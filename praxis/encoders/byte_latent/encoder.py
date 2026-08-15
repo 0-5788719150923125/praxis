@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Optional, Tuple, TypeVar
+from typing import List, Optional, Sequence, Tuple, TypeVar
 
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
@@ -150,6 +150,7 @@ class ByteLatentEncoder(BaseEncoder):
                 patching_mode=PatchingMode(patching_mode),
                 threshold=patching_threshold,
                 monotonicity=getattr(self.byte_config, "monotonicity", False),
+                byte_offset=self.byte_config.byte_offset,
             )
         )
         self.patcher.entropy_model = self.entropy_model
@@ -186,11 +187,30 @@ class ByteLatentEncoder(BaseEncoder):
 
     @property
     def nb_boe(self) -> int:
-        """Number of BOE tokens based on patching mode."""
-        if self.byte_config.patching_mode == "space":
+        """Number of beginning-of-example tokens to prepend, by patching mode.
+
+        BOE is not information - it exists so the first patch contains exactly
+        one real byte, which is what makes the decoder's lag work out
+        (``decoder_patch_ids_from_lengths`` asserts
+        ``first_patch_length - nb_boe == 1``).
+
+        Modes that can produce a length-1 first patch on their own need none:
+
+        * ``space`` cuts on character class, and the patcher forces the opening
+          cut, so its first patch is already 1.
+        * ``static`` now emits ``[1, P, P, ...]`` for the same reason (see
+          ``Patcher._static_patching``). It previously kept uniform patches and
+          paid for the lag with ``P - 1`` prepended BOE tokens; under a
+          256-byte alphabet those have no spare id and land as literal 0x00
+          bytes, so the patching mode with the most predictable boundaries was
+          the one injecting the most meaningless tokens.
+
+        ``entropy`` still needs the prefix: its boundaries follow the entropy
+        model, so a length-1 first patch is not guaranteed.
+        """
+        if self.byte_config.patching_mode in ("space", "static"):
             return 0
-        else:
-            return max(0, self.byte_config.patch_size - 1)
+        return max(0, self.byte_config.patch_size - 1)
 
     def __repr__(self) -> str:
         """
@@ -296,8 +316,11 @@ class ByteLatentEncoder(BaseEncoder):
         else:
             local_block_ids = block_ids
 
-        # Create proper token streams following BLT reference
-        local_encoder_tokens, global_tokens, local_decoder_tokens = get_blt_input(
+        # Create proper token streams following BLT reference. The middle
+        # stream (BLT's "global tokens") is discarded: this encoder builds its
+        # global representation by DOWNSAMPLING the local encoder's hidden
+        # states, so there is no token-level global stream to consume.
+        local_encoder_tokens, _, local_decoder_tokens = get_blt_input(
             tokens=input_ids,
             enforce_patch_size_multiple=False,
             nb_boe=self.nb_boe,
@@ -397,15 +420,12 @@ class ByteLatentEncoder(BaseEncoder):
         # Downsampling to create patch representations
         h = self._downsample(h_encoder, h_cross, bs, patch_lengths, patch_ids)
 
-        # Create global tokens exactly like BLT reference
-        # Note: global_tokens shape matches h.shape (patch-level, not token-level)
-        global_tokens = input_ids.new(h.shape[0], h.shape[1]).fill_(BOE_ID)
-
-        # Mark EOS positions in global tokens following BLT reference logic
-        rows, cols = torch.where(local_encoder_tokens == EOS_ID)
-        if len(rows) > 0:
-            eos_patch_ids = patch_ids[rows, cols]
-            global_tokens[rows, eos_patch_ids] = EOS_ID
+        # NOTE: BLT's reference builds a patch-level "global token" stream here
+        # (BOE-filled, with EOS stamped into the patch each separator landed
+        # in) and feeds it to the global model. This encoder does not: its
+        # global input is `h`, the DOWNSAMPLED hidden states. The stream was
+        # built and then never read - see `create_patch_block_ids` for the
+        # patch-level document boundaries that stream was really carrying.
 
         # Project to global dimension if needed
         if self.token_proj is not None:
@@ -414,10 +434,26 @@ class ByteLatentEncoder(BaseEncoder):
         # Post-downsample hook (e.g. VQ bottleneck in subclasses)
         h, aux_loss = self._post_downsample(h, aux_loss)
 
-        # Returning None for block_ids: token-level boundaries don't cleanly
-        # survive patching, so the global decoder should run unrestricted
-        # rather than gating attention by noisy patch-level labels.
-        return h, h_encoder, patch_lengths, None, aux_loss, local_decoder_tokens
+        # Project the token-level document boundaries onto patches so the
+        # global decoder is isolated the same way the local encoder is. This
+        # used to return None, which left the global transformer attending
+        # freely across every document in a packed sequence - the packing was
+        # only ever half-applied.
+        patch_block_ids = (
+            None
+            if local_block_ids is None
+            else patch_block_ids_from_token_blocks(
+                local_block_ids, patch_ids, h.shape[1]
+            )
+        )
+        return (
+            h,
+            h_encoder,
+            patch_lengths,
+            patch_block_ids,
+            aux_loss,
+            local_decoder_tokens,
+        )
 
     def _downsample(self, h_encoder, h_cross, bs, patch_lengths, patch_ids):
         """Downsample byte-level representations to patch-level. Override for custom pooling."""
@@ -760,16 +796,25 @@ def topk_mean_pooling(
 def patch_entropies_for_special_tokens(
     input_ids: torch.LongTensor,
     entropy_scores: torch.Tensor,
-    special_tokens: List[int] = [0],
+    special_tokens: Sequence[int],
     high_entropy_value: float = 1e9,
 ) -> torch.Tensor:
     """
     Forces patch boundaries at special tokens by setting their entropy scores high.
 
+    The entropy-mode counterpart of the space patcher's unconditional
+    ``patch_end_mask |= tokens < OFFSET`` (``find_space_patch_start_ids``).
+    Currently UNUSED: entropy mode deliberately patches raw entropies to match
+    the BLT reference, which means a document separator can land mid-patch
+    there while under space patching it always opens one. Kept because that is
+    a live question for packed training, not because anything calls it.
+
     Args:
         input_ids: Token IDs of shape [batch_size, seq_len]
         entropy_scores: Original entropy values of shape [batch_size, seq_len]
-        special_tokens: List of special token IDs to mark boundaries
+        special_tokens: Ids to force a boundary at. No default - it used to be
+            ``[0]``, which is ``PAD_ID``/``BOE_ID`` rather than any separator
+            the data contains.
         high_entropy_value: Value to assign at special token positions
 
     Returns:
@@ -800,16 +845,20 @@ def patch_entropies_for_special_tokens(
 def mask_entropy_preds_at_special_tokens(
     input_ids: torch.LongTensor,
     entropy_preds: torch.Tensor,
-    special_tokens: List[int] = [0],
+    special_tokens: Sequence[int],
 ) -> torch.Tensor:
     """
     Masks entropy predictions at special token positions by setting them to zero.
     This prevents the model from learning to predict across sequence boundaries.
 
+    Also currently UNUSED: the entropy loss in ``encode`` trains on raw
+    predictions over the whole packed stream, separators included.
+
     Args:
         input_ids: Token IDs of shape [batch_size, seq_len]
         entropy_preds: Original entropy predictions of shape [batch_size, seq_len * vocab_size]
-        special_tokens: List of special token IDs to mask
+        special_tokens: Ids to mask. No default, for the same reason as
+            ``patch_entropies_for_special_tokens``.
 
     Returns:
         Masked entropy predictions tensor of shape [batch_size, seq_len * vocab_size]
@@ -845,21 +894,68 @@ def mask_entropy_preds_at_special_tokens(
     return masked_entropy_preds
 
 
+def patch_block_ids_from_token_blocks(
+    token_block_ids: torch.LongTensor,
+    patch_ids: torch.LongTensor,
+    num_patches: int,
+) -> torch.LongTensor:
+    """Lift token-level document ids onto patches.
+
+    Patching compresses the sequence, so the global decoder needs its
+    boundaries expressed in patches. Rather than re-detect them (which is what
+    ``create_patch_block_ids`` does, and which needs a separator id to exist in
+    the data), this projects the ids the packer already supplied.
+
+    A patch that straddles a seam takes the LATER document's id (``amax``).
+    Such a patch holds the new document's opening bytes, and the document that
+    ended has no further patches that would need to read it - so attributing it
+    forward loses nothing, while attributing it backward would hide a
+    document's own first bytes from the rest of that document.
+
+    Args:
+        token_block_ids: Block ids per token, [batch_size, seq_len]. Must be
+            aligned with ``patch_ids`` (i.e. already extended over any BOE
+            prefix).
+        patch_ids: Patch index per token, [batch_size, seq_len].
+        num_patches: Width of the patch axis to produce.
+
+    Returns:
+        Block ids per patch, [batch_size, num_patches].
+    """
+    bs = token_block_ids.shape[0]
+    out = token_block_ids.new_zeros((bs, num_patches))
+    return out.scatter_reduce(
+        1, patch_ids, token_block_ids, reduce="amax", include_self=False
+    )
+
+
 def create_patch_block_ids(
     input_ids: torch.LongTensor,
     patch_lengths: torch.LongTensor,
     patch_ids: torch.LongTensor,
-    special_tokens: List[int] = [0],
+    special_tokens: Sequence[int],
 ) -> torch.LongTensor:
     """
     Creates block IDs for patches, with boundaries after patches containing special tokens.
     Special token patches are part of the previous block.
 
+    The patch-level counterpart of ``praxis.utils.create_block_ids``: same
+    document-isolation contract, but indexed by patch rather than by token, so
+    it can gate the GLOBAL decoder's attention the way the token-level ids gate
+    the local encoder's.
+
+    ``special_tokens`` has no default. It used to default to ``[0]``, which is
+    ``PAD_ID``/``BOE_ID`` - padding, not a document separator - so the default
+    produced one block per padded region and no boundary at all at real
+    document ends. Pass the separator explicitly (``EOS_ID`` for the formats
+    that write one; see ``ChatFormat.document_separator``).
+
     Args:
         input_ids: Token IDs of shape [batch_size, seq_len]
         patch_lengths: Length of each patch of shape [batch_size, num_patches]
         patch_ids: Mapping of tokens to patches of shape [batch_size, seq_len]
-        special_tokens: List of special token IDs to mark boundaries
+        special_tokens: Separator ids whose patch ENDS a block. Must be the
+            ids the data actually contains at document ends.
 
     Returns:
         Block IDs tensor of shape [batch_size, num_patches]
@@ -912,7 +1008,7 @@ def packed_rnn_block(
     rnn: nn.Module,
     x: torch.Tensor,
     input_ids: torch.Tensor,
-    eos_token_id: int = 0,
+    eos_token_id: Optional[int] = None,
     block_ids: Optional[torch.LongTensor] = None,
 ) -> torch.Tensor:
     """
@@ -951,8 +1047,16 @@ def packed_rnn_block(
         rnn: nn.RNN module (or compatible RNN type like GRU, LSTM)
         x: Feature tensor of shape [batch_size, seq_len, features]
         input_ids: Token IDs of shape [batch_size, seq_len]
-        eos_token_id: ID to split on when block_ids is None
+        eos_token_id: ID to split on when block_ids is None. Required in that
+            case, and deliberately has no default: it previously defaulted to
+            0, which is ``PAD_ID``/``BOE_ID`` and not a document separator at
+            all. A caller relying on that default split on padding instead of
+            on document ends, which is silent - the wrong block layout still
+            produces a correctly shaped tensor.
         block_ids: Optional block IDs of shape [batch_size, seq_len]
+
+    Raises:
+        ValueError: If neither ``block_ids`` nor ``eos_token_id`` is given.
 
     Returns:
         Processed tensor of shape [batch_size, seq_len, hidden_size]
@@ -964,6 +1068,11 @@ def packed_rnn_block(
     features = x.size(-1)
 
     if block_ids is None:
+        if eos_token_id is None:
+            raise ValueError(
+                "packed_rnn_block needs either block_ids or eos_token_id: "
+                "without a separator id there is nothing to split documents on."
+            )
         block_ids = create_block_ids(input_ids, eos_token_id)
 
     # Block ids are a per-row cumsum, so a block is a contiguous run and

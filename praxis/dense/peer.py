@@ -235,12 +235,51 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.init_weights()
 
     def init_weights(self, keys_std: float = 0.02) -> None:
-        """Init the product keys (normal) and both expert banks (Xavier)."""
+        """Init the product keys and the expert banks by their TRUE fan-in.
+
+        Neither PEER (arXiv 2407.04153) nor the product-key memory it builds on
+        (arXiv 1907.05242) specifies how to initialize experts; PKM says only
+        that keys are "randomly initialized". So this is derived rather than
+        cited, and the derivation is the point.
+
+        The banks are lookup tables, not weight matrices. Each row is one
+        expert's vector, and only ``num_heads * k`` of them participate in any
+        token - the other rows are untouched. That makes ``num_experts`` a
+        LOOKUP dimension, not a fan, and it must not appear in a variance
+        formula.
+
+        Xavier was the previous choice and does exactly that: it reads
+        ``fan_out = num_experts`` off the tensor shape, so the init scale falls
+        as the bank grows, for no reason connected to the computation. At a
+        289-expert bank that already attenuates the module's output to 0.065x
+        its input at init; the factor is ~32x at a paper-scale 2^20 bank. A
+        near-silent FFN that has to climb its way back up is a poor starting
+        point, and it made bank size and init scale impossible to vary
+        independently.
+
+        The fan-in that each bank actually has:
+
+        * ``down`` and ``gate`` project the input onto one expert vector, so
+          their fan-in is ``hidden_size``.
+        * ``up`` is summed over the retrieved experts (an EmbeddingBag in
+          ``sum`` mode weighted by SIGMOID scores, which do not normalize to 1
+          the way a softmax would), so its fan-in is the retrieval fan-out
+          ``num_heads * k``.
+
+        Measured at hidden_size=111, k=8: output/input std goes 0.065 -> 0.59,
+        against 185 for the reference implementation's ``nn.Embedding`` default
+        of N(0, 1). Both alternatives are independent of bank size; only this
+        one is also scale-preserving.
+        """
         nn.init.normal_(self.keys, std=keys_std)
-        nn.init.xavier_uniform_(self.down.weight)
-        nn.init.xavier_uniform_(self.up.weight)
+
+        projection_std = self.hidden_size**-0.5
+        nn.init.normal_(self.down.weight, std=projection_std)
         if self.gate is not None:
-            nn.init.xavier_uniform_(self.gate.weight)
+            nn.init.normal_(self.gate.weight, std=projection_std)
+
+        # Summed over the retrieved experts, so the fan-in is that fan-out.
+        nn.init.normal_(self.up.weight, std=(self.num_heads * self.k) ** -0.5)
 
     def extra_repr(self) -> str:
         return (

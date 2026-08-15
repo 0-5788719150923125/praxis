@@ -18,7 +18,12 @@ class ContrastiveTokenLoss(nn.Module):
 
     Args:
         ignore_index (int, optional): Default padding token id. Defaults to -100.
-        pad_id (int, optional): Specified padding token id. Used to mask out irrelevant preceding tokens. Defaults to 0.
+        pad_id (int, optional): A vocab index SAFE TO GATHER WITH, used to fill
+            positions carrying no real target. It is an index, not a marker:
+            which positions are padding is decided by ``ignore_index`` alone.
+            The two were conflated before, so on a byte-level vocabulary (where
+            0 is the byte 0x00, not a control token) every literal NUL in the
+            data was silently dropped from the loss. Defaults to 0.
         ct_length (Union[int, float], optional): When it's a float value and in [0, 1], it's a portion to the original sequence length;
         when it's larger than 1, it specifies the absolute CT length. Defaults to 0.25.
         preced_m_negatives (Union[int, float], optional): When it's a float value and in [0, 1], it's a portion to the CT sequence length;
@@ -89,7 +94,12 @@ def contrastive_token_loss(
         input (Tensor): Input logits
         target (Tensor): Target token indices
         ignore_index (int, optional): Default padding token id. Defaults to -100.
-        pad_id (int, optional): Specified padding token id. Used to mask out irrelevant preceding tokens. Defaults to 0.
+        pad_id (int, optional): A vocab index SAFE TO GATHER WITH, used to fill
+            positions carrying no real target. It is an index, not a marker:
+            which positions are padding is decided by ``ignore_index`` alone.
+            The two were conflated before, so on a byte-level vocabulary (where
+            0 is the byte 0x00, not a control token) every literal NUL in the
+            data was silently dropped from the loss. Defaults to 0.
         ct_length (Union[int, float], optional): When it's a float value and in [0, 1], it's a portion to the original sequence length;
         when it's larger than 1, it specifies the absolute CT length. Defaults to 0.25.
         preced_m_negatives (Union[int, float], optional): When it's a float value and in [0, 1], it's a portion to the CT sequence length;
@@ -118,12 +128,11 @@ def contrastive_token_loss(
     else:  # exact value
         preced_m_negatives = round(preced_m_negatives)
 
-    if ignore_index != pad_id:
-        target_with_pad = target.masked_fill(target.eq(ignore_index), pad_id)
-    else:
-        target_with_pad = target
-
-    non_padding = target_with_pad != pad_id
+    # Padding is whatever the label mask marked, decided BEFORE the fill:
+    # `pad_id` is only a gather-safe index, and on a byte vocabulary it is a
+    # real byte that must stay in the loss.
+    non_padding = target != ignore_index
+    target_with_pad = target.masked_fill(target.eq(ignore_index), pad_id)
 
     preced_tokens = preced_negatives(target_with_pad, preced_m_negatives, pad_id)
     # if preced_m_negatives:

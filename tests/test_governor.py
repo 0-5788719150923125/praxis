@@ -603,14 +603,30 @@ def test_mixed_shape_cycle_is_not_measured():
 
 
 def test_terminal_reports_governed_microbatch_rows():
-    """batch_size is only a ceiling now, so the info panel must read the live
-    plan or it reports a batch the run never used."""
+    """batch_size is only a ceiling now, so the info panel must report the rows
+    the microbatch actually carried, not the configured ceiling."""
     from praxis.callbacks.lightning.terminal import TerminalInterface
 
     trainer = SimpleNamespace(accumulate_grad_batches=2, world_size=1)
     BatchSchedule.enable(row_ceiling=64, effective_rows=8, tiers=())
-    BatchSchedule.next_microbatch()  # open a cycle: 2 x 4 rows
-    assert TerminalInterface._effective_batch(trainer, 64) == 8
+    plan = BatchSchedule.next_microbatch()  # 2 x 4 rows
+    assert TerminalInterface._effective_batch(trainer, plan.micro_rows) == 8
+
+
+def test_terminal_panel_fields_cannot_disagree():
+    """The reported bug: target_batch read the shared plan while batch_size
+    read the batch, so a plan that had already moved on showed target_batch=1
+    beside batch_size=2. Both must come from the same batch, always."""
+    from praxis.callbacks.lightning.terminal import TerminalInterface
+
+    trainer = SimpleNamespace(accumulate_grad_batches=1, world_size=1)
+    BatchSchedule.enable(row_ceiling=64, effective_rows=2, tiers=((2, 1.0),))
+    BatchSchedule.next_microbatch()  # the fetcher is already a batch ahead:
+    BatchSchedule.next_microbatch()  # a 1-row, 2x-length plan
+    assert BatchSchedule._plan.micro_rows == 1
+    # The batch in hand still has 2 rows; the panel must not quote the other.
+    for observed in (2, 1):
+        assert TerminalInterface._effective_batch(trainer, observed) == observed
 
 
 # ── dynamic sequence lengths under the governor ──────────────────────────
@@ -721,6 +737,75 @@ def test_validation_loader_keeps_a_fixed_shape():
     assert val._next_shape() == (64, 1)  # untouched by the governor
     assert BatchSchedule.current() is None  # and it did not open a cycle
     assert train._next_shape() == (4, 1)  # the governed shape
+
+
+# ---------------------------------------------------- the fetcher's lead
+#
+# Lightning pre-fetches one batch whenever the loader has no length, which an
+# infinite streaming dataset never does, and refills the moment it hands one
+# over. So the pipeline builds microbatch N+1 before the hooks for microbatch N
+# run, and anything reading the shared plan at consumption time is a step ahead
+# unless the plan is explicitly walked forward with the trainer.
+
+
+def test_current_plan_follows_the_trained_batch_not_the_built_one():
+    BatchSchedule.enable(row_ceiling=64, effective_rows=256, tiers=())
+    first = BatchSchedule.next_microbatch()
+    assert BatchSchedule.current() is None  # nothing has been trained on yet
+    BatchSchedule.next_microbatch()  # the fetcher runs ahead
+    assert BatchSchedule.in_flight() == 2
+
+    assert BatchSchedule.consume() is first  # oldest built = the one in hand
+    assert BatchSchedule.current() is first
+    assert BatchSchedule.in_flight() == 1
+
+
+def test_metrics_report_the_trained_shape():
+    """The gov_* shape cards ride alongside the step's loss, so they must
+    describe that step's microbatch, not the next one's."""
+    BatchSchedule.enable(row_ceiling=64, effective_rows=8, tiers=())
+    assert BatchSchedule.metrics() == {}  # nothing trained on yet
+    BatchSchedule.next_microbatch()
+    assert BatchSchedule.metrics() == {}  # built, not yet consumed
+    BatchSchedule.consume()
+    assert BatchSchedule.metrics()["gov_micro_rows"] == 4.0
+
+
+def test_retarget_keeps_production_in_phase_with_the_trainer():
+    """A commit truncates the open production cycle. The microbatches already
+    in flight belong to the trainer's NEXT cycle, so the fresh cycle owes them;
+    ignoring them shifted the phase by one for the rest of the run, and every
+    later step then straddled two cycles - two multipliers, two row counts,
+    inside one step Lightning scales by a single 1/accum."""
+    BatchSchedule.enable(row_ceiling=64, effective_rows=256, tiers=())
+    accum = BatchSchedule.accum()
+    assert accum == 4
+
+    queue = [BatchSchedule.next_microbatch()]  # the fetcher's initial prefetch
+    ready, step, cycle = 0, 0, []
+    straddled = []
+    for _ in range(24):
+        queue.append(BatchSchedule.next_microbatch())  # refills on handover
+        cycle.append(BatchSchedule.consume())  # the batch now being trained on
+        ready += 1
+        queue.pop(0)
+        if ready % accum:
+            continue
+        step += 1
+        # Plans are shared per cycle, so identity says which cycle a
+        # microbatch came from - even when two cycles roll the same shape.
+        if len({id(p) for p in cycle}) > 1:
+            straddled.append(step)
+        cycle = []
+        if step == 2:  # a committed tier change
+            BatchSchedule.set_effective_rows(128)
+            BatchSchedule.restart_cycle()
+            assert BatchSchedule.in_flight() == 1
+            accum, ready = BatchSchedule.accum(), 0
+    # Exactly one step straddles: the one holding the microbatch the fetcher
+    # had already built when the commit landed. That batch cannot be unbuilt.
+    # Before the carry it was every step from the commit onward.
+    assert straddled == [3]
 
 
 def test_validation_draws_do_not_shift_the_training_cycle():

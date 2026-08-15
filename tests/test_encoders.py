@@ -145,6 +145,7 @@ def test_create_patch_block_ids():
         input_ids=input_ids_all_special,
         patch_lengths=patch_lengths[0:1],
         patch_ids=patch_ids[0:1],
+        special_tokens=[0],
     )
 
     expected_all_special = torch.tensor(
@@ -196,7 +197,9 @@ def test_mask_entropy_preds_at_special_tokens():
     original_3d = entropy_preds.clone().reshape(batch_size, seq_len, vocab_size)
 
     # Apply masking
-    masked_preds = mask_entropy_preds_at_special_tokens(input_ids, entropy_preds)
+    masked_preds = mask_entropy_preds_at_special_tokens(
+        input_ids, entropy_preds, special_tokens=[0]
+    )
 
     print(f"Masked entropy_preds shape: {masked_preds.shape}")
     print("Masked entropy_preds (reshaped to 3D for visualization):")
@@ -260,7 +263,9 @@ def test_mask_entropy_preds_at_special_tokens():
     print(f"Original entropy_preds shape: {entropy_preds.shape}")
 
     # Apply masking
-    masked_preds = mask_entropy_preds_at_special_tokens(input_ids, entropy_preds)
+    masked_preds = mask_entropy_preds_at_special_tokens(
+        input_ids, entropy_preds, special_tokens=[0]
+    )
 
     print(f"Masked entropy_preds shape: {masked_preds.shape}")
 
@@ -527,3 +532,147 @@ def test_topk_mean_pooling():
 #         f"Incorrect output shape for variable patch sizes. "
 #         f"Got {result_var.shape}, expected {(batch_size, max_num_patches, emb_dim)}"
 #     )
+
+
+# ------------------------------------------------------- static patching
+
+
+class TestStaticPatchingNeedsNoBOE:
+    """Fixed-size patches on a uniform lattice, with no injected tokens.
+
+    The BLT reference keeps static patches uniform and prepends `patch_size-1`
+    BOE tokens so the first patch holds exactly one real byte (the decoder lag,
+    asserted by `decoder_patch_ids_from_lengths`). Under a 256-byte alphabet
+    there is no spare id, so those would be literal 0x00 bytes at the head of
+    every sequence. Emitting `[1, P, P, ...]` satisfies the same lag with
+    nothing added to the input.
+    """
+
+    @staticmethod
+    def _encoder(mode, patch_size=8):
+        from praxis import ENCODER_REGISTRY, PraxisConfig
+
+        name = (
+            "abstractinator_harmonic_gdn_vocab_bank_static"
+            if mode == "static"
+            else "abstractinator_harmonic_gdn_vocab_bank"
+        )
+        config = PraxisConfig(
+            vocab_size=1024,
+            byte_vocab_size=256,
+            byte_offset=0,
+            hidden_size=111,
+            embed_size=110,
+            num_heads=1,
+            head_size=30,
+            depth=2,
+            num_layers=1,
+            encoder_type=name,
+            decoder_type="sequential",
+            block_size=64,
+            max_position_embeddings=1024,
+            device_map="cpu",
+        )
+        return ENCODER_REGISTRY[name](config)
+
+    def test_static_prepends_no_boe(self):
+        encoder = self._encoder("static")
+        assert encoder.byte_config.patching_mode == "static"
+        assert encoder.byte_config.patch_size == 8
+        assert encoder.nb_boe == 0, "static patching must not inject BOE bytes"
+
+    def test_space_also_needs_no_boe(self):
+        assert self._encoder("space").nb_boe == 0
+
+    def test_entropy_still_gets_its_prefix(self):
+        """Entropy boundaries follow the model, so a length-1 first patch is
+        not guaranteed and the prefix is still doing real work."""
+        encoder = self._encoder("static")
+        encoder.byte_config.patching_mode = "entropy"
+        assert encoder.nb_boe == encoder.byte_config.patch_size - 1
+
+    @pytest.mark.parametrize("patch_size", [4, 6, 8])
+    @pytest.mark.parametrize("seq_len", [31, 64, 65])
+    def test_lengths_are_one_then_uniform(self, patch_size, seq_len):
+        from praxis.encoders.byte_latent.patcher import (
+            Patcher,
+            PatcherConfig,
+            PatchingMode,
+        )
+
+        patcher = Patcher(
+            PatcherConfig(
+                patching_mode=PatchingMode.static,
+                patch_size=patch_size,
+                device="cpu",
+                byte_offset=0,
+            )
+        )
+        tokens = torch.randint(0, 256, (3, seq_len))
+        lengths, _ = patcher.patch(tokens, include_next_token=True)
+
+        # The lag contract decoder_patch_ids_from_lengths asserts.
+        assert torch.all(lengths[:, 0] == 1)
+        # Every patch but the first and last is exactly patch_size.
+        if lengths.shape[1] > 2:
+            assert torch.all(lengths[:, 1:-1] == patch_size)
+        # Total must cover the sequence plus the next-token slot.
+        assert torch.all(lengths.sum(dim=1) == seq_len + 1)
+        assert torch.all(lengths > 0)
+
+
+class TestEntropyBoundaryRulesAreAlternatives:
+    """BLT's two entropy rules are alternatives, not a union.
+
+    global    H(x_t) > theta_g
+    monotonic H(x_t) - H(x_t-1) > theta_r
+
+    OR-ing them is neither rule and cuts strictly more often than either.
+    Inert for space/static runs, but the deviation is from a paper we cite.
+    """
+
+    @staticmethod
+    def _patch(monotonicity, entropies, threshold=1.0):
+        from praxis.encoders.byte_latent.patcher import (
+            Patcher,
+            PatcherConfig,
+            PatchingMode,
+        )
+
+        patcher = Patcher(
+            PatcherConfig(
+                patching_mode=PatchingMode.entropy,
+                device="cpu",
+                monotonicity=monotonicity,
+                byte_offset=0,
+            )
+        )
+        tokens = torch.zeros(entropies.shape, dtype=torch.long)
+        lengths, _ = patcher.patch(
+            tokens, include_next_token=False, threshold=threshold, entropies=entropies
+        )
+        return lengths
+
+    def test_monotonic_ignores_absolute_level(self):
+        """A flat, uniformly HIGH entropy run has no jumps, so the monotonic
+        rule must not cut it - while the global rule cuts everywhere. Under the
+        old union the monotonic setting inherited the global cuts."""
+        entropies = torch.full((1, 24), 10.0)
+        mono = self._patch(True, entropies)
+        glob = self._patch(False, entropies)
+        assert (mono > 0).sum() < (
+            glob > 0
+        ).sum(), "monotonic rule is still inheriting the absolute rule's boundaries"
+
+    def test_monotonic_cuts_on_a_jump(self):
+        """A single upward step is exactly what the monotonic rule is for."""
+        entropies = torch.zeros(1, 16)
+        entropies[0, 8:] = 5.0
+        lengths = self._patch(True, entropies)
+        assert int((lengths > 0).sum()) >= 2, "no boundary at the entropy jump"
+
+    def test_both_rules_conserve_the_sequence(self):
+        entropies = torch.rand(2, 32) * 4
+        for monotonicity in (True, False):
+            lengths = self._patch(monotonicity, entropies)
+            assert torch.all(lengths.sum(dim=1) == 32)

@@ -247,7 +247,13 @@ class GNSBatchGovernor(Callback):
         them here rather than assuming the plan's value keeps the estimate
         correct even when the data pipeline is a cycle behind (a forked worker,
         or the dataloader's one-batch lead).
+
+        Also the one place that knows a produced microbatch has become a
+        trained one, so it advances the schedule's consumption pointer - see
+        ``BatchSchedule.consume``. Every telemetry reader downstream then sees
+        the shape of THIS batch instead of the one the fetcher already built.
         """
+        BatchSchedule.consume()
         rows = _batch_rows(batch)
         if rows is None:
             return

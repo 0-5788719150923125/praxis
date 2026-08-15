@@ -26,9 +26,11 @@ class MessageQueueManager:
     without discarding tokens. A doc that overflows the sequence boundary
     has its tail carried over to the next sequence.
 
-    Every document is terminated with the chat format's `document_separator`
-    id, which is what makes a packed sequence's document boundaries visible
-    downstream - see `_terminate_doc`.
+    Document boundaries are reported out-of-band as `block_ids` rather than
+    marked in the token stream, so packing works for a format with no control
+    tokens at all. Formats that declare a `document_separator` still get one
+    appended (see `_terminate_doc`), because it is part of their wire format -
+    but nothing downstream depends on finding it any more.
 
     Per-token side channels travel with the tokens through packing:
         task_type_ids: int8 task ID per token, copied from doc metadata.
@@ -36,6 +38,9 @@ class MessageQueueManager:
                         0 elsewhere -- emitted by the chat template's
                         {% generation %} blocks. Used downstream for
                         prompt-loss masking during SFT.
+        block_ids: 1-based document index per token, restarting at 1 in
+                        every sequence. Gates attention so one packed
+                        document cannot read another.
     """
 
     def __init__(
@@ -204,29 +209,23 @@ class MessageQueueManager:
     def _terminate_doc(
         self, doc_tokens: torch.Tensor, assistant_mask: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Append the format's document separator to a tokenized document.
+        """Append the format's document separator, if it declares one.
 
-        Packing concatenates unrelated documents into one sequence, and two
-        pieces of the stack need to know where one ends:
+        A no-op for formats with ``document_separator=None`` (``prose``), and
+        that is now the interesting case: document boundaries reach the model
+        as ``block_ids`` rather than as a token, so a separator is no longer
+        needed to make packing work. It remains for formats whose wire format
+        includes one - ``default`` writes ``[BOS]``/``[SEP]`` per turn and
+        ``[EOS]`` per document, and that layout is unchanged.
 
-        * ``create_block_ids`` (praxis/modeling.py) segments the local
-          byte-level encoder's attention on this id, so without it every packed
-          sequence is a single block and the encoder attends across documents.
-        * The byte-latent space patcher force-cuts a patch at ``tokens <
-          OFFSET``, so the seam gets its own patch instead of merging one
-          document's last word into the next document's first.
+        Added AFTER validation, because the validator checks the template's own
+        output.
 
-        Neither template emitted this id before - the ``default`` format writes
-        ``[BOS]``/``[SEP]`` and never ``[EOS]``, so the block-isolation path was
-        inert for every chat run. This is the one control token ``prose`` keeps,
-        and it is added AFTER validation because the validator checks the
-        template's own output.
-
-        The mask copies the document's last position rather than being pinned to
-        0 or 1: the separator is supervised exactly when the document ends on a
-        generated turn. Zeroing it unconditionally would recreate the defect
-        ``prose`` exists to remove - a symbol the model conditions on at every
-        document end but is never trained to produce.
+        The mask copies the document's last position rather than being pinned
+        to 0 or 1: the separator is supervised exactly when the document ends
+        on a generated turn. Zeroing it unconditionally would make it a symbol
+        the model conditions on at every document end but is never trained to
+        produce, which is the asymmetry ``prose`` was built to remove.
         """
         sep_id = self._separator_id()
         if sep_id is None or doc_tokens.numel() == 0:
@@ -256,21 +255,40 @@ class MessageQueueManager:
             sequence_multiplier: Factor to multiply the sequence length by
 
         Returns:
-            Dictionary with 'batch' (list of tensors) and 'metadata' (list of dicts)
+            Dictionary with 'batch' (list of tensors) and 'metadata' (list of
+            dicts), plus the per-token side channels 'task_type_ids',
+            'assistant_mask' and 'block_ids'.
+
+            ``block_ids`` labels which packed document each position belongs
+            to, and is what gates attention so one document cannot read
+            another (praxis/attention/core.py). It is emitted here, rather
+            than recovered downstream by scanning ``input_ids`` for a
+            separator id, because packing is the only step that actually knows
+            where the seams are. Deriving it from a token had three failure
+            modes this avoids: it was silently inert for any chat format whose
+            template emits no separator, it forced a control token to exist in
+            the vocabulary purely as an out-of-band signal, and it could not
+            distinguish a separator the model generated from one the packer
+            wrote.
         """
         effective_block_size = self.block_size * sequence_multiplier
 
         sequences: List[torch.Tensor] = []
         task_id_seqs: List[torch.Tensor] = []
         assistant_mask_seqs: List[torch.Tensor] = []
+        block_id_seqs: List[torch.Tensor] = []
         batch_metadata: List[Dict] = []
 
         for _ in range(batch_size):
             seq_parts: List[torch.Tensor] = []
             seq_task_parts: List[torch.Tensor] = []
             seq_mask_parts: List[torch.Tensor] = []
+            seq_block_parts: List[torch.Tensor] = []
             seq_meta: List[Dict] = []
             seq_len = 0
+            # Block ids are per-SEQUENCE and 1-based, matching
+            # praxis.utils.create_block_ids: a block never spans two rows.
+            block_counter = 0
 
             # Drain any carryover from the previous sequence first. Carryover
             # means we're continuing mid-doc, so this sequence does not start
@@ -280,6 +298,13 @@ class MessageQueueManager:
                 seq_parts.append(self._carry_tokens)
                 seq_task_parts.append(self._carry_task_ids)
                 seq_mask_parts.append(self._carry_assistant_mask)
+                # The carryover is the tail of a document that was split across
+                # sequences. It is a document in its own right here: attention
+                # cannot reach back to the half that landed in the previous row.
+                block_counter = 1
+                seq_block_parts.append(
+                    torch.full(self._carry_tokens.shape, 1, dtype=torch.long)
+                )
                 seq_meta.extend(self._carry_metadata)
                 seq_len += len(self._carry_tokens)
                 self._carry_tokens = None
@@ -317,6 +342,15 @@ class MessageQueueManager:
                     continue
 
                 doc_tokens, doc_mask = tokenized
+                # A new document opens a new attention block. The packer is the
+                # only place that KNOWS where documents meet, so it says so
+                # directly instead of leaving the model to infer it from a
+                # separator id in the stream (see the block_ids note on
+                # get_batch).
+                block_counter += 1
+                doc_block = torch.full(
+                    doc_tokens.shape, block_counter, dtype=torch.long
+                )
                 raw_task = doc["metadata"].get("task_type", DEFAULT_TASK)
                 try:
                     task_id_val = int(raw_task)
@@ -329,6 +363,7 @@ class MessageQueueManager:
                     seq_parts.append(doc_tokens)
                     seq_task_parts.append(doc_task)
                     seq_mask_parts.append(doc_mask)
+                    seq_block_parts.append(doc_block)
                     seq_meta.extend([doc["metadata"]] * len(doc_tokens))
                     seq_len += len(doc_tokens)
                     first_doc_in_seq = False
@@ -342,6 +377,7 @@ class MessageQueueManager:
                     seq_parts.append(fitting_tokens)
                     seq_task_parts.append(fitting_task)
                     seq_mask_parts.append(fitting_mask)
+                    seq_block_parts.append(doc_block[:remaining])
                     seq_meta.extend([doc["metadata"]] * len(fitting_tokens))
                     seq_len += len(fitting_tokens)
                     # Preserve the tail for the next sequence rather than
@@ -362,20 +398,28 @@ class MessageQueueManager:
                     torch.full((pad,), int(DEFAULT_TASK), dtype=torch.uint8)
                 )
                 seq_mask_parts.append(torch.zeros(pad, dtype=torch.uint8))
+                # Padding is its own block, so it cannot attend into the last
+                # real document (nor that document into it).
+                seq_block_parts.append(
+                    torch.full((pad,), block_counter + 1, dtype=torch.long)
+                )
                 seq_meta.extend([{}] * pad)
 
             sequence = torch.cat(seq_parts)[:effective_block_size]
             task_seq = torch.cat(seq_task_parts)[:effective_block_size]
             mask_seq = torch.cat(seq_mask_parts)[:effective_block_size]
+            block_seq = torch.cat(seq_block_parts)[:effective_block_size]
             sequences.append(sequence)
             task_id_seqs.append(task_seq)
             assistant_mask_seqs.append(mask_seq)
+            block_id_seqs.append(block_seq)
             batch_metadata.append(seq_meta[0] if seq_meta else {})
 
         return {
             "batch": sequences,
             "task_type_ids": task_id_seqs,
             "assistant_mask": assistant_mask_seqs,
+            "block_ids": block_id_seqs,
             "metadata": batch_metadata,
         }
 

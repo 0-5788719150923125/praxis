@@ -71,17 +71,19 @@ class BackpropagationTrainer(LightningModule):
         # Capture metadata before _handle_batch_format (it only returns input_ids)
         batch_metadata = batch.get("metadata", []) if isinstance(batch, dict) else []
 
-        (
-            input_ids,
-            rewards,
-            token_weights,
-            task_type_ids,
-            assistant_mask,
-            should_skip,
-        ) = self._handle_batch_format(batch, batch_idx, is_training=True)
+        fields, should_skip = self._handle_batch_format(
+            batch, batch_idx, is_training=True
+        )
 
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
+
+        # Names this step reads directly, below the model call. Bound here so
+        # a channel added to `fields` cannot silently shadow one that the
+        # metrics code still expects to exist.
+        input_ids = fields["input_ids"]
+        task_type_ids = fields["task_type_ids"]
+        rewards = fields["rewards"]
 
         # Check if encoder outputs are already aligned
         if self.outputs_are_aligned:
@@ -89,14 +91,7 @@ class BackpropagationTrainer(LightningModule):
         else:
             labels = input_ids[..., 1:].contiguous()
 
-        outputs = self.model(
-            input_ids=input_ids,
-            labels=labels,
-            rewards=rewards,
-            token_weights=token_weights,
-            task_type_ids=task_type_ids,
-            assistant_mask=assistant_mask,
-        )
+        outputs = self.model(labels=labels, **fields)
         loss = outputs.loss
         # A training-step loss with no grad path means the forward ran in eval
         # mode (e.g. a background dashboard/inference thread flipped the shared
@@ -403,7 +398,12 @@ class BackpropagationTrainer(LightningModule):
         ensuring consistent handling of RL generation, CoT token weights, and other batch formats.
 
         Returns:
-            input_ids, rewards, token_weights, task_type_ids, assistant_mask, should_skip
+            ``(fields, should_skip)``, where ``fields`` is the model-kwargs
+            dict (``input_ids`` plus whichever per-token side channels the
+            batch carried) and is ``None`` when ``should_skip``. A dict rather
+            than a tuple because every channel here is optional and passed
+            straight through to ``forward``: adding one should not renumber a
+            positional unpack at three call sites.
         """
         step_type = "Training" if is_training else "Validation"
 
@@ -414,6 +414,7 @@ class BackpropagationTrainer(LightningModule):
             token_weights = batch.get("token_weights", None)
             task_type_ids = batch.get("task_type_ids", None)
             assistant_mask = batch.get("assistant_mask", None)
+            block_ids = batch.get("block_ids", None)
 
             # Log interesting batch events (only for generation batches to avoid spam)
             if batch.get("needs_generation", False):
@@ -437,7 +438,7 @@ class BackpropagationTrainer(LightningModule):
                     print(
                         f"[RL] {step_type} - Generation failed for batch {batch_idx}, skipping..."
                     )
-                    return None, None, None, None, None, True
+                    return None, True
 
         else:
             # Regular batch format (just tensor of input_ids)
@@ -446,8 +447,19 @@ class BackpropagationTrainer(LightningModule):
             token_weights = None
             task_type_ids = None
             assistant_mask = None
+            block_ids = None
 
-        return input_ids, rewards, token_weights, task_type_ids, assistant_mask, False
+        return (
+            {
+                "input_ids": input_ids,
+                "rewards": rewards,
+                "token_weights": token_weights,
+                "task_type_ids": task_type_ids,
+                "assistant_mask": assistant_mask,
+                "block_ids": block_ids,
+            },
+            False,
+        )
 
     def on_validation_start(self):
         super().on_validation_start()
@@ -462,17 +474,14 @@ class BackpropagationTrainer(LightningModule):
             # Return minimal tensor to avoid errors
             return torch.tensor(0.0, device=self.device)
 
-        (
-            input_ids,
-            rewards,
-            token_weights,
-            task_type_ids,
-            assistant_mask,
-            should_skip,
-        ) = self._handle_batch_format(batch, batch_idx, is_training=False)
+        fields, should_skip = self._handle_batch_format(
+            batch, batch_idx, is_training=False
+        )
 
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
+
+        input_ids = fields["input_ids"]
 
         # Check if encoder outputs are already aligned
         if self.outputs_are_aligned:
@@ -480,14 +489,7 @@ class BackpropagationTrainer(LightningModule):
         else:
             labels = input_ids[..., 1:].contiguous()
 
-        outputs = self.model(
-            input_ids=input_ids,
-            labels=labels,
-            rewards=rewards,
-            token_weights=token_weights,
-            task_type_ids=task_type_ids,
-            assistant_mask=assistant_mask,
-        )
+        outputs = self.model(labels=labels, **fields)
 
         stats = {}
 

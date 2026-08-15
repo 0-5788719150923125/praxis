@@ -33,19 +33,24 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
     compatibility including chat template support.
 
     Tool-control tokens (see ``PraxisToolTokensMixin``) are appended
-    past the byte range so existing byte ids (OFFSET..OFFSET+255) stay
-    valid in saved checkpoints. They are registered only when the chat
-    format actually renders them, because ``byte_alphabet_size`` sizes the
-    model's output head: an unused control token is a sampleable logit with
-    no training signal behind it.
+    past the byte range so existing byte ids stay valid in saved
+    checkpoints. They are registered only when the chat format actually
+    renders them, because ``byte_alphabet_size`` sizes the model's output
+    head: an unused control token is a sampleable logit with no training
+    signal behind it.
 
-    The four ids BELOW ``OFFSET`` are a different matter and always stay.
-    They are structural to the BLT byte layout - bytes are ``b + OFFSET``
-    throughout the stack, and the space patcher force-cuts a patch at
-    ``tokens < OFFSET`` - so they cannot be dropped without renumbering
-    every byte. ``[EOS]`` earns its place there as the packer's
-    document separator (see MessageQueueManager); ``[BOS]``/``[SEP]`` are
-    used by the ``default`` format's turn boundaries.
+    The four NAMED specials below the byte range follow the same rule, and
+    that is what makes a pure 256-byte alphabet possible. A format that
+    renders no control token and asks the packer to write no document
+    separator (``prose``) gets ``byte_offset == 0``: ids ARE bytes, the
+    alphabet is exactly 256, and nothing in the stream is outside the set a
+    byte can represent. A format with token boundaries (``default``) gets the
+    BLT layout - ``byte_offset == 4``, ids 0-3 reserved for
+    ``[PAD]``/``[BOS]``/``[EOS]``/``[SEP]``, bytes at ``b + 4``.
+
+    The offset is therefore an instance property, not a module constant.
+    Everything downstream that does byte arithmetic reads it from here
+    (via ``ByteLatentConfig.byte_offset``) rather than importing ``OFFSET``.
     """
 
     # Only 4 unique named special tokens matching BLT IDs exactly
@@ -111,10 +116,15 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         self.add_bos = add_bos
         self.add_eos = add_eos
 
+        # Named control tokens exist only for formats that actually use them.
+        # When they do not, the alphabet is pure bytes and the offset is 0.
+        self._wants_named = self._wants_named_specials(chat_format)
+        self._offset = OFFSET if self._wants_named else 0
+
         # Tool-control token ids land immediately past the byte range - but
         # only when the format renders them. Empty map = the ids don't exist,
         # which every vocab/encode/decode path below reads from.
-        self._tool_token_start_id = vocab_size_unit_1 + OFFSET
+        self._tool_token_start_id = vocab_size_unit_1 + self._offset
         self._tool_special_id_map: Dict[str, int] = (
             {
                 tok: self._tool_token_start_id + idx
@@ -124,14 +134,18 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
             else {}
         )
 
-        # Initialize named-special tokens from kwargs or use defaults
-        for token_name, token_value in self.SPECIAL_TOKENS.items():
-            if token_name not in kwargs:
-                kwargs[token_name] = token_value
+        # Initialize named-special tokens from kwargs or use defaults. Skipped
+        # entirely in the pure-byte layout: registering a token HuggingFace can
+        # then hand back as `pad_token_id` would put an id outside 0..255 back
+        # into play, which is the whole thing this layout removes.
+        if self._wants_named:
+            for token_name, token_value in self.SPECIAL_TOKENS.items():
+                if token_name not in kwargs:
+                    kwargs[token_name] = token_value
 
-        # HuggingFace expects unk_token - use PAD as fallback
-        if "unk_token" not in kwargs:
-            kwargs["unk_token"] = "[PAD]"  # Use PAD as unknown token
+            # HuggingFace expects unk_token - use PAD as fallback
+            if "unk_token" not in kwargs:
+                kwargs["unk_token"] = "[PAD]"  # Use PAD as unknown token
 
         # Register tool tokens so ``skip_special_tokens`` recognises them.
         self._inject_tool_tokens_kwargs(kwargs, chat_format)
@@ -175,16 +189,17 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         vocab = {}
         merges = []
 
-        # Named special tokens use IDs 0-3
-        vocab["[PAD]"] = self.PAD_ID
-        vocab["[BOS]"] = self.BOS_ID
-        vocab["[EOS]"] = self.EOS_ID
-        vocab["[SEP]"] = self.SEP_ID
+        # Named special tokens use IDs 0-3, when the layout has them at all
+        if self._wants_named:
+            vocab["[PAD]"] = self.PAD_ID
+            vocab["[BOS]"] = self.BOS_ID
+            vocab["[EOS]"] = self.EOS_ID
+            vocab["[SEP]"] = self.SEP_ID
 
-        # Byte tokens start at OFFSET (4)
+        # Byte tokens start at the offset (4 with named specials, else 0)
         for i in range(vocab_size):
             byte_char = chr(i) if i < 256 else f"<unk>"
-            vocab[byte_char] = i + OFFSET
+            vocab[byte_char] = i + self._offset
 
         # Tool-control tokens appended past the byte range.
         for tok, tid in self._tool_special_id_map.items():
@@ -229,13 +244,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         """
         # For testing: handle special token strings in text
         # This allows tests to pass "[BOS]Hello[EOS]" and have it work
-        special_token_map = {
-            "[PAD]": self.PAD_ID,
-            "[BOS]": self.BOS_ID,
-            "[EOS]": self.EOS_ID,
-            "[SEP]": self.SEP_ID,
-            **self._tool_special_id_map,
-        }
+        special_token_map = {**self._named_special_map(), **self._tool_special_id_map}
 
         tokens = []
         i = 0
@@ -253,13 +262,17 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
                 # Convert character to UTF-8 bytes and add offset for each byte
                 char_bytes = text[i].encode("utf-8")
                 for b in char_bytes:
-                    tokens.append(b + OFFSET)
+                    tokens.append(b + self._offset)
                 i += 1
 
         # Add BOS/EOS if requested (and not already present)
-        if add_special_tokens:
+        if add_special_tokens and self._wants_named:
             # When add_special_tokens=True, always add special tokens
-            # (this overrides the tokenizer's default settings)
+            # (this overrides the tokenizer's default settings).
+            #
+            # Ignored outright in the pure-byte layout: ids 1 and 2 are the
+            # bytes 0x01 and 0x02 there, so "adding BOS/EOS" would splice two
+            # arbitrary control characters into the text.
             if not tokens or tokens[0] != self.BOS_ID:
                 tokens.insert(0, self.BOS_ID)
             if not tokens or tokens[-1] != self.EOS_ID:
@@ -294,10 +307,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
 
         # Special token ID to string mapping (named specials + tool specials)
         special_id_map = {
-            self.PAD_ID: "[PAD]",
-            self.BOS_ID: "[BOS]",
-            self.EOS_ID: "[EOS]",
-            self.SEP_ID: "[SEP]",
+            **{tid: tok for tok, tid in self._named_special_map().items()},
             **{tid: tok for tok, tid in self._tool_special_id_map.items()},
         }
 
@@ -313,7 +323,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
                     result.append(special_id_map[tok])
             else:
                 # Regular byte token - reverse the offset
-                byte_val = tok - OFFSET
+                byte_val = tok - self._offset
                 if 0 <= byte_val < 256:
                     byte_buffer.append(byte_val)
 
@@ -338,10 +348,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
 
         # Map special token IDs to strings (named + tool specials)
         special_id_map = {
-            self.PAD_ID: "[PAD]",
-            self.BOS_ID: "[BOS]",
-            self.EOS_ID: "[EOS]",
-            self.SEP_ID: "[SEP]",
+            **{tid: tok for tok, tid in self._named_special_map().items()},
             **{tid: tok for tok, tid in self._tool_special_id_map.items()},
         }
 
@@ -351,7 +358,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
                 tokens.append(special_id_map[token_id])
             else:
                 # Regular byte token - represent as hex byte string
-                byte_val = token_id - OFFSET
+                byte_val = token_id - self._offset
                 if 0 <= byte_val < 256:
                     tokens.append(f"<0x{byte_val:02X}>")
 
@@ -391,7 +398,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         """The raw byte a position holds, or None if it holds a special id."""
         if index < 0 or index >= len(token_ids):
             return None
-        value = int(token_ids[index]) - OFFSET
+        value = int(token_ids[index]) - self._offset
         return value if 0 <= value < 256 else None
 
     def incomplete_tail(self, token_ids: List[int]) -> bool:
@@ -459,6 +466,47 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
             start += 1
         return start
 
+    @staticmethod
+    def _wants_named_specials(chat_format: Any = None) -> bool:
+        """Whether this format needs the four named control ids to exist.
+
+        True when the format writes control tokens into the rendered text
+        (token boundaries), when it renders the atomic tool tokens, or when it
+        asks the packer for a document separator. False leaves a pure 256-byte
+        alphabet, which is only sound because document boundaries now travel
+        out-of-band (MessageQueueManager emits ``block_ids``) rather than as a
+        separator id the model has to see.
+        """
+        from .chat_templates import get_chat_format
+
+        fmt = get_chat_format(chat_format)
+        return (
+            not fmt.text_boundaries
+            or fmt.uses_tool_tokens
+            or fmt.document_separator is not None
+        )
+
+    def _named_special_map(self) -> Dict[str, int]:
+        """``{token string: id}`` for the named specials, empty in byte mode."""
+        if not self._wants_named:
+            return {}
+        return {
+            "[PAD]": self.PAD_ID,
+            "[BOS]": self.BOS_ID,
+            "[EOS]": self.EOS_ID,
+            "[SEP]": self.SEP_ID,
+        }
+
+    @property
+    def byte_offset(self) -> int:
+        """Amount added to a raw byte to get its id: 4 (BLT layout) or 0.
+
+        Everything downstream that does byte arithmetic - the space patcher's
+        character classes, the byte-latent embedding tables - must read this
+        rather than assume a constant.
+        """
+        return self._offset
+
     @property
     def byte_alphabet_size(self) -> int:
         """Number of distinct ids the tokenizer can emit (bytes + named
@@ -469,7 +517,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         Counts the live tool map rather than the class-level string list, so a
         format that skips the tool tokens gets a 260-wide alphabet - and the
         output head shrinks with it (praxis/encoders/byte_latent/config.py)."""
-        return self.vocab_size_unit_1 + OFFSET + len(self._tool_special_id_map)
+        return self.vocab_size_unit_1 + self._offset + len(self._tool_special_id_map)
 
     @property
     def vocab_size(self) -> int:

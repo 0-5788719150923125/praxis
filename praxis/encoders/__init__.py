@@ -176,6 +176,33 @@ AbstractinatorHarmonicGDNVocabBank = partial(
     vq_codebook_size=None,
 )
 
+# The GDN vocab-bank profile on FIXED-SIZE patches instead of space patching.
+#
+# Static patching is the worst-performing mode in BLT's own ablations, so this
+# is a deliberate contrarian test rather than an expected win. The reason to
+# run it here: a harmonic model builds a PERIODIC latent, and patch-time is a
+# resampling of byte-time. A fixed patch size makes that resampling UNIFORM;
+# space and entropy patching make the sampling lattice depend on the content,
+# which is non-uniform sampling and smears the frequency axis. BLT measured
+# bits-per-byte on a non-periodic transformer, where an irregular lattice costs
+# nothing structural - so their result does not obviously transfer to a model
+# whose representation is built out of frequencies.
+#
+# PATCH_SIZE is compute-matched, not chosen for numerology. Space patching on
+# this repo's own source measures a mean patch length of 7.25 bytes (median 6,
+# p25 4, p75 9), so 8 keeps the global decoder's sequence length within ~10% of
+# what the space patcher already produces; 6 would lengthen it by ~21% and
+# confound a patching change with a compute change.
+#
+# Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
+AbstractinatorHarmonicGDNVocabBankStatic = partial(
+    AbstractinatorHarmonic,
+    bottleneck="harmonic_gdn",
+    vq_codebook_size=None,
+    patching_mode="static",
+    patch_size=8,
+)
+
 # CALM profiles. Defaults track the paper (arXiv 2510.27688). Tokenizer-
 # specific variants exist because K ("one word of meaning per latent")
 # scales with tokenizer granularity: BPE=4, char=8, byte=16.
@@ -423,6 +450,8 @@ ENCODER_REGISTRY = dict(
     abstractinator_harmonic_serpent_vocab_bank=AbstractinatorHarmonicSerpentVocabBank,
     abstractinator_harmonic_vocab_bank=AbstractinatorHarmonicVocabBank,
     abstractinator_harmonic_gdn_vocab_bank=AbstractinatorHarmonicGDNVocabBank,
+    # Same, on a uniform patch lattice (see the profile's note).
+    abstractinator_harmonic_gdn_vocab_bank_static=AbstractinatorHarmonicGDNVocabBankStatic,
     # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
     # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
     # calm_small is the smoke-test profile.

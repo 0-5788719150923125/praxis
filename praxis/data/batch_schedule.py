@@ -69,10 +69,35 @@ sees writes immediately. A forked worker would see the snapshot it was forked
 with; the governor therefore measures rows from the batch it actually received
 rather than from what it asked for, so a stale plan can degrade throughput but
 cannot corrupt the estimator.
+
+PRODUCTION RUNS AHEAD OF CONSUMPTION. Lightning's ``_PrefetchDataFetcher``
+pre-fetches one batch whenever the loader has no length - which an infinite
+streaming ``IterableDataset`` never does - and its ``__next__`` refills the
+moment it hands a batch over. So the pipeline builds microbatch N+1 (a
+``next_microbatch`` call, which may roll a new multiplier and open a new cycle)
+BEFORE the hooks for microbatch N run:
+
+    produce b0, produce b1, [hooks b0], produce b2, [hooks b1], ...
+
+Two consequences the class handles explicitly:
+
+* ``current()`` must mean "the plan of the microbatch the trainer is training
+  on", not "the last plan produced" - otherwise every consumption-time reader
+  (telemetry, the info panel) reports the NEXT batch's shape against THIS
+  batch's numbers and looks one step ahead. ``consume()`` advances that
+  pointer; the governor calls it once per training batch.
+* ``restart_cycle()`` must not simply truncate the open production cycle. The
+  microbatches already in flight belong to the trainer's next accumulation
+  cycle, so a fresh cycle that ignores them shifts the production phase by one
+  microbatch FOR GOOD, and every optimizer step afterwards straddles two
+  production cycles - two multipliers, two row counts, inside one step
+  Lightning scales uniformly by 1/accum. The in-flight count is carried into
+  the fresh cycle's budget instead.
 """
 
 import random
-from typing import Dict, NamedTuple, Optional, Tuple
+from collections import deque
+from typing import Deque, Dict, NamedTuple, Optional, Tuple
 
 
 class BatchPlan(NamedTuple):
@@ -174,6 +199,14 @@ class BatchSchedule:
 
     _plan: Optional[BatchPlan] = None
     _micro_index: int = 0  # microbatches emitted in the open cycle
+    # Plans of microbatches built but not yet handed to a training step - the
+    # data fetcher's lead. Popped by ``consume``; its length IS the lead, which
+    # is measured rather than assumed so a sized loader (lead 0) works too.
+    _queued: Deque[BatchPlan] = deque()
+    _live: Optional[BatchPlan] = None  # plan of the microbatch being trained on
+    # Microbatches the next production cycle already owes to the trainer's
+    # cycle, set by ``restart_cycle``. See the module docstring.
+    _carry: int = 0
 
     @classmethod
     def enable(
@@ -188,8 +221,7 @@ class BatchSchedule:
         cls.effective_rows = max(MIN_MICRO_BATCHES, int(effective_rows))
         cls.tiers = tuple(tiers)
         cls.min_micro = max(1, int(min_micro))
-        cls._plan = None
-        cls._micro_index = 0
+        cls._clear()
 
     @classmethod
     def reset(cls) -> None:
@@ -198,8 +230,15 @@ class BatchSchedule:
         cls.effective_rows = 0
         cls.tiers = ()
         cls.min_micro = MIN_MICRO_BATCHES
+        cls._clear()
+
+    @classmethod
+    def _clear(cls) -> None:
         cls._plan = None
         cls._micro_index = 0
+        cls._queued = deque()
+        cls._live = None
+        cls._carry = 0
 
     @classmethod
     def set_effective_rows(cls, rows: int, min_micro: Optional[int] = None) -> None:
@@ -238,8 +277,33 @@ class BatchSchedule:
 
     @classmethod
     def current(cls) -> Optional[BatchPlan]:
-        """The open cycle's plan, without advancing. None before the first."""
-        return cls._plan
+        """Plan of the microbatch the trainer is training on right now.
+
+        NOT the last plan produced: the fetcher runs a batch ahead, so the
+        newest plan describes a batch nobody has seen yet. Reading that one at
+        consumption time is what made the info panel's target batch move a step
+        before its microbatch rows did. None before the first training batch.
+        """
+        return cls._live
+
+    @classmethod
+    def consume(cls) -> Optional[BatchPlan]:
+        """Advance ``current()`` onto the oldest produced-but-unconsumed plan.
+
+        Called once per training batch by the governor, which is the one
+        callback guaranteed to exist whenever the schedule is enabled. Falls
+        back to the open plan if the queue is empty (a lead of 0, or a caller
+        that trains on a batch the schedule did not build).
+        """
+        if not cls.enabled:
+            return None
+        cls._live = cls._queued.popleft() if cls._queued else cls._plan
+        return cls._live
+
+    @classmethod
+    def in_flight(cls) -> int:
+        """Microbatches built but not yet trained on - the fetcher's lead."""
+        return len(cls._queued)
 
     @classmethod
     def next_microbatch(cls, rng=random) -> Optional[BatchPlan]:
@@ -253,8 +317,16 @@ class BatchSchedule:
             return None
         if cls._plan is None or cls._micro_index >= cls._plan.accum:
             cls._plan = cls._new_cycle(rng)
-            cls._micro_index = 0
+            # A cycle opened right after a retarget starts part-spent: the
+            # microbatches already in flight will be counted into the same
+            # accumulation cycle these new ones land in, so they spend its
+            # budget too. Without this the cycle runs a full `accum`
+            # microbatches against a trainer cycle that only has room for
+            # `accum - in_flight`, and the phase slips by one permanently.
+            cls._micro_index = cls._carry
+            cls._carry = 0
         cls._micro_index += 1
+        cls._queued.append(cls._plan)
         return cls._plan
 
     @classmethod
@@ -284,17 +356,30 @@ class BatchSchedule:
         Called when the governor commits a new accumulation factor: the old
         cycle's remaining microbatches would carry the previous factor's row
         count into a step counted under the new one.
+
+        The in-flight microbatches are carried, not discarded. They are already
+        built and the trainer will count them into its NEXT accumulation cycle,
+        so the fresh production cycle owes that many. Dropping them instead
+        left production one microbatch out of phase with the trainer for the
+        rest of the run - every subsequent step straddling two cycles, hence
+        two sequence multipliers and two row counts inside a step whose loss
+        Lightning divides by one uniform 1/accum.
         """
         cls._plan = None
         cls._micro_index = 0
+        cls._carry = len(cls._queued)
 
     @classmethod
     def metrics(cls) -> Dict[str, float]:
-        """Live plan, for the governor's telemetry stash."""
-        if not cls.enabled or cls._plan is None:
+        """Shape of the microbatch being trained on, for the governor's stash.
+
+        Read from ``current()`` rather than the newest plan so the cards line
+        up with the step whose loss and gradients were logged beside them.
+        """
+        if not cls.enabled or cls._live is None:
             return {}
         return {
-            "gov_micro_rows": float(cls._plan.micro_rows),
-            "gov_accum": float(cls._plan.accum),
-            "gov_seq_multiplier": float(cls._plan.multiplier),
+            "gov_micro_rows": float(cls._live.micro_rows),
+            "gov_accum": float(cls._live.accum),
+            "gov_seq_multiplier": float(cls._live.multiplier),
         }

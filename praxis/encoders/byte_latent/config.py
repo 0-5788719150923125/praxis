@@ -13,6 +13,11 @@ class ByteLatentConfig:
     # Local byte-level table size (256 bytes + named specials + tool specials).
     # Distinct from the model's external vocab_size.
     local_vocab_size: int = BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS
+    # Amount added to a raw byte to get its id. 4 keeps the BLT layout (ids
+    # 0-3 reserved for control tokens); 0 is the pure-byte layout. Read from
+    # the tokenizer rather than assumed, because the space patcher's character
+    # classes and the control-token force-cut both depend on it.
+    byte_offset: int = OFFSET
     dim: int = 512
     dim_token_emb: int = 128
     dim_global: int = 512
@@ -76,6 +81,7 @@ def create_base_config(praxis_config) -> ByteLatentConfig:
         # sampling emits an id no training example can ever make a target.
         local_vocab_size=getattr(praxis_config, "byte_vocab_size", None)
         or (BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS),
+        byte_offset=getattr(praxis_config, "byte_offset", OFFSET),
         dim=praxis_config.hidden_size,
         dim_token_emb=praxis_config.embed_size,
         dim_global=praxis_config.hidden_size,

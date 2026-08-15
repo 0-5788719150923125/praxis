@@ -106,19 +106,27 @@ class PraxisModel(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         labels: Optional[torch.LongTensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         losses = LossContainer()
         h_encoder = None
         patch_lengths = None
 
-        # Compute EOS-aware block_ids on the raw input_ids regardless of
-        # encoder presence, so the local byte-level encoder can isolate
-        # packed documents. Encoders compress the sequence (patches),
-        # which destroys these boundaries, so they return None for the
-        # global decoder's block_ids - the patch-level "block" labels are
-        # noisy and shouldn't gate the global attention.
-        token_block_ids = create_block_ids(input_ids, self.config.eos_token_id)
+        # Document boundaries for packed sequences, used to keep attention
+        # inside one document (praxis/attention/core.py).
+        #
+        # The packer supplies these directly (MessageQueueManager.get_batch).
+        # Falling back to scanning input_ids for the separator id covers
+        # callers that build a batch by hand - generation, probes, tests - and
+        # is skipped entirely when the active format writes no separator,
+        # because then the scan would find nothing and silently return a
+        # single block, which is what "no packing" means anyway.
+        token_block_ids = block_ids
+        if token_block_ids is None:
+            sep_id = getattr(self.config, "eos_token_id", None)
+            if sep_id is not None:
+                token_block_ids = create_block_ids(input_ids, sep_id)
 
         if self.encoder:
             (
@@ -289,7 +297,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # config.regularizers (default: contrastive isotropy). The dynamics
         # extractor / descriptions walker iterate model.reg.
         self.reg = build_regularizers(
-            getattr(config, "regularizers", None), pad_id=config.pad_token_id
+            getattr(config, "regularizers", None),
+            # `or 0`: a pure-byte tokenizer defines no pad token, and this
+            # is only a gather-safe index - padding itself is identified by
+            # ignore_index in the labels.
+            pad_id=config.pad_token_id or 0,
         )
 
         # The strategy for combining multiple losses into a single scalar objective.
@@ -594,6 +606,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         token_weights: Optional[torch.FloatTensor] = None,
         task_type_ids: Optional[torch.LongTensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         # Unconditionally, before anything runs: regularizers that collect state
@@ -637,6 +650,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             current_state=current_state,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            block_ids=block_ids,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             labels=labels,
@@ -1073,7 +1087,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         n = candidates.size(1)
         full = g + n
         device = generated.device
-        rows = generated.new_zeros((n, full))  # PAD_ID = 0 (byte tokenizer)
+        # Right-pad with 0 and gate it off with `mask` below. 0 is a real byte
+        # under a pure-byte tokenizer, so the mask - not the value - is what
+        # makes these positions inert.
+        rows = generated.new_zeros((n, full))
         mask = generated.new_zeros((n, full))
         last_pos = torch.empty(n, dtype=torch.long, device=device)
         for k in range(1, n + 1):

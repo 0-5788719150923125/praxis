@@ -79,15 +79,13 @@ class RLCTLandscapeCallback(Callback):
 
         # Reuse the trainer's own batch unpacking, then take a small sub-batch to
         # keep G^2 forward passes cheap.
-        (
-            input_ids,
-            rewards,
-            token_weights,
-            task_type_ids,
-            assistant_mask,
-            should_skip,
-        ) = pl_module._handle_batch_format(batch, batch_idx, is_training=True)
-        if should_skip or input_ids is None:
+        fields, should_skip = pl_module._handle_batch_format(
+            batch, batch_idx, is_training=True
+        )
+        if should_skip or fields is None:
+            return
+        input_ids = fields["input_ids"]
+        if input_ids is None:
             return
 
         # Downsample the batch hard: a few sequences (rows) and a short prefix
@@ -107,11 +105,15 @@ class RLCTLandscapeCallback(Callback):
                 return t[:, :cols].contiguous()
             return t
 
-        input_ids = _cols(_rows(input_ids))
-        rewards = _rows(rewards)  # per-sequence, no token axis
-        token_weights = _cols(_rows(token_weights))
-        task_type_ids = _cols(_rows(task_type_ids))
-        assistant_mask = _cols(_rows(assistant_mask))
+        # Subsample every channel the batch carried, by name. Doing this over
+        # the whole dict rather than a hand-listed set means a channel added to
+        # `_handle_batch_format` reaches the probe automatically - and it keeps
+        # `block_ids` here, without which the probe would measure a model whose
+        # packed documents can read each other while the real step's cannot.
+        # `_cols` is a no-op on per-sequence tensors (rewards), which have no
+        # token axis to truncate.
+        fwd_kwargs = {name: _cols(_rows(value)) for name, value in fields.items()}
+        input_ids = fwd_kwargs["input_ids"]
 
         aligned = getattr(pl_module, "outputs_are_aligned", False)
         if aligned:
@@ -119,14 +121,7 @@ class RLCTLandscapeCallback(Callback):
         else:
             labels = input_ids[..., 1:].contiguous()
 
-        fwd_kwargs = dict(
-            input_ids=input_ids,
-            labels=labels,
-            rewards=rewards,
-            token_weights=token_weights,
-            task_type_ids=task_type_ids,
-            assistant_mask=assistant_mask,
-        )
+        fwd_kwargs["labels"] = labels
 
         def loss_only():
             with torch.no_grad():

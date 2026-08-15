@@ -267,11 +267,10 @@ class ChatFormat:
         tid = getattr(tokenizer, self.document_separator, None)
         return None if tid is None else int(tid)
 
-    # Named control ids that could conceivably reach the output head. Bytes
-    # start at OFFSET=4 in the byte-latent layout, so all four exist whether or
-    # not a format uses them - the ids below OFFSET are structural (the space
-    # patcher force-cuts on ``tokens < OFFSET``) and renumbering them would
-    # move every byte.
+    # Named control ids that could conceivably reach the output head. Under a
+    # format that needs none of them the tokenizer does not define them at all
+    # (``byte_offset`` drops to 0 and ids are raw bytes), so every lookup below
+    # goes through ``getattr(tokenizer, name, None)`` and simply finds nothing.
     _NAMED_CONTROL_IDS = (
         "pad_token_id",
         "bos_token_id",
@@ -398,15 +397,19 @@ PROSE_FORMAT = ChatFormat(
     # inherits exactly the defect this format exists to remove.
     generated_roles=("assistant", "call"),
     boundary_style="text",
-    # The TEMPLATE emits no control token, but the PACKER terminates every
-    # document with `document_separator` - so [EOS] does occur in the data, as
-    # the one control token this format keeps, and halting on it is honest
-    # rather than dead weight. The stop STRINGS below remain the primary halt:
-    # a turn normally ends by naming the next speaker, and only the last turn
-    # of a document reaches the separator.
-    stop_token_names=("eos_token_id",),
+    # No control token anywhere: not in the template, and not appended by the
+    # packer either. Document boundaries reach the model as `block_ids` from
+    # MessageQueueManager instead of as a separator id in the stream, which is
+    # what lets the byte tokenizer drop to a pure 256-id alphabet (see
+    # ByteLevelTokenizer._wants_named_specials).
+    #
+    # Halting is by stop STRING alone, which was always the primary mechanism
+    # here: a turn ends by naming the next speaker, and that boundary is a
+    # trained target because it sits inside the generated turn's span.
+    stop_token_names=(),
     stop_roles=("user", "system", "developer", "call", "tool"),
     tool_style="roles",
+    document_separator=None,
 )
 
 CHAT_FORMAT_REGISTRY: Dict[str, ChatFormat] = {

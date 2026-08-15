@@ -36,6 +36,10 @@ class PatcherConfig:
     device: str = "cuda"
     realtime_patching: bool = False
     log_time: bool = False
+    # Amount added to a raw byte to get its id, forwarded from
+    # ByteLatentConfig.byte_offset. Space patching classifies RAW bytes, so
+    # this has to match the tokenizer or every character-class boundary shifts.
+    byte_offset: int = OFFSET
 
 
 class Patcher:
@@ -148,18 +152,37 @@ class Patcher:
         """
         batch_size, seq_len = tokens.shape
 
-        # Create boundaries where entropy exceeds threshold
-        boundaries = entropies > threshold
-
-        # Ensure monotonicity if configured (BLT reference logic)
+        # BLT (arXiv 2412.09871) gives two ALTERNATIVE boundary rules:
+        #
+        #   global    H(x_t) > theta_g          absolute entropy is high
+        #   monotonic H(x_t) - H(x_t-1) > theta_r   entropy JUMPED
+        #
+        # The second is named for the assumption behind it: entropy decreases
+        # approximately monotonically WITHIN a patch (each byte of context makes
+        # the next easier), so a rise means the patch's subject changed. It is
+        # what the paper uses for its large runs, because it "suffers less from
+        # entropy drift" - the absolute rule's cut rate wanders as mean entropy
+        # drifts over a long context, while a rule on the derivative is
+        # stationary.
+        #
+        # These were previously OR'd together, which is neither rule: it cut
+        # wherever EITHER fired, so a monotonic run also inherited the absolute
+        # rule's drift, at a strictly higher patch count than either alone.
+        #
+        # Both share `threshold` here where the paper has separate theta_g and
+        # theta_r. That is a real simplification, kept because the threshold is
+        # already found adaptively (`_find_safe_threshold`) rather than tuned.
         if self.config.monotonicity:
-            # Boundaries only at positions where entropy *increases* by more than threshold
             differences = entropies[:, 1:] - entropies[:, :-1]
-            monotonic_boundaries = differences > threshold
-            # Prepend the first position's boundary (unchanged)
             boundaries = torch.cat(
-                [boundaries[:, :1], monotonic_boundaries | boundaries[:, 1:]], dim=1
+                [
+                    torch.ones_like(entropies[:, :1], dtype=torch.bool),
+                    differences > threshold,
+                ],
+                dim=1,
             )
+        else:
+            boundaries = entropies > threshold
 
         # Calculate patch lengths from boundaries
         patch_lengths = self._boundaries_to_lengths(boundaries, include_next_token)
@@ -182,7 +205,7 @@ class Patcher:
             Tuple of patch lengths and boundaries
         """
         # Use exact BLT reference implementation
-        patch_start_ids = find_space_patch_start_ids(tokens)
+        patch_start_ids = find_space_patch_start_ids(tokens, self.config.byte_offset)
         seq_len_with_next = tokens.shape[1] + (1 if include_next_token else 0)
         patch_lengths = patch_lengths_from_start_ids(patch_start_ids, seq_len_with_next)
 
@@ -309,20 +332,39 @@ class Patcher:
         # here made every static-mode forward die on that assert.
         total = seq_len + (1 if include_next_token else 0)
 
-        # Calculate number of patches
-        num_patches = (total + patch_size - 1) // patch_size
+        # The FIRST patch holds exactly one byte; every patch after it holds
+        # `patch_size`.
+        #
+        # The lag is why. `decoder_patch_ids_from_lengths` drops the first
+        # patch and shifts, so byte t is predicted from patches covering bytes
+        # strictly before it, and it asserts `first_patch_length - nb_boe == 1`.
+        # The BLT reference satisfies that by keeping patches uniform and
+        # PREPENDING `patch_size - 1` BOE tokens to the input, which is a real
+        # cost here: the byte-level layout has no spare id, so those tokens are
+        # literal 0x00 bytes injected at the head of every sequence - a
+        # discontinuity in exactly the place a byte-level model should have
+        # none, and indistinguishable from a NUL the text actually contains.
+        #
+        # Making the first patch length 1 satisfies the same lag with no input
+        # tokens at all, so `nb_boe` is 0 for this mode (see
+        # ByteLatentEncoder.nb_boe). The cost is that one patch out of
+        # ~seq_len/patch_size is short, at position 0 only; everything after it
+        # is on a perfectly uniform lattice, which is the property static
+        # patching exists to provide.
+        remaining = max(0, total - 1)
+        num_patches = 1 + (remaining + patch_size - 1) // patch_size
 
-        # Create uniform patch lengths
         patch_lengths = torch.full(
             (batch_size, num_patches), patch_size, device=device, dtype=torch.long
         )
+        patch_lengths[:, 0] = 1
 
-        # Handle last patch if the stream doesn't divide evenly. The FIRST patch
-        # stays at patch_size, which is what decoder_patch_ids_from_lengths
-        # asserts against nb_boe (= patch_size - 1) for non-space modes.
-        last_patch_size = total % patch_size
-        if last_patch_size > 0:
+        # Trailing partial patch when the stream does not divide evenly.
+        last_patch_size = remaining % patch_size
+        if remaining > 0 and last_patch_size > 0:
             patch_lengths[:, -1] = last_patch_size
+        elif remaining == 0:
+            patch_lengths = patch_lengths[:, :1]
 
         return self._postprocess_patch_lengths(
             patch_lengths, tokens, include_next_token, scores=None
@@ -660,7 +702,14 @@ def get_blt_input(
 
         if padding_needed > 0:
             pad_tokens = torch.full(
-                (bs, padding_needed), PAD_ID, dtype=tokens.dtype, device=device
+                # Alignment filler only: these positions are trimmed back off
+                # before the decoder sees them, so the value just has to be a
+                # legal id. PAD_ID is 0, which is a real byte when byte_offset
+                # is 0 - harmless here, but not a control token any more.
+                (bs, padding_needed),
+                PAD_ID,
+                dtype=tokens.dtype,
+                device=device,
             )
             local_encoder_tokens = torch.cat([local_encoder_tokens, pad_tokens], dim=1)
             global_tokens = torch.cat([global_tokens, pad_tokens], dim=1)
@@ -668,18 +717,24 @@ def get_blt_input(
     return local_encoder_tokens, global_tokens, local_decoder_tokens
 
 
-def find_space_patch_start_ids(tokens: torch.Tensor) -> torch.Tensor:
+def find_space_patch_start_ids(
+    tokens: torch.Tensor, offset: int = OFFSET
+) -> torch.Tensor:
     """
     Find space patch start IDs using exact BLT reference logic.
 
     Args:
         tokens: Input tokens [batch_size, seq_len]
+        offset: Amount added to a raw byte to get its id, from
+            ``ByteLatentConfig.byte_offset``. The character-class tests below
+            are defined on RAW bytes, so getting this wrong shifts every class
+            boundary and silently changes where patches cut.
 
     Returns:
         Patch start IDs [batch_size, max_patches]
     """
     bs, seq_len = tokens.shape
-    tokens_no_offset = tokens - OFFSET
+    tokens_no_offset = tokens - offset
     patch_end_mask = (
         (tokens_no_offset < ord("0"))
         | ((ord("9") < tokens_no_offset) & (tokens_no_offset < ord("A")))
@@ -688,7 +743,10 @@ def find_space_patch_start_ids(tokens: torch.Tensor) -> torch.Tensor:
         | (0b1100_0000 <= tokens_no_offset)
     )
     patch_end_mask[:, 1:] &= patch_end_mask[:, :-1].bitwise_not()
-    patch_end_mask |= tokens < OFFSET
+    # Control ids sit below the byte range, so each one opens its own patch.
+    # Vacuous in the pure-byte layout (offset 0): there are no such ids, and
+    # document boundaries arrive as block_ids instead of as a token to cut on.
+    patch_end_mask |= tokens < offset
 
     patch_start_mask = torch.cat(
         [

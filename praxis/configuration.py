@@ -37,6 +37,9 @@ class PraxisConfig(PretrainedConfig):
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
         byte_vocab_size: Optional[int] = None,
+        # Amount added to a raw byte to get its id, taken from the tokenizer.
+        # 4 = BLT layout with control ids 0-3; 0 = pure 256-byte alphabet.
+        byte_offset: int = 4,
         max_position_embeddings: int = 32768,
         block_size: int = 512,
         activation: str = "mish",

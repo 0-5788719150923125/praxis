@@ -103,6 +103,7 @@ class WeightedIterableDataset(IterableDataset):
             sampler_weights = result.get("sampler_weights")  # Get the current weights
             task_type_ids = result.get("task_type_ids")
             assistant_mask = result.get("assistant_mask")
+            block_ids = result.get("block_ids")
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
@@ -110,6 +111,22 @@ class WeightedIterableDataset(IterableDataset):
             assistant_mask_tensor = (
                 torch.stack(assistant_mask) if assistant_mask else None
             )
+            block_ids_tensor = torch.stack(block_ids) if block_ids else None
+
+            # Per-token side channels, attached identically to every yielded
+            # shape below. Collected once so a new channel is added in one
+            # place rather than in each branch.
+            extras = {}
+            if token_weights is not None:
+                extras["token_weights"] = torch.stack(token_weights)
+            if sampler_weights is not None:
+                extras["sampler_weights"] = sampler_weights
+            if task_type_tensor is not None:
+                extras["task_type_ids"] = task_type_tensor
+            if assistant_mask_tensor is not None:
+                extras["assistant_mask"] = assistant_mask_tensor
+            if block_ids_tensor is not None:
+                extras["block_ids"] = block_ids_tensor
 
             # Handle rewards if RL is enabled. rewards is None or a 1-D tensor,
             # so test it explicitly - bool() on a multi-element tensor raises.
@@ -134,14 +151,7 @@ class WeightedIterableDataset(IterableDataset):
                         "needs_generation": True,
                         "metadata": metadata,  # Now properly tracked from data manager
                     }
-                    if token_weights is not None:
-                        result_dict["token_weights"] = torch.stack(token_weights)
-                    if sampler_weights is not None:
-                        result_dict["sampler_weights"] = sampler_weights
-                    if task_type_tensor is not None:
-                        result_dict["task_type_ids"] = task_type_tensor
-                    if assistant_mask_tensor is not None:
-                        result_dict["assistant_mask"] = assistant_mask_tensor
+                    result_dict.update(extras)
                     yield result_dict
                 else:
                     # Log batch statistics
@@ -149,29 +159,17 @@ class WeightedIterableDataset(IterableDataset):
 
                     # Return regular RL format
                     result_dict = {"input_ids": batch_tensor, "rewards": reward_tensor}
-                    if token_weights is not None:
-                        result_dict["token_weights"] = torch.stack(token_weights)
-                    if sampler_weights is not None:
-                        result_dict["sampler_weights"] = sampler_weights
-                    if task_type_tensor is not None:
-                        result_dict["task_type_ids"] = task_type_tensor
-                    if assistant_mask_tensor is not None:
-                        result_dict["assistant_mask"] = assistant_mask_tensor
+                    result_dict.update(extras)
                     yield result_dict
             else:
                 # No reinforcement learning
                 # If we have sampler weights, return dict format
-                if sampler_weights is not None or task_type_tensor is not None:
+                if extras:
                     result_dict = {
                         "input_ids": batch_tensor,
                         "metadata": metadata,
                     }
-                    if sampler_weights is not None:
-                        result_dict["sampler_weights"] = sampler_weights
-                    if task_type_tensor is not None:
-                        result_dict["task_type_ids"] = task_type_tensor
-                    if assistant_mask_tensor is not None:
-                        result_dict["assistant_mask"] = assistant_mask_tensor
+                    result_dict.update(extras)
                     yield result_dict
                 else:
                     # Return regular tensor for backward compatibility

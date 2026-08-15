@@ -162,6 +162,14 @@ class ConfigBuilder:
             ):
                 config_kwargs["byte_vocab_size"] = byte_vocab
 
+            # The byte->id offset travels with the alphabet: a tokenizer that
+            # registered no control tokens reports 0, and every byte-arithmetic
+            # site downstream (space patcher, embedding tables) reads it from
+            # the config rather than importing a constant.
+            byte_offset = getattr(tokenizer, "byte_offset", None)
+            if isinstance(byte_offset, int) and "byte_offset" in valid_config_params:
+                config_kwargs["byte_offset"] = byte_offset
+
                 # vocab_size means "representational width." An encoder that owns
                 # its embeddings (CALM) represents the byte vocab directly, so
                 # report that; external-hash encoders (byte-latent) keep the

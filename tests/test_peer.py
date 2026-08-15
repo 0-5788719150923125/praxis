@@ -175,3 +175,57 @@ def test_key_dims_floor_holds_at_a_tiny_odd_width():
     assert module.key_dims == MIN_KEY_DIMS
     x = torch.randn(2, 4, 3)
     assert module(x).shape == x.shape
+
+
+# --------------------------------------------------------------- initialization
+
+
+@pytest.mark.parametrize("glu", [True, False])
+def test_expert_banks_are_initialized_by_true_fan_in(glu):
+    """Bank size is a LOOKUP dimension, not a fan, and must not set the scale.
+
+    Xavier reads ``fan_out`` off the tensor shape, which for these banks is
+    ``num_experts`` - so the init scale fell as the bank grew, coupling two
+    things that have no business being coupled. See ``init_weights``.
+    """
+    import math
+
+    module = ParameterEfficientExpertRetrieval(make_config(), glu=glu)
+    d = module.hidden_size
+
+    # down/gate project the input onto one expert vector: fan-in is hidden_size.
+    assert module.down.weight.std().item() == pytest.approx(d**-0.5, rel=0.15)
+    if module.gate is not None:
+        assert module.gate.weight.std().item() == pytest.approx(d**-0.5, rel=0.15)
+
+    # up is summed over the retrieved experts: fan-in is that fan-out.
+    expected_up = (module.num_heads * module.k) ** -0.5
+    assert module.up.weight.std().item() == pytest.approx(expected_up, rel=0.15)
+
+    # Product keys match the reference implementation.
+    assert module.keys.std().item() == pytest.approx(0.02, rel=0.2)
+
+    # And the scale must NOT track the bank size, which is what Xavier did.
+    xavier_std = math.sqrt(2.0 / (d + module.num_experts * module.num_sets))
+    assert module.down.weight.std().item() > 1.2 * xavier_std
+
+
+def test_output_scale_is_stable_across_widths():
+    """The property the fan-in derivation buys: PEER contributes at the same
+    relative scale whatever the bank size, instead of going quiet as it grows.
+    """
+    torch.manual_seed(0)
+    ratios = []
+    for hidden_size in (64, 128, 256, 512):
+        module = ParameterEfficientExpertRetrieval(
+            make_config(hidden_size=hidden_size), glu=True
+        ).eval()
+        x = torch.randn(4, 32, hidden_size)
+        with torch.no_grad():
+            y = module(x)
+        ratios.append(float(y.std()) / float(x.std()))
+
+    # Every width lands in the same band, and none is near-silent.
+    assert min(ratios) > 0.2, f"PEER is attenuating its input: {ratios}"
+    assert max(ratios) < 3.0, f"PEER is amplifying its input: {ratios}"
+    assert max(ratios) / min(ratios) < 2.5, f"scale tracks bank size: {ratios}"

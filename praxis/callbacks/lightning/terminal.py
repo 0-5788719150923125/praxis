@@ -395,14 +395,12 @@ class TerminalInterface(Callback):
         accumulation factor x microbatch x world size. None when either
         ingredient is unavailable (caller falls back to the config value).
 
-        Under a batch governor the microbatch rows are governed too, so the
-        configured ``batch_size`` is only a ceiling; read the live plan instead
-        or the panel reports a batch the run never used."""
-        from praxis.data.batch_schedule import BatchSchedule
-
-        plan = BatchSchedule.current()
-        if plan is not None:
-            micro_batch = plan.micro_rows
+        ``micro_batch`` is the row count of the batch that just ran, not the
+        configured ``batch_size`` (only a ceiling under a governor) and not the
+        shared plan's ``micro_rows`` (which describes the batch the fetcher has
+        already built, a step ahead of the one being reported). Deriving both
+        panel fields from the same batch is what keeps target_batch ==
+        accum x batch_size x world instead of the two drifting a step apart."""
         accum = getattr(trainer, "accumulate_grad_batches", None)
         if not accum or not micro_batch:
             return None
@@ -454,14 +452,12 @@ class TerminalInterface(Callback):
         info_dict["block_size"] = seq_length
         info_dict["batch_size"] = batch_size
         # The ACTUAL effective batch, read straight off the trainer:
-        # accumulation factor x configured microbatch x ranks. Live under a
-        # batch governor (the factor moves between ticks) and honest under
-        # the static schedule too (a target below the physical batch is
+        # accumulation factor x the rows this microbatch carried x ranks. Live
+        # under a batch governor (the factor moves between ticks) and honest
+        # under the static schedule too (a target below the physical batch is
         # silently ignored; this shows what really happens). Only when no
         # trainer is in reach does it fall back to the configured target.
-        live = self._effective_batch(
-            trainer, getattr(lm.hparams, "batch_size", batch_size)
-        )
+        live = self._effective_batch(trainer, batch_size)
         if live is not None:
             info_dict["target_batch"] = live
         else:
