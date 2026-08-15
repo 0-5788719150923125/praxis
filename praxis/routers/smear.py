@@ -368,7 +368,15 @@ class SMEAR(nn.Module):
         nn.init.zeros_(self.depth_bias.weight)
 
         self._metrics: Dict[str, float] = {}
+        # On-device running sums over the passes since the last flush, and
+        # how many passes went into them. See _log_metrics for why sampling
+        # one pass instead was an aliasing bug.
+        self._accum: Dict[str, Tensor] = {}
+        self._passes: int = 0
         self._tick: int = 0
+        # Passes per diagnostic window: one full recurrent loop, so a window
+        # spans every depth even though halting varies how many actually run.
+        self._window: int = max(1, self.depth)
 
         if verbose:
             print(describe(self.targets, skipped))
@@ -569,14 +577,30 @@ class SMEAR(nn.Module):
 
         merge, probs = self._coefficients(inputs, current_depth)
 
-        if self._tick % METRICS_INTERVAL == 0:
-            with torch.no_grad():
-                self._log_metrics(merge, probs)
-        self._tick += 1
-
         # Elementwise and indexed targets still merge on the batch mean; the
         # Linear targets take their per-example rows through the scope below.
-        merged = self._merged_state_dict(layer, self._flatten(merge))
+        mean_w = self._flatten(merge)
+        merged = self._merged_state_dict(layer, mean_w)
+
+        # Diagnostics run over a contiguous WINDOW of `depth` passes and then
+        # sleep for METRICS_INTERVAL - 1 windows. See _log_metrics: sampling one
+        # pass per interval aliased across recurrent depth, and sampling every
+        # pass fixed that but cost +9.8% per pass, which at ~96 passes per
+        # optimizer step is a third of the step. A window is long enough to span
+        # every depth in a step and still touches only one pass in
+        # METRICS_INTERVAL. Ordered after the merge because _delta_scale reads
+        # the merged tensors rather than recomputing them.
+        if (self._tick // self._window) % METRICS_INTERVAL == 0:
+            with torch.no_grad():
+                self._log_metrics(merge, probs)
+                self._delta_scale(layer, merged, mean_w)
+        self._tick += 1
+        # Flush on a COMPLETE window, so the reported average always covers a
+        # whole recurrent loop rather than whichever passes happened to land
+        # either side of a tick boundary.
+        if self._passes >= self._window:
+            with torch.no_grad():
+                self._flush_metrics()
 
         forward_args = (
             inputs,
@@ -622,19 +646,31 @@ class SMEAR(nn.Module):
         SMEAR emitted nine chart families keyed by ``layer_{depth}_``, which at
         depth 6 rendered 54 lines - every one of them the SAME router sampled at
         a different recurrent pass, since one router serves every depth. Nothing
-        here carries a depth prefix: each pass overwrites the last, so what
-        surfaces is the most recent pass, the same convention
-        ``ArcSingleAttention._record_gate`` uses. The per-pass story is told by
-        ``router_depth_specialization`` on the arc subclass, which is the only
-        place it is actually a different object.
+        here carries a depth prefix, and the per-pass story is told by
+        ``router_depth_specialization``, which is where the depths genuinely
+        differ.
+
+        Averaged over a contiguous WINDOW of passes rather than sampled from one
+        of them. Sampling was an aliasing bug, not a cheaper approximation:
+        the old code logged whenever ``_tick % METRICS_INTERVAL == 0`` while
+        ``_tick`` advances once per recurrent pass, so at depth 6 and interval 10
+        it reported depths 0, 2 and 4 and NEVER 1, 3 or 5. With
+        ``router_depth_specialization`` at 0.78 on abstractinator-n those passes
+        are not interchangeable, and what surfaced on the charts as a router
+        oscillating between collapsed and diverse was in part the sampler
+        rotating between depths that differ. Accumulation stays on-device and
+        only the flush calls ``.item()``, so this still costs one host-device
+        sync per window and not one per pass.
         """
         try:
+            self._reset_accum_if_moved(merge)
             n = self.num_experts
             w = self._flatten(merge)  # [T, N] - what the heatmap reports either way
-            # The heatmap: every target's merge weights, one card.
-            for t, group in enumerate(self.targets):
-                for e in range(n):
-                    self._metrics[f"smear_coeff_{group.label}_{e}"] = w[t, e].item()
+            # The heatmap: every target's merge weights, one card. Kept as a
+            # single [T, N] tensor so accumulating it costs no host traffic;
+            # the per-cell names are attached at flush.
+            self._add("coeff", w)
+            self._passes += 1
 
             # Are the deviations being USED, or has each target picked one and
             # abandoned the rest? Fraction of (target, expert) pairs carrying
@@ -642,9 +678,10 @@ class SMEAR(nn.Module):
             # perfect balance, 1/N at total collapse. This is the number expert
             # dropout is there to hold up, so it is the direct read on whether
             # the paper's balancing mechanism is working.
-            self._metrics["smear_expert_utilization"] = (
-                (w > (0.5 / n)).float().sum(dim=-1).mean() / n
-            ).item()
+            self._add(
+                "smear_expert_utilization",
+                (w > (0.5 / n)).float().sum(dim=-1).mean() / n,
+            )
 
             if n > 1:
                 # Does the router read its input? I(input; expert) per target,
@@ -656,8 +693,8 @@ class SMEAR(nn.Module):
                 h_mean = self._entropy(mean_p, dim=-1)  # [T]
                 h_seq = self._entropy(flat, dim=-1).mean(dim=0)  # [T]
                 mi = ((h_mean - h_seq) / math.log(n)).clamp(0.0, 1.0)
-                self._metrics["smear_input_dependence"] = mi.mean().item()
-                self._metrics["smear_input_dependence_max"] = mi.max().item()
+                self._add("smear_input_dependence", mi.mean())
+                self._add("smear_input_dependence_max", mi.max())
 
                 # Utilization above is computed on the batch-MEAN coefficients,
                 # so it cannot tell "every example picked deviation 2" from
@@ -681,10 +718,11 @@ class SMEAR(nn.Module):
 
                 # How peaked ONE routing decision is. 0 = uniform blend over the
                 # deviations, 1 = a single deviation chosen outright.
-                self._metrics["smear_selection_sharpness"] = (
-                    (1.0 - self._entropy(sel, dim=-1).mean() / math.log(n))
-                    .clamp(0.0, 1.0)
-                    .item()
+                self._add(
+                    "smear_selection_sharpness",
+                    (1.0 - self._entropy(sel, dim=-1).mean() / math.log(n)).clamp(
+                        0.0, 1.0
+                    ),
                 )
 
                 # Do different decisions land on different deviations? Entropy of
@@ -694,10 +732,9 @@ class SMEAR(nn.Module):
                 # construction under reduction="batch", which is the honest
                 # reading of that mode.
                 picks = F.one_hot(sel.argmax(dim=-1), n).to(sel.dtype)  # [D, T, N]
-                self._metrics["smear_selection_diversity"] = (
-                    (self._entropy(picks.mean(dim=0), dim=-1) / math.log(n))
-                    .mean()
-                    .item()
+                self._add(
+                    "smear_selection_diversity",
+                    (self._entropy(picks.mean(dim=0), dim=-1) / math.log(n)).mean(),
                 )
 
                 # THE number this design exists to produce. Mean pairwise L1
@@ -709,17 +746,136 @@ class SMEAR(nn.Module):
                 if len(self.targets) > 1:
                     d = (w.unsqueeze(0) - w.unsqueeze(1)).abs().sum(-1)  # [T, T]
                     t_count = len(self.targets)
-                    self._metrics["smear_target_dispersion"] = (
-                        d.sum() / (t_count * (t_count - 1) * 2.0)
-                    ).item()
+                    self._add(
+                        "smear_target_dispersion",
+                        d.sum() / (t_count * (t_count - 1) * 2.0),
+                    )
         except Exception:
             # Diagnostics never break a step; they write to a plain dict and
             # never reach the loss.
             pass
 
+    def _delta_scale(self, layer: nn.Module, merged: Dict[str, Tensor], w: Tensor) -> None:
+        """``||sum_e w_e delta_e|| / ||base||`` per target, Frobenius.
+
+        The coefficients say how the deviations are MIXED; this says whether the
+        mixture moves the geometry at all. Both are needed to read the design:
+        a rich mixture over deviations that are numerically tiny is a router
+        arguing about nothing, and is indistinguishable from a real one on the
+        coefficient heatmap alone.
+
+        Reported for the mean coefficients, matching the heatmap, even though the
+        Linear targets apply their own row per example. Delta over BASE rather
+        than over merged, so the number is read directly as "the routing moved
+        this module's weights by N% of their own norm".
+        """
+        try:
+            self._reset_accum_if_moved(w)
+            self._delta_scale_inner(layer, merged, w)
+        except Exception:
+            # Optional telemetry must never reach the step. A diagnostic that
+            # can raise into forward() is how a profiler took abstractinator-m
+            # down; this one had the same shape.
+            pass
+
+    def _delta_scale_inner(
+        self, layer: nn.Module, merged: Dict[str, Tensor], w: Tensor
+    ) -> None:
+        rows: List[Optional[Tensor]] = [None] * len(self.targets)
+        parts: Dict[int, List[Tensor]] = {}
+
+        # Elementwise / indexed targets: functional_call already materialized
+        # base + delta, so the deviation is one subtraction away.
+        for pname, row in self._param_row.items():
+            base = _get_param(layer, pname)
+            if base is None:
+                return
+            parts.setdefault(row, []).append(
+                (merged[pname] - base).norm() / base.norm().clamp_min(1e-12)
+            )
+
+        # Linear targets never materialize a merged weight (that is the whole
+        # point of MergedLinear), so the low-rank product is formed here and
+        # here only. These are small: [out, in] at hidden_size scale.
+        for label, row in self._wrapper_row.items():
+            wrapper = self.wrappers[label]
+            delta = torch.einsum(
+                "e,eor,eri->oi",
+                w[row].to(wrapper.lora_b.dtype),
+                wrapper.lora_b,
+                wrapper.lora_a,
+            )
+            parts.setdefault(row, []).append(
+                delta.norm() / wrapper.weight.norm().clamp_min(1e-12)
+            )
+
+        for row, values in parts.items():
+            rows[row] = torch.stack(values).mean()
+        if any(r is None for r in rows):
+            return
+        self._add("delta_scale", torch.stack(rows))
+
+    def _reset_accum_if_moved(self, ref: Tensor) -> None:
+        """Drop a partial window left on another device.
+
+        ``initialize_lazy_modules`` runs a dummy forward on CPU before the model
+        is moved to its device (praxis/utils/system.py), so the accumulator can
+        be holding CPU tensors that the next pass cannot be added to. That is a
+        hard RuntimeError in the middle of forward(), not a wrong number. A
+        partial window is worth nothing; not crashing is worth everything.
+        """
+        for value in self._accum.values():
+            if value.device != ref.device:
+                self._accum, self._passes = {}, 0
+            break
+
+    def _add(self, key: str, value: Tensor) -> None:
+        """Sum one pass's diagnostic into the on-device accumulator.
+
+        Detached, so nothing here can hold a graph alive across passes.
+        """
+        prev = self._accum.get(key)
+        value = value.detach()
+        self._accum[key] = value if prev is None else prev + value
+
+    def _flush_metrics(self) -> None:
+        """Average the accumulated passes into the float dict the logger drains.
+
+        The only place this class touches the host, which is what keeps
+        per-pass accumulation as cheap as the old per-interval sampling.
+        """
+        if not self._accum or self._passes == 0:
+            return
+        try:
+            passes = float(self._passes)
+            coeff = self._accum.pop("coeff", None)
+            if coeff is not None:
+                rows = (coeff / passes).tolist()
+                for t, group in enumerate(self.targets):
+                    for e, value in enumerate(rows[t]):
+                        self._metrics[f"smear_coeff_{group.label}_{e}"] = value
+            scale = self._accum.pop("delta_scale", None)
+            if scale is not None:
+                scale = scale / passes
+                for t, group in enumerate(self.targets):
+                    self._metrics[f"smear_delta_scale_{group.label}"] = scale[t].item()
+                self._metrics["smear_delta_scale_mean"] = scale.mean().item()
+            for key, total in self._accum.items():
+                self._metrics[key] = (total / passes).item()
+        except Exception:
+            pass
+        finally:
+            self._accum = {}
+            self._passes = 0
+
     def get_metrics(self) -> dict:
         from praxis.metrics.specialization import depth_dispersion
 
+        # A window normally closes long before the first poll. If it has not -
+        # a run shorter than one recurrent loop, or a test doing a single
+        # forward - report the partial average rather than nothing at all.
+        if self._passes and not self._metrics:
+            self._flush_metrics()
         out = self._metrics.copy()
         stats = depth_dispersion(self.depth_bias.weight)
         if stats is not None:

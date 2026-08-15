@@ -8,16 +8,16 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 
-def configure_torch_precision():
-    """Opt into low-precision matmul kernels when the system supports them."""
-    import torch
+def configure_torch_precision(precision: str = None, device: str = "cpu"):
+    """Resolve the run's precision profile and install its process-wide half.
 
-    try:
-        torch.set_float32_matmul_precision("medium")
-        print("[INIT] Your system will train with low-precision kernels.")
-    except Exception as e:
-        print(e)
-        print("[INIT] Your system does not support low-precision kernels.")
+    Returns the profile so the caller can hand it to the model and the trainer;
+    everything after this point reads the profile, not the flag."""
+    from praxis.trainers.precision import apply_precision, resolve_precision
+
+    profile = resolve_precision(precision, device)
+    apply_precision(profile)
+    return profile
 
 
 def register_praxis_models():
@@ -35,13 +35,15 @@ def register_praxis_models():
     MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
 
-def setup_environment(no_docs: bool = False):
+def setup_environment(
+    no_docs: bool = False, precision: str = None, device: str = "cpu"
+):
     """Set up warnings, env vars, docs, and model registration for a run."""
     from praxis.trainers.factory import disable_warnings
     from praxis.utils import check_for_updates
 
     sys.dont_write_bytecode = True
-    configure_torch_precision()
+    configure_torch_precision(precision, device)
     check_for_updates()
 
     if not no_docs:
@@ -90,6 +92,7 @@ def assemble_model(cfg, config) -> ModelBundle:
     from transformers import AutoModelForCausalLM
 
     from praxis.optimization import get_optimizer_profile, wrappers_disable_schedule
+    from praxis.trainers.precision import cast_module, init_context
     from praxis.utils import initialize_lazy_modules
 
     optimizer_config, disable_schedule_from_optimizer = get_optimizer_profile(
@@ -100,6 +103,12 @@ def assemble_model(cfg, config) -> ModelBundle:
 
     config.optimizer_config = optimizer_config
     config.optimizer_wrappers = list(cfg.optimizer_wrappers)
+
+    # The flag may have been an alias ("bf16") or a level this device cannot
+    # run; the config records what the model was actually built in, since that
+    # is what a reloaded checkpoint has to match.
+    profile = cfg.precision_profile
+    config.precision = profile.name
 
     from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS
 
@@ -113,10 +122,18 @@ def assemble_model(cfg, config) -> ModelBundle:
         "device": cfg.device,
         "trainer_type": cfg.trainer_type,
         "no_compile": cfg.no_compile,
+        "precision": profile.name,
     }
 
-    model = AutoModelForCausalLM.from_config(config)
-    initialize_lazy_modules(model, cfg.device)
+    # Build (and materialize the lazy modules) under the run's dtype, then cast
+    # what the default dtype didn't reach - buffers registered from explicit
+    # fp32 tensors, submodules that hardcode a dtype. Doing it here rather than
+    # leaving it to Lightning's plugin means the optimizer is constructed
+    # against the dtype the model will actually train in.
+    with init_context(profile):
+        model = AutoModelForCausalLM.from_config(config)
+        initialize_lazy_modules(model, cfg.device)
+        model = cast_module(model, profile)
 
     total_params = sum(p.numel() for p in model.parameters())
     num_params = f"{total_params / 10**6:.2f}M"

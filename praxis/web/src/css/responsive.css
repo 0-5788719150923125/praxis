@@ -301,6 +301,9 @@
     .tab-header-controls {
         width: 100%;
         justify-content: flex-start;
+        /* Research now carries an axis picker alongside the run selector and
+           PDF button; three controls overflow a phone-width row. */
+        flex-wrap: wrap;
     }
 
     .run-selector-dropdown {

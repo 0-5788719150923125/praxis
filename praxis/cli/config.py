@@ -10,6 +10,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from praxis.trainers.precision import (
+    DEFAULT_PRECISION,
+    PrecisionProfile,
+    resolve_precision,
+)
 from praxis.utils import coerce_to_list
 
 
@@ -39,6 +44,11 @@ class RunConfig:
     block_size: int
     device: str
     target_batch_size: int
+
+    # PRECISION_REGISTRY key (or alias). The profile it resolves to drives the
+    # model dtype, the Lightning precision plugin and the matmul policy
+    # together; read it through `precision_profile`, never by name.
+    precision: str = DEFAULT_PRECISION
 
     encoder_type: Optional[str] = None
     tokenizer_type: Optional[str] = None
@@ -148,6 +158,7 @@ class RunConfig:
             batch_size=batch_size,
             block_size=block_size,
             device=processed_args["device"],
+            precision=get("precision", DEFAULT_PRECISION) or DEFAULT_PRECISION,
             target_batch_size=get("target_batch_size", batch_size),
             encoder_type=encoder_type,
             tokenizer_type=get("tokenizer_type"),
@@ -210,6 +221,15 @@ class RunConfig:
             args=args,
             raw=processed_args,
         )
+
+    @property
+    def precision_profile(self) -> PrecisionProfile:
+        """The precision this run actually gets, after device heuristics.
+
+        Resolution is deterministic, so every call site sees the same profile;
+        the downgrade is announced once, at setup, rather than here.
+        """
+        return resolve_precision(self.precision, self.device, verbose=False)
 
     def apply_distributed_env(self) -> None:
         """Export distributed env vars before Lightning builds the process

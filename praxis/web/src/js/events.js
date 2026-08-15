@@ -211,6 +211,14 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_RUN_SELECTOR' })
     },
     {
+        selector: '.x-axis-option',
+        match: 'closest',
+        action: (e) => ({
+            type: 'SET_RESEARCH_X_AXIS',
+            payload: e.target.closest('.x-axis-option').dataset.xAxis
+        })
+    },
+    {
         selector: '.run-selector-item input[data-dynamics-run-hash]',
         match: 'closest',
         action: (e) => ({

@@ -19,6 +19,15 @@ from praxis.trainers.factory import (
     disable_warnings,
 )
 from praxis.trainers.module import BaseTrainingModule
+from praxis.trainers.precision import (
+    DEFAULT_PRECISION,
+    PRECISION_REGISTRY,
+    PrecisionProfile,
+    apply_precision,
+    canonical_precision,
+    cast_module,
+    resolve_precision,
+)
 from praxis.trainers.progress import BaseProgressBar, get_progress_bar_base
 from praxis.trainers.runtime import (
     assemble_trainer,
@@ -141,6 +150,13 @@ __all__ = [
     "setup_environment",
     "register_praxis_models",
     "configure_torch_precision",
+    "DEFAULT_PRECISION",
+    "PRECISION_REGISTRY",
+    "PrecisionProfile",
+    "apply_precision",
+    "canonical_precision",
+    "cast_module",
+    "resolve_precision",
     "assemble_model",
     "build_model_info",
     "ModelBundle",

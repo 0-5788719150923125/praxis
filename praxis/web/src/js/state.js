@@ -272,6 +272,14 @@ export const state = {
         // deal: declare a chart in praxis.metrics.training_metrics and it
         // renders here, no JS edit.
         compositeRegistry: [],
+        // Selectable x axes (step / tokens / wall-clock) served by
+        // /api/metrics. Same registry-driven deal: declare an axis in
+        // praxis.metrics.training_metrics and it appears in the picker.
+        xAxisRegistry: [],
+        // Active x axis, applied to every time-series card at once. Under a
+        // batch governor, step count is no longer proportional to data seen,
+        // so which axis you read is part of the question being asked.
+        xAxis: 'step',
         // Historical run comparison
         historicalRuns: [],       // All available runs from /api/runs
         selectedHistoricalRuns: [], // Hashes the user has checked

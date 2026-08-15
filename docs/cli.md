@@ -28,6 +28,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--master-port` | int | `None` | Port for distributed rendezvous on the rank-0 node (overrides MASTER_PORT env var) |
 | `--node-rank` | int | `None` | Rank of this node among all nodes (overrides NODE_RANK env var) |
 | `--num-nodes` | int | `1` | Number of nodes for distributed training |
+| `--precision` | str | `float32` | Numeric precision for weights, gradients and matmul kernels: float64 (double precision end-to-end; ~1/64 throughput on consumer GPUs); float32 (fp32 weights and gradients, TF32 matmul kernels where available); bfloat16 (weights, activations and gradients all in bf16); float16 (fp16 compute with fp32 master weights and loss scaling) (choices: bfloat16, float16, float32, float64, 16, 32, 64, bf16, bfloat, double, fp16, fp32, fp64, full, half, tf32) |
 
 ### persistence
 

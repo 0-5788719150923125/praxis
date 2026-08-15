@@ -9,6 +9,7 @@ import { storage, applyFormValues, FORM_FIELDS } from './config.js';
 import {
     toggleRunSelector, toggleRunSelection, repaintDeckCards,
     requestDeckFocus, applyDeckFocus, isDeckFocusPending, clearDeckFocus,
+    setResearchXAxis,
 } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
@@ -623,6 +624,15 @@ export const ACTION_HANDLERS = {
      */
     TOGGLE_RUN: (runHash) => {
         toggleRunSelection(runHash);
+    },
+
+    /**
+     * Re-plot every Research time-series card against a different x axis
+     * (step / tokens / wall-clock). Re-renders from cached data - no refetch.
+     * @param {string} key - Axis key from the backend X_AXIS_REGISTRY
+     */
+    SET_RESEARCH_X_AXIS: (key) => {
+        setResearchXAxis(key);
     },
 
     /**

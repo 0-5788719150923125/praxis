@@ -44,7 +44,11 @@ from praxis.utils import (
 def main():
     """Configure, build, and run one training session."""
     args, processed_args = parse_cli()
-    setup_environment(no_docs=processed_args.get("no_docs", False))
+    setup_environment(
+        no_docs=processed_args.get("no_docs", False),
+        precision=processed_args.get("precision"),
+        device=processed_args.get("device", "cpu"),
+    )
     cfg = RunConfig.from_args(processed_args, args)
 
     # Shortcut modes that exit before building a model.

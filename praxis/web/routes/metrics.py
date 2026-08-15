@@ -14,12 +14,30 @@ from flask import Blueprint, current_app, jsonify, request
 from praxis.metrics import (
     COMPOSITE_METRIC_REGISTRY,
     TRAINING_METRIC_REGISTRY,
+    X_AXIS_REGISTRY,
     metric_names,
     validation_metric_names,
 )
 from praxis.web.app import api_logger
 
 metrics_bp = Blueprint("metrics", __name__)
+
+# Raw epoch timestamp, carried alongside the ISO ``ts`` so the wall-clock axis
+# can do arithmetic without re-parsing. Stripped before the payload goes out.
+_TS_RAW = "_ts_epoch"
+
+# A run that is stopped and resumed leaves a hole in ``ts`` as wide as the
+# wall-clock gap, and billing that hole as training time would make the
+# wall-clock axis quietly lie - the exact failure the axis exists to avoid. Any
+# inter-row delta this many times the run's OWN median spacing reads as a pause.
+# The threshold is endogenous (median of the rows actually returned) so it
+# rescales itself with downsampling instead of assuming a step rate.
+_GAP_FACTOR = 50.0
+
+# ...but on a fast small model the median spacing is fractions of a second, and
+# 50x that would call a routine allocator stall a pause. Nothing shorter than
+# this is ever treated as one.
+_GAP_FLOOR_S = 300.0
 
 # The registry's column list, in order. The SELECT fragments themselves are NOT
 # built here: they used to be, once at import time, which is precisely what
@@ -236,6 +254,7 @@ def get_metrics():
             "runs": all_runs_data,
             "registry": TRAINING_METRIC_REGISTRY,
             "composite_registry": COMPOSITE_METRIC_REGISTRY,
+            "x_axis_registry": X_AXIS_REGISTRY,
             "metadata": {
                 "total_params": current_app.config.get("total_params", "N/A"),
                 "current_hash": current_hash,
@@ -343,6 +362,7 @@ def _read_metrics_file(
             entry = {
                 "step": row["step"],
                 "ts": datetime.fromtimestamp(row["ts"]).isoformat(),
+                _TS_RAW: row["ts"],
             }
 
             # Add non-null native columns (registry-driven; new metrics
@@ -452,11 +472,66 @@ def _downsample_metrics(
     return sorted(by_step.values(), key=lambda m: m.get("step", 0))
 
 
+def _elapsed_seconds(raw_metrics: List[Dict[str, Any]]) -> List[float]:
+    """Cumulative training seconds per row, with suspensions discounted.
+
+    Not ``ts - ts[0]``: runs get checkpointed, stopped, and resumed, and a
+    naive baseline would bill an overnight pause as training time. Elapsed is
+    rebuilt from per-row deltas instead, and any delta far above the run's own
+    median spacing is replaced by that median - the run is credited with a
+    typical interval for the gap rather than the whole pause.
+
+    Runs on the rows that survived sampling and LTTB, so the median is the
+    median of what is actually being plotted.
+    """
+    stamps = [m.get(_TS_RAW) for m in raw_metrics]
+    if not stamps:
+        return []
+
+    deltas = [
+        b - a
+        for a, b in zip(stamps, stamps[1:])
+        if a is not None and b is not None and b >= a
+    ]
+    if not deltas:
+        return [0.0] * len(stamps)
+
+    ordered = sorted(deltas)
+    median = ordered[len(ordered) // 2]
+    cap = max(_GAP_FLOOR_S, _GAP_FACTOR * median)
+
+    elapsed = [0.0]
+    total = 0.0
+    for a, b in zip(stamps, stamps[1:]):
+        if a is None or b is None:
+            advance = 0.0
+        else:
+            delta = b - a
+            if delta < 0:
+                # Rows out of timestamp order (clock adjustment). That span is
+                # already counted upstream, so credit nothing rather than guess.
+                advance = 0.0
+            elif delta > cap:
+                # A pause. The run did do this row's work, so credit one
+                # typical interval and drop the time it sat stopped.
+                advance = median
+            else:
+                advance = delta
+        total += advance
+        elapsed.append(total)
+    return elapsed
+
+
 def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
     """Transform list of metric dicts to column format for charts.
 
     Input: [{"step": 0, "loss": 2.45}, {"step": 100, "loss": 2.12, "val_loss": 2.20}]
     Output: {"steps": [0, 100], "loss": [2.45, 2.12], "val_loss": [null, 2.20]}
+
+    Also emits ``elapsed_s``, the wall-clock coordinate backing the Research
+    tab's third x axis (see ``X_AXIS_REGISTRY``). It is derived here rather
+    than stored because every run ever written already has the ``ts`` column
+    it comes from - no schema change, no backfill.
 
     Args:
         raw_metrics: List of metric dictionaries
@@ -474,6 +549,7 @@ def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]
 
     # Remove metadata keys
     all_keys.discard("ts")
+    all_keys.discard(_TS_RAW)
 
     # Initialize result dict
     result = {key: [] for key in all_keys}
@@ -486,6 +562,8 @@ def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]
     # Rename 'step' to 'steps' for consistency
     if "step" in result:
         result["steps"] = result.pop("step")
+
+    result["elapsed_s"] = _elapsed_seconds(raw_metrics)
 
     return result
 

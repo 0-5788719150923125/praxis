@@ -8,9 +8,80 @@ import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { hasRealContent } from './prefetch.js';
 import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
+import { storage } from './config.js';
 
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
+
+// ── X axis selection ────────────────────────────────────────────────────────
+// The batch governor varies the effective batch, so tokens-per-step swings by
+// orders of magnitude within one run and differs between runs - step count
+// stopped being a comparable budget. The axis set is declared by the backend
+// (X_AXIS_REGISTRY in praxis/metrics/training_metrics.py); this side only
+// resolves the active choice to a coordinate array and an axis title.
+
+// Fallback used before the first /api/metrics response lands, and if a saved
+// preference names an axis the backend no longer serves.
+const DEFAULT_X_AXIS = {
+    key: 'step',
+    label: 'Step',
+    axis_title: 'Training Step',
+    source: 'steps',
+};
+
+/** The active axis descriptor, honouring the saved preference when valid. */
+function activeXAxis() {
+    const registry = state.research.xAxisRegistry || [];
+    return registry.find(a => a.key === state.research.xAxis)
+        || registry.find(a => a.key === DEFAULT_X_AXIS.key)
+        || DEFAULT_X_AXIS;
+}
+
+/**
+ * Coordinate array for `run` under `axis`, in display units.
+ *
+ * Every candidate column is index-aligned with every metric column because the
+ * whole read path moves rows, not columns (see _transform_metrics). Returns
+ * null when the run predates the column, which the callers treat as "this run
+ * cannot be drawn on this axis" rather than silently plotting it against step.
+ */
+function xValuesFor(run, axis) {
+    const raw = run.metrics?.[axis.source];
+    if (!Array.isArray(raw) || !raw.some(v => v !== null && v !== undefined)) return null;
+    const scale = axis.unit_scale || 1;
+    return scale === 1 ? raw : raw.map(v => (v === null || v === undefined ? null : v / scale));
+}
+
+/**
+ * Switch every time-series card to a different x axis.
+ *
+ * Re-renders from cached data rather than re-fetching: the axis is a reading
+ * of the same rows. The deck's structural fingerprint is unchanged, so the DOM,
+ * scroll position, and live Chart instances all survive and the renderers
+ * upsert in place.
+ */
+export function setResearchXAxis(key) {
+    if (!key || state.research.xAxis === key) return;
+    state.research.xAxis = key;
+    storage.set('researchXAxis', key);
+    syncXAxisToggle();
+
+    const container = document.getElementById('research-container');
+    if (!container || !state.research.loaded) return;
+    renderMetricsCharts({
+        runs: state.research.lastRuns || [],
+        dataMetrics: state.research.lastDataMetrics || [],
+        registry: state.research.metricRegistry,
+        compositeRegistry: state.research.compositeRegistry,
+    }, container);
+}
+
+/** Paint the active state on the axis segmented control. */
+function syncXAxisToggle() {
+    document.querySelectorAll('.x-axis-option').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.xAxis === state.research.xAxis);
+    });
+}
 
 // ── Axis tick formatting ────────────────────────────────────────────────────
 // Readable text for the magnitudes these charts actually carry. Log scales
@@ -402,6 +473,7 @@ async function fetchSelectedRunMetrics() {
                 // the function signature unchanged.
                 if (data.registry) results.registry = data.registry;
                 if (data.composite_registry) results.compositeRegistry = data.composite_registry;
+                if (data.x_axis_registry) results.xAxisRegistry = data.x_axis_registry;
             }
         } catch (error) {
             console.error('[Charts] Error loading local run metrics:', error);
@@ -597,6 +669,16 @@ async function loadResearchInner(force) {
         if (runs && runs.compositeRegistry) {
             state.research.compositeRegistry = runs.compositeRegistry;
         }
+        if (runs && runs.xAxisRegistry) {
+            state.research.xAxisRegistry = runs.xAxisRegistry;
+            // Restore the saved axis once the registry is known, so a stale
+            // preference for a retired axis falls back instead of blanking
+            // every card.
+            const saved = storage.get('researchXAxis');
+            if (saved && runs.xAxisRegistry.some(a => a.key === saved)) {
+                state.research.xAxis = saved;
+            }
+        }
 
         state.research.lastRuns = runsToRender;
         state.research.lastDataMetrics = dataToRender;
@@ -676,6 +758,11 @@ function buildCompositeConfigsFromRegistry(registry) {
             stepped: entry.stepped || false,
             keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
             series_noun: entry.series_noun || null,
+            // Heatmap axis nouns. The grid's two coordinates are not always
+            // "layer" and "expert" - SMEAR's merge coefficients are target
+            // modules against deviations - so the registry names them.
+            rowLabel: entry.row_label || null,
+            colLabel: entry.col_label || null,
         }));
 }
 
@@ -690,7 +777,7 @@ const METRIC_RENDERERS = {
     multi_expert_line: (config, { runs }) =>
         createMultiExpertChart(config.canvasId, config.title, config.label, runs, config.keyPattern, config),
     expert_routing_heatmap: (config, { runs }) =>
-        createExpertRoutingChart(config.canvasId, runs),
+        createExpertRoutingChart(config.canvasId, runs, config),
     line: (config, { runs }) =>
         createRunComparisonChart(config.canvasId, config.label, runs, config.key),
     evolution: (config) => createEvolutionChart(config.canvasId),
@@ -2289,6 +2376,23 @@ function renderMetricsHeader(container, runs) {
         `;
     }
 
+    // X-axis picker. One control, every time-series card - the axis is a way
+    // of reading the whole deck, not a per-chart setting, and comparing runs
+    // is only meaningful when they share one. Built from the backend registry,
+    // so a new axis needs no JS edit.
+    const axes = (state.research.xAxisRegistry || [])
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const axisHTML = axes.length > 1 ? `
+        <div class="x-axis-toggle" role="group" aria-label="Chart x axis">
+            ${axes.map(a => `
+                <button class="x-axis-option${a.key === state.research.xAxis ? ' active' : ''}"
+                        data-x-axis="${a.key}"
+                        title="${(a.description || '').replace(/"/g, '&quot;')}">${a.label}</button>
+            `).join('')}
+        </div>
+    ` : '';
+
     const totalPoints = runs.reduce((sum, r) => sum + (r.metadata?.num_points || 0), 0);
 
     const metadataHTML = `
@@ -2297,7 +2401,7 @@ function renderMetricsHeader(container, runs) {
     `;
 
     const headerHTML = createTabHeader({
-        additionalContent: selectorHTML,
+        additionalContent: axisHTML + selectorHTML,
         buttons: [
             pdfButton('download-pdf-research'),
         ],
@@ -2331,17 +2435,23 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
+    const axis = activeXAxis();
+
     const datasets = runs.map((run) => {
         const metrics = run.metrics;
-        const steps = metrics.steps || [];
         const values = metrics[metricKey] || [];
 
         if (!values.some(v => v !== null)) return null;
 
-        let data = steps.map((step, i) => ({
-            x: step,
+        // A run written before this axis's column existed simply has no
+        // coordinate to plot against; drop it rather than mixing axes.
+        const xs = xValuesFor(run, axis);
+        if (!xs) return null;
+
+        let data = xs.map((x, i) => ({
+            x,
             y: values[i]
-        })).filter(point => point.y !== null)
+        })).filter(point => point.y !== null && point.x !== null && point.x !== undefined)
           .sort((a, b) => a.x - b.x);
 
         // For validation metrics, remove consecutive duplicate values.
@@ -2404,7 +2514,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                     padding: 12,
                     displayColors: true,
                     callbacks: {
-                        title: (ctx) => `Step ${ctx[0].parsed.x}`,
+                        title: (ctx) => `${axis.label} ${formatAxisTick(ctx[0].parsed.x)}`,
                         label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)}`
                     }
                 }
@@ -2414,13 +2524,16 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                     type: 'linear',
                     title: {
                         display: true,
-                        text: 'Training Step',
+                        text: axis.axis_title || axis.label,
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
                     ticks: {
                         color: textColor,
-                        maxTicksLimit: 10
+                        maxTicksLimit: 10,
+                        // Token counts run to 6 decimals and elapsed hours to
+                        // fractions; raw values would blow out the axis.
+                        callback: formatAxisTick
                     },
                     grid: { color: gridColor }
                 },
@@ -2773,6 +2886,38 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
 /**
  * Update heatmap data for a new step without recreating the chart
  */
+/**
+ * Scatter grid for one step: rows on X, columns on Y.
+ *
+ * X is the row's POSITION in `rows`, not the row's own number. Rows are only
+ * sometimes integers - SMEAR's are module labels like `attn_depth_bias` - and
+ * even the numeric ones can be sparse when routers sit on a subset of layers.
+ * Positions keep the grid gapless either way; the axis ticks map back to names.
+ *
+ * Shared by the initial render and the step slider so the two can never
+ * disagree about what a cell means.
+ */
+function buildHeatmapGrid(rowSeries, rows, numCols, currentStep) {
+    const grid = [];
+    rows.forEach((rowKey, rowIndex) => {
+        const cols = rowSeries.get(rowKey);
+        for (let col = 0; col < numCols; col++) {
+            const series = (cols && cols.get(col)) || [];
+            let total = 0;
+            let count = 0;
+            series.forEach(({ steps, values }) => {
+                const i = steps.indexOf(currentStep);
+                if (i >= 0 && values[i] !== null && values[i] !== undefined) {
+                    total += values[i];
+                    count++;
+                }
+            });
+            grid.push({ x: rowIndex, y: col, v: count > 0 ? total / count : null });
+        }
+    });
+    return grid;
+}
+
 function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
     const chart = charts[canvasId];
     if (!chart || !chartData || !sortedSteps || sortedSteps.length === 0) return;
@@ -2780,37 +2925,9 @@ function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
     // Last line of defence: an out-of-range index would read `undefined` as the
     // step, match no sample, and paint the whole grid grey. Clamp to a real step.
     const currentStep = sortedSteps[Math.min(Math.max(stepIndex, 0), sortedSteps.length - 1)];
-    const { layerExpertMetrics, layers, maxExperts } = chartData;
+    const { rowSeries, rows, numCols, colLabel } = chartData;
 
-    // Recalculate scatter data for new step
-    // X-axis = layers, Y-axis = experts (swapped)
-    const newData = [];
-    layers.forEach(layerNum => {
-        const expertMetrics = layerExpertMetrics.get(layerNum);
-        if (!expertMetrics) return;
-
-        for (let expertNum = 0; expertNum < maxExperts; expertNum++) {
-            const agentData = expertMetrics.get(expertNum);
-            if (!agentData || agentData.length === 0) {
-                newData.push({ x: layerNum, y: expertNum, v: null });  // Swapped
-                continue;
-            }
-
-            let totalWeight = 0;
-            let count = 0;
-
-            agentData.forEach(({ steps, values }) => {
-                const stepIdx = steps.indexOf(currentStep);
-                if (stepIdx >= 0 && values[stepIdx] !== null) {
-                    totalWeight += values[stepIdx];
-                    count++;
-                }
-            });
-
-            const avgWeight = count > 0 ? totalWeight / count : null;
-            newData.push({ x: layerNum, y: expertNum, v: avgWeight });  // Swapped
-        }
-    });
+    const newData = buildHeatmapGrid(rowSeries, rows, numCols, currentStep);
 
     // Update chart data and colors
     chart.data.datasets[0].data = newData;
@@ -2818,9 +2935,10 @@ function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
     chart.data.datasets[0].pointBorderColor = newData.map(d => getHeatmapColor(d.v));
 
     // Update title with new step
-    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
+    const uniformWeight = numCols > 0 ? 1.0 / numCols : 0.5;
     const uniformPct = (uniformWeight * 100).toFixed(1);
-    chart.options.plugins.title.text = `Step ${currentStep} | Uniform: ${uniformPct}% per expert`;
+    chart.options.plugins.title.text =
+        `Step ${currentStep} | Uniform: ${uniformPct}% per ${colLabel.toLowerCase()}`;
 
     // Update without animation for instant feedback
     chart.update('none');
@@ -2944,20 +3062,37 @@ function getLayerLabel(layerIndex, reasoningInfo) {
     return `L${actualLayer} R${reasoningStep}`;
 }
 
+// Key shape this renderer assumed before it took the pattern from the registry.
+// Kept only as the fallback for a card that declares no key_pattern.
+const HEATMAP_DEFAULT_PATTERN = /^layer_(\d+)_expert_(\d+)_routing_weight$/;
+
 /**
- * Create expert routing heatmap showing convergence across layers and experts
- * Uses scatter plot with colored squares to create heatmap effect
+ * Create an expert-routing heatmap: one cell per (row, column) pair at a step.
+ *
+ * The grid's coordinates come from the registry's ``key_pattern``, which must
+ * expose them as two capture groups - group 1 the ROW, group 2 the COLUMN index.
+ * Two families use this renderer and they name their axes differently:
+ *
+ *   layer_3_expert_1_routing_weight  -> row "3" (a decoder layer), column 1
+ *   smear_coeff_attn_depth_bias_0    -> row "attn_depth_bias" (a target
+ *                                       module), column 0
+ *
+ * The pattern used to be hardcoded to the first of those while the registry
+ * gated the card on the second, so the SMEAR Merge Coefficients card was shown
+ * whenever its data existed and then drew nothing, on every run.
  */
-async function createExpertRoutingChart(canvasId, agents) {
+async function createExpertRoutingChart(canvasId, agents, config = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    // Parse metrics to detect layers, experts, and steps
-    const layerExpertMetrics = new Map();
-    let maxExperts = 0;
+    const pattern = config.keyPattern || HEATMAP_DEFAULT_PATTERN;
+
+    // rowSeries: rowKey -> columnIndex -> [{steps, values}, ...] across runs
+    const rowSeries = new Map();
+    let numCols = 0;
     let allSteps = new Set();
 
     agents.forEach((agent) => {
@@ -2966,37 +3101,47 @@ async function createExpertRoutingChart(canvasId, agents) {
         steps.forEach(s => allSteps.add(s));
 
         Object.keys(metrics).forEach(k => {
-            const match = k.match(/^layer_(\d+)_expert_(\d+)_routing_weight$/);
-            if (!match) return;
+            const match = k.match(pattern);
+            // Needs both coordinates; a one-group pattern cannot form a grid.
+            if (!match || match.length < 3) return;
 
-            const layerNum = parseInt(match[1]);
-            const expertNum = parseInt(match[2]);
+            const rowKey = match[1];
+            const col = parseInt(match[2], 10);
+            if (!Number.isInteger(col)) return;
 
-            if (!layerExpertMetrics.has(layerNum)) {
-                layerExpertMetrics.set(layerNum, new Map());
-            }
-            if (!layerExpertMetrics.get(layerNum).has(expertNum)) {
-                layerExpertMetrics.get(layerNum).set(expertNum, []);
-            }
-            layerExpertMetrics.get(layerNum).get(expertNum).push({
+            if (!rowSeries.has(rowKey)) rowSeries.set(rowKey, new Map());
+            if (!rowSeries.get(rowKey).has(col)) rowSeries.get(rowKey).set(col, []);
+            rowSeries.get(rowKey).get(col).push({
                 agent: agent.name,
                 metricKey: k,
                 steps: steps,
                 values: metrics[k]
             });
-            maxExperts = Math.max(maxExperts, expertNum + 1);
+            numCols = Math.max(numCols, col + 1);
         });
     });
 
-    const layers = Array.from(layerExpertMetrics.keys()).sort((a, b) => a - b);
+    // Numeric rows (decoder layers) sort by value; label rows sort by name, so
+    // the grid ordering is stable across refreshes whatever Object.keys gave us.
+    const rows = Array.from(rowSeries.keys());
+    const numericRows = rows.length > 0 && rows.every(r => /^\d+$/.test(r));
+    rows.sort(numericRows
+        ? (a, b) => Number(a) - Number(b)
+        : (a, b) => a.localeCompare(b));
+
     const sortedSteps = Array.from(allSteps).sort((a, b) => a - b);
 
-    if (layers.length === 0 || sortedSteps.length === 0) return;
+    if (rows.length === 0 || sortedSteps.length === 0) return;
 
-    // Calculate reasoning steps from model config
-    const reasoningInfo = await calculateReasoningSteps();
-    console.log('[Heatmap] Reasoning info:', reasoningInfo);
-    console.log('[Heatmap] Model config:', modelConfigCache);
+    // Reasoning-step folding is a statement about decoder layers, so it only
+    // applies when the rows ARE layers. Module labels are passed through as-is.
+    const reasoningInfo = numericRows ? await calculateReasoningSteps() : null;
+    const rowLabelFor = (rowKey) => (
+        reasoningInfo ? getLayerLabel(Number(rowKey), reasoningInfo) : rowKey
+    );
+    const xTitle = config.rowLabel
+        || (reasoningInfo && reasoningInfo.hasReasoningSteps ? 'Layers/Reasoning Steps' : 'Layer');
+    const yTitle = config.colLabel || 'Expert';
 
     // Track the selected STEP VALUE, not an array position. The number of step
     // samples returned varies between refreshes (downsampling / stale-while-
@@ -3017,54 +3162,15 @@ async function createExpertRoutingChart(canvasId, agents) {
     const currentStepIndex = sortedSteps.indexOf(currentStep);
 
     // Store chart data for slider updates
-    const chartData = { layerExpertMetrics, layers, maxExperts, reasoningInfo };
+    const chartData = { rowSeries, rows, numCols, colLabel: yTitle };
 
     // Render step slider control (only once)
     renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData);
 
-    // Transform data for current step into scatter plot points
-    // X-axis = layers, Y-axis = experts (swapped from before)
-    const scatterData = [];
-
-    layers.forEach(layerNum => {
-        const expertMetrics = layerExpertMetrics.get(layerNum);
-        if (!expertMetrics) return;
-
-        for (let expertNum = 0; expertNum < maxExperts; expertNum++) {
-            const agentData = expertMetrics.get(expertNum);
-            if (!agentData || agentData.length === 0) {
-                scatterData.push({
-                    x: layerNum,  // Swapped: layer on X
-                    y: expertNum,  // Swapped: expert on Y
-                    v: null
-                });
-                continue;
-            }
-
-            // For multi-agent: average weights across agents at this step
-            let totalWeight = 0;
-            let count = 0;
-
-            agentData.forEach(({ steps, values }) => {
-                const stepIdx = steps.indexOf(currentStep);
-                if (stepIdx >= 0 && values[stepIdx] !== null) {
-                    totalWeight += values[stepIdx];
-                    count++;
-                }
-            });
-
-            const avgWeight = count > 0 ? totalWeight / count : null;
-
-            scatterData.push({
-                x: layerNum,  // Swapped: layer on X
-                y: expertNum,  // Swapped: expert on Y
-                v: avgWeight
-            });
-        }
-    });
+    const scatterData = buildHeatmapGrid(rowSeries, rows, numCols, currentStep);
 
     // Calculate uniform weight reference
-    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
+    const uniformWeight = numCols > 0 ? 1.0 / numCols : 0.5;
     const uniformPct = (uniformWeight * 100).toFixed(1);
 
     // Heatmap as a scatter plot with colored square points
@@ -3084,8 +3190,8 @@ async function createExpertRoutingChart(canvasId, agents) {
                     // Calculate cell size to fill columns/rows completely
                     const width = chartArea.right - chartArea.left;
                     const height = chartArea.bottom - chartArea.top;
-                    const cellWidth = width / layers.length;
-                    const cellHeight = height / maxExperts;
+                    const cellWidth = width / rows.length;
+                    const cellHeight = height / numCols;
 
                     // Use smaller of the two to ensure squares fit
                     return Math.min(cellWidth, cellHeight) / 2;  // Divide by 2 because radius
@@ -3098,8 +3204,8 @@ async function createExpertRoutingChart(canvasId, agents) {
 
                     const width = chartArea.right - chartArea.left;
                     const height = chartArea.bottom - chartArea.top;
-                    const cellWidth = width / layers.length;
-                    const cellHeight = height / maxExperts;
+                    const cellWidth = width / rows.length;
+                    const cellHeight = height / numCols;
 
                     return Math.min(cellWidth, cellHeight) / 2;  // Same size as normal
                 },
@@ -3118,7 +3224,7 @@ async function createExpertRoutingChart(canvasId, agents) {
                 },
                 title: {
                     display: true,
-                    text: `Step ${currentStep} | Uniform: ${uniformPct}% per expert`,
+                    text: `Step ${currentStep} | Uniform: ${uniformPct}% per ${yTitle.toLowerCase()}`,
                     color: textColor,
                     font: { size: 12, weight: '500' },
                     padding: { bottom: 10 }
@@ -3136,14 +3242,14 @@ async function createExpertRoutingChart(canvasId, agents) {
                         },
                         label(context) {
                             const dataPoint = context.raw;
-                            const layer = dataPoint.x;  // Swapped
-                            const expert = dataPoint.y;  // Swapped
+                            // x is the row's POSITION, so name it before showing it.
+                            const rowName = rowLabelFor(rows[dataPoint.x]);
+                            const col = dataPoint.y;
                             const weight = dataPoint.v;
-                            const layerLabel = getLayerLabel(layer, reasoningInfo);
-                            if (weight === null) {
-                                return `${layerLabel}, Expert ${expert}: No data`;
+                            if (weight === null || weight === undefined) {
+                                return `${rowName}, ${yTitle} ${col}: No data`;
                             }
-                            return `${layerLabel}, Expert ${expert}: ${(weight * 100).toFixed(2)}%`;
+                            return `${rowName}, ${yTitle} ${col}: ${(weight * 100).toFixed(2)}%`;
                         }
                     }
                 }
@@ -3154,19 +3260,32 @@ async function createExpertRoutingChart(canvasId, agents) {
                     position: 'bottom',
                     title: {
                         display: true,
-                        text: reasoningInfo.hasReasoningSteps ? 'Layers/Reasoning Steps' : 'Layer',
+                        text: xTitle,
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    min: Math.min(...layers) - 0.5,
-                    max: Math.max(...layers) + 0.5,
+                    min: -0.5,
+                    max: rows.length - 0.5,
+                    // Cells are centred on integers but the scale spans
+                    // -0.5..n-0.5, so Chart.js's own stepSize:1 ticks land on
+                    // the half-integers BETWEEN cells and every label is
+                    // discarded as non-integer. Place one tick per cell.
+                    afterBuildTicks: (axis) => {
+                        axis.ticks = rows.map((_, i) => ({ value: i }));
+                    },
                     ticks: {
                         color: textColor,
-                        stepSize: 1,
-                        callback: (value) => {
-                            if (!Number.isInteger(value) || !layers.includes(value)) return '';
-                            return getLayerLabel(value, reasoningInfo);
-                        }
+                        // Layer rows are short labels and there can be twenty
+                        // of them, so let Chart.js thin them; a missing "Layer
+                        // 7" costs nothing. Module rows are words, so they get
+                        // rotated instead and every one is kept - which module
+                        // a column belongs to is the whole point of the card.
+                        autoSkip: numericRows,
+                        maxRotation: numericRows ? 0 : 60,
+                        minRotation: numericRows ? 0 : 60,
+                        callback: (value) => (
+                            rows[value] === undefined ? '' : rowLabelFor(rows[value])
+                        )
                     },
                     grid: { color: gridColor, lineWidth: 0.5 }
                 },
@@ -3175,16 +3294,19 @@ async function createExpertRoutingChart(canvasId, agents) {
                     position: 'left',
                     title: {
                         display: true,
-                        text: 'Expert',
+                        text: yTitle,
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
                     min: -0.5,
-                    max: maxExperts - 0.5,
+                    max: numCols - 0.5,
+                    afterBuildTicks: (axis) => {
+                        axis.ticks = Array.from({ length: numCols }, (_, i) => ({ value: i }));
+                    },
                     ticks: {
                         color: textColor,
-                        stepSize: 1,
-                        callback: (value) => Number.isInteger(value) ? value : ''
+                        autoSkip: false,
+                        callback: (value) => (Number.isInteger(value) ? value : '')
                     },
                     grid: { color: gridColor, lineWidth: 0.5 }
                 }
@@ -3282,12 +3404,12 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
 
     const allDatasets = [];
     let maxExperts = 0;
+    const axis = activeXAxis();
 
     agents.forEach((agent, agentIdx) => {
         const metrics = agent.metrics;
-        const steps = metrics.steps || [];
-
-        console.log(`[createMultiExpertChart] Agent: ${agent.name}, Steps: ${steps.length}, First: ${steps[0]}, Last: ${steps[steps.length-1]}`);
+        const steps = xValuesFor(agent, axis);
+        if (!steps) return;
 
         // Find all metrics matching the pattern
         const expertKeys = Object.keys(metrics).filter(k => k.match(keyPattern));
@@ -3309,10 +3431,8 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
             const data = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
-            })).filter(point => point.y !== null)
+            })).filter(point => point.y !== null && point.x !== null && point.x !== undefined)
               .sort((a, b) => a.x - b.x);
-
-            console.log(`[createMultiExpertChart] Data points after filtering: ${data.length}, First x: ${data[0]?.x}, Last x: ${data[data.length-1]?.x}`);
 
             const color = chartLineColor(identity.index);
             const label = agents.length > 1 ? `${agent.name} - ${identity.label}` : identity.label;
@@ -3384,7 +3504,7 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                     type: 'linear',
                     title: {
                         display: true,
-                        text: 'Training Step',
+                        text: axis.axis_title || axis.label,
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
@@ -3393,7 +3513,10 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                     ticks: {
                         color: textColor,
                         maxTicksLimit: 10,
-                        precision: 0
+                        // Only the step axis is whole-numbered; pinning
+                        // precision on a fractional axis ticks all zeroes.
+                        ...(axis.integral ? { precision: 0 } : {}),
+                        callback: formatAxisTick
                     },
                     grid: { color: gridColor },
                     beginAtZero: false

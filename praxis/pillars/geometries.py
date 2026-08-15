@@ -36,15 +36,50 @@ FIG_DIR = os.path.join(RESEARCH_DIR, "figures")
 OUT_TEX = os.path.join(RESEARCH_DIR, "geometries.tex")
 GRID_SIZE = 64
 # Match any CrystalClassifier centers tensor (its param is always `.centers`):
-# CrystalHead exposes it as `...lm_head.centers`, while the prismatic4 VEAR bank
+# CrystalHead exposes it as `...lm_head.centers`, while a VEAR crystal bank
 # (CrystalVearHead) exposes N of them as `...bank.experts.<i>.centers`. Matching
 # the bare suffix catches both; the [V, D] shape guard in collect_geometries
 # rejects anything else that happens to end in `.centers`.
 CENTERS_SUFFIX = ".centers"
+
+# ...except HaloClassifier (praxis/heads/halo.py:96) ALSO names its parameter
+# `centers`, and prismatic5/6 carry a HaloHead arm, so the bare suffix silently
+# swept HALO's hyperspherical prototypes in as though they were a crystal
+# geometry. They are neither: they live on a sphere, not in the crystal's
+# Euclidean center space, and HALO's gate share is near zero, so the panel is a
+# raw `randn` init - a featureless blob captioned as a settled geometry.
+#
+# The two are told apart structurally, not by name: HaloClassifier owns a
+# learnable `gamma` temperature beside its centers, CrystalClassifier owns
+# nothing beside them.
+HALO_SIBLING = "gamma"
 # Shared with the web dashboard (praxis/web/src/js/colormaps.js is generated from
 # the same file), so the printed figure matches the live Center PCA Density card.
 COLORMAPS_JSON = os.path.join(REPO_ROOT, "praxis", "web", "src", "colormaps.json")
 COLORMAP_NAME = "praxis_heat"
+
+
+def is_crystal_centers(sd, key):
+    """True if ``key`` is a CrystalClassifier's centers, not HALO's prototypes.
+
+    Both parameters are called ``centers`` and both are [vocab, dim], so shape
+    cannot separate them; the sibling ``gamma`` can.
+    """
+    prefix = key[: -len("centers")]
+    return f"{prefix}{HALO_SIBLING}" not in sd
+
+
+def head_type_of(run_dir):
+    """The run's resolved ``head_type``, or None if it never wrote a spec.
+
+    Read rather than assumed: the caption used to hardcode one head name, so it
+    kept asserting ``prismatic4`` long after the runs had moved to ``prismatic6``.
+    """
+    try:
+        with open(os.path.join(run_dir, "spec.json")) as fh:
+            return json.load(fh).get("args", {}).get("head_type") or None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def runs_newest_first():
@@ -147,7 +182,7 @@ def collect_geometries(limit, scan):
     Each dict: {name, hash, label, grid, var_explained, n_points, intra_run}."""
     import torch
 
-    def _panels(sd, name, run_hash, keys, multi):
+    def _panels(sd, name, run_hash, head_type, keys, multi):
         out = []
         for key in keys:
             grid, ve = pca_density_grid(sd[key])
@@ -155,6 +190,7 @@ def collect_geometries(limit, scan):
                 {
                     "name": name,
                     "hash": run_hash,
+                    "head_type": head_type,
                     "label": branch_label(key) if multi else "",
                     "grid": grid,
                     "var_explained": ve,
@@ -183,14 +219,18 @@ def collect_geometries(limit, scan):
             and hasattr(sd[k], "dim")
             and sd[k].dim() == 2
             and sd[k].shape[0] >= 3
+            and is_crystal_centers(sd, k)
         ]
         if not keys:
             continue
         multi = len(keys) > 1
-        run_geos = _panels(sd, name, run_hash, keys, multi)
+        head_type = head_type_of(run_dir)
+        run_geos = _panels(sd, name, run_hash, head_type, keys, multi)
         # Newest crystal run is a multi-head bank: render its own heads, done.
+        # Truncated to `limit` like the cross-run path - a bank wider than the
+        # budget used to return every expert and overflow the float page.
         if multi and not cross_run:
-            return run_geos
+            return run_geos[:limit]
         for g in run_geos:
             if len(cross_run) >= limit:
                 break
@@ -295,9 +335,13 @@ def figure_tex(paths, geometries):
         # Single multi-head model (a crystal bank): the panels are its OWN heads.
         run = geometries[0]["name"]
         labels = ", ".join(g["label"] for g in geometries if g["label"])
+        # Never name a head the run did not use. This clause hardcoded
+        # "prismatic4" and went on asserting it through every later head.
+        head = geometries[0].get("head_type")
+        bank = f"{head}'s VEAR crystal bank" if head else "a VEAR crystal bank"
         caption = (
             f"Center PCA density for the {len(geometries)} crystal heads of "
-            f"{run} - a single multi-head model (prismatic4's VEAR crystal bank), "
+            f"{run} - a single multi-head model ({bank}), "
             f"so these are that run's own heads ({labels}), not a cross-run mix. "
             f"Each panel is {grid_desc} The bank's experts settle into structurally "
             "distinct geometries - the between-expert variance the router selects over."

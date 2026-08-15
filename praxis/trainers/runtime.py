@@ -69,7 +69,9 @@ def _build_trainer_params(cfg, bundle, callbacks, logger):
         max_steps=cfg.max_steps if cfg.max_steps is not None else -1,
         max_epochs=-1,
         reload_dataloaders_every_n_epochs=0,
-        precision="32-true",
+        # Decides the dtype of the training step and therefore of the
+        # gradients; the model was already built in the matching dtype.
+        precision=cfg.precision_profile.lightning,
         gradient_clip_val=(
             cfg.gradient_clip_val if caps.supports_gradient_clipping else None
         ),

@@ -21,8 +21,10 @@ from praxis.metrics.training_metrics import (
     COMPOSITE_METRIC_REGISTRY,
     DYNAMICS_CHART_REGISTRY,
     TRAINING_METRIC_REGISTRY,
+    X_AXIS_REGISTRY,
     metric_names,
     validation_metric_names,
+    x_axis_names,
 )
 
 __all__ = [
@@ -44,6 +46,8 @@ __all__ = [
     "TRAINING_METRIC_REGISTRY",
     "COMPOSITE_METRIC_REGISTRY",
     "DYNAMICS_CHART_REGISTRY",
+    "X_AXIS_REGISTRY",
     "metric_names",
     "validation_metric_names",
+    "x_axis_names",
 ]

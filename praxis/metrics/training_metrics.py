@@ -871,7 +871,12 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "type": "expert_routing_heatmap",
         "title": "Expert Routing Weights (Convergence)",
         "y_label": "Routing Weight",
-        "key_pattern": r"^layer_\d+_expert_\d+_routing_weight$",
+        # Row = decoder layer, column = expert. The capture groups are what the
+        # heatmap renderer reads; without them it can form no grid.
+        #
+        # No live router emits this key shape any more - it survives so the
+        # runs that DO carry it stay readable, and auto-hides everywhere else.
+        "key_pattern": r"^layer_(\d+)_expert_(\d+)_routing_weight$",
         "stepped": True,
         "order": 110,
     },
@@ -1083,7 +1088,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "key_pattern": r"^layer_\d+_routing_peak$",
         "order": 240,
     },
-    # --- Modular SMEAR (praxis/routers/modular.py) --------------------------
+    # --- Modular SMEAR (praxis/routers/smear.py) ----------------------------
     # Three cards, not nine. SMEAR emitted nine chart families each keyed by
     # `layer_{depth}_`, which at depth 6 drew 54 lines - all of them the SAME
     # router sampled at different recurrent passes, since one router serves
@@ -1105,7 +1110,12 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "state at once. A row pinned at 1/N means that module declined to "
             "specialize; a row at 1.0 means it committed."
         ),
-        "key_pattern": r"^smear_coeff_.+_\d+$",
+        # Two capture groups, in the order the heatmap renderer reads them:
+        # group 1 the ROW (a target module label), group 2 the COLUMN index.
+        # A pattern without both cannot form a grid and draws nothing.
+        "key_pattern": r"^smear_coeff_(.+)_(\d+)$",
+        "row_label": "Target module",
+        "col_label": "Deviation",
         "stepped": True,
         "order": 260,
     },
@@ -1179,6 +1189,23 @@ COMPOSITE_METRIC_REGISTRY: list = [
         ),
         "key_pattern": r"^smear_selection_(sharpness|diversity)$",
         "order": 264,
+    },
+    {
+        "key": "smear_delta_scale",
+        "type": "multi_expert_line",
+        "title": "SMEAR Deviation Magnitude",
+        "y_label": "||merged delta|| / ||base||",
+        "description": (
+            "How far the routed deviations actually move each target's weights, "
+            "as a fraction of that target's own norm, plus the mean across "
+            "targets. The coefficient heatmap says how the deviations are MIXED; "
+            "this says whether the mixture moves anything. A rich mixture over "
+            "numerically tiny deviations is a router arguing about nothing, and "
+            "is indistinguishable from a real one on coefficients alone. Exactly "
+            "0 at init, since LoRA-style zero-init makes the merge identity."
+        ),
+        "key_pattern": r"^smear_delta_scale_.+$",
+        "order": 265,
     },
     {
         "key": "depth_step",
@@ -1356,6 +1383,72 @@ DYNAMICS_CHART_REGISTRY: list = [
         "caller": "Halting",
     },
 ]
+
+
+# ── X axes the Research tab can plot every time-series card against ──────────
+#
+# Optimizer steps stopped being a comparable budget the day the batch governor
+# landed: it varies the effective batch, so tokens-per-step swings by two orders
+# of magnitude WITHIN a single run, never mind between two of them. Which axis
+# is "right" depends on the question, and the three questions are different:
+#
+#   step      - how many optimizer updates did it take? The learning-dynamics
+#               question. Still the honest axis for anything schedule-driven.
+#   tokens    - how much data did it take? The sample-efficiency question.
+#   wallclock - how long did it take? The one the governor is actually trying
+#               to win. A governed run is EXPECTED to look worse per-token than
+#               a small-batch run while beating it per-second, so reading only
+#               the token axis will condemn the governor exactly where it works.
+#
+# ``source`` names a key on the per-run ``metrics`` payload from /api/metrics;
+# every one of them is index-aligned with the others because the whole read
+# path (SQL sampling, LTTB, _transform_metrics) moves whole ROWS, never columns.
+# Adding a fourth axis (samples, FLOPs) is one entry here plus one emit.
+X_AXIS_REGISTRY: list = [
+    {
+        "key": "step",
+        "label": "Step",
+        "axis_title": "Training Step",
+        "source": "steps",
+        # Whole numbers, so charts may pin ticks to integers. Token counts (in
+        # billions) and elapsed hours are fractional and must not be rounded -
+        # a 113M-token run reads 0.113 and would tick as a row of zeroes.
+        "integral": True,
+        "order": 10,
+        "description": "Optimizer updates. Not proportional to data under a batch governor.",
+    },
+    {
+        "key": "tokens",
+        "label": "Tokens",
+        "axis_title": "Tokens (Billions)",
+        "source": "num_tokens",
+        "order": 20,
+        "description": (
+            "Cumulative training tokens. Exact on validation rows - the val "
+            "write merges into the same step-keyed row the training step wrote, "
+            "so a val point carries the token count at the step it ran, not a "
+            "carried-forward one."
+        ),
+    },
+    {
+        "key": "wallclock",
+        "label": "Wall-clock",
+        "axis_title": "Elapsed (hours)",
+        "source": "elapsed_s",
+        "unit_scale": 3600.0,
+        "order": 30,
+        "description": (
+            "Time the run actually spent training. Rebuilt from per-row "
+            "timestamp deltas with pauses discounted, so a resumed run is not "
+            "billed for the hours it sat stopped."
+        ),
+    },
+]
+
+
+def x_axis_names() -> list:
+    """Keys of the registered Research-tab x axes."""
+    return [axis["key"] for axis in X_AXIS_REGISTRY]
 
 
 def metric_names() -> list:

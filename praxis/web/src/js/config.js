@@ -17,7 +17,8 @@ export const STORAGE_KEYS = {
     apiUrl: 'praxis_api_url',
     genParams: 'praxis_gen_params',
     debugLogging: 'praxis_debug_logging',
-    chatHistory: 'chatHistory'
+    chatHistory: 'chatHistory',
+    researchXAxis: 'praxis_research_x_axis'
 };
 
 /**

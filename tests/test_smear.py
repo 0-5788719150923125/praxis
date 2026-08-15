@@ -533,7 +533,9 @@ def test_utilization_metric_spans_collapse_to_balance():
     router(*router_args(block, x))
     assert router.get_metrics()["smear_expert_utilization"] == pytest.approx(1.0)
 
-    router._tick = 0
+    # Diagnostics average over a window of `depth` passes, so clear what was
+    # already reported before measuring the second regime.
+    router._tick, router._metrics = 0, {}
     with torch.no_grad():  # collapsed routing -> one of four in use
         router.router.bias.view(len(router.targets), 4)[:, 0] = 50.0
     router(*router_args(block, x))
@@ -719,9 +721,12 @@ class _Probe(SMEAR):
         self.targets = [type("G", (), {"label": f"t{i}"})() for i in range(targets)]
         self.SHARPEN = sharpen
         self._metrics = {}
+        self._accum = {}
+        self._passes = 0
 
     def score(self, probs):
         self._log_metrics(probs, probs)
+        self._flush_metrics()  # accumulate-then-flush; one pass averages to itself
         return self._metrics
 
 
@@ -786,10 +791,13 @@ def test_selection_metrics_are_measured_before_expert_dropout():
     torch.testing.assert_close(reported, probs)
     assert not torch.allclose(merge, probs), "dropout did not fire; test is vacuous"
 
+    router._accum, router._passes, router._metrics = {}, 0, {}
     router._log_metrics(merge, reported)
+    router._flush_metrics()
     from_probs = dict(router._metrics)
-    router._metrics = {}
+    router._accum, router._passes, router._metrics = {}, 0, {}
     router._log_metrics(merge, merge)  # what leaking dropout in would produce
+    router._flush_metrics()
     from_merge = dict(router._metrics)
 
     assert (
@@ -826,3 +834,156 @@ def test_vear_sharpens_a_real_forward_relative_to_smear():
     assert (
         sharp["smear_selection_sharpness"] > soft["smear_selection_sharpness"]
     ), "vear did not peak the routing relative to smear"
+
+
+def test_diagnostics_cover_every_recurrent_depth():
+    """The sampler used to log only when `_tick % METRICS_INTERVAL == 0` while
+    `_tick` advances once per recurrent PASS, so at depth 6 and interval 10 it
+    reported depths 0, 2 and 4 and never 1, 3 or 5. Since the per-depth bias
+    makes those passes genuinely different (router_depth_specialization ~0.78 on
+    abstractinator-n), that turned depth variation into an apparent oscillation
+    over time."""
+    from praxis.routers.smear import METRICS_INTERVAL
+
+    router, block = make(depth=6)
+    x = torch.randn(4, 6, router.hidden_size)
+
+    seen = []
+    original = router._log_metrics
+    router._log_metrics = lambda m, p: (seen.append(router._probe_depth), original(m, p))
+
+    for _ in range(20):
+        for depth in range(6):
+            router._probe_depth = depth
+            router(*router_args(block, x, depth=depth))
+
+    assert set(seen) == set(range(6)), f"depths missed by the diagnostics: {sorted(set(range(6)) - set(seen))}"
+    assert seen.count(1) == seen.count(0), "passes are not weighted equally"
+
+
+def test_flush_averages_rather_than_overwrites():
+    """Two passes with known, different coefficients must report their mean."""
+    router, _ = make()
+    router._metrics, router._accum, router._passes = {}, {}, 0
+    t, n = len(router.targets), router.num_experts
+
+    for value in (0.0, 1.0):
+        router._add("coeff", torch.full((t, n), value))
+        router._add("smear_input_dependence", torch.tensor(value))
+        router._passes += 1
+    router._flush_metrics()
+
+    assert router._metrics["smear_input_dependence"] == pytest.approx(0.5)
+    label = router.targets[0].label
+    assert router._metrics[f"smear_coeff_{label}_0"] == pytest.approx(0.5)
+    assert router._accum == {} and router._passes == 0, "accumulator not reset"
+
+
+def test_accumulator_holds_no_autograd_graph():
+    """A retained graph across passes would be a slow leak, not a wrong number."""
+    router, block = make()
+    router(*router_args(block, torch.randn(4, 6, router.hidden_size)))
+    for key, value in router._accum.items():
+        assert not value.requires_grad, f"{key} carries grad"
+        assert value.grad_fn is None, f"{key} retains a graph"
+
+
+# --- deviation magnitude -----------------------------------------------------
+#
+# The coefficients say how the deviations are MIXED; this says whether the
+# mixture moves the geometry at all. A rich mixture over numerically tiny
+# deviations is a router arguing about nothing, and reads identically to a real
+# one on the coefficient heatmap.
+
+
+def _delta_scales(router, block):
+    router(*router_args(block, torch.randn(4, 6, router.hidden_size)))
+    router._flush_metrics()
+    return {
+        g.label: router._metrics[f"smear_delta_scale_{g.label}"] for g in router.targets
+    }
+
+
+def test_delta_scale_is_zero_at_init():
+    """LoRA init makes every deviation exactly zero, so the merge is identity and
+    the reported movement must be exactly 0 - not merely small."""
+    router, block = make()
+    for label, value in _delta_scales(router, block).items():
+        assert value == pytest.approx(0.0, abs=1e-9), f"{label} moved at init: {value}"
+    assert router._metrics["smear_delta_scale_mean"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_delta_scale_covers_both_merge_paths():
+    """The Linear targets never materialize a merged weight, so their deviation
+    has to be formed explicitly. If that were skipped, the 90% of merged
+    parameters living in MergedLinear would silently report nothing."""
+    router, block = make()
+    scales = _delta_scales(router, block)
+    assert set(scales) == {g.label for g in router.targets}
+    assert set(router.wrappers).issubset(scales), "MergedLinear targets are missing"
+    assert set(router._param_row), "test needs both paths populated"
+
+
+def test_delta_scale_tracks_the_true_norm_ratio():
+    """Against the ratio computed directly from the parameters."""
+    torch.manual_seed(0)
+    router, block = make()
+    for param in router.deltas.values():
+        nn.init.normal_(param, std=0.05)
+    for wrapper in router.wrappers.values():
+        nn.init.normal_(wrapper.lora_b, std=0.05)
+
+    scales = _delta_scales(router, block)
+    x = torch.randn(4, 6, router.hidden_size)
+    w = router._flatten(router._coefficients(x, 0)[0])
+
+    for label, row in router._wrapper_row.items():
+        wrap = router.wrappers[label]
+        delta = torch.einsum("e,eor,eri->oi", w[row], wrap.lora_b, wrap.lora_a)
+        want = (delta.norm() / wrap.weight.norm()).item()
+        assert scales[label] == pytest.approx(want, rel=0.3), label
+        assert scales[label] > 0, f"{label} reported no movement despite real deltas"
+
+
+def test_delta_scale_distinguishes_a_tiny_deviation_from_a_real_one():
+    """The whole point: two routers with identical coefficients but deviations
+    three orders of magnitude apart must not report the same number."""
+    torch.manual_seed(0)
+    small, block_s = make()
+    large, block_l = make()
+    for router, std in ((small, 1e-4), (large, 1e-1)):
+        for param in router.deltas.values():
+            nn.init.normal_(param, std=std)
+        for wrapper in router.wrappers.values():
+            nn.init.normal_(wrapper.lora_b, std=std)
+
+    a = _delta_scales(small, block_s)["attn_qkv"]
+    b = _delta_scales(large, block_l)["attn_qkv"]
+    assert b > a * 100, f"tiny={a:.3g} vs real={b:.3g} - not distinguishable"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a second device")
+def test_diagnostics_survive_the_model_moving_device():
+    """initialize_lazy_modules runs a dummy forward on CPU before the model is
+    moved to its device, so a window can be left holding CPU tensors that the
+    next pass cannot be added to. That is a RuntimeError inside forward(), not a
+    wrong metric."""
+    router, block = make()
+    router(*router_args(block, torch.randn(4, 6, router.hidden_size)))
+    assert router._accum, "nothing accumulated on CPU; test is vacuous"
+
+    router, block = router.cuda(), block.cuda()
+    x = torch.randn(4, 6, router.hidden_size, device="cuda")
+    for _ in range(router._window + 1):
+        router(*router_args(block, x))  # must not raise
+
+    assert router.get_metrics()["smear_delta_scale_mean"] is not None
+    for value in router._accum.values():
+        assert value.is_cuda
+
+
+def test_delta_scale_never_raises_into_forward():
+    """Whatever it hits, the step continues."""
+    router, block = make()
+    router._delta_scale_inner = lambda *a, **k: 1 / 0
+    router(*router_args(block, torch.randn(4, 6, router.hidden_size)))

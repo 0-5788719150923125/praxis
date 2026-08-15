@@ -1,5 +1,11 @@
 """Hardware-related CLI arguments."""
 
+from praxis.trainers.precision import (
+    DEFAULT_PRECISION,
+    PRECISION_CHOICES,
+    PRECISION_REGISTRY,
+)
+
 
 class HardwareGroup:
     """Hardware configuration arguments."""
@@ -16,6 +22,21 @@ class HardwareGroup:
             type=str,
             default="cpu",
             help="Device to use",
+        )
+
+        group.add_argument(
+            "--precision",
+            type=str,
+            default=DEFAULT_PRECISION,
+            choices=PRECISION_CHOICES,
+            metavar="{" + ",".join(PRECISION_REGISTRY) + "}",
+            help=(
+                "Numeric precision for weights, gradients and matmul kernels: "
+                + "; ".join(
+                    f"{name} ({p.note})" for name, p in PRECISION_REGISTRY.items()
+                )
+                + f" (default: {DEFAULT_PRECISION})"
+            ),
         )
 
         group.add_argument(

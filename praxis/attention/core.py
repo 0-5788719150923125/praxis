@@ -6,7 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.functional import alpha_entmax, alpha_relu, ghostmax
+from praxis.functional import (
+    additive_mask,
+    alpha_entmax,
+    alpha_relu,
+    ghostmax,
+    mask_fill_value,
+)
 
 
 class ScaledDotProduct(nn.Module):
@@ -85,7 +91,12 @@ class ScaledDotProduct(nn.Module):
                 # Regular causal mask when no sequence blocking needed
                 causal_mask = (
                     torch.triu(
-                        torch.full((seq_len, hist_len), -1e9, device=scores.device),
+                        torch.full(
+                            (seq_len, hist_len),
+                            mask_fill_value(scores.dtype),
+                            dtype=scores.dtype,
+                            device=scores.device,
+                        ),
                         diagonal=1,
                     )
                     .unsqueeze(0)
@@ -101,8 +112,9 @@ class ScaledDotProduct(nn.Module):
                     hist_len, device=scores.device
                 )
 
-                mask = (same_block & causal).unsqueeze(1).float()
-                causal_mask = (1.0 - mask) * -1e9
+                causal_mask = additive_mask(
+                    (same_block & causal).unsqueeze(1), scores.dtype
+                )
 
             scores = scores + causal_mask
         elif attention_mask is not None:
@@ -110,7 +122,9 @@ class ScaledDotProduct(nn.Module):
             attention_mask = F.pad(
                 attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
             )
-            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            attention_mask = additive_mask(
+                attention_mask.unsqueeze(1).unsqueeze(2).bool(), scores.dtype
+            )
 
             scores = scores + attention_mask
 
