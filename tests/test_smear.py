@@ -737,7 +737,9 @@ def _one_hot(idx, n):
 
 def test_sharpness_separates_a_blend_from_a_choice():
     n = 4
-    blend = _Probe(n).score(torch.full((256, 3, n), 1.0 / n))["smear_selection_sharpness"]
+    blend = _Probe(n).score(torch.full((256, 3, n), 1.0 / n))[
+        "smear_selection_sharpness"
+    ]
     choice = _Probe(n).score(_one_hot(torch.randint(0, n, (256, 3)), n))[
         "smear_selection_sharpness"
     ]
@@ -850,14 +852,19 @@ def test_diagnostics_cover_every_recurrent_depth():
 
     seen = []
     original = router._log_metrics
-    router._log_metrics = lambda m, p: (seen.append(router._probe_depth), original(m, p))
+    router._log_metrics = lambda m, p: (
+        seen.append(router._probe_depth),
+        original(m, p),
+    )
 
     for _ in range(20):
         for depth in range(6):
             router._probe_depth = depth
             router(*router_args(block, x, depth=depth))
 
-    assert set(seen) == set(range(6)), f"depths missed by the diagnostics: {sorted(set(range(6)) - set(seen))}"
+    assert set(seen) == set(
+        range(6)
+    ), f"depths missed by the diagnostics: {sorted(set(range(6)) - set(seen))}"
     assert seen.count(1) == seen.count(0), "passes are not weighted equally"
 
 

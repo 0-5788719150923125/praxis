@@ -755,7 +755,9 @@ class SMEAR(nn.Module):
             # never reach the loss.
             pass
 
-    def _delta_scale(self, layer: nn.Module, merged: Dict[str, Tensor], w: Tensor) -> None:
+    def _delta_scale(
+        self, layer: nn.Module, merged: Dict[str, Tensor], w: Tensor
+    ) -> None:
         """``||sum_e w_e delta_e|| / ||base||`` per target, Frobenius.
 
         The coefficients say how the deviations are MIXED; this says whether the
