@@ -363,3 +363,36 @@ def test_smear_merge_coefficients_pattern_parses_real_keys():
         assert int(match.group(2)) == col
 
     assert not pattern.match("smear_coeff_attn"), "a key with no index is not a cell"
+
+
+def test_cross_run_charts_do_not_match_points_by_array_index():
+    """Run comparison must hover by x VALUE, not by position in the array.
+
+    Chart.js's ``index`` mode returns the same array index from every dataset.
+    Nothing keeps those indices aligned across runs - LTTB selects different
+    rows per run, validation rows are sparse and deduped, and runs end at
+    different lengths - so hovering compared one run's point against a point in
+    another run at an unrelated x. Measured on the token axis with two real
+    runs, a single hover matched 0.0044B tokens against 0.0166B, and a run
+    shorter than the chosen index dropped out of the tooltip entirely.
+
+    Source-level guard. The behaviour itself was verified in a browser against
+    live run data; this only catches a revert to the built-in mode.
+    """
+    import pathlib
+
+    src = pathlib.Path("praxis/web/src/js/charts.js").read_text()
+
+    assert "praxisNearestX" in src, "the nearest-by-x interaction mode is gone"
+    assert src.count("crossRunInteraction()") >= 2, (
+        "both the scalar run-comparison chart and the multi-series composite "
+        "chart must use the x-matching interaction"
+    )
+    # One occurrence only: the fallback inside crossRunInteraction, taken when
+    # Chart.js is somehow unavailable to register a custom mode. Any second one
+    # is a chart wiring itself straight back to index-matching.
+    index_modes = src.count("mode: 'index'")
+    assert index_modes == 1, (
+        "expected exactly one 'index' mode - crossRunInteraction's fallback - "
+        f"but found {index_modes}"
+    )

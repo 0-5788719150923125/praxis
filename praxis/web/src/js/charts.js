@@ -83,6 +83,102 @@ function syncXAxisToggle() {
     });
 }
 
+// ── Cross-run hover ─────────────────────────────────────────────────────────
+// Chart.js's 'index' mode matches points by ARRAY INDEX, not by x value. That
+// only reads correctly when every dataset shares one x array, and none of these
+// charts do: LTTB picks different rows per run, validation rows are sparse and
+// deduped, and runs end at different lengths. So hovering compared a point in
+// one run against whatever happened to sit at the same index in another - at a
+// completely unrelated x - and a run shorter than that index vanished from the
+// tooltip entirely.
+//
+// This mode instead answers the question the chart is actually asking: for each
+// run, which of ITS points is nearest the x under the cursor. A run whose data
+// does not span that x contributes nothing, rather than a phantom reading taken
+// from the end of its curve.
+const NEAREST_X_MODE = 'praxisNearestX';
+
+// Slack at each end of a run's span, so its first and last points stay
+// reachable instead of needing a pixel-exact hover.
+const HOVER_EDGE_PAD_PX = 6;
+
+function registerNearestXMode() {
+    if (typeof Chart === 'undefined' || !Chart.Interaction) return false;
+    if (Chart.Interaction.modes[NEAREST_X_MODE]) return true;
+
+    Chart.Interaction.modes[NEAREST_X_MODE] = (chart, event, options, useFinalPosition) => {
+        if (!chart.chartArea) return [];
+        const cursorX = event.x;
+        if (!Number.isFinite(cursorX)) return [];
+
+        const items = [];
+        chart.getSortedVisibleDatasetMetas().forEach(meta => {
+            if (!meta.data.length) return;
+
+            // Whether a run should answer at all is a question about its SPAN,
+            // not about distance to its nearest sample. Validation points sit
+            // ~N steps apart, which late on the token axis is a wide gap, so a
+            // distance cap would silently blank a run that genuinely covers
+            // this x. A run that simply ended earlier is the case worth
+            // excluding, and that is exactly what the span test catches.
+            const xs = meta.data.map(el => el.getProps(['x'], useFinalPosition).x);
+            const lo = Math.min(...xs) - HOVER_EDGE_PAD_PX;
+            const hi = Math.max(...xs) + HOVER_EDGE_PAD_PX;
+            if (cursorX < lo || cursorX > hi) return;
+
+            let best = null;
+            let bestDistance = Infinity;
+            xs.forEach((x, index) => {
+                const distance = Math.abs(x - cursorX);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = { element: meta.data[index], datasetIndex: meta.index, index };
+                }
+            });
+            if (best) items.push(best);
+        });
+        return items;
+    };
+    return true;
+}
+
+const NEAREST_X_READY = registerNearestXMode();
+
+/** Interaction block for a cross-run line chart, with a safe fallback. */
+function crossRunInteraction() {
+    return NEAREST_X_READY || registerNearestXMode()
+        ? { intersect: false, mode: NEAREST_X_MODE }
+        : { intersect: false, mode: 'index' };
+}
+
+/**
+ * Tooltip callbacks that never imply two runs were read at the same x.
+ *
+ * Points are sparse and land wherever each run happened to log, so the hovered
+ * runs usually sit at slightly different coordinates. When they do, each line
+ * carries its own.
+ */
+function crossRunTooltipCallbacks(axis, formatValue = (v) => v.toFixed(4)) {
+    const coord = (item) => formatAxisTick(item.parsed.x);
+    return {
+        title: (items) => {
+            if (!items.length) return '';
+            const xs = new Set(items.map(coord));
+            return xs.size === 1
+                ? `${axis.label} ${coord(items[0])}`
+                : `${axis.label} ~${coord(items[0])}`;
+        },
+        label: (item) => {
+            const items = item.chart.tooltip?.dataPoints || [item];
+            const spread = new Set(items.map(coord)).size > 1;
+            const value = formatValue(item.parsed.y);
+            return spread
+                ? `${item.dataset.label}: ${value}  (at ${coord(item)})`
+                : `${item.dataset.label}: ${value}`;
+        },
+    };
+}
+
 // ── Axis tick formatting ────────────────────────────────────────────────────
 // Readable text for the magnitudes these charts actually carry. Log scales
 // used to push EVERY tick through toExponential(0), which renders a batch size
@@ -2490,10 +2586,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
+            interaction: crossRunInteraction(),
             plugins: {
                 legend: {
                     display: runs.length > 1,
@@ -2513,10 +2606,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                     borderWidth: 1,
                     padding: 12,
                     displayColors: true,
-                    callbacks: {
-                        title: (ctx) => `${axis.label} ${formatAxisTick(ctx[0].parsed.x)}`,
-                        label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)}`
-                    }
+                    callbacks: crossRunTooltipCallbacks(axis)
                 }
             },
             scales: {
@@ -3475,10 +3565,10 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
+            // Series here usually share one run's x array, where index-matching
+            // was harmless - but the moment two runs are selected they do not,
+            // and the same cross-run mismatch applies.
+            interaction: crossRunInteraction(),
             plugins: {
                 legend: {
                     display: true,
@@ -3496,7 +3586,8 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                     bodyColor: textColor,
                     borderColor: gridColor,
                     borderWidth: 1,
-                    padding: 12
+                    padding: 12,
+                    callbacks: crossRunTooltipCallbacks(axis)
                 }
             },
             scales: {
