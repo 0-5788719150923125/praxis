@@ -44,7 +44,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
-| `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc, arc_dropoff, arc_single, arc_single_dropoff) |
+| `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc, arc_dropoff, arc_single, arc_single_dropoff, ssog) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet) |
@@ -62,7 +62,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear) |
+| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |

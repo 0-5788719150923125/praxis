@@ -570,6 +570,36 @@ class CrystalVearHead(BaseHead):
         logits = F.linear(router_input, weight, v.router.bias)
         return torch.softmax(logits, dim=-1)
 
+    def _expert_centers(self) -> Tensor:
+        """The bank's center sets, ``[N, V, D]``.
+
+        Every read of the bank's geometry goes through here so a subclass can
+        change HOW the N sets are stored without touching the routing, the
+        logits, or the diagnostics. ``CrystalSmearHead`` uses it to hold one
+        base set plus low-rank deviations instead of N independent sets.
+        """
+        return torch.stack([e.centers for e in self.bank.experts], dim=0)
+
+    def _training_logits(
+        self, hidden_states: Tensor, mask: Optional[Tensor]
+    ) -> Tensor:
+        """Training merge: ONE crystal for the whole batch.
+
+        ``sharp.mean(dim=0)`` is the honest limit named in the class docstring,
+        and it is also the reason the routing cannot learn to be
+        input-conditional: the loss reaches the coefficients only through the
+        batch mean, so every example contributes the identical routing gradient
+        and a constant router is the fixed point. ``CrystalSmearHead`` overrides
+        exactly this method and nothing else.
+        """
+        probs = self._route(hidden_states, mask)  # [B, N] (post-dropout)
+        sharp = probs.pow(self._sharpen)
+        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        ew = sharp.mean(dim=0)
+        merged = torch.einsum("n,nvd->vd", ew.to(self._expert_centers().dtype),
+                              self._expert_centers())
+        return self._crystal_logits(hidden_states, merged, self.bank.experts[0])
+
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         if self.pre_projection is not None:
             hidden_states = self.pre_projection(hidden_states)
@@ -587,14 +617,7 @@ class CrystalVearHead(BaseHead):
             mask = mask[:, -hidden_states.shape[1] :]
         experts = self.bank.experts
         if self.training:
-            # Training keeps the batch-mean merge (one crystal per batch, the
-            # documented honest limit); unchanged, so a live run is undisturbed.
-            probs = self._route(hidden_states, mask)  # [B, N] (post-dropout)
-            sharp = probs.pow(self._sharpen)
-            sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-            ew = sharp.mean(dim=0)
-            merged = sum(ew[i] * experts[i].centers for i in range(len(experts)))
-            return self._crystal_logits(hidden_states, merged, experts[0])
+            return self._training_logits(hidden_states, mask)
         # Inference routes PER POSITION on the prefix mean, so every position is
         # a causal read: a batched forward equals each sequence run alone (the
         # padding invariance batched decode needs) AND a long row equals each of
@@ -604,7 +627,7 @@ class CrystalVearHead(BaseHead):
             probs = self._route(hidden_states, mask)
             sharp = probs.pow(self._sharpen)
             sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-            stacked = torch.stack([e.centers for e in experts], dim=0)  # [N, V, D]
+            stacked = self._expert_centers()  # [N, V, D]
             merged = torch.einsum("bn,nvd->bvd", sharp, stacked)  # [B, V, D]
             return self._crystal_logits_perseq(hidden_states, merged, experts[0])
         sharp = self._route_causal(hidden_states, mask).pow(self._sharpen)
@@ -625,15 +648,15 @@ class CrystalVearHead(BaseHead):
         """
         out_dtype = x.dtype
         xf = x.float()  # [B, T, D]
-        centers = [e.centers.float() for e in self.bank.experts]
+        stack0 = self._expert_centers().float()  # [N, V, D]
+        centers = list(stack0.unbind(0))
         s = sharp.float()  # [B, T, N]
         xx = (xf * xf).sum(-1, keepdim=True)  # [B, T, 1]
         cx = None  # sum_n s_n (x . C_n)
         for n, c in enumerate(centers):
             term = s[..., n : n + 1] * (xf @ c.T)  # [B, T, V]
             cx = term if cx is None else cx + term
-        stacked = torch.stack(centers, dim=0)  # [N, V, D]
-        gram = torch.einsum("nvd,mvd->nmv", stacked, stacked)  # [N, N, V]
+        gram = torch.einsum("nvd,mvd->nmv", stack0, stack0)  # [N, N, V]
         ss = (s.unsqueeze(-1) * s.unsqueeze(-2)).flatten(-2)  # [B, T, N*N]
         cc = ss @ gram.flatten(0, 1)  # [B, T, V]
         dist_sq = (cc + xx - 2.0 * cx).clamp_min(ref.eps)
@@ -705,7 +728,7 @@ class CrystalVearHead(BaseHead):
         out: dict = {}
         # Repulsion computed fresh here (parameter-only, collected post-forward
         # like centers_rms) - no stash, so nothing escapes the forward graph.
-        if self.training and self.n_experts >= 2:
+        if self.training and self.n_experts >= 2 and self._rep_scale > 0:
             out["crystal_bank_repulsion"] = (
                 self._rep_scale * self.bank._inter_expert_repulsion()
             )
@@ -714,20 +737,25 @@ class CrystalVearHead(BaseHead):
             or 0.0
         )
         if lam > 0.0:
-            rms = torch.stack(
-                [
-                    e.centers.pow(2).mean(dim=0).clamp_min(1e-12).sqrt().mean()
-                    for e in self.bank.experts
-                ]
-            ).mean()
+            rms = (
+                self._expert_centers()
+                .pow(2)
+                .mean(dim=1)
+                .clamp_min(1e-12)
+                .sqrt()
+                .mean()
+            )
             out["centers_rms"] = lam * rms
         return out
+
+
+
 
     @torch.no_grad()
     def _bank_distinctness(self) -> float:
         """Mean pairwise L2 distance between the experts' center-sets - rises as
         VEAR's repulsion drives the geometries apart; ~0 = collapsed/redundant."""
-        flat = torch.stack([e.centers.reshape(-1) for e in self.bank.experts], dim=0)
+        flat = self._expert_centers().reshape(self.n_experts, -1)
         n = flat.shape[0]
         if n < 2:
             return 0.0
@@ -799,3 +827,91 @@ class CrystalVearHead(BaseHead):
             "caller": "CrystalVearHead",
         }
         return out
+
+
+class CrystalSmearHead(CrystalVearHead):
+    """prismatic7's bank: SMEAR's mechanism where prismatic6 has the batch mean.
+
+    ``CrystalVearHead`` at ``sharpen=1.0`` already blends rather than votes, so
+    prismatic6 is SMEAR in that one respect and nothing else. Two things it does
+    not do, and both are the paper's (arxiv 2306.03745), not new here:
+
+    ROUTING IS PER EXAMPLE. The parent merges on ``sharp.mean(dim=0)`` - one
+    crystal for the whole batch. That is not merely coarse: the loss reaches the
+    coefficients only through the batch mean, so every example contributes the
+    identical routing gradient ``dL/dw / B`` and a CONSTANT router is the
+    design's fixed point rather than a training failure. It is the same defect
+    the decoder's router had, where ``smear_input_dependence`` sat at ~0 through
+    abstractinator-m/n/p. Here each example merges its own center set, which
+    needs no approximation: ``_crystal_logits_perseq`` already consumes a
+    ``[B, V, D]`` center stack, because inference has always routed per position.
+    Training was the odd one out, and this also closes that train/inference gap.
+
+    THE BANK IS BASE PLUS DEVIATIONS. The parent holds ``N`` independent
+    ``[V, D]`` center sets. Here there is ONE set plus ``N`` rank-r deviations,
+    which is the same merge written in a different basis
+    (``base + sum_e w_e delta_e``) with two properties the parent lacks: it is
+    EXACTLY the base at initialization (LoRA init, ``b`` zero), so swapping
+    prismatic6 -> prismatic7 is a clean A/B rather than a reroll; and the shared
+    trunk receives full gradient whatever the routing does, since
+    ``d(merged)/d(base) = sum_e w_e = 1``. A starved deviation costs its rank
+    instead of a whole geometry.
+
+    Repulsion is OFF (``_rep_scale = 0``). It is VEAR's, not the paper's, and it
+    exists to keep independent geometries apart; deviations off a shared base
+    are not competing for the same role. Expert dropout stays at the bank's 0.1,
+    which IS the paper's balancing mechanism.
+
+    Averaging distinct center sets pulls the result toward the origin - the
+    parent's argument for sharpening - but that argument applies to a convex hull
+    of independently trained shells. A base plus zero-mean deviations has no such
+    interior: the merge stays on the base's shell and the deviations perturb it.
+    """
+
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        n_experts: int = CRYSTAL_BANK_SIZE,
+    ) -> None:
+        # sharpen=1.0: prismatic7 is SMEAR by construction, not by configuration.
+        super().__init__(config, encoder, n_experts=n_experts, sharpen=1.0)
+        from praxis.routers.smear import MIN_RANK, RANK_DIVISOR
+
+        base = self.bank.experts[0]
+        # The parent built N full center sets; keep one as the shared trunk (and
+        # as the reference for n / eps / label_smoothing / vocab_size) and carry
+        # the rest as deviations off it.
+        self.bank.experts = nn.ModuleList([base])
+        vocab_size, center_dim = base.centers.shape
+        self.rank = max(MIN_RANK, min(vocab_size, center_dim) // RANK_DIVISOR)
+        self.lora_a = nn.Parameter(torch.empty(n_experts, self.rank, center_dim))
+        nn.init.normal_(self.lora_a, mean=0.0, std=0.02)
+        self.lora_b = nn.Parameter(torch.zeros(n_experts, vocab_size, self.rank))
+        self._rep_scale = 0.0
+
+    def _expert_centers(self) -> Tensor:
+        """``[N, V, D]``: the shared geometry plus each deviation.
+
+        Exactly ``base`` for every expert at step 0, since ``lora_b`` is zero.
+        """
+        base = self.bank.experts[0].centers
+        delta = torch.einsum("evr,erd->evd", self.lora_b, self.lora_a)
+        return base.unsqueeze(0) + delta
+
+    def _training_logits(
+        self, hidden_states: Tensor, mask: Optional[Tensor]
+    ) -> Tensor:
+        """Per-EXAMPLE merge, which is the whole point of this subclass."""
+        if hidden_states.dim() < 3:
+            # No batch axis to route over; the parent's path is already correct.
+            return super()._training_logits(hidden_states, mask)
+        probs = self._route(hidden_states, mask)  # [B, N], padded-masked
+        stack = self._expert_centers()  # [N, V, D]
+        merged = torch.einsum("bn,nvd->bvd", probs.to(stack.dtype), stack)
+        return self._crystal_logits_perseq(
+            hidden_states, merged, self.bank.experts[0]
+        )
+
+    def compose_repr(self) -> str:
+        return f"CrystalSmearBank({self.n_experts}, rank={self.rank})"

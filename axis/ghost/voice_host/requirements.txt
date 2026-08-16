@@ -45,10 +45,15 @@ phonemizer>=3.2
 # none is wanted: CMUdict's readings disagree with eSpeak's transcription
 # conventions on 60% of words, which is the "was" -> "wars" failure again.
 #
+# Its STOPWORD corpus does a second job: homographs.py needs to know which words
+# are function words (they get reduced inside any carrier phrase, and none of them
+# has a second lexical reading), and that list is nltk's to maintain rather than
+# ours to type out and keep extending.
+#
 # Apache-2.0. Pure Python; its dependencies (click, joblib, regex, tqdm) are all
-# permissive. The tagger MODEL is data and is not in the wheel - it is fetched
-# once on first use into <venv>/nltk_data, and everything degrades to the old
-# behaviour if that never happens.
+# permissive. The tagger MODEL and the corpus are data and are not in the wheel -
+# both are fetched once on first use into <venv>/nltk_data, and everything degrades
+# to the old behaviour if that never happens.
 nltk>=3.8
 
 # Build/patch time only, and optional: used once per voice to expose the VITS

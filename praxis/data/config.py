@@ -357,14 +357,31 @@ DATASETS = {
         type="synthetic-print",
         task_type=TaskType.CONVERSATION,
     ),
+    # The knowledge base as raw text: docs, notes, crawled pages.
     "kb": dict(
         type="kb",
+        # LOCAL for the same reason as ``git-history`` and ``praxis``: a
+        # bounded store reshuffled per epoch and reloaded on exhaustion, so
+        # every item is seen again and again. Crawled pages grow as the spider
+        # works, but they join the same finite pool - that is not the
+        # never-repeats economics `pretrain` weights for.
+        task_type="local",
     ),
     # Recency-weighted before/after code transitions from the current repo's git
     # history. type-only; the dataset reads ``.`` by default (override with
     # ``repo``). See praxis/data/datasets/git_history.py.
     "git-history": dict(
         type="git_history",
+        # LOCAL, for the same reason the ``praxis`` entry below is: one repo's
+        # commit history is a few MB read off disk and revisited constantly,
+        # not unrepeatable web text. Tagged PRETRAIN it shared fineweb's
+        # loss-weight line and difficulty EMA, so the curriculum could not tell
+        # a thrice-seen diff from a token it will never see again.
+        #
+        # Must be declared, not inferred: resolve_task_type only reaches
+        # FORMAT_TO_TASK through `format`, and a type-only entry sets none, so
+        # the fallback is DEFAULT_TASK (PRETRAIN).
+        task_type="local",
     ),
     "praxis": dict(
         type="directory",

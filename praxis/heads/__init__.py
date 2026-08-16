@@ -1,7 +1,12 @@
 from functools import partial
 from typing import Optional
 
-from praxis.heads.crystal import CrystalClassifier, CrystalHead, CrystalVearHead
+from praxis.heads.crystal import (
+    CrystalClassifier,
+    CrystalHead,
+    CrystalSmearHead,
+    CrystalVearHead,
+)
 from praxis.heads.forward import ForwardHead
 from praxis.heads.halo import HaloClassifier, HaloHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
@@ -142,6 +147,20 @@ def _prismatic6_branches(sharpen: Optional[float]) -> list:
     ]
 
 
+def _prismatic7_branches() -> list:
+    """prismatic6's three arms, with arm 0's bank merged per example.
+
+    Only the geometric arm changes. The direct readout and the HALO arm are
+    byte-identical to prismatic6, so a prismatic6 -> prismatic7 comparison
+    attributes any delta to the merge and to nothing else.
+    """
+    return [
+        CrystalSmearHead,
+        ForwardHead,
+        partial(HaloHead, detach_in_blend=False),
+    ]
+
+
 HEAD_REGISTRY = dict(
     forward=ForwardHead,
     tied=TiedWeights,
@@ -207,5 +226,19 @@ HEAD_REGISTRY = dict(
         ParallelHead,
         stem=_field("input", fast_weights=True),
         branches=_prismatic6_branches(None),
+    ),
+    # prismatic7: prismatic6's arms, with the crystal bank merged the way the
+    # SMEAR paper merges - per EXAMPLE rather than on the batch mean, over one
+    # shared geometry plus low-rank deviations rather than N independent center
+    # sets. prismatic6 is already SMEAR in its exponent (sharpen 1.0) and in
+    # nothing else; those two are the rest of it. See CrystalSmearHead for why
+    # a batch mean makes a constant router the design's fixed point - which is
+    # what smear_input_dependence sitting near 0 through -m/-n/-p has been.
+    # Exactly identical to prismatic6 at initialization (LoRA init), so the
+    # swap is a clean A/B.
+    prismatic7=partial(
+        ParallelHead,
+        stem=_field("input", fast_weights=True),
+        branches=_prismatic7_branches(),
     ),
 )

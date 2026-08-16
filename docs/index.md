@@ -6,7 +6,7 @@ Praxis is built around 52 pluggable registries. The feature categories below lin
 ## Feature registries
 
 - [Activation functions](activations.md) (35) - Pointwise nonlinearities used inside blocks and heads.
-- [Attention mechanisms](attention.md) (10) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
+- [Attention mechanisms](attention.md) (11) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (6) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
@@ -21,7 +21,7 @@ Praxis is built around 52 pluggable registries. The feature categories below lin
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Optimizer profiles](optimizers.md) (7) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
 - [Optimizer wrappers](wrappers.md) (8) - Composable wrappers layered onto the base optimizer with ``--optimizer-wrappers`` (a list, applied innermost-first). The schedule-free family runs without an LR schedule; the others keep it.
-- [Output heads](heads.md) (15) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
+- [Output heads](heads.md) (16) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 - [Residual connections](residuals.md) (4) - Standard residuals vs. hyper-connections.

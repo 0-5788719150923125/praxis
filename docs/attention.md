@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (10 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (11 entries)
 
 ## `arc`, `arc_dropoff` - ArcAttention
 
@@ -73,6 +73,12 @@ bank queried at every step, decoupling memory size from sequence length.
 Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
+
+## `ssog` - SSOGAttention
+
+Sum-of-Gaussians attention field over causal lag (see module docstring).
+
+Source: [praxis/attention/ssog.py:70](../praxis/attention/ssog.py#L70)
 
 ## `syntaxes` - SyntaxesAttention
 

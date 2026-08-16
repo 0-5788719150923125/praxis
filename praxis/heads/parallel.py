@@ -196,8 +196,20 @@ class ParallelHead(BaseHead):
         gaps = diff[iu[0], iu[1]]
         return -(gaps + self._REPULSION_EPS).log().mean()
 
+    @torch.compiler.disable
     def _update_gate_stats(self, w: Tensor) -> None:
-        """Cache cheap gate diagnostics from the latest forward, for logging."""
+        """Cache cheap gate diagnostics from the latest forward, for logging.
+
+        ``torch.compiler.disable`` because this is telemetry, and the two
+        ``.item()`` calls below make Dynamo guard on a FLOAT VALUE - so a new
+        graph is compiled every time the gate entropy changes, which is every
+        step. Measured on abstractinator-q: this frame hit
+        ``config.recompile_limit (8)`` on its own with
+        ``last reason: ___stack2 == 1.047181248664856``, after which Dynamo
+        gives up and runs it eager anyway. Same call made for the same reason as
+        the patcher and the residual VQ (see project notes, 2026-08-03);
+        inert when nothing is compiling, so the eager path is unchanged.
+        """
         with torch.no_grad():
             flat = w.reshape(-1, w.shape[-1])
             self._gate_mean = flat.mean(dim=0)

@@ -73,14 +73,33 @@ def _tokens(sentence: str) -> list:
     return out
 
 
-def _read(sentence: str, word: str) -> str:
-    """The reading `word` ends up with in `sentence` - "" meaning unchanged."""
+def _read(sentence: str, word: str, context: tuple = ()) -> str:
+    """The reading `word` ends up with in `sentence` - "" meaning unchanged.
+
+    `context` is any sentences that come BEFORE it, fed in reading order through
+    the same instance. That is not decoration: the narrative prior is built from
+    them, and it is the only thing that can settle a sentence like "I read your
+    book in two nights", where the clause itself holds no tense at all.
+    """
+    hg = homographs.Homographs(_speak)
+    for prior in context:
+        hg.annotate(_tokens(prior), LANG)
     toks = _tokens(sentence)
-    homographs.Homographs(_speak).annotate(toks, LANG)
+    hg.annotate(toks, LANG)
     for t in toks:
         if t["text"].lower() == word:
             return str(t.get("ipa", ""))
     raise AssertionError(f"{word!r} is not in {sentence!r}")
+
+
+# A few sentences of ordinary past-tense narrative, used as `context` wherever the
+# claim under test is about the DISCOURSE rather than the clause. Deliberately dull
+# and homograph-free, so all they contribute is a tense.
+PAST_NARRATIVE = (
+    "He came down the stairs and opened the door.",
+    "The rain had stopped and the yard smelled of it.",
+    "She waited by the gate until he found her.",
+)
 
 
 def _bare(word: str) -> str:
@@ -92,19 +111,45 @@ def _bare(word: str) -> str:
 
 SWITCHES = [
     # the reported bug, in the two shapes a chapter actually contains
-    ("He read the book yesterday.", "read", "past"),
-    ("She read to him until the lamp went out.", "read", "past"),
-    ("Nobody read the sign.", "read", "past"),
-    ("She has read every page.", "read", "past"),
-    ("He had read the whole ledger.", "read", "past"),
+    ("He read the book yesterday.", "read", "past", ()),
+    ("She read to him until the lamp went out.", "read", "past", ()),
+    ("Nobody read the sign.", "read", "past", ()),
+    ("She has read every page.", "read", "past", ()),
+    ("He had read the whole ledger.", "read", "past", ()),
     # a participle the perceptron calls something else; the auxiliary decides
-    ("The letter was read aloud.", "read", "past"),
-    ("The names were read out in order.", "read", "past"),
+    ("The letter was read aloud.", "read", "past", ()),
+    ("The names were read out in order.", "read", "past", ()),
+    # THE SECOND REPORT, verbatim from north-star ch12 - three sites in one
+    # paragraph, all past, all previously spoken in the present. The tagger calls
+    # the first two VBP and the third VB: no morphological evidence at all, so
+    # every one of these is decided by the clause around it rather than the word.
+    (
+        "I stood at the mailbox and read that seed catalog cover to cover.",
+        "read",
+        "past",
+        (),
+    ),  # conjunct of `stood`
+    (
+        "You told me I'd forgotten I read it, and you said it flat.",
+        "read",
+        "past",
+        (),
+    ),  # complement of `told`
+    (
+        "I read your book in two nights, the year it came.",
+        "read",
+        "past",
+        (),
+    ),  # no tense in the clause at all - the narrative decides
+    # the same shapes, generalised
+    ("She sat down and read for an hour.", "read", "past", ()),
+    ("We read it and left.", "read", "past", ()),  # first conjunct, tense on the right
+    ("I read it last night.", "read", "past", PAST_NARRATIVE),
     # other homographs the same machinery covers, for free
-    ("Historians record the year.", "record", "verb"),
-    ("They will present the case.", "present", "verb"),
-    ("The refuse was piled by the door.", "refuse", "noun"),
-    ("He had wound the clock too tight.", "wound", "wound"),
+    ("Historians record the year.", "record", "verb", ()),
+    ("They will present the case.", "present", "verb", ()),
+    ("The refuse was piled by the door.", "refuse", "noun", ()),
+    ("He had wound the clock too tight.", "wound", "wound", ()),
 ]
 
 # What each expected reading IS, asked of eSpeak rather than written down here -
@@ -119,46 +164,107 @@ EXPECT = {
 
 
 def check_switches() -> None:
-    for sentence, word, kind in SWITCHES:
+    for sentence, word, kind, context in SWITCHES:
         frame, slot = EXPECT[kind]
         want = _speak([frame.format(word)])[0].split()[slot]
-        got = _read(sentence, word)
+        got = _read(sentence, word, context)
         assert got, f"{word!r} unchanged in {sentence!r} (still {_bare(word)})"
         assert got == want, f"{sentence!r}: {word} -> {got}, wanted {want}"
-        print(f"    {sentence:46s} {word} {_bare(word)} -> {got}")
+        print(f"    {sentence[:58]:60s} {word} {_bare(word)} -> {got}")
 
 
 # -- HOLDS: it must not fire here ------------------------------------------
 
 HOLDS = [
-    # present and future: eSpeak's default is already right
-    ("I will read the book tomorrow.", "read"),
-    ("Can you read this?", "read"),
-    ("Read it aloud.", "read"),
-    ("They read quietly each night.", "read"),
+    # present and future: eSpeak's default is already right. Each of these carries
+    # the PAST_NARRATIVE context, because holding without a prior proves nothing -
+    # the question is whether a licenser still beats a past-tense chapter.
+    ("I will read the book tomorrow.", "read", PAST_NARRATIVE),
+    ("Can you read this?", "read", PAST_NARRATIVE),
+    ("He cannot read it.", "read", PAST_NARRATIVE),
+    ("He did read it.", "read", PAST_NARRATIVE),
+    ("She wanted to read it.", "read", PAST_NARRATIVE),
+    # IMPERATIVES have no subject, and that outranks both the tag and the prior.
+    # The tagger calls the first VB, the second VB and the third VBN.
+    ("Read it aloud.", "read", PAST_NARRATIVE),
+    ("Now read the list again.", "read", PAST_NARRATIVE),
+    ("Read from the near face and stop.", "read", PAST_NARRATIVE),
     # words eSpeak does not distinguish at all - there is nothing to switch to
-    ("He led the way with a lead pipe.", "lead"),
-    ("Wait one minute.", "minute"),
-    ("The row of chairs.", "row"),
+    ("He led the way with a lead pipe.", "lead", ()),
+    ("Wait one minute.", "minute", ()),
+    ("The row of chairs.", "row", ()),
     # the noun reading of a pair whose default IS the noun
-    ("The record shows nothing.", "record"),
-    ("A record of the year.", "record"),
-    ("The present was wrapped.", "present"),
+    ("The record shows nothing.", "record", ()),
+    ("A record of the year.", "record", ()),
+    ("The present was wrapped.", "present", ()),
+    # A NOUN SLOT beats a verb tag: nothing but a noun can follow "the most
+    # legible", and the tagger called this one a verb.
+    ("The most legible object a person makes.", "object", ()),
+    # ...and the noun/verb fallback must not reach a word that was never tagged a
+    # verb. "was record heat" is not the verb `record`.
+    ("It was record heat that year.", "record", ()),
+    # A REGULAR -ed FORM is already past and must not be handed the past frame:
+    # eSpeak reads "they have resented them" as re-sented, the perfume.
+    ("They flattered inward and resented outward.", "resented", PAST_NARRATIVE),
+    # CAPITALS ARE NOT A PART OF SPEECH - both of these come back NNP.
+    ("THAT DO NOT CONVENE.", "that", ()),
+    ("Refuse, not cannot.", "refuse", ()),
+    # FUNCTION WORDS, which are tagged as verbs and get reduced inside any frame.
+    # This is the case the first version shipped without: every one of these sits
+    # after an auxiliary, which is exactly where the participle rule fires.
+    ("It was a refund.", "a", ()),
+    ("I was in the room when you said it.", "in", ()),
+    ("Well, so was I.", "i", ()),
+    ("The mail has always run five years late.", "has", ()),
+    ("I had to sit down on the porch.", "to", ()),
+    ("It will be one word, maybe two.", "be", ()),
     # ordinary words, ordinary sentences: nothing here is a homograph
-    ("The lamp went out and the room was quiet.", "lamp"),
-    ("She walked to the window and looked down.", "walked"),
-    ("The miller was quiet.", "miller"),
-    ("The heater was warm.", "heater"),
-    ("It was above the door.", "above"),
-    ("They get it.", "get"),
+    ("The lamp went out and the room was quiet.", "lamp", ()),
+    ("She walked to the window and looked down.", "walked", ()),
+    ("The miller was quiet.", "miller", ()),
+    ("The heater was warm.", "heater", ()),
+    ("It was above the door.", "above", ()),
+    ("They get it.", "get", ()),
 ]
 
 
 def check_holds() -> None:
-    for sentence, word in HOLDS:
-        got = _read(sentence, word)
+    for sentence, word, context in HOLDS:
+        got = _read(sentence, word, context)
         assert not got, f"{sentence!r}: {word} was rewritten to {got} for nothing"
-        print(f"    {sentence:46s} {word} held at {_bare(word)}")
+        print(f"    {sentence[:58]:60s} {word} held at {_bare(word)}")
+
+
+# The habitual present inside a past-tense chapter. There is no rule that settles
+# these - "sometimes I read the paper" and "sometimes I read the paper that year"
+# differ by nothing the sentence contains - so the pass gets them wrong, and this
+# check pins WHERE the wrongness lives rather than pretending it does not.
+#
+# An earlier draft vetoed them with a hand-typed list of habitual adverbs, which is
+# the kind of list that never finishes. What is asserted instead: every one of these
+# is decided by the narrative prior and by nothing else. That keeps the limitation
+# confined to the single weakest rule - the one the audit prints - and it fails the
+# day some stronger rule starts reaching them, which would be a real regression.
+KNOWN_SOFT = [
+    "Sometimes I read the paper.",
+    "I usually read at night.",
+    "We often read together.",
+]
+
+
+def check_soft_cases_stay_soft() -> None:
+    for sentence in KNOWN_SOFT:
+        hg = homographs.Homographs(_speak)
+        for prior in PAST_NARRATIVE:
+            hg.annotate(_tokens(prior), LANG)
+        hg.annotate(_tokens(sentence), LANG)
+        why = [r for w, _f, r in hg.last_reasons if w.lower() == "read"]
+        assert why, f"{sentence!r}: `read` was not considered at all"
+        assert why[0].startswith("past-tense narrative"), (
+            f"{sentence!r}: decided by {why[0]!r}, not by the prior - a stronger "
+            "rule is now reaching a case nothing in the sentence can settle"
+        )
+        print(f"    {sentence:36s} soft, by {why[0]}")
 
 
 def check_author_wins() -> None:
@@ -180,6 +286,13 @@ def check_whole_sentence_untouched() -> None:
         "The spoon went past the gills and the water closed over it.",
         "Snow came down through the lamplight, slow and without any wind.",
         "He stood at the door for a while and then he went inside.",
+        # WITH AUXILIARIES IN THEM. The first version of this check had none, and
+        # that is precisely why it passed while the participle rule was quietly
+        # rewriting `a`, `to`, `in` and `I` wherever one of these stood in front
+        # of them.
+        "It was a fine day, and I was in the room when you said so.",
+        "The mail has always run late, and it will be late again.",
+        "He had to sit down, because the porch was where he had been.",
     ]
     for line in lines:
         toks = _tokens(line)
@@ -192,15 +305,15 @@ def check_whole_sentence_untouched() -> None:
 
 def check_degrades_without_tagger() -> None:
     """No nltk, no change - never an exception, never a lost sentence."""
-    saved = homographs._Tagger.state
+    saved = homographs._Corpus.tag
     try:
-        homographs._Tagger.state = False
+        homographs._Corpus.tag = None
         toks = _tokens("He read the book yesterday.")
         assert homographs.Homographs(_speak).annotate(toks, LANG) == 0
         assert not any(t.get("ipa") for t in toks)
         print("    tagger off -> zero rewrites, no exception")
     finally:
-        homographs._Tagger.state = saved
+        homographs._Corpus.tag = saved
 
 
 def check_probe_is_cached() -> None:
@@ -224,6 +337,7 @@ def check_probe_is_cached() -> None:
 CHECKS = [
     check_switches,
     check_holds,
+    check_soft_cases_stay_soft,
     check_author_wins,
     check_whole_sentence_untouched,
     check_degrades_without_tagger,
@@ -237,8 +351,8 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"eSpeak is not available in this environment: {exc}")
         return 2
-    if homographs._Tagger.get() is None:
-        print("the nltk tagger is not available in this environment")
+    if not homographs._Corpus.ready():
+        print("the nltk tagger/stopword data is not available in this environment")
         return 2
     failed = 0
     for fn in CHECKS:

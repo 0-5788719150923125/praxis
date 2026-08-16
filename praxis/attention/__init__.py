@@ -11,6 +11,7 @@ from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.single import SingleHeadArcAttention
+from praxis.attention.ssog import SSOGAttention
 from praxis.attention.syntaxes import SyntaxesAttention
 
 # Registry of available attention mechanisms
@@ -34,6 +35,9 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # head_size as usual. See praxis/attention/single.py.
     "arc_single": SingleHeadArcAttention,
     "arc_single_dropoff": partial(SingleHeadArcAttention, dropoff="warp"),
+    # Query-steered Gaussian field over causal lag, no Q/K (Pisoni's SSOG,
+    # ported to 1D). Position-addressed only; see praxis/attention/ssog.py.
+    "ssog": SSOGAttention,
 }
 
 

@@ -7,8 +7,30 @@ from praxis.environments import EnvironmentFeatures
 COMPILE_KWARGS = dict(
     mode="default",  # ~30% more memory, good speedup
     fullgraph=False,
-    dynamic=True,
+    # STATIC SHAPES, deliberately. `dynamic=True` makes every size symbolic from
+    # the first trace, and Inductor's range inference then fails on this model
+    # with `ValueRangeError: Invalid ranges [0:-1]` out of
+    # index_propagation.py - a loop extent whose upper bound resolved to 0.
+    # `dynamic=None` (trace static, re-trace symbolic once a size actually
+    # moves) fails identically the moment a size moves. Measured on
+    # abstractinator-q; only full specialization gets through.
+    #
+    # Affordable now in a way it was not under -g: static patching (-n) makes
+    # the patch count a function of seq_len rather than of content, so the
+    # shape set is small and bounded rather than open.
+    dynamic=False,
 )
+
+# Graphs Dynamo may compile per frame before giving up and running eager.
+#
+# The default 8 exists to catch runaway retracing. The variation here is
+# bounded and intentional, and 8 is simply too small for it: the recurrent
+# loop passes `current_depth` as a Python int, so Dynamo guards on its VALUE
+# and mints one graph per depth (6), and the batch governor varies microbatch
+# rows (16 and 64 observed), which multiplies it. 6 x 2 = 12 > 8, so the
+# router's forward was being abandoned to eager on a model that had just
+# compiled successfully.
+RECOMPILE_LIMIT = 32
 
 
 def _hp(hparams, key, default=None):
@@ -48,6 +70,7 @@ def try_compile_model(model, hparams):
 
     try:
         print("[COMPILER] Generating optimized kernel...")
+        torch._dynamo.config.recompile_limit = RECOMPILE_LIMIT
         return torch.compile(model, **COMPILE_KWARGS)
     except Exception as e:
         print(f"[COMPILER]\n")
