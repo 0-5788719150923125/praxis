@@ -35,6 +35,22 @@ numpy>=1.24
 espeakng-loader>=0.2
 phonemizer>=3.2
 
+# Part-of-speech tagging, used ONLY to choose between a homograph's readings.
+#
+# eSpeak already knows both readings of "read" and picks between them from
+# syntax - but ghost phonemizes word by word (it needs per-word boundaries for
+# the karaoke line), and a word alone has no syntax, so it got the present tense
+# every time. homographs.py re-asks eSpeak inside a carrier phrase that forces
+# the part of speech nltk found. No pronunciation dictionary is involved and
+# none is wanted: CMUdict's readings disagree with eSpeak's transcription
+# conventions on 60% of words, which is the "was" -> "wars" failure again.
+#
+# Apache-2.0. Pure Python; its dependencies (click, joblib, regex, tqdm) are all
+# permissive. The tagger MODEL is data and is not in the wheel - it is fetched
+# once on first use into <venv>/nltk_data, and everything degrades to the old
+# behaviour if that never happens.
+nltk>=3.8
+
 # Build/patch time only, and optional: used once per voice to expose the VITS
 # duration predictor as a graph output so we get exact per-phoneme timings.
 # Apache 2.0. Not required to synthesize.

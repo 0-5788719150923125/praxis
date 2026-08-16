@@ -674,8 +674,15 @@ class PiperBackend(Backend):
             raise BackendError(
                 "onnxruntime/numpy are not installed in the voice environment"
             ) from exc
+        import homographs  # ghost's own; HERE is on sys.path - see host.py
+
         self._sessions: dict[str, Any] = {}
         self._configs: dict[str, dict] = {}
+        # Homograph resolution phonemizes through this backend's OWN word-level
+        # call, so a carrier reading and a bare reading are always comparable.
+        # Constructed here rather than per request because its probe cache is the
+        # thing that makes it free after the first few sentences.
+        self._homographs = homographs.Homographs(self._espeak)
 
     # -- storage -----------------------------------------------------------
 
@@ -849,11 +856,15 @@ class PiperBackend(Backend):
         # include eSpeak's bare "en" - and "en" IS British in eSpeak, which is
         # the whole point of reading it from the config.
         lang = {"en": "en-gb", "en-uk": "en-gb"}.get(voice, voice)
-        # SENTENCE CONTEXT, word boundaries preserved by the separator.
-        # Phonemizing word by word loses homograph disambiguation: eSpeak reads
-        # "live" as laɪv in isolation and lɪv in "where they live", and ghost was
-        # getting the isolated reading for every occurrence. Passing whole
-        # sentences and splitting on the word separator gets both.
+        # EACH ITEM OF `words` IS ITS OWN UTTERANCE - a list is a batch, not a
+        # sentence - and callers pass one word per item, so this is the isolated
+        # reading by construction. That is deliberate (the docstring above says
+        # why: alignment) and it is also what costs the homograph: eSpeak reads
+        # "live" as laɪv alone and lɪv in "where they live", so ghost was getting
+        # the isolated reading for every occurrence. The separator is what makes
+        # a MULTI-word item splittable, which is how homographs.py asks the same
+        # question again with the syntax attached - it is not sentence context
+        # here.
         out = phonemize(
             words,
             language=lang,
@@ -874,6 +885,11 @@ class PiperBackend(Backend):
         Inline [K AE T] overrides arrive with `arpa` set and ALWAYS win - that
         is the whole point of the override, and it is how invented proper nouns
         stay pronounceable whichever phonemizer is in use.
+
+        A token may also carry `ipa`, which is eSpeak's OWN reading of that word
+        under the part of speech it was tagged with (homographs.py). It sits
+        below `arpa` - the author still outranks it - and above the word-by-word
+        transcription it exists to correct.
         """
         import arpabet
 
@@ -889,7 +905,7 @@ class PiperBackend(Backend):
         need = [
             i
             for i, t in enumerate(tokens)
-            if not t.get("arpa") and str(t.get("text", "")).strip()
+            if not t.get("arpa") and not t.get("ipa") and str(t.get("text", "")).strip()
         ]
         espoke: dict[int, str] = {}
         if need and phonemizer == "espeak":
@@ -937,6 +953,9 @@ class PiperBackend(Backend):
         for i, t in enumerate(tokens):
             if t.get("arpa"):
                 for ch, _ in arpabet.to_symbols([str(x) for x in t["arpa"]]):
+                    out.append((ch, i))
+            elif t.get("ipa"):
+                for ch in str(t["ipa"]):
                     out.append((ch, i))
             elif i in espoke:
                 for ch in espoke[i]:
@@ -1301,9 +1320,16 @@ class PiperBackend(Backend):
         import numpy as np
 
         pmap: dict = cfg["phoneme_id_map"]
-        symbols = self._symbols(
-            group, phonemizer, str(cfg.get("espeak", {}).get("voice", "en-us"))
-        )
+        espeak_voice = str(cfg.get("espeak", {}).get("voice", "en-us"))
+        # Word by word, a homograph has no syntax to be read by, so eSpeak gives
+        # its default reading every time - "he read the book" came out present
+        # tense. Ask it again in a frame that forces the part of speech, and only
+        # where the answer actually changes. See homographs.py; a no-op if nltk
+        # is not installed. English only, because the carrier frames and the
+        # tagger both are.
+        if phonemizer == "espeak" and espeak_voice.split("-")[0] in ("en", ""):
+            self._homographs.annotate(group, espeak_voice)
+        symbols = self._symbols(group, phonemizer, espeak_voice)
         # eSpeak is where U+0329 comes from, so this is the call that matters.
         symbols, folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]

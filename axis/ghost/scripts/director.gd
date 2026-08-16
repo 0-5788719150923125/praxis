@@ -288,8 +288,23 @@ const FLURRY_CD_MIN := 6     # never fewer scenes between flurries, whatever the
 # Rapid-fire STINGER: instead of cutting through different scenes (jarring at speed), a run of
 # beat-synced PUNCHES that contort / recolour / zoom the CURRENT scene - BANG, BANG, BANG - then
 # settle. A universal modulation: it rides the SceneView pulse + node tint, so it works on any scene.
+#
+# Zoom kick ranges, sampled per punch (never baked to one value). Asymmetric on
+# purpose - see the sampler in _drive_stinger and the gate in
+# tests/sting_shape_check.gd, which checks the outward one against the margin
+# below rather than against a remembered number.
+const STING_PUSH := Vector2(0.07, 0.20)   # inward: crops, can expose nothing
+const STING_PULL := Vector2(0.02, 0.05)   # outward: walks the painted edge into shot
+## The overdraw margin layer-composed scenes are painted to - the literal 1.15 in
+## [method GhostScene.update_layers], repeated here because the punch has to stay
+## inside it and nothing else connects the two numbers.
+const LAYER_OVERDRAW := 1.15
+## The largest zoom-out the camera drift alone can ask for ([method GhostScene.drift_view]:
+## `zoom` gain 0.08 at a view gain of 1, modulator in -1..1).
+const DRIFT_PULL := 0.08
 var _sting_left := 0         # beat-synced punches remaining in the run
-var _sting := 0.0            # current punch envelope (1 on the beat -> 0 between)
+var _sting_t := -1.0         # seconds into the live punch, < 0 when none is live
+var _sting_span := 0.28      # that punch's whole envelope, sampled from the pulse period
 var _sting_zoom := 0.0       # this punch's sampled kicks
 var _sting_rot := 0.0
 var _sting_skew := 0.0
@@ -912,8 +927,24 @@ func _drive_stinger(delta: float, bf: float) -> void:
 	if beat_edge:
 		if _sting_left > 0:                          # land the next punch on this beat
 			_sting_left -= 1
-			_sting = 1.0
-			_sting_zoom = _rng.randf_range(0.07, 0.20) * (1.0 if _rng.randf() < 0.5 else -1.0)
+			_sting_t = 0.0
+			# THE PUNCH IS AS LONG AS THE MUSIC IS SLOW. A fixed 1/6 s decay is a
+			# different gesture at 60 BPM than at 160: on slow material it is over
+			# before the eye has followed it, which is half of why it read as a
+			# glitch rather than as a hit. Bounded either side so a mis-estimated
+			# period cannot leave the frame contorted or blink it.
+			_sting_span = clampf(f.beat_period * 0.55, 0.28, 0.7)
+			# INWARD AND OUTWARD ARE NOT SYMMETRIC. A push-in crops and can never show
+			# anything that is not painted; a pull-back walks the edge of the painted
+			# region into shot. Layer-composed scenes are painted to a FIXED 1.15x
+			# overdraw margin (GhostScene.update_layers), sized for the camera drift's
+			# +-0.08 and documented as such - so a 0.20 pull-back needed 1.25x and got
+			# 1.15x, and a seam appeared and vanished with the punch. That is the other
+			# half of "the whole scene explodes". Outward kicks are bounded by what the
+			# margin can actually cover; inward ones keep the full range.
+			_sting_zoom = _rng.randf_range(STING_PUSH.x, STING_PUSH.y)
+			if _rng.randf() < 0.5:
+				_sting_zoom = -_rng.randf_range(STING_PULL.x, STING_PULL.y)
 			_sting_rot = _rng.randf_range(-0.09, 0.09)
 			_sting_skew = _rng.randf_range(-0.06, 0.06)
 			_sting_flash = _rng.randf_range(0.20, 0.5)
@@ -925,14 +956,74 @@ func _drive_stinger(delta: float, bf: float) -> void:
 				_sting_left = _rng.randi_range(2, 4)  # BANG, BANG (, BANG)
 				_flurry_cd = _flurry_spacing()
 				print("ghost: STINGER x%d" % _sting_left)
-	_sting = maxf(0.0, _sting - delta * 6.0)         # quick decay between beats
-	var p := _sting * _sting                         # eased punch (snappy attack, soft tail)
-	_current.view.pulse_zoom = 1.0 + _sting_zoom * p
-	_current.view.pulse_rot = _sting_rot * p
-	_current.view.pulse_skew = _sting_skew * p
+	if _sting_t >= 0.0:
+		_sting_t += delta
+		if _sting_t >= _sting_span:
+			_sting_t = -1.0                          # settled; back to the scene's own framing
+	var p := _sting_env()
+	# THE CAMERA HALF RIDES THE SCENE'S DECLARED CHARACTER, the flash does not.
+	# `drift_view` already scales every per-frame camera move by `behavior.view`
+	# (0 for a static scene, 0.3 for a fluid one), and the punch was the one thing
+	# that moved the camera without asking - so a scene whose whole design is "hold
+	# still and let the audio speak" got slammed exactly as hard as one built to
+	# swoop. The floor keeps the accent present everywhere rather than deleting it
+	# from half the catalogue. The brightness flash is not a camera move and stays
+	# universal, which is what a static scene gets instead.
+	var g: float = 0.35 + 0.65 * float(_current.behavior.get("view", 1.0))
+	# ...and a FIELD scene is not rolled or sheared at all. Shot selection already
+	# denies fields `canted` and `pan` "so their edges never swing into view"
+	# (Shots.FIELD_BAG) - and then the punch rolled them 5 degrees anyway, which is
+	# the one move that rule exists to prevent. Zoom survives, because push_in and
+	# pull_back ARE in that bag.
+	var swing := 0.0 if _current.framing == "field" else 1.0
+	_current.view.pulse_zoom = 1.0 + _sting_zoom * p * g
+	_current.view.pulse_rot = _sting_rot * p * g * swing
+	_current.view.pulse_skew = _sting_skew * p * g * swing
 	# Brightness/tint flash via the node modulate, preserving the fade alpha.
 	var fl := 1.0 + _sting_flash * p
 	_current.modulate = Color(fl * (1.0 + 0.06 * _sting_rot), fl, fl * (1.0 - 0.06 * _sting_rot), bf)
+
+
+# The punch envelope, 0 -> 1 -> 0 across `_sting_span`. The whole point of it is
+# the ATTACK.
+#
+# It used to be a step: `_sting = 1.0` on the beat edge, read by the same frame's
+# draw, so `pulse_zoom` went 1.00 -> 1.20 between two consecutive frames and the
+# roll, skew and a 1.5x brightness flash all arrived in that same frame. Nothing
+# else in ghost's camera moves like that - `SceneView.commit` exists precisely so
+# framing eases rather than snaps, and `snap()` is documented as a pre-warm-only
+# exception - and a one-frame scale step does not read as an accent, it reads as
+# the picture tearing. That is the reported "the whole scene explodes, then
+# recovers immediately", and it was jarring on peaceful scenes because a
+# discontinuity is jarring on anything.
+#
+# The envelope was always meant to BE the easing (SceneView: "not eased - the
+# Director drives the envelope"); it simply never eased the onset.
+#
+# THE SPLIT AND THE FLOOR ARE BOTH MEASURED, by tests/sting_shape_check.gd: the
+# largest change in drawn zoom between two consecutive frames, at the largest kick
+# the sampler can produce (0.20). ghost's own eased camera covers 8% of its
+# remaining error per frame (SceneView.smoothing = 5), so a 0.20 move starts at
+# 1.6%/frame there; 5%/frame is three times that - snappy, and still a move rather
+# than a jump. Hitting it needs a rise of at least ~0.11 s, which is why the span
+# has a floor as well as a ceiling and why the rise takes 40% of it rather than a
+# quarter. The old step measured 20%/frame - the entire kick, in one frame.
+#
+# The squared fall is the same soft tail the old `_sting * _sting` gave, so the
+# release is the shape that always shipped; only the onset is new.
+const STING_ATTACK := 0.40
+
+
+func _sting_env() -> float:
+	if _sting_t < 0.0:
+		return 0.0
+	var k := _sting_t / maxf(0.01, _sting_span)
+	if k >= 1.0:
+		return 0.0
+	if k < STING_ATTACK:
+		return smoothstep(0.0, 1.0, k / STING_ATTACK)
+	var d := (k - STING_ATTACK) / (1.0 - STING_ATTACK)
+	return (1.0 - d) * (1.0 - d)
 
 
 # The content clock (manual mode): feed the [Echo] map at the frontier, listen for a
@@ -1331,7 +1422,7 @@ func _begin_transition() -> void:
 		_burst_left -= 1                  # consume this quick scene
 	# Clear any rapid-fire modulation so the leaving scene doesn't freeze mid-contortion or tint.
 	_sting_left = 0
-	_sting = 0.0
+	_sting_t = -1.0
 	if _current != null:
 		_current.view.pulse_zoom = 1.0
 		_current.view.pulse_rot = 0.0

@@ -148,7 +148,7 @@ func _host_script() -> String:
 ## phonemizer was added looked healthy forever and the deps step never re-ran -
 ## reported as "eSpeak phonemizer unavailable". Any future requirements.txt
 ## addition must be listed here too, or the same silent staleness returns.
-const REQUIRED_IMPORTS := "import onnxruntime, numpy, espeakng_loader, phonemizer"
+const REQUIRED_IMPORTS := "import onnxruntime, numpy, espeakng_loader, phonemizer, nltk"
 
 
 func _deps_present() -> bool:
