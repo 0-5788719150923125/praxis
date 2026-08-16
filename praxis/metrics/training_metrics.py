@@ -18,61 +18,20 @@ head-side metrics. Each entry's ``chart`` hint may carry:
   N steps) so the LTTB downsampler force-preserves them and the
   frontend dedups consecutive-equal values that Lightning's
   ``callback_metrics`` persistence smears across training rows.
+* ``y_clip_percentile``: float. Bound the y axis at this percentile of
+  the plotted values instead of at the maximum, so a startup transient
+  cannot set the scale for the whole run. Outliers are not removed -
+  the line runs off the top edge and the tooltip still reports the true
+  value. Only for metrics whose tail is noise; omit wherever the
+  extremes ARE the signal.
+* ``smooth``: bool. Draw a rolling-median trend line with the raw
+  series kept faint behind it. For per-step metrics too jagged to read
+  at full length.
 """
 
 from typing import Any, Dict
 
 TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
-    # ── Information density at the rim (see praxis/metrics/density.py) ───────
-    # The paper's conjecture states its own falsifier: deviation must rise from
-    # head to tip AND that rise must steepen with recurrent depth, in norm and
-    # in occupancy alike. These four keys are that falsifier, nothing else.
-    #
-    # CHARTLESS, deliberately - like the val_brier_* columns below. Each pair is
-    # meant to be READ TOGETHER (a norm-only reading is escapable, which is the
-    # entire reason the occupancy coordinate exists), so they render as two
-    # two-series composites, "Density Gradient across Position" and "Density
-    # Steepening across Depth", declared in COMPOSITE_METRIC_REGISTRY.
-    #
-    # They used to carry `chart` blocks with `series_group`/`group_order`, which
-    # do nothing here: buildScalarConfigsFromRegistry (praxis/web/src/js/charts.js)
-    # sorts this registry flat by `order` and emits one card per key, ignoring
-    # grouping entirely - that is the Dynamics tab's manifest builder, not this
-    # one. The result was four cards, two titled "Density Gradient (norm)" and
-    # two titled "Density Steepening across Depth", sorted to the very front of
-    # the deck because `order: 10` tied with `loss` and these are declared first.
-    "density_norm_slope": {
-        "description": (
-            "Positional gradient of hidden-state deviation, in NORM: how much "
-            "more the tip of the window moves per depth step than the head, "
-            "relative to the mean. Positive = density pushed toward the rim, "
-            "the paper's conjecture. Flat at 0 in both coordinates falsifies it."
-        ),
-    },
-    "density_hop_slope": {
-        "description": (
-            "The same positional gradient read in symbol OCCUPANCY - the rate "
-            "positions cross a partition boundary between depth steps. Present "
-            "because a silent bit flip can change the geometry without moving "
-            "the norm, so a norm-only reading is escapable."
-        ),
-    },
-    "density_norm_steepening": {
-        "description": (
-            "Whether the norm gradient STEEPENS as the recurrence deepens - "
-            "the second half of the falsifier. Early positions should settle "
-            "toward a fixed point while the tip stays live, so the profile "
-            "tilts further with every pass. Zero or negative kills the reading "
-            "even if the slope itself is positive."
-        ),
-    },
-    "density_hop_steepening": {
-        "description": (
-            "Steepening across depth in occupancy coordinates. The prediction "
-            "is that the hop rate between symbols rises from head to tip and "
-            "steepens as the loop deepens."
-        ),
-    },
     "loss": {
         "description": "Per-step training cross-entropy loss.",
         "chart": {
@@ -81,6 +40,19 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "y_scale": "linear",
             "order": 10,
             "is_validation": False,
+            # An untrained model's first few steps can log a loss in the
+            # thousands - one run opened at 3484 and was under 60 within a
+            # dozen steps. On a max-bounded axis those dozen points flatten
+            # the other sixteen thousand into a single line at the bottom.
+            # p99.5 keeps essentially the whole run in frame (that run's p99.5
+            # is 27.4, and only 7 of 16720 points exceed 100); the transient
+            # still draws, running off the top edge where it reads as an
+            # excursion rather than as the axis.
+            "y_clip_percentile": 99.5,
+            # Per-step CE is genuinely noisy - in the settled region of that
+            # same run, consecutive steps differ by 2.45 on average against a
+            # mean of 7.56. The trend is unreadable underneath that.
+            "smooth": True,
         },
     },
     "val_loss": {
@@ -737,84 +709,131 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
 # * ``key_pattern``: regex (string) matching a family of metric names.
 # * ``stepped``: draw as a step plot (cumulative counts).
 # * ``order``: ordering within the Research tab, after the scalars above.
+# Legend labels for the readout profile cards, indexed by position bucket.
+# Bucket b covers positions [b/8, (b+1)/8) of the window.
+_POSITION_LABELS = [
+    "head (0-1/8)",
+    "1/8-2/8",
+    "2/8-3/8",
+    "3/8-4/8",
+    "4/8-5/8",
+    "5/8-6/8",
+    "6/8-7/8",
+    "tip (7/8-1)",
+]
+
 COMPOSITE_METRIC_REGISTRY: list = [
+    # ── Information density at the rim (see praxis/metrics/density.py) ───────
+    # Whole-sequence readout by position: from a single hidden state at each
+    # position, how much of the entire window (at three resolutions) a linear
+    # readout recovers, scored prequentially. All keys live in extra_metrics;
+    # nothing here adds a schema column. Series 0..7 are POSITION buckets,
+    # head to tip, and are labeled as such via series_labels.
     {
-        "key": "density_profile_norm",
+        "key": "readout_profile_bag",
         "type": "multi_expert_line",
-        "title": "Information Density Profile (norm)",
-        "y_label": "Deviation / mean",
+        "title": "Whole-Sequence Readout by Position (bag of content)",
+        "y_label": "Readout R\u00b2 above chance",
         "description": (
-            "Per-position hidden-state deviation, averaged over depth steps and "
-            "normalized by its own mean, in 8 buckets from the head of the "
-            "window (b0) to the tip (b7). The conjecture predicts these fan "
-            "out with b7 above b0; all eight sitting on top of each other is "
-            "the flat profile that falsifies it. Schematic figure fig:density "
-            "in the paper is this curve, promised - this is it measured."
+            "How much of the WHOLE window a linear readout recovers from ONE "
+            "hidden state, by position bucket from the head of the window to "
+            "the tip, at the last executed depth step. This band is the bag of "
+            "content: the window's mean input state (DFT mode 0 along "
+            "position). Scored as R\u00b2 above a shuffled-target null "
+            "(0 = nothing readable, 1 = fully read). The received picture has "
+            "this rise LINEARLY head to tip - a causal state knows its prefix, "
+            "and a prefix predicts the bag in proportion to its length. The "
+            "paper's conjecture (fig:density) has the head carry the compressed "
+            "whole already: the head line closes on the tip line."
         ),
-        "key_pattern": r"^density_norm_b\d+$",
+        "key_pattern": r"^readout_bag_b\d+$",
+        "series_labels": _POSITION_LABELS,
         "legend": True,
-        "order": 205,
+        "order": 191,
     },
     {
-        "key": "density_profile_hop",
+        "key": "readout_profile_coarse",
         "type": "multi_expert_line",
-        "title": "Information Density Profile (occupancy)",
-        "y_label": "Hop rate / mean",
+        "title": "Whole-Sequence Readout by Position (coarse)",
+        "y_label": "Readout R\u00b2 above chance",
         "description": (
-            "The same profile read in symbol occupancy: the rate at which each "
-            "position crosses a partition boundary between depth steps, head "
-            "(b0) to tip (b7). Catches the decision-boundary flips a norm "
-            "reading is blind to - a state can change which basin it expresses "
-            "while barely moving in magnitude."
+            "The same readout for window-scale structure: DFT modes 1-3 along "
+            "position, where in the window the content sits at the scale of "
+            "the whole. A prefix predicts these at intermediate positions and "
+            "NOT at the tip (the full window's sum is orthogonal to them), so "
+            "the received picture is a hump that dies at the tip; a head that "
+            "anticipates the window's shape lifts the head line."
         ),
-        "key_pattern": r"^density_hop_b\d+$",
+        "key_pattern": r"^readout_coarse_b\d+$",
+        "series_labels": _POSITION_LABELS,
         "legend": True,
-        "order": 206,
-    },
-    # The two halves of the conjecture's falsifier, each read in BOTH
-    # coordinates on one card. Norm and occupancy are companions by design - a
-    # norm-only reading is escapable, since a state can flip which basin it
-    # expresses while barely moving in magnitude - so they belong on the same
-    # axes rather than on two cards a reader has to hold side by side. Sorted
-    # here beside the profiles they summarize, which also puts them behind the
-    # scalar cards (training loss, val loss) where they belong: this tab
-    # concatenates all scalars before all composites.
-    {
-        "key": "density_gradient",
-        "type": "multi_expert_line",
-        "title": "Density Gradient across Position",
-        "y_label": "Rise head to tip",
-        "description": (
-            "Positional gradient of hidden-state deviation: how much more the "
-            "tip of the window moves per depth step than the head, relative to "
-            "the mean. Positive = density pushed toward the rim, the paper's "
-            "conjecture. One line per coordinate - NORM is magnitude, "
-            "OCCUPANCY is the rate positions cross a partition boundary "
-            "between depth steps. Flat at 0 in BOTH falsifies the conjecture; "
-            "the occupancy line is here because a silent basin flip moves the "
-            "geometry without moving the norm."
-        ),
-        "key_pattern": r"^density_(norm|hop)_slope$",
-        "legend": True,
-        "order": 207,
+        "order": 192,
     },
     {
-        "key": "density_steepening",
+        "key": "readout_profile_mid",
         "type": "multi_expert_line",
-        "title": "Density Steepening across Depth",
-        "y_label": "Slope change per pass",
+        "title": "Whole-Sequence Readout by Position (mid)",
+        "y_label": "Readout R\u00b2 above chance",
         "description": (
-            "Whether the positional gradient STEEPENS as the recurrence "
-            "deepens - the second half of the falsifier. Early positions "
-            "should settle toward a fixed point while the tip stays live, so "
-            "the profile tilts further with every pass. Zero or negative kills "
-            "the reading even if the gradient itself is positive. One line per "
-            "coordinate, norm and occupancy, read together for the same reason "
-            "as the gradient card above."
+            "Mid resolution: DFT modes 4-15 along position, structure at 1/4 "
+            "to 1/16 of the window. Between the bands the head could "
+            "anticipate and the fine band it cannot."
         ),
-        "key_pattern": r"^density_(norm|hop)_steepening$",
+        "key_pattern": r"^readout_mid_b\d+$",
+        "series_labels": _POSITION_LABELS,
         "legend": True,
-        "order": 208,
+        "order": 193,
+    },
+    {
+        "key": "readout_profile_fine",
+        "type": "multi_expert_line",
+        "title": "Whole-Sequence Readout by Position (fine)",
+        "y_label": "Readout R\u00b2 above chance",
+        "description": (
+            "The control band: DFT modes 16-31 along position, structure at "
+            "1/16 to 1/32 of the window. Fine content of the whole sequence "
+            "cannot be anticipated by a causal state, so this stays near zero "
+            "everywhere under both pictures. A head line that rose here would "
+            "mean the target leaks, not that the conjecture holds."
+        ),
+        "key_pattern": r"^readout_fine_b\d+$",
+        "series_labels": _POSITION_LABELS,
+        "legend": True,
+        "order": 194,
+    },
+    {
+        "key": "readout_rim_gap",
+        "type": "multi_expert_line",
+        "title": "Whole-Sequence Readout: Tip minus Head",
+        "y_label": "R\u00b2(tip) - R\u00b2(head)",
+        "description": (
+            "The conjecture's reading in one number per band: whole-sequence "
+            "readout R\u00b2 (above chance) at the tip bucket minus the head "
+            "bucket. The received picture keeps the BAG gap large and "
+            "positive - the tip has seen everything, the head only its own "
+            "token. Density pushed to the rim, in fig:density's sense, is the "
+            "bag and coarse gaps closing toward zero, the head anticipating "
+            "the window-scale whole, while fine stays wherever it was."
+        ),
+        "key_pattern": r"^readout_(bag|coarse|mid|fine)_rim_gap$",
+        "legend": True,
+        "order": 195,
+    },
+    {
+        "key": "readout_depth_gain",
+        "type": "multi_expert_line",
+        "title": "Whole-Sequence Readout: Gain over Depth",
+        "y_label": "R\u00b2(last step) - R\u00b2(entry)",
+        "description": (
+            "Whether the depth loop BUILDS whole-sequence content into the "
+            "states: readout R\u00b2 at the last executed step minus at the "
+            "loop entry (the raw embeddings), averaged over positions, per "
+            "band. Zero means the loop adds nothing a linear readout can see "
+            "beyond what the tokens themselves carry."
+        ),
+        "key_pattern": r"^readout_(bag|coarse|mid|fine)_depth_gain$",
+        "legend": True,
+        "order": 196,
     },
     {
         # Repo-level, not per-run: the framework's own git-churn evolution.

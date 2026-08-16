@@ -104,3 +104,69 @@ ghostmax/dropoff sink pair (`research/body.tex`, `research/ghostmax.tex`);
 cross-curvature conjecture (`research/conjectures.tex`);
 [harmonic_koopman.md](harmonic_koopman.md) (stable/changing split);
 [dropoff.md](dropoff.md); [oscillatory_axes.md](oscillatory_axes.md).
+
+## 2026-08-15: the metric, reframed
+
+The deviation profile above was built (`praxis/metrics/density.py`, commit
+`1e00ffd8`) and read flat: every position bucket at 1.00 ± 0.01 in norm, the
+occupancy hop rate mildly head-heavy. That flatness does not test the picture,
+for three reasons, and the probe was replaced rather than tuned:
+
+1. **Movement is not content.** "The share of the representation's
+   distinguishing content carried at each position" is a statement about what
+   a vector *holds*; per-step deviation is a statement about how much the
+   recurrence is still rewriting it. A state can be still and carry
+   everything, or churn and carry nothing. KL halting already reads settling.
+2. **Flat is the null for any residual stack.** Each block's update to
+   position t is a normed attention + FFN output; nothing makes its magnitude
+   depend on position, and dividing by the profile mean lands ~1.0 everywhere,
+   trained or not.
+3. **It read the wrong tensor and threw away the sink signal.** The mechanism
+   is the harmonic *field*; the probe read the decoder's residual stream, and
+   standardized away the norm - which is where the cited sink evidence lives.
+
+What `fig:density` actually claims (the characters piling into the head cells)
+is: *the whole sequence, compressed, is already present in the early vectors;
+later positions add sparse detail.* Causality makes that sharp - a causal
+state cannot contain later tokens, so the head can only carry the whole by
+*anticipating* it, which is possible for slow structure and impossible for
+fine structure. So the instrument is now a **whole-sequence linear readout by
+position**: from ONE hidden state in each of 8 position buckets, at each depth
+step, ridge-read the window's DFT-along-position content in four bands - `bag`
+(mode 0), `coarse` (1-3), `mid` (4-15), `fine` (16-31) - scored prequentially
+against running moments and reported as R² above a shuffled-target null.
+Cards: `readout_profile_{band}` (head..tip series), `readout_rim_gap`
+(tip - head per band), `readout_depth_gain` (last step - entry per band).
+
+Signatures, verified on synthetic states (`tests/test_density.py`):
+
+- received picture (state = prefix): bag rises **linearly** head→tip
+  (~t/T); coarse is a hump that dies at the tip; fine ~0.
+- conjecture's limit (state = whole): bag **flat and high** at every position.
+- own token only: everything ~0.
+
+The falsifier is now: bag and coarse `rim_gap` staying large and positive
+(the head knows nothing about the whole beyond its own token) - i.e. the
+received picture. Fine is the control and should stay near zero everywhere;
+a rising head line there would mean the target leaks.
+
+Related term of art: psycholinguistics' **Uniform Information Density**
+(Levy & Jaeger; Meister et al. 2021 on LMs) - density = surprisal per unit,
+predicted uniform. That is literally the received picture named. Nearest
+methodology: Future Lens (Pal et al. 2023), vec2text (Morris et al. 2023);
+the null stated in Echo Embeddings (Springer et al. 2024): early causal
+vectors cannot see later tokens.
+
+Open: `body.tex` ~328-330, `conjectures.tex` and
+`praxis/pillars/conjectures/information-density.yml` still state the
+falsifier in deviation/occupancy terms and should be restated in readout
+terms. Also noted while reading: the prismatic6 stem's conditional field
+pooled `hidden_states.mean(dim=-2)` over the WHOLE window (non-causal), so at
+train time every position's field carried a K-coefficient summary of the
+future - a leak and a train/inference mismatch, and one mechanism by which
+"the whole at the head" could appear without the states earning it. **Fixed
+2026-08-15:** every position now pools its own inclusive causal prefix; made
+affordable by factorizing the envelope across the two grid axes (product of
+two bounded factors instead of one tanh of their sum), tests in
+`tests/test_harmonic_modulation.py`. The readout probes decoder
+states, upstream of the head, so it was never contaminated by this.

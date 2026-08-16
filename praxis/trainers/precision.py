@@ -31,6 +31,13 @@ class PrecisionProfile:
     lightning: str
     # torch.set_float32_matmul_precision(...) - governs the ops that remain
     # fp32 regardless of the above (TF32 kernels on Ampere+).
+    #
+    # "high" rather than "medium" for every non-fp64 profile. On CUDA the two
+    # currently resolve identically (torch 2.10: both give allow_tf32=True,
+    # fp32_precision='tf32'), so this costs nothing measurable - but "medium"
+    # is DEFINED as permitting a bf16 internal datatype, an 8-bit mantissa,
+    # and a mode named float32 should not be leaving that door open for
+    # whichever backend decides to walk through it.
     matmul: str
     # Cast the assembled model here. None leaves it in fp32, which is correct
     # for the mixed-precision profiles: their master weights are fp32.
@@ -56,20 +63,20 @@ PRECISION_REGISTRY: Dict[str, PrecisionProfile] = {
     "float32": PrecisionProfile(
         name="float32",
         lightning="32-true",
-        matmul="medium",
+        matmul="high",
         note="fp32 weights and gradients, TF32 matmul kernels where available",
     ),
     "bfloat16": PrecisionProfile(
         name="bfloat16",
         lightning="bf16-true",
-        matmul="medium",
+        matmul="high",
         param_dtype="bfloat16",
         note="weights, activations and gradients all in bf16",
     ),
     "float16": PrecisionProfile(
         name="float16",
         lightning="16-mixed",
-        matmul="medium",
+        matmul="high",
         # Deliberately not "16-true": fp16 has no exponent headroom for
         # gradients, so pure fp16 training needs loss scaling to survive.
         # The mixed plugin gives fp16 compute with an fp32 master copy and a

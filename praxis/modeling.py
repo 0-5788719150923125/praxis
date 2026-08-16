@@ -729,6 +729,26 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         and ``logits`` stays at the embedding width.
         """
         hidden_states = outputs.last_hidden_state
+        # Cached decode hands the head only the new suffix, so any head module
+        # anchored to absolute position or carrying context (the harmonic
+        # field's phase, prefix mean and fast bank) needs the cache to continue
+        # from - the head-side twin of `self.embeds(input_ids, offset=...)`.
+        _bind_head_cache(self.head, outputs.past_key_values)
+        try:
+            return self._compute_logits_inner(
+                outputs, input_ids, skip_logits, attention_mask, hidden_states
+            )
+        finally:
+            _bind_head_cache(self.head, None)
+
+    def _compute_logits_inner(
+        self,
+        outputs: "PraxisModelOutput",
+        input_ids: torch.Tensor,
+        skip_logits: bool,
+        attention_mask: Optional[torch.Tensor],
+        hidden_states: torch.Tensor,
+    ):
         logits = hidden_states
         classifier = None
         backward_logits = None
@@ -1576,6 +1596,19 @@ def _head_accepts_mask(head_type: type) -> bool:
         p.kind is p.VAR_KEYWORD or name == "attention_mask"
         for name, p in params.items()
     )
+
+
+def _bind_head_cache(head: nn.Module, cache) -> None:
+    """Point every cache-aware module inside ``head`` at the live decode cache
+    (or clear it with None). Modules opt in with ``accepts_decode_cache`` and
+    read ``decode_cache`` in their forward; nothing else is touched. Only a
+    ``PraxisCache`` counts - a bare HF cache carries no head-side state and no
+    trunk-consistent ``past_length``."""
+    if cache is not None and not isinstance(cache, PraxisCache):
+        cache = None
+    for module in head.modules():
+        if getattr(module, "accepts_decode_cache", False):
+            module.decode_cache = cache
 
 
 def _head_mask_kwargs(head: nn.Module, attention_mask) -> dict:

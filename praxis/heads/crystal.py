@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.heads.base import BaseHead
+from praxis.heads.base import BaseHead, decode_context
 
 # Number of CrystalClassifiers in the VEAR-merged bank for the prismatic4 head.
 # Baked (fixed, model-agnostic) per the tuning-free stance; override with a
@@ -406,6 +406,11 @@ class CrystalVearHead(BaseHead):
 
     self_ties = False  # a bank has no single tie target; keep it untied
 
+    # Inference routes per position on the PREFIX mean; under cached decode the
+    # running sum is carried across chunks (praxis.heads.base.decode_context).
+    accepts_decode_cache: bool = True
+    decode_cache: Any = None
+
     def __init__(
         self,
         config: Any,
@@ -539,10 +544,27 @@ class CrystalVearHead(BaseHead):
         x = hidden_states
         if mask is not None:
             m = mask.to(x.dtype).unsqueeze(-1)  # [B, T, 1]
-            router_input = (x * m).cumsum(1) / m.cumsum(1).clamp_min(1.0)
+            total = (x * m).cumsum(1)
+            count = m.cumsum(1)
         else:
+            total = x.cumsum(1)
             count = torch.arange(1, x.size(1) + 1, device=x.device, dtype=x.dtype)
-            router_input = x.cumsum(1) / count.view(1, -1, 1)
+            count = count.view(1, -1, 1).expand(x.size(0), -1, 1)
+        # Cached decode: the chunk is a suffix, so the prefix mean continues
+        # from the carried running sum - otherwise a one-token step routes on
+        # itself alone and disagrees with the full-sequence read.
+        _, state, commit = decode_context(self, hidden_states)
+        if state is not None and "prefix_sum" in state:
+            total = total + state["prefix_sum"].to(x.device, x.dtype).unsqueeze(1)
+            count = count + state["prefix_count"].to(x.device, x.dtype).unsqueeze(1)
+        if commit is not None:
+            commit(
+                {
+                    "prefix_sum": total[:, -1].detach(),
+                    "prefix_count": count[:, -1].detach(),
+                }
+            )
+        router_input = total / count.clamp_min(1.0)
         router_input = v.router_norm(router_input)
         weight = F.normalize(v.router.weight, dim=1)
         logits = F.linear(router_input, weight, v.router.bias)
@@ -552,6 +574,17 @@ class CrystalVearHead(BaseHead):
         if self.pre_projection is not None:
             hidden_states = self.pre_projection(hidden_states)
         mask = kwargs.get("attention_mask", None)
+        # Cached decode: generate() passes the mask for the WHOLE sequence while
+        # the hidden states are only the new suffix. The suffix's own mask is
+        # its trailing columns; a full-length mask would broadcast the routing
+        # pool back out to the full length.
+        if (
+            mask is not None
+            and hidden_states.dim() >= 3
+            and mask.dim() == 2
+            and mask.shape[1] != hidden_states.shape[1]
+        ):
+            mask = mask[:, -hidden_states.shape[1] :]
         experts = self.bank.experts
         if self.training:
             # Training keeps the batch-mean merge (one crystal per batch, the

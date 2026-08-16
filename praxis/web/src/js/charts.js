@@ -121,6 +121,10 @@ function registerNearestXMode() {
             // distance cap would silently blank a run that genuinely covers
             // this x. A run that simply ended earlier is the case worth
             // excluding, and that is exactly what the span test catches.
+            // Faint raw traces sit underneath a smoothed line; reporting both
+            // would list every run twice in the tooltip.
+            if (chart.data.datasets[meta.index]?.[RAW_TRACE_FLAG]) return;
+
             const xs = meta.data.map(el => el.getProps(['x'], useFinalPosition).x);
             const lo = Math.min(...xs) - HOVER_EDGE_PAD_PX;
             const hi = Math.max(...xs) + HOVER_EDGE_PAD_PX;
@@ -143,6 +147,77 @@ function registerNearestXMode() {
 }
 
 const NEAREST_X_READY = registerNearestXMode();
+
+// ── Readability for noisy per-step series ───────────────────────────────────
+
+// Datasets carrying this flag are scenery: drawn, but kept out of the legend
+// and the tooltip so the faint raw trace does not double every entry.
+const RAW_TRACE_FLAG = 'praxisRawTrace';
+
+// Rolling window as a fraction of the points actually plotted, so the trend
+// keeps the same visual smoothness whether a run is 2k steps or 200k. Applied
+// to the LTTB output rather than to raw history - note that LTTB deliberately
+// selects local extremes, so some of the jaggedness on screen is the
+// downsampler's doing and smoothing here is what answers it.
+const SMOOTH_WINDOW_FRACTION = 0.02;
+const SMOOTH_MIN_WINDOW = 5;
+
+/**
+ * Rolling MEDIAN of `points`, centred, returned as fresh {x, y} objects.
+ *
+ * Median rather than a mean or an EMA because the series this is for opens
+ * with a transient three orders of magnitude above everything after it. A mean
+ * window smears that spike across its whole width and an EMA drags it forward
+ * for hundreds of steps as a false ramp; a median ignores it the moment it is
+ * outnumbered in the window. The cost is that a genuine sharp step is rounded
+ * slightly - acceptable when the raw trace is still drawn underneath.
+ */
+function rollingMedian(points, windowSize) {
+    const n = points.length;
+    if (n === 0) return [];
+    const half = Math.floor(windowSize / 2);
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+        const lo = Math.max(0, i - half);
+        const hi = Math.min(n - 1, i + half);
+        const window = [];
+        for (let j = lo; j <= hi; j++) window.push(points[j].y);
+        window.sort((a, b) => a - b);
+        const mid = window.length >> 1;
+        out[i] = {
+            x: points[i].x,
+            y: window.length % 2 ? window[mid] : (window[mid - 1] + window[mid]) / 2,
+        };
+    }
+    return out;
+}
+
+/** Window size for a series of `n` plotted points; always odd, always >= 3. */
+function smoothingWindow(n) {
+    const raw = Math.max(SMOOTH_MIN_WINDOW, Math.round(n * SMOOTH_WINDOW_FRACTION));
+    return raw % 2 ? raw : raw + 1;
+}
+
+/**
+ * Upper y bound at the given percentile of `values`, or null to autoscale.
+ *
+ * Bounds the AXIS, not the data: points above it still draw, running off the
+ * top edge, and the tooltip still reports their true value. The alternative -
+ * dropping outliers - would quietly rewrite the series.
+ */
+function robustUpperBound(values, percentile) {
+    const finite = values.filter(v => Number.isFinite(v));
+    if (!finite.length || !percentile) return null;
+    finite.sort((a, b) => a - b);
+    const idx = Math.min(finite.length - 1, Math.floor((percentile / 100) * finite.length));
+    const bound = finite[idx];
+    const min = finite[0];
+    if (!Number.isFinite(bound) || bound <= min) return null;
+    // Only worth clipping when the tail actually dwarfs the body; otherwise
+    // leave Chart.js to autoscale and keep the real maximum on screen.
+    if (finite[finite.length - 1] <= bound * 1.5) return null;
+    return bound + (bound - min) * 0.05;  // a little headroom above the bound
+}
 
 /** Interaction block for a cross-run line chart, with a safe fallback. */
 function crossRunInteraction() {
@@ -827,6 +902,10 @@ function buildScalarConfigsFromRegistry(registry) {
         label: entry.chart.y_label || entry.chart.title || key,
         type: entry.chart.type || 'line',
         description: entry.description || '',
+        // Readability hints for noisy per-step series - see the chart-hint
+        // list in praxis/metrics/training_metrics.py.
+        yClipPercentile: entry.chart.y_clip_percentile ?? null,
+        smooth: entry.chart.smooth === true,
     }));
 }
 
@@ -854,6 +933,10 @@ function buildCompositeConfigsFromRegistry(registry) {
             stepped: entry.stepped || false,
             keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
             series_noun: entry.series_noun || null,
+            // Explicit legend labels for a NUMBERED family, indexed by the
+            // trailing number - "head (0-1/8)" instead of "Series 0" when the
+            // number is a position bucket rather than an expert.
+            series_labels: Array.isArray(entry.series_labels) ? entry.series_labels : null,
             // Heatmap axis nouns. The grid's two coordinates are not always
             // "layer" and "expert" - SMEAR's merge coefficients are target
             // modules against deviations - so the registry names them.
@@ -875,7 +958,7 @@ const METRIC_RENDERERS = {
     expert_routing_heatmap: (config, { runs }) =>
         createExpertRoutingChart(config.canvasId, runs, config),
     line: (config, { runs }) =>
-        createRunComparisonChart(config.canvasId, config.label, runs, config.key),
+        createRunComparisonChart(config.canvasId, config.label, runs, config.key, config),
     evolution: (config) => createEvolutionChart(config.canvasId),
     spider_citations: (config) => createSpiderCitationsChart(config.canvasId),
 };
@@ -2524,7 +2607,7 @@ function updateMetricsMetadata(runs) {
 /**
  * Create multi-agent comparison chart
  */
-function createRunComparisonChart(canvasId, label, runs, metricKey) {
+function createRunComparisonChart(canvasId, label, runs, metricKey, config = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -2532,17 +2615,18 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     const axis = activeXAxis();
+    const allValues = [];
 
-    const datasets = runs.map((run) => {
+    const datasets = runs.flatMap((run) => {
         const metrics = run.metrics;
         const values = metrics[metricKey] || [];
 
-        if (!values.some(v => v !== null)) return null;
+        if (!values.some(v => v !== null)) return [];
 
         // A run written before this axis's column existed simply has no
         // coordinate to plot against; drop it rather than mixing axes.
         const xs = xValuesFor(run, axis);
-        if (!xs) return null;
+        if (!xs) return [];
 
         let data = xs.map((x, i) => ({
             x,
@@ -2563,10 +2647,11 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
         }
 
         const color = chartLineColor(runColorIndex(run));
+        data.forEach(p => allValues.push(p.y));
 
-        return {
+        const line = (points, overrides) => ({
             label: run.hash,
-            data: data,
+            data: points,
             borderColor: color,
             backgroundColor: color + '20',
             borderWidth: 2,
@@ -2576,9 +2661,28 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
             pointHoverBorderColor: '#fff',
             pointHoverBorderWidth: 2,
             tension: 0,
-            fill: false
-        };
-    }).filter(d => d !== null);
+            fill: false,
+            ...overrides,
+        });
+
+        if (!config.smooth || data.length < SMOOTH_MIN_WINDOW) return [line(data)];
+
+        // Raw first so the trend draws on top of it. The raw trace stays on
+        // screen deliberately: the smoothed line is a reading of the data, not
+        // a replacement for it, and the spread around it is information.
+        return [
+            line(data, {
+                borderWidth: 1,
+                // Faint enough to read as a spread BAND behind the trend
+                // rather than as a forest of spikes competing with it - at
+                // ~1000 plotted points across ~700px there is more than one
+                // sample per pixel column, so anything darker just fills in.
+                borderColor: color + '1f',
+                [RAW_TRACE_FLAG]: true,
+            }),
+            line(rollingMedian(data, smoothingWindow(data.length))),
+        ];
+    });
 
     charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'line',
@@ -2595,7 +2699,11 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                         color: textColor,
                         usePointStyle: true,
                         padding: 15,
-                        font: { size: 11 }
+                        font: { size: 11 },
+                        // One entry per run, not one per line: the faint raw
+                        // trace shares its run's name and colour.
+                        filter: (item, data) =>
+                            !data.datasets[item.datasetIndex]?.[RAW_TRACE_FLAG],
                     }
                 },
                 tooltip: {
@@ -2634,6 +2742,9 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
+                    // Declared per metric, and only where the tail is noise.
+                    // null leaves Chart.js to autoscale as before.
+                    max: robustUpperBound(allValues, config.yClipPercentile) ?? undefined,
                     ticks: {
                         color: textColor,
                         callback: formatAxisTick
@@ -3427,7 +3538,7 @@ function metricKeySegments(key) {
  * Named keys are sorted before slots are handed out, because the key order here
  * comes from Object.keys() on the metrics payload and must not decide colours.
  */
-function resolveSeriesIdentities(keys, seriesNoun) {
+function resolveSeriesIdentities(keys, seriesNoun, seriesLabels) {
     const identities = new Map();
     const named = [];
     let maxNumbered = -1;
@@ -3445,7 +3556,8 @@ function resolveSeriesIdentities(keys, seriesNoun) {
             : layerMatch ? 'Layer'
             : (seriesNoun || 'Series');
         const index = parseInt(numbered[1], 10);
-        identities.set(key, { index, label: `${noun} ${numbered[1]}` });
+        const explicit = seriesLabels && seriesLabels[index];
+        identities.set(key, { index, label: explicit || `${noun} ${numbered[1]}` });
         maxNumbered = Math.max(maxNumbered, index);
     });
 
@@ -3510,7 +3622,7 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         // layer-indexed (per-depth router scalars), trailing-numbered, or named
         // - see resolveSeriesIdentities. The key_pattern in the registry decides
         // which keys land here; this just draws whatever axis they carry.
-        const identities = resolveSeriesIdentities(expertKeys, options.series_noun);
+        const identities = resolveSeriesIdentities(expertKeys, options.series_noun, options.series_labels);
 
         expertKeys.forEach((expertKey) => {
             const identity = identities.get(expertKey);

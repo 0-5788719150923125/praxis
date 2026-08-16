@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.heads.base import BaseHead
+from praxis.heads.base import BaseHead, decode_context
 
 IRR_T: float = math.pi
 IRR_D: float = math.e
@@ -348,7 +348,8 @@ class HarmonicField(nn.Module):
         "harmonic_capacity_variance": {
             "description": (
                 "Share of field energy doing variance work - the "
-                "input-conditional delta the envelope writes per sequence. "
+                "input-conditional delta the envelope writes from each "
+                "position's causal prefix. "
                 "Zero until an input-modulated field has trained."
             ),
             "chart": {
@@ -594,10 +595,11 @@ class HarmonicField(nn.Module):
                 self.amp_gain = nn.Parameter(torch.ones(self.F_t))
             if amp_modulation in ("input", "pure"):
                 # Input-conditional envelope - the field's structured-variance
-                # axis. A zero-init projection from pooled hidden states to
-                # envelope coefficients: the field is exactly the static (bias)
-                # field at init and learns its input-dependence, orthogonal to
-                # the static spectrum. ``_last_input_coeffs`` keeps a
+                # axis. A zero-init projection from pooled hidden states (the
+                # causal prefix at every position - see _field_conditional) to
+                # envelope coefficients: the field is
+                # exactly the static (bias) field at init and learns its
+                # input-dependence, orthogonal to the static spectrum. ``_last_input_coeffs`` keeps a
                 # representative coeff set (mean over the last batch) so the
                 # strands snapshot can rebuild the conditional field with no batch.
                 self.amp_input = nn.Linear(self.D, self.amp_K, bias=False)
@@ -652,7 +654,12 @@ class HarmonicField(nn.Module):
                 persistent=False,
             )
 
-    def _fast_retrieve(self, hidden_states: Tensor) -> Tensor:
+    def _fast_retrieve(
+        self,
+        hidden_states: Tensor,
+        state: Optional[dict] = None,
+        new_state: Optional[dict] = None,
+    ) -> Tensor:
         """Per-token read ``[B, L, d]`` from a delta-rule linear-attention memory
         over the causal context. ELU+1 kernel, delta write (value minus what the
         memory already predicts), z-normalized retrieval - the Infini-Attention
@@ -665,9 +672,31 @@ class HarmonicField(nn.Module):
         The per-segment ``A_n``, write matrix ``B_n = phi_k^T v`` and the ``z``
         normalizer are all computed batched; only the affine matrix recurrence
         ``mem_{n+1} = (I - A_n) mem_n + B_n`` stays sequential, over the handful
-        of segments (no per-token loop, no ``S`` dim in the loop body)."""
+        of segments (no per-token loop, no ``S`` dim in the loop body).
+
+        Under cached decode ``state`` carries the bank and normalizer after the
+        last CLOSED segment plus the raw states of the open segment (its
+        ``fast_tail``); the tail is re-read in front of the new chunk so the
+        within-segment causal half stays exact, and ``new_state`` receives the
+        bank advanced through every segment the chunk closed and the new tail.
+        A one-token chunk therefore reads exactly what it would have read as
+        the last position of a full-sequence forward.
+        """
         d, seg = self.fast_mem, FAST_SEGMENT
-        q, k, v = self.fast_qkv(hidden_states.float()).split(d, dim=-1)
+        tail = state.get("fast_tail") if state is not None else None
+        n_tail = 0
+        if tail is not None and tail.shape[0] == hidden_states.shape[0]:
+            n_tail = tail.shape[1]
+            hidden_states = torch.cat([tail.to(hidden_states.dtype), hidden_states], 1)
+        # Project in the parameters' own dtype - a hardcoded ``.float()`` faults
+        # against any run whose weights are not fp32 - then give the recurrence
+        # at least fp32 headroom, which is what that cast was there for. An
+        # fp32 run gets exactly what it got before; fp64 keeps its width.
+        out_dtype = hidden_states.dtype
+        q, k, v = self.fast_qkv(hidden_states).split(d, dim=-1)
+        work = torch.promote_types(q.dtype, torch.float32)
+        if q.dtype != work:
+            q, k, v = q.to(work), k.to(work), v.to(work)
         sig_q, sig_k = F.elu(q) + 1.0, F.elu(k) + 1.0
         b_size, seq_len, _ = q.shape
 
@@ -684,18 +713,32 @@ class HarmonicField(nn.Module):
         kk = sig_k.view(b_size, n_seg, seg, d)
         vv = v.view(b_size, n_seg, seg, d)
 
+        mem = q.new_zeros(b_size, d, d)
+        z0 = q.new_zeros(b_size, d)
+        if state is not None and "fast_mem" in state:
+            mem = state["fast_mem"].to(q.device, q.dtype)
+            z0 = state["fast_z"].to(q.device, q.dtype)
+
         dz = kk.sum(dim=2)  # [B, N, d] per-segment z increment
-        z_prior = dz.cumsum(dim=1) - dz  # exclusive cumsum = bank from prior segments
+        # exclusive cumsum = bank from prior segments (plus the carried bank)
+        z_prior = z0.unsqueeze(1) + dz.cumsum(dim=1) - dz
         dk = torch.einsum("bnsd,bnd->bns", kk, z_prior) + FAST_EPS  # [B, N, S]
         a_mat = torch.einsum("bnsd,bnse->bnde", kk, kk / dk.unsqueeze(-1))  # A_n
         b_mat = torch.einsum("bnsd,bnse->bnde", kk, vv)  # B_n = phi_k^T v
 
-        mem = q.new_zeros(b_size, d, d)
         mems = []
         for n in range(n_seg):
-            mems.append(mem)  # bank from prior segments (mem_0 = 0 -> read 0)
+            mems.append(mem)  # bank from prior segments (mem_0 = carried or 0)
             mem = mem + b_mat[:, n] - a_mat[:, n] @ mem
         mem_stack = torch.stack(mems, dim=1)  # [B, N, d, d]
+
+        if new_state is not None:
+            # Commit through the segments this chunk CLOSED; the open remainder
+            # is carried raw and re-read next call.
+            n_full = seq_len // seg
+            new_state["fast_mem"] = (mems[n_full] if n_full < n_seg else mem).detach()
+            new_state["fast_z"] = (z0 + dz[:, :n_full].sum(dim=1)).detach()
+            new_state["fast_tail"] = hidden_states[:, n_full * seg :].detach()
 
         # Cross-segment: the compressed bank of everything before this segment.
         num = torch.einsum("bnsd,bnde->bnse", qk, mem_stack)  # [B, N, S, d]
@@ -714,22 +757,29 @@ class HarmonicField(nn.Module):
         den = den + scores.sum(dim=-1)
 
         reads = num / (den + FAST_EPS).unsqueeze(-1)
-        return reads.reshape(b_size, n_seg * seg, d)[:, :seq_len]
+        reads = reads.reshape(b_size, n_seg * seg, d)[:, n_tail:seq_len]
+        return reads.to(out_dtype)
 
-    def _field_fast(self, hidden_states: Tensor) -> Tensor:
+    def _field_fast(
+        self,
+        hidden_states: Tensor,
+        offset: int = 0,
+        state: Optional[dict] = None,
+        new_state: Optional[dict] = None,
+    ) -> Tensor:
         """Per-token bounded rank-r overlay field ``[B, L, D]``. The retrieved
         context vector drives factors ``u_t (x) v_t``; since the field is linear
         in the grid this is the field of the per-token delta alone, summed into
         the base field upstream. ``f_t`` is contracted against the frozen phase
         inside the matmul, so the ``[B, L, F_t, F_d]`` grid is never built."""
-        r = self._fast_retrieve(hidden_states)
+        r = self._fast_retrieve(hidden_states, state, new_state)
         b_size, seq_len, _ = r.shape
         u = torch.tanh(self.fast_u(r)).view(b_size, seq_len, self.fast_rank, self.F_t)
         v = torch.tanh(self.fast_v(r)).view(b_size, seq_len, self.fast_rank, self.F_d)
         self._update_fast_repr(u, v)
 
         device = hidden_states.device
-        ca, sa = self._phase_table(seq_len, device)  # shared with _eval_field
+        ca, sa = self._phase_table(seq_len, device, offset)  # shared with _eval_field
         cos_a = ca.view(1, seq_len, 1, self.F_t)
         sin_a = sa.view(1, seq_len, 1, self.F_t)
         p_re, p_im = self.spec_real.to(device), self.spec_imag.to(device)
@@ -761,7 +811,9 @@ class HarmonicField(nn.Module):
                 self._fast_repr.dtype
             )
 
-    def _eval_field(self, scaled: Tensor, seq_len: int, device: torch.device) -> Tensor:
+    def _eval_field(
+        self, scaled: Tensor, seq_len: int, device: torch.device, offset: int = 0
+    ) -> Tensor:
         """Band-limited field at positions ``0..seq_len-1`` via two small
         matmuls - exactly the ortho-normed irfft2 of the (Hermitian-extended)
         ``[T, D]`` spectrum, but never materializing it: only F_t * F_d bins
@@ -774,21 +826,27 @@ class HarmonicField(nn.Module):
         into irfft2's ortho norm, preserving spectral energy: field std stays
         ~ amp std * sqrt(F_t * F_d / (T * D)), independent of T scale.
         """
-        cos_a, sin_a = self._phase_table(seq_len, device)
+        cos_a, sin_a = self._phase_table(seq_len, device, offset)
         a = cos_a @ scaled.real - sin_a @ scaled.imag
         return (2.0 / math.sqrt(self.T * self.D)) * (a @ self.basis_d.to(device))
 
-    def _phase_table(self, seq_len: int, device: torch.device):
-        """``(cos, sin)`` of ``2*pi*t*f_t/T`` for ``t`` in ``0..seq_len-1``.
+    def _phase_table(self, seq_len: int, device: torch.device, offset: int = 0):
+        """``(cos, sin)`` of ``2*pi*t*f_t/T`` for ``t`` in
+        ``offset .. offset+seq_len-1``.
 
         Sliced from the precomputed ``[T, F_t]`` buffers - these are constants
-        of the module, not of the input. Sequences longer than ``T`` are
-        computed on the spot; the field is band-limited to period ``T``, so that
-        path is only reachable if a config asks for positions past one period.
+        of the module, not of the input. Positions past ``T`` are computed on
+        the spot; the field is band-limited to period ``T``, so that path is
+        only reachable if a config asks for positions past one period. The
+        offset is the cached-decode continuation: the trunk hands the head only
+        the new suffix, and the field is anchored to ABSOLUTE position.
         """
-        if seq_len <= self.T:
-            return self.pos_cos[:seq_len].to(device), self.pos_sin[:seq_len].to(device)
-        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        if offset + seq_len <= self.T:
+            return (
+                self.pos_cos[offset : offset + seq_len].to(device),
+                self.pos_sin[offset : offset + seq_len].to(device),
+            )
+        t = torch.arange(offset, offset + seq_len, device=device, dtype=torch.float32)
         f_t = torch.arange(1, self.F_t + 1, device=device, dtype=torch.float32)
         ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T
         return torch.cos(ang), torch.sin(ang)
@@ -798,6 +856,7 @@ class HarmonicField(nn.Module):
         seq_len: int,
         device: torch.device,
         dtype: Optional[torch.dtype],
+        offset: int = 0,
     ) -> Tensor:
         amps = self.amplitudes
         env = self._envelope()
@@ -806,7 +865,7 @@ class HarmonicField(nn.Module):
         scaled = (
             torch.complex(self.spec_real.to(device), self.spec_imag.to(device)) * amps
         )
-        b = self._eval_field(scaled, seq_len, device)
+        b = self._eval_field(scaled, seq_len, device, offset)
         return b.to(dtype) if dtype is not None else b
 
     @torch._dynamo.disable
@@ -906,38 +965,88 @@ class HarmonicField(nn.Module):
         self._smooth_rho = float(self._smooth_rho_buf)
         self._smooth_target = float(self._smooth_target_buf)
 
+    # Cached decode. The model binds the live ``PraxisCache`` here around the
+    # head call (modeling._bind_head_cache) and unbinds it after; training and
+    # any cache-less forward see None. See ``praxis.heads.base.decode_context``.
+    accepts_decode_cache: bool = True
+    decode_cache: Any = None
+
     def forward(self, hidden_states: Tensor) -> Tensor:
         seq_len = hidden_states.shape[-2]
         device = hidden_states.device
         dtype = hidden_states.dtype
         self._update_smoothness_dual(hidden_states)
+        offset, state, commit = decode_context(self, hidden_states)
+        new_state: dict = {}
         if self.amp_modulation in ("input", "pure"):
-            b = self._field_conditional(hidden_states)
+            b = self._field_conditional(hidden_states, offset, state, new_state)
         else:
-            b = self._field(seq_len, device=device, dtype=dtype)
+            b = self._field(seq_len, device=device, dtype=dtype, offset=offset)
         if self.fast_weights:
-            b = b + self._field_fast(hidden_states)  # per-token overlay [B, L, D]
+            b = b + self._field_fast(hidden_states, offset, state, new_state)
+        if commit is not None:
+            commit(new_state)
         return hidden_states * (1.0 + b)
 
-    def _field_conditional(self, hidden_states: Tensor) -> Tensor:
+    def _field_conditional(
+        self,
+        hidden_states: Tensor,
+        offset: int = 0,
+        state: Optional[dict] = None,
+        new_state: Optional[dict] = None,
+    ) -> Tensor:
         """Input-conditional field ``[B, seq_len, D]``: the static spectrum with
-        an envelope whose coefficients carry a per-sequence delta from pooled
-        hidden states. Zero-init projection means it is identical to the static
-        field at init; the learned delta is the structured-variance axis."""
-        _, seq_len, _ = hidden_states.shape
+        an envelope whose coefficients carry a delta from pooled hidden states.
+        Zero-init projection means it is identical to the static field at init;
+        the learned delta is the structured-variance axis.
+
+        CAUSAL, PER POSITION. The pool used to be the mean over the WHOLE
+        window, so at train time every position's field carried a summary of
+        the future - a leak, and a train/inference mismatch (generation only
+        ever has the prefix). Now position ``t`` pools the causal prefix
+        ``h[:, :t+1]`` (inclusive: its own state is not the future) and gets
+        its own coefficient set. That is affordable because the envelope
+        FACTORIZES across the two grid axes (see :meth:`_env_factors`): the
+        field is ``((phase_t * e_t) @ (spec * amps)) * e_d`` per position, two
+        ``[B*T, F_t] @ [F_t, F_d]`` matmuls and no per-position grid, so the
+        cost is a constant factor over the static field whatever the sequence
+        length, and a 64-token window is conditioned as fully as a 512-token
+        one.
+
+        Under cached decode the prefix continues from the carried
+        ``prefix_sum``/``prefix_count`` and positions from ``offset``, so a
+        one-token chunk reads exactly the coefficients it would have read as
+        the last position of a full-sequence forward.
+        """
+        batch, seq_len, _ = hidden_states.shape
         device = hidden_states.device
-        p = hidden_states.mean(dim=-2).to(self.amp_basis.dtype)  # [B, D]
+        cum = torch.cumsum(hidden_states.float(), dim=1)  # [B, T, D]
+        counts = torch.arange(1, seq_len + 1, device=device, dtype=torch.float32)
+        if state is not None and "prefix_sum" in state:
+            cum = cum + state["prefix_sum"].to(device).unsqueeze(1)
+            counts = counts + float(state["prefix_count"])
+        if new_state is not None:
+            new_state["prefix_sum"] = cum[:, -1].detach()
+            new_state["prefix_count"] = float(counts[-1])
+        p = (cum / counts.view(1, -1, 1)).to(self.amp_basis.dtype)  # [B, T, D]
         if self.amp_modulation == "pure":
-            coeffs = self.amp_input(p)  # [B, K] - no static base
+            coeffs = self.amp_input(p)  # [B, T, K] - no static base
         else:
-            coeffs = self.amp_coeffs + self.amp_input(p)  # [B, K]
-        rep = coeffs.detach().mean(0)
+            coeffs = self.amp_coeffs + self.amp_input(p)  # [B, T, K]
+        # Representative coefficient set for the snapshots: the batch mean of
+        # the last position's, the one conditioned on the most context.
+        rep = coeffs[:, -1].detach().mean(0)
         self._last_input_coeffs = (
             COEFF_EMA * self._last_input_coeffs + (1.0 - COEFF_EMA) * rep
         )
-        env = self._env_from_coeffs(coeffs)  # [B, F_t]
-        amps = self.amplitudes.unsqueeze(0) * env  # [B, F_t, F_d]
-        return self._build_field(amps, seq_len, device).to(hidden_states.dtype)
+        e_t, e_d = self._env_factors(coeffs)  # [B, T, F_t], [B, T, F_d]
+        cos_a, sin_a = self._phase_table(seq_len, device, offset)  # [T, F_t]
+        real = self.spec_real.to(device) * self.amplitudes  # [F_t, F_d]
+        imag = self.spec_imag.to(device) * self.amplitudes
+        a = (cos_a * e_t) @ real - (sin_a * e_t) @ imag  # [B, T, F_d]
+        a = a * e_d
+        field = (2.0 / math.sqrt(self.T * self.D)) * (a @ self.basis_d.to(device))
+        return field.to(hidden_states.dtype)
 
     def _build_field(self, amps: Tensor, seq_len: int, device: torch.device) -> Tensor:
         """Batched field from per-example amplitudes ``[B, F_t, F_d]`` -> ``[B,
@@ -947,28 +1056,37 @@ class HarmonicField(nn.Module):
         scaled = phase.unsqueeze(0) * amps  # [B, F_t, F_d]
         return self._eval_field(scaled, seq_len, device)
 
-    def _env_from_coeffs(self, coeffs: Tensor) -> Tensor:
-        """Envelope over the grid from coefficient rows ``[..., K]`` ->
-        ``[..., F_t, F_d]``.
+    def _env_factors(self, coeffs: Tensor) -> tuple:
+        """Envelope factors from coefficient rows ``[..., K]`` ->
+        (``[..., F_t]``, ``[..., F_d]``); the envelope over the grid is their
+        outer product.
 
         The coefficient vector splits into an f_t block and an f_d block; each
-        maps through its own complete sine basis and the two profiles are summed
-        INSIDE the tanh, so the envelope is separable in the tanh argument and
-        bounded whatever the two axes do. ``1 + depth*tanh(...)`` stays positive;
-        "pure" drops the base 1 (the field is the conditional delta alone) and
-        applies the per-f_t-band gain.
-
-        With the f_d block at zero this is the old f_t-only envelope broadcast
-        across f_d, which is what makes the completion a strict generalisation.
+        maps through its own complete sine basis into a bounded factor
+        ``1 + depth*tanh(.)``, and the grid envelope is the PRODUCT of the
+        two. Factorizing (rather than summing the two profiles inside one tanh)
+        is what lets the input-conditional path evaluate a distinct envelope at
+        every position without ever forming a per-position ``[F_t, F_d]`` grid.
+        With the f_d block at zero the f_d factor is identically one and this
+        is the old f_t-only envelope, so it is still a strict generalisation and
+        identical at init. "pure" drops the base 1 from the f_t factor (the
+        field is the conditional delta alone, exactly zero at init) and applies
+        the per-f_t-band gain there.
         """
         c_t, c_d = coeffs[..., : self.F_t], coeffs[..., self.F_t :]
-        arg = (c_t @ self.amp_basis.T).unsqueeze(-1) + (
-            c_d @ self.amp_basis_d.T
-        ).unsqueeze(-2)
-        mod = AMP_MOD_DEPTH * torch.tanh(arg)
+        mod_t = AMP_MOD_DEPTH * torch.tanh(c_t @ self.amp_basis.T)
+        mod_d = AMP_MOD_DEPTH * torch.tanh(c_d @ self.amp_basis_d.T)
         if self.amp_modulation == "pure":
-            return mod * self.amp_gain.unsqueeze(-1)
-        return 1.0 + mod
+            e_t = mod_t * self.amp_gain
+        else:
+            e_t = 1.0 + mod_t
+        return e_t, 1.0 + mod_d
+
+    def _env_from_coeffs(self, coeffs: Tensor) -> Tensor:
+        """Envelope over the grid from coefficient rows ``[..., K]`` ->
+        ``[..., F_t, F_d]``: the outer product of :meth:`_env_factors`."""
+        e_t, e_d = self._env_factors(coeffs)
+        return e_t.unsqueeze(-1) * e_d.unsqueeze(-2)
 
     def _envelope(self) -> Optional[Tensor]:
         """``[F_t]`` amplitude envelope over the temporal-frequency axis, or

@@ -49,8 +49,17 @@ def greedy(model, ids, use_cache):
         dict(attention_type="vanilla", embeddings="positional", encoding="nope"),
         dict(attention_type="infini", encoding="rope", window_size=8),
         dict(attention_type="arc", encoding="arc", window_size=8),
+        # Harmonic stem (input envelope + fast weights) + crystal SMEAR arm:
+        # both carry context across chunks through the head-side cache state.
+        dict(
+            attention_type="vanilla",
+            embeddings="positional",
+            encoding="nope",
+            head_type="prismatic6",
+            block_size=128,
+        ),
     ],
-    ids=["vanilla", "infini", "arc"],
+    ids=["vanilla", "infini", "arc", "prismatic6"],
 )
 def test_cached_generate_matches_uncached(kwargs):
     model = build_model(**kwargs)
@@ -114,3 +123,33 @@ def test_positional_embedding_offset():
     full = emb(ids)
     suffix = emb(ids[:, 4:], offset=4)
     torch.testing.assert_close(suffix, full[:, 4:])
+
+
+@pytest.mark.parametrize("head_type", ["crystal_harmonic", "prismatic6"])
+def test_harmonic_head_cached_logits_match(head_type):
+    """The harmonic field is anchored to absolute position and (prismatic6's
+    stem) carries a causal prefix mean and a fast-weight bank across tokens.
+    Under cached decode the head sees only the suffix, so without the head-side
+    cache state it evaluated every chunk at positions 0.. and pooled the suffix
+    alone. Prefill + one-token steps must match the full forward, logit for
+    logit, across a FAST_SEGMENT boundary."""
+    model = build_model(
+        attention_type="vanilla",
+        embeddings="positional",
+        encoding="nope",
+        head_type=head_type,
+        block_size=128,
+    )
+    ids = torch.randint(0, 200, (1, 70))  # crosses the 64-token segment fold
+    with torch.no_grad():
+        full = model(input_ids=ids).logits
+        cache = PraxisCache()
+        prefill = model(input_ids=ids[:, :60], past_key_values=cache).logits
+        steps = [
+            model(input_ids=ids[:, i : i + 1], past_key_values=cache).logits
+            for i in range(60, 70)
+        ]
+    torch.testing.assert_close(prefill, full[:, :60], rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(torch.cat(steps, 1), full[:, 60:], rtol=1e-4, atol=1e-5)
+    # The head actually left state behind (it is not falling back silently).
+    assert any(k.startswith("HarmonicField:") for k in cache.head_states)

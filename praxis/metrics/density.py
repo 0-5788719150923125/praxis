@@ -1,59 +1,75 @@
-"""Information-density profile: the instrument for the paper's rim conjecture.
+"""Whole-sequence readout by position: the instrument for the paper's
+information-density conjecture (body.tex, "Information density at the rim",
+Figure fig:density).
 
-The claim (body.tex, "Information density at the rim") is that a harmonic latent
-pushes density - the share of the representation's distinguishing content
-carried at each position - to the extremes of the window: a slow hum at the
-head, an input-conditional chirp at the tip. The paper states its own falsifier
-precisely, and this module measures exactly that and nothing more:
+WHAT THE CONJECTURE SAYS. Figure fig:density piles the sequence's characters
+into the head cells and thins them toward the tip: the whole sequence, compressed
+as far as one vector's capacity allows, is already present in the early hidden
+states, and later positions add sparse detail rather than new structure. The
+received picture (tokens in boxes, an arrow to the next) says the opposite: a
+vector at position t knows its prefix and nothing else, so what a single vector
+carries about the whole sequence grows monotonically toward the tip.
 
-    "hidden-state deviation must grow with recurrent depth under a monotone
-    positional gradient - early positions settling toward a fixed point while
-    the tip stays live [...] the claim is falsified the moment the
-    per-position, per-step deviation profile - read in norm and in symbol
-    occupancy alike, since a silent bit flip can change the geometry without
-    moving the norm - is measured flat in position, or fails to steepen across
-    depth."
+WHAT THIS MEASURES. Take the sequence as the decoder receives it - the pre-loop
+hidden state, ``[T, D]`` per example - and ask, of the hidden state at ONE
+position, how much of that whole sequence can be read back out of it linearly.
+"The whole sequence" is taken at four resolutions, as bands of its discrete
+Fourier transform along position: ``bag`` (mode 0: the mean over the window,
+the bag of content), ``coarse`` (modes 1-3: window-scale structure), ``mid``
+(modes 4-15) and ``fine`` (modes 16-31). The
+readout is a ridge regression fit per position bucket and per depth step, and
+the reading is its held-out R^2 in each band, ABOVE CHANCE: the same readout is
+fit against a shuffled target (another sequence's), and the reported value is
+(R^2 - R^2_null) / (1 - R^2_null) - the fraction of the way from chance to
+perfect - so the finite-sample overfitting bias of a D-dimensional readout
+cancels, zero means "nothing readable" and one means "fully read", at any
+sample count. This is the framing the probing
+literature calls a linear readout (Future Lens reads tokens k ahead from one
+state; vec2text shows one vector can hold a short sequence exactly), applied
+across the window instead of at one offset.
 
-So there are two predictions and two coordinate systems, and all four readings
-are emitted:
+Predictions, stated so a flat or opposite reading is unmistakable:
 
-    density_norm_slope        deviation rises head -> tip          (> 0)
-    density_norm_steepening   that rise steepens with depth        (> 0)
-    density_hop_slope         same, in symbol-occupancy            (> 0)
-    density_hop_steepening    same                                 (> 0)
+    readout_{band}_b0..b7     R^2 profile from head (b0) to tip (b7), at the
+                              last executed depth step
+    readout_{band}_rim_gap    R^2(tip) - R^2(head). The received picture puts
+                              this strongly positive at EVERY resolution - the
+                              tip has seen everything, the head only its own
+                              token; for the bag it is a linear rise. The
+                              conjecture says the bag and coarse gaps close:
+                              the head anticipates the window-scale content,
+                              and only the fine band stays tip-heavy.
+    readout_{band}_depth_gain mean over positions of R^2(last step) - R^2(entry).
+                              Whether the depth loop BUILDS whole-sequence
+                              content into the states, over what the raw
+                              embeddings already carry.
 
-A slope at zero in BOTH coordinates, or slopes that fail to steepen, kills the
-reading. The paper is explicit that "flat in norm AND flat in occupancy leaves
-it nothing to hide behind" - which is why a norm-only probe would not have been
-enough, and why this one is not.
+Causality makes the null hypothesis sharp. A causal state cannot contain later
+tokens, so the only way the head can carry the whole is by anticipating it, and
+anticipation is only possible for the slow structure - which is exactly the
+band the conjecture claims for the head. The fine band cannot be anticipated
+and is the control: it should be tip-heavy under both pictures.
 
-WHAT "DEVIATION" IS. Between successive loop boundaries r-1 and r, per position:
-the distance the hidden state moved. Both states are standardized over the
-feature axis first (shift/scale invariant), the same trick
-``praxis/halting/kl.py`` uses so the measure does not drift as residual norms
-grow during training. Each per-step profile is then divided by its own mean, so
-the slope is a dimensionless "fractional rise per unit of normalized position" -
-comparable across architectures, widths and runs, which is the point of putting
-this in a general module rather than in one experiment.
+HOW THE READOUT IS FIT, AND WHY IT IS HONEST. One batch has too few sequences
+to fit and hold out a D-dimensional readout, so the probe keeps exponentially
+decayed running moments (mean, second moment, cross moment) per (bucket, step)
+and solves the ridge readout from those. Every sampled forward is scored FIRST
+against the readout fit from earlier batches, THEN folded into the moments -
+prequential evaluation, so R^2 is always on unseen sequences. It warms up over
+the first few dozen sampled forwards and tracks the model with the decay. The
+shuffled-null readout shares the left-hand side (same x), so both come out of
+one batched solve; the null is what makes a 256-feature readout on a few
+thousand sequences readable at all - without it every unpredictable target
+dimension costs ~D/N of R^2 and swamps the signal.
 
-WHAT "OCCUPANCY" IS, AND HOW IT DIFFERS FROM THE PAPER'S LETTER. The paper asks
-which cluster of the *learned codebook* a state expresses. That is only defined
-for models carrying a codebook, so as a general instrument this uses a fixed
-random hyperplane signature (SimHash) instead: which cell of a random partition
-the state falls in, and the rate at which positions cross a boundary between
-depth steps. It shares the property that motivated the second coordinate - a
-change of cell registers at full weight however small the norm movement - but it
-reads a *geometric* partition, not a learned-semantic one. A codebook-backed
-version, for models that have one, is the stricter test and is not this.
-
-WHERE IT RUNS. ``BaseDecoder`` owns one probe and the depth loop drives it, so
-every decoder with a recurrence gets the profile for free and architectures
-without one simply emit nothing. Cost is one [D, BITS] matmul and a handful of
-reductions per loop boundary - negligible beside the block itself, and the same
-always-on shape as the existing ``depth_prints`` accounting.
+WHERE IT RUNS. ``BaseDecoder`` owns one probe and the depth loop drives it
+(``begin`` pre-loop, ``observe`` after each layer application, ``finalize``
+after). It is a plain object, not an ``nn.Module``: no parameters, no
+persistent buffers, nothing in ``state_dict``. The running moments live on the
+object and are rebuilt from scratch after a restart.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -62,126 +78,170 @@ from torch import Tensor
 # width regardless of sequence length or curriculum stage.
 BUCKETS: int = 8
 
-# Hyperplanes in the occupancy signature. 16 bits is plenty to make a boundary
-# crossing detectable while staying free next to the block's own compute.
-BITS: int = 16
+# The whole-sequence target is the pre-loop state projected to this many
+# features (fixed seeded Gaussian projection) and Fourier-transformed along
+# position. Small on purpose: the target's width multiplies the readout cost
+# and the running moments' memory.
+TARGET_WIDTH: int = 4
 
-# Seeded so the partition is identical across runs and architectures - the
-# occupancy numbers would otherwise not be comparable between them.
+# Resolution bands over the DFT along position, as inclusive mode ranges.
+# Mode 0 is the mean over the window (the bag of content); mode k completes
+# k cycles across the window, so the bands are window-relative scales, which
+# is what the conjecture speaks about. The bag stands alone because it has the
+# cleanest received-picture signature: a prefix predicts it in proportion to
+# the prefix fraction, so it rises linearly head to tip, whereas modes 1-3 a
+# prefix predicts at intermediate positions and NOT at the tip (the full
+# window's sum is orthogonal to them), which would blur the two together.
+BANDS: Tuple[Tuple[str, int, int], ...] = (
+    ("bag", 0, 0),
+    ("coarse", 1, 3),
+    ("mid", 4, 15),
+    ("fine", 16, 31),
+)
+# rfft of a T-long sequence has T//2 + 1 modes; the fine band needs mode 31.
+MIN_LENGTH: int = 64
+
+# Seeded so the target projection is identical across runs and architectures.
 PROJECTION_SEED: int = 20260812
+
+# Only every N-th forward is scored and folded into the moments. Keeps the
+# probe at a few ms per training step amortized.
+SAMPLE_EVERY: int = 8
+# Exponential decay of the running moments per sampled forward. 0.98 is an
+# effective window of ~50 sampled forwards - a few thousand sequences.
+DECAY: float = 0.98
+# Ridge strength relative to the mean feature variance. Fixed: this is an
+# instrument, not a model, and it must read the same for every run.
+RIDGE: float = 1e-2
+# Sampled forwards folded in before the readout is scored at all.
+WARMUP: int = 4
+# Positions read per bucket, evenly strided. The readout's sample size is
+# bounded by SEQUENCES (every position in a sequence shares its target), so
+# more positions per bucket cost matmul time without adding evidence.
+POSITIONS_PER_BUCKET: int = 16
 
 _EPS: float = 1e-6
 
 
-def _standardize(hidden_states: Tensor) -> Tensor:
-    """Shift/scale invariant over the feature axis, matching KL halting."""
-    mean = hidden_states.mean(dim=-1, keepdim=True)
-    std = hidden_states.std(dim=-1, keepdim=True).clamp_min(_EPS)
-    return (hidden_states - mean) / std
+class _Moments:
+    """Running moments for one depth step's readouts, all buckets batched.
 
-
-def _bucketize(profile: Tensor) -> Tensor:
-    """Reduce a per-position [T] profile to BUCKETS means over position."""
-    length = profile.shape[0]
-    if length <= BUCKETS:
-        return profile
-    edges = torch.linspace(0, length, BUCKETS + 1, device=profile.device).long()
-    return torch.stack(
-        [profile[edges[b] : edges[b + 1]].mean() for b in range(BUCKETS)]
-    )
-
-
-def _slope(values: Tensor) -> float:
-    """Least-squares slope of ``values`` against position normalized to [0, 1].
-
-    Returns the rise across the whole window, so it reads directly as "the tip
-    carries N times more than the mean relative to the head".
+    ``x`` is per bucket ``[BUCKETS, N, D]``; ``y`` is the target stacked with
+    its shuffled null along the last axis, ``[BUCKETS, N, 2K]``, so one solve
+    with a shared left-hand side yields both readouts.
     """
-    n = values.numel()
-    if n < 2:
-        return 0.0
-    x = torch.linspace(0.0, 1.0, n, device=values.device, dtype=values.dtype)
-    x_centered = x - x.mean()
-    denom = x_centered.square().sum()
-    if float(denom) < _EPS:
-        return 0.0
-    return float((x_centered * (values - values.mean())).sum() / denom)
+
+    __slots__ = ("count", "mx", "my", "mxx", "mxy", "myy")
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.mx: Optional[Tensor] = None
+        self.my: Optional[Tensor] = None
+        self.mxx: Optional[Tensor] = None
+        self.mxy: Optional[Tensor] = None
+        self.myy: Optional[Tensor] = None
+
+    def update(self, x: Tensor, y: Tensor) -> None:
+        n = x.shape[1]
+        mx = x.mean(dim=1)  # [G, D]
+        my = y.mean(dim=1)  # [G, 2K]
+        mxx = x.transpose(1, 2) @ x / n  # [G, D, D]
+        mxy = x.transpose(1, 2) @ y / n  # [G, D, 2K]
+        myy = y.square().mean(dim=1)  # [G, 2K]
+        if self.mx is None:
+            self.mx, self.my, self.mxx, self.mxy, self.myy = mx, my, mxx, mxy, myy
+        else:
+            self.mx.lerp_(mx, 1.0 - DECAY)
+            self.my.lerp_(my, 1.0 - DECAY)
+            self.mxx.lerp_(mxx, 1.0 - DECAY)
+            self.mxy.lerp_(mxy, 1.0 - DECAY)
+            self.myy.lerp_(myy, 1.0 - DECAY)
+        self.count += 1
+
+    def readout(self) -> Optional[Tuple[Tensor, Tensor, Tensor, Tensor]]:
+        """(W [G, D, 2K], mean_x [G, D], mean_y [G, 2K], var_y [G, 2K])."""
+        if self.mx is None or self.count < WARMUP:
+            return None
+        cov_xx = self.mxx - self.mx.unsqueeze(2) * self.mx.unsqueeze(1)
+        cov_xy = self.mxy - self.mx.unsqueeze(2) * self.my.unsqueeze(1)
+        var_y = (self.myy - self.my.square()).clamp_min(_EPS)
+        ridge = RIDGE * cov_xx.diagonal(dim1=1, dim2=2).mean(dim=1).clamp_min(_EPS)
+        eye = torch.eye(cov_xx.shape[-1], device=cov_xx.device, dtype=cov_xx.dtype)
+        lhs = cov_xx + ridge.view(-1, 1, 1) * eye
+        try:
+            weight = torch.linalg.solve(lhs, cov_xy)
+        except RuntimeError:
+            return None
+        return weight, self.mx, self.my, var_y
 
 
 class DensityProbe:
-    """Accumulates the per-position, per-depth-step deviation profile.
+    """Whole-sequence readout R^2 (above a shuffled-target null) by position
+    bucket, per depth step.
 
     Deliberately a plain object, not an ``nn.Module``: it holds no parameters
     and no persistent buffers, so it never touches ``state_dict`` and cannot
-    change a checkpoint. The projection is cached per (device, dtype, width) on
-    first use.
+    change a checkpoint.
     """
 
     def __init__(self) -> None:
         self._projection: Optional[Tensor] = None
-        self._previous: Optional[Tensor] = None
-        self._norm_profiles: List[Tensor] = []
-        self._hop_profiles: List[Tensor] = []
+        self._forwards = 0
+        self._active = False
+        self._target: Optional[Tensor] = None  # [B, K]
+        self._band_slices: List[Tuple[str, slice]] = []
+        self._step = 0
+        self._moments: Dict[int, _Moments] = {}
+        # Per executed step this forward: {band: [BUCKETS] R^2-above-null}
+        self._scores: Dict[int, Dict[str, Tensor]] = {}
         self._metrics: Dict[str, float] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
     def begin(self, hidden_states: Tensor) -> None:
-        """Reset per-forward state and stash the pre-loop hidden state."""
-        self._previous = None
-        self._norm_profiles = []
-        self._hop_profiles = []
-        if self._usable(hidden_states):
-            self._previous = _standardize(hidden_states.detach().float())
-
-    def observe(self, hidden_states: Tensor) -> None:
-        """Record one loop boundary's deviation against the previous one."""
+        """Reset per-forward state; build this forward's whole-sequence target
+        from the pre-loop state and score the entry state as step 0."""
+        self._active = False
+        self._target = None
+        self._scores = {}
+        self._step = 0
+        self._forwards += 1
         if not self._usable(hidden_states):
             return
-        current = _standardize(hidden_states.detach().float())
-        previous, self._previous = self._previous, current
-        # A compressor can change sequence length mid-loop; positions no longer
-        # correspond, so that boundary contributes nothing rather than garbage.
-        if previous is None or previous.shape != current.shape:
+        if self._forwards % SAMPLE_EVERY != 0:
             return
+        with torch.no_grad():
+            self._target = self._sequence_target(hidden_states.detach().float())
+        self._active = True
+        self._score_and_fold(hidden_states, step=0)
 
-        delta = current - previous
-        # Norm coordinate: per-position distance moved, averaged over batch.
-        norm = delta.square().mean(dim=-1).sqrt().mean(dim=0)  # [T]
-        self._norm_profiles.append(_bucketize(norm))
-
-        # Occupancy coordinate: fraction of hyperplanes the position crossed.
-        projection = self._get_projection(current)
-        before = (previous @ projection) > 0
-        after = (current @ projection) > 0
-        hop = (before ^ after).float().mean(dim=-1).mean(dim=0)  # [T]
-        self._hop_profiles.append(_bucketize(hop))
+    def observe(self, hidden_states: Tensor) -> None:
+        """Score one loop boundary's hidden state against the whole sequence."""
+        if not self._active:
+            return
+        self._step += 1
+        self._score_and_fold(hidden_states, step=self._step)
 
     def finalize(self) -> None:
-        """Turn the recorded profiles into the four readings plus the charts."""
+        """Turn this forward's per-step scores into the emitted readings."""
+        if not self._active or not self._scores:
+            return
+        last_step = max(self._scores)
+        last = self._scores[last_step]
+        entry = self._scores.get(0)
         metrics: Dict[str, float] = {}
-        for name, profiles in (
-            ("norm", self._norm_profiles),
-            ("hop", self._hop_profiles),
-        ):
-            if not profiles:
+        for band, _ in self._band_slices:
+            profile = last.get(band)
+            if profile is None:
                 continue
-            # Normalize each step's profile by its own mean, so the slope is
-            # dimensionless and the steepening is not just "everything moved
-            # more this pass".
-            relative = [p / p.mean().clamp_min(_EPS) for p in profiles]
-            slopes = [_slope(p) for p in relative]
-
-            metrics[f"density_{name}_slope"] = sum(slopes) / len(slopes)
-            if len(slopes) >= 2:
-                # Does the positional gradient STEEPEN as the loop deepens?
-                by_step = torch.tensor(slopes, dtype=torch.float32)
-                metrics[f"density_{name}_steepening"] = _slope(by_step)
-
-            profile = torch.stack(relative).mean(dim=0)
-            for b, value in enumerate(profile.tolist()):
-                metrics[f"density_{name}_b{b}"] = value
-
+            values = profile.tolist()
+            for b, value in enumerate(values):
+                metrics[f"readout_{band}_b{b}"] = value
+            metrics[f"readout_{band}_rim_gap"] = values[-1] - values[0]
+            if entry is not None and last_step > 0 and band in entry:
+                metrics[f"readout_{band}_depth_gain"] = float(
+                    (profile - entry[band]).mean()
+                )
         if metrics:
             self._metrics = metrics
 
@@ -194,8 +254,91 @@ class DensityProbe:
         return (
             isinstance(hidden_states, Tensor)
             and hidden_states.dim() == 3
-            and hidden_states.shape[1] >= 2
+            and hidden_states.shape[0] >= 2
+            and hidden_states.shape[1] >= MIN_LENGTH
         )
+
+    def _sequence_target(self, states: Tensor) -> Tensor:
+        """Whole-sequence target ``[B, K]``: the state projected to
+        TARGET_WIDTH features, DFT'd along position, cut into BANDS."""
+        projection = self._get_projection(states)
+        projected = states @ projection  # [B, T, r]
+        spectrum = torch.fft.rfft(projected, dim=1) / states.shape[1]  # [B, M, r]
+        pieces: List[Tensor] = []
+        slices: List[Tuple[str, slice]] = []
+        offset = 0
+        for name, lo, hi in BANDS:
+            modes = spectrum[:, lo : hi + 1, :]  # [B, m, r]
+            parts = [modes.real.flatten(1)]
+            # Mode 0 is real by construction; its imaginary part is identically
+            # zero and would be a dead target dimension.
+            imag = modes[:, 1:, :] if lo == 0 else modes
+            if imag.shape[1] > 0:
+                parts.append(imag.imag.flatten(1))
+            piece = torch.cat(parts, dim=1)
+            pieces.append(piece)
+            slices.append((name, slice(offset, offset + piece.shape[1])))
+            offset += piece.shape[1]
+        self._band_slices = slices
+        return torch.cat(pieces, dim=1)
+
+    def _score_and_fold(self, hidden_states: Tensor, step: int) -> None:
+        if not self._usable(hidden_states):
+            return
+        target = self._target
+        if target is None or hidden_states.shape[0] != target.shape[0]:
+            return
+        with torch.no_grad():
+            states = hidden_states.detach().float()
+            batch, length, width = states.shape
+            per = length // BUCKETS
+            k = target.shape[-1]
+            # [BUCKETS, B*n, D]: bucket-major, positions past 8*per dropped,
+            # up to POSITIONS_PER_BUCKET evenly strided positions per bucket.
+            n = min(per, POSITIONS_PER_BUCKET)
+            offsets = torch.arange(n, device=states.device) * (per // n)
+            x = (
+                states[:, : BUCKETS * per, :]
+                .reshape(batch, BUCKETS, per, width)[:, :, offsets, :]
+                .permute(1, 0, 2, 3)
+                .reshape(BUCKETS, batch * n, width)
+            )
+            # Target beside its shuffled null: sequence i paired with sequence
+            # i-1's target. The null readout carries the same overfitting bias
+            # as the real one, and the reported R^2 is their difference.
+            paired = torch.cat([target, target.roll(1, dims=0)], dim=1)  # [B, 2K]
+            y = (
+                paired.unsqueeze(1)
+                .expand(batch, n, 2 * k)
+                .reshape(1, batch * n, 2 * k)
+                .expand(BUCKETS, -1, -1)
+            )
+            moments = self._moments.get(step)
+            if moments is None:
+                moments = _Moments()
+                self._moments[step] = moments
+            readout = moments.readout()
+            if readout is not None:
+                weight, mean_x, mean_y, var_y = readout
+                predicted = mean_y.unsqueeze(1) + (x - mean_x.unsqueeze(1)) @ weight
+                # Per-dimension standardized residual energy, so every target
+                # dimension counts equally within its band.
+                sse = (predicted - y).square().mean(dim=1) / var_y  # [G, 2K]
+                sst = (y - mean_y.unsqueeze(1)).square().mean(dim=1) / var_y
+                scores: Dict[str, Tensor] = {}
+                for name, sl in self._band_slices:
+                    null = slice(sl.start + k, sl.stop + k)
+                    real = 1.0 - sse[:, sl].sum(dim=1) / sst[:, sl].sum(
+                        dim=1
+                    ).clamp_min(_EPS)
+                    chance = 1.0 - sse[:, null].sum(dim=1) / sst[:, null].sum(
+                        dim=1
+                    ).clamp_min(_EPS)
+                    # Fraction of the way from chance to perfect: 0 = nothing
+                    # readable beyond the overfitting bias, 1 = fully read.
+                    scores[name] = (real - chance) / (1.0 - chance).clamp_min(_EPS)
+                self._scores[step] = scores
+            moments.update(x, y)
 
     def _get_projection(self, reference: Tensor) -> Tensor:
         width = reference.shape[-1]
@@ -204,12 +347,11 @@ class DensityProbe:
             cached is not None
             and cached.shape[0] == width
             and cached.device == reference.device
-            and cached.dtype == reference.dtype
         ):
             return cached
         generator = torch.Generator(device="cpu").manual_seed(PROJECTION_SEED)
-        projection = torch.randn(width, BITS, generator=generator).to(
-            device=reference.device, dtype=reference.dtype
+        projection = torch.randn(width, TARGET_WIDTH, generator=generator).to(
+            device=reference.device, dtype=torch.float32
         )
         self._projection = projection
         return projection

@@ -1,5 +1,6 @@
 """Amplitude modulation envelope on the harmonic field (off|static|learned)."""
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -443,3 +444,173 @@ def test_fast_repr_refreshes_on_a_cadence():
             field.fast_u.weight.normal_(0, 0.3)
         field._field_fast(x)
     assert torch.equal(field._fast_repr, first), "refreshed inside the period"
+
+
+# ── Input-conditional envelope is causal, per position ──────────────────────
+
+
+def _live_input_field(mode="input", max_positions=512):
+    torch.manual_seed(0)
+    f = HarmonicField(hidden_dim=16, max_positions=max_positions, amp_modulation=mode)
+    with torch.no_grad():
+        f.amp_input.weight.normal_(std=0.5)  # make the conditional delta live
+    return f
+
+
+def test_input_envelope_matches_static_field_at_init():
+    """Zero-init projection: every position reads the static (bias) field."""
+    torch.manual_seed(0)
+    f = HarmonicField(hidden_dim=16, max_positions=512, amp_modulation="input")
+    x = torch.randn(2, 200, 16)
+    with torch.no_grad():
+        got = f(x)
+        static = x * (1.0 + f._field(200, x.device, x.dtype))
+    torch.testing.assert_close(got, static)
+
+
+def test_input_envelope_does_not_read_the_future():
+    """The pool used to be the mean over the WHOLE window - a leak. Now a
+    position's field depends only on its causal prefix: perturb a token, and
+    nothing before it may change, while it and everything after must."""
+    for mode in ("input", "pure"):
+        f = _live_input_field(mode)
+        x = torch.randn(1, 200, 16)
+        x2 = x.clone()
+        x2[:, 100] += 5.0
+        with torch.no_grad():
+            o1, o2 = f(x), f(x2)
+        torch.testing.assert_close(o1[:, :100], o2[:, :100])
+        # Every later position pools the perturbed state, so its field moved.
+        moved = (o1[:, 101:] - o2[:, 101:]).abs().amax(dim=-1)  # [1, 99]
+        assert (moved > 0).all(), mode
+
+
+def test_input_envelope_conditions_short_windows_too():
+    """A window shorter than any bank/segment length is conditioned as fully
+    as a long one - the fix must not switch the variance axis off at the
+    curriculum's short tiers."""
+    f = _live_input_field("input")
+    x = torch.randn(3, 16, 16)
+    with torch.no_grad():
+        got = f(x)
+        static = x * (1.0 + f._field(16, x.device, x.dtype))
+    assert not torch.allclose(got[:, 1:], static[:, 1:])
+
+
+def test_input_envelope_matches_whole_window_evaluation_per_position():
+    """Position t's field equals the full-window field built from position
+    t's own coefficient set - the per-position contraction is exact."""
+    f = _live_input_field("input")
+    x = torch.randn(2, 40, 16)
+    with torch.no_grad():
+        prefix = torch.cumsum(x, 1) / torch.arange(1, 41).view(1, -1, 1)
+        coeffs = f.amp_coeffs + f.amp_input(prefix)  # [B, T, K]
+        field = f._field_conditional(x)
+        for t in (0, 7, 39):
+            amps = f.amplitudes * f._env_from_coeffs(coeffs[:, t])  # [B, F_t, F_d]
+            whole = f._build_field(amps, 40, x.device)
+            torch.testing.assert_close(field[:, t], whole[:, t], atol=1e-5, rtol=1e-4)
+
+
+def test_envelope_factorizes_and_reduces_to_ft_only_when_fd_is_zero():
+    f = HarmonicField(hidden_dim=16, max_positions=64, amp_modulation="learned")
+    coeffs = torch.randn(f.amp_K)
+    coeffs[f.F_t :] = 0.0
+    env = f._env_from_coeffs(coeffs)  # [F_t, F_d]
+    # Constant along f_d, equal to the f_t factor.
+    e_t, e_d = f._env_factors(coeffs)
+    torch.testing.assert_close(e_d, torch.ones_like(e_d))
+    torch.testing.assert_close(env, e_t.unsqueeze(-1).expand_as(env))
+
+
+def test_input_envelope_is_trainable_per_position():
+    f = _live_input_field("input")
+    x = torch.randn(2, 30, 16, requires_grad=True)
+    f(x).sum().backward()
+    assert f.amp_input.weight.grad.abs().sum() > 0
+    assert f.amplitudes.grad is not None
+
+
+# ── Cached decode: chunked == full-sequence ─────────────────────────────────
+
+
+class _FakeCache:
+    """Stands in for PraxisCache: past_length() is what the trunk has written
+    (including the current chunk, as at head time), plus the head side-store."""
+
+    def __init__(self):
+        self.length = 0
+        self.head_states = {}
+
+    def past_length(self):
+        return self.length
+
+    def get_head_state(self, key):
+        return self.head_states.get(key)
+
+    def set_head_state(self, key, state):
+        self.head_states[key] = state
+
+
+def _chunked_equals_full(f, x, chunks):
+    with torch.no_grad():
+        full = f(x)
+        cache = _FakeCache()
+        outs = []
+        pos = 0
+        for size in chunks:
+            chunk = x[:, pos : pos + size]
+            cache.length = pos + size  # trunk wrote this chunk before the head runs
+            f.decode_cache = cache
+            try:
+                outs.append(f(chunk))
+            finally:
+                f.decode_cache = None
+            pos += size
+        got = torch.cat(outs, 1)
+    torch.testing.assert_close(got, full, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.parametrize("mode", ["static", "learned", "input", "pure"])
+def test_cached_decode_matches_full_forward(mode):
+    """Prefill of 70, then single tokens and a multi-token chunk that straddles
+    a FAST_SEGMENT boundary: every chunk must equal its slice of the full
+    forward. Before this the head evaluated every chunk at positions 0.. and,
+    for the conditional modes, pooled the suffix alone."""
+    torch.manual_seed(0)
+    f = HarmonicField(
+        hidden_dim=16, max_positions=512, amp_modulation=mode, fast_weights=True
+    )
+    with torch.no_grad():
+        f.fast_u.weight.normal_(std=0.5)
+        if mode in ("input", "pure"):
+            f.amp_input.weight.normal_(std=0.5)
+    x = torch.randn(2, 150, 16)
+    _chunked_equals_full(f, x, [70, 1, 1, 60, 1, 17])
+
+
+def test_cached_decode_without_cache_is_full_recompute():
+    """Cache-less attention leaves past_length at 0 and feeds the whole
+    sequence every call; the head must then behave exactly as untethered."""
+    f = HarmonicField(
+        hidden_dim=16, max_positions=64, amp_modulation="input", fast_weights=True
+    )
+    with torch.no_grad():
+        f.amp_input.weight.normal_(std=0.5)
+    x = torch.randn(2, 30, 16)
+    cache = _FakeCache()  # length stays 0
+    with torch.no_grad():
+        want = f(x)
+        f.decode_cache = cache
+        try:
+            got = f(x)
+        finally:
+            f.decode_cache = None
+    torch.testing.assert_close(got, want)
+
+
+def test_cached_decode_positions_past_one_period():
+    """The on-the-fly phase path with an offset: chunks past T still match."""
+    f = HarmonicField(hidden_dim=16, max_positions=32, amp_modulation="learned")
+    x = torch.randn(1, 50, 16)
+    _chunked_equals_full(f, x, [30, 5, 15])

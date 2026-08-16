@@ -7,12 +7,14 @@ concatenate ALL scalars ahead of ALL composites and sort each half flat by
 belong to the Dynamics tab's manifest builder. Two things went wrong because of
 that and are pinned here:
 
-  * four density entries carried ``series_group`` expecting to merge into two
-    cards, so the deck rendered four - two titled "Density Gradient (norm)" and
-    two "Density Steepening across Depth";
+  * four (since removed) density entries carried ``series_group`` expecting to
+    merge into two cards, so the deck rendered four;
   * they also carried ``order: 10``, tying with ``loss``, and a stable sort puts
     the earlier-declared entry first - which put a research probe at deck
     position 1, ahead of training loss.
+
+The information-density probe now emits only ``readout_*`` keys into
+extra_metrics (no schema columns), claimed by the composite cards pinned below.
 """
 
 import re
@@ -25,11 +27,11 @@ from praxis.metrics.training_metrics import (
     X_AXIS_REGISTRY,
 )
 
-DENSITY_KEYS = (
-    "density_norm_slope",
-    "density_hop_slope",
-    "density_norm_steepening",
-    "density_hop_steepening",
+READOUT_BANDS = ("bag", "coarse", "mid", "fine")
+READOUT_KEYS = tuple(
+    f"readout_{band}_{suffix}"
+    for band in READOUT_BANDS
+    for suffix in [f"b{b}" for b in range(8)] + ["rim_gap", "depth_gain"]
 )
 
 
@@ -70,38 +72,48 @@ def test_card_titles_are_unique():
     assert not overlap, f"title collides across registries: {sorted(overlap)}"
 
 
-def test_density_keys_are_chartless():
-    """They render as two composites, so an individual chart would duplicate."""
-    for key in DENSITY_KEYS:
-        entry = TRAINING_METRIC_REGISTRY[key]
-        assert entry.get("chart") is None, f"{key} would render its own card"
-        assert entry["description"], f"{key} lost its tooltip text"
+def test_readout_keys_are_not_schema_columns():
+    """The probe's keys ride extra_metrics; a registry column per key would
+    add 40 columns to every run's schema for one research card family."""
+    for key in READOUT_KEYS:
+        assert key not in TRAINING_METRIC_REGISTRY, f"{key} became a column"
 
 
-def test_density_composites_cover_every_density_key():
-    """Chartless keys must be claimed by some composite, or they vanish."""
+def test_readout_composites_cover_every_readout_key():
+    """Every emitted key must be claimed by some composite, or it vanishes."""
     patterns = [
         re.compile(e["key_pattern"])
         for e in COMPOSITE_METRIC_REGISTRY
         if e.get("key_pattern")
     ]
-    for key in DENSITY_KEYS:
+    for key in READOUT_KEYS:
         assert any(p.match(key) for p in patterns), f"{key} is on no card"
 
 
-def test_density_composites_pair_norm_with_occupancy():
-    """Each card carries BOTH coordinates - a norm-only reading is escapable."""
+def test_readout_profiles_label_positions_head_to_tip():
+    """Series 0..7 are POSITION buckets; the legend must say so, not 'Series 0'."""
     by_key = {e["key"]: e for e in COMPOSITE_METRIC_REGISTRY}
-    for card, expected in (
-        ("density_gradient", {"density_norm_slope", "density_hop_slope"}),
-        (
-            "density_steepening",
-            {"density_norm_steepening", "density_hop_steepening"},
-        ),
+    for band in READOUT_BANDS:
+        card = by_key[f"readout_profile_{band}"]
+        labels = card["series_labels"]
+        assert len(labels) == 8
+        assert labels[0].startswith("head") and labels[-1].startswith("tip")
+        pattern = re.compile(card["key_pattern"])
+        assert {k for k in READOUT_KEYS if pattern.match(k)} == {
+            f"readout_{band}_b{b}" for b in range(8)
+        }
+
+
+def test_readout_summary_cards_carry_every_band():
+    by_key = {e["key"]: e for e in COMPOSITE_METRIC_REGISTRY}
+    for card, suffix in (
+        ("readout_rim_gap", "rim_gap"),
+        ("readout_depth_gain", "depth_gain"),
     ):
-        assert card in by_key, f"missing composite {card}"
         pattern = re.compile(by_key[card]["key_pattern"])
-        assert {k for k in DENSITY_KEYS if pattern.match(k)} == expected
+        assert {k for k in READOUT_KEYS if pattern.match(k)} == {
+            f"readout_{band}_{suffix}" for band in READOUT_BANDS
+        }
 
 
 def test_composite_orders_do_not_collide():
@@ -111,8 +123,9 @@ def test_composite_orders_do_not_collide():
     # Pre-existing ties are grandfathered; the point is that new cards do not
     # silently join them. Assert only that the ones we placed are clean.
     for key in (
-        "density_gradient",
-        "density_steepening",
+        "readout_profile_bag",
+        "readout_rim_gap",
+        "readout_depth_gain",
         "smear_coefficients",
         "smear_target_dispersion",
         "smear_input_dependence",
@@ -395,4 +408,76 @@ def test_cross_run_charts_do_not_match_points_by_array_index():
     assert index_modes == 1, (
         "expected exactly one 'index' mode - crossRunInteraction's fallback - "
         f"but found {index_modes}"
+    )
+
+
+# --- readability hints -------------------------------------------------------
+
+
+def test_clip_and_smooth_hints_are_well_formed():
+    """Both hints change what the reader sees, so a typo must not pass silently."""
+    for key, entry in TRAINING_METRIC_REGISTRY.items():
+        chart = entry.get("chart")
+        if not chart:
+            continue
+        if "y_clip_percentile" in chart:
+            pct = chart["y_clip_percentile"]
+            assert isinstance(
+                pct, (int, float)
+            ), f"{key}: y_clip_percentile not numeric"
+            assert 90 <= pct < 100, (
+                f"{key}: y_clip_percentile={pct}; below 90 discards real signal "
+                f"and 100 is a no-op"
+            )
+        if "smooth" in chart:
+            assert isinstance(chart["smooth"], bool), f"{key}: smooth must be a bool"
+
+
+def test_readability_hints_stay_opt_in():
+    """Clipping and smoothing are per-metric, never blanket defaults.
+
+    Both are wrong for most cards: clipping hides real maxima where the tail IS
+    the signal (softmax_collapse, gradient spikes), and smoothing a sparse
+    validation series would draw a trend through a handful of points.
+    """
+    charts = [
+        (k, v["chart"]) for k, v in TRAINING_METRIC_REGISTRY.items() if v.get("chart")
+    ]
+    clipped = [k for k, c in charts if c.get("y_clip_percentile")]
+    smoothed = [k for k, c in charts if c.get("smooth")]
+
+    assert clipped, "expected at least the training-loss card to clip"
+    assert len(clipped) < len(charts) / 2, "clipping has become a de-facto default"
+    assert len(smoothed) < len(charts) / 2, "smoothing has become a de-facto default"
+
+    # A sparse series has too few points for a rolling window to mean anything.
+    for key in smoothed:
+        assert not TRAINING_METRIC_REGISTRY[key]["chart"].get("is_validation"), (
+            f"{key}: smoothing a validation series - its points are one per "
+            f"val_check_interval, far too sparse for a rolling window"
+        )
+
+
+def test_training_loss_declares_both_hints():
+    """The card this was built for: a startup transient plus per-step noise."""
+    chart = TRAINING_METRIC_REGISTRY["loss"]["chart"]
+    assert chart.get("y_clip_percentile"), "training loss lost its robust y bound"
+    assert chart.get("smooth") is True, "training loss lost its trend line"
+
+
+def test_raw_trace_is_excluded_from_legend_and_tooltip():
+    """The faint raw series must not double every run in the chart chrome.
+
+    Smoothing draws two datasets per run sharing one name and colour. Without
+    the flag check in both the legend filter and the interaction mode, a
+    two-run comparison lists four legend entries and four tooltip lines.
+    """
+    import pathlib
+
+    src = pathlib.Path("praxis/web/src/js/charts.js").read_text()
+    assert "RAW_TRACE_FLAG" in src, "the raw-trace marker is gone"
+    # One definition, one legend filter, one interaction skip, one tag site.
+    assert src.count("RAW_TRACE_FLAG") >= 4, (
+        "raw traces must be flagged, filtered from the legend, AND skipped by "
+        "the hover interaction"
     )

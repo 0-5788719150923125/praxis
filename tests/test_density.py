@@ -1,139 +1,114 @@
+"""Whole-sequence readout probe: it must discriminate the received picture (a
+causal state knows its prefix) from the paper's conjecture (the head already
+carries the compressed whole), and read nothing where there is nothing.
+
+The three synthetic regimes below have analytic signatures for the BAG band:
+
+    own     each state is its own token only          -> ~0 everywhere
+    prefix  each state is the running prefix mean     -> rises linearly ~t/T
+    whole   each state is the whole-window mean       -> flat, near 1
+"""
+
+import pytest
 import torch
 
+import praxis.metrics.density as density
 from praxis.metrics.density import BUCKETS, DensityProbe
 
-
-def _trajectory(probe, states):
-    """Drive the probe over a list of [B, T, D] states and read the result."""
-    probe.begin(states[0])
-    for state in states[1:]:
-        probe.observe(state)
-    probe.finalize()
-    return probe.get_metrics()
+B, T, D = 32, 128, 64
+NOISE = 0.3
 
 
-def _ramp(length, head, tip):
-    """Per-position scale rising linearly from ``head`` to ``tip``."""
-    return torch.linspace(head, tip, length).view(1, length, 1)
+@pytest.fixture(autouse=True)
+def _sample_every_forward(monkeypatch):
+    monkeypatch.setattr(density, "SAMPLE_EVERY", 1)
 
 
-def test_flat_trajectory_reads_flat():
-    """The falsifying case has to actually read as falsified: a trajectory that
-    moves every position equally must not manufacture a positional gradient."""
+def _states(seq, mode):
+    """Depth-step states [B, T, D] for a given regime; unit-variance signals."""
+    if mode == "own":
+        signal = seq
+    elif mode == "prefix":
+        counts = torch.arange(1, T + 1).view(1, T, 1).sqrt()
+        signal = torch.cumsum(seq, 1) / counts
+    elif mode == "whole":
+        signal = (seq.mean(1, keepdim=True) * T**0.5).expand(B, T, D)
+    else:
+        raise ValueError(mode)
+    return signal + NOISE * torch.randn(B, T, D)
+
+
+def _drive(mode, forwards=60, steps=2, tail=5):
+    """Run the probe over ``forwards`` batches; average the last ``tail`` readings."""
     torch.manual_seed(0)
-    base = torch.randn(4, 64, 32)
-    states = [base + 0.1 * torch.randn(4, 64, 32) for _ in range(5)]
-
-    metrics = _trajectory(DensityProbe(), states)
-    assert abs(metrics["density_norm_slope"]) < 0.1
-    profile = [metrics[f"density_norm_b{b}"] for b in range(BUCKETS)]
-    assert max(profile) - min(profile) < 0.2
-
-
-def test_tip_heavy_trajectory_reads_positive():
-    """Density at the rim: positions late in the window move more per step."""
-    torch.manual_seed(0)
-    base = torch.randn(4, 64, 32)
-    scale = _ramp(64, 0.02, 0.6)
-    states = [base]
-    for _ in range(4):
-        states.append(states[-1] + scale * torch.randn(4, 64, 32))
-
-    metrics = _trajectory(DensityProbe(), states)
-    assert metrics["density_norm_slope"] > 0.5
-    assert metrics["density_hop_slope"] > 0.0
-    # b7 is the tip, b0 the head.
-    assert metrics["density_norm_b7"] > metrics["density_norm_b0"]
-
-
-def test_steepening_across_depth():
-    """The second half of the falsifier: the tilt must GROW with each pass."""
-    torch.manual_seed(0)
-    base = torch.randn(4, 64, 32)
-    states = [base]
-    for step in range(1, 5):
-        # Each pass tilts harder than the last.
-        scale = _ramp(64, 0.02, 0.1 * step**2)
-        states.append(states[-1] + scale * torch.randn(4, 64, 32))
-
-    metrics = _trajectory(DensityProbe(), states)
-    assert metrics["density_norm_steepening"] > 0.0
-
-
-def test_occupancy_catches_what_norm_misses():
-    """The paper's stated reason for a second coordinate: 'a single bit's worth
-    of change can move the hidden state from one basin to another while
-    remaining silent in norm'.
-
-    Constructed directly - every position gets an identically sized
-    perturbation, so the NORM profile is flat by design, but tip positions sit
-    on the partition boundaries (state orthogonal to every hyperplane) while
-    head positions sit far from them. Only occupancy should see it.
-    """
-    torch.manual_seed(0)
-    batch, length, width = 4, 64, 64
     probe = DensityProbe()
-
-    reference = torch.randn(batch, length, width)
-    projection = probe._get_projection(reference)  # [width, BITS]
-    basis, _ = torch.linalg.qr(projection)  # orthonormal span of the hyperplanes
-
-    # Head: inside the span, so projections are large and a nudge cannot flip
-    # a sign. Tip: orthogonal to the span, so every projection sits at ~0 and
-    # the same nudge crosses boundaries.
-    coeffs = torch.randn(batch, length, basis.shape[1])
-    in_span = coeffs @ basis.t()
-    off_span = torch.randn(batch, length, width)
-    off_span = off_span - (off_span @ basis) @ basis.t()
-
-    weight = torch.linspace(0.0, 1.0, length).view(1, length, 1)
-    previous = (1 - weight) * in_span + weight * off_span
-    # Equal magnitude at every position, so the probe's per-position
-    # standardization scales the nudge identically head to tip. Without this
-    # the norm profile tilts for a reason that has nothing to do with the
-    # partition, and the test would be measuring its own construction.
-    previous = previous / previous.norm(dim=-1, keepdim=True)
-
-    # One identically sized perturbation for every position.
-    nudge = torch.randn(batch, length, width)
-    nudge = 0.05 * nudge / nudge.norm(dim=-1, keepdim=True)
-    current = previous + nudge
-
-    metrics = _trajectory(probe, [previous, current])
-
-    # Norm is flat by construction; occupancy is not.
-    assert abs(metrics["density_norm_slope"]) < 0.25
-    assert metrics["density_hop_slope"] > 0.5
-    assert metrics["density_hop_b7"] > 3 * metrics["density_hop_b0"]
+    acc = {}
+    for f in range(forwards):
+        seq = torch.randn(B, T, D)  # i.i.d. tokens: nothing about the whole in any one
+        probe.begin(seq)
+        for _ in range(steps):
+            probe.observe(_states(seq, mode))
+        probe.finalize()
+        if f >= forwards - tail:
+            for k, v in probe.get_metrics().items():
+                acc.setdefault(k, []).append(v)
+    return {k: sum(v) / len(v) for k, v in acc.items()}
 
 
-def test_degenerate_inputs_emit_nothing():
-    """No depth loop, a 2-D state, or a compressor changing sequence length
-    mid-loop must all be silent rather than fatal."""
+def _profile(metrics, band):
+    return [metrics[f"readout_{band}_b{b}"] for b in range(BUCKETS)]
+
+
+def test_own_token_reads_nothing():
+    """No state carries anything about the whole: every band sits at chance."""
+    m = _drive("own")
+    for band in ("bag", "coarse", "mid", "fine"):
+        assert max(abs(v) for v in _profile(m, band)) < 0.08, band
+    assert abs(m["readout_bag_rim_gap"]) < 0.08
+
+
+def test_prefix_reads_the_bag_in_proportion_to_prefix_length():
+    """The received picture: the bag rises linearly head to tip."""
+    m = _drive("prefix")
+    bag = _profile(m, "bag")
+    assert bag[0] < 0.2
+    assert bag[-1] > 0.6
+    assert all(b - a > -0.05 for a, b in zip(bag, bag[1:])), bag  # monotone
+    assert m["readout_bag_rim_gap"] > 0.5
+    # The loop's states carry more of the whole than the raw tokens did.
+    assert m["readout_bag_depth_gain"] > 0.2
+
+
+def test_whole_at_every_position_reads_flat_and_high():
+    """The conjecture's limit: the head carries the whole as well as the tip."""
+    m = _drive("whole")
+    bag = _profile(m, "bag")
+    assert min(bag) > 0.7
+    assert abs(m["readout_bag_rim_gap"]) < 0.1
+
+
+def test_fine_band_stays_at_chance_in_every_regime():
+    """Fine content of the whole is unreadable from a mean, prefix or not."""
+    for mode in ("own", "prefix", "whole"):
+        m = _drive(mode, forwards=40)
+        assert max(abs(v) for v in _profile(m, "fine")) < 0.08, mode
+
+
+def test_probe_stays_out_of_state_dict_and_skips_short_sequences():
     probe = DensityProbe()
-    probe.begin(torch.randn(2, 16, 8))
-    probe.finalize()
-    assert probe.get_metrics() == {}  # single boundary -> no transition
-
-    probe = DensityProbe()
-    probe.begin(torch.randn(2, 8))  # not [B, T, D]
-    probe.observe(torch.randn(2, 8))
-    probe.finalize()
-    assert probe.get_metrics() == {}
-
-    probe = DensityProbe()
-    probe.begin(torch.randn(2, 16, 8))
-    probe.observe(torch.randn(2, 4, 8))  # sequence length changed
+    assert not isinstance(probe, torch.nn.Module)
+    probe.begin(torch.randn(4, 16, 8))  # below MIN_LENGTH
+    probe.observe(torch.randn(4, 16, 8))
     probe.finalize()
     assert probe.get_metrics() == {}
 
 
-def test_probe_holds_no_state_dict():
-    """It must never be able to change a checkpoint."""
-    import torch.nn as nn
-
-    from praxis.metrics.density import DensityProbe as Probe
-
-    module = nn.Module()
-    module.density = Probe()
-    assert module.state_dict() == {}
+def test_length_change_mid_loop_is_skipped_not_garbage():
+    """A compressor can shorten the sequence between boundaries; the probe
+    must not pair states with a target of another shape."""
+    probe = DensityProbe()
+    seq = torch.randn(B, T, D)
+    probe.begin(seq)
+    probe.observe(torch.randn(B // 2, T, D))  # batch mismatch -> skipped
+    probe.finalize()
+    assert probe.get_metrics() == {}

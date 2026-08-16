@@ -43,7 +43,7 @@ def test_default_matches_the_status_quo():
     profile = resolve_precision(None, "cpu", verbose=False)
     assert profile.name == DEFAULT_PRECISION == "float32"
     assert profile.lightning == "32-true"
-    assert profile.matmul == "medium"
+    assert profile.matmul == "high"
     assert profile.torch_dtype is None  # nothing is cast; fp32 is torch's own
     assert _cfg().precision_profile.name == "float32"
 
@@ -68,6 +68,14 @@ def test_unknown_precision_is_rejected_with_the_options():
         assert "float8" in str(e) and "bfloat16" in str(e)
     else:
         raise AssertionError("expected ValueError for an unknown precision")
+
+
+def test_only_float64_forbids_tf32():
+    """ "medium" is defined as permitting a bf16 internal datatype, so no
+    profile uses it: the fp32-carrying levels take TF32 via "high", and the
+    level whose entire premise is arithmetic width takes none of it."""
+    for name, profile in PRECISION_REGISTRY.items():
+        assert profile.matmul == ("highest" if name == "float64" else "high")
 
 
 def test_every_profile_is_internally_coherent():

@@ -10,6 +10,43 @@ from torch import Tensor
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
+def decode_context(module: nn.Module, hidden_states: Tensor):
+    """``(offset, state, commit)`` for a cache-aware head module under cached
+    decode; ``(0, None, None)`` whenever no ``PraxisCache`` is bound.
+
+    The model binds the live cache onto every module declaring
+    ``accepts_decode_cache`` (as ``module.decode_cache``) around the head call
+    and clears it after - see ``modeling._bind_head_cache``. ``offset`` is the
+    absolute position of the chunk's first token: the trunk has already written
+    this chunk by the time the head runs, so it is ``past_length() - seq_len``;
+    zero for the prefill and for cache-less attentions (their past_length stays
+    0 and the head sees the full sequence every call, so full recompute is
+    right). ``state`` is this module's own carried context when the cache holds
+    one that lines up with ``offset`` (a mismatch - a batch change, a
+    rollback - degrades to suffix-only rather than faulting). ``commit(state)``
+    stores the context for the next call.
+    """
+    cache = getattr(module, "decode_cache", None)
+    if cache is None or not hasattr(cache, "past_length"):
+        return 0, None, None
+    seq_len = hidden_states.shape[-2]
+    batch = hidden_states.shape[0]
+    offset = max(int(cache.past_length()) - seq_len, 0)
+    key = f"{type(module).__name__}:{id(module)}"
+    state = cache.get_head_state(key) if offset > 0 else None
+    if state is not None and (
+        state.get("pos") != offset or state.get("batch") != batch
+    ):
+        state = None
+
+    def commit(new_state: dict) -> None:
+        new_state["pos"] = offset + seq_len
+        new_state["batch"] = batch
+        cache.set_head_state(key, new_state)
+
+    return offset, state, commit
+
+
 class BaseHead(nn.Module, ABC):
     """Abstract base class for language modeling heads.
 

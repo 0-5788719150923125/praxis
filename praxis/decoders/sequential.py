@@ -73,8 +73,8 @@ class SequentialDecoder(BaseDecoder):
         # Mono-forward: reset per-forward state and stash the goodness target
         # (labels for token models, the input stream for latent models).
         self.mono.begin(hidden_states, labels)
-        # Density probe: the pre-loop state is the trajectory's origin, so the
-        # first executed depth already yields one transition to measure.
+        # Density probe: the pre-loop state is both the whole-sequence target
+        # and the entry (step 0) reading the depth gain is measured against.
         self.density.begin(hidden_states)
 
         current_route: List[int] = []
@@ -173,8 +173,8 @@ class SequentialDecoder(BaseDecoder):
             # from its local loss in the same backward pass.
             hidden_states = self.mono.cut(hidden_states, losses, current_depth)
 
-            # Density: record this boundary's per-position deviation BEFORE the
-            # halting check, so the step that triggers the exit is still counted.
+            # Density: score this boundary's states BEFORE the halting check, so
+            # the step that triggers the exit is still counted.
             self.density.observe(hidden_states)
 
             # Check halting strategy at loop boundaries

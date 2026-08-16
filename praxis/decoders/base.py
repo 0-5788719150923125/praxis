@@ -101,10 +101,10 @@ class BaseDecoder(nn.Module):
         from praxis.decoders.mono import build_mono
 
         self.mono = build_mono(config)
-        # Per-position, per-depth-step deviation profile - the instrument for
-        # the paper's information-density conjecture. Holds no parameters and no
-        # persistent buffers, so it cannot touch a checkpoint; decoders without
-        # a depth loop simply never drive it and it emits nothing.
+        # Whole-sequence readout by position and depth step - the instrument
+        # for the paper's information-density conjecture. Holds no parameters
+        # and no persistent buffers, so it cannot touch a checkpoint; decoders
+        # without a depth loop simply never drive it and it emits nothing.
         self.density = DensityProbe()
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []

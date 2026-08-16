@@ -125,13 +125,20 @@ def assemble_model(cfg, config) -> ModelBundle:
         "precision": profile.name,
     }
 
-    # Build (and materialize the lazy modules) under the run's dtype, then cast
-    # what the default dtype didn't reach - buffers registered from explicit
-    # fp32 tensors, submodules that hardcode a dtype. Doing it here rather than
-    # leaving it to Lightning's plugin means the optimizer is constructed
-    # against the dtype the model will actually train in.
+    # Build under the run's dtype, then cast what the default dtype didn't
+    # reach - buffers registered from an explicit `dtype=torch.float32`,
+    # submodules that hardcode one. Doing it here rather than leaving it to
+    # Lightning's plugin means the optimizer is constructed against the dtype
+    # the model will actually train in.
+    #
+    # The cast has to happen BEFORE initialize_lazy_modules, which runs a dummy
+    # forward: a model half in the profile's dtype and half in fp32 will fault
+    # on the first op that mixes them. It runs again afterwards because that
+    # forward is what materializes the lazy modules, and they are built under
+    # the same mixed rules.
     with init_context(profile):
         model = AutoModelForCausalLM.from_config(config)
+        model = cast_module(model, profile)
         initialize_lazy_modules(model, cfg.device)
         model = cast_module(model, profile)
 

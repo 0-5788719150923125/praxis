@@ -96,6 +96,21 @@ DIFF_DTYPE = torch.bfloat16
 EPS = 1e-12
 
 
+def _direction_dtype(dtype: torch.dtype) -> torch.dtype:
+    """Reduced width for optimizer state that only carries a DIRECTION.
+
+    bf16 is the floor for the usual cases, but it cannot be the floor for
+    EVERY case: a float64 run exists to ask whether anything it measures is
+    precision-limited, and an 8-bit mantissa sitting inside its optimizer
+    would quietly answer that question for it. So fp64 halves to fp32 - still
+    off the memory bill, still far wider than the cosine needs. Parameters
+    already at 16 bits keep their own dtype, as before.
+    """
+    if torch.finfo(dtype).bits <= 16:
+        return dtype
+    return torch.float32 if dtype is torch.float64 else DIFF_DTYPE
+
+
 class LionGeo(Optimizer):
     """SMEAR blend of sign, Newton-Schulz and Frobenius updates over a shared
     Lion momentum, with hypergradient-adapted mixture weights."""
@@ -114,9 +129,14 @@ class LionGeo(Optimizer):
         GEOMETRIES really is the dial: drop or reorder entries and the state,
         the mixture and the metrics all follow."""
         flat = c.reshape(c.size(0), -1)
+        # The library orthogonalizes in bf16 by default, which is the standard
+        # Muon recipe and stays that way for fp32/bf16 parameters. Same
+        # argument as _direction_dtype for fp64: an 8-bit mantissa inside the
+        # spectral arm would be a precision floor the run cannot see.
+        ns_dtype = _direction_dtype(c.dtype)
         arms = {
             "sign": lambda: torch.sign(c),
-            "spectral": lambda: zero_power_via_newton_schulz_5(flat)
+            "spectral": lambda: zero_power_via_newton_schulz_5(flat, dtype=ns_dtype)
             .to(c.dtype)
             .reshape_as(c)
             .mul_(math.sqrt(max(flat.shape))),
@@ -141,7 +161,7 @@ class LionGeo(Optimizer):
                     continue
                 g = p.grad
                 state = self.state[p]
-                diff_dtype = DIFF_DTYPE if torch.finfo(p.dtype).bits > 16 else p.dtype
+                diff_dtype = _direction_dtype(p.dtype)
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(p)
                     state["geo_logits"] = torch.zeros(n_arms, device=p.device)
@@ -169,15 +189,23 @@ class LionGeo(Optimizer):
                 w_now = torch.softmax(logits, dim=0)
                 gf = g.reshape(1, -1)
                 df = d_prev.reshape(n_arms, -1)
+                # Reduce the norms at fp32 or wider, never narrower than the
+                # gradient itself: a hardcoded float32 cannot take an fp64
+                # gradient without narrowing, and vector_norm refuses rather
+                # than silently rounding.
+                norm_dtype = torch.promote_types(gf.dtype, torch.float32)
                 denom = (
-                    torch.linalg.vector_norm(df, dim=1, dtype=torch.float32)
-                    * torch.linalg.vector_norm(gf, dtype=torch.float32)
+                    torch.linalg.vector_norm(df, dim=1, dtype=norm_dtype)
+                    * torch.linalg.vector_norm(gf, dtype=norm_dtype)
                 ).clamp_min(EPS)
                 # Elementwise rather than a matvec: this promotes the half
                 # precision deviations to fp32, where a bf16 matmul would
                 # accumulate in bf16 on CPU and in fp32 on CUDA - a ~2e-3
                 # device-dependent split in the cosine, for no measured speedup.
-                cos = (df * gf).sum(dim=1) / denom
+                # Back to the logits' dtype: the accumulator stays fp32 whatever
+                # the parameters are, so an fp64 cosine must not try to land in
+                # it in place.
+                cos = ((df * gf).sum(dim=1) / denom).to(logits.dtype)
                 jac = 4.0 * w_now * (1.0 - w_now)
                 logits.add_(ADAPT_RATE * jac * cos)
                 # Centre before clamping: the clamp then bounds RELATIVE
