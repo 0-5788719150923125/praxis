@@ -13,10 +13,13 @@ carries about the whole sequence grows monotonically toward the tip.
 WHAT THIS MEASURES. Take the sequence as the decoder receives it - the pre-loop
 hidden state, ``[T, D]`` per example - and ask, of the hidden state at ONE
 position, how much of that whole sequence can be read back out of it linearly.
-"The whole sequence" is taken at four resolutions, as bands of its discrete
+"The whole sequence" is taken at three resolutions, as bands of its discrete
 Fourier transform along position: ``bag`` (mode 0: the mean over the window,
-the bag of content), ``coarse`` (modes 1-3: window-scale structure), ``mid``
-(modes 4-15) and ``fine`` (modes 16-31). The
+the bag of content), ``coarse`` (modes 1-3: window-scale structure) and ``mid``
+(modes 4-7). The bands are window-relative because the decoder's window is
+whatever it is - patches for a byte-latent encoder, a curriculum tier's worth
+of tokens - and the conjecture speaks about the window's rim, not about
+absolute token counts. The
 readout is a ridge regression fit per position bucket and per depth step, and
 the reading is its held-out R^2 in each band, ABOVE CHANCE: the same readout is
 fit against a shuffled target (another sequence's), and the reported value is
@@ -30,25 +33,29 @@ across the window instead of at one offset.
 
 Predictions, stated so a flat or opposite reading is unmistakable:
 
-    readout_{band}_b0..b7     R^2 profile from head (b0) to tip (b7), at the
-                              last executed depth step
-    readout_{band}_rim_gap    R^2(tip) - R^2(head). The received picture puts
-                              this strongly positive at EVERY resolution - the
-                              tip has seen everything, the head only its own
-                              token; for the bag it is a linear rise. The
-                              conjecture says the bag and coarse gaps close:
-                              the head anticipates the window-scale content,
-                              and only the fine band stays tip-heavy.
-    readout_{band}_depth_gain mean over positions of R^2(last step) - R^2(entry).
-                              Whether the depth loop BUILDS whole-sequence
-                              content into the states, over what the raw
-                              embeddings already carry.
+    readout_cell_{pos}_{band}  the profile: R^2 at position bucket ``pos``
+                               (head, q1..q6, tip) for band index ``band``
+                               (0 bag, 1 coarse, 2 mid), at the last executed
+                               depth step. Drawn as ONE heatmap - x = position,
+                               y = band, shade = R^2 - which is fig:density
+                               measured: is the head strip lit?
+    readout_{band}_rim_gap     R^2(tip) - R^2(head). The received picture puts
+                               this strongly positive - the tip has seen
+                               everything, the head only its own token; for
+                               the bag it is a linear rise. The conjecture
+                               says the bag and coarse gaps close: the head
+                               anticipates the window-scale content.
+    readout_{band}_depth_gain  mean over positions of R^2(last step) -
+                               R^2(entry). Whether the depth loop BUILDS
+                               whole-sequence content into the states, over
+                               what the raw embeddings already carry.
 
 Causality makes the null hypothesis sharp. A causal state cannot contain later
 tokens, so the only way the head can carry the whole is by anticipating it, and
 anticipation is only possible for the slow structure - which is exactly the
-band the conjecture claims for the head. The fine band cannot be anticipated
-and is the control: it should be tip-heavy under both pictures.
+band the conjecture claims for the head. The entry-step reading (the raw
+embeddings, before any depth) is the built-in null: nothing there can carry the
+whole beyond its own token, so ``depth_gain`` is what the loop added.
 
 HOW THE READOUT IS FIT, AND WHY IT IS HONEST. One batch has too few sequences
 to fit and hold out a D-dimensional readout, so the probe keeps exponentially
@@ -56,7 +63,9 @@ decayed running moments (mean, second moment, cross moment) per (bucket, step)
 and solves the ridge readout from those. Every sampled forward is scored FIRST
 against the readout fit from earlier batches, THEN folded into the moments -
 prequential evaluation, so R^2 is always on unseen sequences. It warms up over
-the first few dozen sampled forwards and tracks the model with the decay. The
+the first few dozen sampled forwards and tracks the model with the decay. One
+batch's R^2 is a noisy draw, so the emitted readings are an EMA over sampled
+forwards (``SCORE_EMA``) - a card shows a trend, not one batch. The
 shuffled-null readout shares the left-hand side (same x), so both come out of
 one batched solve; the null is what makes a 256-feature readout on a few
 thousand sequences readable at all - without it every unpredictable target
@@ -82,7 +91,7 @@ BUCKETS: int = 8
 # features (fixed seeded Gaussian projection) and Fourier-transformed along
 # position. Small on purpose: the target's width multiplies the readout cost
 # and the running moments' memory.
-TARGET_WIDTH: int = 4
+TARGET_WIDTH: int = 8
 
 # Resolution bands over the DFT along position, as inclusive mode ranges.
 # Mode 0 is the mean over the window (the bag of content); mode k completes
@@ -95,18 +104,27 @@ TARGET_WIDTH: int = 4
 BANDS: Tuple[Tuple[str, int, int], ...] = (
     ("bag", 0, 0),
     ("coarse", 1, 3),
-    ("mid", 4, 15),
-    ("fine", 16, 31),
+    ("mid", 4, 7),
 )
-# rfft of a T-long sequence has T//2 + 1 modes; the fine band needs mode 31.
-MIN_LENGTH: int = 64
+# rfft of a T-long sequence has T//2 + 1 modes; the mid band needs mode 7. A
+# byte-latent decoder's window is PATCHES (tens of them at a short curriculum
+# tier), so this floor is deliberately low - a probe that only fires on long
+# windows never fires on the runs it is for.
+MIN_LENGTH: int = 16
+
+# Position bucket labels, head to tip; the heatmap card reads them as its x
+# axis. They sort alphabetically in this order, which the renderer relies on.
+POSITION_LABELS: Tuple[str, ...] = ("head", "q1", "q2", "q3", "q4", "q5", "q6", "tip")
 
 # Seeded so the target projection is identical across runs and architectures.
 PROJECTION_SEED: int = 20260812
 
 # Only every N-th forward is scored and folded into the moments. Keeps the
 # probe at a few ms per training step amortized.
-SAMPLE_EVERY: int = 8
+SAMPLE_EVERY: int = 4
+# EMA of the emitted readings over sampled forwards; a single batch's R^2
+# swings by tenths, the trend is what a card is for.
+SCORE_EMA: float = 0.9
 # Exponential decay of the running moments per sampled forward. 0.98 is an
 # effective window of ~50 sampled forwards - a few thousand sequences.
 DECAY: float = 0.98
@@ -194,6 +212,9 @@ class DensityProbe:
         self._moments: Dict[int, _Moments] = {}
         # Per executed step this forward: {band: [BUCKETS] R^2-above-null}
         self._scores: Dict[int, Dict[str, Tensor]] = {}
+        # EMA'd readings across sampled forwards: exit profile and depth gain
+        # per band, on the CPU (a handful of floats; no per-call device sync).
+        self._smoothed: Dict[str, Tensor] = {}
         self._metrics: Dict[str, float] = {}
 
     # -- lifecycle ---------------------------------------------------------
@@ -223,27 +244,42 @@ class DensityProbe:
         self._score_and_fold(hidden_states, step=self._step)
 
     def finalize(self) -> None:
-        """Turn this forward's per-step scores into the emitted readings."""
+        """Fold this forward's per-step scores into the running readings."""
         if not self._active or not self._scores:
             return
         last_step = max(self._scores)
         last = self._scores[last_step]
-        entry = self._scores.get(0)
-        metrics: Dict[str, float] = {}
+        entry = self._scores.get(0) if last_step > 0 else None
         for band, _ in self._band_slices:
             profile = last.get(band)
             if profile is None:
                 continue
+            self._ema(f"exit_{band}", profile)
+            if entry is not None and band in entry:
+                self._ema(f"gain_{band}", (profile - entry[band]).mean())
+        metrics: Dict[str, float] = {}
+        for index, (band, _) in enumerate(self._band_slices):
+            profile = self._smoothed.get(f"exit_{band}")
+            if profile is None:
+                continue
             values = profile.tolist()
-            for b, value in enumerate(values):
-                metrics[f"readout_{band}_b{b}"] = value
+            for label, value in zip(POSITION_LABELS, values):
+                metrics[f"readout_cell_{label}_{index}"] = value
             metrics[f"readout_{band}_rim_gap"] = values[-1] - values[0]
-            if entry is not None and last_step > 0 and band in entry:
-                metrics[f"readout_{band}_depth_gain"] = float(
-                    (profile - entry[band]).mean()
-                )
+            gain = self._smoothed.get(f"gain_{band}")
+            if gain is not None:
+                metrics[f"readout_{band}_depth_gain"] = float(gain)
         if metrics:
             self._metrics = metrics
+
+    def _ema(self, key: str, value: Tensor) -> None:
+        value = value.detach().float().cpu()
+        previous = self._smoothed.get(key)
+        self._smoothed[key] = (
+            value
+            if previous is None
+            else SCORE_EMA * previous + (1.0 - SCORE_EMA) * value
+        )
 
     def get_metrics(self) -> Dict[str, Any]:
         return dict(self._metrics)

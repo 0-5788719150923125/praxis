@@ -48,6 +48,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet) |
+| `--codebook-size` | int | `None` | Entries in the encoder's VQ codebook (abstractinator bottleneck). Defaults to vocab_size when unset |
 | `--compression-type` | str | `none` | The type of sequence compression to use (choices: none, linear, nearest) |
 | `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention, neural) |
 | `--decoder-type` | str | `sequential` | How to process layers in the decoder (choices: sequential, parallel_mean, parallel_variance, parallel_weighted) |
@@ -61,6 +62,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline) |
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
+| `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
 | `--head-size` | int | `None` | Specify the inner head dimension |
 | `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |

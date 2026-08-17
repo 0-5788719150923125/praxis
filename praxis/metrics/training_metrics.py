@@ -709,97 +709,42 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
 # * ``key_pattern``: regex (string) matching a family of metric names.
 # * ``stepped``: draw as a step plot (cumulative counts).
 # * ``order``: ordering within the Research tab, after the scalars above.
-# Legend labels for the readout profile cards, indexed by position bucket.
-# Bucket b covers positions [b/8, (b+1)/8) of the window.
-_POSITION_LABELS = [
-    "head (0-1/8)",
-    "1/8-2/8",
-    "2/8-3/8",
-    "3/8-4/8",
-    "4/8-5/8",
-    "5/8-6/8",
-    "6/8-7/8",
-    "tip (7/8-1)",
-]
-
 COMPOSITE_METRIC_REGISTRY: list = [
     # ── Information density at the rim (see praxis/metrics/density.py) ───────
     # Whole-sequence readout by position: from a single hidden state at each
     # position, how much of the entire window (at three resolutions) a linear
-    # readout recovers, scored prequentially. All keys live in extra_metrics;
-    # nothing here adds a schema column. Series 0..7 are POSITION buckets,
-    # head to tip, and are labeled as such via series_labels.
+    # readout recovers, scored prequentially and reported as R² above a
+    # shuffled-target null. All keys live in extra_metrics; nothing here adds
+    # a schema column. The primary card is a heatmap because the paper's own
+    # figure (fig:density) IS a shaded strip over position: x = position bucket
+    # head..tip, y = band, shade = R². Eight-line profile cards were tried and
+    # were unreadable.
     {
-        "key": "readout_profile_bag",
-        "type": "multi_expert_line",
-        "title": "Whole-Sequence Readout by Position (bag of content)",
-        "y_label": "Readout R\u00b2 above chance",
+        "key": "readout_profile",
+        "type": "expert_routing_heatmap",
+        "title": "Whole-Sequence Readout by Position",
+        "y_label": "R\u00b2 above chance",
         "description": (
-            "How much of the WHOLE window a linear readout recovers from ONE "
-            "hidden state, by position bucket from the head of the window to "
-            "the tip, at the last executed depth step. This band is the bag of "
-            "content: the window's mean input state (DFT mode 0 along "
-            "position). Scored as R\u00b2 above a shuffled-target null "
-            "(0 = nothing readable, 1 = fully read). The received picture has "
-            "this rise LINEARLY head to tip - a causal state knows its prefix, "
-            "and a prefix predicts the bag in proportion to its length. The "
-            "paper's conjecture (fig:density) has the head carry the compressed "
-            "whole already: the head line closes on the tip line."
+            "fig:density, measured. Each cell: how much of the WHOLE window a "
+            "linear readout recovers from ONE hidden state at that position "
+            "(x, head of the window to tip), at loop exit, for one resolution "
+            "of the window's content (y: 0 = bag of content, DFT mode 0 along "
+            "position; 1 = coarse, modes 1-3, window-scale structure; 2 = mid, "
+            "modes 4-7). Scored as R\u00b2 above a shuffled-target null, so "
+            "grey = nothing readable beyond chance and full accent = fully "
+            "read; the shade is the paper's density envelope. Received "
+            "picture: the bag row brightens linearly toward the tip and the "
+            "head stays grey - a causal state knows only its prefix. The "
+            "conjecture: the head end of the bag and coarse rows is lit - the "
+            "early vectors already carry the compressed whole. EMA over "
+            "sampled forwards; the step slider scrubs the history."
         ),
-        "key_pattern": r"^readout_bag_b\d+$",
-        "series_labels": _POSITION_LABELS,
-        "legend": True,
+        # Group 1 = row label (rendered along x), group 2 = column index (y).
+        "key_pattern": r"^readout_cell_([a-z0-9]+)_(\d)$",
+        "row_label": "Position in window (head \u2192 tip)",
+        "col_label": "Band (0 bag, 1 coarse, 2 mid)",
+        "uniform_note": False,
         "order": 191,
-    },
-    {
-        "key": "readout_profile_coarse",
-        "type": "multi_expert_line",
-        "title": "Whole-Sequence Readout by Position (coarse)",
-        "y_label": "Readout R\u00b2 above chance",
-        "description": (
-            "The same readout for window-scale structure: DFT modes 1-3 along "
-            "position, where in the window the content sits at the scale of "
-            "the whole. A prefix predicts these at intermediate positions and "
-            "NOT at the tip (the full window's sum is orthogonal to them), so "
-            "the received picture is a hump that dies at the tip; a head that "
-            "anticipates the window's shape lifts the head line."
-        ),
-        "key_pattern": r"^readout_coarse_b\d+$",
-        "series_labels": _POSITION_LABELS,
-        "legend": True,
-        "order": 192,
-    },
-    {
-        "key": "readout_profile_mid",
-        "type": "multi_expert_line",
-        "title": "Whole-Sequence Readout by Position (mid)",
-        "y_label": "Readout R\u00b2 above chance",
-        "description": (
-            "Mid resolution: DFT modes 4-15 along position, structure at 1/4 "
-            "to 1/16 of the window. Between the bands the head could "
-            "anticipate and the fine band it cannot."
-        ),
-        "key_pattern": r"^readout_mid_b\d+$",
-        "series_labels": _POSITION_LABELS,
-        "legend": True,
-        "order": 193,
-    },
-    {
-        "key": "readout_profile_fine",
-        "type": "multi_expert_line",
-        "title": "Whole-Sequence Readout by Position (fine)",
-        "y_label": "Readout R\u00b2 above chance",
-        "description": (
-            "The control band: DFT modes 16-31 along position, structure at "
-            "1/16 to 1/32 of the window. Fine content of the whole sequence "
-            "cannot be anticipated by a causal state, so this stays near zero "
-            "everywhere under both pictures. A head line that rose here would "
-            "mean the target leaks, not that the conjecture holds."
-        ),
-        "key_pattern": r"^readout_fine_b\d+$",
-        "series_labels": _POSITION_LABELS,
-        "legend": True,
-        "order": 194,
     },
     {
         "key": "readout_rim_gap",
@@ -807,33 +752,33 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Whole-Sequence Readout: Tip minus Head",
         "y_label": "R\u00b2(tip) - R\u00b2(head)",
         "description": (
-            "The conjecture's reading in one number per band: whole-sequence "
+            "The conjecture's reading in one number per band, over training: "
             "readout R\u00b2 (above chance) at the tip bucket minus the head "
-            "bucket. The received picture keeps the BAG gap large and "
+            "bucket. The received picture keeps the BAG line large and "
             "positive - the tip has seen everything, the head only its own "
             "token. Density pushed to the rim, in fig:density's sense, is the "
-            "bag and coarse gaps closing toward zero, the head anticipating "
-            "the window-scale whole, while fine stays wherever it was."
+            "bag and coarse lines closing toward zero: the head anticipating "
+            "the window-scale whole."
         ),
-        "key_pattern": r"^readout_(bag|coarse|mid|fine)_rim_gap$",
+        "key_pattern": r"^readout_(bag|coarse|mid)_rim_gap$",
         "legend": True,
-        "order": 195,
+        "order": 192,
     },
     {
         "key": "readout_depth_gain",
         "type": "multi_expert_line",
         "title": "Whole-Sequence Readout: Gain over Depth",
-        "y_label": "R\u00b2(last step) - R\u00b2(entry)",
+        "y_label": "R\u00b2(exit) - R\u00b2(entry)",
         "description": (
             "Whether the depth loop BUILDS whole-sequence content into the "
-            "states: readout R\u00b2 at the last executed step minus at the "
-            "loop entry (the raw embeddings), averaged over positions, per "
-            "band. Zero means the loop adds nothing a linear readout can see "
-            "beyond what the tokens themselves carry."
+            "states: readout R\u00b2 at loop exit minus at loop entry (the raw "
+            "embeddings, which cannot carry the whole beyond their own token), "
+            "averaged over positions, per band. Zero means the loop adds "
+            "nothing a linear readout can see."
         ),
-        "key_pattern": r"^readout_(bag|coarse|mid|fine)_depth_gain$",
+        "key_pattern": r"^readout_(bag|coarse|mid)_depth_gain$",
         "legend": True,
-        "order": 196,
+        "order": 193,
     },
     {
         # Repo-level, not per-run: the framework's own git-churn evolution.

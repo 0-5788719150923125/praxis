@@ -1,0 +1,10 @@
+# The Masking editor's face-landmark pre-pass (see face_track.py). Installed into
+# ghost's OWN venv at user://face_venv, never the repo's venv or system packages -
+# the same isolation ghost gives yt-dlp and the voice host, and for the same
+# reason: one effect's dependency must not become the project's.
+#
+# Verified on Python 3.14.6 (mediapipe 1.0.1). mediapipe pulls opencv-contrib and
+# numpy itself; both are listed so a resolver change cannot silently drop them.
+mediapipe>=1.0
+opencv-contrib-python>=4.8
+numpy>=1.24

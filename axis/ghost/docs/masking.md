@@ -35,11 +35,15 @@ The preview's view modes (see MaskSession.VIEW_MODES + _build_video_composition)
 
 view_mode is a per-MARKER field (see MaskSession.VECTOR_FIELDS), not an editing- only preference: the toggle button edits the marker at the playhead exactly like every other panel control (see _edit), the live preview always renders whatever session.at_time() resolves to, and the export relaunch (render_mode) runs the identical per-frame logic - so a marker set to "raw" plays raw in the rendered file too, not just live. What you see while editing is what you get.
 
+THE REGION is the one control here that is spatial rather than chromatic, and it is UNIVERSAL - not an entry in EFFECT_CONTROLS, because "where may this layer act" is meaningful for every effect. Each marker carries a box in frame UV (reg_x0/y0/x1/y1 + reg_soft) which multiplies into its layer's on-screen weight, so confining a layer is the same operation as fading it, resolved per pixel; the default is the whole frame. It exists because a colour key cannot separate two things that ARE the same colour - a yellow wall and a gold coin in front of it - and their positions separate them trivially. The box is dragged on the video itself, not typed (see _build_region_overlay).
+
+ANY FRAME SHAPE. The clip's own pixel dimensions are read once ([member _src_size]) and are the only thing that decides the picture's geometry: the editor fits the whole frame inside its video area (a portrait phone clip gets black bars left and right, a wide one keeps them above and below), the effects' patterns stay isotropic through the shader's `u_aspect`, and the export records at the SOURCE's resolution - a 1080x1920 clip renders a 1080x1920 movie. Nothing in here assumes 16:9; see _src_size and _write_render_override.
+
 Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 
 ## Effects
 
-18 effects (`MaskSession.MASK_EFFECTS`). The actual implementations live in [shaders/mask_split.gdshader](../shaders/mask_split.gdshader) - each marker becomes a shader layer, and `apply_layer()` dispatches per effect. Control groups: `keying` (threshold / feather / colorfulness steer the volumetric mask), `reach` (how wide around the key colour a restore acts), `pattern` (field placement / coverage / contrast / resonance), plus per-effect groups (`echo`, `snow`, `fur`). An effect with no groups exposes only the universal colour + intensity controls.
+21 effects (`MaskSession.MASK_EFFECTS`). The actual implementations live in [shaders/mask_split.gdshader](../shaders/mask_split.gdshader) - each marker becomes a shader layer, and `apply_layer()` dispatches per effect. Control groups: `keying` (threshold / feather / colorfulness steer the volumetric mask), `reach` (how wide around the key colour a restore acts), `pattern` (field placement / coverage / contrast / resonance), plus per-effect groups (`echo`, `snow`, `fur`). An effect with no groups exposes only the universal colour + intensity controls.
 
 | # | Effect | Control groups | Notes |
 | --- | --- | --- | --- |
@@ -61,6 +65,9 @@ Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 | 15 | `meta` | - | mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter |
 | 16 | `clown` | `pattern`, `clown` | pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow |
 | 17 | `umbra` | `pattern`, `umbra` | colour picker names the wall; coverage=Loom, contrast=Roil, + its own Wisp/Cling/Depth |
+| 18 | `repaint` | `repaint` | projection-based like erase/crystal: no keying gates, no pattern - just the paint colour + its reach and edge smoothing |
+| 19 | `rain` | `pattern`, `rain` | keyless: coverage=Amount, velocity=fall speed, scale=streak length, pan=wind, contrast=Depth - where near rain gives way to far - plus its own Squall |
+| 20 | `audio` | `audio` | draws nothing: lag=Echo time, smooth=Echo mix, density=Ambience, scale=Room, contrast=Resonance, stick=Bass |
 
 ## Headless marker insertion
 

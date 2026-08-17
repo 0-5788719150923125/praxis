@@ -346,6 +346,13 @@ ENGINE_FLAGS = {
     "--throttled-rate",
     "--concurrent-fragments",
     "--js-runtimes",
+    # face_host/face_track.py's own interface (mask_editor spawns it for the
+    # clown's landmark pre-pass) - arguments to a subprocess, not ghost flags.
+    "--video",
+    "--out",
+    "--model",
+    "--rate",
+    "--progress",
 }
 
 # Top-level entries for the README LAYOUT block and docs/index.md.
@@ -912,6 +919,38 @@ def _render_masklab_doc(session: Script, editor: Script) -> str:
 # ---------------------------------------------------------------------------
 
 
+def check_panel_controls() -> None:
+    """Every panel control the mask editor SYNCS must also be BUILT.
+
+    The editor's control panel is three parallel lists that have to agree: a
+    member variable, a line in _build_panel that constructs it, and a line in
+    _refresh_panel_inner that writes the stored value back into it. Delete or
+    move a build line and leave the other two - which happens when a block of
+    sliders is replaced wholesale - and the variable stays null, so every panel
+    refresh throws. That is once at open, once per selection, and once per frame
+    from _process, and it takes the rest of the refresh down with it, so controls
+    below the broken one silently stop updating too.
+
+    It is invisible to a running check, because a GDScript runtime error prints
+    and carries on rather than failing anything, and it is invisible to a
+    structural check over the registered-control list, because a control that was
+    never built was never registered either. It IS visible here: a name that is
+    written to but never assigned. Same drift-detection idea as CLI_FLAGS above.
+    """
+    src = (ROOT / "scripts" / "mask_editor.gd").read_text(encoding="utf-8")
+    written = set(
+        re.findall(r"\b(_\w+)\.set_(?:value|pressed)_no_signal\(", src)
+    )
+    for name in sorted(written):
+        # `var _x` alone is a declaration, not a construction - the assignment is
+        # what proves something was actually made and handed to the panel.
+        if not re.search(rf"^\s*{re.escape(name)} = ", src, re.M):
+            warn(
+                f"mask_editor.gd: {name} is written by _refresh_panel_inner but "
+                "never built - the panel will throw on every refresh"
+            )
+
+
 def _scan_flags() -> Dict[str, List[str]]:
     """Every `--flag` string literal in the GDScript, mapped to the scripts
     that mention it."""
@@ -1108,6 +1147,7 @@ def _patch_readme_block(name: str, body: str) -> None:
 def main() -> int:
     scripts = {p.stem: Script(p) for p in sorted(SCRIPTS.glob("*.gd"))}
     scenes, groups = _collect_scenes()
+    check_panel_controls()
 
     layer = scripts["layer"]
     prims = scripts["primitives"]

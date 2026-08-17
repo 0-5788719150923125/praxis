@@ -108,6 +108,41 @@ const VECTOR_FIELDS := [
 	                    #   Decoupled from hue_a on purpose: the color picker says what to
 	                    #   MASK, this says what color the drawn effect becomes. The old Hue
 	                    #   slider was a second widget on hue_a and the linkage read as a bug.
+	# THE REGION - a spatial restriction on where this layer acts at all, in the
+	# frame's own 0..1 UV (so it means the same thing on any clip shape, portrait
+	# included). Real fields rather than spare ones borrowed per effect, because
+	# unlike every "reuse fx_stick under a new name" group this is not one
+	# effect's private knob: it multiplies into EVERY layer's on-screen weight
+	# (see the shader's apply_layer), so any effect can be confined without each
+	# one growing its own version. Default is the whole frame, which is exactly
+	# the behaviour every session had before it existed.
+	#
+	# What it is FOR: a colour key is a colour key - it cannot tell the yellow
+	# wall behind a subject from a gold coin hanging at their neck, because they
+	# ARE the same colour. No amount of hue selectivity separates them. Space
+	# does: the wall is up there, the coin is down here.
+	"reg_x0",           # region left edge, 0..1 UV
+	"reg_y0",           # region top edge
+	"reg_x1",           # region right edge (x1 <= x0 is normalized on read)
+	"reg_y1",           # region bottom edge
+	"reg_soft",         # 0..1 - how gradually the region fades out at its border,
+	                    #   as a fraction of the box's own smaller side. A hard
+	                    #   rectangular cut reads as a rectangular cut.
+	# THE KEY SWATCH'S other two components. The key itself is a HUE - that is what
+	# the shader matches on, and hue_a above is the whole of it - but the picker is
+	# a colour picker, and it used to store only `.h` and rebuild the swatch as
+	# from_hsv(hue_a, 0.85, 0.9). So a colour picked off the footage came back a
+	# different colour: pick a pale yellow off a wall, reopen the session, and the
+	# swatch is a saturated yellow. Reported as "the key color is not persisted...
+	# the UI never reads that color from state, so you never actually know what
+	# color is being keyed to". These carry the rest of the pick so the swatch is
+	# the swatch you set. Deliberately NOT in LAYER_FIELDS: nothing in any shader
+	# reads them, and a field there is a promise that something does.
+	#
+	# The defaults are exactly the constants the rebuild used, so every session
+	# that predates them opens looking identical.
+	"key_sat",          # the key swatch's saturation - display only
+	"key_val",          # ...and its value
 ]
 
 ## Global keying environment - lerped across transition windows (contract shape 1).
@@ -121,10 +156,21 @@ const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## default forever, silently. That is exactly how umbra's Reach/Lead/Gaze
 ## shipped inert. hue_b was dead weight ("legacy, unused") and is now umbra's
 ## accent hue - the colour of the ghost's eyes.
-const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
+## intensity_b was the other half of the old two-channels-per-marker model and has
+## been dead weight since; it is the clown's Drip curve now, and `swap` - dead the
+## same way and for the same length of time - is its Smudge, both following hue_b,
+## which was "legacy, unused" until it became umbra's accent hue. A revived field has to be
+## added HERE as well as used, or it is simply absent from the layer dictionary
+## and the control ships inert (see the note above).
+const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "intensity_b", "swap", "fx_x", "fx_y",
 	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
 	"fx_smooth", "fx_stick", "fx_tint",
-	"threshold", "feather", "sat_floor", "hue_b"]
+	"threshold", "feather", "sat_floor", "hue_b",
+	# The region travels WITH the layer (see the note above about umbra shipping
+	# inert): it is a property of what this marker draws, and a continuation
+	# marker blending into its predecessor lerps the box corners across, so a
+	# moving restriction is a moving restriction rather than a jump.
+	"reg_x0", "reg_y0", "reg_x1", "reg_y1", "reg_soft"]
 
 const MARKER_KINDS := ["ramp", "damp"]
 
@@ -356,7 +402,7 @@ const MAX_LAYERS := 6
 ## core. The mass DARKENS rather than paints black - a shadow keeps the
 ## surface's hue, so it multiplies, and shade_amount's ceiling keeps the
 ## wall's own texture alive inside it (a flat black fill reads as a decal).
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown", "umbra"]
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown", "umbra", "repaint", "rain", "audio"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -374,6 +420,22 @@ const EFFECT_AREALIGHT := 14
 const EFFECT_META := 15
 const EFFECT_CLOWN := 16
 const EFFECT_UMBRA := 17
+## REPAINT: replace one colour with another. Projection-based like erase and
+## crystal - no keying gates and no pattern - but where erase SUBTRACTS the keyed
+## chroma, this substitutes a chosen one, because "make the yellow wall black" is
+## not the same request as "take the yellow out" and the second leaves grey.
+## Its selection is an angular CONE around the key rather than the raw projection
+## the other two use: a replacement is all-or-nothing, and skin sitting 28 degrees
+## off a yellow wall must not take a share of it (see tests/repaint_check.gd).
+const EFFECT_REPAINT := 18
+## RAIN: keyless weather in front of and behind the subject. Every drop is
+## independent - lane, phase, speed and length all hashed per drop - and Depth
+## sets where near rain gives way to a far sheet that falls BEHIND the subject.
+const EFFECT_RAIN := 19
+## AUDIO: draws nothing at all. The one layer whose product is sound - an EQ,
+## compressor, delay and reverb chain on the mask bus, scaled by the marker's own
+## envelope so it fades in rather than popping on. See MaskEditor._apply_audio_fx.
+const EFFECT_AUDIO := 20
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -402,6 +464,9 @@ const EFFECT_CONTROLS := {
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
 	16: ["pattern", "clown"],     # clown (pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow)
 	17: ["pattern", "umbra"],     # umbra (colour picker names the wall; coverage=Loom, contrast=Roil, + its own Wisp/Cling/Depth)
+	18: ["repaint"],              # repaint (projection-based like erase/crystal: no keying gates, no pattern - just the paint colour + its reach and edge smoothing)
+	19: ["pattern", "rain"],      # rain (keyless: coverage=Amount, velocity=fall speed, scale=streak length, pan=wind, contrast=Depth - where near rain gives way to far - plus its own Squall)
+	20: ["audio"],                # audio (draws nothing: lag=Echo time, smooth=Echo mix, density=Ambience, scale=Room, contrast=Resonance, stick=Bass)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
@@ -424,7 +489,18 @@ const PATTERN_KNOBS := {
 	# invisible wobble and Resonance only grazed Wear, so both are hidden
 	# rather than left on screen doing nothing (the control hierarchy's whole
 	# point - "only show properties that can be used").
-	16: ["scale", "pan", "coverage", "contrast"],
+	#
+	# PAN IS GONE TOO, and not for tidiness: Pan could only slide a face-TRACKED
+	# mask off the face it was fitted to, so fx_x and fx_y were free, and both now
+	# carry a clown control (Edge feather and Drip width). Leaving "pan" here would
+	# put a second slider on each of those fields, and whichever moved last would
+	# win - a control that silently fights another control.
+	16: ["scale", "coverage", "contrast"],
+	# rain reads everything except resonance: scale is the streak length, pan the
+	# wind direction, coverage the Amount, velocity the fall speed and contrast the
+	# Depth at which near rain gives way to the far sheet. Its own Squall sits in
+	# the "rain" group on fx_smooth.
+	19: ["scale", "pan", "coverage", "contrast", "velocity"],
 	# umbra is deliberately ABSENT (so it shows all six): it is the first
 	# effect that genuinely reads every one of them. Velocity is the essence's
 	# climb rate and Resonance swells the loom with the audio - on a talking
@@ -457,7 +533,23 @@ const DEFAULTS := {
 	"fx_x": 0.0, "fx_y": 0.0, "fx_scale": 1.0, "fx_density": 0.45, "resonance": 0.0,
 	"fx_contrast": 0.5, "fx_speed": 1.0, "fx_lag": 0.35, "fx_smooth": 0.0,
 	"fx_stick": 0.0, "fx_tint": 0.0,
+	# The whole frame - i.e. no restriction at all, which is what every session did
+	# before regions existed. reg_soft only bites once the box is actually smaller
+	# than the frame, and it defaults to a HARD border: a region is a selection,
+	# and an effect confined to one should look the same everywhere inside it.
+	# Softening the border is a deliberate choice, not the starting point.
+	"reg_x0": 0.0, "reg_y0": 0.0, "reg_x1": 1.0, "reg_y1": 1.0, "reg_soft": 0.0,
+	"key_sat": 0.85, "key_val": 0.9,
 }
+
+
+## Is this marker's region an actual restriction, or the default whole frame?
+## One place, because the panel, the on-screen box and the shader push all have
+## to agree about it - and "did the user limit this layer" is not the same
+## question as "are the numbers non-zero".
+static func has_region(m: Dictionary) -> bool:
+	return float(m.get("reg_x0", 0.0)) > 0.001 or float(m.get("reg_y0", 0.0)) > 0.001 \
+		or float(m.get("reg_x1", 1.0)) < 0.999 or float(m.get("reg_y1", 1.0)) < 0.999
 
 var video_path := ""
 var audio_path := ""

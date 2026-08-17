@@ -48,4 +48,12 @@ EMBEDDING_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "byte_hash": partial(
         _compose, [("tok", {}), ("hash", {"group_sizes": [3, 4, 5], "functions": 1})]
     ),
+    # Multi-hash: four independent hashes per window instead of one, so an
+    # n-gram's code is the 4-tuple of buckets and is ambiguous only when all
+    # four collide at once. How MANY buckets is not decided here - that is
+    # --hash-buckets, set in the experiment file. See HashEmbedding for the
+    # measurement that motivates both.
+    "byte_multihash": partial(
+        _compose, [("tok", {}), ("hash", {"group_sizes": [3, 4, 5], "functions": 4})]
+    ),
 }

@@ -942,6 +942,9 @@ function buildCompositeConfigsFromRegistry(registry) {
             // modules against deviations - so the registry names them.
             rowLabel: entry.row_label || null,
             colLabel: entry.col_label || null,
+            // Heatmaps whose cells are not routing weights (a readout R², say)
+            // have no "uniform" reference; the registry switches the note off.
+            uniformNote: entry.uniform_note !== false,
         }));
 }
 
@@ -3160,6 +3163,9 @@ function getHeatmapColor(value) {
     // render, and the heatmap re-renders each metrics poll, so it stays in sync.
     const greyR = 220, greyG = 220, greyB = 220;
     const [accR, accG, accB] = accentRgb();
+    // Clamp to [0, 1]: a value below zero (a readout worse than chance, which
+    // is noise around "nothing readable") is grey, not an extrapolated colour.
+    value = Math.min(1, Math.max(0, value));
 
     const r = Math.round(greyR + (accR - greyR) * value);
     const g = Math.round(greyG + (accG - greyG) * value);
@@ -3425,7 +3431,9 @@ async function createExpertRoutingChart(canvasId, agents, config = {}) {
                 },
                 title: {
                     display: true,
-                    text: `Step ${currentStep} | Uniform: ${uniformPct}% per ${yTitle.toLowerCase()}`,
+                    text: config.uniformNote === false
+                        ? `Step ${currentStep}`
+                        : `Step ${currentStep} | Uniform: ${uniformPct}% per ${yTitle.toLowerCase()}`,
                     color: textColor,
                     font: { size: 12, weight: '500' },
                     padding: { bottom: 10 }
@@ -3450,7 +3458,11 @@ async function createExpertRoutingChart(canvasId, agents, config = {}) {
                             if (weight === null || weight === undefined) {
                                 return `${rowName}, ${yTitle} ${col}: No data`;
                             }
-                            return `${rowName}, ${yTitle} ${col}: ${(weight * 100).toFixed(2)}%`;
+                            // Routing weights read as percentages; other cell
+                            // values (a readout R²) as plain numbers.
+                            return config.uniformNote === false
+                                ? `${rowName}, ${yTitle} ${col}: ${weight.toFixed(3)}`
+                                : `${rowName}, ${yTitle} ${col}: ${(weight * 100).toFixed(2)}%`;
                         }
                     }
                 }

@@ -37,6 +37,15 @@ class PraxisConfig(PretrainedConfig):
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
         byte_vocab_size: Optional[int] = None,
+        # Buckets per n-gram hash table, scalar or one per window size. Sizes
+        # the input hash embedding independently of any vocabulary, which under
+        # a byte tokenizer is a constant 256 and tells you nothing about how
+        # many distinct byte n-grams need distinct codes. None = fall back to
+        # vocab_size (what every config predating the flag was doing).
+        hash_buckets=None,
+        # Entries in the encoder's VQ codebook. None = fall back to vocab_size,
+        # same legacy path.
+        codebook_size: Optional[int] = None,
         # Amount added to a raw byte to get its id, taken from the tokenizer.
         # 4 = BLT layout with control ids 0-3; 0 = pure 256-byte alphabet.
         byte_offset: int = 4,

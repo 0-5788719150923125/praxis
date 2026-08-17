@@ -216,6 +216,26 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
+            "--hash-buckets",
+            type=int,
+            nargs="+",
+            default=None,
+            help="Buckets per n-gram hash table in the byte-latent input "
+            "embedding: one value, or one per window size (e.g. 1024 1024 "
+            "2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, "
+            "which under a byte tokenizer is a constant 256. Defaults to "
+            "vocab_size when unset",
+        )
+
+        group.add_argument(
+            "--codebook-size",
+            type=int,
+            default=None,
+            help="Entries in the encoder's VQ codebook (abstractinator "
+            "bottleneck). Defaults to vocab_size when unset",
+        )
+
+        group.add_argument(
             "--depth",
             type=int,
             default=None,

@@ -3,7 +3,7 @@
 
 Input embedding layers, paired with the corresponding block type.
 
-Registry: ``praxis.EMBEDDING_REGISTRY`` (14 entries)
+Registry: ``praxis.EMBEDDING_REGISTRY`` (15 entries)
 
 ## `byte`
 
@@ -12,6 +12,10 @@ Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {})])`
 ## `byte_hash`
 
 Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {}), ('hash', {'group_sizes': [3, 4, 5], 'functions': 1})])`
+
+## `byte_multihash`
+
+Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {}), ('hash', {'group_sizes': [3, 4, 5], 'functions': 4})])`
 
 ## `conv`, `gru`, `min`, `nano`, `recurrent`, `ssm`, `transformer`, `wavelet` - ProjectedEmbedding
 
@@ -26,6 +30,11 @@ Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L1
 N-gram hash embedding: sums table lookups over byte windows of several sizes and hash
 functions, computing vectors from byte n-grams rather than retrieving a per-token row.
 Has no single tie-able table by design.
+
+Collision resistance comes from ``functions``, not from ``hash_vocab``. A single hash
+maps every distinct n-gram onto exactly one row, so two n-grams sharing a bucket become
+the same vector and are unrecoverable downstream; the only defence is a wider table, and
+byte n-grams outnumber ...
 
 Source: [praxis/embeddings/hash.py:41](../praxis/embeddings/hash.py#L41)
 

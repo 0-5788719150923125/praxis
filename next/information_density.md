@@ -135,20 +135,28 @@ position**: from ONE hidden state in each of 8 position buckets, at each depth
 step, ridge-read the window's DFT-along-position content in four bands - `bag`
 (mode 0), `coarse` (1-3), `mid` (4-15), `fine` (16-31) - scored prequentially
 against running moments and reported as R² above a shuffled-target null.
-Cards: `readout_profile_{band}` (head..tip series), `readout_rim_gap`
-(tip - head per band), `readout_depth_gain` (last step - entry per band).
+Cards: `readout_profile` (ONE heatmap: x = position head..tip, y = band,
+shade = R² at loop exit - fig:density measured), `readout_rim_gap` (tip -
+head per band), `readout_depth_gain` (exit - entry per band).
+
+2026-08-16 revision: the first cut gated on 64+ positions (fine band, modes
+16-31) and so fired 6 times in 8.9k steps of abstractinator-p, whose decoder
+window is PATCHES (tens at short curriculum tiers); each firing was one batch's
+R² (±0.5 swings). Now: bands bag/coarse(1-3)/mid(4-7), MIN_LENGTH 16, sample
+every 4th forward, EMA 0.9 over firings; four 8-line profile cards replaced by
+the heatmap. First honest reading available after the next restart.
 
 Signatures, verified on synthetic states (`tests/test_density.py`):
 
 - received picture (state = prefix): bag rises **linearly** head→tip
-  (~t/T); coarse is a hump that dies at the tip; fine ~0.
+  (~t/T); coarse is a hump that dies at the tip; mid ~0.
 - conjecture's limit (state = whole): bag **flat and high** at every position.
 - own token only: everything ~0.
 
 The falsifier is now: bag and coarse `rim_gap` staying large and positive
 (the head knows nothing about the whole beyond its own token) - i.e. the
-received picture. Fine is the control and should stay near zero everywhere;
-a rising head line there would mean the target leaks.
+received picture. The entry-step profile (raw embeddings) is the built-in
+null; `depth_gain` is what the loop added over it.
 
 Related term of art: psycholinguistics' **Uniform Information Density**
 (Levy & Jaeger; Meister et al. 2021 on LMs) - density = surprisal per unit,

@@ -27,11 +27,16 @@ from praxis.metrics.training_metrics import (
     X_AXIS_REGISTRY,
 )
 
-READOUT_BANDS = ("bag", "coarse", "mid", "fine")
+READOUT_BANDS = ("bag", "coarse", "mid")
+READOUT_POSITIONS = ("head", "q1", "q2", "q3", "q4", "q5", "q6", "tip")
 READOUT_KEYS = tuple(
     f"readout_{band}_{suffix}"
     for band in READOUT_BANDS
-    for suffix in [f"b{b}" for b in range(8)] + ["rim_gap", "depth_gain"]
+    for suffix in ("rim_gap", "depth_gain")
+) + tuple(
+    f"readout_cell_{pos}_{i}"
+    for pos in READOUT_POSITIONS
+    for i in range(len(READOUT_BANDS))
 )
 
 
@@ -90,18 +95,19 @@ def test_readout_composites_cover_every_readout_key():
         assert any(p.match(key) for p in patterns), f"{key} is on no card"
 
 
-def test_readout_profiles_label_positions_head_to_tip():
-    """Series 0..7 are POSITION buckets; the legend must say so, not 'Series 0'."""
+def test_readout_profile_is_one_heatmap_over_position_and_band():
+    """fig:density is a shaded strip over position; the card is a heatmap
+    whose row group is the position label and column group the band index."""
     by_key = {e["key"]: e for e in COMPOSITE_METRIC_REGISTRY}
-    for band in READOUT_BANDS:
-        card = by_key[f"readout_profile_{band}"]
-        labels = card["series_labels"]
-        assert len(labels) == 8
-        assert labels[0].startswith("head") and labels[-1].startswith("tip")
-        pattern = re.compile(card["key_pattern"])
-        assert {k for k in READOUT_KEYS if pattern.match(k)} == {
-            f"readout_{band}_b{b}" for b in range(8)
-        }
+    card = by_key["readout_profile"]
+    assert card["type"] == "expert_routing_heatmap"
+    assert card.get("uniform_note") is False  # cells are R², not routing weights
+    pattern = re.compile(card["key_pattern"])
+    cells = {k for k in READOUT_KEYS if pattern.match(k)}
+    assert cells == {k for k in READOUT_KEYS if k.startswith("readout_cell_")}
+    for pos in READOUT_POSITIONS:
+        m = pattern.match(f"readout_cell_{pos}_1")
+        assert m and m.group(1) == pos and m.group(2) == "1"
 
 
 def test_readout_summary_cards_carry_every_band():
@@ -123,7 +129,7 @@ def test_composite_orders_do_not_collide():
     # Pre-existing ties are grandfathered; the point is that new cards do not
     # silently join them. Assert only that the ones we placed are clean.
     for key in (
-        "readout_profile_bag",
+        "readout_profile",
         "readout_rim_gap",
         "readout_depth_gain",
         "smear_coefficients",

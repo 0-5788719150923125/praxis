@@ -65,6 +65,15 @@ uniform float u_l_smooth[6];       // echo's temporal blend is baked into u_l_ew
 
 uniform float u_time = 0.0;        // clip playback seconds (deterministic clock)
 uniform float u_aspect = 1.7778;   // video w/h, so the pattern stays isotropic
+// One SOURCE pixel in UV. Anything that has to reason about the footage's own
+// pixel grid rather than about the frame as a unit square needs this - repaint's
+// edge averaging, whose job is to span a compressed chroma block, and a chroma
+// block is a fixed number of pixels whatever resolution the clip happens to be.
+// Pushed per frame from the decoded texture's real size (see MaskEditor).
+// (literal, not 1.0/1920.0 - a uniform's default must be a constant EXPRESSION
+// and gdshader will not fold the division, which fails the whole shader to
+// compile rather than just this line)
+uniform vec2 u_texel = vec2(0.00052083, 0.00092593);
 
 // The temporal echo ring: quarter-res snapshots of PAST frames, captured by the
 // editor every fixed slice of PLAYBACK time (not wall clock) and pushed here in
@@ -102,6 +111,17 @@ uniform float u_l_tint[6];
 // Per-layer ACCENT hue (hue_b). Umbra's ghost-eye colour; 0 = red.
 uniform float u_l_accent[6];
 
+// THE REGION: each layer's box in frame UV as (x0, y0, x1, y1), and how softly
+// it fades out at its border. Default (0,0,1,1) is the whole frame, so a layer
+// that was never given a region behaves exactly as it always did. This is the
+// one control here that is SPATIAL rather than chromatic, and it exists because
+// a colour key fundamentally cannot separate two things that are the same
+// colour - a yellow wall and a gold coin in front of it - while their positions
+// separate them trivially. Applied to the layer's WEIGHT (see apply_layer), so
+// it confines every effect uniformly instead of each branch reimplementing it.
+uniform vec4 u_l_region[6];
+uniform float u_l_regsoft[6];
+
 // The clown face model, fitted CPU-side each capture tick (see MaskEditor.
 // _update_face_model) and EMA-glided like u_anchor: both eyes, the mouth,
 // the face's semi-axes, its mean chroma direction and luminance. Defaults
@@ -114,6 +134,12 @@ uniform vec2 u_clown_face_r = vec2(0.14, 0.20);
 uniform vec3 u_clown_tint = vec3(0.55, 0.1, -0.5);
 uniform float u_clown_lum = 0.5;
 uniform vec2 u_clown_face_c = vec2(0.5, 0.45);
+// The face's own coordinate frame: the EYE-LINE direction, divided by the eye
+// separation. Dotting a screen offset against this and its perpendicular gives a
+// coordinate that is fixed to the skin - so anything drawn in it (the craquelure
+// below) rotates, scales and travels WITH the head instead of over it. Identity-
+// ish default so a session with no face track still renders sensibly.
+uniform vec2 u_clown_frame = vec2(4.0, 0.0);
 // Per-feature sizes, measured from each detected cluster's own spread
 // (eye-distance units) - each eye and the mouth carry their OWN live extent,
 // so the drawn features breathe with the anatomy (talking makes the lips
@@ -522,10 +548,80 @@ float shade_amount(float x, vec2 uv) {
 	return s * 0.93;
 }
 
+// REPAINT'S SELECTION, for one sample: how completely this colour IS the target
+// colour, 0..1. Split out of the effect branch because the branch evaluates it
+// over a disc rather than at one pixel (see there for why).
+//
+// SELECTION IS AN ANGLE WITH A FLAT TOP, not the raw alignment and not a power
+// of it. Erase and crystal use the cosine of the angle directly, which is fine
+// when the result is proportional (subtracting a bit of chroma, mixing a bit of
+// glass) but wrong for a REPLACEMENT, because the cosine is flat near zero and
+// gently sloped everywhere: measured on real footage, a lit yellow wall reads
+// 1.00 and the SKIN of the person in front of it reads 0.88 - only 28 degrees
+// apart - so any threshold soft enough to paint the whole wall evenly also
+// paints the face. Raising the cosine to a power separates them, but then
+// penalizes the wall's own hue drift, which mottles it.
+//
+// So: the actual angle from the target colour, accepted as a CONE - everything
+// within `tol` fully selected (a flat top, so one wall paints uniformly however
+// its lighting varies across it), fading out over a shoulder past it (soft, so
+// no boundary ring). `reach` sets the half-angle, squared for feel: ~2 degrees
+// at 0 (this exact colour only), ~17 at the default 0.5 (a real wall, its
+// shadows and washed-out patches included, but not the face beside it), ~57 at
+// 1 (the whole warm or cool family).
+float repaint_select(vec3 c, vec3 tdir, float reach) {
+	float lum = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 ch = c - vec3(lum);
+	float clen = length(ch);
+	float ang = acos(clamp(dot(ch, tdir) / max(clen, 1e-4), -1.0, 1.0));
+	float tol = mix(0.04, 1.0, reach * reach);
+	float sel = 1.0 - smoothstep(tol, tol + max(tol * 0.6, 0.05), ang);
+	// The chroma floor does only its own job: an almost-neutral pixel has no
+	// meaningful hue, so the angle above is noise there. Kept LOW - selection is
+	// the cone's business now - or a washed-out stretch of the same wall drops
+	// out and the paint goes blotchy.
+	return sel * smoothstep(mix(0.030, 0.0, reach), mix(0.075, 0.012, reach), clen);
+}
+
+// How much of layer i acts at `uv`: 1 inside its region, 0 outside. INSIDE IS
+// UNIFORM - the box is a boundary, not a vignette; the effect it confines has to
+// look the same everywhere within it or the box stops being a selection and
+// becomes a gradient nobody asked for. Any softening happens strictly AT the
+// border, and only as much as Region edge asks for (0 by default).
+//
+// The falloff is measured INWARD from each side, so a side sitting on the frame's
+// own edge has nothing to fade against and is skipped: a box dragged flush to the
+// top of the picture must paint the first row of pixels, and a full-frame box
+// (what every layer without a region has) must be exactly 1 everywhere rather
+// than a vignette. Separable via min(), so the corners round off with the sides.
+//
+// The shoulder is a fraction of the box's own smaller side - soft should look
+// equally soft on a small box and a big one, not equally wide - and never
+// narrower than a pixel, both because smoothstep with equal edges is undefined
+// in GLSL and because a hard box still wants its own edge anti-aliased rather
+// than stepped.
+float region_mask(int i, vec2 uv) {
+	vec4 r = u_l_region[i];
+	vec2 lo = min(r.xy, r.zw);
+	vec2 hi = max(r.xy, r.zw);
+	vec2 size = max(hi - lo, vec2(1e-4));
+	float soft = max(clamp(u_l_regsoft[i], 0.0, 1.0) * 0.5 * min(size.x, size.y),
+		max(u_texel.x, u_texel.y));
+	float m = 1.0;
+	if (lo.x > 0.0005) { m = min(m, smoothstep(lo.x, lo.x + soft, uv.x)); }
+	if (hi.x < 0.9995) { m = min(m, 1.0 - smoothstep(hi.x - soft, hi.x, uv.x)); }
+	if (lo.y > 0.0005) { m = min(m, smoothstep(lo.y, lo.y + soft, uv.y)); }
+	if (hi.y < 0.9995) { m = min(m, 1.0 - smoothstep(hi.y - soft, hi.y, uv.y)); }
+	return m;
+}
+
 // Apply layer i to the running color. `w` is the layer's full on-screen weight
-// (envelope x intensity x surface presence), already resolved CPU-side.
+// (envelope x intensity x surface presence), already resolved CPU-side, times
+// this pixel's REGION membership - so confining a layer to a box is the same
+// operation as fading it out, just resolved per pixel instead of per frame, and
+// every effect inherits it without knowing about it.
 vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
-	float w = u_l_w[i];
+	float w = u_l_w[i] * region_mask(i, uv);
 	if (w <= 0.001) {
 		return col;
 	}
@@ -551,6 +647,230 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float p = max(0.0, dot(chroma, u_l_tdir[i]));
 		vec3 outc = col.rgb - u_l_tdir[i] * (p * k) - vec3(0.85 * p * k);
 		return vec4(max(outc, vec3(0.0)), col.a);
+	}
+	if (effect == 19) {
+		// RAIN. Rewritten from a first cut that was wrong in five separate ways,
+		// each recorded here so none of them comes back.
+		//
+		//  1 THE TAIL POINTED THE WRONG WAY. A falling drop is brightest at its
+		//    LEADING edge, with the tail trailing behind it - i.e. above it. The
+		//    first profile peaked at the top of each cell and faded downward, so
+		//    every drop appeared to be flying upward. The phase runs so that
+		//    yy -> 1 is the bottom of a cell, hence the head, and the tail ramps
+		//    away above it.
+		//  2 IT HAD A TAIL SHAPE AT ALL. Rain is a fast straight line that simply
+		//    fades out behind the head - not a lozenge with a soft nose. A linear
+		//    ramp to a hard leading edge is the whole of it.
+		//  3 THERE WAS NO AMOUNT CONTROL. Coverage moved the COLUMN COUNT, so
+		//    every column always held a drop and the sheet went from downpour to
+		//    slightly-finer downpour. Drizzle needs most columns EMPTY, which is a
+		//    per-column existence gate, not a spacing.
+		//  4 IT FELL FAR TOO SLOWLY, and
+		//  5 IT FELL AS ONE RIGID SHEET - every drop the same angle, the same
+		//    speed, the same length. Real rain is chaotic with a TREND: a wind
+		//    direction that drifts, and drops that scatter around it.
+		float k19 = shade_amount(w, uv);
+		vec2 asp19 = vec2(u_aspect, 1.0);
+		vec2 q19 = uv * asp19;
+		float dens19 = clamp(u_l_dens[i], 0.0, 1.0);
+		float len19 = 0.10 * clamp(u_l_scale[i], 0.1, 8.0);
+		float depth19 = clamp(u_l_con[i], 0.0, 1.0);
+		float squall19 = clamp(u_l_smooth[i], 0.0, 1.0);
+		// THE WIND IS A TREND, NOT A SETTING. Pan is the direction it blows on
+		// average; the gust is a slow smooth wander around that, so the sheet
+		// leans and recovers instead of holding one rigid angle forever.
+		float gust19 = (fbm(vec2(u_time * 0.13, 4.7)) - 0.5) * 1.6;
+		float slant19 = u_l_off[i].x * 0.9 + gust19 * 0.45 * squall19;
+		// HOW MUCH OF THIS PIXEL IS THE SUBJECT. Same idea as crystal's aligned
+		// fraction - ask the picture per pixel rather than guessing globally.
+		// Dark AND flat reads as background (a wall, or one this session has
+		// already repainted); lit or structured reads as the person in front of
+		// it. The structure term is what stops a dark JACKET counting as sky.
+		float lum19 = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vec2 grad19 = vec2(0.0);
+		for (int g19 = 0; g19 < 8; g19++) {
+			float ag19 = float(g19) * 0.7853981634 + 0.3926990817;
+			grad19 += vec2(cos(ag19), sin(ag19)) * taps[g19 + 9].z;
+		}
+		float subj19 = max(smoothstep(0.10, 0.42, lum19),
+			smoothstep(0.05, 0.22, length(grad19)));
+		float wet19 = 0.0;
+		float lead19 = 0.0;
+		// Two DEPTHS x two SHEETS. The sheets sit at slightly different angles so
+		// the drops are not all parallel - the cheapest cure for the rigid look,
+		// and the one that survives being looked at closely.
+		for (int b19 = 0; b19 < 4; b19++) {
+			bool near19 = b19 >= 2;
+			float sub19 = float(b19 - (near19 ? 2 : 0));
+			// Near: fewer, longer, faster, wider, brighter. Far: the opposite,
+			// and only over background.
+			float cols19 = near19 ? 26.0 : 74.0;
+			float bspeed19 = near19 ? 1.0 : 0.55;
+			float blen19 = near19 ? 1.0 : 0.45;
+			float bwide19 = near19 ? 1.0 : 0.5;
+			float bbright19 = near19 ? 1.0 : 0.5;
+			float share19 = near19 ? depth19 : (1.0 - depth19) * (1.0 - subj19);
+			if (share19 <= 0.002) {
+				continue;
+			}
+			// Each sheet leans a little differently around the trend.
+			float sl19 = slant19 + (sub19 - 0.5) * 0.22 * (0.4 + squall19);
+			vec2 p19 = vec2(q19.x + sl19 * q19.y, q19.y);
+			float cx19 = p19.x * cols19 + sub19 * 31.7;
+			float ci19 = floor(cx19);
+			float cf19 = fract(cx19);
+			// Speed is the one thing that must stay constant along a lane: the
+			// phase below is what divides the lane into drops, and a speed that
+			// changed per drop would tear that division apart.
+			vec2 hl19 = hash22(vec2(ci19, sub19 * 13.0 + float(near19 ? 5 : 91)));
+			float slen19 = max(len19 * blen19 * (0.55 + 0.95 * hl19.x), 1e-3);
+			float rate19 = (1.6 + 6.0 * clamp(u_l_speed[i], 0.0, 4.0))
+				* bspeed19 * (0.7 + 0.6 * hl19.y);
+			// EVERY DROP IS ITS OWN DROP. This is the correction that matters. A
+			// lane hashed once gives each lane a fixed offset, a fixed calibre and
+			// a fixed angle FOREVER, so drop after drop runs down the identical
+			// path - thirty tracks with trains on them, which is exactly what it
+			// looked like and nothing like rain. Hashing on the CELL INDEX as well
+			// as the lane gives every pass down a lane its own position, calibre,
+			// length, brightness and tilt, so a lane is only a scheduling device
+			// and no two drops share a path.
+			float ph19 = p19.y / slen19 - u_time * rate19;
+			float cell19 = floor(ph19);
+			float yy19 = ph19 - cell19;
+			// INTEGER arguments, deliberately. hash22 is a permutation hash - it
+			// reduces mod 289 and runs a polynomial - and it is built for integer
+			// lattice coordinates. Fed fractional ones (ci * 13.9 - cell * 2.7)
+			// consecutive cells map to nearly the same value, so a lane's drops
+			// came out clustered on a handful of positions and the "same track"
+			// look survived the per-cell hashing that was supposed to cure it:
+			// measured, 52 crossings in one lane landed on 9 distinct x. Both
+			// arguments below are integer combinations of integer inputs.
+			vec4 hd19 = vec4(hash22(vec2(ci19 + cell19 * 131.0, sub19 * 3.0 + 11.0)),
+				hash22(vec2(ci19 * 7.0 + cell19 * 57.0 + 3.0, sub19 * 5.0 + 29.0)));
+			// EXISTENCE, now per drop rather than per lane - so a lane runs dry
+			// and fills again instead of being permanently on or permanently off.
+			// This is what makes a drizzle scattered rather than merely thin.
+			if (hd19.x > dens19 * (near19 ? 0.55 : 0.85)) {
+				continue;
+			}
+			// Only the heavy drops pass in front of the subject; the fine ones
+			// would be invisible against a lit face at that distance anyway.
+			float fat19 = 0.40 + 0.60 * hd19.y;
+			float over19 = smoothstep(0.30, 0.70, subj19);
+			float sh19 = share19 * mix(1.0, smoothstep(0.40, 0.80, fat19), over19);
+			if (sh19 <= 0.002) {
+				continue;
+			}
+			// THIS drop's own lane position and THIS drop's own tilt. The tilt is
+			// applied along the streak (it grows with distance behind the head),
+			// so each drop is a straight line at its own angle rather than every
+			// drop being parallel to every other.
+			float lane19 = 0.10 + 0.80 * hd19.z;
+			float tilt19 = (hd19.w - 0.5) * 0.9 * (0.25 + squall19);
+			float halfw19 = (0.020 + 0.055 * fat19) * bwide19;
+			float dx19 = cf19 - lane19 - tilt19 * (yy19 - 1.0);
+			float across19 = smoothstep(halfw19, 0.0, abs(dx19));
+			if (across19 <= 0.001) {
+				continue;
+			}
+			// THE STREAK: a ramp to a hard leading edge at yy = 1, which is the
+			// bottom of the cell and so the head of a falling drop. Each drop gets
+			// its own length by cutting the tail short of the cell.
+			float tail19 = 0.35 + 0.60 * hd19.z;
+			float body19 = smoothstep(1.0 - tail19, 1.0, yy19);
+			body19 *= body19;
+			float head19 = pow(yy19, 26.0);
+			wet19 += (body19 * 0.7 + head19 * 0.8) * across19 * bbright19
+				* sh19 * (0.6 + 0.7 * hd19.y);
+			lead19 = max(lead19, head19 * across19 * sh19);
+		}
+		wet19 = clamp(wet19 * k19 * 1.5, 0.0, 1.0);
+		if (wet19 <= 0.003) {
+			return col;
+		}
+		// Water is not white - it is a brightened, desaturated version of whatever
+		// is behind it, which is why rain reads over a dark wall AND a lit face.
+		// The head carries a little extra light, the way a real drop catches it.
+		vec3 water19 = hue_shift(mix(vec3(lum19), vec3(0.80, 0.87, 0.96), 0.72)
+			* (0.75 + 0.8 * lum19) + vec3(0.30) * lead19, u_l_tint[i]);
+		return vec4(mix(col.rgb, water19, wet19), col.a);
+	}
+	if (effect == 18) {
+		// REPAINT - the target color REPLACED by a flat color of your choosing.
+		// The literal "swap this color for that one", which erase is not: erase
+		// SUBTRACTS the target's chroma and the light it carried, so its result
+		// is always a darkened neutral scaled by how saturated the pixel was -
+		// a lit yellow wall lands on grey-mauve and a pale one hardly moves.
+		// Here the pixel is mixed toward an ABSOLUTE color instead, so "yellow
+		// wall -> black" is exactly what it says.
+		//
+		// Same gate-free projection foundation as erase and crystal (no
+		// threshold, no colorfulness floor, so no boundary rings), and
+		// crystal's ALIGNED FRACTION rather than erase's raw projection - see
+		// the crystal branch for why a replacement mixed by the raw projection
+		// barely registers on dim footage.
+		float reach18 = clamp(u_l_con[i], 0.0, 1.0);
+		// THE EDGE IS SUPERSAMPLED, and it has to be. Erase and crystal read the
+		// single pixel under them, which is fine for a proportional effect, but a
+		// REPLACEMENT makes every artifact in the selection visible at full
+		// contrast, and the source is compressed video: theora stores chroma at
+		// quarter resolution in quantized blocks, so hue steps in 8-pixel squares
+		// along any colour boundary. Keyed per pixel, whole blocks flip in and out
+		// - which is exactly the reported "blocky, aliased, and it flickers",
+		// because those blocks are also re-quantized frame to frame. (This is the
+		// same problem the 25-tap ring in fragment() was added for; those taps are
+		// HSV and shared, so the projection branches never used them.)
+		//
+		// So the selection is evaluated over a small disc and averaged: partial
+		// coverage becomes a partial amount, which anti-aliases the boundary, and
+		// averaging across a chroma block's width low-passes the block noise that
+		// was making it crawl. SMOOTHING sets the radius, and even at 0 there is
+		// a minimum - the anti-aliasing is not optional, only its width is.
+		//
+		// The radius is in SOURCE PIXELS, not in frame units: a chroma block is
+		// 8-ish pixels whatever the clip's resolution, so a UV-relative radius
+		// would span three blocks on a small clip and a third of one on a large
+		// one. Which also makes the disc round in pixels for free, on any frame
+		// shape - u_texel already carries the aspect.
+		float soft18 = clamp(u_l_smooth[i], 0.0, 1.0);
+		vec2 roff18 = u_texel * mix(3.0, 20.0, soft18);
+		float sel18 = repaint_select(col.rgb, u_l_tdir[i], reach18);
+		float wsum18 = 1.0;
+		for (int s18 = 0; s18 < 8; s18++) {
+			float a18 = float(s18) * 0.7853981634 + 0.3926990817;
+			// Two rings on one loop - the inner one carries the anti-aliasing,
+			// the outer one reaches across a chroma block. Weighted so the pixel
+			// itself still dominates and a thin feature is not smeared away.
+			vec2 d18 = vec2(cos(a18), sin(a18));
+			sel18 += 0.55 * repaint_select(
+				texture(tex, clamp(uv + d18 * roff18 * 0.5, vec2(0.0), vec2(1.0))).rgb,
+				u_l_tdir[i], reach18);
+			sel18 += 0.30 * repaint_select(
+				texture(tex, clamp(uv + d18 * roff18, vec2(0.0), vec2(1.0))).rgb,
+				u_l_tdir[i], reach18);
+			wsum18 += 0.85;
+		}
+		sel18 /= wsum18;
+		// STRENGTH WITHOUT THE GRAIN. Every other suppression here runs through
+		// shade_amount, whose per-pixel grain is clocked off the clip's time and
+		// exists to dissolve block boundaries in a DARKENING - where it reads as
+		// film grain. Multiplying a flat replacement by it instead makes the
+		// painted area shimmer at ~9Hz, which was the other half of the flicker.
+		// Same soft gamma curve, same "never quite total" ceiling, no hash.
+		float k18 = pow(clamp(w, 0.0, 1.0), 0.85) * 0.995;
+		float amt18 = clamp(sel18 * k18 * 1.2, 0.0, 1.0);
+		if (amt18 <= 0.003) {
+			return col;
+		}
+		// The paint is a whole COLOR, not a hue: accent carries its hue, stick
+		// its saturation and tint its value, so value 0 is true black (the
+		// default - both fields start at 0) and saturation 0 gives greys and
+		// white. Flat by construction: what survives of the wall's own shading
+		// is the amount itself, which already falls off wherever the surface is
+		// less that color, so shadowed and grazed areas keep their form.
+		vec3 paint18 = hsv2rgb(vec3(u_l_accent[i], clamp(u_l_stick[i], 0.0, 1.0),
+			clamp(u_l_tint[i], 0.0, 1.0)));
+		return vec4(mix(col.rgb, paint18, amt18), col.a);
 	}
 	if (effect == 6) {
 		// CRYSTAL - fractal faceted glass IN PLACE of the target color. Same
@@ -640,16 +960,33 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		vec2 h1 = hash22(vec2(salt16, 3.7));
 		vec2 h2 = hash22(vec2(salt16, 9.1));
 		vec2 h3 = hash22(vec2(salt16, 15.3));
-		vec2 pan16 = u_l_off[i] * 0.25;   // plain screen nudge - no frame to ride
+		// NO PAN. The clown mask TRACKS A DETECTED FACE - every feature below is
+		// placed from the model, every frame - so a fixed screen-space offset on
+		// top of that can only slide the mask off the face it is following. It used
+		// to shift the eye anchors and the whole liquid-sampling frame together,
+		// which reads as the mask coming unstuck. The knob is gone from the panel
+		// (MaskSession.PATTERN_KNOBS) and its effect is gone from here, so a session
+		// that stored a nudge before now renders on the face like every other one.
 		// Hand-painted edge wobble: screen-locked, breathing on the clip clock,
 		// chewed wider by Smear. Applied as a SAMPLING warp on the liquid.
 		vec2 wob16 = vec2(fbm(uv * asp16 * 5.5 + vec2(salt16, t16 * 0.11)),
 			fbm(uv * asp16 * 5.5 + vec2(salt16 + 9.7, -t16 * 0.09))) - 0.5;
-		vec2 puv16 = uv - pan16 + wob16 * (0.006 + 0.018 * smear16);
+		// Smear's wobble had a range of 0.006..0.024, which over the whole pipeline
+		// moved the output by 0.010 - present, but far less than any neighbouring
+		// control, so it read as inert beside them. Widened to something you can
+		// actually see at the top of the slider.
+		vec2 puv16 = uv + wob16 * (0.004 + 0.050 * smear16);
 		vec4 paint16 = texture(u_clown_paint, clamp(puv16, vec2(0.0), vec2(1.0)));
 		// COAT window: the face channel of the liquid - advected and decaying
 		// in screen space, with no oval geometry left to rotate.
 		float win16 = smoothstep(0.12, 0.5, paint16.a);
+		// HOW DEEP INSIDE THE MEASURED FACE THIS PIXEL IS - and therefore the
+		// answer to "is this surrounded by coat", which is what the in-fill below
+		// needs. The coat's silhouette is a rasterized landmark polygon carried in
+		// the liquid's alpha: 1 across the whole interior, ramping to 0 over the
+		// feather at the jaw. Being inside that polygon and being surrounded by
+		// coat are the same statement, so no neighbourhood search is needed for it.
+		float solid16 = smoothstep(0.55, 0.92, paint16.a);
 		if (win16 * w16 <= 0.004) {
 			return col;
 		}
@@ -685,8 +1022,19 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// through the SAME field (see there), so both deform with the face.
 		vec2 struct16 = vec2(-grad16.y, grad16.x) * smoothstep(0.06, 0.30, length(grad16));
 		vec2 conform16 = struct16 * 0.12;
-		vec2 pcr16 = ((uv - (u_clown_face_c - vec2(0.5)) * near16) * asp16 + pan16)
-			/ fs16 + conform16;
+		// THE CRACKS LIVE IN THE FACE'S OWN FRAME, not the screen's. They used to
+		// be evaluated in screen space with only a soft pull toward the face
+		// centre, so as the head moved and turned the lattice slid across the
+		// skin underneath it - which is exactly the "squiggly smears" reading:
+		// a crack that travels over a cheek is a smear, and a crack that stays
+		// put on that cheek is a crack. u_clown_frame is the face's measured
+		// axes (origin at its centre, x along the EYE LINE, scaled by the eye
+		// separation), so the same lattice coordinate lands on the same piece of
+		// skin however the head has moved, rolled or come nearer.
+		vec2 rel16 = (uv - u_clown_face_c) * asp16;
+		vec2 fx16 = u_clown_frame.xy;                     // eye-line direction, scaled
+		vec2 fy16 = vec2(-fx16.y, fx16.x);                // its perpendicular
+		vec2 pcr16 = vec2(dot(rel16, fx16), dot(rel16, fy16)) / fs16 + conform16;
 		vec2 cvq16 = pcr16 * (7.0 + 4.5 * h3.y) + vec2(salt16 * 0.31, salt16 * 0.11);
 		float vein16 = pow(1.0 - abs(2.0 * fbm(cvq16) - 1.0), 7.0);
 		float crack16 = smoothstep(0.86 - 0.50 * wear16, 0.98, vein16)
@@ -725,14 +1073,14 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// a stripe.
 		float streakM16 = 0.0;
 		for (int e16 = 0; e16 < 2; e16++) {
-			vec2 eyep16 = (e16 == 0 ? u_clown_eye_l : u_clown_eye_r) + pan16;
+			vec2 eyep16 = (e16 == 0 ? u_clown_eye_l : u_clown_eye_r);
 			float er_r16 = clamp(e16 == 0 ? u_clown_eye_lr : u_clown_eye_rr,
 				0.012, 0.08) * fs16;
 			// Root INSIDE the patch, not below it: the paint gate decides
 			// where the run actually begins.
 			vec2 root_uv16 = eyep16 + vec2(0.0, er_r16 * 0.35);
 			float rootpaint16 = texture(u_clown_paint,
-				clamp(root_uv16 - pan16, vec2(0.0), vec2(1.0))).r;
+				clamp(root_uv16, vec2(0.0), vec2(1.0))).r;
 			float attach16 = smoothstep(0.14, 0.45, rootpaint16);
 			if (attach16 <= 0.01) {
 				continue;
@@ -784,16 +1132,53 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// a FEATURE lands (they paint at full strength on the dark anatomy
 		// they were detected on).
 		float feat16 = max(max(eyeM16, streakM16), max(lipM16, noseM16));
-		float amt16 = clamp(w16 * win16 * (0.35 + 0.65 * match16)
-			* max(dark16, feat16 * 0.95), 0.0, 0.96);
+		// THE COLOUR AND DARKNESS GUARDS ONLY APPLY AT THE RIM. Both exist for one
+		// job - stopping paint that the liquid has carried past the jawline from
+		// finding anything to draw on - and back when the coat was a screen-space
+		// blob with no fitted geometry they were the ONLY thing doing it. The coat
+		// is a measured landmark polygon now, so in the interior they are answering
+		// a question that has already been answered, and answering it per pixel: a
+		// shadow under a cheekbone, a lens, stubble, the shaded side of a nose each
+		// drop the coat to 15% (dark16's floor) or 35% (match16's), which is the
+		// reported patchiness - grey holes in the white that MOVE when the key
+		// colour changes, because match16 follows the key.
+		//
+		// So they are faded out across the same ramp that defines the silhouette.
+		// At the rim they are exactly as strict as they ever were, which is where
+		// the spill they prevent could actually happen; in the interior the
+		// polygon decides, and the coat is solid. This is the author's own
+		// suggestion - "areas surrounded by white in-filled by white" - and it
+		// needs no tolerance knob, because it is not a tolerance: nothing about
+		// the picture may veto paint in a region the face outline claims.
+		//
+		// The coat still carries the scene's light (see white16, which multiplies
+		// by the pixel's own luminance), so dropping the darkness guard costs no
+		// shading - it only stops the guard punching holes.
+		float guard16 = (0.35 + 0.65 * match16) * max(dark16, feat16 * 0.95);
+		float amt16 = clamp(w16 * win16 * mix(guard16, 1.0, solid16), 0.0, 0.96);
 		if (amt16 <= 0.004) {
 			return col;
 		}
 		// COMPOSE back to front. Black and red keep a breath of the footage's
 		// light so the paint sits IN the scene's lighting; Morph rotates the
 		// whole palette at the end.
-		float coat16 = clamp(1.0 - chip16 * 0.9 - erode16, 0.0, 1.0);
-		vec3 base16 = mix(white16, white16 * 0.16, crack16);
+		// WEAR MARKS THE COAT, IT DOES NOT PERFORATE IT. Chips and erosion used to
+		// SUBTRACT coverage, so the default Wear of 0.45 punched roughly a fifth of
+		// the craquelure's cells clean through to the skin. That was tolerable while
+		// the lattice sat in screen space and a face held about nine cells; moving
+		// it into the face's own frame (which it needed, or the cracks slide over
+		// the skin - see clown_anchor_check) put well over a hundred cells on the
+		// same face, so the same one-in-five rule went from two chips to dozens.
+		// That is the other half of the patchiness, and it is why it appeared
+		// without any control having been touched.
+		//
+		// Interior chips are now a SCUFF - the white goes grey where paint has worn
+		// thin - and only at the rim do they still bite through, which is where a
+		// chip eating into the outline reads as a chip rather than as a hole.
+		float bite16 = clamp(chip16 * 0.9 + erode16, 0.0, 1.0);
+		float coat16 = clamp(1.0 - bite16 * (1.0 - solid16), 0.0, 1.0);
+		vec3 worn16 = mix(white16, white16 * 0.16, crack16);
+		vec3 base16 = mix(worn16, white16 * 0.62, bite16 * solid16 * 0.8);
 		vec3 painted16 = mix(col.rgb, base16, coat16 * 0.95);
 		vec3 black16 = vec3(0.05, 0.045, 0.055) + vec3(0.09) * lum16;
 		painted16 = mix(painted16, black16, clamp(eyeM16, 0.0, 1.0) * 0.95);

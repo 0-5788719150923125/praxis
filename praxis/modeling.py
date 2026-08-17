@@ -70,6 +70,11 @@ class PraxisModel(PreTrainedModel):
             # their embeddings (e.g. CALM) name no profile.
             profile = self.encoder.embedding_profile
             if profile:
+                # A config-level `embeddings` key overrides the encoder
+                # profile's default, mirroring how it overrides block_type on
+                # the non-encoder path below. Encoders that own their
+                # embeddings (profile None) are left alone.
+                profile = getattr(config, "embeddings", None) or profile
                 self.embeds = EMBEDDING_REGISTRY[profile](config, encoder=self.encoder)
                 self.encoder.set_embeddings(self.embeds)
         else:

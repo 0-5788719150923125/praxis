@@ -94,12 +94,20 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         )
 
         D = config.hidden_size
-        # None means "size the bank to the token vocabulary", which is what this
-        # module's docstring has always claimed and what a hardcoded 1024 was
-        # silently doing instead. Identical at the configs in this lineage
-        # (vocab_size IS 1024), so this makes the documented behaviour real
-        # without moving any existing run.
-        K = vq_codebook_size if vq_codebook_size is not None else config.vocab_size
+        # Bank size, most explicit source first: `config.codebook_size` (the
+        # --codebook-size flag, set in the experiment file), then the encoder
+        # profile's own constant, then vocab_size. The flag outranks the profile
+        # for the same reason `config.embeddings` outranks the encoder's
+        # embedding profile - a number written in the run's config should not be
+        # overridden by a default written in a registry partial. The vocab_size
+        # tail is the legacy path, and it is a coincidence of scale rather than
+        # a rule: this bank indexes patch latents, not tokens, so a tokenizer
+        # change would move it for no reason.
+        K = getattr(config, "codebook_size", None)
+        if K is None:
+            K = vq_codebook_size
+        if K is None:
+            K = config.vocab_size
 
         vq_kwargs = dict(
             K=K,
