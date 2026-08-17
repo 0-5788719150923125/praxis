@@ -73,6 +73,13 @@ func _check_follow() -> void:
 	var seed_cfg := ConfigFile.new()
 	seed_cfg.load(CFG)
 	seed_cfg.set_value("splash", "_state_check_witness", "keep me")
+	# CLEAR THE REAL PREFERENCE FIRST. The default is only a default when nothing is
+	# stored, and this reads the author's own ghost.cfg - so with Follow legitimately
+	# switched off in their editor, asserting the default against it failed for a
+	# reason that had nothing to do with the code. The file is restored on the way
+	# out either way (see _restore_cfg).
+	if seed_cfg.has_section_key("mask", "follow_playhead"):
+		seed_cfg.erase_section_key("mask", "follow_playhead")
 	seed_cfg.save(CFG)
 
 	_expect(ed._load_follow(), "Follow does not default to ON with nothing stored - "

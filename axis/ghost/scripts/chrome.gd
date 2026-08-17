@@ -29,8 +29,29 @@ var feedback: Node
 var console: Node
 var scrubber: Node
 
+## HOW MUCH ROOM THE CURRENT MODE HAS CLAIMED at the bottom of the frame, in
+## pixels. Every piece of furniture here anchors bottom-right, which is empty in
+## most modes - but the Masking editor puts its marker strip and its trim/track
+## lanes down there, so all three toggles (⤓ export, 💬 assistant, >_ console) sat
+## ON the timeline. A mode sets this once and the whole row steps up together;
+## patching one button's offsets would only have moved one of the three, and the
+## next piece of furniture added here would have the same bug again.
+var bottom_inset := 0.0:
+	set(value):
+		bottom_inset = value
+		_apply_inset()
+
+
+func _apply_inset() -> void:
+	for n in [exporter, assistant, console]:
+		if n != null and n.has_method("set_bottom_inset"):
+			n.set_bottom_inset(bottom_inset)
+
 
 func _ready() -> void:
+	# Findable by a mode without knowing where in the tree it was parented - it is
+	# main's child today, and a mode looking for it walked two levels and missed it.
+	add_to_group("ghost_chrome")
 	exporter = preload("res://scripts/exporter.gd").new()
 	add_child(exporter)
 	assistant = preload("res://scripts/assistant.gd").new()

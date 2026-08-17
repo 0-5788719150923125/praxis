@@ -62,6 +62,19 @@ const UI_TOGGLE_ID := 1000
 # -> catch -> hold/fold cycle. This is long enough to usually show one.
 const SYNTH_AUTOPLAY_DURATION := 150.0
 
+## Set by a mode that owns its OWN export path, so the shared button steps aside
+## instead of sitting dead on top of it. Masking is the one such mode: its export
+## is a headless RELAUNCH of the app against the session json, not this bake
+## pipeline, so it builds its own button - at the same bottom-right offsets,
+## because that is where an export button lives in every mode. This layer is 250
+## and the editor's is 100, so without this the shared button is drawn OVER the
+## working one and eats its clicks while greyed out, which is exactly how it was
+## reported: "the export button is greyed-out and I cannot click it".
+var suppressed := false
+## How far up the current mode has asked the bottom-right row to sit. See
+## Chrome.bottom_inset.
+var _inset := 0.0
+
 var _btn: Button
 var _status: Label
 var _dialog: FileDialog
@@ -269,6 +282,12 @@ func _process(dt: float) -> void:
 		_note_t -= dt
 		if _note_t <= 0.0:
 			_status.visible = false
+	if suppressed:
+		_btn.visible = false
+		_btn.modulate.a = 0.0
+		# The STATUS line stays: an export started before the mode took over is
+		# still running, and its progress is worth seeing.
+		return
 	var want := _state == "idle" and _can_export()
 	if want and not _announced:
 		_announced = true
@@ -704,3 +723,21 @@ func _set_status(text: String, color: Color) -> void:
 	_status.text = text
 	_status.add_theme_color_override("font_color", color)
 	_status.visible = true
+
+
+## Lift the button and its status line clear of whatever the mode has put along
+## the bottom of the frame. See Chrome.bottom_inset.
+func set_bottom_inset(v: float) -> void:
+	_inset = v
+	if _btn != null:
+		_btn.offset_top = -68.0 - _inset
+		_btn.offset_bottom = -28.0 - _inset
+	if _status != null:
+		# ITS OWN LINE, ABOVE THE BUTTON ROW. Sharing the row worked while the row
+		# was the only thing at the bottom of the frame, but a long status ("100% of
+		# the clip", an export's progress line) then runs under the buttons the
+		# moment the row moves or the text grows. A row of its own cannot collide
+		# with them whatever either one does.
+		_status.offset_top = -110.0 - _inset
+		_status.offset_bottom = -74.0 - _inset
+		_status.offset_right = -28.0

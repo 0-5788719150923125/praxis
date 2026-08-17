@@ -2276,6 +2276,42 @@ func _apply_lane_reserved(count: int) -> void:
 	_lanes_col.offset_bottom = -90
 	if _video_area != null:
 		_video_area.offset_bottom = -reserved
+	# THE EXPORT BUTTON RIDES ABOVE THE BOTTOM CHROME. Its offsets are the ones
+	# every mode uses (-68/-28 from the bottom edge, matching assistant.gd's
+	# toggle row), and in every other mode the bottom of the frame is empty - but
+	# here it is the marker strip and the lane stack, so the button sat ON the
+	# timeline. `reserved` is exactly the height of that furniture, so anchoring to
+	# it keeps the button clear however many tracks are open.
+	# THE WHOLE BOTTOM-RIGHT ROW RIDES ABOVE THE BOTTOM CHROME - this editor's own
+	# export button AND the shared furniture (⤓ / 💬 / >_), all off ONE number, and
+	# all with the SAME arithmetic. They were laid out two different ways at first,
+	# which is why the row came out staggered rather than in a line: the shared
+	# buttons sit at -28..-68 from the bottom edge, so anything joining that row has
+	# to be -28 - inset .. -68 - inset and not "inset plus a margin".
+	#
+	# `reserved` is exactly what the marker strip and the trim/track lanes occupy,
+	# and it is what the video area is inset by, so the row stays clear however many
+	# tracks are open.
+	var inset := reserved - 14.0
+	if _export_btn != null:
+		_export_btn.offset_bottom = -28.0 - inset
+		_export_btn.offset_top = -68.0 - inset
+	if _status != null:
+		# ITS OWN LINE, ABOVE THE BUTTON ROW - see Exporter.set_bottom_inset for
+		# why. The face-track line and the export progress both live here and both
+		# outgrow the space beside four buttons.
+		_status.offset_bottom = -74.0 - inset
+		_status.offset_top = -110.0 - inset
+		_status.offset_right = -28.0
+	# SET EVERY FRAME, not once at build time. The suppression used to be done in
+	# _build_export_ui, which runs before the chrome has joined its group in some
+	# boot orders - so it silently found nothing, the shared button stayed live on
+	# its higher CanvasLayer, and it went on covering this one and eating the click.
+	var ch_i := _chrome()
+	if ch_i != null:
+		ch_i.bottom_inset = inset
+		if ch_i.exporter != null:
+			ch_i.exporter.suppressed = true
 
 
 func _delete_track(i: int) -> void:
@@ -6555,6 +6591,13 @@ func _poll_reload_check() -> void:
 ## closing the window mid-burst never loses the last edit. Always save (not only when
 ## dirty) so the current playhead is captured even after a pure play/scrub with no edit.
 func _exit_tree() -> void:
+	# Hand the shared export button back on the way out, or leaving Masking would
+	# leave every other mode without one - see _build_export_ui.
+	var ch_out := _chrome()
+	if ch_out != null:
+		if ch_out.exporter != null:
+			ch_out.exporter.suppressed = false
+		ch_out.bottom_inset = 0.0
 	_save_session()
 	# Reap every subprocess THIS instance spawned. OS.create_process children
 	# are fully detached - close the app mid-prep and the ffmpeg transcode
@@ -7954,6 +7997,17 @@ func _build_status_label() -> void:
 
 # --- export: relaunch in Movie Maker mode (--mask-render), then ffmpeg mux ------
 
+## The shared session furniture, if this session has any (the render relaunch and
+## the gates run without it). BY GROUP, not by walking the tree: the first cut
+## walked two levels down from the root and the exporter is three - root, main,
+## chrome, exporter - so it silently found nothing and the suppression below never
+## happened. The button stayed on top, greyed, swallowing every click.
+func _chrome() -> Node:
+	if get_tree() == null:
+		return null
+	return get_tree().get_first_node_in_group("ghost_chrome")
+
+
 func _build_export_ui() -> void:
 	_export_btn = Button.new()
 	_export_btn.focus_mode = Control.FOCUS_NONE
@@ -7969,6 +8023,13 @@ func _build_export_ui() -> void:
 	_export_btn.offset_bottom = -28
 	_export_btn.pressed.connect(_on_export_pressed)
 	add_child(_export_btn)
+	# The SHARED export button steps aside - see Exporter.suppressed. Masking has
+	# its own export (a headless relaunch against the session json rather than the
+	# bake pipeline), and the shared one is on a higher CanvasLayer, so left alone
+	# it covers this one and swallows the click while greyed out.
+	var ch := _chrome()
+	if ch != null and ch.exporter != null:
+		ch.exporter.suppressed = true
 
 	_dialog = FileDialog.new()
 	_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE

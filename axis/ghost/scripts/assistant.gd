@@ -613,6 +613,8 @@ const _PANEL_TOP_MARGIN := 28.0 # never crowd closer to the viewport top than th
 ## buttons' own offset_right is pulled in by _TOGGLE_SIZE + _TOGGLE_GAP to leave the
 ## toggle room at the true corner, right of them - see this file's class doc.
 const _TOGGLE_ROW_BOTTOM := -28.0
+## See Chrome.bottom_inset.
+var _bottom_inset := 0.0
 
 func _build_ui() -> void:
 	# Closed by default - a chat-bubble toggle sitting in the viewport's very
@@ -719,7 +721,7 @@ func _refresh_list() -> void:
 func _resize_panel() -> void:
 	if not is_instance_valid(_panel):
 		return
-	var offset_bottom := _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE - _TOGGLE_GAP
+	var offset_bottom := _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE - _TOGGLE_GAP - _bottom_inset
 	_panel.offset_bottom = offset_bottom
 	var viewport_h := get_viewport().get_visible_rect().size.y
 	var max_h: float = max(viewport_h + offset_bottom - _PANEL_TOP_MARGIN, 0.0)
@@ -1020,3 +1022,13 @@ func _build_resume_row(entry: Dictionary) -> Control:
 
 	col.add_child(row)
 	return col
+
+
+## Lift the toggle - and the panel that opens above it - clear of whatever the
+## mode has put along the bottom of the frame. See Chrome.bottom_inset.
+func set_bottom_inset(v: float) -> void:
+	_bottom_inset = v
+	if _toggle_btn != null:
+		_toggle_btn.offset_bottom = _TOGGLE_ROW_BOTTOM - v
+		_toggle_btn.offset_top = _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE - v
+	_resize_panel()

@@ -127,3 +127,14 @@ func _read_tail() -> String:
 		if nl >= 0:
 			s = s.substr(nl + 1)
 	return s
+
+
+## Lift the toggle - and the panel above it - clear of whatever the mode has put
+## along the bottom of the frame. See Chrome.bottom_inset.
+func set_bottom_inset(v: float) -> void:
+	if _toggle != null:
+		_toggle.offset_top = -68.0 - v
+		_toggle.offset_bottom = -28.0 - v
+	if _panel != null:
+		_panel.offset_top = -76.0 - 380.0 - v
+		_panel.offset_bottom = -76.0 - v
