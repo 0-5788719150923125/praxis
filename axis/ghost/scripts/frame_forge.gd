@@ -47,6 +47,9 @@ var _pending_retain: RefCounted = null   # a Callable holds only an object ID -
                                          # alive (measured: null::run) - so the
                                          # forge retains the job explicitly
                                          # until its build has run
+## The job that built the packet now in `_packet`, swapped WITH it in the same
+## assignment - see [method packet_source].
+var _packet_src: RefCounted = null
 var _fails := 0                          # consecutive builds that returned no packet
 
 # resolved lazily on first kick (a static initializer proved unreliable for
@@ -105,6 +108,8 @@ func _launch(scene: CanvasItem) -> void:
 			_busy = false
 			if ok:
 				_packet = out
+				_packet_src = retain     # in the SAME assignment as the packet, on
+				                         # the MAIN thread - see packet_source()
 				_fails = 0
 			else:
 				_note_failure()      # keep the last good packet rather than blanking the stage
@@ -129,11 +134,31 @@ func _note_failure() -> void:
 			+ "the scene is showing its last good frame; look above for the builder's own error")
 
 
-## Emit the latest packet onto `ci`'s canvas. Call from _draw(). In sync
-## (export) mode this is where the once-per-frame build happens; live, a
-## scene with no packet yet builds its FIRST one inline so a fresh cut
-## never shows an empty backdrop.
-func submit(ci: CanvasItem) -> void:
+## The job object whose build produced the packet that is on screen RIGHT NOW.
+##
+## This exists because a scene that draws anything ALONGSIDE the packet has to place it
+## against the inputs the packet was built from, not against the inputs it has now - and it
+## cannot ask the job it last kicked, because most kicked jobs never run (kick() keeps only
+## the newest snapshot) and a build that did run lands a frame or more later.
+##
+## The failure it ends is specific and was visible: contour_map used to have each job write
+## its warp offset into a shared slot at the end of run(), which happens ON THE WORKER, while
+## the packet itself is swapped in a deferred call on the main thread. Any frame drawn in
+## between compensated the OLD sheet by the NEW offset - a whole extraction cadence of warp,
+## about 1.5% of the sheet's width - and then corrected itself on the next frame. One frame
+## out of place reads as a hard jump, and it happened on most re-prints. Here the source and
+## the packet are swapped in one assignment on one thread, so they cannot disagree.
+##
+## Null until the first packet lands. Cast it to your own job class.
+func packet_source() -> RefCounted:
+	return _packet_src
+
+
+## Finish any build that has to happen on the main thread, so the packet AND
+## [method packet_source] are final for this frame. [method submit] calls this itself; call
+## it directly only when you must READ the source before drawing (contour_map sets its
+## transform from it, and in export mode the build happens right here).
+func flush() -> void:
 	# `not _busy` is load-bearing and was missing. The inline first build exists so a
 	# fresh cut never shows an empty backdrop, but without that guard it fires WHILE a
 	# worker build of the same job is already in flight - so the builder runs twice at
@@ -152,6 +177,7 @@ func submit(ci: CanvasItem) -> void:
 	if _has_pending and (_sync or (_packet.is_empty() and not _busy)):
 		var t0 := Time.get_ticks_usec()
 		var built: Variant = _pending_builder.call(_pending_snapshot)
+		var src := _pending_retain
 		# Cleared BEFORE the check, so a builder that fails every frame does not also re-run every
 		# frame off a pending flag that never clears. In sync (export) mode this is the whole
 		# render path, and the old `_packet = <null>` assignment aborted submit() itself - past
@@ -161,11 +187,20 @@ func submit(ci: CanvasItem) -> void:
 		_has_pending = false
 		if built is Array:
 			_packet = built
+			_packet_src = src
 			_fails = 0
 		else:
 			_note_failure()
 		if not OS.get_environment("GHOST_PROFILE").is_empty():
 			print("forge sync build: %d us" % (Time.get_ticks_usec() - t0))
+
+
+## Emit the latest packet onto `ci`'s canvas. Call from _draw(). In sync
+## (export) mode this is where the once-per-frame build happens; live, a
+## scene with no packet yet builds its FIRST one inline so a fresh cut
+## never shows an empty backdrop.
+func submit(ci: CanvasItem) -> void:
+	flush()
 	var item := ci.get_canvas_item()
 	for chunk in _packet:
 		var c: Dictionary = chunk

@@ -1,0 +1,81 @@
+# Section 2 (bias-variance manifold), closing subsection. Two jobs.
+#
+# (1) Disambiguation. The paper's "variance" is the input-conditional part of
+# the model's function - a decomposition over the INPUT distribution (Var_x),
+# which is the functional-ANOVA / Sobol axis. The classical bias-variance
+# decomposition's variance is over resamples of the TRAINING SET (Var_D). They
+# are different quantities with one name, and a reader who assumes the second
+# reads the paper's central claim backwards: under Var_D, a model that responds
+# more to its input has LOWER bias, not higher variance. The glossary entry in
+# body.tex now names the axis in one sentence; this fragment is the argument.
+#
+# (2) The distinction the disambiguation opens up: representing a distribution
+# vs collapsing it to an expectation before it moves downstream. Stated as a
+# direction with a falsifier, not as a result - nothing here is measured yet.
+#
+# Unconditional (no requires): the argument is about which quantity the paper's
+# axis names, which holds for every run that builds a harmonic basis. Placed at
+# order 30 so it follows the temperature fragments (10, 20), which continue the
+# preceding paragraph rather than opening a subsection.
+#
+# Sources, all verified in citations.bib: sobol1993 (Sobol' sensitivity
+# indices, the variance-over-inputs decomposition), mezic2005 (Koopman spectral
+# decomposition into point and continuous parts), bellemare2017distributional
+# (C51 - learning the return distribution improves the mean-greedy policy).
+section: manifold
+order: 30
+body: >
+  \subsection{Which variance, and where it is spent}
+
+  One disambiguation, because two quantities share the name and the argument
+  above only works for one of them. The classical bias-variance decomposition
+  measures variance across \emph{resamples of the training set}: hold the input
+  fixed, retrain, and ask how much the prediction moves. That is a property of
+  the training procedure, and an architecture has no direct coordinate on it.
+  The quantity this section has been decomposing is different - it is the
+  variation of the learned function across the \emph{input} distribution, the
+  part of the field that moves when the context moves. Decomposing a function
+  into a constant term plus input-conditional terms, and attributing variance to
+  each, is the functional-ANOVA construction that sensitivity analysis has used
+  for decades~\cite{sobol1993}; the static amplitude grid is the constant term
+  and $\Delta_\phi(\text{context})$ is the first-order term. Reading the section
+  under the other definition inverts it, because there a model that responds more
+  to its input has \emph{lower} bias rather than more variance.
+
+  Naming the axis this way also says why the harmonic basis is the natural place
+  to hold it. A power spectrum is the transform of an autocovariance, so a
+  spectrum is already a variance map; what distinguishes the two ends of our axis
+  is not amplitude but the \emph{kind} of spectral mass. A pure line spectrum -
+  discrete atoms at fixed frequencies - is deterministic and repeats forever,
+  which is precisely the corpus rhythm. Spread that is not concentrated into
+  lines is the continuous part, and it is what carries input-conditional
+  structure. Koopman theory makes the same cut for dynamics, where the point
+  spectrum holds the eigenfunctions that recur and the continuous spectrum holds
+  the mixing part that has no eigenfunction at all~\cite{mezic2005,koopman1931}.
+  Our two axes are that decomposition read on a language model: bias is the
+  atomic part, variance the continuum.
+
+  This sharpens a diagnostic the paper already leans on. Hoyer concentration
+  measures how tightly mass sits in a few cells, which tracks the atomic reading
+  well and says nothing about how the remaining mass is distributed. The measure
+  the argument actually wants is the \emph{ratio} of line mass to continuum mass,
+  taken separately on the baseline and on the delta - and the prediction the
+  decoupling claim makes is that the two should move in opposite directions. If
+  they move together, the axes are not separate parameters after all, whatever
+  the gradient graph says.
+
+  There is a second, harder question the framing raises and this paper does not
+  settle. Representing a distribution and \emph{using} one are different things,
+  and a readout that summarises a distribution by its expectation discards the
+  spread by construction, however carefully the spread was built. A mixture over
+  positions consumed as a weighted average of values is a mean; so is a soft
+  assignment to a set of centers. The distribution shapes \emph{which} mean, and
+  then the mean is what travels downstream. Whether a model gains anything by
+  carrying the spread instead of collapsing it is an empirical question with at
+  least one clear affirmative answer elsewhere: in reinforcement learning,
+  replacing the expected return with the full return distribution improved the
+  resulting policy even though that policy still acts on the
+  mean~\cite{bellemare2017distributional}. The representation was worth more than
+  the summary. We record the analogous question here without claiming the
+  analogous result - it is a direction, and its falsifier is the ordinary one,
+  that a model given room to carry spread declines to use it.

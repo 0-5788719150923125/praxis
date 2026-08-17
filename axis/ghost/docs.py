@@ -200,6 +200,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "voice_host.gd",
             "generative_editor.gd",
             "voice_fx.gd",
+            "room_fx.gd",
         ],
     ),
     (

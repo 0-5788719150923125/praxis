@@ -144,6 +144,7 @@ var _arc: HSlider
 var _effort: HSlider
 
 var _fx_res: HSlider
+var _fx_room: HSlider
 var _fx_presence: HSlider
 var _fx_pad: HSlider
 var _tone: OptionButton
@@ -354,6 +355,10 @@ func _build_panel() -> void:
 		# to be regenerated - the same path a pace change takes
 		if not _chunks.is_empty():
 			_repace()
+		# ...and it nudges the ambience bed, which is a LIVE effect: without this
+		# the preset's contribution only arrived at the next stream open, so a
+		# tone change mid-reading moved the voice and not the room around it.
+		_sync_fx(_fx)
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	trow.add_child(_tone)
@@ -450,6 +455,19 @@ func _build_panel() -> void:
 		+ "to fuse with the voice rather than be heard as a separate sound. It opens out into a "
 		+ "distinct slapback with a long tail as you raise it, so this changes the SIZE of the "
 		+ "space, not just how loud it is.")
+	# THE ROOM, the same one Masking has - see [RoomFX], which owns the dial and
+	# leaves each mode only its engine. It is a separate control from Echo above
+	# and has to be: Echo is discrete repeats, which the ear counts, and this is
+	# the diffuse tail behind them, which it cannot. A voice with only the first
+	# sounds like a voice in a corridor; with only the second, like a voice in a
+	# hall. Most rooms are both.
+	_fx_room = _fx_slider(box, "Room", 0.0,
+		"The size of the space around the reader. Where Echo is a repeat you can hear arrive, "
+		+ "this is the diffuse tail behind it - no countable events, just the room answering. "
+		+ "Low is a small studio whose tail is gone before the next word; the top is a hall that "
+		+ "rings for seconds. Resonance sets its colour, exactly as it does in Masking: dark and "
+		+ "swallowed at 0, bright and ringing at 1. It is baked into the exported take, so what "
+		+ "you hear here is what renders.")
 	_fx_res = _fx_slider(box, "Resonance", 0.0,
 		"Sympathetic tones tuned to the reader's own pitch, ringing when the voice rings and dying "
 		+ "when it stops - the room answering, rather than a chord played over the top. It follows "
@@ -531,6 +549,7 @@ func _persist() -> void:
 	cfg.set_value("generative", "arc", _arc.value)
 	cfg.set_value("generative", "effort", _effort.value)
 	cfg.set_value("generative", "resonance", _fx_res.value)
+	cfg.set_value("generative", "room", _fx_room.value)
 	cfg.set_value("generative", "presence", _fx_presence.value)
 	cfg.set_value("generative", "ambience", _fx_pad.value)
 	cfg.set_value("generative", "tone", _tone.selected)
@@ -551,14 +570,14 @@ func _load_persisted() -> void:
 	_arc.value = float(cfg.get_value("generative", "arc", 0.4))
 	_effort.value = float(cfg.get_value("generative", "effort", 0.35))
 	_fx_res.value = float(cfg.get_value("generative", "resonance", 0.0))
+	_fx_room.value = float(cfg.get_value("generative", "room", 0.0))
 	_fx_presence.value = float(cfg.get_value("generative", "presence", 1.0))
-	_fx.echo_wet = _fx_echo.value
-	_fx.resonance = _fx_res.value
 	_fx_pad.value = float(cfg.get_value("generative", "ambience", 0.0))
 	_tone.select(clampi(int(cfg.get_value("generative", "tone", 0)), 0, TONE_PRESETS.size() - 1))
 	_speaker.value = float(cfg.get_value("generative", "speaker", 0))
-	_fx.presence = _fx_presence.value
-	_fx.pad = _pad_level()
+	# Last, and once: the Tone preset nudges the ambience bed, so the chain cannot
+	# be synced before the preset is chosen.
+	_sync_fx(_fx)
 
 
 func _selected_voice_id() -> String:
@@ -690,14 +709,29 @@ func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> 
 	sl.value = initial
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.value_changed.connect(func(_v: float) -> void:
-		_fx.echo_wet = _fx_echo.value
-		_fx.resonance = _fx_res.value
-		_fx.presence = _fx_presence.value
-		_fx.pad = _pad_level()
+		_sync_fx(_fx)
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	row.add_child(sl)
 	return sl
+
+
+## Push the panel's settings onto a [VoiceFX] chain. ONE definition, because there
+## were four lists of assignments - the slider callback, the config load, the
+## stream opening and the export - and a dial had to appear in all four to work
+## everywhere. Adding Room to three of them would have left one path silently
+## dry, which is the same class of bug [method _pad_level] was written to end:
+## live and render disagreeing about the room around the voice.
+func _sync_fx(fx: VoiceFX) -> void:
+	if fx == null:
+		return
+	fx.echo_wet = _fx_echo.value
+	fx.resonance = _fx_res.value
+	fx.presence = _fx_presence.value
+	fx.pad = _pad_level()
+	# One dial, so [RoomFX] does the collapsing: size and wet open together, and
+	# Resonance colours the tail the same way it does on Masking's bus.
+	fx.room.from_dial(_fx_room.value, _fx_res.value)
 
 
 func _set_status(msg: String) -> void:
@@ -1123,10 +1157,11 @@ func _drain_ready() -> void:
 				continue          # keep accumulating; nothing is lost, it is all queued
 			# same text, same music: the pad's note choices are seeded
 			_fx.pad_seed = hash(_text.text)
-			# the preset nudges the bed: a mood is carried by the room as much
-			# as by the reading
-			_fx.pad = _pad_level()
 			_fx.setup(_sr)
+			# every dial onto the fresh chain, in one call - the preset's own nudge
+			# to the bed included: a mood is carried by the room as much as by the
+			# reading
+			_sync_fx(_fx)
 			# the session opens on the FIRST chunk and never again - that is the
 			# whole point: one unbroken take, so the Director does not re-cut
 			# and the harmonic seed does not re-derive every few sentences
@@ -1333,10 +1368,7 @@ func export_take() -> String:
 	var fx := VoiceFX.new()
 	fx.pad_seed = hash(body)
 	fx.setup(_sr)
-	fx.echo_wet = _fx_echo.value
-	fx.resonance = _fx_res.value
-	fx.presence = _fx_presence.value
-	fx.pad = _pad_level()
+	_sync_fx(fx)
 	# SEED THE KEY, or the intro is silent anyway. The pad picks its tonic from the
 	# tracked pitch of the voice, and the tracker returns 0 on silence - so during a
 	# leading pad of pure zeros `_tonic` never rises off 0, `_start_tone` refuses to

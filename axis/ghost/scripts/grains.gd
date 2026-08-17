@@ -356,6 +356,165 @@ func emit(x0: int, x1: int, y: int, m: int, count: int, salt: int) -> void:
 			_touch(y)
 
 
+## Deposit matter as though the chamber had already been pouring for a long time - piles
+## under the spouts, pools where a liquid runs, and a stream still in the air.
+##
+## WHY IT IS NOT A PRE-ROLL. The obvious way to start a world in progress is to run it: build
+## the chamber, then step it a few hundred times before anyone sees it. Measured on the real
+## thing (280x161, three spouts) a tick costs 5-15 ms, and 200 ticks - seven seconds of world
+## time, barely enough to make a cone - is 1.4 SECONDS of CPU. On the main thread that is a
+## visible stall at every cut to this scene; on the worker it is over a second of empty
+## chamber before the first packet, which is the same blank slate arriving late. So the piles
+## are DEPOSITED instead, in one O(cells) pass, and the automaton takes over from there: what
+## it inherits is a plausible state rather than a settled one, and the first second of the
+## scene is it relaxing - which is exactly what "already in progress" looks like.
+##
+## THE SHAPE COMES FROM THE MATERIALS, not from a drawing. Each source contributes a cone
+## whose flank slope is read off its own repose - the same number that decides how the sim
+## will pile it - so a flat powder spreads a wide apron and a steep one stacks near its spout,
+## and the deposit already looks like something these rules would have made. A LIQUID
+## contributes a level instead of a cone, because a pool that arrives as a triangle spends its
+## first second visibly collapsing, which advertises the trick.
+##
+## `sources` is one dictionary per pour: `x` (the column it lands in), `mat`, and optionally
+## `live` (its stream is currently running) and `flow` (0..1, how solid that stream is).
+## `fill` is how deep the deepest pile stands, as a fraction of the chamber's free height.
+func prefill(sources: Array, fill: float, rng: RandomNumberGenerator) -> void:
+	if sources.is_empty():
+		return
+	var free_h := maxf(4.0, float(h - maxi(1, floor_h) - 1))
+	var peak := clampf(fill, 0.0, 0.95) * free_h
+	if peak < 1.0:
+		return
+	# A wobble along the whole chamber, so the piles are not four clean cones with flat ground
+	# between them - material has been avalanching and draining all along.
+	var wob_k := rng.randf_range(0.02, 0.06)
+	var wob_p := rng.randf() * TAU
+	var wob_a := peak * rng.randf_range(0.04, 0.12)
+
+	var prof := PackedInt32Array()
+	var pmat := PackedInt32Array()
+	prof.resize(w)
+	pmat.resize(w)
+	for x in w:
+		var best := peak * BASE_SHARE + wob_a * sin(float(x) * wob_k + wob_p)
+		var bmat := 0
+		var near := INF
+		for s in sources:
+			var d: Dictionary = s
+			var m := int(d.get("mat", 0))
+			# `pile: false` for a source whose material does not ACCUMULATE - an ignition
+			# spout drops embers that burn out into ash, and a chamber that opened with a
+			# heap of live coals under the torch would be a world with different rules.
+			if m <= 0 or m >= _mn or not bool(d.get("pile", true)):
+				continue
+			var sx := float(d.get("x", 0))
+			var dist := absf(float(x) - sx)
+			var v := 0.0
+			if _knd[m] == LIQUID:
+				# A pool, not a heap: level everywhere it reaches, and shallower than a cone of
+				# the same fill because a liquid spends its depth on width.
+				v = peak * LIQUID_SHARE
+			else:
+				# Slope straight off the repose the sim will use: a grain that always slides
+				# (repose 1) makes an apron, one that rarely does stacks steeply.
+				v = peak - dist * lerpf(SLOPE_STEEP, SLOPE_FLAT, clampf(_rep[m], 0.0, 1.0))
+			if v > best:
+				best = v
+				bmat = m
+			if dist < near:
+				near = dist
+				if bmat == 0:
+					bmat = m            # the floor between cones belongs to the nearest pour
+		prof[x] = maxi(0, int(round(best + rng.randf_range(-1.2, 1.2))))
+		pmat[x] = bmat
+
+	# THE DEPOSIT WALK. Bottom-up per column, filling air that RESTS on something - so a shelf
+	# carries its own pile, an overhang keeps its space, and the hourglass fills above its
+	# waist as well as below it, all without this knowing what shape the chamber is.
+	#
+	# EVERY SURFACE IS NOT A FLOOR, and the first cut treated them as one: the counter reset
+	# at each support, so a column crossing four shelves got the full pile depth four times
+	# over and a ledged chamber came out PACKED SOLID to the ceiling - the opposite failure to
+	# the blank slate. A shelf holds a thin run, because material that lands on a slope leaves
+	# at its edge; only the bottom of the chamber holds a deep one. The column budget is what
+	# enforces that whatever shape it is crossing.
+	for x in w:
+		var m := pmat[x]
+		if m <= 0:
+			continue
+		var want := prof[x]
+		var budget := int(round(float(want) * COLUMN_BUDGET))
+		var supports := 0
+		var placed := 0
+		var here := want
+		var y := h - 1
+		while y >= 0 and budget > 0:
+			var i := y * w + x
+			if int(_cells[i]) != 0:
+				if placed > 0 or supports == 0:
+					supports += 1       # a fresh surface above whatever we just built
+				placed = 0
+				here = want if supports <= 1 else maxi(1, int(round(float(want) * SHELF_SHARE)))
+				y -= 1
+				continue
+			if y + 1 >= h or int(_cells[i + w]) == 0:
+				placed = 0              # open air: nothing rests here
+				y -= 1
+				continue
+			if placed >= here:
+				y -= 1
+				continue
+			# The top of a pile is never a ruled line - the last couple of cells are a
+			# scattering, which is what the automaton's own surface looks like.
+			if here - placed > 2 or rng.randf() < 0.55:
+				_cells[i] = m
+				_touch(y)
+			placed += 1
+			budget -= 1
+			y -= 1
+
+	# ...and the streams that are still falling. A spout that is pouring has a column of
+	# material in the air between its mouth and its pile; without it every session opens with
+	# the pours switching on at once, which is the other half of the blank slate.
+	for s in sources:
+		var d: Dictionary = s
+		if not bool(d.get("live", false)):
+			continue
+		var m := int(d.get("mat", 0))
+		if m <= 0 or m >= _mn:
+			continue
+		var sx := clampi(int(d.get("x", 0)), 0, w - 1)
+		var flow := clampf(float(d.get("flow", 0.6)), 0.0, 1.0)
+		var x0 := clampi(int(d.get("x0", sx)), 0, w - 1)
+		var x1 := clampi(int(d.get("x1", sx)), 0, w - 1)
+		for y in h:
+			if int(_cells[y * w + sx]) != 0:
+				break                   # the stream has reached its pile
+			if rng.randf() >= flow:
+				continue
+			emit(x0, x1, y, m, 1, sx * 31 + y)
+
+
+## How deep the ground lies where no cone reaches, as a share of the deepest pile. Not zero:
+## a chamber that has been running has material everywhere, avalanched out of the heaps and
+## walked along the floor by the draft.
+const BASE_SHARE := 0.22
+## A pool's depth against a heap's peak. A liquid of the same volume lies far flatter, and a
+## deep pool would swallow the piles it is supposed to sit between.
+const LIQUID_SHARE := 0.45
+## Flank slope, in cells of drop per cell of run, across the repose range. The steep end is
+## just over 45 degrees, which is about where a dry powder stands; the flat end is a beach.
+const SLOPE_STEEP := 1.1
+const SLOPE_FLAT := 0.16
+## What a SHELF holds against what the floor holds. Material that lands on a slope runs off
+## its edge, so a ledge carries a run rather than a heap.
+const SHELF_SHARE := 0.30
+## ...and the ceiling on everything one column may carry, as a multiple of its own pile depth.
+## Without it a column crossing several shelves collects a full pile at each of them.
+const COLUMN_BUDGET := 1.35
+
+
 ## Open a floor hatch across an inclusive column span (x1 < x0 shuts it). Shutting restores
 ## the floor out of [member wall_id], so the chamber is whole again and the next pile builds
 ## on it - the hatch is a door, not a permanent hole.

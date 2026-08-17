@@ -114,6 +114,15 @@ var sample_rate := 22050
 var echo_wet := 0.0            # 0..1
 var echo_feedback := 0.42
 var resonance := 0.0           # 0..1
+## THE ROOM, which is not the echo above and is the reason both exist. The echo is
+## discrete: taps at a measurable delay, which the ear hears as repeats of the
+## voice however small the room is made. This is the diffuse half - a comb/allpass
+## network whose response has no countable events in it at all - so it is the
+## space the voice is in rather than a copy of the voice arriving late.
+##
+## Shared with Masking, which has had one on its bus for a while: [RoomFX] holds
+## the dial and its meanings, and only the engine differs (see its class docs).
+var room := RoomFX.new()
 var presence := 1.0            # 1 = in the room, lower = further away
 var pad := 0.0                 # 0..1 the ambient bed
 var pad_seed := 0              # same text, same music
@@ -185,6 +194,7 @@ func setup(sr: int) -> void:
 	_next_note = 0.5
 	_speech = 0.0
 	_rng.seed = pad_seed
+	room.setup(sr)
 
 
 ## Teach the pad its key BEFORE processing, from a buffer that has not been heard yet.
@@ -273,6 +283,10 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 	if _echo.is_empty():
 		setup(sample_rate)
 	_resolve_echo()
+	# Same discipline as _resolve_echo: the dial is live, so the room's settings
+	# are resolved once here rather than per sample.
+	room.prepare()
+	var room_on := room.is_active()
 	var n := buf.size()
 	var res_step := PackedFloat32Array()
 	res_step.resize(TONES)
@@ -368,6 +382,13 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 			wet += _echo_lp * _echo_gain
 			_echo[_echo_i] = dry + _echo_lp * _echo_fb
 			_echo_i = (_echo_i + 1) % sz
+
+		# --- the room: last, around all of it, as a room is ---
+		# The same place Masking's bus chain puts it, and for the same reason: the
+		# room has to hear the echo, the resonance and the bed, or the bed is
+		# somewhere else than the voice is.
+		if room_on:
+			wet = room.tick(wet)
 
 		# --- presence: distance is a filter first, a gain second ---
 		if presence < 0.995:

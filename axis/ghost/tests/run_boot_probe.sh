@@ -37,12 +37,32 @@ PROBE="tests/boot_probe.gd"
 STUB=$(mktemp)
 cp "$PROBE" "$STUB"
 
+# ARMED BEFORE ANYTHING IS COPIED IN, and that ordering is not cosmetic. The trap
+# used to be installed after the probe had already been written over tests/
+# boot_probe.gd, so the two checks below - a missing probe, and a pre-existing
+# override.cfg - exited without restoring it and LEFT THE PROBE IN THE PROJECT.
+# That is exactly the state this script's own header warns about, and it happened:
+# a scratch probe sat in tests/boot_probe.gd as a modified tracked file, silently,
+# because a stale override.cfg (the exporter writes one) made every later run
+# refuse before it could clean up. Nothing may be copied over that file until the
+# restore is guaranteed.
+# ...and it removes the override only if THIS run wrote it. Arming the trap early
+# means it now also fires on the refuse path, where the override.cfg in the way is
+# somebody else's - a render in flight, most likely - and deleting that would be a
+# worse failure than the one being refused.
+MINE=0
+cleanup() {
+  [[ "$MINE" = 1 ]] && rm -f "$OVERRIDE"
+  cp "$STUB" "$PROBE"
+  rm -f "$STUB"
+}
+trap cleanup EXIT INT TERM
+
 if [[ -n "$PROBE_SRC" ]]; then
   if [[ ! -f "$PROBE_SRC" ]]; then
     echo "run_boot_probe: no such probe: $PROBE_SRC" >&2
     exit 2
   fi
-  cp "$PROBE_SRC" "$PROBE"
 fi
 
 if [[ -e "$OVERRIDE" ]]; then
@@ -51,11 +71,11 @@ if [[ -e "$OVERRIDE" ]]; then
   exit 2
 fi
 
-# Restore BOTH: a stale override hijacks the project, and a broken probe stops
-# it booting at all. Runs on every exit path, including Ctrl-C.
-cleanup() { rm -f "$OVERRIDE"; cp "$STUB" "$PROBE"; rm -f "$STUB"; }
-trap cleanup EXIT INT TERM
+if [[ -n "$PROBE_SRC" ]]; then
+  cp "$PROBE_SRC" "$PROBE"
+fi
 
+MINE=1
 cat > "$OVERRIDE" <<'CFG'
 ; TEMPORARY - written by tests/run_boot_probe.sh, removed when it exits.
 ; If you are reading this in a working tree, the script was killed uncleanly:

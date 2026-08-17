@@ -4532,6 +4532,11 @@ var _fx_eq: AudioEffectEQ6
 var _fx_comp: AudioEffectCompressor
 var _fx_delay: AudioEffectDelay
 var _fx_reverb: AudioEffectReverb
+## The room's SETTINGS, shared with the mode that has no bus. See [RoomFX]: the
+## dial's range, its taper and what Resonance does to the tail are decided there
+## and rendered here onto Godot's own reverb, so Generative's Room slider is the
+## same control rather than a second one wearing the name.
+var _room := RoomFX.new()
 
 
 func _ensure_audio_bus() -> void:
@@ -4602,12 +4607,17 @@ func _apply_audio_fx(l: Dictionary) -> void:
 	# AMBIENCE. Room size and wet are separate on purpose - a big dry room and a
 	# small wet one are different sounds, and collapsing them into one "reverb"
 	# slider is what makes every preset sound the same.
-	var amb := clampf(float(l.get("fx_density", 0.45)), 0.0, 1.0) * amt
-	_fx_reverb.wet = amb * 0.8
-	_fx_reverb.dry = 1.0 - amb * 0.35
-	_fx_reverb.room_size = clampf(float(l.get("fx_scale", 1.0)) * 0.5, 0.0, 1.0)
-	_fx_reverb.damping = lerpf(0.9, 0.2, reso)
-	_fx_reverb.spread = 1.0
+	#
+	# The mapping itself lives in [RoomFX] rather than here, because Generative has
+	# the same Room now and cannot use this bus (it bakes its effects into a take
+	# WAV; see the class docs). Only the RENDERER is mode-specific: this hands the
+	# settings to Godot's reverb, that one runs the same network per sample.
+	# Note the size is NOT scaled by the envelope while the wet is - a marker fades
+	# a room IN, it does not grow the walls.
+	_room.size = float(l.get("fx_scale", 1.0))
+	_room.wet = clampf(float(l.get("fx_density", 0.45)), 0.0, 1.0) * amt
+	_room.resonance = reso
+	_room.to_reverb(_fx_reverb)
 
 
 # --- face track: bootstrap, run, poll -------------------------------------------

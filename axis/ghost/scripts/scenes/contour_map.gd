@@ -106,12 +106,21 @@ const SIMPLIFY_PX := 0.35
 const KINDS := ["fbm", "fbm", "ridged", "billow", "cells"]
 
 var _forge: FrameForge
-var _slot := WarpSlot.new()            # the running build reports its offset here
 # The warp the packet CURRENTLY ON SCREEN was built at. Everything drawn live is placed
 # against this, and the packet itself is translated by the difference to the live warp -
 # see _draw. Without it the marks slid smoothly while the contours stepped on the
 # extraction cadence, which is what "the plane kept jumping" and "a compass detached and
 # floating around" both were: annotations adrift from the map they annotate.
+#
+# IT MUST BE THE WARP OF THE PACKET ON SCREEN, NOT OF THE NEWEST BUILD, and the difference
+# between those two is a whole re-print's worth of drift. This used to come from a slot each
+# job wrote at the end of run() - on the WORKER, while the packet it belonged to was still
+# waiting on a deferred call to reach the main thread. Any frame drawn in that window
+# compensated the old sheet by the new offset, so the map stepped sideways by about 1.5% of
+# its width and stepped back on the next frame: a hard jump on most re-prints, which is
+# exactly what "the whole scene jumps, then shifts back like a correction" was. It is read
+# off [method FrameForge.packet_source] now, which is swapped WITH the packet in one
+# assignment on one thread and therefore cannot be ahead of it.
 var _pkt_warp := Vector2.ZERO
 var _pkt_valid := false
 var _sim := SimClock.new(60.0)
@@ -467,10 +476,13 @@ func _ensure_sites() -> void:
 		_sites.append(e)
 
 
-## Take the warp offset of the build whose packet is currently on screen.
+## Take the warp offset of the build whose packet is currently on screen. Call it after the
+## forge has flushed, or in an export - where the build happens inside the draw - it would
+## read the PREVIOUS sheet's offset against this sheet's lines.
 func _adopt_packet_warp() -> void:
-	if _slot.valid:
-		_pkt_warp = _slot.warp
+	var job := _forge.packet_source() as SheetJob
+	if job != null:
+		_pkt_warp = job.warp
 		_pkt_valid = true
 
 
@@ -672,7 +684,6 @@ func _kick() -> void:
 	job.hatch_w = maxf(0.7, _w_minor * 0.8)
 	job.band_lo = _lo + float(_pick) * _step_v
 	job.band_hi = job.band_lo + float(_index_every) * _step_v
-	job.slot = _slot
 	_forge.kick(job.run, {}, self, job)
 
 
@@ -734,6 +745,9 @@ func _draw() -> void:
 	if size.x < 4.0:
 		return
 	draw_layers("back")
+	# Flush FIRST: in an export the sheet is built right here, inside the draw, and the offset
+	# has to be that build's rather than the one before it.
+	_forge.flush()
 	_adopt_packet_warp()
 	# GLIDE THE SHEET. The warp is a pure translation of the sampling window - the offset
 	# moves the window, the land does not move - so displaying a packet built at one offset
@@ -908,14 +922,6 @@ func _ensure_idx(quads: int) -> void:
 ## the field, extracts, smooths and simplifies every contour, and returns the finished
 ## triangle chunks - water first, then hatching, then the out-of-register plate, then the
 ## minor lines, the index lines, and the inked one last.
-## Where a finished build reports the offset it was drawn at. One per scene, shared by
-## every job, so whichever build actually ran is the one whose offset is read.
-class WarpSlot:
-	extends RefCounted
-	var warp := Vector2.ZERO
-	var valid := false
-
-
 class SheetJob:
 	extends RefCounted
 
@@ -925,14 +931,11 @@ class SheetJob:
 	var half := Vector2.ZERO         # the sheet's half extent in pixels
 	var fspan := Vector2.ONE         # the same, in field units
 	var off := Vector2.ZERO          # the window's position on the continent
-	## The warp offset in SHEET fractions this packet was built at, written into the shared
-	## slot when the build finishes. It goes through a slot rather than being read off the
-	## job because the scene cannot tell WHICH job ran: [FrameForge] keeps one worker and
-	## replaces the pending snapshot when a newer kick arrives, so most kicked jobs are
-	## dropped without ever running. A slot every job writes to always holds the offset of
-	## the build whose packet is actually on screen.
+	## The warp offset in SHEET fractions this packet was built at. Read back off the job
+	## itself through [method FrameForge.packet_source] - the scene cannot ask the job it last
+	## KICKED, because the forge keeps one worker and replaces the pending snapshot when a
+	## newer kick arrives, so most kicked jobs are dropped without ever running.
 	var warp := Vector2.ZERO
-	var slot: WarpSlot
 	var lo := 0.1
 	var step := 0.06
 	var count := 14
@@ -961,15 +964,9 @@ class SheetJob:
 	var band_lo := 0.0
 	var band_hi := 0.0
 
-	func _publish() -> void:
-		if slot != null:
-			slot.warp = warp
-			slot.valid = true
-
 	func run(_s: Dictionary) -> Array:
 		var tb := TriBatch.new()
 		if nx < 2 or ny < 2 or count <= 0:
-			_publish()
 			return tb.take_chunks()
 		var h := PackedFloat32Array()
 		h.resize(nx * ny)
@@ -1015,5 +1012,4 @@ class SheetJob:
 			Contour.stroke(tb, levels[k], index_col, w_index, org, cell, true)
 		if pick >= 0 and pick < count:
 			Contour.stroke(tb, levels[pick], pick_col, w_pick, org, cell, true)
-		_publish()
 		return tb.take_chunks()

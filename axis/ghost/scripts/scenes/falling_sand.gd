@@ -27,8 +27,21 @@ extends GhostScene
 ## and ash chain, added only when a flammable material was drawn; the spouts, each with its
 ## own column, width, material, spectral band, gain and slow duty cycle; the hatch
 ## positions, widths and dwell; how far gravity may tilt and for how long; a steady ambient
-## draft and its direction; the wall strata ramp; and whether the air behind it all is a
-## bright ground or a dark one.
+## draft and its direction; the wall strata ramp; whether the air behind it all is a
+## bright ground or a dark one; and HOW LONG IT HAS BEEN RUNNING before you got here.
+##
+## THAT LAST ONE IS NOT DECORATION. The chamber used to be built out of stone and nothing else,
+## so every session this scene was ever cut to opened on the identical empty room - the same
+## lanes falling from the very top of an untouched floor - and spent its first seconds filling
+## up. A world with rules has been running before anyone looked at it. So its own clock starts
+## somewhere in the middle of its life (`_job.t_sim`), which puts each spout's duty cycle
+## wherever it happens to be rather than all at their beginnings - some lanes pouring, some dry
+## and about to open - and the matter that clock implies is DEPOSITED by [method Grains.prefill]:
+## piles under the spouts shaped by each material's own repose, a thin run on every shelf, and a
+## stream still in the air under whichever lanes are open. Deposited rather than simulated,
+## because a pre-roll long enough to raise a cone is over a second of CPU - which is either a
+## stall at the cut or a second of empty chamber arriving late, the same blank slate either way.
+## Gated by tests/sand_warm_check.gd, which settles the deposit against the automaton itself.
 ##
 ## AUDIO. Each spout owns a FIXED band, and its rate in grains per second is its gain times
 ## that band's level, so the pours move against each other rather than throbbing together -
@@ -262,8 +275,16 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_spouts.append({
 			"x0": x0, "x1": x1, "y": 0, "mat": sim.id_of(mname), "name": mname,
 			"band": band_t, "gain": rng.randf_range(70.0, 240.0),
-			"period": rng.randf_range(5.0, 16.0), "phase": rng.randf(),
-			"duty": rng.randf_range(0.55, 1.0)})
+			"period": rng.randf_range(5.0, 16.0),
+			# PHASES SPREAD, like the bands just above and for the same reason: drawn freely,
+			# several spouts sit in the same part of their cycle and the chamber opens and
+			# shuts as one instead of one lane starting as another runs dry.
+			"phase": fposmod((float(i) + 0.5) / float(ns) + rng.randf_range(-0.12, 0.12), 1.0),
+			# ...and every spout now HAS an off phase. The old ceiling was 1.0, so a duty
+			# drawn near the top never closed at all and that lane simply ran for the whole
+			# song. A lane that opens and another that runs dry is the scene's own slow clock,
+			# and it only exists if the top of this range is short of 1.
+			"duty": rng.randf_range(0.40, 0.92)})
 		sim.fill_rect(x0, 0, x1, thick - 1, 0)         # a pipe through the ceiling
 	if fuelly:
 		# The ignition source is its own thin, intermittent spout on the top band - a
@@ -352,7 +373,44 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_job.depth = _depth
 	_job.wind_dir = _wind_dir
 
+	# --- ARRIVE MID-POUR --------------------------------------------------------------
+	# The chamber used to open empty every single time: the same few lanes falling from the
+	# very top of an untouched floor, for the first several seconds of every session this
+	# scene was ever cut to. It is a world with rules, and a world with rules has been running
+	# before you looked at it.
+	#
+	# Two halves. The world's own CLOCK starts somewhere in the middle of its life, so the
+	# spouts' duty phases are wherever they happen to be rather than all at their beginning -
+	# that alone is the difference between "the pours switch on together" and "two are
+	# running, one is dry and about to open". And the matter that clock implies is DEPOSITED
+	# (see Grains.prefill for why it is deposited rather than simulated): piles under the
+	# spouts, shaped by each material's own repose, and a stream still in the air under
+	# whichever lanes are open at that moment.
+	_job.t_sim = rng.randf_range(20.0, 400.0)
+	# How deep this session arrives. The top of the range is not taste: the sweep and the
+	# batching both scale with how much matter there is, and measured on the real thing one
+	# build (a tick plus a repaint) runs 12 ms on a nearly empty chamber, 26 at a third full
+	# and 42 at half - past which the worker stops keeping up with its own 20-30 Hz clock and
+	# the world runs in slow motion. A chamber that fills that far during a song has earned it;
+	# one that OPENS there has not.
+	var fill := rng.randf_range(0.10, 0.40)
+	var seeded: Array = []
+	for sp in _spouts:
+		var d: Dictionary = sp
+		var live := fposmod(_job.t_sim / maxf(0.5, float(d["period"])) + float(d["phase"]),
+			1.0) < float(d["duty"])
+		var span := maxi(1, int(d["x1"]) - int(d["x0"]) + 1)
+		seeded.append({
+			"x": (int(d["x0"]) + int(d["x1"])) / 2, "x0": int(d["x0"]), "x1": int(d["x1"]),
+			"mat": int(d["mat"]), "live": live,
+			# How solid that stream is: the rate this spout pours at a middling level, in
+			# grains per tick, spread across its own width.
+			"flow": clampf(float(d["gain"]) * 0.5 * _clock.dt / float(span), 0.15, 1.0),
+			"pile": String(d["name"]) != "ember"})
+	sim.prefill(seeded, fill, rng)
+
 	return {"chamber": shape, "mood": sch.name, "grid_w": _w, "grid_h": _h,
+		"prefill": fill, "start_t": _job.t_sim,
 		"materials": mats, "pours": pours, "spouts": _spouts.size(),
 		"hatches": nh, "hatch_dwell": _hatch_dwell, "tilt": _tilt_mag,
 		"wind": _wind, "wind_dir": _wind_dir, "ignite": _ignite,

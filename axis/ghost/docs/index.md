@@ -176,6 +176,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
 - [`generative_editor.gd`](../scripts/generative_editor.gd) **GenerativeEditor** - the neural synthesis path (VOICE_PLAN.md P4).
 - [`voice_fx.gd`](../scripts/voice_fx.gd) **VoiceFX** - the ambience from Synthesis, over any PCM.
+- [`room_fx.gd`](../scripts/room_fx.gd) **RoomFX** - THE ROOM, decided once and rendered twice.
 
 ### Storyboards & stage
 
