@@ -45,10 +45,13 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # is the one we hack on. See praxis/attention/arc_ssog.py for why each
     # deviation exists (every one of them is a measurement off -r).
     "arc_ssog": ArcSSOGAttention,
-    # Atom count is a profile, not a flag: the bank is what the variant IS.
-    # 32 atoms is the "delay line dense enough to decode a position from"
-    # end of the argument, and costs compile time linear in atoms.
-    "arc_ssog_wide": partial(ArcSSOGAttention, num_atoms=32),
+    # The bank is a profile, not a flag: it IS the variant. This is exactly
+    # what -r ran from 2026-08-18, kept reproducible rather than deleted -
+    # twelve atoms over 0.5..128 diluted the softmax (0.083 per atom against
+    # 0.25, with three atoms centred outside the ×1 window) and `far_mass`
+    # decayed at every depth for 11.8k steps. `arc_ssog` came back down to the
+    # faithful ladder; this stays so the measurement can be repeated.
+    "arc_ssog_wide": partial(ArcSSOGAttention, num_atoms=12, mu_init_max=128.0),
 }
 
 

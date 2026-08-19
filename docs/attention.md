@@ -41,11 +41,11 @@ Presets:
 
 SSOG with a per-depth field (see module docstring).
 
-Source: [praxis/attention/arc_ssog.py:125](../praxis/attention/arc_ssog.py#L125)
+Source: [praxis/attention/arc_ssog.py:159](../praxis/attention/arc_ssog.py#L159)
 
 Presets:
 - `arc_ssog` - class defaults
-- `arc_ssog_wide` - `num_atoms=32`
+- `arc_ssog_wide` - `mu_init_max=128.0, num_atoms=12`
 
 ## `causal` - CausalAttention
 

@@ -255,7 +255,12 @@ static func grow(sp: Dictionary, rng: RandomNumberGenerator, height: float,
 		var sg: Dictionary = entry
 		if int(sg["depth"]) >= leaf_order:
 			outer.append(sg)
-	var cap := 46
+	# THE CAP IS THE FOLIAGE'S GRAIN. At 46 sites a crown has to be filled with clusters a third
+	# of its own radius across, and a hard-edged cluster that big is a plate of coloured card -
+	# coarse at the wrong scale. Three times the sites lets each one be a third the size, which
+	# is grain rather than plating, and the near LOD band is capped at a dozen trees so the
+	# billboards this adds are bounded.
+	var cap := 112
 	var stride := maxi(1, int(ceil(float(outer.size()) / float(cap))))
 	var lsize: float = float(sp["leaf_size"]) * height
 	# `along` is renormalized over the leaves' OWN range of born-fractions. Raw, they all sit
@@ -299,12 +304,23 @@ static func grow(sp: Dictionary, rng: RandomNumberGenerator, height: float,
 			crad = maxf(crad, ((lf["p"] as Vector3) - cen).length())
 	else:
 		cen = Vector3(0.0, height * 0.72, 0.0)
+	# THE PUFF CLOUD MUST FIT INSIDE THE CROWN IT STANDS IN FOR. It did not: offsets reached
+	# 0.55 of the crown radius and each puff was up to 0.80 of it, so the silhouette spanned
+	# 1.35 crowns before the billboard's own raggedness widened it again - and a distant tree
+	# was visibly a third bigger than the near tree it was a copy of. Rendered and looked at:
+	# "their size seems too large relative to the terrain" is mostly this, because the far
+	# band is most of the wood. Offsets and radii now sum to 1.0, which is what "the same
+	# space the near one would occupy" means.
 	var puffs: Array = []
-	for _pi in rng.randi_range(3, 6):
+	for _pi in rng.randi_range(4, 7):
+		var off := Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-0.8, 0.8),
+			rng.randf_range(-1.0, 1.0))
+		if off.length() > 1.0:
+			off = off.normalized()
+		var orad := rng.randf_range(0.40, 0.62)
 		puffs.append({
-			"p": cen + Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-0.7, 0.7),
-				rng.randf_range(-1.0, 1.0)) * crad * 0.55,
-			"r": crad * rng.randf_range(0.45, 0.80),
+			"p": cen + off * crad * (1.0 - orad),
+			"r": crad * orad,
 			"ragged": rng.randf() * TAU})
 	return {"segs": segs, "leaves": leaves, "puffs": puffs, "height": height,
 		"radius": radius, "depth": deepest, "crown": cen, "crown_r": crad,
@@ -449,19 +465,33 @@ static func loft_ribbon(faces: Array, lens: Lens3D, u: float, a: Vector3, b: Vec
 		"cols": PackedColorArray([ca, ca, cb, cb])})
 
 
-## A soft billboard cluster - one leaf mass, or one crown puff of a distant tree.
+## A billboard cluster - one leaf mass, or one crown puff of a distant tree.
 ##
-## A fan with an opaque core and a fully transparent rim, its radius modulated per vertex so
-## the silhouette is ragged rather than a disc. This is deliberately NOT a textured atlas
-## quad: leaves interleave with terrain quads in the merged depth sort, and a second texture
-## in that list cuts the batch at every crossing between land and foliage - the exact failure
-## the water sheet cost 894 batch cuts a frame to prove. A fan is five triangles in the run
-## everything else is already in, and the soft rim is the part of a leaf that reads anyway.
+## A fan with an opaque core, a rim whose radius is modulated per vertex so the silhouette is
+## broken rather than a disc, and a rim ALPHA that decides whether the thing has an edge at all.
+## This is deliberately NOT a textured atlas quad: leaves interleave with terrain quads in the
+## merged depth sort, and a second texture in that list cuts the batch at every crossing between
+## land and foliage - the exact failure the water sheet cost 894 batch cuts a frame to prove. A
+## fan is five triangles in the run everything else is already in.
+##
+## [param hard] IS WHY FOLIAGE READS AS FOLIAGE. At 0 the rim is fully transparent and the
+## cluster is a soft radial gradient - which is a cloud puff, by construction, and forty of them
+## per crown is a cloud: reported as foliage that looks "a little too fluffy... proper foliage
+## would be more coarse, not like clouds". At 1 the rim carries the core's own alpha and the
+## cluster has a hard, jagged boundary. Between them is a leaf clump: mostly solid, with the
+## gradient compressed into a thin outer band.
+##
+## THE SILHOUETTE takes two harmonics and a per-vertex hash rather than one sine. One sine at
+## three lobes is a smooth trefoil however far it is pushed - round, and it stays round. Real
+## foliage has a high-frequency broken outline, so: a slow lobe for the mass's overall shape, a
+## faster one for clumping, and a hashed jitter for the leaf-scale break. The hash is keyed on
+## `s % sides` so the closing vertex lands exactly on the opening one - keyed on `s` it leaves a
+## wedge-shaped hole in every cluster.
 ##
 ## Faces append as `{d, fan, fcols}`; the caller draws them with [method TriBatch.tri_colored].
 static func billboard_fan(faces: Array, lens: Lens3D, u: float, c: Vector3,
 		right: Vector3, up: Vector3, r: float, core: Color, sides := 5,
-		ragged := 0.25, phase := 0.0) -> void:
+		ragged := 0.25, phase := 0.0, hard := 0.0) -> void:
 	if r <= 0.0 or core.a <= 0.004:
 		return
 	var pc := lens.project(c)
@@ -478,10 +508,24 @@ static func billboard_fan(faces: Array, lens: Lens3D, u: float, c: Vector3,
 	var cols := PackedColorArray()
 	pts.append(o)
 	cols.append(core)
-	var edge := Color(core.r, core.g, core.b, 0.0)
+	var k := clampf(hard, 0.0, 1.0)
+	# The rim keeps a share of the core's alpha, and darkens a little as it goes: a leaf clump is
+	# lit on top and shaded at its edge, where a cloud puff simply thins out.
+	var dim := lerpf(1.0, 0.74, k)
+	var edge := Color(core.r * dim, core.g * dim, core.b * dim, core.a * k)
 	for s in sides + 1:
-		var ang := TAU * float(s) / float(sides) + phase
-		var rr := 1.0 + ragged * sin(3.0 * ang + phase * 2.0)
+		var si := s % sides
+		var ang := TAU * float(si) / float(sides) + phase
+		var jag := _rim_hash(si, phase) - 0.5
+		var rr := 1.0 + ragged * (0.55 * sin(3.0 * ang + phase * 2.0)
+			+ 0.30 * sin(7.0 * ang - phase * 1.3) + 0.75 * jag)
 		pts.append(o + ex * (cos(ang) * rr) + ey * (sin(ang) * rr))
 		cols.append(edge)
 	faces.append({"d": pc.z, "fan": pts, "fcols": cols})
+
+
+# A deterministic 0..1 per rim vertex. Keyed on the vertex INDEX and the cluster's phase, so one
+# cluster's outline is fixed for its lifetime (a rim that re-rolled per frame would boil) while
+# no two clusters share an outline.
+static func _rim_hash(i: int, phase: float) -> float:
+	return fposmod(sin(float(i) * 12.9898 + phase * 78.233) * 43758.5453, 1.0)

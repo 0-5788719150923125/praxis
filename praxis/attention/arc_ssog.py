@@ -32,18 +32,37 @@ from ``abstractinator-r`` or a theorem, not a preference:
    still frozen at initialisation here, by zero-init; the gate now scales
    steering rather than blocking it.
 
-3. THE ATOM BANK IS POPULATED (12 atoms over lags 0.5 .. 128, against 4 over
-   0.5 .. 32). Two reasons. Zoology/Based establish that recall quality is
-   governed by RECURRENT STATE SIZE, and this field's state is what it carries
-   forward: ``R`` atoms x ``head_dim``, which at R=4, one head, head_dim 37 is
-   148 numbers summarising all history. And R Gaussian atoms on a log ladder ARE
-   a projection of the value history onto an R-dimensional basis - the same
-   object as HiPPO/LMU, which projects onto orthogonal polynomials precisely so
-   history can be RECONSTRUCTED. At R=4 the frame is far too sparse to localise
-   anything in lag; a populated ladder is a multi-scale delay line a downstream
-   readout can decode a position from. The reference's 4 was a sweet spot on
-   32x32 and 224x224 grids with 2D separability, which says nothing about
-   512-patch causal text.
+3. THE BANK CAME BACK DOWN, and this entry is a retraction. It shipped as 12
+   atoms over 0.5 .. 128 on the argument that Zoology/Based tie recall quality
+   to RECURRENT STATE SIZE, so a bigger bank should buy recall, and that R
+   Gaussians on a log ladder are a HiPPO/LMU-style basis projection of history
+   which at R=4 is too sparse to localise anything in lag.
+
+   The state-size half of that does not transfer, and I pushed it too hard.
+   Their state is a matrix holding key-value BINDINGS; these atoms are fixed
+   positional filters holding none. More atoms buys a better basis for reading
+   POSITION, not associative capacity.
+
+   What it did buy was dilution. Attention weights are the mixture NORMALISED
+   over the causal keys, so every atom added takes a share from every other:
+   0.083 per atom against 0.25, cutting the previous-token atom to a third of
+   its mass. Worse, three of the twelve sat centred beyond lag 32 and two
+   beyond 64, so at the x1 curriculum tier their mass was truncated and
+   renormalised onto the OLDEST tokens - a sink, not a long-range read, and the
+   softmax has no way to decline. Measured over 11.8k steps on -r: ``far_mass``
+   decayed at every depth while ``reach`` stayed flat, i.e. the model spent
+   training clawing back toward concentration. With the faithful 0.5 .. 32
+   ladder the same knob had gone the other way, lambda moving TOWARD the far
+   atoms.
+
+   The mechanism is dilution, NOT interference. The mixture is a sum of
+   non-negative densities and cannot cancel; twelve atoms can represent
+   anything four can by zeroing eight weights. An initialisation cost, not a
+   capacity one.
+
+   Default is back to the faithful 4 over 0.5 .. 32, which also puts every atom
+   inside the window at every tier. The 12/128 configuration is preserved as
+   the ``arc_ssog_wide`` registry profile so the measurement can be repeated.
 
 WHY ANY OF THIS COULD WORK AT ALL, stated as the theorem rather than a hope.
 The Zoology line (Arora, Rudra, Re et al) makes the decisive property
@@ -59,14 +78,26 @@ route affordable, since it buys layers without buying parameters. That is the
 whole bet, and deviations 1 and 2 exist to get across that class boundary.
 
 NOT DONE HERE, deliberately: the null atom (the field's softmax1), and
-unbounded mu-steering read as a pointer. Both are the natural next steps once
-the gates are observed to open; neither is worth its complexity while the taps
-are shut. ``MAX_OFFSET`` is inherited unchanged at 8 tokens, so steering here
-still only nudges - see ``next/`` for the addressing argument.
+unbounded mu-steering read as a pointer. ``MAX_OFFSET`` is inherited unchanged
+at 8 tokens, so steering here still only nudges - see ``next/`` for the
+addressing argument.
 
-The atom count is a REGISTRY PROFILE argument, not a config field: behaviour
-belongs in the registry entry (``partial(ArcSSOGAttention, num_atoms=...)``),
-the way ``arc_dropoff`` carries its ablation.
+On the null atom specifically, since it is the obvious response to the dilution
+above and is NOT one: a learned null logit scales every real weight by the
+common factor ``Z / (Z + exp(l_0))``, so each real atom keeps exactly its 1/R
+share of what is left. What it would fix is the out-of-window sink - and the
+ladder coming back to 0.5 .. 32 already removes that, since no atom sits
+outside the window at any tier. The field's own cue for a missing outlet is a
+per-depth temperature driving toward its 0.5 floor; on -r it did not, sitting
+at 0.76 - 0.89 against an init of 0.813 for 11.8k steps. Add it when that cue
+fires, and as a LEARNED lambda_0: a fixed logit-0 ghost would take 40-60% of a
+Gaussian field's mass, because a Gaussian log-density integrates to only ~1-2
+over lags.
+
+Bank size and ladder span are ONE decision and both are REGISTRY PROFILE
+arguments, not config fields: behaviour belongs in the registry entry
+(``partial(ArcSSOGAttention, num_atoms=..., mu_init_max=...)``), the way
+``arc_dropoff`` carries its ablation.
 """
 
 import math
@@ -91,9 +122,12 @@ from praxis.attention.ssog import (
     _log_kernel,
 )
 
-ARC_NUM_ATOMS: int = 12  # populated bank (the reference's vision sweet spot is 4)
+# Four atoms over 0.5 .. 32, which is the faithful port's ladder. A twelve-atom
+# bank over 0.5 .. 128 was tried and is kept as the `arc_ssog_wide` profile; see
+# THE BANK CAME BACK DOWN in the class docstring for what it measured.
+ARC_NUM_ATOMS: int = 4
 ARC_GATE_INIT: float = -2.0  # softplus(-2) ~ 0.13: warm, not open, not shut
-ARC_MU_INIT_MAX: float = 128.0  # farthest atom at init, in tokens
+ARC_MU_INIT_MAX: float = 32.0  # farthest atom at init, in tokens
 MAX_DECLARED_DEPTHS: int = 12  # how many per-depth cards the dashboard declares
 FAR_LAG: float = 32.0  # "far" atom threshold for the far-mass diagnostic
 
@@ -255,12 +289,17 @@ class ArcSSOGAttention(SSOGAttention):
         },
     }
 
-    def __init__(self, config, num_atoms: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        config,
+        num_atoms: Optional[int] = None,
+        mu_init_max: Optional[float] = None,
+    ) -> None:
         # Set before super().__init__, because __init__ calls _build_field,
         # which needs it. A plain int assignment is safe before nn.Module's
         # __init__ (only Parameters and Modules are not).
         self.depths = max(1, int(getattr(config, "depth", 1) or 1))
-        super().__init__(config, num_atoms=num_atoms)
+        super().__init__(config, num_atoms=num_atoms, mu_init_max=mu_init_max)
 
     # ------------------------------------------------------------------ field
     def _build_field(self, hidden_size: int, H: int, R: int) -> None:
@@ -318,17 +357,25 @@ class ArcSSOGAttention(SSOGAttention):
 
     # --------------------------------------------------------------- geometry
     def _atoms(self, depth: int = 0) -> Tuple[Tensor, Tensor, Tensor]:
-        """One pass's head-averaged ``(mu, sigma, lambda)``, each ``[H, R]``."""
+        """One pass's head-averaged ``(mu, sigma, lambda)``, each ``[H, R]``, ON CPU.
+
+        Host copy first, for the reason in ``SSOGAttention._atoms``: everything
+        downstream of this runs in the snapshot producer's BACKGROUND THREAD,
+        and GPU work there can block on the training stream forever. This
+        variant made that far more likely than the base did - it walks every
+        depth, so one cascade issued six times the device calls plus a
+        ``float()`` sync per depth to size the FFT window.
+        """
         d = min(int(depth), self.depths - 1)
-        mu = F.softplus(self.raw_mu[d].detach().float())
-        sigma = F.softplus(self.raw_sigma[d].detach().float()) + _EPS + SIGMA_FLOOR
-        lam = torch.softmax(self.log_lambda[d].detach().float(), dim=-1)
+        mu = F.softplus(self.raw_mu[d].detach().float().cpu())
+        sigma = F.softplus(self.raw_sigma[d].detach().float().cpu()) + _EPS + SIGMA_FLOOR
+        lam = torch.softmax(self.log_lambda[d].detach().float().cpu(), dim=-1)
         return mu, sigma, lam
 
     def _mixture(self, depth: int) -> Tensor:
         """That pass's summed mixture on the display grid, ``[GEOM_BINS]``."""
         mu, sigma, lam = self._atoms(depth)
-        lags = self.geom_lags.float()
+        lags = self.geom_lags.float().cpu()
         dens = lam[..., None] * torch.exp(
             _log_kernel(lags, mu[..., None], sigma[..., None])
         )
@@ -354,6 +401,7 @@ class ArcSSOGAttention(SSOGAttention):
         sized to the atoms' own reach, so a far field cannot wrap onto short
         lags.
         """
+        # All CPU now, so this is arithmetic rather than six device syncs.
         reach = max(
             float((mu + 4.0 * sigma).max())
             for mu, sigma, _ in (self._atoms(d) for d in range(self.depths))
@@ -371,12 +419,17 @@ class ArcSSOGAttention(SSOGAttention):
         out = torch.stack(rows)
         return out / out.amax(dim=-1, keepdim=True).clamp_min(_EPS)
 
-    def dashboard_snapshots(self) -> dict:
-        """Per-depth geometry, and the composed reach."""
+    def _build_snapshots(self) -> dict:
+        """Per-depth geometry, and the composed reach.
+
+        Built on the TRAINING thread and stashed; the producer thread only
+        reads the stash. See ``SSOGAttention.dashboard_snapshots``.
+        """
         geom = torch.stack([self._mixture(d) for d in range(self.depths)])
         geom = geom / geom.amax(dim=-1, keepdim=True).clamp_min(_EPS)
         cascade = self._cascade()
-        lag_range = [float(self.geom_lags[0]), float(self.geom_lags[-1])]
+        lags = self.geom_lags.detach().float().cpu()
+        lag_range = [float(lags[0]), float(lags[-1])]
         return {
             "ssog_geometry": {
                 "grid": geom.tolist(),
@@ -417,6 +470,7 @@ class ArcSSOGAttention(SSOGAttention):
             out[f"ssog_far_mass_d{d}"] = (
                 (lam * (mu > FAR_LAG).float()).sum(dim=-1).mean().item()
             )
+        self._snapshot_cache = self._build_snapshots()
         return out
 
     def extra_repr(self) -> str:

@@ -201,3 +201,22 @@ def test_no_compile_is_honoured():
     assert x.grad is not None and torch.isfinite(x.grad).all()
     for name in ("raw_mu", "raw_sigma", "log_lambda", "raw_gate"):
         assert getattr(eager, name).grad is not None, name
+
+
+def test_inference_never_takes_the_compiled_path():
+    """`DecodeBackend.eval_mode` forbids compiled frames in the decode loop -
+    it changes guard inputs every token. The module compiles flex ITSELF, which
+    smuggled one back in; and flex's inference kernel needs a power-of-two head
+    dim, so at head_size 37 every decode step paid a compile that then failed."""
+    module, _ = _module(no_compile=False)
+    if module.flex_attention is None:
+        pytest.skip("flex_attention unavailable")
+
+    x = torch.randn(1, 24, 64)
+    with torch.no_grad():
+        eval_out = module(x)[0]
+    grad_out = module(x)[0]  # grad enabled: flex path is allowed again
+    assert eval_out.shape == grad_out.shape
+    # Same field, so the two paths must agree; this also pins the materialised
+    # fallback as exact rather than an approximation.
+    assert torch.allclose(eval_out, grad_out, atol=1e-4)

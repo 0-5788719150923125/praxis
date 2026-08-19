@@ -262,13 +262,21 @@ class SSOGAttention(nn.Module):
         },
     }
 
-    def __init__(self, config, num_atoms: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        config,
+        num_atoms: Optional[int] = None,
+        mu_init_max: Optional[float] = None,
+    ) -> None:
         super().__init__()
         self.patch_config(config)
         hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.head_dim = getattr(config, "head_size", None) or hidden_size // self.num_heads
         self.num_atoms = int(num_atoms or self.default_atoms)
+        # Instance override so a registry PROFILE can set the ladder's span
+        # alongside its atom count; the two are one decision, not two.
+        self.mu_init_max = float(mu_init_max or type(self).mu_init_max)
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
         self.dropout_p = config.dropout
@@ -293,6 +301,12 @@ class SSOGAttention(nn.Module):
             GEOM_LAG_MIN * (GEOM_LAG_MAX / GEOM_LAG_MIN) ** ramp,
             persistent=False,
         )
+
+        # Snapshot payload, published by the training thread (see
+        # dashboard_snapshots). Seeded here so a card exists before the first
+        # metrics tick; at construction the module is still on the host, so
+        # this costs nothing and blocks on nothing.
+        self._snapshot_cache: dict = self._build_snapshots()
 
         self.flex_attention = None
         self.create_block_mask = None
@@ -487,7 +501,23 @@ class SSOGAttention(nn.Module):
         B, T, _ = inputs.shape
         v = self.value(inputs).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         mu, sigma, loglam, tau = self._field(inputs, current_depth)
-        if self.flex_attention is not None and inputs.device.type != "cpu":
+        # INFERENCE NEVER TAKES THE COMPILED PATH. The flex branch compiles
+        # itself (see __init__), and `DecodeBackend.eval_mode` documents why the
+        # decode loop must not run through torch.compile at all: it changes
+        # python-level guard inputs every token, so compiled frames blow the
+        # dynamo recompile limit. Compiling inside the module smuggled a
+        # compiled frame back into a loop built to avoid them. It is also
+        # simply broken here - flex's inference kernel requires a power-of-two
+        # head dim, and at head_size 37 the Triton compile fails outright
+        # ("Shape element 2 must be a power of 2"), so every decode step paid a
+        # full compile attempt to arrive at an exception. The materialised path
+        # is exact, needs no compile, and at generation batch sizes is cheap.
+        use_flex = (
+            self.flex_attention is not None
+            and inputs.device.type != "cpu"
+            and torch.is_grad_enabled()
+        )
+        if use_flex:
             out = self._flex(v, mu, sigma, loglam, tau)
         else:
             out = self._materialised(v, mu, sigma, loglam, tau)
@@ -521,9 +551,32 @@ class SSOGAttention(nn.Module):
             out[f"ssog_sigma_a{r}"] = sigma[:, r].mean().item()
             out[f"ssog_lambda_a{r}"] = lam[:, r].mean().item()
 
+        # Publish the geometry from HERE, on the training thread, where a
+        # device copy is ordinary rather than a cross-thread hazard.
+        self._snapshot_cache = self._build_snapshots()
         return out
 
     def dashboard_snapshots(self) -> dict:
+        """Hand back the payload the TRAINING thread already built.
+
+        This runs in the web layer's snapshot producer thread, and it must not
+        touch the model. Reading a live parameter from there means a device
+        call - ``.cpu()`` is a blocking device-to-host copy just as much as a
+        softmax is - and that thread then contends with training for the CUDA
+        context and the allocator. Moving the arithmetic to the host was not
+        enough: the COPY was the blocking part, and the run wedged again in the
+        same method one line further down.
+
+        So nothing here reads a parameter at all. ``training_metrics`` runs on
+        the training thread and stashes a finished payload of plain lists,
+        which is the pattern ``_rlct_landscape`` and ``_compute_profile``
+        already use for exactly this reason. Rebinding a name is atomic, so a
+        reader sees either the previous payload or the next one and never a
+        torn one - provided we always build a NEW dict rather than mutate.
+        """
+        return self._snapshot_cache or {}
+
+    def _build_snapshots(self) -> dict:
         """The two geometry heatmaps, as live grids.
 
         These are pictures of the CURRENT field, which is what the reference's
@@ -560,10 +613,24 @@ class SSOGAttention(nn.Module):
 
     # -------------------------------------------------------------- geometry
     def _atoms(self) -> Tuple[Tensor, Tensor, Tensor]:
-        """Head-averaged ``(mu, sigma, lambda)``, each ``[R]``, detached."""
-        mu = F.softplus(self.raw_mu.detach().float())
-        sigma = F.softplus(self.raw_sigma.detach().float()) + _EPS + SIGMA_FLOOR
-        lam = torch.softmax(self.log_lambda.detach().float(), dim=-1)
+        """Head-averaged ``(mu, sigma, lambda)``, each ``[R]``, detached, ON CPU.
+
+        The copy to host is the whole point, and it is not an optimisation.
+        Everything below feeds ``dashboard_snapshots``, which the web layer's
+        snapshot producer calls FROM A BACKGROUND THREAD while training runs.
+        Issuing GPU work there - even a softmax over 12 numbers - contends with
+        the training stream, and any device sync in that thread can block on it
+        indefinitely. That is not hypothetical: it wedged a run for six hours,
+        every watchdog dump showing the producer parked on the CUDA softmax
+        this method used to run (praxis/callbacks/lightning/stall_watchdog.py).
+        The field is a few dozen floats, so one host copy costs nothing and the
+        rest of the geometry math is plain CPU tensors.
+        """
+        raw_mu, raw_sigma = self.raw_mu.detach(), self.raw_sigma.detach()
+        log_lambda = self.log_lambda.detach()
+        mu = F.softplus(raw_mu.float().cpu())
+        sigma = F.softplus(raw_sigma.float().cpu()) + _EPS + SIGMA_FLOOR
+        lam = torch.softmax(log_lambda.float().cpu(), dim=-1)
         return mu, sigma, lam
 
     def _geometry(self) -> Tuple[Tensor, Tensor]:
@@ -578,7 +645,7 @@ class SSOGAttention(nn.Module):
         each query are not here, and neither is per-query steering.
         """
         mu, sigma, lam = self._atoms()  # each [H, R]
-        d = self.geom_lags.float()  # [G]
+        d = self.geom_lags.float().cpu()  # [G]
         dens = lam[..., None] * torch.exp(
             _log_kernel(d, mu[..., None], sigma[..., None])
         )  # [H, R, G]
@@ -632,7 +699,7 @@ class SSOGAttention(nn.Module):
 
     def _sample_grid(self, curve: Tensor) -> Tensor:
         """Read ``curve`` (indexed by integer lag) at the display grid, linearly."""
-        d = self.geom_lags.float().clamp(0.0, curve.shape[0] - 1.0)
+        d = self.geom_lags.float().cpu().clamp(0.0, curve.shape[0] - 1.0)
         lo = d.floor().long()
         hi = (lo + 1).clamp_max(curve.shape[0] - 1)
         frac = d - lo.float()

@@ -295,6 +295,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	if not _open:
 		_open = true
 		_write_opening()
+		_shift_cur = _shift_target()     # arrive centred; the ease is for what happens after
 		# The page arrives already part written (see _write_opening), so it should arrive
 		# already FRAMED. Easing in from the centre would have the opening seconds of every
 		# session drift across whatever the prefill happened to leave under the middle.
@@ -357,6 +358,46 @@ func _step(dt: float) -> void:
 		_commit()                       # _start resets the reveal, _advance sets the next rest
 	_scroll = lerpf(_scroll, _scroll_to, 1.0 - exp(-9.0 * dt))
 	_sshift = lerpf(_sshift, _sshift_to, 1.0 - exp(-6.0 * dt))
+	_ease_shift(dt)
+
+
+# THE CENTRED LINE'S SHIFT, and why it is integrated here rather than computed at draw time.
+#
+# A banner recentres its live line, so every glyph on it is drawn at `p.x + _shift_cur`. That
+# shift used to be recomputed inside _ink() as `-(_cx + _adv + _left) * 0.5` - straight off the
+# page CURSOR, which advances by a whole character at a time in _advance(). So the entire row
+# stepped left by half an advance the instant each character was committed, and the row a reader
+# is trying to read was the one thing on the page that would not sit still. Reported as "the
+# entire row of glyphs kept shifting in hard, discrete jumps... you would expect the row of
+# glyphs to remain where they were written".
+#
+# Two changes, and both are needed:
+#
+#   THE TARGET MOVES WITH THE REVEAL. The line's visible extent is the committed cursor plus the
+#   fraction of the current character the nib has actually inked, so the target is continuous
+#   ACROSS a commit: `_cx` gains that character's width at the same moment `_reveal` drops from
+#   1 to 0, and the two cancel. Without this the ease would only smear the step over a fifth of a
+#   second instead of removing it.
+#
+#   AND IT IS EASED, on this fixed clock, because the residue is not zero: a word gap, a narrow
+#   punctuation mark and a carriage return all move the target by a real amount in one substep.
+#   Those become a glide.
+#
+# _pen_at reads the SAME eased value, so the camera and the row can never disagree about where
+# the line is - and _newline freezes it as the line's final shift, so a finished line stops
+# exactly where it was last drawn rather than at a recomputed value half an advance away.
+func _ease_shift(dt: float) -> void:
+	if not _centred:
+		_shift_cur = 0.0
+		return
+	_shift_cur = lerpf(_shift_cur, _shift_target(), 1.0 - exp(-14.0 * dt))
+
+
+func _shift_target() -> float:
+	if not _centred:
+		return 0.0
+	var w := _adv * (0.62 if _cur_mark else 1.0)
+	return -(_cx + w * clampf(_reveal, 0.0, 1.0) + _left) * 0.5
 
 
 # How long the character under the nib has to be written.
@@ -458,7 +499,14 @@ func _write_opening() -> void:
 		_cur = {}
 		if _prng.randf() < 0.16:
 			_pending_word = true
+		# The pre-write is instantaneous, so the centring is SNAPPED along with it - the ease is
+		# for a hand that is writing. It has to be kept up to date here even so, because
+		# _newline() freezes the live shift as each line's final one, and a run of opening lines
+		# frozen at a stale value would left-align the whole page above the pen.
+		_reveal = 1.0
+		_shift_cur = _shift_target()
 		_advance(_prng.randi() % maxi(1, _gs.count()))
+		_shift_cur = _shift_target()
 	_reveal = 0.0
 	_hold = 0.0
 
@@ -542,11 +590,21 @@ func _advance(gi: int) -> void:
 
 func _newline() -> void:
 	if _centred:
-		# Freeze this line's centring the moment it is finished; the live line keeps
-		# recentring itself as it grows (see _shift_cur).
-		_shifts[_line] = -(_cx + _left) * 0.5
+		# Freeze this line's centring the moment it is finished, at the value it was last DRAWN
+		# with rather than a recomputed one - a recomputed freeze differs from the live shift by
+		# the last character's half advance, which is one more jump at every carriage return.
+		# The live line goes on recentring itself as it grows (see _ease_shift).
+		_shifts[_line] = _shift_cur
 	_line += 1
 	_cx = _left
+	if _centred:
+		# A CARRIAGE RETURN IS A DISCONTINUITY, and easing it is wrong. The line just finished
+		# keeps the shift it was drawn with (frozen above), and the new line has nothing on it
+		# yet - so snapping its centring moves no ink at all, while easing it drags the first
+		# glyph of the new line across the page from wherever the old line ended. That is a
+		# 9-advance glide, measured, and far more visible than the per-character step this ease
+		# exists to remove.
+		_shift_cur = _shift_target()
 	_cy += _line_step
 	_joined_now = false
 	if _cy > _bottom:
@@ -714,8 +772,9 @@ func _pen_at() -> Vector2:
 		# be and the frame simply holds still on it - which is why `_zoom_in` is sampled low for
 		# this layout in build_params, so the whole coil is in shot rather than its empty hub.
 		return Vector2.ZERO
-	var sh := -(_cx + _adv + _left) * 0.5 if _centred else 0.0
-	return Vector2(_cx + _adv * 0.5 + sh, _cy - _scroll - _line_step * 0.25)
+	# The SAME eased shift the glyphs are drawn with (see _ease_shift). Recomputing the raw
+	# target here would have the camera stepping while the row glides.
+	return Vector2(_cx + _adv * 0.5 + _shift_cur, _cy - _scroll - _line_step * 0.25)
 
 
 ## Keep the frame ON the writing.
@@ -775,7 +834,6 @@ func _ink(u: float) -> void:
 	_uvs.clear()
 	_tip_ok = false
 	var now := _sim.elapsed()
-	_shift_cur = -(_cx + _adv + _left) * 0.5 if _centred else 0.0
 	var prev_exit := Vector2.ZERO
 	var prev_ok := false
 	var hair_w := _gs.weight * u / GlyphSet.REF_UNIT * 0.34

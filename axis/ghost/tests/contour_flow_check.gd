@@ -27,6 +27,17 @@ extends Node
 ##   THE INK. The highlighted contour's colour is baked into the packet, so the tonal
 ##   centre it comes from has to be eased or it arrives as a step every re-print.
 ##
+## AND THEN THE OPPOSITE REPORT, which is the other half of the same subject: "I just ran into a
+## contour map scene that zoomed, but no longer moves at all... I would expect the map to slowly
+## evolve, not in large jumps, but in slow morphing over time... I would also not expect the
+## entire map to change simultaneously; I would expect the evolution to be localized to certain
+## regions". Making a re-print invisible had made the SHEET static: the only thing that ever moved
+## the land was a window warp gated on a `f.movement` rising edge, which a spoken chapter never
+## produces. So the EVOLUTION half below asserts the three properties that request names - that it
+## changes at all, that one print changes only a little, and that what changes is a REGION - with
+## a window warp as the control, because a window warp is what "the entire map at once" looks like
+## and the measure has to be able to tell them apart.
+##
 ## Run inside a real boot (the scene reaches the Spectrum autoload):
 ##   tests/run_boot_probe.sh tests/contour_flow_check.gd 180
 
@@ -135,12 +146,159 @@ func _run_seed(sv: int) -> void:
 		_ok(busy.hatch_col.a > quiet.hatch_col.a + 0.05,
 			"seed %d: flux does not reach the hatching at all any more" % sv)
 
+	_evolution_test(sc, sv, a)
 	_ease_test(sc, sv)
 	# Freed the way the Director does, and WAITED FOR - a scene pulled out from under a
 	# FrameForge job still building on a worker faults at exit, which turns a printed
 	# verdict into a core dump and an exit status nobody can trust.
 	sc.queue_free()
 	await get_tree().process_frame
+
+
+## THE EVOLUTION: does the land change, slowly, and in one region rather than everywhere?
+##
+## Driven through the scene's own swell integrator (_step_swells) rather than through update() or
+## _step, both of which submit a FrameForge job to a worker - and a scene pulled out from under a
+## running worker faults at exit, which turns a printed verdict into a core dump.
+func _evolution_test(sc, sv: int, ref) -> void:
+	var base := _points(ref.run({}))
+	if base.is_empty():
+		_ok(false, "seed %d: the reference sheet is empty" % sv)
+		return
+	# ONE PRINT'S WORTH of evolution: whatever the cadence is, this is the step the viewer sees.
+	for _i in int(round(sc._cadence * 60.0)):
+		sc._step_swells(1.0 / 60.0)
+	var one := _points(sc._make_job().run({}))
+	var moved_print := _moved(base, one)
+	# ...and eight seconds of it, which is the timescale the request asks for.
+	for _i in 480:
+		sc._step_swells(1.0 / 60.0)
+	var later := _points(sc._make_job().run({}))
+	var moved_long := _moved(base, later)
+	var spread := _spread(base, later)
+	# THE CONTROL: one step of the window ring, which is the global mechanism. If the measure
+	# cannot tell this apart from the swells, it is not measuring "localized" at all.
+	var keep_a: Vector2 = sc._warp_a
+	var keep_b: Vector2 = sc._warp_b
+	var keep_t: float = sc._warp_t
+	sc._warp_a = keep_b
+	sc._warp_b = keep_b + Vector2(0.06, 0.04)
+	sc._warp_t = 1.0
+	var warped := _points(sc._make_job().run({}))
+	var moved_warp := _moved(later, warped)
+	var spread_warp := _spread(later, warped)
+	sc._warp_a = keep_a
+	sc._warp_b = keep_b
+	sc._warp_t = keep_t
+	print("  evolution: %4.1f%% of the sheet redrawn in one print, %4.1f%% over 8 s (over %4.1f%% "
+		% [moved_print * 100.0, moved_long * 100.0, spread * 100.0]
+		+ "of its area) | window warp control: %4.1f%% redrawn over %4.1f%% of the area"
+		% [moved_warp * 100.0, spread_warp * 100.0])
+	_ok(moved_long > 0.02,
+		"seed %d: 8 seconds of evolution redrew %.2f%% of the sheet - the map does not evolve"
+		% [sv, moved_long * 100.0])
+	_ok(moved_print < 0.10,
+		"seed %d: ONE print redrew %.1f%% of the sheet - that is a jump, not a morph"
+		% [sv, moved_print * 100.0])
+	_ok(spread < 0.60,
+		"seed %d: the change over 8 s is spread over %.1f%% of the sheet's area - the whole map "
+		% [sv, spread * 100.0] + "is evolving at once, which is what was asked against")
+	_ok(spread_warp > spread + 0.15,
+		"seed %d: a window warp spread over %.1f%% against the swells' %.1f%% - this measure "
+		% [sv, spread_warp * 100.0, spread * 100.0] + "cannot tell local from global")
+
+
+## MEASURED WITH A TOLERANCE, and it has to be. Exact vertex matching is right for the
+## re-print half of this gate (a translation preserves every point exactly) and completely wrong
+## here: a contour re-routed inside a swell is re-traced and re-simplified along its WHOLE length,
+## so its vertices land in different places by fractions of a pixel a metre away from the change.
+## Hashed exactly, a local morph reads as "97% of the sheet redrawn". What the reader can see is
+## ink moving by a pixel or more, so that is what is counted.
+const TOL_PX := 1.25
+
+## Fraction of `a`'s vertices with no vertex of `b` within TOL_PX - "how much of this drawing
+## actually moved". A coarse spatial hash at the tolerance, checked over its 3x3 neighbourhood.
+func _moved(a: PackedVector2Array, b: PackedVector2Array) -> float:
+	if a.is_empty():
+		return 0.0
+	var grid := {}
+	for p in b:
+		var key := Vector2i(floori(p.x / TOL_PX), floori(p.y / TOL_PX))
+		if not grid.has(key):
+			grid[key] = PackedVector2Array()
+		grid[key].append(p)
+	var moved := 0
+	var tol2 := TOL_PX * TOL_PX
+	for p in a:
+		var cx := floori(p.x / TOL_PX)
+		var cy := floori(p.y / TOL_PX)
+		var near := false
+		for oy in range(-1, 2):
+			for ox in range(-1, 2):
+				var cell: Variant = grid.get(Vector2i(cx + ox, cy + oy))
+				if cell == null:
+					continue
+				for q: Vector2 in cell:
+					if p.distance_squared_to(q) <= tol2:
+						near = true
+						break
+				if near:
+					break
+			if near:
+				break
+		if not near:
+			moved += 1
+	return float(moved) / float(a.size())
+
+
+## How much of the SHEET'S AREA a change touches: the fraction of a coarse grid of cells that
+## hold a vertex present in one packet and absent from the other. Area, not vertex count, because
+## "localized" is a claim about where on the paper the reader sees ink move.
+func _spread(a: PackedVector2Array, b: PackedVector2Array) -> float:
+	var cells := 24
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for p in a:
+		lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
+		hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+	var span := hi - lo
+	if span.x <= 0.0 or span.y <= 0.0:
+		return 0.0
+	var grid := {}
+	for p in b:
+		var key := Vector2i(floori(p.x / TOL_PX), floori(p.y / TOL_PX))
+		if not grid.has(key):
+			grid[key] = PackedVector2Array()
+		grid[key].append(p)
+	var tol2 := TOL_PX * TOL_PX
+	var touched := {}
+	var occupied := {}
+	for p in a:
+		var cx := clampi(int((p.x - lo.x) / span.x * float(cells)), 0, cells - 1)
+		var cy := clampi(int((p.y - lo.y) / span.y * float(cells)), 0, cells - 1)
+		var key := Vector2i(cx, cy)
+		occupied[key] = true
+		if touched.has(key):
+			continue
+		var hx := floori(p.x / TOL_PX)
+		var hy := floori(p.y / TOL_PX)
+		var near := false
+		for oy in range(-1, 2):
+			for ox in range(-1, 2):
+				var cell: Variant = grid.get(Vector2i(hx + ox, hy + oy))
+				if cell == null:
+					continue
+				for q: Vector2 in cell:
+					if p.distance_squared_to(q) <= tol2:
+						near = true
+						break
+				if near:
+					break
+			if near:
+				break
+		if not near:
+			touched[key] = true
+	return float(touched.size()) / float(maxi(1, occupied.size()))
 
 
 ## The ink of the highlighted contour is baked into a packet rebuilt at most every 0.3 s, so

@@ -31,6 +31,8 @@ const STACKS := {
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _t := 0.0
+## One batch for the band fills - see the note in _draw about why they are strips.
+var _tb := TriBatch.new()
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -76,59 +78,97 @@ func update(f: AudioFeatures, delta: float) -> void:
 
 func _draw() -> void:
 	begin_draw()
-	var field := size * OVER
-	var planes := int(params.planes)
-	var step := field.y / float(planes)
-	var top := -field.y * 0.5
-	var left := -field.x * 0.5
-	var foot := field.y * 0.5
-	var amp_u := unit() * float(params.amp)
+	var planes := maxi(2, int(params.planes))
+	var foot := size.y * OVER * 0.5
 	var hue: float = params.hue
 	var hue_span: float = params.hue_span
-	var wave_k: float = params.wave_k
 	var alpha: float = params.alpha
 	var sat: float = params.sat
 	var val_mul: float = params.val
-	var profile: String = params.profile
-	var steps: int = params.steps
 
 	# Far (top) to near (bottom): later draws cover earlier -> depth ordering.
 	for i in planes:
 		var depth := float(i) / float(planes - 1)        # 0 far .. 1 near
-		var base_y := top + (i + 0.5) * step
-		var band := 1.0 - depth                          # bass near, treble far
-		var loud := _f.sample(band)
-		var phase := _t * (0.4 + 0.6 * depth)            # parallax: near scrolls faster
-		var crest := amp_u * (0.4 + 1.4 * loud + 0.3 * _f.beat)
+		var loud := _f.sample(1.0 - depth)               # bass near, treble far
 
-		var pts := PackedVector2Array()
-		pts.resize(COLS + 2)
-		for c in COLS:
-			var fx := float(c) / float(COLS - 1)
-			var x := left + fx * field.x
-			var wave := _shape(profile, wave_k * fx + phase / TAU, steps) * 0.6 \
-				+ 0.4 * (_f.sample(fx) - 0.5) * 2.0
-			# Clamp every crest above the closing edge, so the band is always a
-			# simple (non-self-intersecting) polygon that can be triangulated.
-			var y := minf(base_y - wave * crest, foot - 1.0)
-			pts[c] = Vector2(x, y)
-		# Close the band down to the foot of the frame.
-		pts[COLS] = Vector2(left + field.x, foot)
-		pts[COLS + 1] = Vector2(left, foot)
+		var tops := band_points(i)
 
 		var h := fposmod(hue + hue_span * depth, 1.0)
 		var fill := Color.from_hsv(h, clampf(sat * 0.85, 0.0, 1.0),
 			clampf((0.25 + 0.6 * (0.3 + loud) * (0.4 + depth)) * val_mul, 0.0, 1.0), alpha)
-		draw_colored_polygon(pts, fill)
+		# FILLED AS AN EXPLICIT STRIP, one quad per column, not as one closed polygon.
+		#
+		# A closed polygon has to be triangulated by the engine, and the engine cannot always
+		# do it. Reported from a live session:
+		#   ERROR: Invalid polygon data, triangulation failed. at: _draw (strata.gd:122)
+		# Godot ear-clips, and its snip test needs a strictly positive cross product, so a
+		# zero-area ear can never be clipped - while the `ridge` profile is made of STRAIGHT
+		# FLANKS, which is to say exactly-collinear runs of vertices, and the crest clamp lays
+		# flat plateaus on top of that. Brute-forced over the real parameter space: 2
+		# untriangulable bands in 36,443, both `ridge`, each with five or six exactly-collinear
+		# triples. When it happens the band does not glitch, it VANISHES for that frame - which
+		# is the visible half of the bug and the reason this is worth more than a guard.
+		#
+		# A band is x-monotone, so its triangulation is not a search at all: column c and c+1
+		# with their two feet make a quad, and the whole band goes down in one batched draw
+		# call ([TriBatch]). Exact, cheaper than ear clipping, and it cannot fail.
+		for c in COLS - 1:
+			_tb.quad(tops[c], tops[c + 1],
+				Vector2(tops[c + 1].x, foot), Vector2(tops[c].x, foot), fill)
+		# Flushed PER BAND, because the crest line below has to land over its own fill and
+		# under the next plane's - the painter's order this scene reads by.
+		_tb.flush(self)
 
 		# A brighter crest line for definition.
-		var line := PackedVector2Array()
-		line.resize(COLS)
-		for c in COLS:
-			line[c] = pts[c]
 		var lcol := Color.from_hsv(h, clampf(sat * 0.55, 0.0, 1.0),
 			clampf((0.7 + 0.3 * loud) * val_mul, 0.0, 1.0), 0.7)
-		draw_polyline(line, lcol, 1.5 + 2.0 * depth, true)
+		draw_polyline(tops, lcol, 1.5 + 2.0 * depth, true)
+
+
+## The CREST of plane [param i]: the band's top edge, sampled across the frame in this scene's
+## own draw space, from the plane's spectrum slice and the scrolling profile.
+##
+## Split out of [method _draw] so a gate can ask for the geometry the scene ACTUALLY draws.
+## tests/strata_band_check.gd needs these exact points to show that the engine's triangulator
+## refuses them while the scene paints the band anyway, and a gate that rebuilt the profile
+## arithmetic for itself would quietly stop testing the thing it names the moment either copy
+## changed.
+func band_points(i: int) -> PackedVector2Array:
+	var field := size * OVER
+	var planes := maxi(2, int(params.planes))
+	var step := field.y / float(planes)
+	var top := -field.y * 0.5
+	var left := -field.x * 0.5
+	var foot := field.y * 0.5
+	var depth := float(i) / float(planes - 1)            # 0 far .. 1 near
+	var base_y := top + (float(i) + 0.5) * step
+	var loud := _f.sample(1.0 - depth)
+	var phase := _t * (0.4 + 0.6 * depth)                # parallax: near scrolls faster
+	var crest := unit() * float(params.amp) * (0.4 + 1.4 * loud + 0.3 * _f.beat)
+	var profile: String = params.profile
+	var steps: int = params.steps
+	var wave_k: float = params.wave_k
+	var out := PackedVector2Array()
+	out.resize(COLS)
+	for c in COLS:
+		var fx := float(c) / float(COLS - 1)
+		var x := left + fx * field.x
+		var wave := _shape(profile, wave_k * fx + phase / TAU, steps) * 0.6 \
+			+ 0.4 * (_f.sample(fx) - 0.5) * 2.0
+		# Keep every crest above the closing edge, so no column's quad folds over.
+		out[c] = Vector2(x, minf(base_y - wave * crest, foot - 1.0))
+	return out
+
+
+## The same band as one CLOSED polygon - the shape the fill used to be handed to the engine as,
+## kept only so the gate can demonstrate what happens to it. Nothing draws this.
+func band_polygon(i: int) -> PackedVector2Array:
+	var tops := band_points(i)
+	var foot := size.y * OVER * 0.5
+	var out := tops.duplicate()
+	out.append(Vector2(tops[tops.size() - 1].x, foot))
+	out.append(Vector2(tops[0].x, foot))
+	return out
 
 
 ## The crest law, in [-1, 1], as a function of position along the plane (`s` is in

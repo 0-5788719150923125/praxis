@@ -7,9 +7,16 @@ extends GhostScene
 ## line is an index contour drawn heavier, the band above the inked index line is ruled
 ## with fine diagonal hatching, a graticule of ticks runs the margins with a scale bar in
 ## one corner, and small survey crosses sit on local summits, each with a leader line out
-## to a two-glyph label in an invented script. The land warps slowly underneath, so the
-## lines migrate like a time-lapse coastline, and a survey sweep crosses the sheet
-## planting marks as it goes and clearing them when it comes round again.
+## to a two-glyph label in an invented script. A survey sweep crosses the sheet planting marks
+## as it goes and clearing them when it comes round again.
+##
+## THE LAND EVOLVES, IN PLACES. Regions of it rise and subside under the ink - contours crowding
+## up into a new hill over ten or twenty seconds while the rest of the sheet holds perfectly
+## still - so the map reads as a survey being re-flown rather than a picture. That is one
+## mechanism ([method _step_swells]) and it is deliberately NOT the window: moving the window
+## moves every line in the frame at once, which is a different and much cruder thing. Both
+## failures have been seen in the field and the second was caused by fixing the first, so the
+## whole subject is written down there and gated in tests/contour_flow_check.gd.
 ##
 ## THREE ABSENCES AT ONCE, which is why it exists. Nothing else here is a PLAN VIEW -
 ## every other framing is eye-level horizon, three-quarter isometric or centred abstract.
@@ -47,10 +54,12 @@ extends GhostScene
 ##   a `f.beat` rising edge stamps the next survey cross - at the summit nearest the
 ##   sweep, so marks appear along the line as it passes.
 ##   `f.movement` over a sampled threshold eases the field offset to the next entry of a
-##   pre-rolled ring over 6 to 15 seconds. The offset is a position in an infinite noise
-##   field, so easing to a new one is a slow flight across a continent: the coastline
-##   genuinely reorganises rather than sliding, and it does so for a fraction of the
-##   machinery an erosion solver would cost.
+##   pre-rolled ring, over 14 to 30 seconds. The offset is a position in an infinite noise
+##   field, so easing to a new one is a slow flight across a continent. It is the GLOBAL
+##   motion and it is rare on purpose - and because a spoken chapter barely moves that score
+##   at all, there is now a floor under it too (`_warp_gap`, 35 to 75 s), so the window can
+##   never stall for a whole song the way it was reported doing. The continuous evolution is
+##   not this: it is the local swells, which no audio feature touches.
 ##   `f.high` raises the graticule and annotation ink alpha, so the paperwork layer fades
 ##   in on bright passages and the sheet is mostly bare land on quiet ones.
 ##   `f.energy` does nothing at all except warm the paper through the tint, because it is
@@ -196,6 +205,7 @@ var _sweep_beats := 16.0
 var _sweep_trail := 0.10
 var _mv_thr := 0.35
 var _warp_secs := 9.0
+var _warp_gap := 45.0
 var _margin := 0.05
 var _grat_lo := 0.35
 var _grat_hi := 0.85
@@ -218,6 +228,15 @@ var _ring_i := 0
 var _warp_a := Vector2.ZERO
 var _warp_b := Vector2.ZERO
 var _warp_t := 1.0
+var _warp_idle := 0.0               # seconds since the window last moved (see _step)
+## The LOCAL EVOLUTION: a few gaussian swells on the land, each easing its own amplitude in
+## and out and then moving somewhere else while it is invisible. See [method _step_swells].
+var _swells: Array = []
+## Pre-rolled retarget slots - where the next swell goes, how wide, how tall - taken by a
+## counter, the same discipline the warp ring uses and for the same reason: a retarget must
+## never draw an rng inside the running sim, or a live session and an export diverge.
+var _sw_ring: Array = []
+var _sw_i := 0
 var _sites: Array = []              # {n: Vector2, h: float, g: PackedInt32Array}
 var _site_key := Vector2.ZERO
 var _marks: Array = []              # {i: int, age: float, side: float}
@@ -313,6 +332,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_mv_thr = rng.randf_range(0.20, 0.50)
 	# ... and slower, for the same reason.
 	_warp_secs = rng.randf_range(14.0, 30.0)
+	# The floor under the section-change trigger: however quiet the track, the window travels
+	# at least this often. Long, because a section change is meant to be what usually does it.
+	_warp_gap = rng.randf_range(35.0, 75.0)
 	_margin = rng.randf_range(0.030, 0.075)
 	_grat_lo = rng.randf_range(0.22, 0.45)
 	_grat_hi = minf(1.0, _grat_lo + rng.randf_range(0.25, 0.50))
@@ -345,6 +367,46 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_ring.append(Vector2(rng.randf_range(-0.16, 0.16), rng.randf_range(-0.16, 0.16)))
 	_warp_a = _ring[0]
 	_warp_b = _ring[0]
+
+	# THE LOCAL EVOLUTION, seeded. Two to four swells, each with its own clock, and a ring of
+	# places for them to go next. Amplitudes are in CONTOUR INTERVALS (the interval itself is
+	# solved from the land later, in _ensure_sites, and is never touched again), because "this
+	# hill rose by a contour and a half" is the only scale that means anything on a map.
+	var n_sw := rng.randi_range(2, 4)
+	for i in rng.randi_range(10, 18):
+		_sw_ring.append({
+			# Where, in sheet fractions of the window - inside the sheet, so the change is
+			# somewhere the reader is looking.
+			"frac": Vector2(rng.randf_range(-0.42, 0.42), rng.randf_range(-0.42, 0.42)),
+			# How wide, as a fraction of the sheet - and this is the RADIUS OF ITS SUPPORT, not
+			# a gaussian sigma: the kernel is compact (see SheetJob.run), so outside this circle
+			# the land is untouched, exactly. A gaussian's tail is the reason the first cut of
+			# this read as the whole map evolving: at a tenth of its peak it is still moving a
+			# contour line visibly, and a tenth of a sigma-0.30 bump reaches most of the sheet.
+			"rf": rng.randf_range(0.10, 0.22),
+			# How tall, in contour intervals, either sign - land rises and land subsides.
+			"k": rng.randf_range(0.8, 2.4) * (1.0 if rng.randf() < 0.5 else -1.0),
+		})
+	for i in n_sw:
+		# Staggered: each swell has its own time constant and starts at its own point in the
+		# cycle, so they are never in step and there is always one somewhere in mid-move.
+		var slot: Dictionary = _sw_ring[i % _sw_ring.size()]
+		_swells.append({
+			"c": Vector2.ZERO,                       # field coords, set on the first retarget
+			"r": 0.0,
+			"k": 0.0,                                # current amplitude, in intervals
+			"tgt": 0.0,
+			# The EMA constant. Long enough that one re-print (half a second) moves the land by
+			# about a tenth of a contour - a line creeps, and the sheet is never seen to step -
+			# and short enough that a region visibly reorganises over ten or twenty seconds,
+			# which is the timescale the request asks for.
+			"tau": rng.randf_range(10.0, 22.0),
+			"rest": rng.randf_range(0.0, 9.0),       # a pause at each end of the cycle
+			"phase": rng.randf(),                    # 0 = about to grow, 1 = fully grown
+			"slot": slot,
+			"placed": false,
+		})
+	_sw_i = n_sw
 
 	return {
 		"land": kind,
@@ -379,6 +441,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"smooth": _smooth,
 		"alphabet": _gs.count(),
 		"warp_ring": n_ring,
+		"swells": n_sw,
 	}
 
 
@@ -425,6 +488,17 @@ func _step(dt: float) -> void:
 	_pick_index(dt)
 	if _warp_t < 1.0:
 		_warp_t = minf(1.0, _warp_t + dt / maxf(0.5, _warp_secs))
+		_warp_idle = 0.0
+	else:
+		# THE WINDOW MAY NOT STALL FOREVER. Its only trigger was a `f.movement` rising edge over
+		# a sampled threshold, and a narration take barely moves that score at all - so on a
+		# spoken chapter the window never once moved and the sheet was reported as "zoomed, but
+		# no longer moves at all". A section change is still what NORMALLY moves it; this is the
+		# floor under that, on the same slow ease, so the map always eventually travels.
+		_warp_idle += dt
+		if _warp_idle >= _warp_gap:
+			_rewarp()
+	_step_swells(dt)
 	var period := maxf(2.0, clampf(_f.beat_period, 0.25, 1.6) * _sweep_beats)
 	_sweep_prev = _sweep_p
 	_sweep_p = fposmod(_sweep_p + dt / period, 1.0)
@@ -472,10 +546,16 @@ func _ensure_sites() -> void:
 	_site_key = key
 	_sites.clear()
 	_marks.clear()
-	var u := maxf(1.0, unit())
-	var fspan := Vector2(size.x, size.y) * (SHEET * _span / u)
+	var fspan := _fspan()
 	# The sheet occupies -0.5..0.5; the warp ring reaches 0.55 either way, so the table
 	# has to cover a good deal more than the sheet or a wandering map runs out of summits.
+	#
+	# READ WITHOUT THE SWELLS, deliberately. This solves the elevation ladder and the summit
+	# table, and both are supposed to be FIXED: an interval is a claim about the land, and a
+	# survey mark that drifted because a hill nearby breathed would be a mark that means
+	# nothing. So a swell moves the contours in its region and leaves the ladder, the datum
+	# and the marks alone - which is also what makes it safe, since neither the interval nor
+	# any label can be pushed around by it.
 	var dom := 1.20
 	var nx := 56
 	var ny := 36
@@ -561,6 +641,85 @@ func _rewarp() -> void:
 	_ring_i = (_ring_i + 1) % _ring.size()
 	_warp_b = _ring[_ring_i]
 	_warp_t = 0.0
+	_warp_idle = 0.0
+
+
+## THE LOCAL EVOLUTION - the answer to "the map should slowly evolve, not in large jumps, and
+## not the entire thing at once".
+##
+## What this scene had was a WINDOW that moved and land that never changed, and both halves of
+## that were wrong. The window's move is global by construction - every line in the frame goes at
+## once - and it was gated on a section change that a spoken chapter never produces, so the sheet
+## either lurched as a whole or sat perfectly still. Reported both ways: first "super jumpy...
+## shifting the entire map at once", then "zoomed, but no longer moves at all".
+##
+## A swell is a gaussian bump ON THE LAND, in field coordinates, added to the field when the sheet
+## is sampled. Three properties matter and each is deliberate:
+##
+##   LOCAL. Its radius is a tenth to a third of the sheet, so the contours reorganise inside its
+##   footprint and the rest of the map holds still. The reader gets a region to watch changing
+##   rather than a whole frame refusing to sit still.
+##
+##   SLOW, AND AN EMA. The amplitude eases toward its target with a 7 to 18 second constant, so
+##   over one re-extraction (0.3 to 1.0 s) it moves by a few percent of a contour interval - a
+##   line creeps by a pixel or two. That is the difference between evolution and a step: a jump
+##   is not a matter of how far the land moved but of how much of it moved between two prints.
+##
+##   ANCHORED TO THE LAND, not to the window. The whole reason a re-print is invisible is that
+##   consecutive extractions read the same points of the field (see _make_job's lattice snap), and
+##   a swell that sat in sheet coordinates would slide under that snap and re-wobble every line in
+##   its reach. It is placed once, in field units, and stays there.
+##
+## A swell that has relaxed to nothing MOVES, which is the trick that keeps this cheap: it is
+## invisible at zero amplitude, so its next position costs nothing to change. Places, widths and
+## heights come from a pre-rolled ring taken by a counter - no rng inside the running sim, so a
+## live session and its export evolve identically.
+func _step_swells(dt: float) -> void:
+	if _swells.is_empty() or not _ladder:
+		return
+	var fspan := _fspan()
+	for sw in _swells:
+		if not bool(sw.placed):
+			_place_swell(sw, fspan)
+		# The EMA. `phase` is the target it is heading for: 1 = grown, 0 = gone.
+		var tgt := float(sw.tgt)
+		sw.k = lerpf(float(sw.k), tgt, 1.0 - exp(-dt / maxf(0.5, float(sw.tau))))
+		if absf(float(sw.k) - tgt) > 0.03:
+			continue
+		# Arrived. Rest a while at each end of the cycle - a map that never pauses reads as
+		# machinery - then either relax to nothing, or (having relaxed) move and grow again.
+		sw.rest = float(sw.rest) - dt
+		if float(sw.rest) > 0.0:
+			continue
+		if absf(tgt) > 0.01:
+			sw.tgt = 0.0                             # subside where it stands
+			sw.rest = 3.0 + 6.0 * float(sw.phase)
+		else:
+			_place_swell(sw, fspan)                  # invisible: move, then rise somewhere new
+	pass
+
+
+## Put a swell at the next pre-rolled slot, sized and aimed. Called at zero amplitude (or at
+## birth), so nothing on screen moves when it happens.
+func _place_swell(sw: Dictionary, fspan: Vector2) -> void:
+	var slot: Dictionary = _sw_ring[_sw_i % _sw_ring.size()]
+	_sw_i += 1
+	var frac: Vector2 = slot["frac"]
+	# In FIELD units, relative to where the window is now - so it lands inside the sheet the
+	# reader is looking at, and then stays on the land wherever the window goes afterward.
+	sw.c = (_warp_now() + frac) * fspan
+	sw.r = maxf(0.02, float(slot["rf"]) * maxf(fspan.x, fspan.y))
+	sw.tgt = float(slot["k"])
+	sw.k = 0.0
+	sw.rest = 2.0 + 5.0 * float(sw.phase)
+	sw.placed = true
+
+
+## The sheet's extent in FIELD units. One definition, used by the extraction, the summit table
+## and the swells - they have to agree about what a sheet fraction means.
+func _fspan() -> Vector2:
+	var u := maxf(1.0, unit())
+	return Vector2(size.x, size.y) * (SHEET * _span / u)
 
 
 func _site_pos(i: int) -> Vector2:
@@ -702,7 +861,6 @@ func _kick() -> void:
 func _make_job() -> SheetJob:
 	if not _ladder or size.x < 4.0:
 		return null
-	var u := maxf(1.0, unit())
 	var nx := _res
 	var ny := _res
 	# Square-ish cells: a square grid over a 16:9 frame samples twice as finely down the
@@ -717,7 +875,7 @@ func _make_job() -> SheetJob:
 	job.nx = nx
 	job.ny = ny
 	job.half = Vector2(size.x, size.y) * 0.5 * SHEET
-	job.fspan = Vector2(size.x, size.y) * (SHEET * _span / u)
+	job.fspan = _fspan()
 	# SNAP THE WINDOW TO ITS OWN SAMPLING LATTICE, and this is the fix that makes a re-print
 	# invisible. The land is static - only the window moves - so two extractions taken at the
 	# same lattice phase read the SAME points of the field and produce, cell for cell, the
@@ -735,6 +893,17 @@ func _make_job() -> SheetJob:
 	var raw := _warp_now() * job.fspan
 	job.off = Vector2(round(raw.x / cellf.x) * cellf.x, round(raw.y / cellf.y) * cellf.y)
 	job.warp = Vector2(job.off.x / maxf(0.0001, job.fspan.x), job.off.y / maxf(0.0001, job.fspan.y))
+	# The swells, in field units, as of this print (see _step_swells). Only the ones with
+	# something to contribute: a swell resting at zero amplitude is not worth an exp() per sample.
+	for sw in _swells:
+		var amp := float(sw.k) * _step_v
+		if absf(amp) < 0.001 * maxf(_step_v, 0.0001) or float(sw.r) <= 0.0:
+			continue
+		var c: Vector2 = sw.c
+		job.sw_x.append(c.x)
+		job.sw_y.append(c.y)
+		job.sw_r.append(float(sw.r))
+		job.sw_a.append(amp)
 	job.lo = _lo
 	job.step = _step_v
 	job.count = _levels
@@ -1024,6 +1193,13 @@ class SheetJob:
 	## KICKED, because the forge keeps one worker and replaces the pending snapshot when a
 	## newer kick arrives, so most kicked jobs are dropped without ever running.
 	var warp := Vector2.ZERO
+	## The local swells, flattened: centre, radius and amplitude in FIELD units, snapshotted at
+	## build time. Flat arrays rather than the scene's dictionaries because this crosses onto a
+	## worker thread - the sim keeps mutating its own copies while this one is being sampled.
+	var sw_x := PackedFloat32Array()
+	var sw_y := PackedFloat32Array()
+	var sw_r := PackedFloat32Array()
+	var sw_a := PackedFloat32Array()
 	var lo := 0.1
 	var step := 0.06
 	var count := 14
@@ -1060,11 +1236,30 @@ class SheetJob:
 		h.resize(nx * ny)
 		var ix := 1.0 / float(nx - 1)
 		var iy := 1.0 / float(ny - 1)
+		var nsw := sw_a.size()
 		for y in ny:
 			var qy := (float(y) * iy - 0.5) * fspan.y + off.y
 			var row := y * nx
 			for x in nx:
-				h[row + x] = fld.at(Vector2((float(x) * ix - 0.5) * fspan.x + off.x, qy))
+				var qx := (float(x) * ix - 0.5) * fspan.x + off.x
+				var v := fld.at(Vector2(qx, qy))
+				# THE LOCAL EVOLUTION, added to the land itself (see the scene's _step_swells):
+				# one compact bump per swell, so the contours reorganise inside its footprint
+				# and NOWHERE ELSE. In field units, so the window's lattice snap still holds.
+				#
+				# COMPACT, not gaussian, and that is the difference between "a region evolves"
+				# and "the map evolves": a gaussian at a tenth of its peak still moves a contour
+				# line by something the eye catches (a small elevation change crosses a lot of
+				# ground on flat land), so its tail reached most of the sheet. (1 - q^2)^3 is
+				# zero outside the circle and smooth at its rim - the standard spline bump.
+				for k in nsw:
+					var dx := (qx - sw_x[k]) / sw_r[k]
+					var dy := (qy - sw_y[k]) / sw_r[k]
+					var q2 := dx * dx + dy * dy
+					if q2 < 1.0:
+						var w := 1.0 - q2
+						v += sw_a[k] * w * w * w
+				h[row + x] = v
 
 		var org := -half
 		var cell := Vector2(2.0 * half.x * ix, 2.0 * half.y * iy)

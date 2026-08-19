@@ -13,6 +13,7 @@ from praxis.callbacks.lightning.generation_queue import GenerationQueueCallback
 from praxis.callbacks.lightning.governor import GNSBatchGovernor
 from praxis.callbacks.lightning.harmonic_weight_rl import HarmonicWeightRLCallback
 from praxis.callbacks.lightning.host_memory import HostMemoryCallback
+from praxis.callbacks.lightning.stall_watchdog import StallWatchdogCallback
 from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
@@ -55,6 +56,7 @@ __all__ = [
     "MemoryProfilerCallback",
     "ComputeProfilerCallback",
     "HostMemoryCallback",
+    "StallWatchdogCallback",
     "HarmonicWeightRLCallback",
     "EngagementLiveRewardCallback",
     "ExpertPoolCallback",

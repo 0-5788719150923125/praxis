@@ -45,6 +45,7 @@ def build_training_callbacks(
         EngagementLiveRewardCallback,
         HarmonicWeightRLCallback,
         HostMemoryCallback,
+        StallWatchdogCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
         PaperBuildCallback,
@@ -260,6 +261,9 @@ def build_training_callbacks(
     # {run_dir}/host_memory.log (flushed per write, so the tail survives an OOM
     # SIGKILL).
     callbacks.append(HostMemoryCallback(run_dir=cache_dir))
+    # Self-diagnosing wedge detector: dumps every thread's stack if a step
+    # overruns. Costs one armed timer per step and nothing else.
+    callbacks.append(StallWatchdogCallback(run_dir=cache_dir))
 
     if cfg.profile_memory:
         callbacks.append(

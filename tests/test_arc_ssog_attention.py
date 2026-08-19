@@ -15,23 +15,28 @@ from praxis.attention.arc_ssog import ARC_GATE_INIT, ArcSSOGAttention
 from praxis.attention.ssog import COLD_GATE_INIT, NUM_ATOMS, SSOGAttention
 
 
-def _module(cls=ArcSSOGAttention, **overrides):
+def _module(cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0, depth=4)
     cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
+    if cls is ArcSSOGAttention:
+        return cls(cfg, num_atoms=num_atoms, mu_init_max=mu_init_max), cfg
     return cls(cfg), cfg
 
 
 def test_registered_profiles():
     assert ATTENTION_REGISTRY["arc_ssog"] is ArcSSOGAttention
-    # The atom count is a registry PROFILE, not a config field or a CLI flag.
+    # Bank size and ladder span are ONE decision and both are registry
+    # PROFILE arguments, never config fields or CLI flags.
     wide = ATTENTION_REGISTRY["arc_ssog_wide"]
-    assert wide.func is ArcSSOGAttention and wide.keywords["num_atoms"] == 32
+    assert wide.func is ArcSSOGAttention
+    assert wide.keywords == {"num_atoms": 12, "mu_init_max": 128.0}
     cfg = PraxisConfig(hidden_size=64, num_heads=2, dropout=0.0, depth=3)
     cfg.causal = True
-    assert wide(cfg).num_atoms == 32
+    built = wide(cfg)
+    assert built.num_atoms == 12 and built.mu_init_max == 128.0
 
 
 def test_the_faithful_port_did_not_move():
@@ -94,19 +99,29 @@ def test_gate_is_warm_but_the_field_still_starts_frozen():
     assert torch.allclose(mu, base_mu.expand_as(mu), atol=1e-6)
 
 
-def test_atom_bank_is_populated_and_the_ladder_is_finite():
-    """The ladder now reaches past 88 tokens, where the direct
-    ``log(expm1(y))`` inverse softplus overflows float32 and silently produced
-    ``inf`` centres."""
+def test_default_ladder_stays_inside_the_window():
+    """Every atom inside the sequence window at every curriculum tier. An atom
+    centred outside it has its truncated mass renormalised onto the oldest
+    tokens - the softmax forces attention somewhere - which is a sink rather
+    than a long-range read. The wide profile put three atoms out there."""
     module, _ = _module()
-    assert module.num_atoms == 12
+    assert module.num_atoms == 4 and module.mu_init_max == 32.0
+    mu = F.softplus(module.raw_mu)
+    assert mu.max() <= 64.0
+    ladder = mu[0, 0]
+    assert torch.all(ladder[1:] > ladder[:-1])  # geometric, ordered
+    sigma = F.softplus(module.raw_sigma) + 0.25
+    assert (sigma / mu.clamp_min(1e-6)).max() < 1.0  # constant-Q
+
+
+def test_wide_profile_ladder_is_finite_past_the_overflow_point():
+    """``log(expm1(y))`` overflows float32 at y > ~88 and silently produced
+    ``inf`` centres; the wide ladder is the configuration that reaches there."""
+    module, _ = _module(num_atoms=12, mu_init_max=128.0)
     mu = F.softplus(module.raw_mu)
     sigma = F.softplus(module.raw_sigma) + 0.25
     assert torch.isfinite(mu).all() and torch.isfinite(sigma).all()
-    assert mu.max() > 88.0  # past the overflow point, which is the regression
-    ladder = mu[0, 0]
-    assert torch.all(ladder[1:] > ladder[:-1])  # geometric, ordered
-    assert (sigma / mu.clamp_min(1e-6)).max() < 1.0  # constant-Q, no atom wider than its lag
+    assert mu.max() > 88.0
 
 
 def test_metrics_and_snapshots_are_per_depth_and_declared():
@@ -153,3 +168,59 @@ def test_reaches_the_dashboard_through_the_precompute_recipe():
     for key in module.training_metrics():
         assert descriptions.get(key, {}).get("chart"), key
     assert descriptions["ssog_reach_d0"]["caller"] == "ArcSSOGAttention"
+
+
+def test_snapshots_issue_no_gpu_work():
+    """``dashboard_snapshots`` runs in the web layer's snapshot producer
+    thread, concurrently with training. GPU work there contends with the
+    training stream and can block on it forever - it wedged a run for six
+    hours, with every watchdog dump parked on the CUDA softmax in ``_atoms``.
+    The field is a few dozen floats, so all of this belongs on the host."""
+    if not torch.cuda.is_available():
+        pytest.skip("needs a GPU to observe device traffic")
+
+    module, _ = _module()
+    module = module.cuda()
+    torch.cuda.synchronize()
+    before = torch.cuda.memory_allocated()
+
+    snapshots = module.dashboard_snapshots()
+    metrics = module.training_metrics()
+
+    torch.cuda.synchronize()
+    assert torch.cuda.memory_allocated() == before, "snapshot path allocated on device"
+    assert snapshots and metrics
+    # And the intermediates really are host tensors, not just freed ones.
+    for tensor in module._atoms(0):
+        assert tensor.device.type == "cpu"
+    assert module._cascade().device.type == "cpu"
+
+
+def test_producer_thread_never_touches_the_model():
+    """The snapshot producer runs on a background thread. Any parameter read
+    there is a device call - ``.cpu()`` blocks just as a softmax does - and it
+    contends with training for the CUDA context. So the training thread
+    publishes and the producer only reads a stash of plain lists."""
+    import threading
+
+    module, _ = _module()
+    module.raw_mu.data.fill_(0.5)
+    module.training_metrics()  # training thread publishes
+    published = module.dashboard_snapshots()
+
+    # A producer read must not consult the parameters at all: mutate them and
+    # the stash must be unchanged until the next publish.
+    module.raw_mu.data.fill_(3.0)
+    assert module.dashboard_snapshots() == published
+    module.training_metrics()
+    assert module.dashboard_snapshots() != published
+
+    # And nothing in the read path can block on another thread.
+    done = threading.Event()
+    threading.Thread(
+        target=lambda: (module.dashboard_snapshots(), done.set()), daemon=True
+    ).start()
+    assert done.wait(timeout=5), "producer-thread read blocked"
+
+    payload = module.dashboard_snapshots()
+    assert all(isinstance(v["grid"], list) for v in payload.values())
