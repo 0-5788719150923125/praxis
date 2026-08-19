@@ -1217,6 +1217,23 @@ class PiperBackend(Backend):
                 params.get("noise_w", cfg.get("inference", {}).get("noise_w", 0.333))
             ) * float(step["noise_w_mul"])
             audio, per_token = self._run(group, voice, gp, cfg, sess, phonemizer)
+            # SAY WHICH WORDS CAME BACK WITHOUT A SPAN. ghost keeps them in the karaoke line
+            # either way now (it interpolates their timing - see
+            # GenerativeEditor._bridge_words), but a token the aligner cannot place is a real
+            # fault: it means the phoneme stream carries nothing for that word, so it is very
+            # likely not being SPOKEN either. That is how a year went missing from a chapter
+            # render with nothing anywhere to show it.
+            unplaced = [
+                str(t.get("text", ""))
+                for ti, t in enumerate(group)
+                if ti not in per_token and str(t.get("text", "")).strip()
+            ]
+            if unplaced:
+                print(
+                    "ghost/voice: no alignment for %d of %d tokens in this sentence: %s"
+                    % (len(unplaced), len(group), " ".join(unplaced[:8])),
+                    file=sys.stderr,
+                )
             audio = _effort(audio, sr, float(step["tilt"]), float(step["gain_db"]))
             if abs(pr - 1.0) > 1e-4:
                 audio = _resample(audio, pr)

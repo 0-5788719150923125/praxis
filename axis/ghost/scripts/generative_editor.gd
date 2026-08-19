@@ -78,6 +78,52 @@ const PUNCT_ALLOWED := [".", ",", "!", "?", ":", ";"]
 # buffer to drain; one halves that latency, and costs nothing now that the
 # inter-sentence gap is inserted at chunk boundaries too (see _drain_ready).
 const CHUNK_SENTENCES := 1
+
+# VOICES, plural. One tab per reader; a marker line in the script hands the next
+# passage to one of them.
+#
+#     <!-- speaker: 2 -->        (what a chapter file already carries)
+#     [speaker: 2]               (the same thing, typeable)
+#
+# A tab is a WHOLE settings page, not just a checkpoint id: the voice, the
+# reader within it, the tone, the pace, the pauses, the delivery dials and the
+# room are all per-tab. Two speakers in one reading are rarely the same person
+# recorded twice - they are usually a different person in a different room at a
+# different pace, and anything less than the full page cannot say that.
+#
+# The MARKER MUST OWN ITS LINE. Requiring both the keyword and its bracketing
+# means no sentence of prose can be mistaken for a cue, which matters because
+# the failure is silent: a mis-parsed cue does not error, it just reads the rest
+# of the chapter in the wrong voice.
+const SPEAKER_MARK := "^\\s*(?:<!--\\s*speaker\\s*:\\s*(\\d+)\\s*-->|\\[\\s*speaker\\s*:\\s*(\\d+)\\s*\\])\\s*$"
+# Everything else in <!-- --> is an authoring note and must never be spoken. The
+# markers are stripped by the split above this; this catches the rest.
+const HTML_COMMENT := "<!--[\\s\\S]*?-->"
+# Single digits, because the marker is a single digit and a chapter with ten
+# distinct readers is a different program from this one.
+const MAX_SLOTS := 9
+# THE HANDOVER. A change of speaker is a bigger boundary than a sentence end and
+# wants a bigger rest: one reader stops, the other starts, and run together they
+# read as one person changing their mind mid-paragraph rather than as two people.
+# This is the figure at Turn 1, ON TOP of the ordinary sentence seam, and the
+# slider scales it.
+#
+# GLOBAL, not per tab, and that is the point of it being above them: the pause
+# belongs to the BOUNDARY between two voices, not to either one of them, so
+# asking which tab owns it has no answer.
+const TURN_GAP := 0.55
+const MAX_TURN_SCALE := 6.0
+# ...and a ceiling on the whole rest, the seam included. Past a few seconds a
+# handover stops reading as a beat and starts reading as the file having ended.
+const TURN_CEILING := 4.0
+## One tab's worth of settings. Also the schema: [method _cfg] merges a stored
+## slot onto this, so a slot saved by an older build is missing keys rather than
+## broken, and a key added later arrives with a sane value everywhere at once.
+const SLOT_DEFAULTS := {
+	"voice": "", "speaker": 0, "tone": 0, "pace": 1.0, "pause": 1.0,
+	"dynamics": 0.5, "arc": 0.4, "effort": 0.35,
+	"echo": 0.0, "room": 0.0, "resonance": 0.0, "presence": 1.0, "ambience": 0.0,
+}
 ## Seconds of audio that must be queued before the first sample is heard, when there is
 ## no intro to serve as the lead. Chunks are one sentence, and a short opening sentence
 ## (1.13 s, measured) cannot cover the synthesis of a long second one (14.49 s), so
@@ -150,6 +196,28 @@ var _fx_pad: HSlider
 var _tone: OptionButton
 var _speaker: SpinBox
 var _speaker_row: HBoxContainer
+var _turn: HSlider
+var _tabs: TabBar
+var _tab_del: Button
+var _slots: Array = []         # [SLOT_DEFAULTS-shaped Dictionary], one per tab
+var _slot := 0                 # which tab the controls are currently showing
+var _syncing := false          # writing controls from a slot must not re-plan
+# WHEN THE ROOM CHANGES, in frames of the one continuous stream. The effects
+# chain is stateful across chunk boundaries - that is the whole reason it runs
+# here rather than in the host - so a second speaker cannot get their own chain
+# without cutting the first one's tail off mid-decay. What they get instead is
+# the same chain re-dialled at the exact frame their first sample is heard,
+# which is what a live slider move already does, just scheduled.
+var _fx_marks: Array = []      # [{at: int, slot: int}], ascending, absolute
+var _fx_live_slot := -1        # which slot the live chain is currently dialled to
+var _fx_queued_slot := -1      # ...and the last one a mark was written for
+# WHAT THE LAST PLAN NOTICED about the script - a speaker cue with no tab, a
+# macro with no default. Not written straight to the status line, for two
+# reasons that are both bugs it had: the line is overwritten by "Planned N
+# chunk(s)…" a moment later, and a warning written only when there is something
+# to warn about STAYS on screen after the text has been fixed. Rebuilt from
+# scratch by every _build_chunks, and read by whoever reports the plan.
+var _plan_note := ""
 var _stream_open := false      # explicit: a null playback must not retry forever
 var _epoch := 0                # bumped on a pace change; stale replies are dropped
 # THE PREDICTED TIMELINE. The scrub bar used to be scaled by how much audio had been
@@ -214,7 +282,7 @@ func _process(_delta: float) -> void:
 	var room := int(_playback.get_frames_available())
 	if room <= 0:
 		return
-	var avail := _pending.size() - _read
+	var avail := _fx_admit(_pending.size() - _read)
 	var n := mini(room, avail)
 	if n <= 0:
 		return
@@ -233,6 +301,29 @@ func _process(_delta: float) -> void:
 	if _read > 0 and (_read == _pending.size() or _read > 4 * _sr):
 		_pending = _pending.slice(_read)
 		_read = 0
+
+
+## THE ROOM CHANGES AT A FRAME, not at a chunk. Dial in every scheduled change the
+## push has reached, and report how many frames may go out before the next one.
+##
+## The coordinate is ABSOLUTE FRAMES PUSHED, which is the only clock these marks
+## can use. It is not what is being heard - the ring runs seconds ahead - and it
+## does not need to be: the chain transforms the samples at exactly these
+## positions on their way out, so aligning to the push aligns to the audio. Cut
+## short at the next mark rather than crossing it, or a whole buffer of one
+## speaker is read in the other's room.
+##
+## Split out of [method _process] because it is the arithmetic here that can be
+## wrong by a buffer, and a room that arrives a moment early is audible without
+## being attributable.
+func _fx_admit(avail: int) -> int:
+	while not _fx_marks.is_empty() and int((_fx_marks[0] as Dictionary)["at"]) <= _pushed:
+		var m: Dictionary = _fx_marks.pop_front()
+		_fx_live_slot = int(m["slot"])
+		_apply_fx(_fx, _cfg(_fx_live_slot))
+	if _fx_marks.is_empty():
+		return avail
+	return mini(avail, maxi(0, int((_fx_marks[0] as Dictionary)["at"]) - _pushed))
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -267,7 +358,7 @@ func _build_panel() -> void:
 	title_row.add_child(hide)
 
 	var hint := Label.new()
-	hint.text = "Paste a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Inline phonetics still work: [K AE T]."
+	hint.text = "Paste a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Inline phonetics still work: [K AE T]. A line reading <!-- speaker: 2 --> hands the rest to tab 2."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
@@ -277,7 +368,7 @@ func _build_panel() -> void:
 	_text.custom_minimum_size = Vector2(360, 180)
 	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_text.placeholder_text = "Once upon a time..."
-	_text.tooltip_text = "The script to read. Paste a whole chapter - it is cut into sentences and only a couple are ever synthesized ahead, so the first words play within seconds however long it is. Square brackets pin a pronunciation: [B IY1 UW0 K S]."
+	_text.tooltip_text = "The script to read. Paste a whole chapter - it is cut into sentences and only a couple are ever synthesized ahead, so the first words play within seconds however long it is. Square brackets pin a pronunciation: [B IY1 UW0 K S]. A line of its own reading <!-- speaker: 2 --> (or [speaker: 2]) reads everything after it with tab 2's settings; any other HTML comment is stripped rather than spoken. A template macro reads its default and never its own text: ${CHAPTERS_BEFORE_IN_WORDS:twenty-one} is read as \"twenty-one\"."
 	_text.text_changed.connect(func() -> void:
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec()
@@ -286,6 +377,77 @@ func _build_panel() -> void:
 		)
 	box.add_child(_text)
 
+	# A rule between the script and the cast. Everything from here to the tab bar
+	# is global; everything below the tab bar belongs to the tab that is showing.
+	box.add_child(HSeparator.new())
+
+	# THE HANDOVER REST, above the tabs because it belongs to no tab: it is the
+	# silence BETWEEN two of them. Unlike Pause it needs no re-synthesis - the
+	# gap is spliced in as the chunks are joined, not asked of the model - so it
+	# takes effect at the next handover rather than at the next chunk.
+	var turow := HBoxContainer.new()
+	turow.add_theme_constant_override("separation", 8)
+	box.add_child(turow)
+	var tul := Label.new()
+	tul.text = "Turn"
+	tul.custom_minimum_size = Vector2(72, 0)
+	tul.add_theme_font_size_override("font_size", 12)
+	turow.add_child(tul)
+	_turn = HSlider.new()
+	_turn.min_value = 0.0
+	_turn.max_value = MAX_TURN_SCALE
+	_turn.step = 0.05
+	_turn.value = 1.0
+	_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_turn.tooltip_text = ("How long the reading rests when the script CHANGES SPEAKER, on top of "
+		+ "the ordinary rest between sentences. 1 is a little over half a second - enough to "
+		+ "hear one reader stop and another begin; 0 hands over on the same beat as any other "
+		+ "sentence, which reads as one person changing their mind rather than as two people. "
+		+ "The whole rest is capped at four seconds however far this is pushed. It applies to "
+		+ "every tab, because the pause belongs to the boundary and not to either voice, and it "
+		+ "takes effect at the next handover - nothing has to be generated again.")
+	_turn.value_changed.connect(func(_v: float) -> void:
+		if _syncing:
+			return
+		_dirty = true
+		_last_edit_ms = Time.get_ticks_msec())
+	turow.add_child(_turn)
+
+	# THE TABS. Everything below this row belongs to the selected tab; the Speak
+	# button beside the voice picker does not - it reads the whole script, in
+	# every voice the script asks for. That is the one asymmetry in this panel
+	# and the tooltips say so, because the alternative was moving Speak away
+	# from the control it has always sat next to.
+	var tabrow := HBoxContainer.new()
+	tabrow.add_theme_constant_override("separation", 4)
+	box.add_child(tabrow)
+	_tabs = TabBar.new()
+	_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tabs.clip_tabs = false
+	_tabs.tooltip_text = ("Which voice's settings are shown below. A script speaks in tab 1 "
+		+ "until a line of its own says otherwise: <!-- speaker: 2 --> hands the rest of the "
+		+ "text to tab 2, and so on. Every setting under here - the voice, the reader, the "
+		+ "tone, the pace, the pauses, the delivery and the room - belongs to the selected "
+		+ "tab alone. Speak still reads the whole script.")
+	_tabs.add_tab("1")
+	_tabs.tab_selected.connect(_on_tab_selected)
+	tabrow.add_child(_tabs)
+	var tab_add := Button.new()
+	tab_add.text = "+"
+	tab_add.custom_minimum_size = Vector2(28, 28)
+	tab_add.tooltip_text = ("Add another voice. The new tab starts as a copy of this one, so "
+		+ "change its voice - two tabs reading identically is two tabs doing nothing.")
+	tab_add.pressed.connect(_on_tab_add)
+	tabrow.add_child(tab_add)
+	_tab_del = Button.new()
+	_tab_del.text = "×"
+	_tab_del.custom_minimum_size = Vector2(28, 28)
+	_tab_del.disabled = true          # tab 1 is the narrator; there is always one
+	_tab_del.tooltip_text = ("Remove this voice. The tabs after it move up a number, so a "
+		+ "script's speaker cues shift with them. Tab 1 cannot be removed.")
+	_tab_del.pressed.connect(_on_tab_del)
+	tabrow.add_child(_tab_del)
+
 	var vrow := HBoxContainer.new()
 	vrow.add_theme_constant_override("separation", 8)
 	box.add_child(vrow)
@@ -293,7 +455,10 @@ func _build_panel() -> void:
 	_voices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_voices.tooltip_text = "Which Piper model reads. Each is a different person with its own accent, recording and licence - the licence appears under the panel when you pick one. Changing this regenerates whatever has not been played yet."
 	_voices.item_selected.connect(func(_i: int) -> void:
+		if _syncing:
+			return
 		_show_voice_license()
+		_capture_slot()
 		# A voice change is not a re-pace. _repace keeps the stream and appends
 		# at the new setting, which for a VOICE would splice a second speaker
 		# mid-narration; and leaving the old requests in flight keeps both
@@ -330,6 +495,9 @@ func _build_panel() -> void:
 	_speaker.tooltip_text = "Which reader, on a model that holds more than one (libritts carries 904). Same model and same accent, a different person - so it changes WHO is reading, not how. Greyed out on single-speaker voices. Regenerates the un-played chunks."
 	_speaker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_speaker.value_changed.connect(func(_v: float) -> void:
+		if _syncing:
+			return
+		_capture_slot()
 		# same model, different reader: only the un-played chunks need redoing
 		if not _chunks.is_empty():
 			_repace()
@@ -351,6 +519,9 @@ func _build_panel() -> void:
 	for k in TONE_PRESETS:
 		_tone.add_item(String(k))
 	_tone.item_selected.connect(func(_i: int) -> void:
+		if _syncing:
+			return
+		_capture_slot()
 		# a tone changes the model's own parameters, so un-played chunks have
 		# to be regenerated - the same path a pace change takes
 		if not _chunks.is_empty():
@@ -358,7 +529,7 @@ func _build_panel() -> void:
 		# ...and it nudges the ambience bed, which is a LIVE effect: without this
 		# the preset's contribution only arrived at the next stream open, so a
 		# tone change mid-reading moved the voice and not the room around it.
-		_sync_fx(_fx)
+		_live_fx()
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	trow.add_child(_tone)
@@ -382,7 +553,10 @@ func _build_panel() -> void:
 	_rate.value = 1.0
 	_rate.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rate.tooltip_text = "Speaking rate. Takes effect from the next chunk - already-generated audio keeps its pace."
-	_rate.value_changed.connect(func(_v: float) -> void: _repace_timer.start())
+	_rate.value_changed.connect(func(_v: float) -> void:
+		if _syncing:
+			return
+		_repace_timer.start())
 	_rate_row.add_child(_rate)
 
 	# PAUSE. How long the reading rests on punctuation, as a multiple of the
@@ -411,7 +585,10 @@ func _build_panel() -> void:
 	_pause.value = 1.0
 	_pause.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_pause.tooltip_text = "How long to rest on punctuation - commas, semicolons, colons and sentence ends. 1 is the natural rest the model already takes; 0 runs straight through. Measured on one sentence: 1 adds about a third of a second across it, 2 about four fifths, 10 about three and a half - at 10 a colon rests for well over a second. Takes effect from the next chunk; already-generated audio keeps its pauses."
-	_pause.value_changed.connect(func(_v: float) -> void: _repace_timer.start())
+	_pause.value_changed.connect(func(_v: float) -> void:
+		if _syncing:
+			return
+		_repace_timer.start())
 	prow.add_child(_pause)
 
 	# Debounced rather than immediate: a slider drag emits a value per pixel,
@@ -420,6 +597,10 @@ func _build_panel() -> void:
 	_repace_timer.wait_time = 0.3
 	_repace_timer.one_shot = true
 	_repace_timer.timeout.connect(func() -> void:
+		# CAPTURE FIRST. _repace re-requests from the slot store, not from the
+		# controls, so a pace the slider knows about and the slot does not is a
+		# pace the regenerated chunks are read at the OLD value.
+		_capture_slot()
 		_repace()
 		_persist())
 	add_child(_repace_timer)
@@ -538,46 +719,249 @@ func _process_persist() -> void:
 
 func _persist() -> void:
 	_dirty = false
+	# The controls are the truth for the tab on screen; every other tab's truth
+	# is already in _slots. Capture before writing or the tab being edited saves
+	# whatever it held when it was last switched away from.
+	_capture_slot()
 	var cfg := ConfigFile.new()
 	cfg.load(CFG)                     # read-modify-write: never clobber [synth]
 	cfg.set_value("generative", "text", _text.text)
-	cfg.set_value("generative", "voice", _selected_voice_id())
-	cfg.set_value("generative", "pace", _rate.value)
-	cfg.set_value("generative", "pause", _pause.value)
-	cfg.set_value("generative", "echo", _fx_echo.value)
-	cfg.set_value("generative", "dynamics", _dynamics.value)
-	cfg.set_value("generative", "arc", _arc.value)
-	cfg.set_value("generative", "effort", _effort.value)
-	cfg.set_value("generative", "resonance", _fx_res.value)
-	cfg.set_value("generative", "room", _fx_room.value)
-	cfg.set_value("generative", "presence", _fx_presence.value)
-	cfg.set_value("generative", "ambience", _fx_pad.value)
-	cfg.set_value("generative", "tone", _tone.selected)
-	cfg.set_value("generative", "speaker", int(_speaker.value))
+	cfg.set_value("generative", "slots", _slots)
+	cfg.set_value("generative", "turn", _turn.value)
+	cfg.set_value("generative", "tab", _slot)
 	cfg.save(CFG)
 
 
 func _load_persisted() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(CFG) != OK:
-		return
-	_text.text = str(cfg.get_value("generative", "text", ""))
-	_rate.value = float(cfg.get_value("generative", "pace", 1.0))
-	_pause.value = float(cfg.get_value("generative", "pause", 1.0))
-	_want_voice = str(cfg.get_value("generative", "voice", ""))
-	_fx_echo.value = float(cfg.get_value("generative", "echo", 0.0))
-	_dynamics.value = float(cfg.get_value("generative", "dynamics", 0.5))
-	_arc.value = float(cfg.get_value("generative", "arc", 0.4))
-	_effort.value = float(cfg.get_value("generative", "effort", 0.35))
-	_fx_res.value = float(cfg.get_value("generative", "resonance", 0.0))
-	_fx_room.value = float(cfg.get_value("generative", "room", 0.0))
-	_fx_presence.value = float(cfg.get_value("generative", "presence", 1.0))
-	_fx_pad.value = float(cfg.get_value("generative", "ambience", 0.0))
-	_tone.select(clampi(int(cfg.get_value("generative", "tone", 0)), 0, TONE_PRESETS.size() - 1))
-	_speaker.value = float(cfg.get_value("generative", "speaker", 0))
+	var have := cfg.load(CFG) == OK
+	if have:
+		_text.text = str(cfg.get_value("generative", "text", ""))
+		_syncing = true
+		_turn.value = clampf(float(cfg.get_value("generative", "turn", 1.0)), 0.0, MAX_TURN_SCALE)
+		_syncing = false
+		for row in cfg.get_value("generative", "slots", []):
+			if row is Dictionary and _slots.size() < MAX_SLOTS:
+				_slots.append(_merge(row as Dictionary))
+	# MIGRATION, from the single-voice file. The old keys are read exactly once -
+	# whatever was set before the tabs existed becomes tab 1 - and are never
+	# written again, so the two shapes cannot drift apart.
+	if _slots.is_empty() and have:
+		_slots.append(_merge({
+			"voice": str(cfg.get_value("generative", "voice", "")),
+			"speaker": int(cfg.get_value("generative", "speaker", 0)),
+			"tone": int(cfg.get_value("generative", "tone", 0)),
+			"pace": float(cfg.get_value("generative", "pace", 1.0)),
+			"pause": float(cfg.get_value("generative", "pause", 1.0)),
+			"dynamics": float(cfg.get_value("generative", "dynamics", 0.5)),
+			"arc": float(cfg.get_value("generative", "arc", 0.4)),
+			"effort": float(cfg.get_value("generative", "effort", 0.35)),
+			"echo": float(cfg.get_value("generative", "echo", 0.0)),
+			"room": float(cfg.get_value("generative", "room", 0.0)),
+			"resonance": float(cfg.get_value("generative", "resonance", 0.0)),
+			"presence": float(cfg.get_value("generative", "presence", 1.0)),
+			"ambience": float(cfg.get_value("generative", "ambience", 0.0)),
+		}))
+	if _slots.is_empty():
+		_slots.append(SLOT_DEFAULTS.duplicate())
+	_slot = clampi(int(cfg.get_value("generative", "tab", 0)), 0, _slots.size() - 1)
+	_rebuild_tabs()
+	_apply_slot(_slot)
 	# Last, and once: the Tone preset nudges the ambience bed, so the chain cannot
-	# be synced before the preset is chosen.
-	_sync_fx(_fx)
+	# be dialled before the preset is chosen.
+	_apply_fx(_fx, _cfg(_slot))
+
+
+# --- voices, plural -----------------------------------------------------------
+
+
+## A stored slot merged onto [constant SLOT_DEFAULTS]: every key present, every
+## value the right type, and an index that cannot be out of range. Everything
+## downstream reads settings through here, so a tab deleted while its passages
+## are still queued degrades to the last tab rather than to a null.
+func _cfg(i: int) -> Dictionary:
+	if _slots.is_empty():
+		return SLOT_DEFAULTS.duplicate()
+	return _merge(_slots[clampi(i, 0, _slots.size() - 1)] as Dictionary)
+
+
+func _merge(row: Dictionary) -> Dictionary:
+	var out := SLOT_DEFAULTS.duplicate()
+	for k in out:
+		if not row.has(k):
+			continue
+		# The defaults double as the schema: an int key stays an int through a
+		# ConfigFile round trip, which stores every number as a float.
+		match typeof(out[k]):
+			TYPE_INT: out[k] = int(row[k])
+			TYPE_FLOAT: out[k] = float(row[k])
+			_: out[k] = str(row[k])
+	return out
+
+
+## The controls -> the selected slot.
+func _capture_slot() -> void:
+	if _slot < 0 or _slot >= _slots.size() or _rate == null:
+		return
+	_slots[_slot] = {
+		"voice": _selected_voice_id(), "speaker": int(_speaker.value),
+		"tone": _tone.selected, "pace": _rate.value, "pause": _pause.value,
+		"dynamics": _dynamics.value, "arc": _arc.value, "effort": _effort.value,
+		"echo": _fx_echo.value, "room": _fx_room.value, "resonance": _fx_res.value,
+		"presence": _fx_presence.value, "ambience": _fx_pad.value,
+	}
+
+
+## A slot -> the controls. Every write is inside `_syncing`, because each of
+## these controls answers a change by throwing away work in flight: without the
+## guard, showing a tab would restart the reading and re-request every chunk at
+## the settings of the tab that was just left.
+func _apply_slot(i: int) -> void:
+	var s := _cfg(i)
+	_syncing = true
+	_want_voice = String(s["voice"])
+	for k in _voice_meta.size():
+		if String((_voice_meta[k] as Dictionary).get("id", "")) == _want_voice:
+			_voices.select(k)
+			break
+	_tone.select(clampi(int(s["tone"]), 0, TONE_PRESETS.size() - 1))
+	_rate.value = float(s["pace"])
+	_pause.value = float(s["pause"])
+	_dynamics.value = float(s["dynamics"])
+	_arc.value = float(s["arc"])
+	_effort.value = float(s["effort"])
+	_fx_echo.value = float(s["echo"])
+	_fx_room.value = float(s["room"])
+	_fx_res.value = float(s["resonance"])
+	_fx_presence.value = float(s["presence"])
+	_fx_pad.value = float(s["ambience"])
+	# After the voice, because it is what sets the Speaker row's range - and a
+	# speaker id is only meaningful against the model that holds it.
+	_show_voice_license()
+	_speaker.value = clampf(float(int(s["speaker"])), _speaker.min_value, _speaker.max_value)
+	_syncing = false
+
+
+func _rebuild_tabs() -> void:
+	if _tabs == null:
+		return
+	_syncing = true
+	_tabs.clear_tabs()
+	for i in _slots.size():
+		_tabs.add_tab(str(i + 1))
+	_tabs.current_tab = clampi(_slot, 0, _slots.size() - 1)
+	_syncing = false
+	_tab_del.disabled = _slot == 0 or _slots.size() <= 1
+
+
+func _on_tab_selected(i: int) -> void:
+	if _syncing or i == _slot:
+		return
+	_capture_slot()
+	_slot = clampi(i, 0, _slots.size() - 1)
+	_apply_slot(_slot)
+	_tab_del.disabled = _slot == 0 or _slots.size() <= 1
+
+
+func _on_tab_add() -> void:
+	if _slots.size() >= MAX_SLOTS:
+		_set_status("Nine voices is the limit - a speaker cue is one digit.")
+		return
+	_capture_slot()
+	# A COPY, not the defaults. The new tab is reached by changing one thing
+	# about the reader you already have; starting from a blank page would mean
+	# re-dialling the room and the delivery for every voice in the chapter.
+	_slots.append(_cfg(_slot))
+	_slot = _slots.size() - 1
+	_rebuild_tabs()
+	_apply_slot(_slot)
+	_mark_stale()
+	_set_status("Voice %d added - give it its own reader, then cue it with <!-- speaker: %d -->."
+		% [_slot + 1, _slot + 1])
+	_dirty = true
+	_last_edit_ms = Time.get_ticks_msec()
+
+
+func _on_tab_del() -> void:
+	if _slot <= 0 or _slots.size() <= 1:
+		return          # tab 1 is the narrator, and a reading needs a reader
+	var gone := _slot
+	_slots.remove_at(gone)
+	_slot = clampi(gone - 1, 0, _slots.size() - 1)
+	_rebuild_tabs()
+	_apply_slot(_slot)
+	_mark_stale()
+	_set_status("Voice %d removed - the tabs after it have moved up a number." % (gone + 1))
+	_dirty = true
+	_last_edit_ms = Time.get_ticks_msec()
+
+
+## The reading on the stream no longer matches the panel. The same dot the text
+## box raises, and for the same reason: adding or removing a tab renumbers the
+## speaker cues, so what is playing was cut against a different cast.
+func _mark_stale() -> void:
+	if not _chunks.is_empty():
+		_go.text = "Speak ●"
+
+
+## Split a script into passages by speaker cue. Text before the first cue - and
+## a script with no cues at all, which is every script this panel read before
+## today - belongs to tab 1.
+##
+## Out-of-range cues CLAMP rather than fail. A chapter that names four speakers
+## against three tabs is a script being written, not an error to stop on, and
+## the status line says which cue was short.
+func _split_speakers(body: String) -> Array:
+	var mark := RegEx.new()
+	mark.compile(SPEAKER_MARK)
+	var out: Array = []
+	var slot := 0
+	var buf: PackedStringArray = PackedStringArray()
+	var over := 0
+	var front := 0          # 0 none, 1 inside the frontmatter, 2 past it
+	for line in body.split("\n"):
+		# FRONTMATTER IS NOT A SENTENCE. The cue syntax is a chapter file's own,
+		# so chapter files are what gets pasted in - and they open with a `---`
+		# block of metadata that the reader would otherwise announce ("title:
+		# Charlotte's Web of Lies") before the first real word. Only at the very
+		# top, and only the first block, so a `---` rule mid-text is left alone.
+		if front < 2 and String(line).strip_edges() == "---":
+			# `front` is still 0 only while nothing but blank lines has been seen
+			# (the test below moves it on at the first real one), so this needs no
+			# separate look at the buffer.
+			front = 1 if front == 0 else 2
+			continue
+		if front == 1:
+			continue
+		if front == 0 and not String(line).strip_edges().is_empty():
+			front = 2
+		var m := mark.search(String(line))
+		if m == null:
+			buf.append(String(line))
+			continue
+		var want := int(m.get_string(1) if not m.get_string(1).is_empty() else m.get_string(2))
+		var next := clampi(want - 1, 0, maxi(_slots.size() - 1, 0))
+		if want - 1 > next:
+			over = maxi(over, want)
+		if next == slot:
+			continue                  # a cue for the voice already reading
+		out.append({"slot": slot, "text": "\n".join(buf)})
+		buf = PackedStringArray()
+		slot = next
+	out.append({"slot": slot, "text": "\n".join(buf)})
+	if over > 0:
+		_note("the script cues speaker %d and there are only %d tabs, so it read in tab %d"
+			% [over, _slots.size(), _slots.size()])
+	# Authoring notes are not lines to read. The cues themselves are already gone
+	# (they were consumed above); this is every other comment in the file.
+	var strip := RegEx.new()
+	strip.compile(HTML_COMMENT)
+	var kept: Array = []
+	for seg in out:
+		var t := strip.sub(String((seg as Dictionary)["text"]), "", true).strip_edges()
+		if not t.is_empty():
+			kept.append({"slot": int((seg as Dictionary)["slot"]), "text": t})
+	return kept
 
 
 func _selected_voice_id() -> String:
@@ -709,29 +1093,48 @@ func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> 
 	sl.value = initial
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.value_changed.connect(func(_v: float) -> void:
-		_sync_fx(_fx)
+		if _syncing:
+			return
+		_capture_slot()
+		_live_fx()
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	row.add_child(sl)
 	return sl
 
 
-## Push the panel's settings onto a [VoiceFX] chain. ONE definition, because there
+## Push ONE VOICE'S settings onto a [VoiceFX] chain. ONE definition, because there
 ## were four lists of assignments - the slider callback, the config load, the
 ## stream opening and the export - and a dial had to appear in all four to work
 ## everywhere. Adding Room to three of them would have left one path silently
-## dry, which is the same class of bug [method _pad_level] was written to end:
+## dry, which is the same class of bug [method _pad_level_of] was written to end:
 ## live and render disagreeing about the room around the voice.
-func _sync_fx(fx: VoiceFX) -> void:
+##
+## It takes a SLOT rather than reading the panel, because the tab on screen is
+## not necessarily the voice being heard: while tab 1 narrates, tab 2's dials are
+## a room nobody is in yet.
+func _apply_fx(fx: VoiceFX, s: Dictionary) -> void:
 	if fx == null:
 		return
-	fx.echo_wet = _fx_echo.value
-	fx.resonance = _fx_res.value
-	fx.presence = _fx_presence.value
-	fx.pad = _pad_level()
+	fx.echo_wet = float(s["echo"])
+	fx.resonance = float(s["resonance"])
+	fx.presence = float(s["presence"])
+	fx.pad = _pad_level_of(s)
 	# One dial, so [RoomFX] does the collapsing: size and wet open together, and
 	# Resonance colours the tail the same way it does on Masking's bus.
-	fx.room.from_dial(_fx_room.value, _fx_res.value)
+	fx.room.from_dial(float(s["room"]), float(s["resonance"]))
+
+
+## A dial moved on the panel, applied to the LIVE chain - but only if the tab
+## being edited is the voice currently sounding. Turning up the reverb on a
+## character who has not spoken yet must not put the narrator in a cathedral;
+## the setting is stored either way, and arrives at that character's first word
+## through [member _fx_marks].
+func _live_fx() -> void:
+	if _fx_live_slot >= 0 and _fx_live_slot != _slot:
+		return
+	_fx_live_slot = _slot
+	_apply_fx(_fx, _cfg(_slot))
 
 
 func _set_status(msg: String) -> void:
@@ -847,7 +1250,7 @@ func _on_speak() -> void:
 		_set_status("Nothing speakable in that text.")
 		return
 	_go.text = "Speak"
-	_set_status("Planned %d chunk(s). Synthesizing the first…" % _chunks.size())
+	_set_status("Planned %d chunk(s). Synthesizing the first…%s" % [_chunks.size(), _plan_note])
 	_pump()
 
 
@@ -861,7 +1264,7 @@ func _restart_speaking() -> void:
 	_plan(body)
 	if _chunks.is_empty():
 		return
-	_set_status("Voice changed - reading again from the start…")
+	_set_status("Voice changed - reading again from the start…%s" % _plan_note)
 	_pump()
 
 
@@ -882,6 +1285,9 @@ func _plan(body: String) -> void:
 	_pending = PackedFloat32Array()
 	_read = 0
 	_elapsed = 0.0
+	_fx_marks = []
+	_fx_live_slot = -1
+	_fx_queued_slot = -1
 	# No scrub hooks are registered by this editor (see the withdrawal note above
 	# _repace), but clear them anyway: a file session opened earlier in the same process
 	# may have left some, and they must not describe a reading that no longer exists.
@@ -907,17 +1313,58 @@ func _plan(body: String) -> void:
 
 ## Pure: text in, chunk plan out. Shared by playback and by export, so an export
 ## cannot disturb the reading in progress.
+##
+## The speaker cues are resolved HERE and nowhere else: past this point a chunk
+## carries a slot number and every consumer - the request, the resampler, the
+## seam, the room - reads its settings from that. Nothing downstream has to know
+## that a script can change voice.
 func _build_chunks(body: String) -> Array:
+	var out: Array = []
+	var sentence_no := 0
+	var bare: PackedStringArray = PackedStringArray()
+	_plan_note = ""
+	for seg in _split_speakers(body):
+		var text := String((seg as Dictionary)["text"])
+		# Asked per PASSAGE rather than of the whole box, so a macro sitting in a
+		# stripped authoring note is not reported as one that will be missing
+		# from the reading - it was never going to be read either way.
+		bare.append_array(TextNorm.unresolved_macros(text))
+		var part := _cut(text, sentence_no)
+		var chunks: Array = part["chunks"]
+		sentence_no = int(part["sentence_no"])
+		if chunks.is_empty():
+			continue
+		# PLACEMENT IS PER PASSAGE. A speaker's turn is its own piece of
+		# discourse - it opens in its own register and settles across its own
+		# paragraphs - so measuring it against the whole chapter would hand the
+		# second voice the contour of a paragraph it is not in.
+		_place_chunks(chunks, text)
+		for c in chunks:
+			(c as Dictionary)["slot"] = int((seg as Dictionary)["slot"])
+		out.append_array(chunks)
+	# LAST, so it wins the status line. TextNorm has already warned into the log,
+	# but this is the surface someone is looking at with their hand on Speak, and
+	# a macro with no default is words missing from a reading about to be made.
+	if not bare.is_empty():
+		_note("%d macro(s) will not read as intended: %s - write ${NAME:value}"
+			% [bare.size(), ", ".join(bare)])
+	return out
+
+
+## One finding about the script, for the line that reports the plan.
+func _note(msg: String) -> void:
+	_plan_note += ("  " if _plan_note.is_empty() else "; ") + msg
+
+
+## One passage, cut at sentence boundaries. `sentence_no` runs across the WHOLE
+## script rather than restarting per passage: [Subtitles] windows the display by
+## that index, and two speakers sharing sentence 0 would have the overlay draw
+## both at once.
+func _cut(body: String, sentence_no: int) -> Dictionary:
 	var out: Array = []
 	var toks: Array = []
 	var words: Array = []
 	var sentences := 0
-	# Subtitles windows the display by this index (Subtitles.span_at, which turns these
-	# into one span per sentence and keeps the line up through the sentence's own pauses),
-	# so it must be a real, globally increasing sentence number. Hardcoding 0
-	# put every word of the chapter in one "sentence", which the overlay then
-	# tried to draw at once - it piled up and shrank toward nothing.
-	var sentence_no := 0
 	for sentence in Phonemes.parse(body):
 		for w in sentence:
 			var ph: Array = w.phones
@@ -978,36 +1425,33 @@ func _build_chunks(body: String) -> Array:
 			sentences = 0
 	if not toks.is_empty():
 		out.append({"tokens": toks, "words": words})
-	_place_chunks(out, body)
-	return out
+	return {"chunks": out, "sentence_no": sentence_no}
 
 
-## The selected preset, and the resample ratio it implies.
-func _tone_preset() -> Dictionary:
+## A slot's preset, and the resample ratio it implies.
+func _preset_of(s: Dictionary) -> Dictionary:
 	var keys := TONE_PRESETS.keys()
-	var i: int = clampi(_tone.selected, 0, keys.size() - 1)
-	return TONE_PRESETS[keys[i]]
+	return TONE_PRESETS[keys[clampi(int(s["tone"]), 0, keys.size() - 1)]]
 
 
-func _pitch_ratio() -> float:
-	return pow(2.0, float(_tone_preset()["semis"]) / 12.0)
+func _pitch_ratio_of(s: Dictionary) -> float:
+	return pow(2.0, float(_preset_of(s)["semis"]) / 12.0)
 
 
-## The Pause setting, as the multiplier the host expects. Null-guarded because
-## export_take and _pump are both reachable from outside this editor's own
-## lifecycle, and a missing slider should read as "the default rests", never as
-## zero - silently deleting every pause would be the worst possible failure.
-## The delivery settings, as the host expects them. Null-guarded like _pause_scale:
-## export_take and _pump are both reachable from outside this editor's lifecycle,
-## and a missing slider must read as "the old constant delivery", never as a
-## half-strength one nobody asked for.
-func _delivery() -> Dictionary:
+## One voice's delivery settings, as the host expects them.
+##
+## These used to be null-guarded against a missing slider, because export_take and
+## _pump are both reachable from outside this editor's own lifecycle. They read a
+## SLOT now, and a slot is [constant SLOT_DEFAULTS] merged with whatever was
+## stored - so the missing-value case is answered by the schema, once, for every
+## setting rather than one guard per dial.
+func _delivery_of(s: Dictionary) -> Dictionary:
 	return {
-		"dynamics": _open_up(_dynamics.value if _dynamics != null else 0.0),
+		"dynamics": _open_up(float(s["dynamics"])),
 		# ARC IN SEMITONES peak-to-peak. 3 was the old ceiling and is an ordinary
 		# paragraph reset; the curve below takes the top of the dial past it.
-		"prosody_arc": _open_up(_arc.value if _arc != null else 0.0) * 3.0,
-		"effort": _open_up(_effort.value if _effort != null else 0.0),
+		"prosody_arc": _open_up(float(s["arc"])) * 3.0,
+		"effort": _open_up(float(s["effort"])),
 	}
 
 
@@ -1036,27 +1480,40 @@ func _open_up(k: float) -> float:
 ## export louder, not quieter, and the take WAV and the finished MP4 measure within a
 ## decibel of each other on the pad band), but the two paths have to agree about this or
 ## nothing measured on one says anything about the other.
-func _pad_level() -> float:
-	if _fx_pad == null:
-		return 0.0
-	return clampf(_fx_pad.value + float(_tone_preset()["amb"]), 0.0, 1.0)
+func _pad_level_of(s: Dictionary) -> float:
+	return clampf(float(s["ambience"]) + float(_preset_of(s)["amb"]), 0.0, 1.0)
 
 
-func _pause_scale() -> float:
-	if _pause == null:
-		return 1.0
-	return clampf(_pause.value, 0.0, MAX_PAUSE_SCALE)
+func _pause_scale_of(s: Dictionary) -> float:
+	return clampf(float(s["pause"]), 0.0, MAX_PAUSE_SCALE)
 
 
 ## The silence at a chunk seam. The host inserts the same figure between
 ## sentences INSIDE a chunk, so a seam and an interior boundary stay the same
 ## length however the reading happens to have been cut up.
-func _seam_gap() -> float:
+func _seam_gap_of(s: Dictionary) -> float:
 	# Mid-sentence marks scale all the way - that is the complaint this slider answers.
 	# The gap BETWEEN sentences is capped, because it is the one that compounds: at 10x an
 	# uncapped seam is 3.2 s of dead air after every single sentence, which over a chapter is
 	# not a longer rest, it is a broken reading. 1.2 s is already a long, deliberate beat.
-	return minf(SENTENCE_GAP * _pause_scale(), SEAM_CEILING)
+	return minf(SENTENCE_GAP * _pause_scale_of(s), SEAM_CEILING)
+
+
+## The silence BEFORE chunk `idx` - the ordinary sentence seam, plus the turn
+## rest when the chunk before it was somebody else's.
+##
+## Both the live window and the export join chunks, so this is written once for
+## the same reason [method _request_args] is: the render has to be the reading
+## that was auditioned, and a second copy of a rule is where the two part.
+func _gap_before(chunks: Array, idx: int, s: Dictionary) -> float:
+	var g := _seam_gap_of(s)
+	if idx <= 0 or idx >= chunks.size():
+		return g
+	if int((chunks[idx - 1] as Dictionary).get("slot", 0)) \
+			== int((chunks[idx] as Dictionary).get("slot", 0)):
+		return g
+	return minf(g + TURN_GAP * clampf(_turn.value if _turn != null else 1.0,
+		0.0, MAX_TURN_SCALE), TURN_CEILING)
 
 
 ## Keep LOOKAHEAD chunks in flight and start playback as soon as the chunk we
@@ -1070,28 +1527,67 @@ func _buffered_seconds() -> float:
 	return float(maxi(_pending.size() - _read, 0) + queued) / float(maxi(_sr, 1))
 
 
+## Which checkpoint a slot reads with. A tab may name a voice this install does
+## not have - a config copied between machines, a model deleted - and the answer
+## to that is to read in whatever IS selected, not to fall silent halfway
+## through a chapter.
+func _voice_id_of(s: Dictionary) -> String:
+	var want := String(s["voice"])
+	for v in _voice_meta:
+		if String((v as Dictionary).get("id", "")) == want:
+			return want
+	var i := _voices.selected
+	if i >= 0 and i < _voice_meta.size():
+		return String((_voice_meta[i] as Dictionary).get("id", ""))
+	return ""
+
+
+## A slot's reader id, clamped to what its own model actually holds. Slots are
+## copied when a tab is added, so a speaker id chosen on libritts (904 readers)
+## can easily outlive the switch to a single-speaker voice.
+func _speaker_of(s: Dictionary) -> int:
+	var vid := _voice_id_of(s)
+	for v in _voice_meta:
+		if String((v as Dictionary).get("id", "")) == vid:
+			return clampi(int(s["speaker"]), 0, maxi(0, int((v as Dictionary).get("speakers", 1)) - 1))
+	return maxi(0, int(s["speaker"]))
+
+
+## Everything the host needs to read ONE chunk in ONE voice. Written once and
+## used by both the live window and the export, because the render must be the
+## performance that was auditioned - a second copy of this list is how the two
+## drift apart a parameter at a time.
+func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
+	var t := _preset_of(s)
+	# length_scale = r / pace: the model speaks r times slower so that
+	# playing back r times faster restores the intended pace
+	var r := _pitch_ratio_of(s)
+	var d := _delivery_of(s)
+	return {
+		"length_scale": r / maxf(float(s["pace"]) * float(t["pace"]), 0.1),
+		"noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
+		"speaker": _speaker_of(s),
+		"sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale_of(s),
+		"dynamics": d["dynamics"],
+		"prosody_arc": d["prosody_arc"],
+		"effort": d["effort"],
+		"plan_u": float(ch.get("plan_u", 0.0)),
+		"plan_v": float(ch.get("plan_v", 0.0)),
+		"tokens": ch["tokens"],
+	}
+
+
 func _pump() -> void:
+	if _voice_meta.is_empty():
+		return
 	while _in_flight < LOOKAHEAD and _next_to_request < _chunks.size() \
 			and _buffered_seconds() < LOOKAHEAD_SECONDS:
 		var idx := _next_to_request
 		_next_to_request += 1
 		_in_flight += 1
-		var vid := String(_voice_meta[_voices.selected].get("id", ""))
-		var t := _tone_preset()
-		var r := _pitch_ratio()
-		# length_scale = r / pace: the model speaks r times slower so that
-		# playing back r times faster restores the intended pace
-		var id := _host.request("", vid, TAKE_DIR + "/chunk_%d_%d.wav" % [idx, _epoch],
-			{"length_scale": r / maxf(_rate.value * float(t["pace"]), 0.1),
-			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
-			 "speaker": int(_speaker.value),
-			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
-			 "dynamics": _delivery()["dynamics"],
-			 "prosody_arc": _delivery()["prosody_arc"],
-			 "effort": _delivery()["effort"],
-			 "plan_u": float(_chunks[idx].get("plan_u", 0.0)),
-			 "plan_v": float(_chunks[idx].get("plan_v", 0.0)),
-			 "tokens": _chunks[idx]["tokens"]}, null)
+		var s := _cfg(int((_chunks[idx] as Dictionary).get("slot", 0)))
+		var id := _host.request("", _voice_id_of(s),
+			TAKE_DIR + "/chunk_%d_%d.wav" % [idx, _epoch], _request_args(s, _chunks[idx]), null)
 		_req_chunk[id] = {"idx": idx, "epoch": _epoch}
 
 
@@ -1109,24 +1605,46 @@ func _drain_ready() -> void:
 			return
 		var take: Dictionary = _ready_takes[found]
 		_ready_takes.remove_at(found)
+		var idx := int(take["index"])
 		_next_to_play += 1
 
 		var pcm := _read_wav(String(take["wav"]))
 		if pcm.is_empty():
 			continue
-		var ratio := _pitch_ratio()
+		var slot := 0
+		if idx >= 0 and idx < _chunks.size():
+			slot = int((_chunks[idx] as Dictionary).get("slot", 0))
+		var s := _cfg(slot)
+		var ratio := _pitch_ratio_of(s)
 		if absf(ratio - 1.0) > 0.001:
 			pcm = _resample(pcm, ratio)
 		if _next_to_play > 1:
 			# a breath between sentences, at the seam the host cannot see.
 			# Scaled by Pause like every other rest, or the control would do
 			# nothing at all at CHUNK_SENTENCES = 1 - every sentence boundary in
-			# the reading IS a seam, and they would all stay 0.32 s.
-			var seam := _seam_gap()
+			# the reading IS a seam, and they would all stay 0.32 s. A handover
+			# takes the Turn rest on top.
+			var seam := _gap_before(_chunks, idx, s)
 			var gap := PackedFloat32Array()
 			gap.resize(int(seam * float(_sr)))
 			_pending.append_array(gap)
 			_elapsed += seam
+		# SCHEDULE THE ROOM, do not switch it here. This runs when a chunk is
+		# DECODED, which is seconds ahead of when it is heard - dialling the
+		# chain now would put the next speaker's room over the end of this one's
+		# last sentence. The mark carries the frame instead, and _process applies
+		# it as the playhead reaches it. The first mark sits at 0 so the intro is
+		# already in the opening voice's room rather than in nobody's.
+		#
+		# AFTER the gap, deliberately: the handover silence belongs to the voice
+		# leaving it, whose reverb is still decaying through it. Dialling the new
+		# room at the start of the rest would cut that tail over to a different
+		# space halfway down, which is the one thing a room never does.
+		if slot != _fx_queued_slot:
+			_fx_queued_slot = slot
+			_fx_marks.append({
+				"at": 0 if _fx_marks.is_empty() else _pushed + _pending.size() - _read,
+				"slot": slot})
 		# the model timed each chunk from zero; shift into stream time
 		for w in take["words"]:
 			var d: Dictionary = (w as Dictionary).duplicate()
@@ -1161,8 +1679,10 @@ func _drain_ready() -> void:
 			_fx.setup(_sr)
 			# every dial onto the fresh chain, in one call - the preset's own nudge
 			# to the bed included: a mood is carried by the room as much as by the
-			# reading
-			_sync_fx(_fx)
+			# reading. The opening voice's, not the tab on screen's.
+			_fx_live_slot = int((_fx_marks[0] as Dictionary)["slot"]) if not _fx_marks.is_empty() \
+				else slot
+			_apply_fx(_fx, _cfg(_fx_live_slot))
 			# the session opens on the FIRST chunk and never again - that is the
 			# whole point: one unbroken take, so the Director does not re-cut
 			# and the harmonic seed does not re-derive every few sentences
@@ -1222,8 +1742,8 @@ func _repace() -> void:
 	# Same reasoning as _jump_to_chunk: the host keeps computing what it was given, so the
 	# accounting for it has to survive or the pump will pile more on top.
 	_next_to_request = _next_to_play
-	_set_status("Pace %.2fx, pause %.2fx - regenerating from chunk %d…"
-		% [_rate.value, _pause_scale(), _next_to_play + 1])
+	_set_status("Voice %d at pace %.2fx, pause %.2fx - regenerating from chunk %d…"
+		% [_slot + 1, _rate.value, clampf(_pause.value, 0.0, MAX_PAUSE_SCALE), _next_to_play + 1])
 	_pump()
 
 
@@ -1287,30 +1807,26 @@ func export_take() -> String:
 	var chunks := _build_chunks(body)
 	if chunks.is_empty():
 		return ""
-	var vid := String(_voice_meta[_voices.selected].get("id", ""))
-	var t := _tone_preset()
-	var ratio := _pitch_ratio()
 	var stamp := Time.get_ticks_msec()
 	var pcm := PackedFloat32Array()
 	var words: Array = []
 	var elapsed := 0.0
+	# Where the reading changes voice, in frames of the finished take - the
+	# export's copy of [member _fx_marks], for the same reason and applied the
+	# same way at the bottom of this function.
+	var marks: Array = []
+	var last_slot := -1
 
 	for i in chunks.size():
 		_set_status("Rendering for export: %d of %d…" % [i + 1, chunks.size()])
-		var id := _host.request("", vid, TAKE_DIR + "/export_%d_%d.wav" % [stamp, i],
-			{"length_scale": ratio / maxf(_rate.value * float(t["pace"]), 0.1),
-			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
-			 "speaker": int(_speaker.value),
-			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
-			 # The SAME delivery the preview used. An export that re-derived its own
-			 # would be a different performance from the one that was auditioned,
-			 # which is the one thing the render must never be.
-			 "dynamics": _delivery()["dynamics"],
-			 "prosody_arc": _delivery()["prosody_arc"],
-			 "effort": _delivery()["effort"],
-			 "plan_u": float(chunks[i].get("plan_u", 0.0)),
-			 "plan_v": float(chunks[i].get("plan_v", 0.0)),
-			 "tokens": chunks[i]["tokens"]}, null)
+		# The SAME arguments the preview used, from the SAME builder. An export
+		# that re-derived its own would be a different performance from the one
+		# that was auditioned, which is the one thing the render must never be.
+		var slot := int((chunks[i] as Dictionary).get("slot", 0))
+		var s := _cfg(slot)
+		var ratio := _pitch_ratio_of(s)
+		var id := _host.request("", _voice_id_of(s),
+			TAKE_DIR + "/export_%d_%d.wav" % [stamp, i], _request_args(s, chunks[i]), null)
 		var res: Array = []
 		while true:
 			res = await _host.synthesized
@@ -1325,21 +1841,28 @@ func export_take() -> String:
 		if absf(ratio - 1.0) > 0.001:
 			part = _resample(part, ratio)
 		if i > 0:
-			var seam := _seam_gap()
+			var seam := _gap_before(chunks, i, s)
 			var gap := PackedFloat32Array()
 			gap.resize(int(seam * float(_sr)))
 			pcm.append_array(gap)
 			elapsed += seam
+		# after the gap, for the reason spelled out in _drain_ready
+		if slot != last_slot:
+			last_slot = slot
+			marks.append({"at": pcm.size(), "slot": slot})
 		var by_index := {}
 		for sp in out.get("tokens", []):
 			by_index[int((sp as Dictionary).get("index", -1))] = sp
+		var rows: Array = []
 		for w in chunks[i]["words"]:
 			var span: Variant = by_index.get(int(w["index"]))
-			if span == null:
-				continue
-			words.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
-				"t0": float((span as Dictionary).get("t0", 0.0)) / ratio + elapsed,
-				"t1": float((span as Dictionary).get("t1", 0.0)) / ratio + elapsed})
+			rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
+				"t0": 0.0 if span == null else
+					float((span as Dictionary).get("t0", 0.0)) / ratio + elapsed,
+				"t1": 0.0 if span == null else
+					float((span as Dictionary).get("t1", 0.0)) / ratio + elapsed,
+				"ok": span != null})
+		words.append_array(_bridge_words(rows, "export chunk %d" % i))
 		pcm.append_array(part)
 		elapsed += float(part.size()) / float(_sr)
 
@@ -1369,7 +1892,6 @@ func export_take() -> String:
 	var fx := VoiceFX.new()
 	fx.pad_seed = hash(body)
 	fx.setup(_sr)
-	_sync_fx(fx)
 	# SEED THE KEY, or the intro is silent anyway. The pad picks its tonic from the
 	# tracked pitch of the voice, and the tracker returns 0 on silence - so during a
 	# leading pad of pure zeros `_tonic` never rises off 0, `_start_tone` refuses to
@@ -1378,7 +1900,26 @@ func export_take() -> String:
 	# key up front is what lets the bed be playing before the first word.
 	if intro > 0.0:
 		fx.prime_key(pcm)
-	pcm = fx.process(pcm)
+	# ONE CHAIN, RE-DIALLED per passage - never one chain per voice. The effects
+	# are stateful, so a second chain would start each speaker in a dead room and
+	# cut the previous one's tail off at the change; re-dialling shares the decay
+	# across the join, which is what a room in the world does when the person
+	# talking in it changes.
+	if marks.is_empty():
+		marks = [{"at": 0, "slot": 0}]
+	var head := int(intro * float(_sr))
+	for m in marks:
+		(m as Dictionary)["at"] = int((m as Dictionary)["at"]) + head
+	(marks[0] as Dictionary)["at"] = 0        # the first voice owns the intro
+	var wet := PackedFloat32Array()
+	for k in marks.size():
+		var a := int((marks[k] as Dictionary)["at"])
+		var b := pcm.size() if k == marks.size() - 1 else int((marks[k + 1] as Dictionary)["at"])
+		if b <= a:
+			continue
+		_apply_fx(fx, _cfg(int((marks[k] as Dictionary)["slot"])))
+		wet.append_array(fx.process(pcm.slice(a, b)))
+	pcm = wet
 
 	var path := TAKE_DIR + "/take_%d.wav" % stamp
 	var abs_path := _write_wav(path, pcm)
@@ -1431,6 +1972,52 @@ func _write_wav(path: String, pcm: PackedFloat32Array) -> String:
 # --- subtitles ----------------------------------------------------------------
 
 
+## KEEP EVERY WORD, even one the aligner had no span for.
+##
+## Both paths below used to `continue` past a word whose token the host did not return a span
+## for, which deletes it from the karaoke line without a word anywhere about it. That is how a
+## chapter render came back reading "an opponent who left the building in" with the year simply
+## absent (the root cause was upstream - see TextNorm._expand_numbers - but this is what made it
+## SILENT, and it would hide the next one just as well).
+##
+## A word with no span keeps its text and takes a timing interpolated across the gap between its
+## nearest aligned neighbours, so the line reads correctly and the highlight sweeps through it at
+## a plausible rate. The count is reported once per take, because an aligner that misses words is
+## a real fault worth seeing in the log even when the subtitle no longer loses them.
+static func _bridge_words(rows: Array, label: String) -> Array:
+	var missing := 0
+	var n := rows.size()
+	for i in n:
+		if bool((rows[i] as Dictionary)["ok"]):
+			continue
+		missing += 1
+		# The aligned neighbours either side, and how many unaligned words share the gap.
+		var lo := i - 1
+		while lo >= 0 and not bool((rows[lo] as Dictionary)["ok"]):
+			lo -= 1
+		var hi := i + 1
+		while hi < n and not bool((rows[hi] as Dictionary)["ok"]):
+			hi += 1
+		var t0: float = float((rows[lo] as Dictionary)["t1"]) if lo >= 0 else 0.0
+		var t1: float = float((rows[hi] as Dictionary)["t0"]) if hi < n else t0 + 0.25
+		if t1 <= t0:
+			t1 = t0 + 0.25
+		var run := float(maxi(1, (hi if hi < n else n) - (lo + 1)))
+		var k := float(i - (lo + 1))
+		var step := (t1 - t0) / run
+		var row: Dictionary = rows[i]
+		row["t0"] = t0 + step * k
+		row["t1"] = t0 + step * (k + 1.0)
+	if missing > 0:
+		push_warning("ghost/voice: %s - the aligner returned no span for %d of %d words; "
+			% [label, missing, n] + "their subtitle timing is interpolated (text is intact)")
+	var out: Array = []
+	for r in rows:
+		var d: Dictionary = r
+		out.append({"text": d["text"], "sentence": d["sentence"], "t0": d["t0"], "t1": d["t1"]})
+	return out
+
+
 ## Rebuild word timings from the per-phone durations the model returned.
 ##
 ## The backend hands back one entry per phone we sent, in order, so the word
@@ -1443,14 +2030,13 @@ func _words_for(idx: int, spans: Array) -> Array:
 	var by_index := {}
 	for s in spans:
 		by_index[int((s as Dictionary).get("index", -1))] = s
-	var out: Array = []
+	var rows: Array = []
 	for w in _chunks[idx]["words"]:
 		var span: Variant = by_index.get(int(w["index"]))
-		if span == null:
-			continue
-		out.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
-			"t0": float((span as Dictionary).get("t0", 0.0)),
-			"t1": float((span as Dictionary).get("t1", 0.0))})
-	return out
+		rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
+			"t0": 0.0 if span == null else float((span as Dictionary).get("t0", 0.0)),
+			"t1": 0.0 if span == null else float((span as Dictionary).get("t1", 0.0)),
+			"ok": span != null})
+	return _bridge_words(rows, "chunk %d" % idx)
 
 

@@ -170,6 +170,20 @@ PRESENT_TAGS = frozenset(("VBZ",))
 # `cut`, `set`, `put` and every other invariant verb.
 UNMARKED_TAGS = frozenset(("VB", "VBP"))
 
+# PRESENT EVIDENCE FROM AN AUXILIARY, which is the one place a VBP tag can be trusted.
+#
+# VBP is unmarked on the word being decided (`read` spells its present and its past alike, so a
+# VBP on it means the tagger found nothing), and it is not much better on an arbitrary other
+# word: measured, this tagger returns VBP for `forgotten`, which is morphologically a participle
+# and can only be VBN. Trusting VBP wholesale therefore traded one error for another - it fixed
+# "they are issued a face and they read everything through it" and broke "I'd forgotten I read
+# it", where the scan stopped at the mis-tagged participle instead of walking on to `told`.
+#
+# What IS reliable is an inflected form of BE or HAVE. `am`, `is`, `are`, `have`, `has` are the
+# commonest present cue in English prose, they are the words that carry the tense of every
+# periphrastic verb, and they are already enumerated here - closed by construction, not by hope.
+# So: VBZ anywhere, VBP only on those.
+
 # THE ONE WORD LIST IN THIS FILE, and the only one that can be complete: every
 # inflected form of BE and HAVE. English has three auxiliary verbs and these are
 # two of them - the two whose complement is a PARTICIPLE ("was read aloud", "had
@@ -220,6 +234,42 @@ NARRATIVE_MARGIN = 1.5
 # rendering of the same segments is the same word said in a sentence.
 _LEVEL = str.maketrans({"ˌ": "ˈ"})
 _MARK = "ˈ"
+
+
+def _enclitic_aux(word: str) -> bool:
+    """`I've`, `they'd`, `we're`, `I'm` - a subject with BE or HAVE fused onto it.
+
+    ghost keeps the contraction as ONE token on purpose (the karaoke line shows the source
+    spelling), and this tagger reads `I've` as a proper noun - so nothing in the cascade saw the
+    auxiliary that is plainly there, and "I've read it more times than you would believe" had no
+    participle evidence at all. A suffix test rather than a list, because these four enclitics ARE
+    the contracted forms of be and have, and there are only four.
+
+    `'s` is deliberately absent: it is also the possessive, and "the man's read on the situation"
+    is a noun. Treating it as an auxiliary would make that a participle.
+    """
+    return word.endswith(("'ve", "'d", "'re", "'m"))
+
+
+def _tense_at(tags: list, lower: list, j: int) -> str:
+    """"past", "present" or "" for the verb at `j` - a participle's tense read off its AUXILIARY.
+
+    "are issued" is present and "was issued" is past, and the participle is VBN in both, so a
+    scan that took VBN at face value read the passive of a present clause as evidence FOR the
+    past. The tense of a periphrastic verb sits on its auxiliary; this is the one place that is
+    written down, and rules 6 and 7 both consult it rather than reading tags directly.
+
+    A bare VBN with no auxiliary in front of it - "the letter read aloud in court" - is a reduced
+    relative, and past.
+    """
+    tag = tags[j]
+    if tag in ("VBN", "VBG") and j and lower[j - 1] in BE_HAVE:
+        return _tense_at(tags, lower, j - 1)      # the auxiliary carries the tense
+    if tag in PAST_TAGS:
+        return "past"
+    if tag == "VBZ" or (tag == "VBP" and lower[j] in BE_HAVE):
+        return "present"
+    return ""
 
 
 def _shape(s: str) -> tuple:
@@ -473,8 +523,20 @@ class Homographs:
         #    verb-ish tag would drop the one case this rule exists for; what keeps
         #    "it was a refund" and "I was in the room" out is the closed-class check
         #    a few lines up, which is nltk's stopword corpus and not a guess.
-        if wi and lower[wi - 1] in BE_HAVE:
-            return "VBD", "after auxiliary %r" % lower[wi - 1]
+        #    ADVERBS DO NOT BREAK THE AUXILIARY'S GRIP, and the immediate-neighbour test used to
+        #    let them: "is not read", "have never read", "had already read" are all participles
+        #    and all three missed this rule, which is how a whole-book measurement caught them
+        #    (the veto in 3b then flipped them to the present reading, which is how they became
+        #    visible at all). Only adverbs and negation may be skipped - a subject or an object
+        #    in between means the auxiliary governs something else.
+        for back in range(1, LICENSER_REACH + 1):
+            j = wi - back
+            if j < 0:
+                break
+            if lower[j] in BE_HAVE or _enclitic_aux(lower[j]):
+                return "VBD", "after auxiliary %r" % lower[j]
+            if tags[j] not in ("RB", "RBR", "RBS"):
+                break
 
         # 2. POSITION BEATS A VERB TAG for a word sitting where no verb can sit.
         #    Only a verb tag: a determiner after a determiner ("half a breath",
@@ -489,6 +551,45 @@ class Homographs:
         #    for the same reason as above: a sentence-initial noun is just a noun.
         if penn in VERB_TAGS and all(tags[j] in PRE_IMPERATIVE for j in range(wi)):
             return "VB", "no subject before it, imperative"
+
+        # 3b. COORDINATION AGREES IN TENSE, and that outranks a past tag on a verb whose past is
+        #     spelled like its present. Rule 4 below believes a marked tag, which is right when
+        #     the SPELLING marks it - but `read`, `cut`, `set` and `wound` are spelled the same
+        #     either way, so VBD on one of them is the tagger guessing from context, and a
+        #     coordinated present clause is that same context saying otherwise.
+        #
+        #     Every clause of the guard is doing work. Across exactly ONE coordinator, which is
+        #     rule 7's own reach and the reason a complement clause cannot qualify - without it
+        #     "I know he read it" would flip, since `know` is present and the reading is past.
+        #     Nothing past in between, or "he stood up and read the letter" would flip too. And
+        #     never on an -ed form: that is marked by its spelling, so the tag is not a guess.
+        #     A FINITE CLAUSE HAS A SUBJECT, and requiring one immediately before the verb is
+        #     what keeps this off reduced passives - ", read out of him by the only unit" and
+        #     ", one woman, read from two sides," are participial phrases, not coordinated
+        #     clauses, and both were flipped to the present reading before this guard existed.
+        #     A comma is not a subject; a pronoun or a noun is. (VBN is excluded for the same
+        #     reason: a participle tag names a FORM, not a tense the tagger guessed at, and
+        #     `read` as a participle is ɹˈɛd whatever tense the clause around it carries.)
+        subject_before = wi > 0 and tags[wi - 1] in (
+            "PRP", "NN", "NNS", "NNP", "NNPS", "EX", "WDT", "WP"
+        )
+        if penn == "VBD" and subject_before and not lower[wi].endswith("ed"):
+            crossed = False
+            for j in range(wi - 1, -1, -1):
+                if tags[j] == "CC":
+                    if crossed:
+                        break
+                    crossed = True
+                    continue
+                if tags[j] in (".", ":", "``", "''"):
+                    break
+                if not crossed:
+                    continue
+                t = _tense_at(tags, lower, j)
+                if t == "past":
+                    break
+                if t == "present":
+                    return FAMILY["VBP"], "coordinated with present %r" % lower[j]
 
         # 4. The tag is real evidence - a past form, a participle, a third-person
         #    present, a noun, an adjective. Believe it.
@@ -518,9 +619,10 @@ class Homographs:
         #    ("I'd forgotten I read it"). Both are the same scan, so both are one
         #    rule rather than two special cases.
         for j in range(wi - 1, -1, -1):
-            if tags[j] in PAST_TAGS:
+            t = _tense_at(tags, lower, j)
+            if t == "past":
                 return "VBD", "follows %s %r" % (tags[j], lower[j])
-            if tags[j] in PRESENT_TAGS:
+            if t == "present":
                 return fam, "follows %s %r" % (tags[j], lower[j])
 
         # 7. ...or the first conjunct's tense, taken from the second: "We read it
@@ -533,9 +635,10 @@ class Homographs:
                 continue
             if not crossed:
                 continue
-            if tags[j] in PAST_TAGS:
+            t = _tense_at(tags, lower, j)
+            if t == "past":
                 return "VBD", "conjoined with %s %r" % (tags[j], lower[j])
-            if tags[j] in PRESENT_TAGS:
+            if t == "present":
                 return fam, "conjoined with %s %r" % (tags[j], lower[j])
 
         # 8. Nothing in the clause at all. Fall back to the tense the prose is

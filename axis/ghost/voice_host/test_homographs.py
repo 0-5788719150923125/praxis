@@ -119,6 +119,17 @@ SWITCHES = [
     # a participle the perceptron calls something else; the auxiliary decides
     ("The letter was read aloud.", "read", "past", ()),
     ("The names were read out in order.", "read", "past", ()),
+    # AN ADVERB DOES NOT BREAK THE AUXILIARY'S GRIP. All three of these missed the
+    # auxiliary rule while it only looked at the immediate neighbour, and a whole-book
+    # measurement is what turned them up.
+    ("A book that is not read has to live somewhere else.", "read", "past", ()),
+    ("You have never read the first thing.", "read", "past", ()),
+    ("They had only ever read about it.", "read", "past", ()),
+    # ...AND NEITHER DOES A CONTRACTION. ghost keeps `I've` as one token so the karaoke
+    # line shows the source spelling, and the tagger calls it a proper noun - so nothing
+    # in the cascade saw the auxiliary until the enclitic test existed.
+    ("I've read it more times than you would believe.", "read", "past", ()),
+    ("If you've read this book from the front it is obvious.", "read", "past", ()),
     # THE SECOND REPORT, verbatim from north-star ch12 - three sites in one
     # paragraph, all past, all previously spoken in the present. The tagger calls
     # the first two VBP and the third VB: no morphological evidence at all, so
@@ -175,6 +186,18 @@ def check_switches() -> None:
 
 # -- HOLDS: it must not fire here ------------------------------------------
 
+# COORDINATION AGREES IN TENSE, and a VBD tag on an invariant verb is a guess the clause can
+# overrule. "They are issued a face and they read everything through it" is present in both
+# halves; the tagger says VBD and the sentence says otherwise. The three HOLDS below are the
+# constructions that must NOT be flipped by that rule, and each one broke a different clause of
+# its guard while it was being written: a complement clause ("I know he read it" - no coordinator
+# crossed), a past coordinate ("stood up and read" - a past verb intervenes), and a reduced
+# passive (", read out of him" - a participial phrase has no subject before the verb).
+PRESENT_SWITCHES = [
+    ("They are issued a face and they read everything through it.", "read"),
+    ("The clerks are patient and they read every line.", "read"),
+]
+
 HOLDS = [
     # present and future: eSpeak's default is already right. Each of these carries
     # the PAST_NARRATIVE context, because holding without a prior proves nothing -
@@ -226,6 +249,21 @@ HOLDS = [
     ("It was above the door.", "above", ()),
     ("They get it.", "get", ()),
 ]
+
+
+def check_present_coordination() -> None:
+    """A coordinated present clause overrules a past TAG on an invariant verb."""
+    # The present reading of an invariant verb IS its bare-verb reading, which is the frame the
+    # switches already use for the verb direction.
+    frame, slot = EXPECT["verb"]
+    for sentence, word in PRESENT_SWITCHES:
+        want = _speak([frame.format(word)])[0].split()[slot]
+        got = _read(sentence, word, ())
+        # Either the pass rewrote it to the present reading, or it left the base reading -
+        # which for `read` IS the present one. Both are correct; being rewritten to the PAST
+        # reading is not.
+        assert got in ("", want), f"{sentence!r}: {word} -> {got}, wanted {want} or no change"
+        print(f"    {sentence[:58]:60s} {word} -> {got or 'left alone'}")
 
 
 def check_holds() -> None:
@@ -336,6 +374,7 @@ def check_probe_is_cached() -> None:
 
 CHECKS = [
     check_switches,
+    check_present_coordination,
     check_holds,
     check_soft_cases_stay_soft,
     check_author_wins,

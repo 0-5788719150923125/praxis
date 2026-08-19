@@ -297,6 +297,24 @@ static func parse(text: String) -> Array:
 		if bare.length() > 0:
 			var got := lookup(bare)
 			var phones: Array = got.phones
+			if phones.is_empty():
+				# NOTHING MAY LEAVE THE PIPELINE SILENTLY. This `if phones.size() > 0` was the
+				# second half of a reported loss: `2009` at the end of a paragraph escaped
+				# TextNorm's numeral pass (see TextNorm._expand_numbers, now fixed), reached here
+				# as digits, and word_to_phones - which walks letters - returned nothing, so the
+				# word was deleted from the utterance with no trace in the audio, the subtitles or
+				# the log. Two things now stand between a token and that fate: a rescue that reads
+				# any digits it contains, and a warning for whatever is left.
+				var saved := _rescue_phones(bare)
+				phones = saved["phones"] as Array
+				if phones.is_empty():
+					push_warning("ghost/voice: no pronunciation for %s - dropping it. "
+						% [token] + "If it should be spoken, add it under `names:` in "
+						+ "data/english.yml or inline as [P AH0 N S]")
+				else:
+					push_warning("ghost/voice: %s reached the phonemizer unnormalized; "
+						% [token] + "read as '%s'" % [String(saved["said"])])
+					got = {"phones": phones, "stress": saved["stress"]}
 			if phones.size() > 0:
 				words.append({
 					"text": bare,
@@ -467,6 +485,39 @@ static func _phone_list(v: Variant) -> Array:
 ## parallel. Stress is 0 (unstressed / consonant), 1 (primary) or 2 (secondary),
 ## and is the signal the whole rhythm of the reading hangs off: which vowels
 ## reduce to schwa, which get length, and which carries the pitch accent.
+## A LAST RESORT for a token the dictionary and the letter rules both have nothing for, so that
+## it is never simply deleted. Digits are the case that matters and the case that was reported:
+## anything numeric is normalized here and read as the words it stands for, with the phones of
+## those words concatenated into this one token (its DISPLAY stays the source spelling, so the
+## karaoke line still shows `2009`). A token with no digits and no letters is a symbol - there is
+## nothing to say for it, and the caller warns and drops it.
+##
+## This is deliberately defence in depth rather than the fix: numerals are expanded before the
+## tokenizer ever sees them (see TextNorm), and if one reaches here at all that is a bug in the
+## normalizer. It just must not be an INAUDIBLE bug.
+static func _rescue_phones(bare: String) -> Dictionary:
+	var digits := false
+	for i in bare.length():
+		if bare[i] >= "0" and bare[i] <= "9":
+			digits = true
+			break
+	if not digits:
+		return {"phones": [], "stress": [], "said": ""}
+	var said := TextNorm.normalize(bare)
+	var phones: Array = []
+	var stress: Array = []
+	for part in said.split(" ", false):
+		var w := String(part).to_lower().strip_edges()
+		while w.length() > 0 and w[w.length() - 1] in ".,!?;:\"')":
+			w = w.substr(0, w.length() - 1)
+		if w.is_empty() or w == bare:
+			continue                       # w == bare: the normalizer had nothing either
+		var g := lookup(w)
+		phones.append_array(g["phones"] as Array)
+		stress.append_array(g["stress"] as Array)
+	return {"phones": phones, "stress": stress, "said": said}
+
+
 static func lookup(word: String) -> Dictionary:
 	_load_data()
 	# our overrides win: data/english.yml is where we disagree with the
