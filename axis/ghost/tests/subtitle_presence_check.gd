@@ -16,6 +16,15 @@ extends Node
 ##   and - the constraint that stops the fix becoming its own bug - NO blink across an
 ##   ordinary gap between two sentences.
 ##
+## THE SECOND BUG, from a ch19 render: "at exactly the same place where the colon is, the
+## subtitles briefly disappeared, then reappeared... the SAME subtitles flickered". There were
+## TWO rules for what is on screen - the presence ease asked about the SENTENCE's span, the draw
+## asked about the nearest WORD (+/- 0.4 s) - and they disagree for any pause longer than 1.2 s
+## inside a sentence, which is what a colon's clause pause becomes once pause_scale stretches it.
+## So the second half of this gate asks BOTH paths the same questions through a long internal
+## pause, and its control is the case that must still go dark: a real silence between sentences.
+## Asking only the presence path would have passed while the bug was live.
+##
 ## Run inside a real boot (the overlay is a CanvasLayer, and Subtitles reads the
 ## Spectrum autoload):
 ##   tests/run_boot_probe.sh tests/subtitle_presence_check.gd 90
@@ -64,6 +73,54 @@ func _ready() -> void:
 
 	# --- and the ease actually eases, rather than snapping ---
 	_check_ease(subs)
+
+	# --- A LONG PAUSE INSIDE ONE SENTENCE MAY NOT BLINK (the colon) ---
+	# One sentence, spoken either side of a 1.8s pause where the colon is. Both paths are asked,
+	# every 50ms, right through it: the drawn line must stay the SAME five words the whole way.
+	var colon := Subtitles.new()
+	add_child(colon)
+	colon.words = [
+		{"text": "men", "t0": 1.00, "t1": 1.30, "sentence": 0},
+		{"text": "are", "t0": 1.30, "t1": 1.55, "sentence": 0},
+		{"text": "not:", "t0": 1.55, "t1": 2.00, "sentence": 0},
+		{"text": "it", "t0": 3.80, "t1": 4.00, "sentence": 0},
+		{"text": "felt", "t0": 4.00, "t1": 4.40, "sentence": 0},
+	]
+	var dark := 0
+	var thin := 0
+	var t := 2.0
+	while t < 3.8:
+		if colon._presence_target(t) < 0.5:
+			thin += 1
+		if colon._overlay._current_sentence(t).size() != 5:
+			dark += 1
+		t += 0.05
+	print("subtitle_presence_check: through a 1.8s pause inside a sentence - %d instants with "
+		% dark + "no line to draw, %d with the plate faded out" % thin)
+	if dark > 0:
+		_fails.append("colon: the drawn line vanished at %d instants inside one sentence - "
+			% dark + "that is the reported flicker")
+	if thin > 0:
+		_fails.append("colon: presence dropped at %d instants inside one sentence" % thin)
+	# THE CONTROL. The fix must not become "the line never leaves": a genuine silence between two
+	# sentences, longer than HANG + LEAD, still has to clear the frame.
+	colon.words = [
+		{"text": "one.", "t0": 1.00, "t1": 1.50, "sentence": 0},
+		{"text": "two.", "t0": 5.00, "t1": 5.50, "sentence": 1},
+	]
+	var cleared := false
+	t = 1.5
+	while t < 5.0:
+		if colon._presence_target(t) < 0.5 and colon._overlay._current_sentence(t).is_empty():
+			cleared = true
+			break
+		t += 0.05
+	print("subtitle_presence_check: a 3.5s silence BETWEEN sentences clears the frame: %s"
+		% ("yes at t=%.2f" % t if cleared else "NO"))
+	if not cleared:
+		_fails.append("control: a 3.5s silence between sentences never cleared the line - the "
+			+ "rule now holds a line on screen through anything")
+	colon.queue_free()
 
 	subs.queue_free()
 	if _fails.is_empty():

@@ -5,6 +5,7 @@ import torch
 from torch import nn
 
 from praxis.attention.arc import ArcAttention
+from praxis.attention.arc_ssog import ArcSSOGAttention
 from praxis.attention.modular import ModularAttention
 from praxis.attention.causal import CausalAttention
 from praxis.attention.components import VanillaMHA
@@ -38,6 +39,16 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # Query-steered Gaussian field over causal lag, no Q/K (Pisoni's SSOG,
     # ported to 1D). Position-addressed only; see praxis/attention/ssog.py.
     "ssog": SSOGAttention,
+    # The same field with a PER-DEPTH axis, a warm steering gate and a
+    # populated atom bank - the reference's own per-layer geometry, which a
+    # depth-shared field cannot express. `ssog` stays the faithful port; this
+    # is the one we hack on. See praxis/attention/arc_ssog.py for why each
+    # deviation exists (every one of them is a measurement off -r).
+    "arc_ssog": ArcSSOGAttention,
+    # Atom count is a profile, not a flag: the bank is what the variant IS.
+    # 32 atoms is the "delay line dense enough to decode a position from"
+    # end of the argument, and costs compile time linear in atoms.
+    "arc_ssog_wide": partial(ArcSSOGAttention, num_atoms=32),
 }
 
 

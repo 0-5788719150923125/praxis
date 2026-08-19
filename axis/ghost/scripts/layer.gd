@@ -1311,7 +1311,7 @@ class Clouds:
 class Fire:
 	extends Base
 	const SHADER := preload("res://shaders/flame.gdshader")
-	var _quad: FlameQuad = null      # the shader quad (a child canvas item: materials
+	var _quad: FieldQuad = null      # the shader quad (a child canvas item: materials
 	var _mat := ShaderMaterial.new() # apply per-item, so the field needs its own)
 	var _srcs: Array = []            # bed heat sources: {x, w, band, gam, atk, rel, heat}
 	var _sparks: Array = []
@@ -1490,7 +1490,7 @@ class Fire:
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		if _quad == null:
-			_quad = FlameQuad.new()
+			_quad = FieldQuad.new()
 			_quad.material = _mat
 			# Deferred: layers draw inside the scene's _draw, no tree changes mid-pass.
 			ci.call_deferred("add_child", _quad)
@@ -1515,13 +1515,15 @@ class Fire:
 			Layer.puff(ci, c, w * 3.0, Color(col.r, col.g, col.b, a * 0.30))
 
 
-# The flame field's canvas item: a canvas material applies to a whole item, so the
-# fire's GPU body lives on this child quad. It re-applies the scene's view matrix in
-# its own draw, so the field and the CPU sparks share one camera. It renders IN FRONT
-# of the parent (behind-parent would bury it under the scene's opaque bed layer), and
-# because the field is additive light it never occludes what the scene drew - sparks
-# and smoke read through it, brightened where the flame burns.
-class FlameQuad:
+# A SHADER FIELD's canvas item, shared by every layer whose body is a full-frame
+# fragment program ([Fire], [Vapor]): a canvas material applies to a whole item, so a
+# GPU field cannot live on the scene's own canvas beside ordinary drawing - it needs a
+# child of its own. It re-applies the scene's view matrix in its own draw, so the field
+# and the layer's CPU parts (fire's sparks) share one camera. It renders IN FRONT of the
+# parent (behind-parent would bury it under the scene's opaque bed layer), and because
+# these fields are additive light it never occludes what the scene drew - sparks, smoke
+# and motes read through it, brightened where the field burns.
+class FieldQuad:
 	extends Node2D
 	var px_half := Vector2(480.0, 300.0)   # half-extents in PIXELS (set by the layer)
 
@@ -1532,6 +1534,292 @@ class FlameQuad:
 		draw_set_transform_matrix(sc.view.matrix(sc.size))
 		draw_texture_rect(Layer.white_texture(),
 			Rect2(-px_half, px_half * 2.0), false)
+
+
+# ---------------------------------------------------------------------------------
+# Vapor - coloured ink-in-water: heavy twisting masses with fibrous strands drawn out
+# of them, lit from inside. The GPU field lives in shaders/vapor_field.gdshader (read
+# its header for the twist / fibre / hardness construction and why blobs cannot do it);
+# this half is the part that has to be a simulation rather than arithmetic - WHERE the
+# masses are, WHAT COLOUR each one is, and HOW LOUD it is right now.
+#
+# A PLUME is one mass: an elliptical gaussian that listens to its own harmonic band
+# (fast attack, slow release, expanded through a per-plume gamma), drifts on a slow
+# lissajous about its home, and carries its own hue. The field mixes their colours by
+# contribution, so a violet mass and a teal one blend where they overlap and stay
+# themselves where they do not - that two-sided colour is the whole point, and it is
+# the reason plumes are separate objects instead of one density.
+#
+# THE LAMP is a real position in the same space, travelling on its own slow orbit. The
+# shader tapping the plume envelope toward it is what makes the masses read as volume;
+# moving it is what keeps them from looking like a still.
+#
+# Tint it with hue / accent / sat / val, shape it with swirl / churn / crease / stretch /
+# hard / thresh / haze / scale, and choose where the masses sit with `layout`. Additive, so it composes over
+# anything - a bed, a landscape, a city - without occluding it.
+# ---------------------------------------------------------------------------------
+class Vapor:
+	extends Base
+	const SHADER := preload("res://shaders/vapor_field.gdshader")
+	var _quad: FieldQuad = null       # the shader quad (see FieldQuad)
+	var _mat := ShaderMaterial.new()
+	var _plumes: Array = []
+	var _burst := 0.0                 # beat/flux surge: brighter, wilder, wider
+	var _energy := 0.0                # fast-attack / slow-release loudness register
+	var _sig := 0.0                   # decaying peak of live energy: gates the idle drift
+	var _last_beat := 0.0
+	var _spin := 0.0                  # the whole arrangement turning over (rad/s)
+	var _swirl := 0.6                 # per-instance warp GAIN - constant, never audio-driven
+	var _churn := 1.0                 # per-instance turn-over rate (a rate, integrated below)
+	var _phase := 0.0                 # INTEGRATED field phase - what the shader's u_time is
+	var _drift := Vector2.ZERO        # integrated travel of the medium
+	var _drift_dir := Vector2.RIGHT
+	var _drift_speed := 0.02
+	var _lamp := Vector2(-0.5, -0.3)  # the light, in unit fractions
+	var _lamp_home := Vector2(-0.5, -0.3)
+	var _lamp_orb := Vector2(0.35, 0.22)
+	var _lamp_rate := Vector2(0.05, 0.037)
+	var _lamp_ph := Vector2(0.0, 1.7)
+	var _rim := 0.55                  # the fringe / shadow hue (the scheme's accent)
+
+	## The live tonal centre as Vector2(hue, strength), pushed by the SCENE each frame
+	## (see GhostScene.chroma_hue - the scene owns the harmonic read; a layer only ever
+	## sees AudioFeatures). Every plume's hue is pulled toward it by its strength, so the
+	## vapour's colour is the music's key and drifts as the key does. Left at zero it is
+	## simply not used and the seeded hues stand.
+	var tonal := Vector2.ZERO
+
+	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
+		super(seed_rng, c)
+		var n := clampi(int(num("count", 5)), 1, 8)
+		var base_h := num("hue", 0.72)
+		var accent_h := num("accent", fposmod(base_h + 0.42, 1.0))
+		var spread := num("spread", 0.10)
+		var size := num("size", 1.0)
+		# THE HUE LADDER. Plume hues walk from the scheme's base to its accent across the
+		# frame (the arc Scheme.hue_at describes, taken the short way round the wheel) rather
+		# than all sitting within a few hundredths of one hue. That is what makes the frame
+		# genuinely two-coloured - a violet mass beside a teal one, blending only where they
+		# overlap - and a single-hue field was the first cut's flattest failing.
+		var arc := fposmod(accent_h - base_h + 0.5, 1.0) - 0.5
+		# THE BAND LADDER. Plume 0 listens lowest and is the largest and slowest; the
+		# last listens high and is small and quick - the same "bass is big" reading the
+		# fire bed uses, which is what keeps a bassline from shivering a wisp and a hat
+		# from heaving the whole frame. Capped below the spectrum's dead top for the
+		# same reason fire caps it: a plume that never lights is a hole, not detail.
+		var band_gamma := seed_rng.randf_range(0.85, 1.35)
+		var layout := txt("layout", "edges")
+		var sweep := seed_rng.randf() * TAU
+		for i in n:
+			var f := (float(i) + 0.5) / float(n)
+			var band := clampf(pow(f, band_gamma) * 0.82, 0.0, 1.0)
+			var home: Vector2
+			match layout:
+				# EDGES - the masses hug the borders and leave the middle dark, so
+				# whatever else the scene puts at the focal point is framed by vapour
+				# rather than buried in it.
+				"edges":
+					var a := TAU * (float(i) + seed_rng.randf_range(-0.25, 0.25)) / float(n)
+					var r := seed_rng.randf_range(0.78, 1.12)
+					home = Vector2(cos(a) * r * 1.05, sin(a) * r * 0.78)
+				# SWEEP - one diagonal current of vapour crossing the frame.
+				"sweep":
+					var s := lerpf(-1.05, 1.05, f) + seed_rng.randf_range(-0.1, 0.1)
+					home = Vector2(cos(sweep), sin(sweep) * 0.7) * s \
+						+ Vector2(-sin(sweep), cos(sweep) * 0.7) * seed_rng.randf_range(-0.3, 0.3)
+				_:
+					home = Vector2(seed_rng.randf_range(-0.95, 0.95),
+						seed_rng.randf_range(-0.65, 0.65))
+			# Radius falls with the band (bass masses are broad), and each plume is an
+			# ELLIPSE at its own aspect - a circle reads as a ball of gas, and the
+			# reference has none of those.
+			var r0 := lerpf(0.62, 0.26, band) * size * seed_rng.randf_range(0.82, 1.20)
+			_plumes.append({
+				"home": home, "pos": home,
+				"rx": r0 * seed_rng.randf_range(0.7, 1.5),
+				"ry": r0 * seed_rng.randf_range(0.6, 1.3),
+				"band": band,
+				"gam": seed_rng.randf_range(1.3, 2.0),           # loudness expander
+				"atk": seed_rng.randf_range(0.45, 0.80),         # swells over a second or two...
+				"rel": seed_rng.randf_range(0.20, 0.40),         # ...and sinks over three or four
+				"amp": 0.0, "kick": 0.0,
+				"hue": _plume_hue(seed_rng, base_h, arc, i, n, spread),
+				# Its own slow travel: two decorrelated rates, so the arrangement never
+				# repeats a pose. These are SLOW on purpose - vapour this heavy moves
+				# like weather, and the fast motion is all in the shader's warp.
+				"orb": Vector2(seed_rng.randf_range(0.02, 0.09), seed_rng.randf_range(0.02, 0.08)),
+				"orbr": Vector2(seed_rng.randf_range(0.05, 0.20), seed_rng.randf_range(0.04, 0.16)),
+				"ph": Vector2(seed_rng.randf() * TAU, seed_rng.randf() * TAU),
+				"breathe": seed_rng.randf_range(0.11, 0.34),     # the idle pulse
+			})
+		_spin = seed_rng.randf_range(-0.030, 0.030)
+		# THE FORWARD MOTION. One steady direction, at a rate the music may only nudge - the
+		# vapour is always going somewhere, which is what a still frame with a pulsing size is
+		# not. Seeded phase for the same reason Base seeds its clock: otherwise every session
+		# starts its warp at exactly the same place.
+		_drift_dir = Vector2.from_angle(seed_rng.randf() * TAU)
+		_drift_speed = num("flow", seed_rng.randf_range(0.012, 0.032))
+		_phase = seed_rng.randf() * 600.0
+		_swirl = num("swirl", seed_rng.randf_range(0.45, 0.80))
+		_churn = num("churn", seed_rng.randf_range(0.75, 1.35))
+		_rim = accent_h
+		var la := seed_rng.randf() * TAU
+		_lamp_home = Vector2(cos(la), sin(la) * 0.7) * seed_rng.randf_range(0.35, 0.8)
+		_lamp_orb = Vector2(seed_rng.randf_range(0.15, 0.45), seed_rng.randf_range(0.10, 0.30))
+		_lamp_rate = Vector2(seed_rng.randf_range(0.03, 0.10), seed_rng.randf_range(0.02, 0.08))
+		_lamp_ph = Vector2(seed_rng.randf() * TAU, seed_rng.randf() * TAU)
+		# The character of the field itself, sampled per instance (see the shader header).
+		_mat.shader = SHADER
+		_mat.set_shader_parameter("u_scale", num("scale", seed_rng.randf_range(0.8, 1.25)))
+		_mat.set_shader_parameter("u_stretch", num("stretch", seed_rng.randf_range(1.3, 3.0)))
+		_mat.set_shader_parameter("u_crease", num("crease", seed_rng.randf_range(1.4, 2.6)))
+		_mat.set_shader_parameter("u_hard", num("hard", seed_rng.randf_range(0.45, 0.85)))
+		_mat.set_shader_parameter("u_thresh", num("thresh", seed_rng.randf_range(0.42, 0.60)))
+		_mat.set_shader_parameter("u_haze", num("haze", seed_rng.randf_range(0.10, 0.22)))
+		_mat.set_shader_parameter("u_shadow", num("shadow", seed_rng.randf_range(1.4, 2.6)))
+		_mat.set_shader_parameter("u_gain", num("gain", seed_rng.randf_range(1.15, 1.5)))
+		_mat.set_shader_parameter("u_seed",
+			Vector2(seed_rng.randf_range(0.0, 97.0), seed_rng.randf_range(0.0, 97.0)))
+
+	# One plume's hue: its place on the base -> accent ladder, jittered - and then, for a
+	# `counter` share of them, taken to the OPPOSING hue instead (fposmod(h + 0.5), ghost's
+	# standard complement idiom, as furry uses for its repulsors). A scheme's accent can sit
+	# a few hundredths from its base, and a field of one hue is flat however well it moves:
+	# the reference for this scene is magenta on one side and teal on the other, and that is
+	# a complement, not a neighbour.
+	func _plume_hue(seed_rng: RandomNumberGenerator, base_h: float, arc: float,
+			i: int, n: int, spread: float) -> float:
+		var h := base_h + arc * (float(i) / float(maxi(1, n - 1))) \
+			+ seed_rng.randf_range(-spread, spread)
+		if seed_rng.randf() < num("counter", 0.0):
+			h += 0.5
+		return fposmod(h, 1.0)
+
+	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
+		super(f, dt, h)
+		# THE IDLE DRIFT, on fire's gate: with no audio (or sustained true silence) a
+		# gentle synthetic pulse keeps the vapour breathing, and any real music switches
+		# it fully onto the harmonics. A quiet passage in a song still reads as quiet -
+		# only dead silence re-lights the idle.
+		_sig = maxf(_sig * exp(-0.25 * dt), f.energy)
+		var idle := clampf(1.0 - _sig * 7.0, 0.0, 1.0)
+		var e_in := maxf(f.energy, idle * (0.30 + 0.14 * sin(t * 0.19)))
+		# SLOW on both edges. This register drives the brightness and the flow rate, and both
+		# of those look wrong if they track the waveform: a 3.0 attack is a third of a second,
+		# which on music is a flicker.
+		_energy = Nonlinear.flare(_energy, e_in, dt, 1.1, 0.35)
+		for pl in _plumes:
+			var raw := clampf(f.sample(float(pl.band)) * 1.25, 0.0, 1.0)
+			raw = maxf(raw, idle * (0.34 + 0.28 * sin(t * float(pl.breathe) + float(pl.ph.x))))
+			# THE MASS IS ALMOST STEADY, and that is the fix for the worst thing this layer did.
+			# A plume's amplitude is the mass at its centre and the body exists where mass beats
+			# u_thresh, so amplitude IS the size of the mass - it was swinging 0.35..1.4 on the
+			# band, with a third-of-a-second attack, and the masses visibly inflated and
+			# collapsed with the music: "it expands and contracts rapidly with the harmonics.
+			# That really shouldn't be happening at all". The band still moves it, by a fifth,
+			# over SECONDS (attack 0.45..0.8 is a 1-2 s constant), so a swell reads as the
+			# vapour thickening rather than as a pulse. Everything the music used to do to the
+			# SIZE it now does to the LIGHT.
+			var target := (0.66 + 0.26 * pow(raw, float(pl.gam))) * (0.90 + 0.14 * _energy)
+			pl.amp = maxf(Nonlinear.flare(float(pl.amp), target, dt,
+				float(pl.atk), float(pl.rel)), 0.42)
+			# The beat's answer decays as LIGHT (u_glow), not as size.
+			pl.kick = float(pl.kick) * exp(-1.8 * dt)
+			var orb: Vector2 = pl.orb
+			var orbr: Vector2 = pl.orbr
+			var ph: Vector2 = pl.ph
+			var wander := Vector2(sin(t * orb.x + ph.x), sin(t * orb.y + ph.y)) * orbr
+			pl.pos = (Vector2(pl.home) + wander).rotated(_spin * t)
+		# The burst is the TRANSIENT (beats and arriving spectral content); sustained
+		# loudness already lives in the plume amplitudes.
+		# Gentler and slower than fire's: this one only lifts brightness, and a hard-edged
+		# brightness step on every beat is its own kind of chaotic.
+		_burst = maxf(_burst * exp(-1.3 * dt), clampf(0.45 * f.beat + 0.9 * f.flux, 0.0, 0.85))
+		# An onset kicks ONE plume - the loudest flares alone and decays, so a hit belongs
+		# to a place in the vapour rather than throbbing the whole frame.
+		if f.beat > _last_beat + 0.30:
+			var hot: Dictionary = _plumes[0]
+			for pl in _plumes:
+				if float(pl.amp) > float(hot.amp):
+					hot = pl
+			hot.kick = 1.0
+		_last_beat = f.beat
+		_lamp = _lamp_home + Vector2(sin(t * _lamp_rate.x + _lamp_ph.x),
+			sin(t * _lamp_rate.y + _lamp_ph.y)) * _lamp_orb
+		# THE MOTION, INTEGRATED. The music sets a RATE and the phase/offset accumulate it, so
+		# every audio change is a change of speed and never a change of position. Scaling an
+		# absolute clock instead (what this did) teleports the field by the rate change times
+		# the elapsed time, which is minutes of noise coordinate a few seconds into a song.
+		# Both rates stay inside a narrow band for the same reason: a 4x speed swing on a
+		# medium this heavy reads as a jolt even when it is perfectly continuous.
+		var rate := _churn * (0.80 + 0.40 * _energy)
+		_phase += dt * rate
+		_drift += _drift_dir * _drift_speed * (0.75 + 0.50 * _energy) * dt
+		_push_uniforms()
+
+	func _push_uniforms() -> void:
+		var xs := PackedFloat32Array()
+		var ys := PackedFloat32Array()
+		var amps := PackedFloat32Array()
+		var rxs := PackedFloat32Array()
+		var rys := PackedFloat32Array()
+		var cols := PackedVector3Array()
+		var glows := PackedFloat32Array()
+		var sat: float = num("sat", 0.85)
+		var val: float = num("val", 1.0)
+		for pl in _plumes:
+			var pos: Vector2 = pl.pos
+			xs.append(pos.x * half.x)
+			ys.append(pos.y * half.y)
+			# NOTHING GEOMETRIC RIDES THE BEAT. The kick used to scale this plume's amplitude
+			# by 1.7 and its radii by 1.12, which is an inflating mass by definition.
+			amps.append(float(pl.amp))
+			rxs.append(maxf(0.02, float(pl.rx) * half.x))
+			rys.append(maxf(0.02, float(pl.ry) * half.y))
+			glows.append(float(pl.kick))
+			# The plume's own hue, pulled toward the music's key by its strength. Blended
+			# on the wheel (see GhostScene.blend_hue) - the shortest-arc form flips at the
+			# antipode and made tints jump between two colours.
+			var hue := GhostScene.blend_hue(float(pl.hue), tonal.x, clampf(tonal.y, 0.0, 1.0) * 0.30)
+			var c := Color.from_hsv(hue, clampf(sat, 0.0, 1.0), clampf(val, 0.0, 1.0))
+			cols.append(Vector3(c.r, c.g, c.b))
+		while xs.size() < 8:            # a uniform array only takes its FULL declared
+			xs.append(0.0)              # length - a short set is silently dropped
+			ys.append(0.0)
+			amps.append(0.0)
+			rxs.append(1.0)             # never zero: the shader divides by these
+			rys.append(1.0)
+			cols.append(Vector3.ZERO)
+			glows.append(0.0)
+		_mat.set_shader_parameter("u_n", _plumes.size())
+		_mat.set_shader_parameter("u_px", xs)
+		_mat.set_shader_parameter("u_py", ys)
+		_mat.set_shader_parameter("u_amp", amps)
+		_mat.set_shader_parameter("u_rx", rxs)
+		_mat.set_shader_parameter("u_ry", rys)
+		_mat.set_shader_parameter("u_col", cols)
+		_mat.set_shader_parameter("u_glow", glows)
+		_mat.set_shader_parameter("u_time", _phase)
+		_mat.set_shader_parameter("u_drift", _drift)
+		_mat.set_shader_parameter("u_half", half)
+		_mat.set_shader_parameter("u_burst", _burst)
+		_mat.set_shader_parameter("u_light", _lamp * half)
+		# CONSTANT. The warp gain is the shape of the twist, and modulating it re-warps space
+		# under the masses - which is not "the vapour twisting harder", it is every feature in
+		# the frame jumping to a new place. Loudness reaches the motion through the RATE the
+		# phase is integrated at (see update), where it can only ever change the speed.
+		_mat.set_shader_parameter("u_swirl", _swirl)
+		var rim := Color.from_hsv(fposmod(_rim, 1.0), clampf(num("sat", 0.85) * 0.9, 0.0, 1.0), 1.0)
+		_mat.set_shader_parameter("u_rim", Vector3(rim.r, rim.g, rim.b))
+
+	func draw(ci: CanvasItem, u: float) -> void:
+		if _quad == null:
+			_quad = FieldQuad.new()
+			_quad.material = _mat
+			# Deferred: layers draw inside the scene's _draw, no tree changes mid-pass.
+			ci.call_deferred("add_child", _quad)
+		_quad.px_half = half * u        # matches u_half above
+		_quad.queue_redraw()
 
 
 # ---------------------------------------------------------------------------------
@@ -2013,6 +2301,7 @@ const REGISTRY := {
 	"cosmos": Cosmos,
 	"clouds": Clouds,
 	"fire": Fire,
+	"vapor": Vapor,
 	"rays": Rays,
 	"planet": Planet,
 	"volumetric": Volumetric,

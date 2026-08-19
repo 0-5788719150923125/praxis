@@ -51,6 +51,20 @@ func _ready() -> void:
 	get_tree().node_added.connect(_hook_tooltip)
 
 
+## THE BACKSTOP for background programs. Every child ghost starts goes through
+## [Subprocess], which remembers it; this kills whatever is still registered when the app
+## closes, so a mode that forgets to clean up (or is torn down in an order that skips its
+## own `_exit_tree`) still cannot leave an `ffmpeg` writing to the disk with nothing on
+## screen. Boot is the first autoload, so it is the last thing standing at shutdown.
+##
+## This is the CLEAN-QUIT half only. If ghost is killed outright no script runs at all,
+## which is why `Subprocess` also binds each child to this process at the kernel level -
+## see its class doc.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_EXIT_TREE:
+		Subprocess.reap_all()
+
+
 func _hook_tooltip(n: Node) -> void:
 	if not (n is Control):
 		return

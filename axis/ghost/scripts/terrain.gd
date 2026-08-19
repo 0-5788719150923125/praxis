@@ -33,7 +33,13 @@ var _vnorm := PackedVector3Array()  # per-vertex surface normal (for the moving 
 # refreshed a few rows per frame (never a full-grid recompute), so it stays hitch-free.
 var _light_dir := Vector3(0.55, 0.5, 0.35).normalized()   # world direction TOWARD the key light
 var _cast := PackedFloat32Array()   # per-vertex cast-shadow factor SHOWN (eased toward _cast_target)
-var _cast_target := PackedFloat32Array()   # the raw ray-march result, refreshed a few rows per frame
+var _cast_target := PackedFloat32Array()   # the FEATHERED march result, refreshed a few rows per frame
+var _cast_raw := PackedFloat32Array()      # the raw per-vertex march, before the spatial feather
+var _cast_blur := PackedFloat32Array()     # the raw march, blurred horizontally (the separable pass)
+# Slow per-vertex shading, cached and refreshed a slice at a time - see _refresh_slow.
+var _cloud_c := PackedFloat32Array()       # drifting cloud-shadow factor
+var _occ_c := PackedFloat32Array()         # prop shadow-map factor (1 where there is no field)
+var _slow_cursor := 0
 var _shadow_row := 0                 # incremental shadow-refresh cursor (row being recomputed)
 const SHADOW_MIN := 0.42            # ground brightness where fully in a mountain's cast shadow
 var _fog_level := -1.0               # world height below which valley fog pools (< min = no fog)
@@ -399,6 +405,19 @@ func light_dir() -> Vector3:
 ## Refresh a few rows of the cast-shadow TARGET each frame, then ease the SHOWN shadow toward it.
 ## The easing is the anti-flicker: a cell never hard-flips lit<->shadowed as the light drifts (which
 ## popped and shimmered), it glides; and the incremental refresh no longer shows a moving seam.
+##
+## The target is FEATHERED ACROSS THE LATTICE on the way in, and that is the fix for "the shadows
+## are blocky". Two separate things made them so, and the temporal ease addresses neither:
+##   - the march itself (see [method _cast_at]) is a coarse 17-step walk over a bumpy heightfield,
+##     so neighbouring vertices disagree by more than the surface does - per-vertex noise, which
+##     Gouraud shading then draws as visible facets;
+##   - a shadow edge lands BETWEEN two vertices and there is nothing in between to carry it, so the
+##     drawn edge is a staircase whose step is one quad. At this map's scale a near quad is tens of
+##     pixels across, which is exactly the size of block that was reported.
+## A separable 5-tap binomial over the refreshed band spreads an edge across about five vertices
+## instead of one, which turns the staircase into a gradient the interpolation can actually
+## resolve. It costs nothing measurable: it touches only the rows that changed, where the ease
+## below is already a full pass over the whole grid every call.
 func step_light(delta: float) -> void:
 	var n := res * res
 	if _cast.size() != n:
@@ -407,12 +426,43 @@ func step_light(delta: float) -> void:
 	if _cast_target.size() != n:
 		_cast_target.resize(n)
 		_cast_target.fill(1.0)
+	if _cast_raw.size() != n:
+		_cast_raw.resize(n)
+		_cast_raw.fill(1.0)
+		_cast_blur.resize(n)
+		_cast_blur.fill(1.0)
 	var rows := maxi(1, int(res / 16))            # a few rows per frame; whole target refreshed ~every 16
+	var first := _shadow_row
 	for _r in rows:
 		var gy := _shadow_row
 		for gx in res:
-			_cast_target[gy * res + gx] = _cast_at(gx, gy)
+			_cast_raw[gy * res + gx] = _cast_at(gx, gy)
 		_shadow_row = (_shadow_row + 1) % res
+	# Feather the band that just changed, plus the two rows either side (their kernels reach in).
+	# A 5-tap binomial (1 4 6 4 1), applied separably through `_cast_blur` as a horizontal pass and
+	# then a vertical one, so an edge is carried by about five vertices instead of one - measured,
+	# the worst neighbour-to-neighbour step falls from 84% of the map's whole lit-to-shadowed range
+	# to a third of it. See tests/shadow_feather_check.gd.
+	for k in range(-4, rows + 4):
+		var gy := posmod(first + k, res)
+		var y0 := gy * res
+		for gx in res:
+			_cast_blur[y0 + gx] = 0.0625 * _cast_raw[y0 + maxi(gx - 2, 0)] \
+				+ 0.25 * _cast_raw[y0 + maxi(gx - 1, 0)] \
+				+ 0.375 * _cast_raw[y0 + gx] \
+				+ 0.25 * _cast_raw[y0 + mini(gx + 1, res - 1)] \
+				+ 0.0625 * _cast_raw[y0 + mini(gx + 2, res - 1)]
+	for k in range(-2, rows + 2):
+		var gy := posmod(first + k, res)
+		var y0 := gy * res
+		var ym2 := maxi(gy - 2, 0) * res
+		var ym1 := maxi(gy - 1, 0) * res
+		var yp1 := mini(gy + 1, res - 1) * res
+		var yp2 := mini(gy + 2, res - 1) * res
+		for gx in res:
+			_cast_target[y0 + gx] = 0.0625 * _cast_blur[ym2 + gx] + 0.25 * _cast_blur[ym1 + gx] \
+				+ 0.375 * _cast_blur[y0 + gx] \
+				+ 0.25 * _cast_blur[yp1 + gx] + 0.0625 * _cast_blur[yp2 + gx]
 	var ease := 1.0 - exp(-3.0 * delta)           # smooth glide toward the target - no pop, no seam
 	for i in n:
 		_cast[i] = lerpf(_cast[i], _cast_target[i], ease)
@@ -440,6 +490,28 @@ func _cast_at(gx: int, gy: int) -> float:
 			occ = margin
 	var shade := smoothstep(0.0, 0.14 * relief, occ)   # 0 lit .. 1 fully shadowed, with a penumbra
 	return lerpf(1.0, SHADOW_MIN, shade)
+
+
+# Recompute `count` vertices' worth of the slow shading terms, starting at `from` and wrapping.
+# Called from collect_surface; see the note there for why this is a slice and not the whole grid.
+# The vertex position used for the shadow tap is the CLIPPED one (a submerged vertex IS the water
+# surface, at y = 0), exactly as the shading loop uses it - otherwise a lake bed would be tested
+# for shadow at its real depth and read as permanently in shade.
+func _refresh_slow(from: int, count: int, sxd: float, szd: float, shadow: ShadowField) -> void:
+	var n := res * res
+	var wet := _wsub.size() == n
+	for k in count:
+		var i := from + k
+		if i >= n:
+			i -= n
+		var p: Vector3 = _world[i]
+		if wet and hgrid[i] < water:
+			p.y = 0.0
+		# Two GENTLE orthogonal bands only - the old diagonal (p.x + p.z) term drew a directional
+		# grain that, drifting, read as a diagonal shimmer over the surface.
+		var cv := sin(p.x * 0.5 + sxd) + sin(p.z * 0.42 - szd)
+		_cloud_c[i] = clampf(0.74 + 0.26 * smoothstep(-0.8, 0.9, cv * 0.5), 0.68, 1.0)
+		_occ_c[i] = shadow.factor(p) if shadow != null else 1.0
 
 
 ## Build the terrain's projected quads for this frame, UNSORTED, so a caller can MERGE them with its
@@ -508,6 +580,23 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 	var wcr := _water_col.r
 	var wcg := _water_col.g
 	var wcb := _water_col.b
+	# THE SLOW TERMS, CACHED. The cloud shadow and the prop shadow-map tap are the two most
+	# expensive things done per vertex - measured at RES 112, the tap alone is 23.6 ms of an
+	# 82 ms build - and both are functions of quantities that move a fraction of a world unit
+	# a second: the cloud's drift, the key light's azimuth, a tree growing in. Recomputing
+	# them for all 12.5k vertices every frame buys nothing that refreshing a quarter of the
+	# grid per frame does not, and the build IS the frame here (the picture only refreshes
+	# when it finishes). The audio-driven part - `lit` - is NOT cached and still applies per
+	# frame, so brightness still answers the music on the frame it happens.
+	if _cloud_c.size() != n:
+		_cloud_c.resize(n)
+		_occ_c.resize(n)
+		_slow_cursor = 0
+		_refresh_slow(0, n, sxd, szd, shadow)      # a fresh scene must be complete on frame one
+	else:
+		var take := (n >> 2) + 1
+		_refresh_slow(_slow_cursor, take, sxd, szd, shadow)
+		_slow_cursor = (_slow_cursor + take) % n
 	for i in n:
 		var p: Vector3 = _world[i]
 		# Clip the surface at the water datum (see the note above): a submerged vertex IS the
@@ -521,15 +610,13 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 		sv[i] = Vector2(pr.x, pr.y) * u
 		dep[i] = pr.z
 		uvg[i] = Vector2(p.x, p.z) * tile
-		# Soft drifting cloud shadow. Two GENTLE orthogonal bands only - the old diagonal (p.x+p.z)
-		# term drew a directional grain that, drifting, read as a diagonal shimmer over the surface.
-		var cv := sin(p.x * 0.5 + sxd) + sin(p.z * 0.42 - szd)
-		var cloud := clampf(0.74 + 0.26 * smoothstep(-0.8, 0.9, cv * 0.5), 0.68, 1.0)
+		# Soft drifting cloud shadow, and the cast shadows the scene's occluders (buildings,
+		# spires, trees) drop on the ground - both from the slice cache above.
+		var cloud := _cloud_c[i]
+		var occ := _occ_c[i]
 		# Directional key light: sunny slopes brighten, slopes facing away fall into shade.
 		var ndotl := clampf(_vnorm[i].dot(_light_dir), 0.0, 1.0)
 		var key := 0.55 + 0.6 * ndotl                 # ambient floor + directional term
-		# Cast shadows from the scene's occluders (buildings/spires) land on the ground here too.
-		var occ := shadow.factor(p) if shadow != null else 1.0
 		var col := _lit(_vcol[i], lit * cloud * key * _cast[i] * occ)
 		# WATER, composited over the bed rather than floated above it: shallow water shows the
 		# ground through it, deep water hides it entirely. `sub` is 0 at the waterline, so the

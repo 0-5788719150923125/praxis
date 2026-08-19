@@ -262,7 +262,10 @@ class SpireJob:
 				var seg_h := vis_h / float(segs)
 				for si in segs:
 					var f0 := float(si) / float(segs)
-					shadow.add_box(base + up * (float(si) * seg_h), up, spire.bx, spire.bz, br * (1.0 - 0.72 * f0), seg_h)
+					# ROUND: a spire is a tapering shaft, not a box, and its bounding square cast a
+					# rectangular shadow with hard corners. See ShadowField.add_box.
+					shadow.add_box(base + up * (float(si) * seg_h), up, spire.bx, spire.bz,
+						br * (1.0 - 0.72 * f0), seg_h, true)
 				# Self-shadow bias = the spire's own light-depth reach, so a taller neighbour still shadows it.
 				spire["ext"] = absf(shadow.light_depth(base + up * vis_h) - shadow.light_depth(base)) + br * 1.4
 

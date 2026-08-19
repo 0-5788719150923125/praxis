@@ -18,6 +18,17 @@ extends GhostScene
 ## is the same substance as `terrain` - a [Field] heightfield - rendered as line art on
 ## paper, which is a different visual language and not a recolour.
 ##
+## A RE-PRINT MUST NOT BE VISIBLE, and almost everything below is in service of that. The
+## sheet is rebuilt a couple of times a second and every difference between one build and
+## the next lands as a step, all over the frame at once - which is what a viewer reads as
+## "the whole scene jumps". So the three things that could differ do not: the sampling
+## window is SNAPPED TO ITS OWN LATTICE, so consecutive extractions read the same points of
+## the land and the sheet only has to be translated (see _kick); the hatching's pitch is
+## fixed by the seed and anchored to the ground rather than to the window (see _kick and
+## [method Contour.hatch]); and the tonal centre every colour here is drawn from is EASED,
+## because the ink of the highlighted contour is baked into the packet (see _ease_audio).
+## With those three, a re-print changes nothing but the strip of new land at the edge.
+##
 ## THE CONTOUR INTERVAL NEVER CHANGES, and that restraint is the whole point. A map with
 ## a throbbing contour interval is a lie: an interval is a claim about the land, so it is
 ## chosen ONCE, from the land itself (the datum and the interval are solved from the
@@ -28,9 +39,10 @@ extends GhostScene
 ##   The INKED INDEX CONTOUR - the one elevation drawn heaviest, in the accent - is
 ##   chosen by `chroma_hue().x` mapped across the elevation range, so the harmony picks
 ##   which altitude is inked and a chord change re-prints the sheet at a different height.
-##   `f.flux` sets the hatch spacing between index lines. Flux measures 0.01 to 0.05 in
-##   practice, so it is scaled by 12 to cross its sampled band at all rather than being
-##   used as if it reached 1.
+##   `f.flux` sets the INK DENSITY of the hatching between index lines - the same ruling,
+##   pressed harder on a busy passage. Flux measures 0.01 to 0.05 in practice, so it is
+##   scaled by 12 to cross its range at all rather than being used as if it reached 1. It
+##   used to set the hatch SPACING, and that was the worst mark on the sheet: see _kick.
 ##   The SWEEP advances one sheet width per `f.beat_period` x a sampled [8,32] beats, and
 ##   a `f.beat` rising edge stamps the next survey cross - at the summit nearest the
 ##   sweep, so marks appear along the line as it passes.
@@ -54,8 +66,10 @@ extends GhostScene
 ## grid is about 128 samples across, which puts a cell near a dozen pixels; two rounds of
 ## Chaikin corner cutting in [Contour] turn the resulting faceted polyline into a curve,
 ## and a simplify pass hands the points back. That pair is why a grid coarse enough to
-## sample in a worker still draws like a pen. In an export the forge builds synchronously,
-## so a render pays the extraction on the main thread - slower to render, identical output.
+## sample in a worker still draws like a pen - and it is also why the window has to be
+## snapped: on cells that coarse, re-sampling the same land at a different phase moves every
+## line by pixels. In an export the forge builds synchronously, so a render pays the
+## extraction on the main thread - slower to render, identical output.
 ##
 ## THE HIGH-KEY GROUND fights three separate dark assumptions in this project (the
 ## project's clear colour, [Layer]'s bed being a vignette whose brightest pixel is a mid
@@ -72,11 +86,11 @@ extends GhostScene
 ## widths; whether the sheet is cream paper with dark ink or a blueprint (a deep blue
 ## ground with white ink, roughly one sheet in four); the ink itself from a [Scheme] at a
 ## quarter of its nominal saturation, because a survey is drawn in one restrained colour;
-## the hatch angle and its spacing band; the sea level and whether there is water at all;
-## the graticule divisions and margin; how many survey marks the sheet may carry; the
-## re-extraction cadence; whether a second colour plate prints slightly out of register;
-## the sweep's period in beats; the section-change threshold and how long a warp takes;
-## and the whole invented hand the labels are written in.
+## the hatch angle, and its spacing, which no audio feature may touch; the sea level and
+## whether there is water at all; the graticule divisions and margin; how many survey marks
+## the sheet may carry; the re-extraction cadence; whether a second colour plate prints
+## slightly out of register; the sweep's period in beats; the section-change threshold and
+## how long a warp takes; and the whole invented hand the labels are written in.
 ##
 ## HONEST DETERMINISM CAVEAT, the same one `glyphs` carries. The land, the ladder, the
 ## palette, the alphabet and the ring of warp offsets are all seed-derived and reproduce
@@ -130,7 +144,24 @@ var _fld: Field
 var _sch: Scheme
 var _gs: GlyphSet
 var _f: AudioFeatures = AudioFeatures.new()
+# The tonal centre, EASED - and eased as a VECTOR, because a hue is circular and an average
+# of 0.99 and 0.01 is not 0.5. Everything colour on this sheet reads this rather than
+# `chroma_hue()` itself: the ink of the highlighted contour is baked into a packet that is
+# only rebuilt a couple of times a second, so a jittery tonal centre arrives as a step
+# rather than as a drift. Slow enough that a re-print moves it by a fraction of a percent,
+# fast enough that a chord change still re-prints the sheet in a new colour.
 var _ch := Vector2.ZERO
+var _ch_v := Vector2.ZERO
+var _ch_raw := Vector2.ZERO
+var _ch_seeded := false
+## Seconds for the tonal centre and the flux to close most of the way onto a new value.
+## Set from the measurement in `tests/contour_flow_check.gd`: against a tonal centre
+## sweeping continuously through the wrap, this is what keeps the inked contour's colour
+## step across one re-print under 0.05, and 2.5 s did not (0.076 at seed 11).
+const EASE_SECS := 4.0
+# Flux, eased for the same reason: it is the hatching's ink density and the hatching is in
+# the packet. Flux itself is a per-frame transient detector and steps hard.
+var _flux_e := 0.0
 
 # The sampled definition, unpacked into fields the per-frame code reads without a
 # Dictionary lookup.
@@ -151,8 +182,7 @@ var _ink_s := 0.30
 var _ink_v := 0.16
 var _tint := 0.30
 var _hatch_deg := 45.0
-var _hatch_lo := 5.0
-var _hatch_hi := 12.0
+var _hatch_sp := 8.0
 var _hatch_on := true
 var _sea_frac := 0.18
 var _water := true
@@ -261,8 +291,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 
 	_hatch_on = rng.randf() < 0.85
 	_hatch_deg = rng.randf_range(30.0, 60.0) * (1.0 if rng.randf() < 0.5 else -1.0)
-	_hatch_lo = rng.randf_range(4.0, 8.0)
-	_hatch_hi = _hatch_lo + rng.randf_range(2.0, 7.0)
+	# ONE spacing, chosen here and never touched again - see the class doc. This used to be
+	# `lerp(hi, lo, flux)`, re-evaluated on every re-print, and it was the single worst mark
+	# on the sheet: the ruling is anchored, so changing its pitch moves every line by its own
+	# multiple of the change, and the whole hatched band slid sideways a couple of times a
+	# second. Density is the seed's now, and the music is in the ink instead.
+	_hatch_sp = rng.randf_range(4.0, 12.0)
 
 	_water = rng.randf() < 0.7
 	_sea_frac = rng.randf_range(0.0, 0.35)
@@ -331,7 +365,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"ink_sat": _ink_s,
 		"hatch": _hatch_on,
 		"hatch_deg": _hatch_deg,
-		"hatch_px": "%.1f-%.1f" % [_hatch_lo, _hatch_hi],
+		"hatch_px": _hatch_sp,
 		"water": _water,
 		"sea_frac": _sea_frac,
 		"graticule": _divs,
@@ -359,7 +393,14 @@ func update(f: AudioFeatures, delta: float) -> void:
 	if size.x < 4.0:
 		return
 	_ensure_sites()
-	_ch = chroma_hue()
+	# Read once a frame - the Director substeps update(), and the signature behind this is a
+	# real cost - and eased on the fixed clock in _ease_audio.
+	_ch_raw = chroma_hue()
+	if not _ch_seeded:
+		_ch_seeded = true
+		_ch = _ch_raw
+		_ch_v = Vector2(cos(_ch.x * TAU), sin(_ch.x * TAU)) * _ch.y
+		_flux_e = f.flux
 	# Events, not integration: an edge stays one edge however many times the Director
 	# substeps this frame.
 	if f.beat > 0.55 and _prev_beat <= 0.55:
@@ -377,6 +418,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 # fifteen times in a frame, pre-warms twelve deep and lets Echo fast-forward, and a sweep
 # advanced once per update() call would have crossed the sheet before its first frame.
 func _step(dt: float) -> void:
+	_ease_audio(dt)
 	# The highlight migrates on the FIXED clock like everything else that integrates: it
 	# is called from here rather than from update(), which the Director substeps up to
 	# fifteen times in one frame and pre-warms twelve deep.
@@ -391,6 +433,24 @@ func _step(dt: float) -> void:
 	if _ext_t >= _cadence:
 		_ext_t = 0.0
 		_kick()
+
+
+# Close the eased audio onto its raw reading. Both quantities end up INSIDE a packet that
+# is rebuilt on the extraction cadence, so anything they drive arrives as a step of
+# whatever they moved in the last half second - and a step is exactly what this sheet must
+# not have. Eased here, a re-print moves them by a couple of percent.
+func _ease_audio(dt: float) -> void:
+	var k := 1.0 - exp(-dt / maxf(0.05, EASE_SECS))
+	var raw := _ch_raw
+	# On the wheel, not on the number line: the hue is an angle and its strength is the
+	# vector's length, so a tonal centre with no answer shrinks toward the middle instead of
+	# racing round the rim.
+	_ch_v = _ch_v.lerp(Vector2(cos(raw.x * TAU), sin(raw.x * TAU)) * raw.y, k)
+	if _ch_v.length() > 0.0001:
+		_ch = Vector2(fposmod(_ch_v.angle() / TAU, 1.0), clampf(_ch_v.length(), 0.0, 1.0))
+	else:
+		_ch = Vector2(_ch.x, 0.0)
+	_flux_e = lerpf(_flux_e, _f.flux, k)
 
 
 # ---------------------------------------------------------------------------------
@@ -630,8 +690,18 @@ func _age(dt: float) -> void:
 # ---------------------------------------------------------------------------------
 
 func _kick() -> void:
+	var job := _make_job()
+	if job != null:
+		_forge.kick(job.run, {}, self, job)
+
+
+## The next re-print, as a job object, without submitting it. Split out of [method _kick]
+## so a gate can build two sheets from two states and compare them - which is the only way
+## to assert the property this scene lives or dies by, that consecutive re-prints are the
+## same drawing.
+func _make_job() -> SheetJob:
 	if not _ladder or size.x < 4.0:
-		return
+		return null
 	var u := maxf(1.0, unit())
 	var nx := _res
 	var ny := _res
@@ -648,8 +718,23 @@ func _kick() -> void:
 	job.ny = ny
 	job.half = Vector2(size.x, size.y) * 0.5 * SHEET
 	job.fspan = Vector2(size.x, size.y) * (SHEET * _span / u)
-	job.off = _warp_now() * job.fspan
-	job.warp = _warp_now()
+	# SNAP THE WINDOW TO ITS OWN SAMPLING LATTICE, and this is the fix that makes a re-print
+	# invisible. The land is static - only the window moves - so two extractions taken at the
+	# same lattice phase read the SAME points of the field and produce, cell for cell, the
+	# same contours; the sheet then only has to be translated, which _draw does exactly.
+	# Sampled off the lattice they read a different set of points, and marching squares on a
+	# grid whose cells are a dozen pixels across answers a half-cell shift with a wobble of
+	# several pixels EVERYWHERE AT ONCE. That is what "the entire scene shifts every half
+	# second" was: not a jump in the map, a re-sampling of it.
+	#
+	# The sub-cell remainder is not lost - it goes into `warp`, which _draw reads back off the
+	# packet and turns into the translation, so the map still glides continuously at the
+	# warp's own speed. Snapping costs at most half a cell of lag on the land arriving at the
+	# leading edge, under a margin that covers it.
+	var cellf := Vector2(job.fspan.x / float(maxi(2, nx) - 1), job.fspan.y / float(maxi(2, ny) - 1))
+	var raw := _warp_now() * job.fspan
+	job.off = Vector2(round(raw.x / cellf.x) * cellf.x, round(raw.y / cellf.y) * cellf.y)
+	job.warp = Vector2(job.off.x / maxf(0.0001, job.fspan.x), job.off.y / maxf(0.0001, job.fspan.y))
 	job.lo = _lo
 	job.step = _step_v
 	job.count = _levels
@@ -677,14 +762,17 @@ func _kick() -> void:
 
 	job.hatch_on = _hatch_on
 	job.hatch_a = deg_to_rad(_hatch_deg)
-	# Flux is the density knob and it measures 0.01 to 0.05, so it takes a gain near 12 to
-	# cross the sampled spacing band at all. Denser ruling on a busy passage.
-	job.hatch_sp = lerpf(_hatch_hi, _hatch_lo, clampf(_f.flux * 12.0, 0.0, 1.0))
-	job.hatch_col = Color(ink.r, ink.g, ink.b, 0.34)
+	job.hatch_sp = _hatch_sp
+	# The music is in the INK, not in the pitch: a busy passage rules the same lines darker.
+	# Flux measures 0.01 to 0.05, hence the gain, and it is the eased flux - the alpha is
+	# baked into a packet that is rebuilt twice a second, and a raw transient detector in
+	# there is a flicker.
+	job.hatch_col = Color(ink.r, ink.g, ink.b,
+		lerpf(0.22, 0.46, clampf(_flux_e * 12.0, 0.0, 1.0)))
 	job.hatch_w = maxf(0.7, _w_minor * 0.8)
 	job.band_lo = _lo + float(_pick) * _step_v
 	job.band_hi = job.band_lo + float(_index_every) * _step_v
-	_forge.kick(job.run, {}, self, job)
+	return job
 
 
 # ---------------------------------------------------------------------------------
@@ -985,8 +1073,14 @@ class SheetJob:
 		if water:
 			Contour.fill_below(tb, h, nx, ny, sea, water_col, org, cell)
 		if hatch_on and band_hi > band_lo:
+			# Where this grid's origin sits in the land, in cells - the ruling is defined on
+			# the ground, so a window that has moved re-rules the same lines over the same
+			# country instead of re-phasing the whole band. Whole numbers, because the window
+			# is snapped to the lattice.
+			var land := Vector2(off.x / maxf(1e-9, fspan.x * ix),
+				off.y / maxf(1e-9, fspan.y * iy))
 			Contour.hatch(tb, h, nx, ny, band_lo, band_hi, hatch_a,
-				maxf(1.0, hatch_sp) / cpx, 0.5, hatch_col, hatch_w, org, cell)
+				maxf(1.0, hatch_sp) / cpx, HATCH_MARCH, hatch_col, hatch_w, org, cell, land)
 
 		var ex := Contour.new()
 		var levels := ex.extract(h, nx, ny, lo, step, count)

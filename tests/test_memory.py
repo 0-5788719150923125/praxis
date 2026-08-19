@@ -172,6 +172,90 @@ def test_reports_gain_and_write():
     assert mem.last_write > 0
 
 
+def test_reports_readout_delta():
+    """The readout probe records what the write changed in FUNCTION space:
+    finite, positive, and independent of the weight-space ratio."""
+    mem = _energy_mem()
+    mem(torch.randn(2, 32, 64))
+    assert mem.last_adapt is not None and torch.isfinite(mem.last_adapt)
+    assert mem.last_adapt > 0
+
+
+def test_readout_delta_is_zero_without_writes():
+    """With the update step disabled the weights never move, so the readout
+    probe must report exactly 0 - this is what separates it from the weight
+    ratio, whose denominator alone can make a live update look inert."""
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.GELU(), nn.Linear(128, 64))
+    mem = NeuralMemory(dim=64, model=model, chunk_size=8, use_energy=True, max_lr=0.0)
+    mem(torch.randn(2, 32, 64))
+    assert float(mem.last_adapt) == pytest.approx(0.0, abs=1e-6)
+    assert float(mem.last_write) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_readout_delta_is_not_a_restatement_of_the_write_ratio():
+    """Growing the meta-learned weights by k divides the WRITE ratio by exactly
+    k - it is a fixed update step over a growing ||W0||, and carries no news
+    about the memory. The readout delta does not follow that law: its
+    denominator is RMS-normalized by out_norm and stays put, so what it reports
+    is how much the trunk's view of the memory actually moved."""
+    scale = 32.0
+    seq = torch.randn(2, 32, 64)
+    small = _energy_mem()
+    small(seq)
+    big = _energy_mem()
+    with torch.no_grad():
+        for param in big.memory_model.parameters():
+            param.mul_(scale)
+    big(seq)
+
+    # The write ratio is mechanical: 1/k, to within a few percent.
+    assert float(big.last_write) == pytest.approx(
+        float(small.last_write) / scale, rel=0.1
+    )
+    # The readout delta is not; it decays far more slowly than 1/k.
+    assert float(big.last_adapt) > 1.4 * float(small.last_adapt) / scale
+
+
+def test_readout_delta_matches_sequential_path():
+    """The probe reports the same value from the sequential loop as from the
+    parallel scan (it rides both paths, not just the fast one)."""
+    torch.manual_seed(1)
+    model = nn.Sequential(nn.Linear(32, 32), nn.GELU(), nn.Linear(32, 32))
+    mem = NeuralMemory(dim=32, model=model, chunk_size=32, use_energy=True)
+    seq = torch.randn(2, 96, 32)
+
+    mem.parallel_scan, mem._probe_tick = True, -1
+    mem(seq, mem.init_state(2))
+    parallel = float(mem.last_adapt)
+    mem.parallel_scan, mem._probe_tick = False, -1
+    mem(seq, mem.init_state(2))
+    assert float(mem.last_adapt) == pytest.approx(parallel, rel=1e-4)
+
+
+def test_readout_delta_runs_on_a_cadence():
+    """The extra forward is gated: one call in PROBE_EVERY while training, and
+    never in eval, so the cost rides the logging cadence rather than every
+    forward through the module."""
+    mem = _energy_mem()
+    mem.PROBE_EVERY = 2
+    seq = torch.randn(2, 32, 64)
+
+    mem(seq)  # tick 0 -> probes
+    assert mem.last_adapt is not None
+    mem.last_adapt = None
+    mem(seq)  # tick 1 -> skipped, value goes stale rather than wrong
+    assert mem.last_adapt is None
+    mem(seq)  # tick 2 -> probes
+    assert mem.last_adapt is not None
+
+    mem.eval()
+    mem.last_adapt = None
+    for _ in range(4):
+        mem(seq)
+    assert mem.last_adapt is None
+
+
 def test_energy_surprise_is_scale_free():
     """The normalized surprise is bounded/O(1) even when the memory net's
     output scale is large, where the raw surprise blows up. This is the fix for
@@ -363,7 +447,7 @@ def test_surprise_metric_surfaced(memory_type):
 
     metrics = MemoryBase.collect_training_metrics(model)
     descriptions = MemoryBase.collect_metric_descriptions(model)
-    for key in ("memory_surprise", "memory_gain", "memory_write"):
+    for key in ("memory_surprise", "memory_gain", "memory_write", "memory_adapt"):
         assert key in metrics and torch.isfinite(torch.as_tensor(metrics[key]))
         assert key in descriptions
     # The scale-free surprise and event-size stats are energy/segment only.

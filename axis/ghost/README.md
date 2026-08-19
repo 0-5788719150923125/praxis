@@ -146,7 +146,7 @@ Each scene is a small combination of shapes; behavior decides how it moves. The 
 
 <!-- AUTODOC:SCENES:BEGIN -->
 
-52 scenes in the auto rotation (55 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
+53 scenes in the auto rotation (56 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
 
 _Core catalogue_
 
@@ -185,6 +185,10 @@ _Weather & atmosphere_
 - **`snowflakes`** (canvas, drift) - a field of several dozen crystal dendrites, restored and multiplied.
 - **`starfield`** (canvas, drift, static) - a deep night sky, twinkling, with the occasional shooting star.
 - **`underwater`** (canvas, drift) - looking up through flowing water: shafts of light from the surface, bubbles rising, a deep blue-green wash. The submerged corner of the weather catalogue.
+
+_Denser ink, where the twisting is already all the movement the frame needs_
+
+- **`vapors`** (canvas, drift, static) - coloured ink-in-water: heavy masses twisting through the frame with fibrous strands drawn out of them, lit from inside.
 
 _Worlds & projections_
 

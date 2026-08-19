@@ -1,4 +1,4 @@
-"""Depth-specialization diagnostics for Arc modules.
+"""Module-walk diagnostics: Arc depth specialization, attention, activations.
 
 ArcAttention and ArcGLU give each recurrent-depth pass its own learned
 parameters (per-depth Q/K/V/O biases, per-pass activations). The risk is
@@ -6,6 +6,12 @@ that those copies collapse to identical values, erasing any benefit over a
 single shared parameter. ``depth_dispersion`` measures how far a stack of
 per-depth vectors has diverged; the collectors walk a live model and average
 each Arc module's report so the dashboard sees one number per metric.
+
+The walks exist because these modules have no loss hook: an activation is
+called as a bare ``act(x)`` and an attention block returns a tensor, so neither
+can attach anything to the training step. Each opts in by defining
+``training_metrics`` and is reached here. A mechanism that publishes
+diagnostics but is not covered by a walk logs nothing at all, silently.
 
 Kept free of praxis imports at module load - the Arc classes are imported
 lazily inside the collectors so this stays clear of the
@@ -79,6 +85,53 @@ def collect_arc_metrics(root) -> Dict[str, float]:
     return {key: sums[key] / counts[key] for key in sums}
 
 
+def _attention_modules(root) -> Iterator:
+    """Yield attention modules under ``root`` that publish diagnostics.
+
+    Arc is collected separately by :func:`collect_arc_metrics`, so the Arc
+    classes are excluded here and nothing is counted twice. Everything else in
+    ATTENTION_REGISTRY opts in the same way an activation does - by defining
+    ``training_metrics`` - and, like activations, has no loss hook, so a module
+    walk is the only way to reach it. Without this walk a mechanism can publish
+    a full diagnostic suite that never reaches the log, which is exactly what
+    happened to SSOG's field metrics.
+    """
+    from praxis.attention import ATTENTION_REGISTRY
+    from praxis.attention.arc import ArcAttention
+
+    classes = tuple(
+        {getattr(v, "func", v) for v in ATTENTION_REGISTRY.values()}
+    )
+    for module in root.modules():
+        if (
+            isinstance(module, classes)
+            and not isinstance(module, ArcAttention)
+            and hasattr(module, "training_metrics")
+        ):
+            yield module
+
+
+def collect_attention_metrics(root) -> Dict[str, float]:
+    """Average each attention diagnostic across the attention modules under
+    ``root`` (empty when none opt in).
+
+    Averaging across modules is the same convention Arc and the activations
+    use. At ``num_layers: 1`` there is one module and the average is the value;
+    with several distinct attention blocks the grid cards below become a mean
+    field, which is a real limitation and the reason the per-module story would
+    need a layer prefix if it is ever wanted.
+    """
+    sums: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+    for module in _attention_modules(root):
+        for key, value in module.training_metrics().items():
+            if value is None:
+                continue
+            sums[key] = sums.get(key, 0.0) + value
+            counts[key] = counts.get(key, 0) + 1
+    return {key: sums[key] / counts[key] for key in sums}
+
+
 def _activation_modules(root) -> Iterator:
     """Yield activation modules under ``root`` that publish diagnostics.
 
@@ -116,6 +169,30 @@ def collect_activation_descriptions(root) -> Dict[str, dict]:
         descs = getattr(type(module), "metric_descriptions", None)
         if isinstance(descs, dict):
             out.update(descs)
+    return out
+
+
+def collect_attention_descriptions(root) -> Dict[str, dict]:
+    """Gather ``metric_descriptions`` from the attention modules under ``root``.
+
+    Without this the Dynamics tab has no declaration for an attention key, and
+    a metric with no declaration is logged to the database and then dropped on
+    the floor - the manifest is built from descriptions, not from columns.
+    """
+    out: Dict[str, dict] = {}
+    for module in _attention_modules(root):
+        descs = getattr(type(module), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            out.update(descs)
+    return out
+
+
+def collect_attention_snapshots(root) -> Dict[str, dict]:
+    """Gather live ``dashboard_snapshots()`` from attention modules under ``root``."""
+    out: Dict[str, dict] = {}
+    for module in _attention_modules(root):
+        if hasattr(module, "dashboard_snapshots"):
+            out.update(module.dashboard_snapshots() or {})
     return out
 
 

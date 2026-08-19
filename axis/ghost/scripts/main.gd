@@ -368,6 +368,19 @@ func _shutdown() -> void:
 	for child in get_children():
 		child.queue_free()
 	await get_tree().process_frame
+	# THE HARD EXIT BELOW IS WHY THIS LINE IS HERE. `OS.kill(OS.get_process_id())` is a
+	# SIGKILL on ourselves, so nothing after it runs: no autoload `_exit_tree`, and none of
+	# the engine's own child reaping. Every background program ghost started - the export's
+	# bake / Movie Maker render / `ffmpeg` transcode, the mask editor's prep passes, the
+	# voice host - would simply be inherited by init and carry on. That is the reported
+	# bug: both windows shut and ffmpeg still writing to the file, with no "godot" in `ps`.
+	#
+	# It has to be HERE and not only in `Boot`, because this function is the single funnel
+	# for BOTH ways out (the window's close request and Escape), and the Escape path never
+	# raises WM_CLOSE_REQUEST at all. `Subprocess` also binds each child to this process in
+	# the kernel, which covers a ghost that is killed from outside; this covers the ghost
+	# that kills itself.
+	Subprocess.reap_all()
 	print("ghost: bye (hard exit - audio-input teardown workaround, see main._shutdown)")
 	OS.kill(OS.get_process_id())
 

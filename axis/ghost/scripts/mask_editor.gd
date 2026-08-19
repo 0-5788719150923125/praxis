@@ -753,7 +753,7 @@ func _prep(source: String, dir: String, video: String, audio: String) -> void:
 		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
 		"-progress", ProjectSettings.globalize_path(_PREP_PROGRESS_FILE), "-nostats",
 		"-f", "ogg", ProjectSettings.globalize_path(video) + ".part"])
-	_prep_video_pid = OS.create_process("ffmpeg", args)
+	_prep_video_pid = Subprocess.start("ffmpeg", args, "clip prep (video)")
 	_prep_state = "prepping_video" if _prep_video_pid > 0 else "idle"
 	if _prep_video_pid <= 0:
 		_set_status("⚠  Could not start ffmpeg (is it on PATH?)")
@@ -779,7 +779,7 @@ func _start_prep_audio() -> void:
 		"-f", "wav", abs_a + ".part",
 		"-vn", "-c:a", "libvorbis", "-q:a", "5",
 		"-f", "ogg", abs_a.get_basename() + ".ogg.part"])
-	_prep_audio_pid = OS.create_process("ffmpeg", args)
+	_prep_audio_pid = Subprocess.start("ffmpeg", args, "clip prep (audio)")
 	_prep_state = "prepping_audio" if _prep_audio_pid > 0 else "idle"
 	_set_status("⏳  Preparing clip (audio)…")
 
@@ -794,7 +794,7 @@ func _progress_reset(path: String) -> void:
 # Two writers on the SAME -y output path interleave and corrupt it - not
 # hypothetical, this is here because it happened (twice: a second launch mid-prep
 # raced the first, and separately a manual external ffmpeg run raced the app). The
-# first version of this guard tracked a PID and called OS.is_process_running() on
+# first version of this guard tracked a PID and called Subprocess.alive() on
 # it - which crashes (engine-level ECHILD) the moment the PID belongs to a process
 # this instance didn't spawn itself, e.g. a PREVIOUS launch's child, exactly the
 # cross-instance case the guard exists for. An mtime check answers the actual
@@ -1170,7 +1170,7 @@ func _yt_spawn_logged(cmd: String, args: PackedStringArray) -> int:
 	var script := "exec \"$@\" > \"%s\" 2>&1" % _yt_log
 	var full := PackedStringArray(["-c", script, "bash", cmd])
 	full.append_array(args)
-	return OS.create_process("/bin/bash", full)
+	return Subprocess.start("/bin/bash", full, "clip download")
 
 
 ## The log's last 4KB. This is polled EVERY FRAME while a download runs (the
@@ -1401,7 +1401,7 @@ func _ensure_waveform() -> void:
 	if FileAccess.file_exists(abs_wave):
 		_load_waveform(abs_wave)
 		return
-	_waveform_pid = OS.create_process("ffmpeg", _waveform_args(abs_wave))
+	_waveform_pid = Subprocess.start("ffmpeg", _waveform_args(abs_wave), "waveform")
 
 
 func _waveform_args(abs_out: String) -> PackedStringArray:
@@ -1447,7 +1447,7 @@ func _poll_wave_hi(dt: float) -> void:
 	if session == null or _timeline == null or _tview == null \
 			or session.duration <= 0.0 or _waveform_path.is_empty():
 		return
-	if _wavehi_pid > 0 and not OS.is_process_running(_wavehi_pid):
+	if _wavehi_pid > 0 and not Subprocess.alive(_wavehi_pid):
 		_wavehi_pid = -1
 		var img := Image.load_from_file(ProjectSettings.globalize_path(_WAVEHI_PATH))
 		if img != null:
@@ -1486,7 +1486,7 @@ func _poll_wave_hi(dt: float) -> void:
 	_wavehi_span = want
 	# -ss/-t BEFORE -i: input seeking on PCM is sample-exact and skips the
 	# decode of everything outside the window.
-	_wavehi_pid = OS.create_process("ffmpeg", PackedStringArray([
+	_wavehi_pid = Subprocess.start("ffmpeg", PackedStringArray([
 		"-y", "-loglevel", "error",
 		"-ss", str(want.x), "-t", str(want.y - want.x),
 		"-i", ProjectSettings.globalize_path(session.audio_path),
@@ -2076,7 +2076,7 @@ func _ensure_track_audio(i: int) -> void:
 		abs_src = ProjectSettings.globalize_path(video_path)
 	if not FileAccess.file_exists(abs_src):
 		return
-	var pid := OS.create_process("ffmpeg", ["-y", "-loglevel", "quiet", "-i", abs_src,
+	var pid := Subprocess.start("ffmpeg", ["-y", "-loglevel", "quiet", "-i", abs_src,
 		"-vn", "-c:a", "libvorbis", "-q:a", "4", abs_ogg])
 	if pid > 0:
 		_track_audio_jobs.append({"pid": pid, "index": i, "ogg": abs_ogg})
@@ -2099,7 +2099,7 @@ func _attach_track_audio(i: int, abs_ogg: String) -> void:
 func _poll_track_audio() -> void:
 	for j in range(_track_audio_jobs.size() - 1, -1, -1):
 		var job: Dictionary = _track_audio_jobs[j]
-		if not OS.is_process_running(int(job.pid)):
+		if not Subprocess.alive(int(job.pid)):
 			var idx := int(job.index)
 			if FileAccess.file_exists(String(job.ogg)):
 				_attach_track_audio(idx, String(job.ogg))
@@ -2500,7 +2500,7 @@ func _start_track_import(source: String) -> void:
 		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
 		"-c:a", "libvorbis", "-q:a", "4",
 		"-f", "ogg", ProjectSettings.globalize_path(video) + ".part"])
-	_import_pid = OS.create_process("ffmpeg", args)
+	_import_pid = Subprocess.start("ffmpeg", args, "clip import")
 	if _import_pid <= 0:
 		_cancel_pending_track()     # couldn't even start ffmpeg - roll the lane back out
 		_set_status("⚠  Could not start ffmpeg for track import")
@@ -5277,7 +5277,7 @@ func _ft_make_venv() -> void:
 		_ft_fail("no python3 on PATH - the clown can't build its face tracker")
 		return
 	print("ghost face: bootstrapping venv at ", ProjectSettings.globalize_path(FACE_VENV_DIR))
-	_ft_pid = OS.create_process(py, PackedStringArray(
+	_ft_pid = Subprocess.start(py, PackedStringArray(
 		["-m", "venv", ProjectSettings.globalize_path(FACE_VENV_DIR)]))
 	_ft_state = "venv" if _ft_pid > 0 else "failed"
 	_set_status("⏳  Setting up the face tracker (one-time)…" if _ft_pid > 0
@@ -5333,7 +5333,7 @@ func _ft_start_track() -> void:
 
 
 func _ft_poll() -> void:
-	if _ft_pid <= 0 or OS.is_process_running(_ft_pid):
+	if _ft_pid <= 0 or Subprocess.alive(_ft_pid):
 		if _ft_state == "tracking":
 			var pf := ProjectSettings.globalize_path(FACE_TRACK_DIR).path_join("progress")
 			if FileAccess.file_exists(pf):
@@ -5378,7 +5378,7 @@ func _ft_spawn_logged(exe: String, args: PackedStringArray) -> int:
 	var quoted := PackedStringArray()
 	for a in [exe] + Array(args):
 		quoted.append('"' + String(a).replace('"', '\\"') + '"')
-	return OS.create_process("/bin/bash", PackedStringArray(
+	return Subprocess.start("/bin/bash", PackedStringArray(
 		["-c", " ".join(quoted) + ' >"' + _ft_log + '" 2>&1']))
 
 
@@ -5908,7 +5908,7 @@ func _umb_ensure_track() -> void:
 		"-y", "-loglevel", "error", "-i", src,
 		"-vf", "scale=%d:%d,fps=%f" % [_UMB_W, _UMB_H, 1.0 / _UMBRA_INTERVAL],
 		"-f", "rawvideo", "-pix_fmt", "rgb24", _umb_track_raw + ".part"])
-	_umb_track_pid = OS.create_process("ffmpeg", args)
+	_umb_track_pid = Subprocess.start("ffmpeg", args, "umbra track")
 	if _umb_track_pid <= 0:
 		_umb_track_state = "failed"
 		return
@@ -5920,7 +5920,7 @@ func _umb_ensure_track() -> void:
 ## while an umbra layer is live; both halves are cheap no-ops once done.
 func _umb_poll_track() -> void:
 	if _umb_track_state == "decoding":
-		if OS.is_process_running(_umb_track_pid):
+		if Subprocess.alive(_umb_track_pid):
 			return
 		if not FileAccess.file_exists(_umb_track_raw + ".part"):
 			_umb_track_state = "failed"
@@ -6543,7 +6543,7 @@ func _do_restart() -> void:
 	var proj := ProjectSettings.globalize_path("res://")
 	_reload_check_log = ProjectSettings.globalize_path("user://reload_compile_check.log")
 	var script := "\"%s\" --headless --path \"%s\" --editor --quit > \"%s\" 2>&1" % [exe, proj, _reload_check_log]
-	_reload_check_pid = OS.create_process("/bin/bash", ["-c", script])
+	_reload_check_pid = Subprocess.start("/bin/bash", ["-c", script], "reload check")
 	if _reload_check_pid <= 0:
 		_set_status("⚠  Couldn't run the pre-reload compile check - NOT reloading (edits left as-is)")
 		_reload_check_pid = -1
@@ -6577,7 +6577,7 @@ func _restart_now() -> void:
 ## Poll the pre-reload compile check (see _do_restart). Clean -> restart; errors ->
 ## block the reload and surface them, so a broken assistant edit never bricks the app.
 func _poll_reload_check() -> void:
-	if _reload_check_pid <= 0 or OS.is_process_running(_reload_check_pid):
+	if _reload_check_pid <= 0 or Subprocess.alive(_reload_check_pid):
 		return
 	_reload_check_pid = -1
 	var log := FileAccess.get_file_as_string(_reload_check_log) if FileAccess.file_exists(_reload_check_log) else ""
@@ -6609,24 +6609,26 @@ func _exit_tree() -> void:
 			ch_out.exporter.suppressed = false
 		ch_out.bottom_inset = 0.0
 	_save_session()
-	# Reap every subprocess THIS instance spawned. OS.create_process children
-	# are fully detached - close the app mid-prep and the ffmpeg transcode
-	# keeps running invisibly (no "godot" in ps), still touching video.ogv,
-	# and the NEXT launch reads the fresh mtime as "already in progress
-	# elsewhere" and waits on a writer the user can't see. Killing our own
-	# pids is safe - the ECHILD hazard is is_process_running on pids we did
-	# NOT spawn (see _prep_looks_live's doc). The half-written outputs are
-	# already handled: prep re-runs when the lock goes stale and
-	# _finish_session rejects truncated video, yt-dlp resumes its own .part.
+	# Reap every subprocess THIS instance spawned. A detached child keeps running -
+	# close the app mid-prep and the ffmpeg transcode carries on invisibly (no "godot"
+	# in ps), still touching video.ogv, and the NEXT launch reads the fresh mtime as
+	# "already in progress elsewhere" and waits on a writer the user can't see. Killing
+	# our own pids is safe - the ECHILD hazard is polling pids we did NOT spawn (see
+	# _prep_looks_live's doc). The half-written outputs are already handled: prep re-runs
+	# when the lock goes stale and _finish_session rejects truncated video, yt-dlp resumes
+	# its own .part.
+	#
+	# This list is now a BELT, not the braces: every spawn above goes through
+	# [Subprocess], so `Boot` reaps anything missing from it when the app closes and the
+	# kernel kills the lot if ghost is killed outright. Leaving the explicit list keeps
+	# the timing right - these die when MASKING closes, not when the app does, which is
+	# what frees video.ogv for the next session.
 	for pid in [_prep_video_pid, _prep_audio_pid, _import_pid, _waveform_pid,
 			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid,
 			_umb_track_pid]:
-		if int(pid) > 0 and OS.is_process_running(int(pid)):
-			OS.kill(int(pid))
+		Subprocess.stop(int(pid))
 	for job in _track_audio_jobs:
-		var jpid := int(job.get("pid", -1))
-		if jpid > 0 and OS.is_process_running(jpid):
-			OS.kill(jpid)
+		Subprocess.stop(int(job.get("pid", -1)))
 	# Join the audio loader if it's still running, or Godot warns about an orphaned
 	# thread on close.
 	if _audio_thread != null and _audio_thread.is_started():
@@ -7042,7 +7044,7 @@ func _play(on: bool) -> void:
 func _ensure_audio_ogg(abs_wav: String, abs_ogg: String) -> void:
 	if FileAccess.file_exists(abs_ogg) or not FileAccess.file_exists(abs_wav):
 		return
-	OS.create_process("ffmpeg", PackedStringArray([
+	Subprocess.start("ffmpeg", PackedStringArray([
 		"-y", "-loglevel", "error", "-i", abs_wav,
 		"-c:a", "libvorbis", "-q:a", "5", abs_ogg]))
 
@@ -7745,14 +7747,14 @@ func _process(_dt: float) -> void:
 	_syncing = false
 	match _prep_state:
 		"prepping_video":
-			if OS.is_process_running(_prep_video_pid):
+			if Subprocess.alive(_prep_video_pid):
 				_set_status("⏳  Preparing clip (video)…  %d%%" % _read_prep_pct())
 				return
 			_promote_part(String(_pending.video))
 			_start_prep_audio()
 			return
 		"prepping_audio":
-			if OS.is_process_running(_prep_audio_pid):
+			if Subprocess.alive(_prep_audio_pid):
 				return
 			_promote_part(String(_pending.audio))
 			_promote_part(String(_pending.audio).get_basename() + ".ogg")
@@ -7777,7 +7779,7 @@ func _process(_dt: float) -> void:
 		_:
 			pass
 	if _yt_state != "idle":
-		if _yt_pid > 0 and not OS.is_process_running(_yt_pid):
+		if _yt_pid > 0 and not Subprocess.alive(_yt_pid):
 			_yt_pid = -1
 			_yt_step_done()
 		else:
@@ -7803,13 +7805,13 @@ func _process(_dt: float) -> void:
 								and not _yt_echoed.has(s):
 							_yt_echoed[s] = true
 							print("ghost yt: ", s)
-	if _waveform_pid > 0 and not OS.is_process_running(_waveform_pid):
+	if _waveform_pid > 0 and not Subprocess.alive(_waveform_pid):
 		_waveform_pid = -1
 		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
 		if FileAccess.file_exists(abs_wave):
 			_load_waveform(abs_wave)
 	_poll_wave_hi(_dt)
-	if _import_pid > 0 and not OS.is_process_running(_import_pid):
+	if _import_pid > 0 and not Subprocess.alive(_import_pid):
 		_import_pid = -1
 		_finish_track_import()
 	_poll_audio_thread()   # cheap bool check; attaches the main audio once its load finishes
@@ -8076,7 +8078,7 @@ func _on_export_path(out_path: String) -> void:
 	var args := PackedStringArray([
 		"--path", project, "--write-movie", _avi, "--fixed-fps", "25",
 		"--", "--mask-render", _session_path])
-	_render_pid = OS.create_process(exe, args)
+	_render_pid = Subprocess.start(exe, args, "mask render")
 	if _render_pid > 0:
 		_render_state = "rendering"
 		_set_status("⏺  Rendering %d×%d…" % [rsz.x, rsz.y])
@@ -8088,7 +8090,7 @@ func _on_export_path(out_path: String) -> void:
 func _poll_render() -> void:
 	match _render_state:
 		"rendering":
-			if OS.is_process_running(_render_pid):
+			if Subprocess.alive(_render_pid):
 				return
 			# The render process has read its override at boot and is gone - take it
 			# back out of the project root now, so a later launch (an F5 reload
@@ -8102,7 +8104,7 @@ func _poll_render() -> void:
 				_set_status("⚠  Render produced no file (see console)")
 				_render_state = "idle"
 		"transcoding":
-			if OS.is_process_running(_transcode_pid):
+			if Subprocess.alive(_transcode_pid):
 				return
 			# Always clear the scratch AVI (the transcode's own `&& rm` usually already
 			# did, but not if it failed or was interrupted) - never leave an intermediate
@@ -8202,7 +8204,7 @@ func _start_transcode() -> void:
 	var script := "ffmpeg -y -loglevel error -fflags +genpts -i \"$1\" " \
 		+ "-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k \"$2\" " \
 		+ "&& rm -f \"$1\""
-	_transcode_pid = OS.create_process("/bin/bash", PackedStringArray(["-c", script, "bash", _avi, _out]))
+	_transcode_pid = Subprocess.start("/bin/bash", PackedStringArray(["-c", script, "bash", _avi, _out]), "mask transcode")
 	_render_state = "transcoding"
 
 

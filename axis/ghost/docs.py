@@ -81,6 +81,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         [
             "main.gd",
             "boot.gd",
+            "subprocess.gd",
             "chrome.gd",
             "console.gd",
             "splash.gd",
@@ -354,6 +355,9 @@ ENGINE_FLAGS = {
     "--model",
     "--rate",
     "--progress",
+    # setpriv's interface (subprocess.gd binds every child's lifetime to ghost's with it),
+    # an argument to a subprocess, not a ghost flag.
+    "--pdeathsig",
 }
 
 # Top-level entries for the README LAYOUT block and docs/index.md.

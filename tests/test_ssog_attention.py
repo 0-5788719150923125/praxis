@@ -3,6 +3,7 @@ and flex/materialised parity on GPU."""
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from praxis import PraxisConfig
 from praxis.attention import ATTENTION_REGISTRY
@@ -76,3 +77,127 @@ def test_flex_matches_materialised():
     ref = module._materialised(v, *field)
     out = module._flex(v, *field)
     assert torch.allclose(out, ref, atol=1e-4), (out - ref).abs().max()
+
+
+def test_no_zero_dim_parameters():
+    """Schedule-free optimizers swap parameters through ``x.view(torch.uint8)``,
+    which a 0-dim tensor cannot do. This crashed a run at step 1."""
+    module, _ = _module()
+    zero_dim = [n for n, p in module.named_parameters() if p.dim() == 0]
+    assert zero_dim == [], zero_dim
+
+
+def test_geometry_snapshots_and_declarations():
+    """The heatmaps ride the LIVE snapshot path and the scalars ride the logged
+    path, and each needs its own declaration. A logged key with no
+    ``metric_descriptions`` entry is written to dynamics.db and then dropped:
+    the dashboard manifest is built from declarations, not from columns."""
+    import math
+
+    from praxis.attention.ssog import GEOM_BINS
+
+    module, _ = _module(depth=4)
+    declared = type(module).metric_descriptions
+
+    logged = module.training_metrics()
+    assert all(math.isfinite(v) for v in logged.values())
+    assert set(logged) <= set(declared), sorted(set(logged) - set(declared))
+    assert all(declared[k].get("chart") for k in logged), "logged keys need a chart"
+
+    snapshots = module.dashboard_snapshots()
+    assert set(snapshots) == {"ssog_geometry", "ssog_cascade"}
+    assert all(declared[k].get("snapshot") for k in snapshots)
+    for key, expected_rows in (
+        ("ssog_geometry", module.num_atoms + 1),  # atoms, plus the summed mixture
+        ("ssog_cascade", 4),  # one row per recurrent hop
+    ):
+        grid = snapshots[key]["grid"]
+        assert len(grid) == expected_rows == snapshots[key]["grid_rows"]
+        assert all(len(row) == GEOM_BINS for row in grid)
+        assert all(math.isfinite(v) and v >= 0.0 for row in grid for v in row)
+
+
+def test_cascade_reaches_further_with_depth():
+    """The h-fold self-convolution has mean lag h*mu, so the composed field has
+    to walk outward monotonically - that IS the scale-space claim the card makes."""
+    module, _ = _module(depth=5)
+    lags = module.geom_lags
+    rows = module._cascade()
+    centroid = (rows * lags).sum(-1) / rows.sum(-1)
+    assert torch.all(centroid[1:] > centroid[:-1]), centroid.tolist()
+
+
+def test_attention_walk_reaches_the_field():
+    """Attention modules have no loss hook and are not an attribute of the model
+    the way the head and encoder are, so a module walk is the only way anything
+    of theirs is reachable. All THREE walks are needed and each was missing:
+    values (dynamics.db), declarations (the card exists at all), and live
+    snapshots (the heatmap payload)."""
+    import torch.nn as nn
+
+    from praxis.metrics.descriptions import get_metric_descriptions
+    from praxis.metrics.specialization import (
+        collect_attention_metrics,
+        collect_attention_snapshots,
+    )
+
+    module, _ = _module()
+    model = nn.Sequential(nn.Identity(), module)
+
+    assert collect_attention_metrics(model).keys() == module.training_metrics().keys()
+    assert collect_attention_snapshots(model).keys() == module.dashboard_snapshots().keys()
+
+    descriptions = get_metric_descriptions(model)
+    for key in module.training_metrics():
+        assert descriptions.get(key, {}).get("chart"), key
+    for key in module.dashboard_snapshots():
+        assert descriptions.get(key, {}).get("snapshot"), key
+    # The dashboard labels each card with the class that raised it.
+    assert descriptions["ssog_temperature"]["caller"] == "SSOGAttention"
+
+
+def test_snapshot_recipe_serves_the_geometry():
+    """The /api/head_snapshots ROUTE is only the cold-start fallback; a
+    background producer normally fills the slot from the precompute recipe. A
+    snapshot wired into one and not the other renders blank as soon as the
+    producer takes over, which is exactly what happened."""
+    import torch.nn as nn
+
+    from praxis.web.snapshots import _recipe_head_snapshots
+
+    module, _ = _module()
+    payload = _recipe_head_snapshots(nn.Sequential(nn.Identity(), module))
+    assert payload["status"] == "ok"
+    assert set(module.dashboard_snapshots()) <= set(payload["snapshots"])
+
+
+def test_inverse_softplus_survives_a_long_ladder():
+    """``log(expm1(y))`` overflows float32 at y > ~88, which silently produced
+    ``inf`` atom centres the moment a ladder was initialised past that. The
+    faithful port stops at 32 and never hit it; the helper is shared."""
+    from praxis.attention.ssog import _inv_softplus
+
+    y = torch.tensor([0.05, 0.5, 2.0, 32.0, 88.0, 128.0, 512.0])
+    raw = _inv_softplus(y)
+    assert torch.isfinite(raw).all()
+    assert torch.allclose(F.softplus(raw), y, atol=1e-5)
+
+
+def test_no_compile_is_honoured():
+    """The module compiles the flex kernel ITSELF, whatever the rest of the
+    model does. Under `--no-compile` that self-compile is the only thing
+    compiling, and its cost scales with the atom count - so the flag has to
+    reach it, or a 12-atom field sits in inductor at the first forward."""
+    eager, _ = _module(no_compile=True)
+    assert eager.compile_flex is False and eager.flex_attention is None
+
+    compiled, _ = _module(no_compile=False)
+    assert compiled.compile_flex is True
+
+    # The fallback is not a stub: it differentiates in plain eager, which is
+    # the property the self-compile existed to work around.
+    x = torch.randn(2, 16, 64, requires_grad=True)
+    eager(x)[0].square().sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    for name in ("raw_mu", "raw_sigma", "log_lambda", "raw_gate"):
+        assert getattr(eager, name).grad is not None, name

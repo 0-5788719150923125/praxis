@@ -65,6 +65,12 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/petals.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/bubbles.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/motes.gd"), "behavior": "drift"},
+	# Vapors - the FIELD half of the atmosphere: a fragment program, not puffs, which is
+	# what lets it have a hard front and fibre (see scenes/vapors.gd). Registered on both
+	# behaviors: the drifting camera suits the nebula characters and a held one suits the
+	# denser ink, where the twisting is already all the movement the frame needs.
+	{"script": preload("res://scripts/scenes/vapors.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/vapors.gd"), "behavior": "static"},
 	# Worlds & projections - real 3D terrain, cities on it, latent geometry.
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "static"},
@@ -138,6 +144,7 @@ const ATMOSPHERIC := [
 	"res://scripts/scenes/bubbles.gd", "res://scripts/scenes/petals.gd",
 	"res://scripts/scenes/embers.gd", "res://scripts/scenes/clouds.gd",
 	"res://scripts/scenes/underwater.gd", "res://scripts/scenes/fire.gd",
+	"res://scripts/scenes/vapors.gd",
 	"res://scripts/scenes/clouds.gd", "res://scripts/scenes/fog_volume.gd",
 	# The soft-edged half of the new bright scenes. A LAYER dissolve suits them for the
 	# same reason it suits the weather - they are full-frame fields with no silhouette to

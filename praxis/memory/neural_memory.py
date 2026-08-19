@@ -113,6 +113,12 @@ class NeuralMemory(nn.Module):
     # (praxis/decoders/base.py); this states it once, on the class.
     MERGE_OPAQUE: bool = True
 
+    # Cadence for the readout probe (see ``_readout_delta``), in forward calls.
+    # The dynamics logger reads on a far slower cadence than this module runs
+    # (once per depth, per microbatch), so probing every call would compute a
+    # value that is overwritten hundreds of times before anything reads it.
+    PROBE_EVERY: int = 8
+
     def __init__(
         self,
         dim: int,
@@ -211,12 +217,16 @@ class NeuralMemory(nn.Module):
             self.to_decay = nn.Linear(dim, 1)
 
         # Diagnostics from the last store pass, logged as metrics: cold-start
-        # surprise, the memory's output magnitude relative to the stream, and
-        # the relative size of the test-time weight update.
+        # surprise, the memory's output magnitude relative to the stream, the
+        # relative size of the test-time weight update, and what that update
+        # changed in the readout (the same write, measured in function space).
         self.last_surprise: Optional[Tensor] = None
         self.last_surprise_norm: Optional[Tensor] = None
         self.last_gain: Optional[Tensor] = None
         self.last_write: Optional[Tensor] = None
+        self.last_adapt: Optional[Tensor] = None
+        # -1 so the very first call probes, rather than PROBE_EVERY calls in.
+        self._probe_tick: int = -1
         # Event-size stats from the last segmented store pass (tokens per event).
         self.last_event_mean: Optional[Tensor] = None
         self.last_event_min: Optional[Tensor] = None
@@ -244,6 +254,53 @@ class NeuralMemory(nn.Module):
         """Context for the test-time update: detached in energy mode so neither
         the scan trajectory nor the second-order surprise graph is retained."""
         return torch.no_grad() if self.use_energy else contextlib.nullcontext()
+
+    # --- readout probe -------------------------------------------------------
+
+    def _probe_due(self) -> bool:
+        """Cadence gate for ``_readout_delta``: one call in ``PROBE_EVERY``,
+        training only.
+
+        The counter is deliberately NOT consulted under compile. A host-side
+        branch on a mutating Python int inside a traced region guards on that
+        int, so every call would fail the guard and recompile - far worse than
+        the probe it was meant to save. ``is_compiling()`` folds to a constant
+        during tracing, so the compiled graph simply probes every call and pays
+        the extra memory-net forward (a few percent of this module) rather than
+        dropping the metric from every default run. Eager keeps the cadence.
+        """
+        if not self.training:
+            return False
+        if torch.compiler.is_compiling():
+            return True
+        self._probe_tick += 1
+        return self._probe_tick % self.PROBE_EVERY == 0
+
+    def _readout_delta(
+        self, retrieved: Tensor, base_weights: Weights, queries: Tensor, n: int
+    ) -> Tensor:
+        """How much this call's writes changed the READOUT, relative.
+
+        ``last_write`` measures the same update in weight space, against a
+        ``||W0||`` that grows as the trunk trains - so a step of unchanged size
+        reads as a shrinking ratio, and "the update is inert" is indistinguish-
+        able from "the update is small next to weights that outgrew it". This
+        re-retrieves the call's own queries at the weights it STARTED from and
+        reports ``||read(W_T) - read(W0)|| / ||read(W0)||``: 0 means the writes
+        changed nothing the layer above can see, which is the claim the weight
+        ratio is usually read as making.
+
+        Cheap relative to the store pass it rides along with: one extra memory
+        net forward, vmapped over the batch only (every position reads the same
+        start weights, unlike the real retrieval's per-chunk weights), no
+        autograd, and only on the ``PROBE_EVERY`` cadence.
+        """
+        b = retrieved.shape[0]
+        base = vmap(lambda w, q: functional_call(self.memory_model, w, (q,)))(
+            base_weights, queries.reshape(b, -1, self.dim)
+        )
+        base = self.combine(self.out_norm(base))[:, :n]
+        return (retrieved - base).norm() / (base.norm() + self.eps)
 
     # --- state ---------------------------------------------------------------
 
@@ -529,6 +586,11 @@ class NeuralMemory(nn.Module):
             )
             wden = sum(weights[p].pow(2).sum() for p in self._param_names)
             self.last_write = (wnum / (wden + self.eps)).sqrt()
+            # The same write in function space - see _readout_delta. Pairs with
+            # last_write: identical numerator (this call's update), read out
+            # through the memory net instead of measured against ||W0||.
+            if self._probe_due():
+                self.last_adapt = self._readout_delta(retrieved, weights, queries, n)
 
             # Event sizes: inter-boundary spans at the base-block grid, reported
             # in tokens (whole blocks * segment_block), so they're bounded by
@@ -652,6 +714,8 @@ class NeuralMemory(nn.Module):
             wnum = sum((w[p] - W0[p]).pow(2).sum() for p in self._param_names)
             wden = sum(W0[p].pow(2).sum() for p in self._param_names)
             self.last_write = (wnum / (wden + self.eps)).sqrt()
+            if self._probe_due():
+                self.last_adapt = self._readout_delta(retrieved, W0, queries, n)
             if self.segment and reset_list:
                 reset_mask = torch.stack(reset_list, dim=1)
                 sizes = []

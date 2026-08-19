@@ -137,6 +137,35 @@ func _ready() -> void:
 	_build_ui()
 
 
+## AN EXPORT DOES NOT SURVIVE THE APP, and until this existed it did. Every step of the
+## export is a separate process (see the class doc) and `OS.create_process` detaches them
+## completely, so closing ghost mid-export left the bake, the Movie Maker render or the
+## `ffmpeg` transcode running with nothing on screen, no way to stop them, and no "godot"
+## in `ps` to explain what was still writing to the disk. Reported from the transcode: both
+## windows shut, ffmpeg still finalizing the file.
+##
+## The pids go through [Subprocess], so `Boot` would reap them anyway - this is the owner
+## doing it first and at the right moment, and it also clears the render's `override.cfg`,
+## which is the one piece of shutdown state the generic reap cannot know about. A render
+## killed here leaves its scratch AVI behind on purpose: the next export overwrites it, and
+## deleting a file during teardown is how a half-written one gets lost instead of resumed.
+##
+## WM_CLOSE_REQUEST reaches every node when the window is asked to close; EXIT_TREE covers
+## the programmatic-quit paths. Both, because either can be the one that happens.
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_WM_CLOSE_REQUEST and what != NOTIFICATION_EXIT_TREE:
+		return
+	if _state == "idle" or _state == "done":
+		return
+	for pid in [_bake_pid, _render_pid, _transcode_pid]:
+		Subprocess.stop(int(pid))
+	_bake_pid = -1
+	_render_pid = -1
+	_transcode_pid = -1
+	_clear_override()
+	print("ghost: export stopped - ghost is closing")
+
+
 func _build_ui() -> void:
 	_btn = Button.new()
 	_btn.text = "⤓"                    # icon-only - matches assistant.gd's chat-bubble toggle
@@ -207,7 +236,7 @@ func _build_ui() -> void:
 func _process(dt: float) -> void:
 	match _state:
 		"baking":
-			if OS.is_process_running(_bake_pid):
+			if Subprocess.alive(_bake_pid):
 				_poll_pct()
 				_set_status("⏳  Analyzing audio…  %d%%" % _pct, Color(0.95, 0.92, 0.7))
 			elif FileAccess.file_exists(_cache):
@@ -215,7 +244,7 @@ func _process(dt: float) -> void:
 			else:
 				_fail("⚠  Bake failed (is ffmpeg on PATH?)")
 		"rendering":
-			if OS.is_process_running(_render_pid):
+			if Subprocess.alive(_render_pid):
 				_poll_pct()
 				# STALL WATCHDOG (see the consts): alive = the playback
 				# position advanced at ALL, or the movie file grew. A slow
@@ -231,7 +260,7 @@ func _process(dt: float) -> void:
 					_stall_size = sz
 					_stall_t = 0.0
 				if _stall_t > STALL_LIMIT:
-					OS.kill(_render_pid)
+					Subprocess.stop(_render_pid)
 					_clear_override()
 					DirAccess.remove_absolute(_avi)
 					_fail("⚠  Render stalled at %d%% - frozen for %d min (see console)"
@@ -256,7 +285,7 @@ func _process(dt: float) -> void:
 				else:
 					_fail("⚠  Render produced no file (see console)")
 		"transcoding":
-			if OS.is_process_running(_transcode_pid):
+			if Subprocess.alive(_transcode_pid):
 				_set_status("⏳  Finalizing %s …  %d%%" % [_out.get_file(), _read_transcode_pct()], Color(0.95, 0.92, 0.7))
 			elif FileAccess.file_exists(_out) and _file_size(_out) > 4096:
 				DirAccess.remove_absolute(_avi)   # transcode ok -> drop the scratch AVI
@@ -456,9 +485,9 @@ func _start_bake() -> void:
 	Bake.write_progress(0.0)
 	var exe := OS.get_executable_path()
 	var project := ProjectSettings.globalize_path("res://")
-	_bake_pid = OS.create_process(exe, PackedStringArray([
+	_bake_pid = Subprocess.start(exe, PackedStringArray([
 		"--headless", "--path", project, "--script", "res://scripts/bake_runner.gd",
-		"--", "--bake-song", _song, "--bake-out", _cache]))
+		"--", "--bake-song", _song, "--bake-out", _cache]), "bake")
 	if _bake_pid > 0:
 		_state = "baking"
 		print("ghost: analyzing audio (pid ", _bake_pid, ") -> ", _cache)
@@ -504,7 +533,7 @@ func _start_render() -> void:
 	# clean, exactly as a plain song does.
 	if _synth_autoplay:
 		args.append("--synth-autopilot")
-	_render_pid = OS.create_process(exe, args)
+	_render_pid = Subprocess.start(exe, args, "render")
 	if _render_pid > 0:
 		_state = "rendering"
 		_stall_t = 0.0
@@ -574,7 +603,7 @@ func _start_transcode() -> void:
 		"-c:a", "aac", "-b:a", "192k",
 		"-progress", ProjectSettings.globalize_path(_PROGRESS_FILE), "-nostats", "-loglevel", "error",
 		_out])
-	_transcode_pid = OS.create_process("ffmpeg", args)
+	_transcode_pid = Subprocess.start("ffmpeg", args, "transcode")
 	if _transcode_pid > 0:
 		_state = "transcoding"
 		print("ghost: transcoding (pid %d, %.0fs) %s -> %s" % [_transcode_pid, dur, _avi, _out])

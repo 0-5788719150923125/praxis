@@ -31,7 +31,9 @@ class_name Subtitles
 ## HANG] how long after its last it stays. Both are longer than an ordinary gap between
 ## sentences, deliberately: at a normal seam the next line's window opens before the
 ## previous one's closes, so the overlay never blinks between sentences. It only leaves
-## when the speaking genuinely stops.
+## when the speaking genuinely stops. A pause INSIDE a sentence never brings it off at all,
+## however long - see [method span_at], which is the single rule both the plate's ease and
+## the drawn text obey.
 const LEAD := 0.8
 const HANG := 0.7
 ## Seconds to ease in and out over. The whole overlay eases like everything else here -
@@ -98,34 +100,82 @@ func _target(t: float) -> float:
 	return last_end
 
 
-## Should anything be on screen at time [param t], and how strongly? 1 while the current
-## sentence is within its LEAD/HANG window, 0 otherwise. Computed against the SENTENCE's
-## own span rather than the nearest word, so a line does not dim in its internal pauses.
-func _presence_target(t: float) -> float:
-	if words.is_empty():
-		return 0.0
-	var si := -1
-	var lo := 0.0
-	var hi := 0.0
+## Sentence SPANS: `[{si, lo, hi}]` in time order, where lo/hi are the first word's start and
+## the last word's end - so a span covers a sentence's INTERNAL pauses as well as its words.
+## Cached, because the list is walked every frame and can run to thousands of words; rebuilt
+## when it changes, which it does word by word while a take streams (a live [VoiceStream] shares
+## this array by reference, and [GenerativeEditor] clears it in place between takes).
+var _spans: Array = []
+var _spans_n := -1
+var _spans_tail := -1.0
+
+
+func _spans_now() -> Array:
+	var n := words.size()
+	var tail := float(words[n - 1].t1) if n > 0 else -1.0
+	if n == _spans_n and is_equal_approx(tail, _spans_tail):
+		return _spans
+	_spans = []
+	var at := {}                       # sentence id -> its position in _spans
 	for w in words:
-		var t0 := float(w.t0)
-		var t1 := float(w.t1)
-		if t >= t0 - LEAD and t < t1 + HANG:
-			si = int(w.sentence)
+		var si := int(w.sentence)
+		if at.has(si):
+			var e: Dictionary = _spans[int(at[si])]
+			e.lo = minf(float(e.lo), float(w.t0))
+			e.hi = maxf(float(e.hi), float(w.t1))
+		else:
+			at[si] = _spans.size()
+			_spans.append({"si": si, "lo": float(w.t0), "hi": float(w.t1)})
+	_spans_n = n
+	_spans_tail = tail
+	return _spans
+
+
+## THE ONE RULE for what belongs on screen at [param t]: the position in [method _spans_now] of
+## the sentence to show, or -1 for nothing.
+##
+## It is one rule now because TWO of them was the bug. The presence ease asked "is t inside this
+## SENTENCE's span, +/- LEAD/HANG"; the draw asked "is t within 0.4 s of a WORD, or within LEAD
+## of the next one" - and those disagree for any pause longer than 1.2 s INSIDE a sentence.
+## Reported from a ch19 render, at a colon: "at exactly the same place where the colon is, the
+## subtitles briefly disappeared, then reappeared... the SAME subtitles flickered". A colon is
+## sent to the voice as a colon (see generative_editor._build_chunks), the model answers it with
+## a clause pause, and a pause_scale over 1 stretches it past that 1.2 s - so `presence` held at
+## 1.0 while the draw had no sentence to draw and returned early, taking the plate with it.
+## Measured before the fix: a 1.6 s internal pause went dark 0.45 s in, for a third of a second.
+##
+## The order of preference is what makes one rule serve both:
+##   1. t inside a span - internal pauses included, which is the fix;
+##   2. else the NEXT sentence, if it starts within LEAD (it takes over at a seam, because it is
+##      the one about to be spoken);
+##   3. else the PREVIOUS sentence, if it ended within HANG (a line lingers rather than snapping
+##      off, including in a long gap between two sentences);
+##   4. else nothing - the speaking has genuinely stopped.
+func span_at(t: float) -> int:
+	var spans := _spans_now()
+	for i in spans.size():
+		var e: Dictionary = spans[i]
+		if t >= float(e.lo) and t < float(e.hi):
+			return i
+	var nxt := -1
+	var prv := -1
+	for i in spans.size():
+		if t < float(spans[i].lo):
+			nxt = i
 			break
-	if si < 0:
-		return 0.0
-	var seen := false
-	for w in words:
-		if int(w.sentence) != si:
-			continue
-		if not seen:
-			lo = float(w.t0)
-			seen = true
-		hi = float(w.t1)
-	if not seen:
-		return 0.0
-	return 1.0 if t >= lo - LEAD and t < hi + HANG else 0.0
+		prv = i
+	if nxt >= 0 and float(spans[nxt].lo) - t <= LEAD:
+		return nxt
+	if prv >= 0 and t - float(spans[prv].hi) <= HANG:
+		return prv
+	return -1
+
+
+## Should anything be on screen at time [param t], and how strongly? 1 while a sentence is
+## selected by [method span_at], 0 otherwise - the same question the draw asks, so the plate and
+## the text can never disagree about whether there is anything to read.
+func _presence_target(t: float) -> float:
+	return 1.0 if span_at(t) >= 0 else 0.0
 
 
 func _process(delta: float) -> void:
@@ -318,22 +368,14 @@ class Overlay:
 	## continuous character sequence rather than reset at every word.
 	func _current_sentence(t: float) -> Array:
 		var all: Array = owner_node.words
-		var si := -1
-		for w in all:
-			if t >= float(w.t0) - 0.4 and t < float(w.t1) + 0.4:
-				si = int(w.sentence)
-				break
-		if si < 0:
-			for w in all:
-				# BOUNDED BY LEAD. Without the second condition this reads "the first
-				# sentence not yet spoken", however far off that is - which is why the
-				# opening line sat on screen through the whole intro, before a word had
-				# been said.
-				if t < float(w.t0) and float(w.t0) - t <= Subtitles.LEAD:
-					si = int(w.sentence)
-					break
-		if si < 0:
+		# ONE RULE, shared with the presence ease - see Subtitles.span_at for why this is not
+		# its own window any more. It used to be "the sentence with a word within 0.4 s, else
+		# the first one starting within LEAD", which had a dead zone in the middle of any pause
+		# longer than 1.2 s and blinked the line off inside a sentence at a colon.
+		var pos: int = owner_node.span_at(t)
+		if pos < 0:
 			return []
+		var si := int(owner_node._spans_now()[pos].si)
 		var out: Array = []
 		var cstart := 0
 		for k in all.size():

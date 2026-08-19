@@ -137,6 +137,29 @@ class MemorySurfacing(MemoryBase):
                 "order": 13,
             },
         },
+        "memory_adapt": {
+            "description": (
+                "What the test-time update changed in the READOUT: "
+                "||read(W_T) - read(W0)|| / ||read(W0)||, the same write Memory "
+                "Write measures, in function space instead of weight space. Read "
+                "the two together. Memory Write divides by a ||W0|| that grows "
+                "as the trunk trains, so a step of unchanged size reads as a "
+                "falling ratio - scaling the memory net by k divides it by "
+                "exactly k, news about the weights and not about the memory. "
+                "This denominator instead sits behind out_norm's RMS "
+                "normalization and is pinned regardless of that scale, so what "
+                "moves here is the numerator: how far the trunk's view of the "
+                "memory actually shifted between the pre- and post-write "
+                "weights. 0 means the writes changed nothing the trunk can see."
+            ),
+            "chart": {
+                "title": "Memory Adaptation",
+                "y_label": "delta-read / read",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 14,
+            },
+        },
         # Event sizes share one chart (mean/min/max are the same scale) via a
         # series_group; the lowest-order member supplies the title/axis/subtitle.
         "memory_event_size": {
@@ -152,7 +175,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "tokens / event",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 14,
+                "order": 15,
                 "series_group": "memory_event",
                 "series_label": "mean",
             },
@@ -164,7 +187,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "tokens / event",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 15,
+                "order": 16,
                 "series_group": "memory_event",
                 "series_label": "min",
             },
@@ -176,7 +199,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "tokens / event",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 16,
+                "order": 17,
                 "series_group": "memory_event",
                 "series_label": "max",
             },
@@ -211,6 +234,8 @@ class MemorySurfacing(MemoryBase):
             out["memory_gain"] = float(m.last_gain)
         if m.last_write is not None:
             out["memory_write"] = float(m.last_write)
+        if m.last_adapt is not None:
+            out["memory_adapt"] = float(m.last_adapt)
         if m.last_event_mean is not None:
             out["memory_event_size"] = float(m.last_event_mean)
             out["memory_event_min"] = float(m.last_event_min)
@@ -529,6 +554,7 @@ class MemoryBandSmear(MemoryBase):
             ("last_surprise_norm", "memory_surprise_norm"),
             ("last_gain", "memory_gain"),
             ("last_write", "memory_write"),
+            ("last_adapt", "memory_adapt"),
         ):
             v = getattr(mem, attr, None)
             if v is not None:
@@ -717,10 +743,30 @@ class MemoryDepthBank(MemoryBase):
             "delta-W / W0",
             (
                 "Per-core relative size of the test-time weight update "
-                "(||W_T - W0|| / ||W0||). Near 0 means that regime's update is "
-                "inert - it is being carried as parameters without memorizing."
+                "(||W_T - W0|| / ||W0||). A small value is NOT by itself an "
+                "inert update: the denominator is the core's meta-learned "
+                "weights, which grow as the trunk trains, so a step of "
+                "unchanged size reads as a falling ratio. Memory Core "
+                "Adaptation is the same write without that confound."
             ),
             base_order=50,
+        ),
+        **_per_core_charts(
+            "memory_adapt",
+            "Memory Core Adaptation",
+            "delta-read / read",
+            (
+                "Per-core effect of the test-time update on the READOUT: "
+                "||read(W_T) - read(W0)|| / ||read(W0)||, the write measured in "
+                "function space. This is the line that separates a core doing "
+                "gentle in-context work from one whose update the readout cannot "
+                "feel - Memory Core Write cannot, since it falls by 1/k whenever "
+                "the core's weights grow k-fold against a fixed update step. The "
+                "denominator here is RMS-normalized by out_norm, so it holds "
+                "still under that growth and a fall is a real one. Sampled on a "
+                "cadence, so it moves in steps rather than per-batch."
+            ),
+            base_order=60,
         ),
     }
 
@@ -889,6 +935,7 @@ class MemoryDepthBank(MemoryBase):
             ("last_surprise_norm", "memory_surprise_norm"),
             ("last_gain", "memory_gain"),
             ("last_write", "memory_write"),
+            ("last_adapt", "memory_adapt"),
         ):
             v = getattr(mem, attr, None)
             if v is not None:

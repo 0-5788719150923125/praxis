@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (11 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (13 entries)
 
 ## `arc`, `arc_dropoff` - ArcAttention
 
@@ -36,6 +36,16 @@ Source: [praxis/attention/single.py:86](../praxis/attention/single.py#L86)
 Presets:
 - `arc_single` - class defaults
 - `arc_single_dropoff` - `dropoff='warp'`
+
+## `arc_ssog`, `arc_ssog_wide` - ArcSSOGAttention
+
+SSOG with a per-depth field (see module docstring).
+
+Source: [praxis/attention/arc_ssog.py:125](../praxis/attention/arc_ssog.py#L125)
+
+Presets:
+- `arc_ssog` - class defaults
+- `arc_ssog_wide` - `num_atoms=32`
 
 ## `causal` - CausalAttention
 
@@ -78,7 +88,13 @@ Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.p
 
 Sum-of-Gaussians attention field over causal lag (see module docstring).
 
-Source: [praxis/attention/ssog.py:70](../praxis/attention/ssog.py#L70)
+This class is the FAITHFUL port and is meant to stay that way; variants subclass it. The
+three knobs below are class attributes rather than direct reads of the module constants
+so a subclass can reshape the field without reimplementing ``__init__``, and
+``_build_field`` / ``_field`` are the two seams a variant overrides. See
+``praxis/attention/arc_ssog.py``.
+
+Source: [praxis/attention/ssog.py:84](../praxis/attention/ssog.py#L84)
 
 ## `syntaxes` - SyntaxesAttention
 

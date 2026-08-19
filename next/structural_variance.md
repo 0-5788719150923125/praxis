@@ -28,6 +28,8 @@ our own code:
 | `heads/harmonic.py` | input-conditional amplitude delta `Δ_φ(context)` | one scalar per cell - a **point estimate** |
 | crystal head | a discrete set of centers | a soft assignment - an **expectation over centers** |
 | standard attention | a distribution over positions | a **weighted mean of values** |
+| `heads/parallel.py` | two branches, bias arm and variance arm, on the same input | `sum_i softmax(gate)_i * branch_i(h)` - a **weighted mean of branches** |
+| `routers/smear.py` | a router distribution over N experts | a softmax-weighted **merge of expert parameters** |
 
 SSOG is the sharpest case, because the density is completely explicit. The
 Gaussians shape *which* mean gets taken, and then a mean gets taken. It is a
@@ -38,10 +40,122 @@ density network failure mode (Bishop, 1994): if the target is bimodal, the mean
 lands between the modes. The mean of "swerve left" and "swerve right" is "hit
 the obstacle."
 
+ParallelHead and SMEAR are worth calling out separately, because in both cases
+the collapse is **deliberate and well-motivated**, not an oversight. SMEAR
+merges expert parameters by a softmax specifically so that routing is
+differentiable without sampling - that is the paper's entire contribution. The
+point is not that these are bugs. The point is that we have chosen the mean
+everywhere, for good local reasons, and never once priced what the choice costs.
+
 The one place in the stack that does **not** collapse is the CALM patch vote -
 mode of N decoded candidates rather than argmax of an averaged distribution.
 That is why it feels like a different regime. It is the only non-expectation
 readout we have.
+
+## What "multimodal" means here (three senses of "mode")
+
+Disambiguation first, because "mode" is now doing three separate jobs in this
+codebase and two of them already collide in the paper.
+
+1. **Statistical mode** - a peak of a probability distribution. A distribution
+   is *multimodal* when it has more than one peak. This is the sense used
+   throughout this note, and the sense in "mode of 500 samples."
+2. **Frequency mode** - one component of the harmonic basis. This is the
+   glossary sense in `research/body.tex`. Section 2 already leans on the
+   collision with sense 1 on purpose: "mode collapse" is true in both readings
+   at once, since a spectrum concentrating on one cell *is* a distribution
+   collapsing to one peak.
+3. **Modality** - text, image, audio. Different input types. **Not used in this
+   note at all.**
+
+The operational test for sense 1, which is the only one that matters here:
+
+> **A distribution is multimodal when its mean is not a valid sample.**
+
+The mean of "swerve left" and "swerve right" is "hit the obstacle." The mean of
+`the` and `a` is not a word. Where the mean is not in the support, taking the
+mean is not a summary - it is a fabrication, and a vote is doing something a
+mean structurally cannot.
+
+## Two paths over one input: a mechanism, not a definition
+
+The natural question is whether running the same input down two pathways -
+standard LM embeddings and CALM embeddings, say - and combining them makes the
+model "multimodal." In sense 3, yes, loosely. In sense 1, **not by itself**, and
+the distinction is the whole thesis of this note.
+
+Two pathways are a *mechanism that can produce* a multimodal predictive
+distribution: when the paths disagree about the next token, the combined
+distribution has a peak per path. That is a real and cheap source of structured
+variance, and it is worth having.
+
+But **how you combine them decides whether any of it survives.** Cross-attention
+between the paths, a learned gate, or a weighted sum all take an expectation,
+and an expectation over a bimodal mixture lands in the valley between the peaks.
+We already have exactly this architecture and it already collapses:
+`heads/parallel.py` runs a bias arm and a variance arm on the same input and
+emits `sum_i softmax(gate)_i * branch_i(h)`. The `prismatic` profile is two
+paths over one input, merged by a mean.
+
+So the requirement is not "accept the same input through different paths." It is
+**keep the paths distinguishable at a readout that does not average them.** A
+mixture is only a mixture until something integrates over it. Concretely, that
+means one of:
+
+- carry both paths' distributions to the final readout and **vote**, rather than
+  gating them into one representation mid-stack;
+- train the combination with a proper scoring rule (CRPS / energy score) so the
+  loss rewards covering both peaks instead of splitting the difference;
+- keep the gate, but make it **sample** a path rather than blend paths, and pay
+  for that with the quantile machinery below rather than with REINFORCE.
+
+There is a cheap diagnostic here that needs no new architecture: on an existing
+`prismatic` run, log the **per-token gate entropy** and the **disagreement
+between branch 0 and branch 1 logits**. Tokens where the branches disagree
+sharply *and* the gate is near 0.5 are exactly the tokens whose true predictive
+distribution is bimodal and whose blended output is a fabrication. If that set
+is empty, the branches have converged onto the same function and the parallel
+split is not buying variance at all - which would be a finding about
+`prismatic` independent of everything else in this note.
+
+## Where multimodality should actually appear
+
+Candidate sites, ordered by how likely a real second peak is and how cheap it is
+to check. All of these are measurable on runs we already have.
+
+- **Byte-level positions at a word boundary.** Inside a word the next byte is
+  near-deterministic; at a boundary the model is choosing among words, which is
+  genuinely multimodal. A pure-byte model therefore *alternates* between
+  unimodal and multimodal positions on a regular schedule. This is the cleanest
+  natural experiment available to us and it costs one logging hook.
+- **CALM patch decoding.** A patch spans several bytes, so its distribution is a
+  joint over several decisions, which is far more likely to be multimodal than
+  any single byte. This is the strongest a-priori reason the patch vote might be
+  doing real work, and it is what the check below tests.
+- **MTP draft positions.** Multimodality should grow monotonically with draft
+  distance. The adaptive draft width already tracks an accepted-run EMA, which
+  is an *indirect* measurement of exactly this - a direct one would tell us
+  whether width should key on measured modality instead.
+- **Halting depth.** A token that could plausibly halt at depth 2 or depth 5 is
+  bimodal in depth. KL halting currently reads a convergence ratio, which is a
+  unimodal summary of a possibly-bimodal quantity.
+- **Router assignments.** A genuinely ambiguous token should produce a flat or
+  bimodal router distribution. SMEAR merges it either way.
+
+## Rendered text as images: adjacent, and a separate thread
+
+Writing training text into images and mixing it alongside the byte stream is
+sense-3 multimodality. It is a real line of work - PIXEL (Rust et al. 2023)
+trains a language model on rendered text specifically to escape the vocabulary
+bottleneck, and the optical-compression results treat a page of rendered text as
+a cheaper carrier than its tokens.
+
+It would give two views of the same content, and disagreement between views is a
+variance source, so the instinct connects. But it does not test anything in this
+note more cheaply than two embedding paths over the same bytes do, and it drags
+in a renderer, an image encoder, and a resolution/fidelity axis we would then
+have to tune. **Verdict: worth its own note if the compression angle is what
+appeals, not a component of this one.**
 
 ## Prior art, so we do not reinvent it under a new name
 
@@ -173,7 +287,10 @@ Stated as falsifiers, because the interesting outcome is the one that kills it.
 ## The cheap measurement that should come first
 
 Before any of the above, there is a few-hour check that decides whether the
-whole framing has legs, and it uses runs we already have.
+whole framing has legs, and it uses runs we already have. (The prismatic
+gate-entropy / branch-disagreement probe described earlier is cheaper still and
+independent of this one - it asks whether a two-path split is producing
+multimodality, while this one asks whether an existing vote is consuming any.)
 
 **Is the CALM sample distribution actually multimodal?** The claim "mode of 500
 is voting over the variance, not a mean over the bias" is only true if the
@@ -219,7 +336,11 @@ Hard ordering. Do not skip.
    and we have not yet seen one run. If SSOG is a dud as a *mean-based* mixture,
    that is important information about whether the non-mean version is worth it.
 2. **The CALM multimodality check** on archived runs. Cheap, decides the framing.
-3. Only then: the `kappa` grid, and only alongside a readout that pays for
+3. **The prismatic gate probe** (gate entropy + branch logit disagreement). Also
+   cheap, also on existing runs, and independent of 1 and 2 - it says whether
+   the two-path structure we already ship is generating multimodality or whether
+   the branches have converged. Can run in parallel with 2.
+4. Only then: the `kappa` grid, and only alongside a readout that pays for
    spread.
 
 ## Paper status

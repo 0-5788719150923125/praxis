@@ -31,6 +31,7 @@ from praxis.memory.surfacings import MemoryBase
 from praxis.metrics.specialization import (
     collect_activation_descriptions,
     collect_arc_descriptions,
+    collect_attention_descriptions,
 )
 
 
@@ -100,6 +101,11 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         activation_descs = collect_activation_descriptions(model)
         if activation_descs:
             yield activation_descs
+
+        # Attention mechanisms that publish diagnostics (SSOG's field).
+        attention_descs = collect_attention_descriptions(model)
+        if attention_descs:
+            yield attention_descs
 
     # The decoder's sorting slot, when it holds a learnable positional field
     # (decay_bias / amplitude_field); the stateless sorts declare nothing.

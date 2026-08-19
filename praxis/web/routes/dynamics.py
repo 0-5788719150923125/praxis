@@ -932,31 +932,17 @@ def get_head_snapshots():
     """
 
     def _live():
+        # Delegates to the precompute recipe rather than repeating it. This
+        # route is only the cold-start path (the producer normally fills the
+        # slot), and while it held a second copy the two drifted: the recipe
+        # grew a memory-surfacings walk this one never got, and a snapshot
+        # added here alone would render nowhere once the producer took over.
+        from praxis.web.snapshots import _recipe_head_snapshots
+
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
-        head = getattr(model, "head", None) if model is not None else None
-        criterion = getattr(model, "criterion", None) if model is not None else None
-        encoder = getattr(model, "encoder", None) if model is not None else None
+        return _recipe_head_snapshots(model)
 
-        snapshots = {}
-        if head is not None:
-            snapshots.update(head.dashboard_snapshots() or {})
-        # Loss functions (e.g. HALO) contribute their own geometry snapshots,
-        # whether HALO is the main criterion (byte-latent) or the encoder's
-        # reconstruction loss (CALM).
-        if criterion is not None and hasattr(criterion, "dashboard_snapshots"):
-            snapshots.update(criterion.dashboard_snapshots() or {})
-        if encoder and hasattr(encoder, "dashboard_snapshots"):
-            snapshots.update(encoder.dashboard_snapshots() or {})
-        # RLCT loss-landscape grid, stashed on the model by the landscape probe.
-        rlct = getattr(model, "_rlct_landscape", None)
-        if isinstance(rlct, dict):
-            snapshots.update(rlct)
-        # Per-module compute-time treemap, stashed by ComputeProfilerCallback.
-        compute = getattr(model, "_compute_profile", None)
-        if isinstance(compute, dict):
-            snapshots.update(compute)
-        return {"status": "ok" if snapshots else "no_data", "snapshots": snapshots}
 
     try:
         return serve_snapshot("head_snapshots", _live)

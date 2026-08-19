@@ -66,10 +66,14 @@ func start() -> void:
 
 
 func stop() -> void:
-	if _state == "up":
+	# Only ask a host that is actually there. On the way out `Boot` has already reaped the
+	# registry by the time this runs from `_exit_tree`, so the pipe's far end is gone and the
+	# polite shutdown is a write into a dead process (see the note in subprocess.gd, which is
+	# where the visible half of this bug was).
+	if _state == "up" and Subprocess.alive(_pid):
 		_send({"op": "shutdown"})
 	if _pid > 0:
-		OS.kill(_pid)
+		Subprocess.stop(_pid)
 		_pid = -1
 	_state = "idle"
 	set_process(false)
@@ -163,7 +167,7 @@ func _begin_venv() -> void:
 	_state = "venv"
 	progress.emit("venv", "Creating the voice environment…")
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(VENV_DIR))
-	_boot_pid = OS.create_process(_which("python3"),
+	_boot_pid = Subprocess.start(_which("python3"),
 		["-m", "venv", ProjectSettings.globalize_path(VENV_DIR)])
 	if _boot_pid <= 0:
 		_fail("venv", "could not start python3 -m venv")
@@ -173,7 +177,7 @@ func _begin_deps() -> void:
 	_state = "deps"
 	progress.emit("deps", "Installing voice dependencies (a minute or so)…")
 	var req := ProjectSettings.globalize_path("res://voice_host/requirements.txt")
-	_boot_pid = OS.create_process(_venv_python(),
+	_boot_pid = Subprocess.start(_venv_python(),
 		["-m", "pip", "install", "--upgrade", "-r", req])
 	if _boot_pid <= 0:
 		_fail("deps", "could not start pip")
@@ -182,8 +186,10 @@ func _begin_deps() -> void:
 func _spawn_host() -> void:
 	_state = "starting"
 	var py := _venv_python()
-	# blocking=false gives a FileAccess over the child's stdio pair
-	var info := OS.execute_with_pipe(py, ["-u", _host_script()])
+	# blocking=false gives a FileAccess over the child's stdio pair. Through [Subprocess] so
+	# the host dies with ghost: it is a python process holding a voice model in memory, and a
+	# detached one survives the app invisibly, still holding the model and the venv.
+	var info := Subprocess.start_with_pipe(py, ["-u", _host_script()], "voice host")
 	if info.is_empty():
 		_fail("host", "could not start the voice host process")
 		return
@@ -218,14 +224,14 @@ func _process(delta: float) -> void:
 
 	match _state:
 		"venv":
-			if _boot_pid > 0 and not OS.is_process_running(_boot_pid):
+			if _boot_pid > 0 and not Subprocess.alive(_boot_pid):
 				_boot_pid = -1
 				if _venv_python().is_empty():
 					_fail("venv", "the environment was not created")
 				else:
 					_begin_deps()
 		"deps":
-			if _boot_pid > 0 and not OS.is_process_running(_boot_pid):
+			if _boot_pid > 0 and not Subprocess.alive(_boot_pid):
 				_boot_pid = -1
 				if _deps_present():
 					_spawn_host()
@@ -240,7 +246,7 @@ func _process(delta: float) -> void:
 		"starting", "up":
 			_drain()
 			_drain_stderr()
-			if _pid > 0 and not OS.is_process_running(_pid):
+			if _pid > 0 and not Subprocess.alive(_pid):
 				_drain_stderr()          # whatever it managed to say on the way out
 				_fail("host", "the voice host exited unexpectedly - see the "
 					+ "ghost/voice lines above in the terminal")

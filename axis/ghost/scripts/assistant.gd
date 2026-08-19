@@ -245,7 +245,12 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 	# it arrives as bash's $1, a real argv element.
 	var script := "cd \"%s\" && exec \"%s\" -p --model sonnet --dangerously-skip-permissions --output-format stream-json --verbose%s \"$1\" > \"%s\" 2> \"%s\"" % [
 		_repo_root, _claude_bin, resume_part, entry.out_path, entry.err_path]
-	entry.pid = OS.create_process("/bin/bash", ["-c", script, "bash", prompt])
+	# DETACHED ON PURPOSE, and this is the one place in ghost that is. A dispatched run
+	# writes straight to the working tree and is meant to finish whether or not the editor
+	# is still open - see the note on `_closing`. Everything else goes through
+	# [method Subprocess.start], which binds the child to this process and kills it on exit;
+	# that is exactly the behaviour a dispatch must NOT have.
+	entry.pid = Subprocess.start_detached("/bin/bash", ["-c", script, "bash", prompt])
 	if int(entry.pid) < 0:
 		# create_process failed outright (bad binary, spawn error) - without
 		# this, the entry would sit at "running" forever: _process()'s poll

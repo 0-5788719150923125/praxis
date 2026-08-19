@@ -11,7 +11,7 @@ A scene composes layers through `GhostScene` helpers (add_layer / update_layers 
 
 Two methods to override: update(f, dt, half) - advance state; `half` is the visible half-size in unit fractions (Vector2), so a layer knows where the frame ends. draw(ci, u)         - draw onto CanvasItem `ci` at unit `u` (pixels per unit).
 
-Registry: `Layer.REGISTRY` in [scripts/layer.gd](../scripts/layer.gd) (21 entries)
+Registry: `Layer.REGISTRY` in [scripts/layer.gd](../scripts/layer.gd) (22 entries)
 
 ## `bed` - Bed
 
@@ -23,13 +23,13 @@ Source: [scripts/layer.gd:233](../scripts/layer.gd#L233)
 
 Surface - the lit water SURFACE far above: a bright wash of light pouring down from a distant sun in the sky, and drifting CAUSTIC ripples (the refracted light-net). Fills the "dead space" at the top of the underwater scenes with a real light source and topological refraction. Soft, additive, brightest at the top and fading into the depths; brightens and shimmers with the music.
 
-Source: [scripts/layer.gd:1841](../scripts/layer.gd#L1841)
+Source: [scripts/layer.gd:2129](../scripts/layer.gd#L2129)
 
 ## `kelp` - Kelp
 
 Kelp - the sea FLOOR: tall soft kelp fronds swaying up from the bottom, and a few blurry bioluminescent glows pooled among them - abstract, transparent, all out of focus in the deep water. Anchors the underwater scenes with a floor and life instead of empty blue below.
 
-Source: [scripts/layer.gd:1910](../scripts/layer.gd#L1910)
+Source: [scripts/layer.gd:2198](../scripts/layer.gd#L2198)
 
 ## `fog` - Fog
 
@@ -109,32 +109,44 @@ Fire - a living flame. The BODY is one shared GPU temperature field (see shaders
 
 Source: [scripts/layer.gd:1311](../scripts/layer.gd#L1311)
 
+## `vapor` - Vapor
+
+Vapor - coloured ink-in-water: heavy twisting masses with fibrous strands drawn out of them, lit from inside. The GPU field lives in shaders/vapor_field.gdshader (read its header for the twist / fibre / hardness construction and why blobs cannot do it); this half is the part that has to be a simulation rather than arithmetic - WHERE the masses are, WHAT COLOUR each one is, and HOW LOUD it is right now.
+
+A PLUME is one mass: an elliptical gaussian that listens to its own harmonic band (fast attack, slow release, expanded through a per-plume gamma), drifts on a slow lissajous about its home, and carries its own hue. The field mixes their colours by contribution, so a violet mass and a teal one blend where they overlap and stay themselves where they do not - that two-sided colour is the whole point, and it is the reason plumes are separate objects instead of one density.
+
+THE LAMP is a real position in the same space, travelling on its own slow orbit. The shader tapping the plume envelope toward it is what makes the masses read as volume; moving it is what keeps them from looking like a still.
+
+Tint it with hue / accent / sat / val, shape it with swirl / churn / crease / stretch / hard / thresh / haze / scale, and choose where the masses sit with `layout`. Additive, so it composes over anything - a bed, a landscape, a city - without occluding it.
+
+Source: [scripts/layer.gd:1561](../scripts/layer.gd#L1561)
+
 ## `rays` - Rays
 
 Rays - god-rays / light shafts angling down from the top edge, swaying slowly, brighter at the top and fading to nothing below. The underwater (and fog-lit) light cue.
 
-Source: [scripts/layer.gd:1541](../scripts/layer.gd#L1541)
+Source: [scripts/layer.gd:1829](../scripts/layer.gd#L1829)
 
 ## `planet` - Planet
 
 Planet - a REAL 3D sphere: a smooth-shaded `Mesh3D` icosphere drawn through a private `Lens3D`, exactly the way the eye's sclera is built, so it is genuinely round and lit with a true terminator (not a flat stack of discs). Opaque, so the stars behind it are occluded. Drawn AFTER the stars by the scene for that occlusion.
 
-Source: [scripts/layer.gd:1586](../scripts/layer.gd#L1586)
+Source: [scripts/layer.gd:1874](../scripts/layer.gd#L1874)
 
 ## `volumetric` - Volumetric
 
 Volumetric - REAL 3D clouds / fog. A field of soft gaussian puffs placed in 3D space, lit VOLUMETRICALLY (sorted from the sun inward, accumulating optical depth, so puffs facing the sun are bright and those buried behind others fall into shadow), depth-sorted and projected through a private `Lens3D`, drifting and billowing over time. Simulated dynamics, not a flat 2D sprite - and being atmospheric it washes well over other scenes (the LAYER transition can stack it).
 
-Source: [scripts/layer.gd:1634](../scripts/layer.gd#L1634)
+Source: [scripts/layer.gd:1922](../scripts/layer.gd#L1922)
 
 ## `veil` - Veil
 
 Veil - a composable harmonic OBSCURING layer: drifting gaussian masses (snow squalls, rain sheets, haze) that swell with musical intensity and fade out between, softening and hiding the scene behind. The general form of the snow whiteout, so ANY scene can add moving patterns of visibility and obscuration. Tint with hue/sat/val; floor/gain/max shape how the swell maps to opacity. Add it last (front) so it veils what is beneath.
 
-Source: [scripts/layer.gd:1813](../scripts/layer.gd#L1813)
+Source: [scripts/layer.gd:2101](../scripts/layer.gd#L2101)
 
 ## `flare` - Flare
 
 Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic streak, plus a chain of translucent "ghost" discs and rings marching along the line from the source through the optical centre to the far side (where real lens flares sit). Its brightness pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so any scene can wear a flare over the top. Add it LAST (front).
 
-Source: [scripts/layer.gd:1745](../scripts/layer.gd#L1745)
+Source: [scripts/layer.gd:2033](../scripts/layer.gd#L2033)

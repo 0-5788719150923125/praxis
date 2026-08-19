@@ -52,23 +52,55 @@ PCA_GRID_SIZE: int = 64
 
 
 @torch.no_grad()
-def _pca_density_grid(weights: list, grid_size: int = PCA_GRID_SIZE) -> dict:
+def _pca_frame(weights: list) -> tuple:
+    """Shared ``(mean, V, ranges)`` projection frame for a set of ``[V, D]``
+    tables: the top-2 PCs over every row of every table, plus the extent of the
+    projection, so panels drawn in this frame are directly comparable.
+
+    The SVD is the deterministic full one, matching the paper figure's copy of
+    this view (``praxis.pillars.geometries.pca_density_grid``, which moved off
+    the randomized path first). ``torch.svd_lowrank`` draws from the global RNG:
+    the same centers binned differently on every dashboard refresh, and the
+    draws perturbed the training RNG stream of the run being watched. Economy
+    SVD on a ``[V, D]`` table is cheap either way.
+    """
+    stacked = torch.cat([W.detach().to(torch.float32) for W in weights], dim=0)
+    mean = stacked.mean(dim=0, keepdim=True)
+    centered = stacked - mean
+    _, _, Vh = torch.linalg.svd(centered, full_matrices=False)
+    basis = Vh[:2].transpose(-2, -1)  # [D, 2]
+    proj = centered @ basis
+    ranges = (
+        [float(proj[:, 0].min()), float(proj[:, 0].max())],
+        [float(proj[:, 1].min()), float(proj[:, 1].max())],
+    )
+    return mean, basis, ranges
+
+
+@torch.no_grad()
+def _pca_density_grid(
+    weights: list, grid_size: int = PCA_GRID_SIZE, frame: Optional[tuple] = None
+) -> dict:
     """Project stacked row vectors to 2D PCA, bin into a density grid.
 
     Rows are stacked so the PCA sees every input table at once (the
-    crystal head passes its ``[V, D]`` centers). Uses ``svd_lowrank`` to
-    grab only the top-2 PCs - cheap regardless of vocab size.
+    crystal head passes its ``[V, D]`` centers).
+
+    ``frame`` is an optional :func:`_pca_frame` to draw in. Pass one when
+    several panels are meant to be COMPARED - the bank's per-expert cards -
+    so each lands in the same basis and the same axes: identical geometries
+    then render identically, and a deviation reads as displacement instead of
+    as a re-fit of the projection. Omitted, the table fits its own frame,
+    which is the right thing for a lone card.
     """
     if not weights:
         return {}
     stacked = torch.cat([W.detach().to(torch.float32) for W in weights], dim=0)
-    centered = stacked - stacked.mean(dim=0, keepdim=True)
-    # svd_lowrank wants q <= min(rows, cols); 2 PCs is always safe.
-    U, S, V = torch.svd_lowrank(centered, q=2)
-    proj = centered @ V  # [N, 2]
+    mean, basis, ranges = frame if frame is not None else _pca_frame(weights)
+    centered = stacked - mean
+    proj = centered @ basis  # [N, 2]
 
-    x_min, x_max = float(proj[:, 0].min()), float(proj[:, 0].max())
-    y_min, y_max = float(proj[:, 1].min()), float(proj[:, 1].max())
+    (x_min, x_max), (y_min, y_max) = ranges
     x_span = max(x_max - x_min, 1e-12)
     y_span = max(y_max - y_min, 1e-12)
 
@@ -88,7 +120,11 @@ def _pca_density_grid(weights: list, grid_size: int = PCA_GRID_SIZE) -> dict:
 
     n_rows = max(centered.shape[0] - 1, 1)
     total_var = float((centered.pow(2).sum() / n_rows).item())
-    pc_vars = (S.pow(2) / n_rows).tolist() if total_var > 0 else [0.0, 0.0]
+    # Equal to the singular values when this table defines the frame; in a
+    # shared frame it is this panel's own spread along the shared axes.
+    pc_vars = (
+        (proj.pow(2).sum(dim=0) / n_rows).tolist() if total_var > 0 else [0.0, 0.0]
+    )
     var_explained = [v / total_var for v in pc_vars] if total_var > 0 else [0.0, 0.0]
 
     return {
@@ -778,12 +814,30 @@ class CrystalVearHead(BaseHead):
             "crystal_bank_distinctness": self._bank_distinctness(),
         }
 
+    @torch.no_grad()
     def dashboard_snapshots(self) -> dict:
-        # One PCA density per expert: distinct structure across experts = VEAR
-        # producing unique geometries; identical clouds = the bank collapsed.
+        """One PCA density per expert: distinct structure across experts = the
+        bank producing unique geometries; identical clouds = it collapsed.
+
+        Reads ``_expert_centers()`` rather than looping over ``bank.experts``,
+        so a subclass that stores the bank differently still gets one card per
+        EXPERT. ``CrystalSmearHead`` keeps a single shared trunk module plus
+        rank-r deviations, and the old loop emitted card 0 and left the other
+        ``n_experts - 1`` - which ``all_metric_descriptions`` declares - blank.
+
+        Every panel is drawn in one shared frame, since the whole point of the
+        set is comparing them against each other. The frame spans every
+        expert's rows, so one expert moving redraws all four panels together -
+        the price of a common axis, and far less drift than the per-panel
+        re-fit this replaced.
+        """
+        tables = list(self._expert_centers())
+        if not tables:
+            return {}
+        frame = _pca_frame(tables)
         out: dict = {}
-        for k, e in enumerate(self.bank.experts):
-            grid = _pca_density_grid([e.centers])
+        for k, centers in enumerate(tables):
+            grid = _pca_density_grid([centers], frame=frame)
             if grid:
                 out[f"crystal_centers_pca_{k}"] = grid
         return out
@@ -912,6 +966,31 @@ class CrystalSmearHead(CrystalVearHead):
         return self._crystal_logits_perseq(
             hidden_states, merged, self.bank.experts[0]
         )
+
+    def all_metric_descriptions(self) -> dict:
+        # The parent's per-expert wording ("identical clouds mean the bank
+        # collapsed") reads the opposite way here: these are deviations off a
+        # shared trunk with lora_b zeroed at init, so identical panels are the
+        # designed starting point and separation is the thing to wait for.
+        out = dict(super().all_metric_descriptions())
+        for k in range(self.n_experts):
+            key = f"crystal_centers_pca_{k}"
+            if key in out:
+                out[key] = {
+                    **out[key],
+                    "description": (
+                        f"Top-2 PCA density of crystal expert {k}: the shared "
+                        "center geometry plus this expert's rank-r deviation. "
+                        "All panels are IDENTICAL at step 0 by construction "
+                        "(LoRA init, lora_b zero), which is what makes "
+                        "prismatic6 -> prismatic7 a clean A/B - identical "
+                        "clouds are not collapse here. They separate only as "
+                        "the deviations earn their rank; a panel still "
+                        "indistinguishable from the others late in training is "
+                        "a deviation the router never paid for."
+                    ),
+                }
+        return out
 
     def compose_repr(self) -> str:
         return f"CrystalSmearBank({self.n_experts}, rank={self.rank})"

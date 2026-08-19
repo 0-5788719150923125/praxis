@@ -51,15 +51,29 @@ NUM_ATOMS: int = 4  # Gaussian atoms per head (the reference's sweet spot)
 SIGMA_FLOOR: float = 0.25  # minimum atom width, in tokens
 MAX_OFFSET: float = 8.0  # bound on per-query mu travel, in tokens (raw space)
 COLD_GATE_INIT: float = -8.0  # softplus(-8) ~ 3e-4: steering starts closed
-SIGMA_RAW_INIT: float = -0.5  # softplus(-0.5) + floor ~ 0.72 tokens
+MU_INIT_MIN: float = 0.5  # nearest atom's lag at init, in tokens
+MU_INIT_MAX: float = 32.0  # farthest atom's lag at init, in tokens
+SIGMA_Q: float = 0.35  # atom width as a fraction of its own lag (constant-Q)
+SIGMA_MIN_EXCESS: float = 0.05  # smallest width the ladder asks for, above floor
 TEMPERATURE_RAW_INIT: float = -1.0  # softplus(-1) + 0.5 ~ 0.81, slightly sharp
 QK_DUMMY_DIM: int = 16  # flex needs Q/K tensors; theirs are zeros
+GEOM_BINS: int = 192  # lag samples per geometry row (a live snapshot, so free)
+GEOM_LAG_MIN: float = 0.5  # nearest lag plotted, in tokens
+GEOM_LAG_MAX: float = 512.0  # farthest lag plotted, in tokens
+GEOM_MAX_HOPS: int = 12  # cap on cascade rows, whatever config.depth says
 _EPS: float = 1e-4
 _LOG_2PI: float = math.log(2.0 * math.pi)
 
 
 def _inv_softplus(y: Tensor) -> Tensor:
-    return torch.log(torch.expm1(y))
+    """Inverse of softplus, without overflowing on large lags.
+
+    The direct form ``log(expm1(y))`` overflows float32 at y > ~88, which is
+    reachable the moment a ladder is initialised past that many tokens (it
+    silently produced ``inf`` centres). ``log(e^y - 1) = y + log(1 - e^-y)`` is
+    the same function, stable for every positive y.
+    """
+    return y + torch.log(-torch.expm1(-y))
 
 
 def _log_kernel(d: Tensor, mu: Tensor, sigma: Tensor) -> Tensor:
@@ -68,15 +82,193 @@ def _log_kernel(d: Tensor, mu: Tensor, sigma: Tensor) -> Tensor:
 
 
 class SSOGAttention(nn.Module):
-    """Sum-of-Gaussians attention field over causal lag (see module docstring)."""
+    """Sum-of-Gaussians attention field over causal lag (see module docstring).
 
-    def __init__(self, config) -> None:
+    This class is the FAITHFUL port and is meant to stay that way; variants
+    subclass it. The three knobs below are class attributes rather than direct
+    reads of the module constants so a subclass can reshape the field without
+    reimplementing ``__init__``, and ``_build_field`` / ``_field`` are the two
+    seams a variant overrides. See ``praxis/attention/arc_ssog.py``.
+    """
+
+    default_atoms: int = NUM_ATOMS
+    gate_init: float = COLD_GATE_INIT
+    mu_init_max: float = MU_INIT_MAX
+
+    # Dashboard declaration. The Dynamics tab builds its cards from this map,
+    # so a key absent here logs a column nobody ever sees - which is exactly
+    # what happened when these lived in COMPOSITE_METRIC_REGISTRY, whose cards
+    # read metrics.db while training_metrics() writes dynamics.db.
+    metric_descriptions = {
+        **{
+            f"ssog_mu_a{r}": {
+                "description": (
+                    "Centre lag of Gaussian atom "
+                    f"{r}, in tokens: how far back it looks. Atoms start on a "
+                    "geometric ladder (0.5 .. 32) and can only travel a few "
+                    "sigma from there, because the gradient on mu arrives "
+                    "weighted by the attention mass the atom already puts at "
+                    "that lag. So these lines show how far the field MOVED, "
+                    "not how far it could have."
+                ),
+                "chart": {
+                    "title": "SSOG Atom Lags",
+                    "y_label": "Lag (tokens)",
+                    "y_scale": "logarithmic",
+                    "group": "ssog_field",
+                    # Places the whole section where the other attention
+                    # diagnostics live (arc, infini all declare 30).
+                    "group_order": 30,
+                    "order": 10 + r,
+                    "series_group": "ssog_mu",
+                    "series_label": f"atom {r}",
+                },
+            }
+            for r in range(NUM_ATOMS)
+        },
+        **{
+            f"ssog_sigma_a{r}": {
+                "description": (
+                    f"Width of Gaussian atom {r}, in tokens. At the 0.25 floor "
+                    "with its lag near 1 the atom is a previous-token head; "
+                    "growing without bound it is a causal bag of words. Both "
+                    "are legitimate, and a MIX across atoms is the picture the "
+                    "reference reports."
+                ),
+                "chart": {
+                    "title": "SSOG Atom Widths",
+                    "y_label": "Sigma (tokens)",
+                    "y_scale": "logarithmic",
+                    "group": "ssog_field",
+                    "order": 20 + r,
+                    "series_group": "ssog_sigma",
+                    "series_label": f"atom {r}",
+                },
+            }
+            for r in range(NUM_ATOMS)
+        },
+        **{
+            f"ssog_lambda_a{r}": {
+                "description": (
+                    f"Mixture weight of atom {r}, before per-query steering. "
+                    "Uniform means the field declined to prefer a scale; one "
+                    "atom near 1.0 means the head collapsed onto a single lag "
+                    "and the rest of the ladder is dead weight. The far atom "
+                    "keeping its weight is the only evidence this block is "
+                    "doing anything at range."
+                ),
+                "chart": {
+                    "title": "SSOG Atom Mixture Weights",
+                    "y_label": "lambda",
+                    "group": "ssog_field",
+                    "order": 30 + r,
+                    "series_group": "ssog_lambda",
+                    "series_label": f"atom {r}",
+                },
+            }
+            for r in range(NUM_ATOMS)
+        },
+        **{
+            f"ssog_gate_{name}": {
+                "description": (
+                    f"How far content is allowed to move the atoms' {name}. "
+                    "All three gates start cold at ~3e-4, so the field begins "
+                    "as a fixed causal convolution and the model decides "
+                    "whether to open them at all. Flat at the init value for a "
+                    "whole run is a FINDING, not a failure: it says a purely "
+                    "positional field was all this stack asked for. The "
+                    "reference saw lambda open hardest, and more so with depth."
+                ),
+                "chart": {
+                    "title": "SSOG Steering Gates",
+                    "y_label": "softplus(raw gate)",
+                    "y_scale": "logarithmic",
+                    "group": "ssog_field",
+                    "order": 40 + i,
+                    "series_group": "ssog_gates",
+                    "series_label": name,
+                },
+            }
+            for i, name in enumerate(("mu", "sigma", "lambda"))
+        },
+        "ssog_temperature": {
+            "description": (
+                "The one learned sharpening knob, floored at 0.5. Tempering a "
+                "Gaussian keeps it Gaussian with variance scaled by tau, so "
+                "this is a width multiplier on the whole field at once. "
+                "Driving hard into the floor is the cue that the head is "
+                "trying to manufacture an outlet it does not have: SSOG has no "
+                "null atom, so a query wanting to contribute nothing can only "
+                "approximate it by going needle-narrow onto one key."
+            ),
+            "chart": {
+                "title": "SSOG Field Temperature",
+                "y_label": "tau",
+                "group": "ssog_field",
+                "order": 50,
+            },
+        },
+        "ssog_geometry": {
+            "description": (
+                "The reference's own claim is that a head stops being a "
+                "heatmap and a shrug: it is a few blobs you can plot and read "
+                "with a ruler. This is that plot, 1D and causal. Each band is "
+                "one Gaussian atom with its mixture weight folded in (so an "
+                "atom the field stopped using goes dark rather than staying a "
+                "bright blob nobody reads), nearest at the bottom, the summed "
+                "mixture on top; x is lag on a geometric axis from 0.5 to 512 "
+                "tokens. Separated blobs is the ladder as initialized; "
+                "everything crowding the left edge is a previous-token head; "
+                "one band smeared across the width is a causal bag of words. "
+                "The axis deliberately runs past the sequence length, so mass "
+                "the field has walked outside its own window shows as such. "
+                "The field's SHAPE, from the learned atoms - not a measured "
+                "attention row, so the causal truncation and the per-query "
+                "steering are not in it."
+            ),
+            "snapshot": {
+                "title": "Attention Geometry",
+                "renderer": "heatmap_2d",
+                "color_scale": "linear",
+                "group": "ssog_field",
+                "order": 100,
+            },
+        },
+        "ssog_cascade": {
+            "description": (
+                "The reference plots geometry per LAYER, and that is the one "
+                "axis which does not port: this field is depth-SHARED, so "
+                "there is no per-layer field to draw. The analogue for a "
+                "recurrent-depth model is the cascade. An attention row here "
+                "IS the mixture density, Gaussians are closed under "
+                "convolution, and residual connections keep every hop count "
+                "live at once - so one shared field gives a scale-space "
+                "pyramid whose h-th level is the h-fold self-convolution, mean "
+                "lag h*mu and width sqrt(h)*sigma. Bottom band is one hop, top "
+                "is the full depth; each is normalized to its own peak, since "
+                "the question is where a hop lands, not how thin it is. Read "
+                "it as reach: the top band is the farthest this block can see, "
+                "and if it sits inside a handful of tokens then nothing here "
+                "is doing long range. Ignores the causal window and whatever "
+                "the residual stream does between passes."
+            ),
+            "snapshot": {
+                "title": "Field by Recurrent Depth",
+                "renderer": "heatmap_2d",
+                "color_scale": "linear",
+                "group": "ssog_field",
+                "order": 101,
+            },
+        },
+    }
+
+    def __init__(self, config, num_atoms: Optional[int] = None) -> None:
         super().__init__()
         self.patch_config(config)
         hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.head_dim = getattr(config, "head_size", None) or hidden_size // self.num_heads
-        self.num_atoms = NUM_ATOMS
+        self.num_atoms = int(num_atoms or self.default_atoms)
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
         self.dropout_p = config.dropout
@@ -87,43 +279,52 @@ class SSOGAttention(nn.Module):
         self.output = nn.Linear(H * self.head_dim, hidden_size, bias=False)
         self.dropout = nn.Dropout(self.dropout_p)
 
-        # The field. Atoms start staggered one token apart (lag r + 0.5, jittered)
-        # so the heads break symmetry from step 0 instead of all staring at the
-        # same lag; mu is softplus-parametrised so it is never negative.
-        init_mu = torch.arange(R, dtype=torch.float32).add(0.5).repeat(H, 1)
-        init_mu = init_mu + 0.1 * torch.randn(H, R)
-        self.raw_mu = nn.Parameter(_inv_softplus(init_mu.clamp_min(0.05)))
-        self.raw_sigma = nn.Parameter(torch.full((H, R), SIGMA_RAW_INIT))
-        self.log_lambda = nn.Parameter(torch.zeros(H, R))
-        self.raw_temperature = nn.Parameter(torch.tensor(TEMPERATURE_RAW_INIT))
+        self._build_field(hidden_size, H, R)
 
-        # Steering: one zero-init probe per token -> (mu, sigma, lambda) residuals
-        # for every atom of every head, each family behind its own cold gate.
-        self.steer = nn.Linear(hidden_size, H * R * 3, bias=True)
-        nn.init.zeros_(self.steer.weight)
-        nn.init.zeros_(self.steer.bias)
-        self.raw_gate = nn.Parameter(torch.full((3,), COLD_GATE_INIT))
+        # Display grid for the geometry cards: one FIXED geometric ladder of
+        # lags, shared by both, so a step slider compares like with like across
+        # training. It deliberately runs past the sequence length - a field that
+        # has walked its mass beyond the window is spending it on nothing, and
+        # that is only visible if the axis extends far enough to show it.
+        self.cascade_hops = max(1, min(int(getattr(config, "depth", 1)), GEOM_MAX_HOPS))
+        ramp = torch.linspace(0.0, 1.0, GEOM_BINS)
+        self.register_buffer(
+            "geom_lags",
+            GEOM_LAG_MIN * (GEOM_LAG_MAX / GEOM_LAG_MIN) ** ramp,
+            persistent=False,
+        )
 
         self.flex_attention = None
         self.create_block_mask = None
         self.and_masks = None
-        try:
-            from torch.nn.attention.flex_attention import (
-                and_masks,
-                create_block_mask,
-                flex_attention,
-            )
+        # `--no-compile` means no compile, including ours. The flex path below
+        # compiles ITSELF whatever the rest of the model does, because eager
+        # flex_attention cannot backprop through captured score_mod tensors and
+        # V together (a vmap limitation in its dense backward) and the steering
+        # probes ARE captured tensors that need gradient. That self-compile is
+        # invisible under an outer torch.compile, which dynamo inlines - but
+        # under `no_compile: true` it is the ONLY thing compiling, and its cost
+        # scales with the atom count: one captured tensor per atom per steered
+        # family, so a 12-atom field traces 36 of them and inductor sits on the
+        # first forward for a very long time. The materialised path needs no
+        # compile, differentiates in plain eager, and is affordable here because
+        # the batch schedule holds B*T^2 constant across curriculum tiers
+        # (micro_rows = base_rows // m^2 against T = block_size * m), which puts
+        # the logits tensor at ~1 MB at every tier. So honour the flag.
+        self.compile_flex = not bool(getattr(config, "no_compile", False))
+        if self.compile_flex:
+            try:
+                from torch.nn.attention.flex_attention import (
+                    and_masks,
+                    create_block_mask,
+                    flex_attention,
+                )
 
-            # Compiled on purpose: eager flex_attention cannot backprop through
-            # captured score_mod tensors and V together (a vmap limitation in
-            # its dense backward), and the steering probes ARE captured tensors
-            # that need gradient. Under an outer torch.compile dynamo simply
-            # inlines this, so compiled runs pay nothing extra.
-            self.flex_attention = torch.compile(flex_attention)
-            self.create_block_mask = create_block_mask
-            self.and_masks = and_masks
-        except ImportError:
-            pass
+                self.flex_attention = torch.compile(flex_attention)
+                self.create_block_mask = create_block_mask
+                self.and_masks = and_masks
+            except ImportError:
+                pass
         self.block_mask_cache = {}
 
     @classmethod
@@ -132,9 +333,64 @@ class SSOGAttention(nn.Module):
         if getattr(config, "num_queries", 1) != 1:
             config.num_queries = 1
 
+    def _build_field(self, hidden_size: int, H: int, R: int) -> None:
+        """Create the field and its steering probe.
+
+        The seam a variant overrides to reshape the field (e.g. give it a
+        depth axis). Reads ``self.gate_init`` / ``self.mu_init_max`` rather
+        than the module constants so a subclass changes them by class
+        attribute. Called once, from ``__init__``.
+        """
+        # The field. Atoms start on a GEOMETRIC ladder of lags (0.5 .. 32 for
+        # four atoms), jittered multiplicatively, so the heads break symmetry
+        # from step 0 instead of all staring at the same lag; mu is
+        # softplus-parametrised so it is never negative.
+        #
+        # The ladder is geometric rather than linear because MU CANNOT TRAVEL
+        # FAR BY GRADIENT DESCENT. d/dmu of the log kernel is (d - mu) / sigma^2,
+        # linear in the residual, but it arrives weighted by the attention mass
+        # this atom puts at lag d, which is Gaussian-small a few sigma out. So an
+        # atom initialised at lag 3.5 will never discover lag 200: the ladder set
+        # here IS the run's reachable receptive field, fixed for its lifetime.
+        # A linear stagger (0.5, 1.5, 2.5, 3.5) caps the whole field at ~4 tokens
+        # direct, ~21 through a depth-6 recurrent cascade, and any long-range
+        # result then measures the init rather than the mechanism.
+        #
+        # Widths follow the lags (constant-Q, sigma ~ SIGMA_Q * mu) instead of a
+        # flat 0.72. A far atom needs a basin, not a needle: a needle at lag 32
+        # collects almost no softmax mass, so it gets almost no gradient either,
+        # which would defeat the ladder before the first step. The near atoms sit
+        # on the floor and stay previous-token sharp.
+        ramp = torch.linspace(0.0, 1.0, R) if R > 1 else torch.zeros(1)
+        init_mu = MU_INIT_MIN * (self.mu_init_max / MU_INIT_MIN) ** ramp  # (R,)
+        init_mu = init_mu.repeat(H, 1) * torch.exp(0.1 * torch.randn(H, R))
+        self.raw_mu = nn.Parameter(_inv_softplus(init_mu.clamp_min(0.05)))
+        init_sigma = (SIGMA_Q * init_mu - SIGMA_FLOOR).clamp_min(SIGMA_MIN_EXCESS)
+        self.raw_sigma = nn.Parameter(_inv_softplus(init_sigma))
+        self.log_lambda = nn.Parameter(torch.zeros(H, R))
+        # Shape [1], never 0-dim: schedule-free optimizers swap parameters by
+        # `x.view(torch.uint8).bitwise_xor_(...)`, and a 0-dim tensor cannot be
+        # viewed as a narrower dtype ("self.dim() cannot be 0 to view Float as
+        # Byte"). Broadcasting is unaffected.
+        self.raw_temperature = nn.Parameter(torch.tensor([TEMPERATURE_RAW_INIT]))
+
+        # Steering: one zero-init probe per token -> (mu, sigma, lambda) residuals
+        # for every atom of every head, each family behind its own cold gate.
+        self.steer = nn.Linear(hidden_size, H * R * 3, bias=True)
+        nn.init.zeros_(self.steer.weight)
+        nn.init.zeros_(self.steer.bias)
+        self.raw_gate = nn.Parameter(torch.full((3,), self.gate_init))
+
     # ------------------------------------------------------------------ field
-    def _field(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        """Per-query atom parameters, all ``[B, H, T, R]`` float32, plus tau."""
+    def _field(
+        self, x: Tensor, current_depth: int = 0
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Per-query atom parameters, all ``[B, H, T, R]`` float32, plus tau.
+
+        ``current_depth`` is unused here - the faithful field is shared across
+        every recurrent pass - and is in the signature for variants that are
+        not (see ``ArcSSOGAttention``).
+        """
         B, T, _ = x.shape
         H, R = self.num_heads, self.num_atoms
         steer = self.steer(x).float().view(B, T, H, R, 3).permute(0, 2, 1, 3, 4)
@@ -230,7 +486,7 @@ class SSOGAttention(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], float]:
         B, T, _ = inputs.shape
         v = self.value(inputs).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        mu, sigma, loglam, tau = self._field(inputs)
+        mu, sigma, loglam, tau = self._field(inputs, current_depth)
         if self.flex_attention is not None and inputs.device.type != "cpu":
             out = self._flex(v, mu, sigma, loglam, tau)
         else:
@@ -240,21 +496,147 @@ class SSOGAttention(nn.Module):
 
     # ---------------------------------------------------------------- metrics
     def training_metrics(self) -> dict:
-        """How open the steering taps are and where the field is looking."""
+        """How open the steering taps are, and where each ATOM sits.
+
+        Per atom, not averaged over atoms. The whole picture worth reading here
+        is the MIX - a previous-token needle sitting next to a wide distant
+        basin is the paper's result, and it averages to a middle lag that no
+        atom occupies. HEADS are averaged, since every head starts on the same
+        ladder and so atom index r means the same thing across them.
+        """
         gate = F.softplus(self.raw_gate.detach().float())
+        mu = F.softplus(self.raw_mu.detach().float())  # (H, R)
+        sigma = F.softplus(self.raw_sigma.detach().float()) + _EPS + SIGMA_FLOOR
+        lam = torch.softmax(self.log_lambda.detach().float(), dim=-1)
         out = {
             "ssog_gate_mu": gate[0].item(),
             "ssog_gate_sigma": gate[1].item(),
             "ssog_gate_lambda": gate[2].item(),
-            "ssog_temperature": (F.softplus(self.raw_temperature.detach().float()) + 0.5).item(),
-            "ssog_mu_mean": F.softplus(self.raw_mu.detach().float()).mean().item(),
-            "ssog_sigma_mean": (
-                F.softplus(self.raw_sigma.detach().float()) + _EPS + SIGMA_FLOOR
-            )
-            .mean()
-            .item(),
+            "ssog_temperature": (
+                F.softplus(self.raw_temperature.detach().float()) + 0.5
+            ).mean().item(),
         }
+        for r in range(self.num_atoms):
+            out[f"ssog_mu_a{r}"] = mu[:, r].mean().item()
+            out[f"ssog_sigma_a{r}"] = sigma[:, r].mean().item()
+            out[f"ssog_lambda_a{r}"] = lam[:, r].mean().item()
+
         return out
+
+    def dashboard_snapshots(self) -> dict:
+        """The two geometry heatmaps, as live grids.
+
+        These are pictures of the CURRENT field, which is what the reference's
+        figure is too - so they belong on the snapshot path (fetched live, at
+        whatever resolution reads well) rather than in the per-step log. Sending
+        them as logged metrics costs one database column per cell and buys a
+        history nobody reads a heatmap for.
+        """
+        dens, mix = self._geometry()
+        cascade = self._cascade()
+        lag_range = [float(GEOM_LAG_MIN), float(GEOM_LAG_MAX)]
+        # Row 0 renders at the BOTTOM, so the nearest atom and the shallowest
+        # hop sit at the bottom and the field reads upward, like the harmonic
+        # spectrum card and the paper's figures.
+        geom = torch.cat([dens, mix[None, :]], dim=0)
+        return {
+            "ssog_geometry": {
+                "grid": geom.tolist(),
+                "grid_rows": int(geom.shape[0]),
+                "grid_cols": GEOM_BINS,
+                "x_range": lag_range,
+                "y_range": [0, int(geom.shape[0])],
+                "max_count": float(geom.max().item()),
+            },
+            "ssog_cascade": {
+                "grid": cascade.tolist(),
+                "grid_rows": int(cascade.shape[0]),
+                "grid_cols": GEOM_BINS,
+                "x_range": lag_range,
+                "y_range": [1, int(cascade.shape[0])],
+                "max_count": float(cascade.max().item()),
+            },
+        }
+
+    # -------------------------------------------------------------- geometry
+    def _atoms(self) -> Tuple[Tensor, Tensor, Tensor]:
+        """Head-averaged ``(mu, sigma, lambda)``, each ``[R]``, detached."""
+        mu = F.softplus(self.raw_mu.detach().float())
+        sigma = F.softplus(self.raw_sigma.detach().float()) + _EPS + SIGMA_FLOOR
+        lam = torch.softmax(self.log_lambda.detach().float(), dim=-1)
+        return mu, sigma, lam
+
+    def _geometry(self) -> Tuple[Tensor, Tensor]:
+        """The learned field sampled on the display grid.
+
+        Returns per-atom densities ``[R, GEOM_BINS]`` and their sum ``[GEOM_BINS]``,
+        both scaled so the mixture peaks at 1. Lambda is folded in on purpose:
+        an atom the mixture has stopped weighting is not part of the geometry
+        any more, and should read as dark rather than as a bright blob nobody
+        uses. This is the field's shape, not a measured attention row - the
+        causal truncation and renormalization that the real softmax applies at
+        each query are not here, and neither is per-query steering.
+        """
+        mu, sigma, lam = self._atoms()  # each [H, R]
+        d = self.geom_lags.float()  # [G]
+        dens = lam[..., None] * torch.exp(
+            _log_kernel(d, mu[..., None], sigma[..., None])
+        )  # [H, R, G]
+        dens = dens.mean(dim=0)  # [R, G] - heads share a ladder, so r is comparable
+        mix = dens.sum(dim=0)  # [G]
+        scale = mix.max().clamp_min(_EPS)
+        return dens / scale, mix / scale
+
+    def _cascade(self) -> Tensor:
+        """Where a ``h``-hop path through the field lands, for h = 1..depth.
+
+        The field is depth-SHARED, so this stack has no per-layer geometry to
+        plot the way the reference's vision model does - its layer axis is the
+        one thing that does not port. The honest analogue for a recurrent-depth
+        model is the CASCADE: the attention row is the (tempered, truncated)
+        mixture density itself, Gaussians are closed under convolution, and
+        residual connections mean every hop count 1..depth is live at once. So
+        one shared field gives a scale-space pyramid whose h-th level is the
+        h-fold self-convolution of the kernel - mean lag ``h * mu``, width
+        ``sqrt(h) * sigma``. That is the "early layers are convolutions, late
+        layers go global" progression, derived rather than learned.
+
+        Computed on the integer lag lattice by repeated multiplication in the
+        Fourier domain, on a window sized to the atoms' own reach so a far
+        field cannot wrap around onto short lags. Each row is normalized to its
+        own peak: the question a row answers is WHERE that hop lands, and a
+        wide row's absolute density is small for reasons that say nothing about
+        where it points. Ignores the causal window, per-query steering, and
+        everything the residual stream does between passes.
+        """
+        mu, sigma, lam = self._atoms()
+        reach = float((mu + 4.0 * sigma).max())
+        span = max(64.0, self.cascade_hops * max(reach, 1.0))
+        length = int(min(8192, 2 ** math.ceil(math.log2(span))))
+        lattice = torch.arange(length, dtype=torch.float32, device=mu.device)
+
+        kernel = (
+            lam[..., None] * torch.exp(_log_kernel(lattice, mu[..., None], sigma[..., None]))
+        ).mean(dim=0).sum(dim=0)  # [length]
+        kernel = kernel / kernel.sum().clamp_min(_EPS)
+
+        spectrum = torch.fft.rfft(kernel, n=2 * length)
+        acc = spectrum.clone()
+        rows = []
+        for _ in range(self.cascade_hops):
+            hop = torch.fft.irfft(acc, n=2 * length)[:length].clamp_min(0.0)
+            rows.append(self._sample_grid(hop))
+            acc = acc * spectrum
+        out = torch.stack(rows)  # [hops, G]
+        return out / out.amax(dim=-1, keepdim=True).clamp_min(_EPS)
+
+    def _sample_grid(self, curve: Tensor) -> Tensor:
+        """Read ``curve`` (indexed by integer lag) at the display grid, linearly."""
+        d = self.geom_lags.float().clamp(0.0, curve.shape[0] - 1.0)
+        lo = d.floor().long()
+        hi = (lo + 1).clamp_max(curve.shape[0] - 1)
+        frac = d - lo.float()
+        return curve[lo] * (1.0 - frac) + curve[hi] * frac
 
     def extra_repr(self) -> str:
         return (

@@ -126,6 +126,40 @@ def test_shared_trunk_receives_gradient_however_routing_falls():
     assert head.lora_a.grad is not None and head.lora_b.grad is not None
 
 
+def test_every_declared_pca_card_is_emitted():
+    """The bank declares one Center PCA Density card per EXPERT, and the
+    snapshot loop has to fill all of them. It used to walk ``bank.experts``,
+    which this class collapses to the single shared trunk, so three of the four
+    cards on abstractinator-q rendered blank."""
+    head = make()
+    declared = {k for k in head.all_metric_descriptions() if "centers_pca" in k}
+    emitted = {k for k in head.dashboard_snapshots() if "centers_pca" in k}
+    assert len(declared) == 4
+    assert declared == emitted, f"blank cards: {sorted(declared - emitted)}"
+
+
+def test_pca_panels_share_one_frame_and_are_deterministic():
+    """The panels exist to be compared, so they must be drawn in the same
+    projection: identical geometries (the LoRA init) render identically, and a
+    trained deviation shows up as displacement rather than as a re-fit. Repeat
+    calls must also agree - the randomized SVD this replaced re-binned the same
+    centers on every dashboard refresh and drew from the training RNG stream."""
+    head = make()
+    first = head.dashboard_snapshots()
+    assert first == head.dashboard_snapshots()
+
+    grids = [first[f"crystal_centers_pca_{k}"]["grid"] for k in range(4)]
+    assert all(g == grids[0] for g in grids), "identical experts drew differently"
+
+    with torch.no_grad():  # give expert 2 a deviation to show
+        head.lora_b[2].normal_(0.0, 0.5)
+    moved = [head.dashboard_snapshots()[f"crystal_centers_pca_{k}"]["grid"] for k in range(4)]
+    assert moved[2] != moved[1], "the deviation left no mark on its own panel"
+    # The frame spans every expert, so the untouched panels are re-drawn too;
+    # what must hold is that they still agree with EACH OTHER.
+    assert all(g == moved[0] for g in (moved[1], moved[3]))
+
+
 def test_repulsion_is_off():
     """VEAR's, not the paper's, and meaningless for deviations off a shared base."""
     head = make()

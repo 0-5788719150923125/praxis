@@ -130,6 +130,14 @@ def _recipe_head_snapshots(model):
                 if snaps:
                     snapshots.update(snaps)
                     break
+    # Attention mechanisms with their own geometry to draw (SSOG's field).
+    # A walk, because attention is not an attribute of the model the way the
+    # head and the encoder are, and unlike the memory surfacings above we want
+    # every one of them, not the first.
+    if hasattr(model, "modules"):
+        from praxis.metrics.specialization import collect_attention_snapshots
+
+        snapshots.update(collect_attention_snapshots(model) or {})
     # RLCT loss-landscape grid, stashed on the model by RLCTLandscapeCallback.
     rlct = getattr(model, "_rlct_landscape", None)
     if isinstance(rlct, dict):

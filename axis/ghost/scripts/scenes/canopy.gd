@@ -624,11 +624,14 @@ class CanopyJob:
 					continue
 				var p: Vector3 = tr["pos"]
 				var th: float = float(tr["h"]) * g
+				# ROUND silhouettes (the last argument): a trunk is a cylinder and a crown is a
+				# ball, and add_box otherwise rasterizes their bounding SQUARE - which under a wood
+				# is a hillside striped with rectangles. See ShadowField.add_box.
 				shadow.add_box(p, Vector3.UP, Vector3.RIGHT, Vector3.BACK,
-					float(tr["trunk"]), th * 0.7)
+					float(tr["trunk"]), th * 0.7, true)
 				if leaf_density > 0.25:
 					shadow.add_box(p + Vector3.UP * (th * 0.6), Vector3.UP, Vector3.RIGHT,
-						Vector3.BACK, float(tr["crown_r"]) * g * leaf_density, th * 0.34)
+						Vector3.BACK, float(tr["crown_r"]) * g * leaf_density, th * 0.34, true)
 
 		# ONE merged list: terrain quads (already shadowed by the wood) plus every tree face,
 		# depth-sorted together, so the land occludes the buried trunk bases and the trees

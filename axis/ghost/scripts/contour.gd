@@ -436,9 +436,18 @@ static func _cut(a: float, b: float, level: float) -> float:
 ## every run END is then refined by three bisections, so the band's edges land on the
 ## contour instead of on the march grid - the ragged alternative is the one thing that
 ## would immediately read as sampled rather than drawn.
+##
+## [param land] is where the grid's own origin sits in the LAND, in cells, and it is what
+## makes the ruling belong to the ground rather than to the sheet. The pattern is defined
+## on the land - line k is where `p_land . nrm = k * spacing` - so a window that has moved
+## across the country re-rules exactly the same lines over exactly the same ground. Anchored
+## to the grid instead (`land` left at zero), every re-extraction after a move re-lays the
+## whole pattern at a different phase, and the entire hatched band appears to slide sideways
+## under a map that did not move. Pass zero only for a window that never moves.
 static func hatch(tb: TriBatch, h: PackedFloat32Array, nx: int, ny: int,
 		band_lo: float, band_hi: float, angle: float, spacing: float, march: float,
-		col: Color, width: float, org: Vector2, cell: Vector2) -> void:
+		col: Color, width: float, org: Vector2, cell: Vector2,
+		land := Vector2.ZERO) -> void:
 	if nx < 2 or ny < 2 or spacing <= 0.001 or march <= 0.001 or band_hi <= band_lo:
 		return
 	var d := Vector2(cos(angle), sin(angle))
@@ -458,12 +467,15 @@ static func hatch(tb: TriBatch, h: PackedFloat32Array, nx: int, ny: int,
 		dmax = maxf(dmax, dv)
 		tmin = minf(tmin, tv)
 		tmax = maxf(tmax, tv)
-	# Anchor the ruling to the grid origin rather than to dmin, so the pattern does not
-	# crawl sideways when the band moves.
-	var k0 := int(ceil(dmin / spacing))
-	var k1 := int(floor(dmax / spacing))
+	# Anchor the ruling to the LAND rather than to dmin, so the pattern neither crawls
+	# sideways as the band moves nor re-phases when the sampling window does: line k lies
+	# where `(p + land) . nrm = k * spacing`, which in grid coordinates is
+	# `p . nrm = k * spacing - phase`.
+	var phase := land.dot(nrm)
+	var k0 := int(ceil((dmin + phase) / spacing))
+	var k1 := int(floor((dmax + phase) / spacing))
 	for k in range(k0, k1 + 1):
-		var base := nrm * (float(k) * spacing)
+		var base := nrm * (float(k) * spacing - phase)
 		var t0 := tmin
 		var t1 := tmax
 		if absf(d.x) > 1e-6:

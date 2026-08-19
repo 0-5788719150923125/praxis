@@ -99,6 +99,10 @@ class DynamicsLoggerCallback(Callback):
             # Arc per-depth bias specialization, averaged across Arc modules.
             dynamics.update(self._extract_arc_dynamics(model))
 
+            # Non-Arc attention mechanisms (SSOG's Gaussian field, today) have
+            # no loss hook either and opt in via training_metrics().
+            dynamics.update(self._extract_attention_dynamics(model))
+
             # Activation diagnostics (e.g. Servant's chirp coupling), averaged
             # across activation modules. Empty unless the activation opts in.
             dynamics.update(self._extract_activation_dynamics(model))
@@ -441,6 +445,21 @@ class DynamicsLoggerCallback(Callback):
             return collect_arc_metrics(model)
         except Exception as e:
             print(f"[DynamicsLogger] arc training_metrics failed: {e}")
+            return {}
+
+    def _extract_attention_dynamics(self, model) -> dict:
+        """Collect non-Arc attention diagnostics, averaged across modules.
+
+        Arc has its own extractor above; this reaches every other mechanism
+        that opts in via ``training_metrics()`` (SSOG's field geometry).
+        Wrapped in try/except so one bad metric cannot kill the dynamics log.
+        """
+        from praxis.metrics.specialization import collect_attention_metrics
+
+        try:
+            return collect_attention_metrics(model)
+        except Exception as e:
+            print(f"[DynamicsLogger] attention training_metrics failed: {e}")
             return {}
 
     def _extract_activation_dynamics(self, model) -> dict:

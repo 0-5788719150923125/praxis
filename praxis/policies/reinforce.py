@@ -42,8 +42,10 @@ class REINFORCE(nn.Module):
             nn.Linear(self.hidden_size, self.hidden_size),
         )
 
-        # Baseline for variance reduction
-        self.baseline = nn.Parameter(torch.tensor(0.5))
+        # Baseline for variance reduction. Shape [1], never 0-dim: schedule-free
+        # optimizers swap parameters through `x.view(torch.uint8)`, which a
+        # 0-dim tensor cannot do. Broadcasting against rewards is unchanged.
+        self.baseline = nn.Parameter(torch.tensor([0.5]))
 
         # Logging
         self.step_count = 0

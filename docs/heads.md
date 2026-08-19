@@ -23,7 +23,7 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 (so the distance computation lives in the encoder's feature space) and replaces the
 encoder's dot-product projection at the loss boundary.
 
-Source: [praxis/heads/crystal.py:270](../praxis/heads/crystal.py#L270)
+Source: [praxis/heads/crystal.py:306](../praxis/heads/crystal.py#L306)
 
 ## `crystal_harmonic`, `crystal_harmonic_static` - SequentialHead
 

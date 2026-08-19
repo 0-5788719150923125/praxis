@@ -10,12 +10,17 @@
 # that were shipped on a compile check and a careful read instead of a run.
 #
 # A real boot has autoloads. All that is needed is to point the app at a probe
-# scene instead of main, which override.cfg does. This script writes that file,
-# runs, and ALWAYS removes it again - a stale override.cfg silently hijacks the
-# whole project (it has pinned the resolution before now), so the cleanup runs
-# on any exit path including Ctrl-C.
+# scene instead of main, and Godot takes that as a POSITIONAL ARGUMENT - a scene
+# path after the options runs that scene, autoloads and all.
 #
-#   tests/run_boot_probe.sh <probe.gd> [timeout_seconds]
+#   tests/run_boot_probe.sh <probe.gd> [timeout_seconds] [probe args ...]
+#   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh <probe.gd>   # real renderer, no window
+#
+# It used to say so in override.cfg instead, and that file is project-wide state:
+# the exporter writes one too, so this script had to refuse to run at all while a
+# render was in flight, and a run killed uncleanly left ghost itself booting into
+# a probe. An argument is local to the process. Nothing global is touched now and
+# a probe runs perfectly happily alongside a render.
 #
 # The probe is COPIED into place and the harmless stub is restored afterwards.
 # That matters: tests/boot_probe.tscn lives inside the project, so Godot parses
@@ -30,7 +35,6 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."          # axis/ghost
-OVERRIDE="override.cfg"
 PROBE_SRC="${1:-}"
 TIMEOUT="${2:-90}"
 PROBE="tests/boot_probe.gd"
@@ -39,20 +43,12 @@ cp "$PROBE" "$STUB"
 
 # ARMED BEFORE ANYTHING IS COPIED IN, and that ordering is not cosmetic. The trap
 # used to be installed after the probe had already been written over tests/
-# boot_probe.gd, so the two checks below - a missing probe, and a pre-existing
-# override.cfg - exited without restoring it and LEFT THE PROBE IN THE PROJECT.
-# That is exactly the state this script's own header warns about, and it happened:
-# a scratch probe sat in tests/boot_probe.gd as a modified tracked file, silently,
-# because a stale override.cfg (the exporter writes one) made every later run
-# refuse before it could clean up. Nothing may be copied over that file until the
-# restore is guaranteed.
-# ...and it removes the override only if THIS run wrote it. Arming the trap early
-# means it now also fires on the refuse path, where the override.cfg in the way is
-# somebody else's - a render in flight, most likely - and deleting that would be a
-# worse failure than the one being refused.
-MINE=0
+# boot_probe.gd, so an early exit - a missing probe, say - returned without
+# restoring it and LEFT THE PROBE IN THE PROJECT. That is exactly the state this
+# script's own header warns about, and it happened: a scratch probe sat in
+# tests/boot_probe.gd as a modified tracked file, silently. Nothing may be copied
+# over that file until the restore is guaranteed.
 cleanup() {
-  [[ "$MINE" = 1 ]] && rm -f "$OVERRIDE"
   cp "$STUB" "$PROBE"
   rm -f "$STUB"
 }
@@ -63,28 +59,29 @@ if [[ -n "$PROBE_SRC" ]]; then
     echo "run_boot_probe: no such probe: $PROBE_SRC" >&2
     exit 2
   fi
-fi
-
-if [[ -e "$OVERRIDE" ]]; then
-  echo "run_boot_probe: $OVERRIDE already exists - refusing to clobber it." >&2
-  echo "Inspect and remove it first; a stale one changes how ghost itself runs." >&2
-  exit 2
-fi
-
-if [[ -n "$PROBE_SRC" ]]; then
   cp "$PROBE_SRC" "$PROBE"
 fi
 
-MINE=1
-cat > "$OVERRIDE" <<'CFG'
-; TEMPORARY - written by tests/run_boot_probe.sh, removed when it exits.
-; If you are reading this in a working tree, the script was killed uncleanly:
-; delete this file. While it exists, ghost boots the probe instead of main.
-[application]
-run/main_scene="res://tests/boot_probe.tscn"
-CFG
+# THE RENDERER. A probe that needs autoloads AND REAL PIXELS has nowhere else to
+# go: `--headless` is the dummy driver, whose viewport readback returns nothing
+# (run_quiet.sh's header spells that out), and `godot --script` has no autoloads at
+# all. GHOST_PROBE_GPU=1 boots this same probe scene on the real GPU inside a
+# VIRTUAL DISPLAY, so it still never puts a window on screen. Needs
+# xorg-server-xvfb, exactly like run_quiet.sh.
+RUNNER=(godot --headless)
+if [[ "${GHOST_PROBE_GPU:-0}" != "0" ]]; then
+  if command -v xvfb-run >/dev/null 2>&1; then
+    RUNNER=(xvfb-run -a -s "-screen 0 1280x1024x24" godot)
+  else
+    echo "run_boot_probe: GHOST_PROBE_GPU set but xvfb-run not found -" \
+         "falling back to a VISIBLE window." >&2
+    RUNNER=(godot)
+  fi
+fi
 
-timeout "$TIMEOUT" godot --headless --path . 2>&1
+# Anything after the timeout is handed to the PROBE as user args (read them with
+# OS.get_cmdline_user_args), so a probe can take options the way clown_look_probe does.
+timeout "$TIMEOUT" "${RUNNER[@]}" --path . res://tests/boot_probe.tscn -- "${@:3}" 2>&1
 status=$?
 if [[ $status -eq 124 ]]; then
   echo "run_boot_probe: TIMED OUT after ${TIMEOUT}s (probe never quit)" >&2

@@ -912,7 +912,8 @@ func _build_chunks(body: String) -> Array:
 	var toks: Array = []
 	var words: Array = []
 	var sentences := 0
-	# Subtitles windows the display by this index (Overlay._current_sentence),
+	# Subtitles windows the display by this index (Subtitles.span_at, which turns these
+	# into one span per sentence and keeps the line up through the sentence's own pauses),
 	# so it must be a real, globally increasing sentence number. Hardcoding 0
 	# put every word of the chapter in one "sentence", which the overlay then
 	# tried to draw at once - it piled up and shrank toward nothing.
