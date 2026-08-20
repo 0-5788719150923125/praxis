@@ -7,6 +7,17 @@ from typing import Any, Optional
 
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
+# What one Discord turn is allowed to cost the TRAINING LOOP, which is where
+# queued generations are actually served (GenerationQueueCallback). Every
+# decode step is a full forward for a model whose stack cannot cache - an
+# encoder counts patches while input_ids counts bytes, so
+# PraxisForCausalLM.prepare_inputs_for_generation declines to cache at all - so
+# both numbers are wall-clock, not just memory. These used to be 512 and 2048,
+# which is 128x what the terminal's own inference tick asks for and was
+# measured stalling a run for 208 seconds on a single turn.
+MAX_NEW_TOKENS = 256
+PROMPT_BUDGET = 1024
+
 
 class DiscordBot:
     """Manages Discord bot connection and message handling."""
@@ -145,7 +156,17 @@ class DiscordBot:
         async with message.channel.typing():
             try:
                 response = await self._generate_response(message)
-                if response:
+                if response is None:
+                    # `_generate_response` returns None only when the generator
+                    # failed or ran past its deadline (nothing to reply to
+                    # returns ""). Say so: the `if response` guard alone made a
+                    # timeout indistinguishable from the bot ignoring you, which
+                    # is how a 60s timeout looked like silence.
+                    await message.channel.send(
+                        "I'm still thinking too slowly to answer that one - "
+                        "the model didn't finish in time."
+                    )
+                elif response:
                     # Split long messages (Discord limit is 2000 chars)
                     # 33% chance to reply, 66% chance to send regular message
                     import random
@@ -199,9 +220,13 @@ class DiscordBot:
                     content = content.replace(f"<@{self.client.user.id}>", "").strip()
                 formatted_messages.append({"role": "user", "content": content})
 
-        # Need at least one user message beyond the prompts
+        # Need at least one user message beyond the prompts. Empty string, not
+        # None: the caller reads None as "the generator failed" and says so out
+        # loud, and there is nothing to apologize for here.
         if len(formatted_messages) <= 2:
-            return None
+            return ""
+
+        formatted_messages = self._fit_to_budget(formatted_messages, PROMPT_BUDGET)
 
         # Run generation in a thread pool to avoid blocking the event loop
         loop = asyncio.get_event_loop()
@@ -210,6 +235,36 @@ class DiscordBot:
         )
 
         return response
+
+    def _fit_to_budget(self, messages: list, budget: int) -> list:
+        """Drop the OLDEST history turns until the prompt fits ``budget``.
+
+        The generator truncates too, but it cuts from the FRONT of the token
+        stream (``Generator._prepare_inputs``), and the front is the system and
+        developer turns. Twenty Discord messages routinely exceed the budget on
+        a byte tokenizer, so the header - the only thing telling the model this
+        is a chat at all - was the first casualty, and under ``prose`` there is
+        no ``[BOS]`` left behind to re-anchor on. Trimming here keeps the header
+        and spends the budget on recent turns instead.
+
+        Never drops below the header plus one turn: an over-budget single
+        message is the generator's truncation to handle, not ours.
+        """
+        if not self.tokenizer:
+            return messages
+        header, turns = messages[:2], messages[2:]
+        while len(turns) > 1:
+            try:
+                rendered = self.tokenizer.apply_chat_template(
+                    header + turns, tokenize=False, add_generation_prompt=True
+                )
+                if len(self.tokenizer.encode(rendered)) <= budget:
+                    break
+            except Exception as e:
+                print(f"Error measuring prompt: {e}")
+                break
+            turns = turns[1:]
+        return header + turns
 
     def _call_generator(self, messages: list) -> Optional[str]:
         """Call the generator synchronously (runs in thread pool)."""
@@ -220,10 +275,10 @@ class DiscordBot:
                 messages=messages,
                 generator=self.generator,
                 tokenizer=self.tokenizer,
-                max_new_tokens=512,
+                max_new_tokens=MAX_NEW_TOKENS,
                 temperature=0.7,
                 do_sample=True,
-                truncate_to=2048,
+                truncate_to=PROMPT_BUDGET,
             )
             return result
         except Exception as e:

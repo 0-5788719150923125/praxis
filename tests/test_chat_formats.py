@@ -612,7 +612,7 @@ class _ScriptedBackend:
     def eval_mode(self):
         yield
 
-    def generate_until_halt(self, tokens, step_kwargs):
+    def generate_until_halt(self, tokens, step_kwargs, deadline=None):
         stops = normalize_stop_strings(step_kwargs.get("stop_strings"))
         eos = step_kwargs.get("eos_token_id") or []
         eos = set(eos if isinstance(eos, (list, tuple)) else [eos])

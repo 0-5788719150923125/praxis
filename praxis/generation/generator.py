@@ -192,19 +192,26 @@ class Generator:
             return int(width) + 1
         return 1
 
-    def request_generation(self, prompt, kwargs={}) -> str:
+    def request_generation(self, prompt, kwargs={}, deadline=None) -> str:
         """
         Submit a generation request and return a request ID.
 
         Args:
             prompt: Either a string prompt or a list of message dicts with 'role' and 'content'
             kwargs: Additional generation parameters
+            deadline: Wall-clock time past which this request is not worth
+                serving. Pass one whenever the caller intends to stop waiting:
+                the queued path runs inside the training loop, so an abandoned
+                request without a deadline stalls the run to completion for
+                nobody. See ``GenerationRequest``.
 
         Returns:
             Request ID string
         """
         request_id = str(uuid.uuid4())
-        request = GenerationRequest(id=request_id, prompt=prompt, kwargs=kwargs)
+        request = GenerationRequest(
+            id=request_id, prompt=prompt, kwargs=kwargs, deadline=deadline
+        )
         # Synchronous backends (no training loop to drain the queue) run now;
         # the queued path defers the work to fulfill_requests.
         if self.synchronous:
@@ -388,6 +395,22 @@ class Generator:
 
         with self.backend.eval_mode():
             while True:
+                # The caller's patience, enforced where it costs something.
+                # The real bound is INSIDE the decode: the deadline goes to
+                # generate_until_halt below and reaches both the transformers
+                # loop and our speculative loop as a StoppingCriteria. A plain
+                # turn with no tool call is ONE call to it, so this check on its
+                # own would fire only before the first token; what it bounds is
+                # the TOOL loop, where a request round-trips several decodes and
+                # a tool execution. Whatever the model produced so far is
+                # returned as normal: `reply_start` is the runtime's own offset
+                # and does not depend on halting cleanly.
+                if request.deadline is not None and time.time() >= request.deadline:
+                    _log.info(
+                        f"Generation request {request.id} hit its deadline after "
+                        f"{produced} tokens; returning the partial turn."
+                    )
+                    break
                 remaining = max_new_tokens - produced
                 # Counting model output alone stops a splice from spending the
                 # caller's budget, but it also drops the bound the derived form
@@ -411,7 +434,9 @@ class Generator:
                     for key in ("temperature", "top_k", "top_p", "renormalize_logits"):
                         step_kwargs.pop(key, None)
 
-                extended = self.backend.generate_until_halt(tokens, step_kwargs)
+                extended = self.backend.generate_until_halt(
+                    tokens, step_kwargs, deadline=request.deadline
+                )
                 if extended.shape[1] <= tokens.shape[1]:
                     tokens = extended
                     break
@@ -493,6 +518,8 @@ class Generator:
             # a split multi-byte glyph or pending capcode modifier - which a
             # decode-then-reencode round trip (rolling contexts) silently
             # drops. Ask for a few more tokens until the tail is complete.
+            # Deliberately NOT deadline-bounded: four tokens is a bounded
+            # overshoot, and halting here would trade it for a corrupted tail.
             incomplete_tail = getattr(self.tokenizer, "incomplete_tail", None)
             if incomplete_tail is not None:
                 for _ in range(4):
@@ -552,6 +579,23 @@ class Generator:
                 break
 
             request = self.request_queue.get()
+            if request.deadline is not None and time.time() >= request.deadline:
+                # Nobody is listening any more, and this runs in the training
+                # loop, so serving it would stall the run for a reply that gets
+                # thrown away. Store an empty result rather than dropping the
+                # id: a late poller then gets a falsy answer instead of waiting
+                # out its own timeout on a request that will never run.
+                _log.info(
+                    f"Generation request {request.id} expired before it was served"
+                )
+                self.results[request.id] = GenerationResult("")
+                self._result_order.append(request.id)
+                self._evict_old_results()
+                # Deliberately not counted against `max_requests`: that budget
+                # exists to bound how much GENERATION runs per step, and a drop
+                # runs none. Counting it would let a burst of stale requests
+                # take a step each to clear.
+                continue
             try:
                 result = self._process_single_request(request)
             except Exception as exc:

@@ -14,7 +14,46 @@ The two loops that sample for themselves - byte-level speculative decoding in
 runs to ``max_new_tokens`` on every turn. This module is what they share.
 """
 
+import time
 from typing import Optional, Sequence, Tuple
+
+import torch
+from transformers import StoppingCriteria
+
+
+class DeadlineCriteria(StoppingCriteria):
+    """Halt a decode once wall-clock ``deadline`` passes.
+
+    The queued generation path runs inside the training loop, so a request's
+    cost is the run's cost. A deadline checked only BETWEEN halt-and-resume
+    steps does not bound that: a plain turn with no tool call is a single
+    ``generate_until_halt``, so the check would fire exactly once, before any
+    token. This is the same bound applied per decoding step, which is where the
+    time actually goes.
+
+    Halting here is indistinguishable from halting on length: the sequence is
+    returned as normal and the partial turn extracts normally, because
+    ``reply_start`` is the runtime's own offset rather than something recovered
+    from a clean stop.
+    """
+
+    def __init__(self, deadline: float) -> None:
+        self.deadline = float(deadline)
+
+    def __call__(self, input_ids, scores, **kwargs):
+        expired = time.time() >= self.deadline
+        return torch.full(
+            (input_ids.shape[0],), expired, dtype=torch.bool, device=input_ids.device
+        )
+
+
+def deadline_criteria(deadline: Optional[float]):
+    """``StoppingCriteriaList`` carrying a deadline, or None when unbounded."""
+    if deadline is None:
+        return None
+    from transformers import StoppingCriteriaList
+
+    return StoppingCriteriaList([DeadlineCriteria(deadline)])
 
 
 def _window(stop_strings: Sequence[str]) -> int:
@@ -98,6 +137,8 @@ def trailing_stop(text: str, stop_strings: Sequence[str]) -> Optional[str]:
 
 
 __all__ = [
+    "DeadlineCriteria",
+    "deadline_criteria",
     "find_stop_cut",
     "normalize_stop_strings",
     "split_at_stop",

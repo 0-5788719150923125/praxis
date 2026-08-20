@@ -688,6 +688,11 @@ class TerminalInterface(Callback):
         # poll the queue until the result lands. Bounded (~30s) so a stuck block
         # never hangs the others. Returns the new full passage, or None on timeout.
         def _generate(prompt, temperature):
+            # The ~30s bound below is the poll loop giving up; the DEADLINE is
+            # what stops the queued request from being served after that. They
+            # have to move together, or an abandoned block still costs the
+            # training loop a full generation for a passage nobody reads.
+            deadline = time.time() + 30.0
             request_id = self.generator.request_generation(
                 prompt,
                 dict(
@@ -698,6 +703,7 @@ class TerminalInterface(Callback):
                     truncate_to=int(self.max_length * self._max_context_scale),
                     use_cache=False,
                 ),
+                deadline=deadline,
             )
             for _ in range(300):
                 time.sleep(0.1)

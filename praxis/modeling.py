@@ -1196,6 +1196,20 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         stop_tokenizer = kwargs.get("tokenizer")
         stop_active = bool(stop_strings and stop_tokenizer is not None)
 
+        # This loop owns its decoding, so transformers never runs the criteria
+        # list for it - the same reason stop_strings has to be checked by hand
+        # above. Honoring it matters for the request DEADLINE in particular
+        # (praxis/generation/stopping.py::DeadlineCriteria): queued generations
+        # decode inside the training loop, so an unbounded turn is a stalled
+        # run, and a deadline the speculative path ignored would bound only
+        # models that never took this path.
+        stopping_criteria = kwargs.get("stopping_criteria")
+
+        def criteria_halt(seq):
+            if not stopping_criteria:
+                return False
+            return bool(stopping_criteria(seq, None).all())
+
         def stop_cut(seq, from_index: int):
             """Truncated sequence when a stop string completed past
             ``from_index``, else None."""
@@ -1416,6 +1430,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     first_exact = False
                     if bonus.item() in eos_set:
                         break
+
+            # Checked once per step, like the stop-string scan below: a step is
+            # one forward, which is the unit of time this bounds. Committed
+            # bytes are kept - halting on a deadline is a length halt, not an
+            # error, and the partial turn extracts normally.
+            if criteria_halt(generated):
+                break
 
             # Text-boundary halt. Checked once per step rather than per
             # candidate: a speculative run commits several bytes at once, so the

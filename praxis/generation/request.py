@@ -6,12 +6,28 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class GenerationRequest:
-    """Represents a text generation request."""
+    """Represents a text generation request.
+
+    ``deadline`` is a wall-clock time (``time.time()`` scale) past which the
+    request is not worth serving. It exists because the wait on the caller's
+    side is advisory: ``generate_from_messages`` gives up after its timeout,
+    but the queued request lives on and is served inline in the training loop
+    by ``GenerationQueueCallback``, which has the model's turn. Without a
+    deadline ON THE REQUEST, abandoning the wait only stops us listening - the
+    training loop still pays for the whole generation. Measured on
+    ``abstractinator-r``: one 512-byte Discord turn stalled the loop for 208
+    seconds, roughly 148 of them after the client had already timed out and
+    thrown the (eventual) reply away.
+
+    ``None`` means no deadline, which is what callers that poll forever
+    (the ``/input`` route) need.
+    """
 
     id: str
     prompt: str
     kwargs: Dict[str, Any]
     result: Optional[str] = None
+    deadline: Optional[float] = None
 
 
 class GenerationResult(str):

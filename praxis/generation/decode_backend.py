@@ -52,18 +52,26 @@ class DecodeBackend(ABC):
 
     @abstractmethod
     def generate_until_halt(
-        self, tokens: torch.Tensor, step_kwargs: Dict[str, Any]
+        self,
+        tokens: torch.Tensor,
+        step_kwargs: Dict[str, Any],
+        deadline: Optional[float] = None,
     ) -> torch.Tensor:
         """Extend ``tokens`` until a halt token (any id in
         ``step_kwargs['eos_token_id']``), a completed stop string (any of
-        ``step_kwargs['stop_strings']``), or ``max_new_tokens``. Return the
-        full ``[1, L]`` sequence, including the halt token or boundary.
-        Returns the input unchanged when nothing was produced.
+        ``step_kwargs['stop_strings']``), ``max_new_tokens``, or ``deadline``.
+        Return the full ``[1, L]`` sequence, including the halt token or
+        boundary. Returns the input unchanged when nothing was produced.
 
         Only tokens produced by THIS call can halt it: the caller resumes from
         a sequence that already ends in the boundary it last halted on, so a
         backend that re-tested the whole sequence would return zero new tokens
-        forever."""
+        forever.
+
+        ``deadline`` is wall-clock (``time.time()`` scale) and has to be honored
+        PER STEP, not just on entry. The queued path decodes inside the training
+        loop, and a plain turn is one call to this method, so a check that only
+        ran between calls would never fire."""
 
 
 class ModelBackend(DecodeBackend):
@@ -107,13 +115,25 @@ class ModelBackend(DecodeBackend):
             self.model.train(training)
 
     def generate_until_halt(
-        self, tokens: torch.Tensor, step_kwargs: Dict[str, Any]
+        self,
+        tokens: torch.Tensor,
+        step_kwargs: Dict[str, Any],
+        deadline: Optional[float] = None,
     ) -> torch.Tensor:
+        from praxis.generation.stopping import deadline_criteria
+
+        extra = {}
+        criteria = deadline_criteria(deadline)
+        if criteria is not None:
+            # Honored by the transformers loop natively, and by our own
+            # speculative loop explicitly (see _speculative_generate).
+            extra["stopping_criteria"] = criteria
         outputs = self.model.generate(
             tokens,
             generation_config=GenerationConfig(**step_kwargs),
             tokenizer=self.tokenizer,
             return_dict_in_generate=True,
+            **extra,
         )
         return outputs.sequences
 
@@ -143,8 +163,13 @@ class MonoForwardBackend(DecodeBackend):
         return {int(eos)}
 
     def generate_until_halt(
-        self, tokens: torch.Tensor, step_kwargs: Dict[str, Any]
+        self,
+        tokens: torch.Tensor,
+        step_kwargs: Dict[str, Any],
+        deadline: Optional[float] = None,
     ) -> torch.Tensor:
+        import time
+
         from praxis.generation.stopping import find_stop_cut, normalize_stop_strings
 
         stop_ids = self._stop_ids(step_kwargs)
@@ -167,6 +192,8 @@ class MonoForwardBackend(DecodeBackend):
             suppress_tokens=step_kwargs.get("suppress_tokens"),
         ):
             produced.append(tok)
+            if deadline is not None and time.time() >= deadline:
+                break
             if int(tok.view(-1)[0].item()) in stop_ids:
                 break
             # Text-boundary halt. The scan starts at the prompt's length so the

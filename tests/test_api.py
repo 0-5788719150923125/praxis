@@ -23,10 +23,12 @@ class MockGenerator:
     def __init__(self):
         self.model = Mock()
         self.request_counter = 0
+        self.last_deadline = None
 
-    def request_generation(self, prompt: str, kwargs: dict) -> str:
+    def request_generation(self, prompt: str, kwargs: dict, deadline=None) -> str:
         """Mock generation request."""
         self.request_counter += 1
+        self.last_deadline = deadline
         return f"request_{self.request_counter}"
 
     def get_result(self, request_id: str) -> str:

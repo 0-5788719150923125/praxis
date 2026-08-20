@@ -86,16 +86,22 @@ def generate_from_messages(
     if truncate_to is not None:
         kwargs["truncate_to"] = truncate_to
 
-    # Queue the generation request
-    request_id = generator.request_generation(formatted_prompt, kwargs)
+    # Queue the generation request, with the deadline attached rather than kept
+    # here. The wait below is client-side only: the queued path is served inside
+    # the training loop (GenerationQueueCallback), so giving up here stops us
+    # listening but does NOT stop the run from decoding the whole turn for
+    # nobody. The deadline is what actually bounds that.
+    deadline = time.time() + timeout
+    request_id = generator.request_generation(
+        formatted_prompt, kwargs, deadline=deadline
+    )
 
     # Wait for result with timeout
-    start_time = time.time()
     while True:
         result = generator.get_result(request_id)
         if result is not None:
             break
-        if time.time() - start_time > timeout:
+        if time.time() > deadline:
             api_logger.error(f"Generation timed out after {timeout}s")
             return None
         time.sleep(0.1)
