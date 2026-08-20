@@ -688,17 +688,29 @@ class Homographs:
         eSpeak is fast enough that this is not the reason for batching - 400
         carrier utterances measured at 0.03 s. One call per sentence rather than
         per word is simply less to go wrong in the alignment checks below.
+
+        A CLAIM IS ONLY PERMANENT IF THE ANSWER ARRIVES. The cache entry is written
+        before the call so a word repeated inside one sentence is probed once, and
+        that claim used to survive a batch that never came back - so ONE failed call
+        turned the homograph pass off, silently, for every word in that sentence, for
+        the rest of the session. The reading falls back to eSpeak's default, which is
+        right about as often as a coin, and nothing anywhere says why. Both whole-batch
+        failures below release what this call claimed so the next sentence asks again;
+        a per-probe shape mismatch is deterministic and still sticks.
         """
         utts: list[str] = []
         slots: list[tuple[str, str, int, int]] = []  # text, family, slot, expected
+        claimed: list[tuple[str, str]] = []  # (text, family) written by THIS call
         for text, fam in wanted:
             entry = self._cache.setdefault((lang, text), {})
             if "" not in entry:
                 entry[""] = ""  # claimed, so a repeated word is probed once
+                claimed.append((text, ""))
                 utts.append(text)
                 slots.append((text, "", 0, 1))
             if fam not in entry:
                 entry[fam] = ""
+                claimed.append((text, fam))
                 frame, at, count = CARRIERS[fam]
                 utts.append(frame.format(text))
                 slots.append((text, fam, at, count))
@@ -708,15 +720,22 @@ class Homographs:
             # fallback in `_reading` costs no second round trip.
             if fam == "VBD" and "VB" not in entry:
                 entry["VB"] = ""
+                claimed.append((text, "VB"))
                 frame, at, count = CARRIERS["VB"]
                 utts.append(frame.format(text))
                 slots.append((text, "VB", at, count))
         if not utts:
             return
+
+        def _release() -> None:
+            for text, fam in claimed:
+                self._cache.get((lang, text), {}).pop(fam, None)
+
         try:
             spoken = self._speak(utts, lang)
         except Exception as exc:  # noqa: BLE001
             print(f"ghost/voice: homograph probe failed ({exc})", file=sys.stderr)
+            _release()
             return
         if len(spoken) != len(utts):
             # phonemizer drops inputs it does not like, and a short batch cannot
@@ -726,6 +745,7 @@ class Homographs:
                 "sentence" % (len(spoken), len(utts)),
                 file=sys.stderr,
             )
+            _release()
             return
         for (text, fam, at, count), out in zip(slots, spoken):
             parts = str(out).strip().split()

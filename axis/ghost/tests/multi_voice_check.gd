@@ -35,6 +35,7 @@ func _ready() -> void:
 	_check_comments_never_spoken()
 	_check_frontmatter()
 	_check_macros()
+	_check_subtitles_show_the_source()
 	_check_chunks_carry_their_voice()
 	_check_settings_reach_the_request()
 	_check_room_is_per_voice()
@@ -424,3 +425,49 @@ func _check_macros() -> void:
 	_ed._build_chunks("One.\n<!-- speaker: 4 -->\nTwo.")
 	_ok(_ed._plan_note.contains("speaker 4"),
 		"an out-of-range cue was not reported: %s" % _ed._plan_note)
+
+
+## THE PAGE SHOWS WHAT THE PAGE SAID. `2009` is spoken "two thousand nine" and
+## must still be SHOWN as `2009` - reported as a subtitle reading "...who left
+## the building in two thousand nine." The rule itself lives in [TextNorm] and
+## [Phonemes] and is checked in norm_check; what this holds is the editor's half,
+## which is that one source run becomes ONE subtitle card covering the whole run
+## rather than three cards, or one card over the first syllable.
+func _check_subtitles_show_the_source() -> void:
+	_slots(1)
+	var chunks: Array = _ed._build_chunks(
+		"He left the building in 2009. She paid $5 on the 1st.")
+	var shown := ""
+	var spoken := ""
+	var reach := {}          # card text -> how many spoken words it covers
+	for c in chunks:
+		for w in (c as Dictionary)["words"]:
+			var d: Dictionary = w
+			shown += String(d["text"]) + " "
+			reach[String(d["text"])] = int(d.get("end", d["index"])) - int(d["index"]) + 1
+		for t in (c as Dictionary)["tokens"]:
+			spoken += String((t as Dictionary)["text"]) + " "
+	_ok(shown.contains("2009.") and shown.contains("$5") and shown.contains("1st"),
+		"the source spelling is not what the subtitle shows: %s" % shown)
+	_ok(shown.contains("1st."), "the ordinal lost its full stop: %s" % shown)
+	_ok(not shown.contains("two thousand") and not shown.contains("five dollars")
+		and not shown.to_lower().contains("first"),
+		"the spoken expansion reached the subtitle: %s" % shown)
+	_ok(spoken.contains("two thousand nine") and spoken.contains("five dollars"),
+		"the voice stopped saying the number: %s" % spoken)
+	# A CARD REACHES AS FAR AS ITS RUN IS SPOKEN. `2009` is three spoken words
+	# and `$5` is two, so each card must cover that many or the numeral flashes
+	# for one syllable of the several it takes to say. `1st` is one word and is
+	# the control: a rewrite is not automatically a span.
+	_ok(int(reach.get("2009.", 0)) == 3, "the 2009 card covers %s spoken word(s), wanted 3"
+		% [reach.get("2009.", 0)])
+	_ok(int(reach.get("$5", 0)) == 2, "the $5 card covers %s spoken word(s), wanted 2"
+		% [reach.get("$5", 0)])
+	_ok(int(reach.get("1st.", 0)) == 1, "the 1st card covers %s spoken word(s), wanted 1 (cards: %s)"
+		% [reach.get("1st.", 0), reach.keys()])
+	_ok(not shown.contains("  "), "a blank card was emitted: %s" % JSON.stringify(shown))
+	# no card may be empty, whatever the phonemizer did with the run
+	for c in chunks:
+		for w in (c as Dictionary)["words"]:
+			_ok(not String((w as Dictionary)["text"]).strip_edges().is_empty(),
+				"an empty subtitle card was emitted")

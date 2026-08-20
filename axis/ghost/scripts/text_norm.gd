@@ -137,16 +137,45 @@ const NAME_TAIL := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456
 ## Run the numeral expansion first and that evidence is gone, because by then the 5 has
 ## become the word "five" and nothing distinguishes the two cases at all.
 static func normalize(text: String) -> String:
-	# FIRST, before markup or folding. A macro is a token to the passes below,
-	# and its default has to travel the whole pipeline afterwards - a default of
-	# `25` is only heard as "twenty five" because _expand_numbers still gets to
-	# see it.
+	return String(normalize_marked(text)["text"])
+
+
+## The same normalization, plus WHAT EACH REWRITTEN RUN WAS WRITTEN AS.
+##
+## Returns {"text": String, "spans": [{at, len, src}]}, where each span covers a
+## run of the returned text that does NOT read the way the source spelled it -
+## `two thousand nine` for a source of `2009`, `five dollars` for `$5`, `doctor`
+## for `Dr.`. Runs that were not rewritten get no span, because for those the
+## text already is the source.
+##
+## WHY THIS EXISTS. Normalization is for the phoneme lookup and never for the
+## reader's eyes - [Phonemes.parse] has said exactly that beside `display` since
+## it was written - but `display` was taken from the text AFTER this stage, by
+## which point the source spelling no longer existed anywhere. So the subtitle
+## under a sentence ending "...who left the building in 2009." read "...in two
+## thousand nine.", which is not what the page says. The voice must say the
+## number and the screen must show the numeral, and that needs both spellings to
+## survive the pipeline together rather than one replacing the other.
+##
+## [method normalize] is this function with the spans thrown away, rather than a
+## second copy of the chain, because two paths through the same five passes is
+## how the audio and the subtitles start disagreeing about what was said.
+static func normalize_marked(text: String) -> Dictionary:
+	# MACROS FIRST, before markup or folding. A macro is a token to the passes
+	# below, and its default has to travel the whole pipeline afterwards - a
+	# default of `25` is only heard as "twenty five" because _expand_numbers
+	# still gets to see it. It is also why no span is recorded for one: the
+	# default IS the source as far as a reader is concerned, and showing
+	# `${CHAPTERS_BEFORE_IN_WORDS:25}` in a subtitle would be the original bug
+	# with a longer token.
 	var s := _expand_macros(text)
 	s = _strip_markdown(s)
 	s = _fold(s)
-	s = _expand_abbrev(s)
-	s = _expand_numbers(s)
-	return s
+	var abbrev: Array = []
+	s = _expand_abbrev(s, abbrev)
+	var spans: Array = []
+	s = _expand_numbers(s, abbrev, spans)
+	return {"text": s, "spans": spans}
 
 
 ## Remove Markdown's own punctuation, which is TYPOGRAPHY and must never be spoken.
@@ -397,8 +426,19 @@ static func _is_digits(s: String) -> bool:
 ##
 ## The whitespace is emitted verbatim rather than rejoined with a single space, because it is
 ## STRUCTURE: paragraph breaks reach the sentence splitter, and `\n` is a full stop to it.
-static func _expand_numbers(text: String) -> String:
+## `marks_in` are the spans [method _expand_abbrev] recorded over THIS text, and
+## `marks_out` collects the spans over the RETURNED text - both what this pass
+## rewrites and whatever came in, moved to where it now sits. The two are merged
+## here rather than composed afterwards because this is the pass that knows both
+## offsets: it walks the input and builds the output in one go, so at every token
+## boundary it holds the input cursor and the output length at the same moment.
+##
+## The two rewrites cannot overlap: nothing in ABBREV expands to digits, so a
+## token is at most one of them.
+static func _expand_numbers(text: String, marks_in: Array = [],
+		marks_out: Array = []) -> String:
 	var out := ""
+	var mi := 0                         # next unconsumed incoming mark
 	var starts := true                  # is the next token the start of a sentence?
 	var i := 0
 	var n := text.length()
@@ -419,6 +459,7 @@ static func _expand_numbers(text: String) -> String:
 		while j < n and not (text[j] in " \t\n\r"):
 			j += 1
 		var tok := text.substr(i, j - i)
+		var was := i                    # this token's offset in the INPUT
 		i = j
 		var done := _expand_token(tok)
 		# A NUMERAL OPENING A SENTENCE KEEPS ITS CAPITAL. "5 was missing." expands to
@@ -428,6 +469,28 @@ static func _expand_numbers(text: String) -> String:
 		# so the expansion silently welded two sentences into one subtitle card.
 		if starts and done != tok and done.length() > 0:
 			done = done.substr(0, 1).to_upper() + done.substr(1)
+		# What a reader should see here: whatever the SOURCE said. An incoming
+		# mark means an earlier pass already replaced this token, so its `src` is
+		# the original and beats the token in hand, which is that pass's output.
+		var src := tok
+		var span := done.length()
+		var rewritten := done != tok
+		while mi < marks_in.size() and int((marks_in[mi] as Dictionary)["at"]) < was:
+			mi += 1
+		if mi < marks_in.size() and int((marks_in[mi] as Dictionary)["at"]) == was:
+			var m: Dictionary = marks_in[mi]
+			src = String(m["src"])
+			# ITS length, not this token's. An abbreviation can expand to more
+			# than one word - `etc.` becomes `et cetera` - and this pass sees
+			# only the first of them, so measuring the span here would cover
+			# `et` and leave `cetera` reading as itself. Nothing in ABBREV
+			# expands to digits, so the run cannot also have been rewritten
+			# here and its length is still the one the earlier pass recorded.
+			span = int(m["len"])
+			rewritten = true
+			mi += 1
+		if rewritten:
+			marks_out.append({"at": out.length(), "len": span, "src": src})
 		out += done
 		# The next token starts a sentence if this one ended one. Closing wrappers are
 		# stripped first so `it."` counts.
@@ -560,8 +623,12 @@ static func _run_words(run: String, digits: bool) -> String:
 ## Dotted abbreviations, expanded so their period stops being read as the end of
 ## a sentence. Case-insensitive on the abbreviation, and only when the period is
 ## actually present - "no" the word must not become "number".
-static func _expand_abbrev(text: String) -> String:
+## `marks` collects {at, len, src} over the RETURNED text for every token this
+## rewrites, so [method normalize_marked] can tell a reader that `doctor` was
+## written `Dr.`. Left empty by every other caller; the pass is unchanged.
+static func _expand_abbrev(text: String, marks: Array = []) -> String:
 	var out: Array = []
+	var at := 0                       # output offset of the token about to be written
 	var words := text.split(" ", false)
 	for i in words.size():
 		var raw := words[i]
@@ -584,11 +651,15 @@ static func _expand_abbrev(text: String) -> String:
 		var matched := false
 		for key in ABBREV:
 			if lower == key + "." and _abbrev_fits(key, words, i):
-				out.append(head + String(ABBREV[key]) + tail)
+				var said := head + String(ABBREV[key]) + tail
+				marks.append({"at": at, "len": said.length(), "src": tok})
+				out.append(said)
+				at += said.length() + 1        # the joining space
 				matched = true
 				break
 		if not matched:
 			out.append(tok)
+			at += tok.length() + 1
 	return " ".join(out)
 
 

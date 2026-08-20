@@ -234,6 +234,63 @@ func _init() -> void:
 		print("norm_check: FAIL  a paragraph-length default was reported as unusable")
 		fails += 1
 
+	# THE PAGE AND THE MOUTH SAY DIFFERENT THINGS, and both must survive.
+	#
+	# Reported: a sentence ending "...who left the building in 2009." was
+	# SUBTITLED "...in two thousand nine." Normalization is for the phoneme
+	# lookup and never for the reader's eyes - Phonemes.parse has said so beside
+	# `display` since it was written - but `display` was read off the text AFTER
+	# this file had rewritten it, by which point the numeral existed nowhere.
+	# Every case here is a rewrite that must be HEARD one way and SHOWN another.
+	# THE ASSERTION IS EQUALITY, not "contains the numeral". A weaker test passes
+	# while a span measured on the wrong word leaves `cetera` behind it, which is
+	# how this very check first went green on a broken abbreviation span. What
+	# the reader sees must be the sentence they wrote, word for word.
+	for c in [["He left in 2009.", "two thousand nine"],
+			["She paid $5.", "five dollars"],
+			["The 1st of May.", "first"],
+			["Dr. Smith left.", "doctor"],
+			["It cost 1,200 pounds.", "one thousand two hundred"],
+			# an abbreviation that expands to TWO words: the span has to cover
+			# both, or `cetera` is left on screen reading as itself
+			["Bring rope, etc.", "et cetera"]]:
+		var shown := ""
+		var spoken := ""
+		for sentence in Phonemes_.parse(String(c[0])):
+			for w in sentence:
+				spoken += String(w.text) + " "
+				var d := String(w.get("display", ""))
+				if not d.is_empty():
+					shown += d + " "
+		if shown.strip_edges() != String(c[0]):
+			print("norm_check: FAIL  the page says %s and the subtitle says '%s'"
+				% [c[0], shown.strip_edges()])
+			fails += 1
+		if not spoken.contains(String(c[1])):
+			print("norm_check: FAIL  %-24s spoken as '%s' (wanted %s)" % [c[0], spoken, c[1]])
+			fails += 1
+
+	# THE RUN IS GROUPED, so a subtitle can hold the numeral up for as long as it
+	# takes to say - the words after the first carry the group and nothing to draw.
+	var grouped := 0
+	var blanks := 0
+	for sentence in Phonemes_.parse("in 2009."):
+		for w in sentence:
+			if int(w.get("src_span", -1)) >= 0:
+				grouped += 1
+				if String(w.get("display", "")).is_empty():
+					blanks += 1
+	if grouped != 3 or blanks != 2:
+		print("norm_check: FAIL  '2009' grouped %d word(s), %d of them blank (wanted 3 and 2)"
+			% [grouped, blanks])
+		fails += 1
+	# a word nobody rewrote is its own source and belongs to no group
+	for sentence in Phonemes_.parse("plain words only."):
+		for w in sentence:
+			if int(w.get("src_span", -1)) != -1:
+				print("norm_check: FAIL  '%s' was grouped and should not be" % w.text)
+				fails += 1
+
 	for c in PAUSE_CASES:
 		var found := false
 		for sentence in Phonemes_.parse(String(c[0])):

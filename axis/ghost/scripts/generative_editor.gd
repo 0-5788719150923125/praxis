@@ -1414,8 +1414,22 @@ func _cut(body: String, sentence_no: int) -> Dictionary:
 			if bool(w.get("literal", false)):
 				tok["arpa"] = arpa
 			toks.append(tok)
-			words.append({"text": String(w.get("display", w.text)),
-				"index": start, "sentence": sentence_no})
+			# ONE SUBTITLE ENTRY PER SOURCE RUN. `2009` is three spoken words and
+			# one thing on the page, so the words after the first in a rewritten
+			# run do not get their own entry - they extend this one's END, and
+			# the highlight sweeps the numeral across all three rather than
+			# flashing it over the first syllable. See Phonemes.parse.
+			var span := int(w.get("src_span", -1))
+			if span >= 0 and not words.is_empty() \
+					and int((words[words.size() - 1] as Dictionary).get("span", -1)) == span:
+				(words[words.size() - 1] as Dictionary)["end"] = start
+			else:
+				# A run whose first word the phonemizer dropped would leave a
+				# continuation with nothing to draw; show what is being said
+				# rather than an empty card.
+				var shown := String(w.get("display", w.text))
+				words.append({"text": shown if not shown.is_empty() else String(w.text),
+					"index": start, "end": start, "span": span, "sentence": sentence_no})
 		sentence_no += 1
 		sentences += 1
 		if sentences >= CHUNK_SENTENCES:
@@ -1856,11 +1870,14 @@ func export_take() -> String:
 		var rows: Array = []
 		for w in chunks[i]["words"]:
 			var span: Variant = by_index.get(int(w["index"]))
+			var tail: Variant = by_index.get(int(w.get("end", w["index"])))
+			if tail == null:
+				tail = span
 			rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
 				"t0": 0.0 if span == null else
 					float((span as Dictionary).get("t0", 0.0)) / ratio + elapsed,
-				"t1": 0.0 if span == null else
-					float((span as Dictionary).get("t1", 0.0)) / ratio + elapsed,
+				"t1": 0.0 if tail == null else
+					float((tail as Dictionary).get("t1", 0.0)) / ratio + elapsed,
 				"ok": span != null})
 		words.append_array(_bridge_words(rows, "export chunk %d" % i))
 		pcm.append_array(part)
@@ -2033,9 +2050,15 @@ func _words_for(idx: int, spans: Array) -> Array:
 	var rows: Array = []
 	for w in _chunks[idx]["words"]:
 		var span: Variant = by_index.get(int(w["index"]))
+		# A run's card is up from its first word to its LAST - `end` is that word
+		# when the entry covers a rewritten run, and the entry's own word when it
+		# does not.
+		var tail: Variant = by_index.get(int(w.get("end", w["index"])))
+		if tail == null:
+			tail = span
 		rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
 			"t0": 0.0 if span == null else float((span as Dictionary).get("t0", 0.0)),
-			"t1": 0.0 if span == null else float((span as Dictionary).get("t1", 0.0)),
+			"t1": 0.0 if tail == null else float((tail as Dictionary).get("t1", 0.0)),
 			"ok": span != null})
 	return _bridge_words(rows, "chunk %d" % idx)
 

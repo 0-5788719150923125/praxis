@@ -1319,6 +1319,10 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 					"amp": amp, "reduce": reduce,
 					"echo": clampf(0.55 * acts.echo, 0.0, 0.9),
 					"display": w.get("display", w.text),
+					# Which rewritten SOURCE run this word belongs to, if any -
+					# `2009` is three spoken words and one thing on the page.
+					# See Phonemes.parse; -1 means the word is its own source.
+					"group": w.get("src_span", -1),
 				})
 			# terminal contours land on the sentence's last word's vowels, with
 			# a freshly drawn shape each sentence (see Walk.sentence_end)
@@ -2286,10 +2290,19 @@ static func _record_timing(state: Dictionary, seg: Dictionary, t0: float, t1: fl
 	# vowel space, and inferring it from duration would be circular.
 	state.phones.append({"p": seg.p, "t0": t0, "t1": t1, "word": seg.word,
 		"sentence": seg.sentence, "reduce": seg.get("reduce", 0.0)})
-	var key := "%d:%d" % [seg.sentence, seg.word]
+	# KEYED BY THE SOURCE RUN where there is one, so the three words of `two
+	# thousand nine` open ONE karaoke entry reading `2009` and the loop below
+	# extends it to the last of them. Separate namespaces, because a run index
+	# and a word index are both small integers and would otherwise collide.
+	var key := "%d:w%d" % [seg.sentence, seg.word]
+	if int(seg.get("group", -1)) >= 0:
+		key = "%d:g%d" % [seg.sentence, int(seg.group)]
 	if seg.word_start and not state.wopen.has(key):
+		# a run whose first word was dropped leaves a continuation with nothing
+		# to draw; show what is being said rather than an empty card
+		var shown := String(seg.get("display", seg.text))
 		state.wopen[key] = state.words.size()
-		state.words.append({"text": seg.get("display", seg.text),
+		state.words.append({"text": shown if not shown.is_empty() else String(seg.text),
 			"t0": t0, "t1": t1, "sentence": seg.sentence})
 	if state.wopen.has(key):
 		state.words[state.wopen[key]].t1 = t1

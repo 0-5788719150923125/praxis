@@ -675,6 +675,7 @@ class PiperBackend(Backend):
                 "onnxruntime/numpy are not installed in the voice environment"
             ) from exc
         import homographs  # ghost's own; HERE is on sys.path - see host.py
+        import vowel_probe
 
         self._sessions: dict[str, Any] = {}
         self._configs: dict[str, dict] = {}
@@ -683,6 +684,13 @@ class PiperBackend(Backend):
         # Constructed here rather than per request because its probe cache is the
         # thing that makes it free after the first few sentences.
         self._homographs = homographs.Homographs(self._espeak)
+        # Whether a checkpoint says the vowel its phoneme string names. Constructed
+        # here for the same reason: the verdict is per voice and the probe RENDERS, so
+        # it is asked once and then remembered - in memory here,
+        # and on disk beside the weights so a restart does not pay for it again.
+        self._vowels = vowel_probe.VowelProbe(
+            self._espeak, self._render_symbols, self._root()
+        )
 
     # -- storage -----------------------------------------------------------
 
@@ -756,6 +764,19 @@ class PiperBackend(Backend):
         )
         self._sessions[voice] = sess
         self._configs[voice] = cfg
+        # ASK THIS CHECKPOINT WHETHER IT SAYS THE VOWEL ITS PHONEME STRING NAMES.
+        # en_US-libritts-high renders a word-initial `ɹˈiːd` with the vowel of `rid`,
+        # which is its training transcripts carrying the same homograph bug one level
+        # down - see vowel_probe.py. Here rather than in `_run` for two reasons: it is
+        # a property of the weights, so once per load is the right cadence and a check
+        # on every sentence is not; and it RENDERS, so it must not happen inside one.
+        # Being on the cold path only, it also never touches a session a caller
+        # supplied itself - the alignment tests seed `_sessions` with a stand-in whose
+        # phoneme map allocates ids on lookup, and probing that would silently move
+        # every id in the audio under test.
+        self._vowels.measure(
+            voice, cfg, sess, str(cfg.get("espeak", {}).get("voice", "en-us"))
+        )
         return sess, cfg
 
     @staticmethod
@@ -877,7 +898,11 @@ class PiperBackend(Backend):
         return [o.strip() for o in out]
 
     def _symbols(
-        self, tokens: list, phonemizer: str, espeak_voice: str = "en-us"
+        self,
+        tokens: list,
+        phonemizer: str,
+        espeak_voice: str = "en-us",
+        voice: str = "",
     ) -> list:
         """(codepoint, token index) pairs for a chunk.
 
@@ -890,8 +915,19 @@ class PiperBackend(Backend):
         under the part of speech it was tagged with (homographs.py). It sits
         below `arpa` - the author still outranks it - and above the word-by-word
         transcription it exists to correct.
+
+        Whichever of the three a reading comes from, it is written out in the spelling
+        THIS checkpoint was measured to render correctly before it leaves here (see
+        vowel_probe.py). That applies to the authored override too, and deliberately:
+        the repair does not change which vowel is named, only how it is spelled for a
+        model that mis-renders the short spelling, so an author who writes [R IY1 D]
+        wants the same repair an eSpeak reading gets. `voice` empty - every caller
+        that is not a real render - leaves every reading untouched.
         """
         import arpabet
+
+        def written(ipa: str) -> str:
+            return self._vowels.repair_for(voice, ipa) if voice else ipa
 
         # A token whose text is only whitespace must never reach the batch, and the
         # result must be checked rather than trusted. phonemizer DROPS an empty or
@@ -952,19 +988,26 @@ class PiperBackend(Backend):
         out: list = [(" ", 0)] * LEAD_IN_SPACES
         for i, t in enumerate(tokens):
             if t.get("arpa"):
-                for ch, _ in arpabet.to_symbols([str(x) for x in t["arpa"]]):
+                got = "".join(
+                    ch for ch, _ in arpabet.to_symbols([str(x) for x in t["arpa"]])
+                )
+                for ch in written(got):
                     out.append((ch, i))
             elif t.get("ipa"):
-                for ch in str(t["ipa"]):
+                for ch in written(str(t["ipa"])):
                     out.append((ch, i))
             elif i in espoke:
-                for ch in espoke[i]:
+                for ch in written(espoke[i]):
                     out.append((ch, i))
             elif t.get("text"):
                 # no eSpeak: fall back to ghost's ARPAbet if it sent any
-                for ch, _ in arpabet.to_symbols(
-                    [str(x) for x in t.get("fallback", [])]
-                ):
+                got = "".join(
+                    ch
+                    for ch, _ in arpabet.to_symbols(
+                        [str(x) for x in t.get("fallback", [])]
+                    )
+                )
+                for ch in written(got):
                     out.append((ch, i))
             for ch in str(t.get("punct", "")):
                 out.append((ch, i))
@@ -1334,9 +1377,6 @@ class PiperBackend(Backend):
         self, group: list, voice: str, params: dict, cfg: dict, sess, phonemizer: str
     ):
         """One sentence: symbols -> ids -> audio, plus per-token time spans."""
-        import numpy as np
-
-        pmap: dict = cfg["phoneme_id_map"]
         espeak_voice = str(cfg.get("espeak", {}).get("voice", "en-us"))
         # Word by word, a homograph has no syntax to be read by, so eSpeak gives
         # its default reading every time - "he read the book" came out present
@@ -1346,7 +1386,23 @@ class PiperBackend(Backend):
         # tagger both are.
         if phonemizer == "espeak" and espeak_voice.split("-")[0] in ("en", ""):
             self._homographs.annotate(group, espeak_voice)
-        symbols = self._symbols(group, phonemizer, espeak_voice)
+        # The reading is then written in the spelling this checkpoint was measured
+        # to render correctly - see `_load`, which is where that measurement happens,
+        # and vowel_probe.py for what it is measuring.
+        symbols = self._symbols(group, phonemizer, espeak_voice, voice)
+        return self._render_symbols(symbols, cfg, sess, params)
+
+    def _render_symbols(self, symbols: list, cfg: dict, sess, params: dict):
+        """(symbol, source) pairs -> audio, plus a time span per source.
+
+        Split out of `_run` so the vowel probe can render a phoneme string it built
+        itself and get spans back keyed to single SYMBOLS rather than to words - a
+        vowel is a symbol, and there is no other way to measure one. Nothing here
+        interprets the source index; it is carried through and handed back.
+        """
+        import numpy as np
+
+        pmap: dict = cfg["phoneme_id_map"]
         # eSpeak is where U+0329 comes from, so this is the call that matters.
         symbols, folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]

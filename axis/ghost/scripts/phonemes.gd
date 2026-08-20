@@ -221,10 +221,36 @@ static func parse(text: String) -> Array:
 	# stage existed, a numeral produced an empty phone array and vanished from
 	# the utterance without a trace, and a curly apostrophe defeated both the
 	# contraction split and the dictionary key. See TextNorm.
-	text = TextNorm.normalize(text)
-	var toks := _tokenize(text)
+	# ...and keep WHAT THE PAGE SAID alongside what the mouth will say. `2009` is
+	# spoken "two thousand nine" and must still be SHOWN as `2009`; see
+	# TextNorm.normalize_marked for why the two spellings have to travel together.
+	var marked := TextNorm.normalize_marked(text)
+	text = String(marked["text"])
+	var spans: Array = marked["spans"]
+	var span_at := 0                 # spans are ascending; walk them with the tokens
+	var span_open := -1              # the span the previous word belonged to, if any
+	var tok_at := PackedInt32Array()
+	var toks := _tokenize(text, tok_at)
 	for ti in toks.size():
 		var token: String = toks[ti]
+		# WHICH SOURCE RUN IS THIS TOKEN PART OF. A rewritten run covers one or
+		# more tokens ("two thousand nine"), and the reader is shown its source
+		# spelling ONCE, over the whole run - so the first token of a run carries
+		# the source and the rest carry nothing to draw. `src_span` groups them
+		# so a subtitle can span the run's whole duration rather than flashing
+		# the numeral over its first syllable.
+		var start: int = tok_at[ti] if ti < tok_at.size() else -1
+		var in_span := -1
+		var span_src := ""
+		while span_at < spans.size():
+			var sp: Dictionary = spans[span_at]
+			if start >= 0 and start >= int(sp["at"]) + int(sp["len"]):
+				span_at += 1        # the run ended before this token began
+				continue
+			if start >= 0 and start >= int(sp["at"]):
+				in_span = span_at
+				span_src = String(sp["src"])
+			break
 		if token.begins_with("["):
 			words.append(_literal_word(token))
 			continue
@@ -316,11 +342,18 @@ static func parse(text: String) -> Array:
 						% [token] + "read as '%s'" % [String(saved["said"])])
 					got = {"phones": phones, "stress": saved["stress"]}
 			if phones.size() > 0:
+				# THE SOURCE SPELLING, caps and punctuation intact - normalization
+				# is for the phoneme lookup, never for the reader's eyes. Inside a
+				# rewritten run that is what the page said (`2009`), shown once on
+				# the run's first word; elsewhere the token already IS the source.
+				var shown := token.trim_suffix("\n")
+				if in_span >= 0:
+					shown = span_src.trim_suffix("\n") if in_span != span_open else ""
+					span_open = in_span
 				words.append({
 					"text": bare,
-					"display": token.trim_suffix("\n"),   # the SOURCE spelling,
-					# caps and punctuation intact - normalization is for the
-					# phoneme lookup, never for the reader's eyes
+					"display": shown,
+					"src_span": in_span,
 					"phones": phones,
 					"stress": got.stress,
 					"stressed": not is_function_word(bare),
@@ -336,7 +369,10 @@ static func parse(text: String) -> Array:
 	return sentences
 
 
-static func _tokenize(text: String) -> PackedStringArray:
+## `at` collects each token's start offset in `text`, for callers that have to
+## map a token back onto the source it was normalized from (see [method parse]).
+## Left empty by every other caller; the tokenization is unchanged.
+static func _tokenize(text: String, at: PackedInt32Array = PackedInt32Array()) -> PackedStringArray:
 	var out := PackedStringArray()
 	var i := 0
 	while i < text.length():
@@ -345,6 +381,7 @@ static func _tokenize(text: String) -> PackedStringArray:
 			var close := text.find("]", i)
 			if close < 0:
 				close = text.length() - 1
+			at.append(i)
 			out.append(text.substr(i, close - i + 1))
 			i = close + 1
 		elif c == " " or c == "\t":
@@ -358,6 +395,7 @@ static func _tokenize(text: String) -> PackedStringArray:
 			var j := i
 			while j < text.length() and not (text[j] in " \t\n["):
 				j += 1
+			at.append(i)
 			out.append(text.substr(i, j - i))
 			i = j
 	return out
