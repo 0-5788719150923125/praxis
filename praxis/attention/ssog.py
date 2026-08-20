@@ -57,6 +57,18 @@ SIGMA_Q: float = 0.35  # atom width as a fraction of its own lag (constant-Q)
 SIGMA_MIN_EXCESS: float = 0.05  # smallest width the ladder asks for, above floor
 TEMPERATURE_RAW_INIT: float = -1.0  # softplus(-1) + 0.5 ~ 0.81, slightly sharp
 QK_DUMMY_DIM: int = 16  # flex needs Q/K tensors; theirs are zeros
+# Null-atom logit at init, calibrated against the MEASURED denominator rather
+# than guessed. The field's logsumexp sits near -0.83 to -0.97 across sequence
+# lengths 64-512, so the null's share at init is sigmoid-close to
+# exp(l_0 - lse): l_0 = -2 gives ~25%, -3 ~11%, -4 ~4.5%, -5 ~1.7%.
+#
+# -4.0 is the choice: ~5% is near-identity, which is this lineage's discipline
+# (the arm starts inert and the model opens it), while staying far from
+# saturation. Going strongly negative would be the cold-gate trap a second
+# time - at l_0 = -20, sigmoid(lse - l_0) pins at 1.0 and the gradient dies,
+# which is exactly how the reference's softplus(-8) steering gate spent 11.7k
+# steps welded shut.
+NULL_LOGIT_INIT: float = -4.0
 GEOM_BINS: int = 192  # lag samples per geometry row (a live snapshot, so free)
 GEOM_LAG_MIN: float = 0.5  # nearest lag plotted, in tokens
 GEOM_LAG_MAX: float = 512.0  # farthest lag plotted, in tokens
@@ -267,6 +279,7 @@ class SSOGAttention(nn.Module):
         config,
         num_atoms: Optional[int] = None,
         mu_init_max: Optional[float] = None,
+        null_atom: bool = False,
     ) -> None:
         super().__init__()
         self.patch_config(config)
@@ -277,6 +290,7 @@ class SSOGAttention(nn.Module):
         # Instance override so a registry PROFILE can set the ladder's span
         # alongside its atom count; the two are one decision, not two.
         self.mu_init_max = float(mu_init_max or type(self).mu_init_max)
+        self.null_atom = bool(null_atom)
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
         self.dropout_p = config.dropout
@@ -311,6 +325,7 @@ class SSOGAttention(nn.Module):
         self.flex_attention = None
         self.create_block_mask = None
         self.and_masks = None
+        self._aux_request = None
         # `--no-compile` means no compile, including ours. The flex path below
         # compiles ITSELF whatever the rest of the model does, because eager
         # flex_attention cannot backprop through captured score_mod tensors and
@@ -337,6 +352,12 @@ class SSOGAttention(nn.Module):
                 self.flex_attention = torch.compile(flex_attention)
                 self.create_block_mask = create_block_mask
                 self.and_masks = and_masks
+                try:
+                    from torch.nn.attention.flex_attention import AuxRequest
+
+                    self._aux_request = AuxRequest(lse=True)
+                except ImportError:  # torch < 2.10 keeps return_lse
+                    self._aux_request = None
             except ImportError:
                 pass
         self.block_mask_cache = {}
@@ -394,6 +415,22 @@ class SSOGAttention(nn.Module):
         nn.init.zeros_(self.steer.weight)
         nn.init.zeros_(self.steer.bias)
         self.raw_gate = nn.Parameter(torch.full((3,), self.gate_init))
+        self._build_null(H)
+
+    def _build_null(self, H: int) -> None:
+        """The learned null logit, one per head. See ``_apply_null``."""
+        self.raw_null = (
+            nn.Parameter(torch.full((H,), NULL_LOGIT_INIT)) if self.null_atom else None
+        )
+        # Realized share, EMA'd in the forward. The PARAMETER says what the head
+        # asked for; this says what the softmax actually gave it, which is the
+        # position-dependent part and the only one worth reading.
+        self.register_buffer("null_share", torch.zeros(self._null_slots()), persistent=False)
+
+    def _null_slots(self) -> int:
+        """How many null-share slots to track. One per depth where the field is
+        per-depth, one overall where it is shared."""
+        return 1
 
     # ------------------------------------------------------------------ field
     def _field(
@@ -464,9 +501,17 @@ class SSOGAttention(nn.Module):
         q_dummy = v.new_zeros(B, H, T, QK_DUMMY_DIM)
         k_dummy = v.new_zeros(B, H, T, QK_DUMMY_DIM)
         block_mask = self._block_mask(T, v.device) if self.causal else None
-        return self.flex_attention(
-            q_dummy, k_dummy, v, score_mod=score_mod, block_mask=block_mask
-        )
+        # The null scale needs the attention denominator, and flex already has
+        # it; asking costs nothing when the null is off. `return_lse` is
+        # deprecated from torch 2.10 in favour of `return_aux`, so prefer the
+        # new spelling where it exists and keep the old one working.
+        kwargs = dict(score_mod=score_mod, block_mask=block_mask)
+        if self._aux_request is not None:
+            out, aux = self.flex_attention(
+                q_dummy, k_dummy, v, **kwargs, return_aux=self._aux_request
+            )
+            return out, aux.lse
+        return self.flex_attention(q_dummy, k_dummy, v, **kwargs, return_lse=True)
 
     # ------------------------------------------------------- materialised path
     def _materialised(self, v: Tensor, mu, sigma, loglam, tau) -> Tensor:
@@ -485,8 +530,61 @@ class SSOGAttention(nn.Module):
             if self.window_size is not None:
                 allowed = allowed & (d <= self.window_size)
             logits = logits.masked_fill(~allowed, float("-inf"))
+        lse = torch.logsumexp(logits, dim=-1)  # [B, H, T]
         weights = torch.softmax(logits, dim=-1).to(v.dtype)
-        return weights @ v
+        return weights @ v, lse
+
+    def _apply_null(self, out: Tensor, lse: Tensor, current_depth: int) -> Tensor:
+        """Scale the output by the share the real keys keep against the null.
+
+        The null is an extra softmax column whose VALUE is zero, so it steals
+        probability mass and contributes nothing. Writing its share out,
+
+            null   = exp(l_0) / (exp(l_0) + Z),      Z = sum_k exp(logit_k)
+            keep   = Z / (Z + exp(l_0)) = sigmoid(logsumexp(logits) - l_0)
+
+        so the whole thing is one sigmoid on the attention denominator, which
+        both paths already compute. No extra column, no kernel change.
+
+        WHY IT IS WORTH HAVING HERE, and it is not the dilution argument: this
+        stack has NO absolute position anywhere below the head - the logit is a
+        function of lag alone - so a query cannot represent "I am near the start
+        and there is nothing that far back". Without a null, an atom centred at
+        lag 32 queried at position 5 has its truncated tail renormalised onto
+        the oldest token, which is a sink indistinguishable from a real
+        long-range read. With one, Z is tiny exactly there (a far atom puts
+        almost no density on the few available lags), so a CONSTANT l_0 absorbs
+        most of the mass; deep in the sequence the same atom sits in-window, Z
+        is large, and the null gets almost nothing. One learned scalar buys
+        position-dependent abstention without a position input.
+
+        What it does NOT do is restore concentration between atoms: ``keep`` is
+        a common factor, so every real atom keeps its 1/R share of what is left.
+        """
+        if self.raw_null is None:
+            return out
+        null = self._null_logit(current_depth)  # [H]
+        keep = torch.sigmoid(lse.float() - null[None, :, None])  # [B, H, T]
+        self._note_null_share(1.0 - keep, current_depth)
+        return out * keep.unsqueeze(-1).to(out.dtype)
+
+    def _null_logit(self, current_depth: int) -> Tensor:
+        """``[H]`` null logit for this pass. Depth-shared in the faithful port."""
+        return self.raw_null.float()
+
+    def _note_null_share(self, share: Tensor, current_depth: int) -> None:
+        """EMA of the mass actually going nowhere, per depth slot.
+
+        The PARAMETER says what the head asked for; this says what the softmax
+        gave it, which is the position-dependent half and the only one worth
+        reading.
+        """
+        with torch.no_grad():
+            value = share.mean().detach()
+            if not torch.isfinite(value):
+                return
+            idx = min(int(current_depth), self.null_share.numel() - 1)
+            self.null_share[idx].mul_(0.99).add_(0.01 * value.to(self.null_share.device))
 
     # ---------------------------------------------------------------- forward
     def forward(
@@ -518,9 +616,10 @@ class SSOGAttention(nn.Module):
             and torch.is_grad_enabled()
         )
         if use_flex:
-            out = self._flex(v, mu, sigma, loglam, tau)
+            out, lse = self._flex(v, mu, sigma, loglam, tau)
         else:
-            out = self._materialised(v, mu, sigma, loglam, tau)
+            out, lse = self._materialised(v, mu, sigma, loglam, tau)
+        out = self._apply_null(out, lse, current_depth)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.dropout(self.output(out)), past_key_values, 0.0
 
@@ -545,6 +644,14 @@ class SSOGAttention(nn.Module):
             "ssog_temperature": (
                 F.softplus(self.raw_temperature.detach().float()) + 0.5
             ).mean().item(),
+            **(
+                {
+                    "ssog_null_logit": self.raw_null.detach().float().mean().item(),
+                    "ssog_null_share": self.null_share.item(),
+                }
+                if self.raw_null is not None
+                else {}
+            ),
         }
         for r in range(self.num_atoms):
             out[f"ssog_mu_a{r}"] = mu[:, r].mean().item()

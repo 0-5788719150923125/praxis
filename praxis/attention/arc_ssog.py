@@ -110,6 +110,7 @@ from torch import Tensor
 
 from praxis.attention.ssog import (
     _EPS,
+    NULL_LOGIT_INIT,
     GEOM_BINS,
     MAX_OFFSET,
     MU_INIT_MIN,
@@ -238,6 +239,33 @@ class ArcSSOGAttention(SSOGAttention):
             "wanting to contribute nothing can only approximate it by going "
             "needle-narrow onto a single key.",
         ),
+        **_depth_cards(
+            "ssog_null_share",
+            "SSOG Null Share (mass that goes nowhere, per depth)",
+            "Share of attention mass",
+            130,
+            "The fraction of each pass's attention the null atom absorbs - "
+            "measured, not asked for. This is the card the null atom exists to "
+            "produce, and it should be strongly POSITION-DEPENDENT even though "
+            "nothing below the head knows absolute position: a query near the "
+            "start has almost no density on the few lags available to it, so a "
+            "constant learned logit takes most of its mass, while deep in the "
+            "sequence the same atom sits in-window and the null takes almost "
+            "none. Measured at init: 0.30 at the first query against 0.04 at "
+            "position 127. Rising means a pass is learning to abstain; pinned "
+            "near zero means it never wanted the outlet.",
+        ),
+        **_depth_cards(
+            "ssog_null_logit",
+            "SSOG Null Logit (what the head asked for, per depth)",
+            "l_0",
+            150,
+            "The learned null logit itself, against an init of -4.0 (~5% of the "
+            "mass). Read it with the share card: the logit is what the pass "
+            "asked for, the share is what the softmax gave it, and the gap is "
+            "the position-dependent part. Driving strongly negative means the "
+            "pass is closing an outlet it was handed.",
+        ),
         "ssog_geometry": {
             "description": (
                 "The reference's figure, finally drawable. It plots learned "
@@ -294,12 +322,18 @@ class ArcSSOGAttention(SSOGAttention):
         config,
         num_atoms: Optional[int] = None,
         mu_init_max: Optional[float] = None,
+        null_atom: bool = False,
     ) -> None:
         # Set before super().__init__, because __init__ calls _build_field,
         # which needs it. A plain int assignment is safe before nn.Module's
         # __init__ (only Parameters and Modules are not).
         self.depths = max(1, int(getattr(config, "depth", 1) or 1))
-        super().__init__(config, num_atoms=num_atoms, mu_init_max=mu_init_max)
+        super().__init__(
+            config,
+            num_atoms=num_atoms,
+            mu_init_max=mu_init_max,
+            null_atom=null_atom,
+        )
 
     # ------------------------------------------------------------------ field
     def _build_field(self, hidden_size: int, H: int, R: int) -> None:
@@ -331,6 +365,26 @@ class ArcSSOGAttention(SSOGAttention):
         nn.init.zeros_(self.steer.bias)
         self.steer_bias = nn.Parameter(torch.zeros(D, H * R * 3))
         self.raw_gate = nn.Parameter(torch.full((D, 3), self.gate_init))
+        self._build_null(H)
+
+    def _null_slots(self) -> int:
+        return self.depths
+
+    def _build_null(self, H: int) -> None:
+        """Per-depth null logit: a pass that wants to abstain often is a
+        different pass from one that never does, and a shared scalar would
+        average them the way the shared steering gate did."""
+        self.raw_null = (
+            nn.Parameter(torch.full((self.depths, H), NULL_LOGIT_INIT))
+            if self.null_atom
+            else None
+        )
+        self.register_buffer(
+            "null_share", torch.zeros(self.depths), persistent=False
+        )
+
+    def _null_logit(self, current_depth: int) -> Tensor:
+        return self.raw_null[min(int(current_depth), self.depths - 1)].float()
 
     def _field(
         self, x: Tensor, current_depth: int = 0
@@ -470,6 +524,9 @@ class ArcSSOGAttention(SSOGAttention):
             out[f"ssog_far_mass_d{d}"] = (
                 (lam * (mu > FAR_LAG).float()).sum(dim=-1).mean().item()
             )
+            if self.raw_null is not None:
+                out[f"ssog_null_logit_d{d}"] = self.raw_null[d].detach().float().mean().item()
+                out[f"ssog_null_share_d{d}"] = self.null_share[d].item()
         self._snapshot_cache = self._build_snapshots()
         return out
 

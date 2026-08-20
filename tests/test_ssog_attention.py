@@ -74,9 +74,12 @@ def test_flex_matches_materialised():
     x = torch.randn(2, 64, 64, device="cuda")
     v = module.value(x).view(2, 64, 2, 32).transpose(1, 2)
     field = module._field(x)
-    ref = module._materialised(v, *field)
-    out = module._flex(v, *field)
+    # Both paths now also return the attention denominator, which the null atom
+    # scales the output by; the two have to agree on BOTH.
+    ref, ref_lse = module._materialised(v, *field)
+    out, out_lse = module._flex(v, *field)
     assert torch.allclose(out, ref, atol=1e-4), (out - ref).abs().max()
+    assert torch.allclose(out_lse, ref_lse, atol=1e-4), (out_lse - ref_lse).abs().max()
 
 
 def test_no_zero_dim_parameters():

@@ -52,6 +52,13 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # decayed at every depth for 11.8k steps. `arc_ssog` came back down to the
     # faithful ladder; this stays so the measurement can be repeated.
     "arc_ssog_wide": partial(ArcSSOGAttention, num_atoms=12, mu_init_max=128.0),
+    # ... plus a per-depth NULL ATOM: one learned logit per pass whose "value"
+    # is zero, so a query can decline to contribute. It matters here because
+    # nothing below the head knows absolute position - the logit is a function
+    # of lag alone - so without it a query near the start has an atom's
+    # truncated tail renormalised onto the oldest token, a sink that looks
+    # exactly like a real long-range read. See ArcSSOGAttention._apply_null.
+    "arc_ssog_null": partial(ArcSSOGAttention, null_atom=True),
 }
 
 

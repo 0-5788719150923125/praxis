@@ -12,17 +12,24 @@ import torch.nn.functional as F
 from praxis import PraxisConfig
 from praxis.attention import ATTENTION_REGISTRY
 from praxis.attention.arc_ssog import ARC_GATE_INIT, ArcSSOGAttention
-from praxis.attention.ssog import COLD_GATE_INIT, NUM_ATOMS, SSOGAttention
+from praxis.attention.ssog import (
+    COLD_GATE_INIT,
+    NULL_LOGIT_INIT,
+    NUM_ATOMS,
+    SSOGAttention,
+)
 
 
-def _module(cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, **overrides):
+def _module(cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, null_atom=False, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0, depth=4)
     cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
     if cls is ArcSSOGAttention:
-        return cls(cfg, num_atoms=num_atoms, mu_init_max=mu_init_max), cfg
+        return cls(
+            cfg, num_atoms=num_atoms, mu_init_max=mu_init_max, null_atom=null_atom
+        ), cfg
     return cls(cfg), cfg
 
 
@@ -224,3 +231,59 @@ def test_producer_thread_never_touches_the_model():
 
     payload = module.dashboard_snapshots()
     assert all(isinstance(v["grid"], list) for v in payload.values())
+
+
+def test_null_atom_is_opt_in_and_off_by_default():
+    plain, _ = _module()
+    assert plain.raw_null is None
+    assert not any("null" in k for k in plain.training_metrics())
+
+    nulled, _ = _module(null_atom=True)
+    assert nulled.raw_null.shape == (4, nulled.num_heads)  # per depth
+    assert torch.allclose(
+        nulled.raw_null, torch.full_like(nulled.raw_null, NULL_LOGIT_INIT)
+    )
+    x = torch.randn(2, 20, 64)
+    assert not torch.allclose(plain(x)[0], nulled(x)[0])
+
+
+def test_null_share_falls_with_query_position():
+    """The whole argument for the null atom in THIS stack: nothing below the
+    head knows absolute position, so a query near the start cannot otherwise
+    say "there is nothing that far back" - its atom's truncated tail gets
+    renormalised onto the oldest token instead. One constant logit fixes that,
+    because the denominator it competes against is itself position-dependent."""
+    module, _ = _module(null_atom=True)
+    module.eval()
+    x = torch.randn(1, 96, 64)
+    with torch.no_grad():
+        B, T, _ = x.shape
+        v = module.value(x).view(B, T, module.num_heads, module.head_dim).transpose(1, 2)
+        _, lse = module._materialised(v, *module._field(x, 0))
+        share = (1.0 - torch.sigmoid(lse - module._null_logit(0)[None, :, None]))[0, 0]
+
+    assert share[0] > 3 * share[-1], (share[0].item(), share[-1].item())
+    assert share[0] > share[4] > share[32]  # monotone falloff, not a step
+    assert share.mean() < 0.15  # near-identity at init, per NULL_LOGIT_INIT
+
+
+def test_null_logit_is_not_initialised_into_saturation():
+    """A strongly negative init would pin sigmoid(lse - l_0) at 1.0 with a dead
+    gradient, which is exactly how the reference's softplus(-8) steering gate
+    spent 11.7k steps welded shut."""
+    module, _ = _module(null_atom=True)
+    module(torch.randn(2, 24, 64), None, None, None, 1)[0].square().sum().backward()
+    grad = module.raw_null.grad
+    assert grad is not None and grad[1].abs().sum() > 1e-8, grad
+    # and only the depth that ran takes gradient
+    assert grad[0].abs().sum() == 0
+
+
+def test_null_share_is_tracked_per_depth():
+    module, cfg = _module(null_atom=True)
+    assert module.null_share.shape == (cfg.depth,)
+    module(torch.randn(2, 16, 64), None, None, None, 2)
+    metrics = module.training_metrics()
+    assert metrics["ssog_null_share_d2"] > 0.0
+    assert metrics["ssog_null_share_d0"] == 0.0  # depth 0 never ran
+    assert metrics["ssog_null_logit_d2"] == pytest.approx(NULL_LOGIT_INIT)

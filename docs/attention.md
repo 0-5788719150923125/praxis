@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (13 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (14 entries)
 
 ## `arc`, `arc_dropoff` - ArcAttention
 
@@ -37,14 +37,15 @@ Presets:
 - `arc_single` - class defaults
 - `arc_single_dropoff` - `dropoff='warp'`
 
-## `arc_ssog`, `arc_ssog_wide` - ArcSSOGAttention
+## `arc_ssog`, `arc_ssog_null`, `arc_ssog_wide` - ArcSSOGAttention
 
 SSOG with a per-depth field (see module docstring).
 
-Source: [praxis/attention/arc_ssog.py:159](../praxis/attention/arc_ssog.py#L159)
+Source: [praxis/attention/arc_ssog.py:160](../praxis/attention/arc_ssog.py#L160)
 
 Presets:
 - `arc_ssog` - class defaults
+- `arc_ssog_null` - `null_atom=True`
 - `arc_ssog_wide` - `mu_init_max=128.0, num_atoms=12`
 
 ## `causal` - CausalAttention
@@ -94,7 +95,7 @@ so a subclass can reshape the field without reimplementing ``__init__``, and
 ``_build_field`` / ``_field`` are the two seams a variant overrides. See
 ``praxis/attention/arc_ssog.py``.
 
-Source: [praxis/attention/ssog.py:84](../praxis/attention/ssog.py#L84)
+Source: [praxis/attention/ssog.py:96](../praxis/attention/ssog.py#L96)
 
 ## `syntaxes` - SyntaxesAttention
 
