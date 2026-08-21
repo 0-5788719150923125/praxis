@@ -1482,6 +1482,7 @@ func _begin_transition() -> void:
 	# alpha update (the "appeared, disappeared, reappeared" bug).
 	nxt.modulate.a = 0.0
 	nxt.view.presence = 0.0
+	nxt.view.reveal = 0.0             # arm the geometry ratchet: it grows in with the fade-up
 	_next = nxt
 	_host.add_child(_next)            # added last -> drawn over _current
 	_transitioning = true
@@ -1506,6 +1507,7 @@ func _finish_transition() -> void:
 	_swaps += 1
 	_current.modulate.a = 1.0
 	_current.view.presence = 1.0
+	_current.view.reveal = 1.0
 	# The survivor of a LAYER HOLDS the position it took during the overlap - it does not shift
 	# back to the centred focal point (that snap-back read as wrong). Its bias stays as set.
 	_arm()

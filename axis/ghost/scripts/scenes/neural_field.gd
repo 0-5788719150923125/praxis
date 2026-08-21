@@ -487,7 +487,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 
 	var job := NeuralJob.new()
 	job.u = unit()
-	job.reveal = smoothstep(0.75, 1.0, view.presence)
+	job.reveal = view.reveal
 	job.fov = lens.fov
 	job.lens = Lens3D.new()
 	job.lens.eye = lens.eye

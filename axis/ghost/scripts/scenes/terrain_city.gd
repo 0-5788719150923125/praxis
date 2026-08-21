@@ -238,7 +238,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.sat = _sat
 	job.vmul = _vmul
 	job.maturity = _maturity
-	job.reveal = smoothstep(0.8, 1.0, view.presence)
+	job.reveal = view.reveal
 	job.terrain = _terrain
 	job.tex_rid = Terrain.detail_texture().get_rid()
 	job.dev = _dev.f.duplicate()

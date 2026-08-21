@@ -10,13 +10,14 @@ extends GhostScene
 ## to a two-glyph label in an invented script. A survey sweep crosses the sheet planting marks
 ## as it goes and clearing them when it comes round again.
 ##
-## THE LAND EVOLVES, IN PLACES. Regions of it rise and subside under the ink - contours crowding
-## up into a new hill over ten or twenty seconds while the rest of the sheet holds perfectly
-## still - so the map reads as a survey being re-flown rather than a picture. That is one
-## mechanism ([method _step_swells]) and it is deliberately NOT the window: moving the window
-## moves every line in the frame at once, which is a different and much cruder thing. Both
-## failures have been seen in the field and the second was caused by fixing the first, so the
-## whole subject is written down there and gated in tests/contour_flow_check.gd.
+## THE LAND EVOLVES, EVERYWHERE, AT DIFFERENT RATES. Ground rises and subsides under the ink and
+## ridges wander - contours crowding up into a new hill here while a mile away the sheet is
+## almost still, and a minute later the still part is the one reorganising - so the map reads as
+## a survey being re-flown rather than as a picture. That is [method _step_tectonics], and it is
+## deliberately NOT the window: moving the window moves every line in the frame at once, by the
+## same vector, which is the crude thing this scene has been reported for twice. It is also not a
+## few bumps on an otherwise frozen sheet, which is what the first repair made of it. The whole
+## subject is written down there and gated in tests/contour_flow_check.gd.
 ##
 ## THREE ABSENCES AT ONCE, which is why it exists. Nothing else here is a PLAN VIEW -
 ## every other framing is eye-level horizon, three-quarter isometric or centred abstract.
@@ -59,7 +60,7 @@ extends GhostScene
 ##   motion and it is rare on purpose - and because a spoken chapter barely moves that score
 ##   at all, there is now a floor under it too (`_warp_gap`, 35 to 75 s), so the window can
 ##   never stall for a whole song the way it was reported doing. The continuous evolution is
-##   not this: it is the local swells, which no audio feature touches.
+##   not this: it is the tectonics, which no audio feature touches.
 ##   `f.high` raises the graticule and annotation ink alpha, so the paperwork layer fades
 ##   in on bright passages and the sheet is mostly bare land on quiet ones.
 ##   `f.energy` does nothing at all except warm the paper through the tint, because it is
@@ -89,7 +90,9 @@ extends GhostScene
 ## OVER the contours in the same colour, which is what gives the sheet a real neatline and
 ## a clean white margin for four quads.
 ##
-## WHAT THE SEED DECIDES: the field kind (fbm / ridged / billow / cells), its octaves,
+## WHAT THE SEED DECIDES: the two spectral bases the land evolves through - how many waves, how
+## long, how fast, and the per-re-print budget that bounds the whole thing; the field kind
+## (fbm / ridged / billow / cells), its octaves,
 ## frequency and whether it is domain-warped; how much of the continent the sheet covers;
 ## the number of contour levels and which of them are index lines; the minor and index pen
 ## widths; whether the sheet is cream paper with dark ink or a blueprint (a deep blue
@@ -229,14 +232,41 @@ var _warp_a := Vector2.ZERO
 var _warp_b := Vector2.ZERO
 var _warp_t := 1.0
 var _warp_idle := 0.0               # seconds since the window last moved (see _step)
-## The LOCAL EVOLUTION: a few gaussian swells on the land, each easing its own amplitude in
-## and out and then moving somewhere else while it is invisible. See [method _step_swells].
-var _swells: Array = []
-## Pre-rolled retarget slots - where the next swell goes, how wide, how tall - taken by a
-## counter, the same discipline the warp ring uses and for the same reason: a retarget must
-## never draw an rng inside the running sim, or a live session and an export diverge.
-var _sw_ring: Array = []
-var _sw_i := 0
+## THE LAND'S OWN EVOLUTION - a small spectral basis of travelling waves, evaluated in FIELD
+## coordinates off one clock. See [method _step_tectonics] and [SheetJob].
+##
+## Two fields, both `sum_i a_i sin(k_i . q + w_i t + phi_i)`. UPLIFT adds elevation, so ground
+## rises and subsides and the contours reorganise - new closed rings appear, saddles open and
+## shut. DRIFT displaces the point the land is READ at, so ridges meander and, where the
+## displacement converges, contours crowd - which is the only thing here that looks like two
+## plates pushing against each other.
+##
+## Flat arrays because every one of these crosses onto a worker on each re-print, and in the
+## units the PICTURE is judged in: a wavelength is a fraction of the sheet's width, an uplift
+## amplitude is a contour interval, a drift amplitude is a fraction of the sheet.
+var _up_kx := PackedFloat32Array()   # wavevector, radians per sheet width
+var _up_ky := PackedFloat32Array()
+var _up_w := PackedFloat32Array()    # radians per second, either sign
+var _up_ph := PackedFloat32Array()
+var _up_a := PackedFloat32Array()    # weight, normalised so sum(a * |w|) == 1
+var _dr_kx := PackedFloat32Array()
+var _dr_ky := PackedFloat32Array()
+var _dr_w := PackedFloat32Array()
+var _dr_ph := PackedFloat32Array()
+var _dr_a := PackedFloat32Array()
+var _dr_dx := PackedFloat32Array()   # which way this wave pushes the ground
+var _dr_dy := PackedFloat32Array()
+## THE WHOLE BUDGET, and the only two numbers that decide whether this reads as evolution or
+## as a jump: how far the land may move IN ONE RE-PRINT, worst case. See [method _step_tectonics].
+var _up_print := 0.04                # contour intervals
+var _dr_print := 0.0006              # sheet widths
+## The tectonic clock. The fields are a pure FUNCTION of it - nothing is integrated - so two
+## builds at the same instant are the same sheet however the scene got there.
+var _tect_t := 0.0
+## The land's mean relief across ONE GRID CELL, measured once alongside the ladder and frozen.
+## The uplift is limited against it so a basin does not swim while a scarp barely moves - see
+## [method SheetJob.run].
+var _grad_cell := 0.01
 var _sites: Array = []              # {n: Vector2, h: float, g: PackedInt32Array}
 var _site_key := Vector2.ZERO
 var _marks: Array = []              # {i: int, age: float, side: float}
@@ -368,45 +398,35 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_warp_a = _ring[0]
 	_warp_b = _ring[0]
 
-	# THE LOCAL EVOLUTION, seeded. Two to four swells, each with its own clock, and a ring of
-	# places for them to go next. Amplitudes are in CONTOUR INTERVALS (the interval itself is
-	# solved from the land later, in _ensure_sites, and is never touched again), because "this
-	# hill rose by a contour and a half" is the only scale that means anything on a map.
-	var n_sw := rng.randi_range(2, 4)
-	for i in rng.randi_range(10, 18):
-		_sw_ring.append({
-			# Where, in sheet fractions of the window - inside the sheet, so the change is
-			# somewhere the reader is looking.
-			"frac": Vector2(rng.randf_range(-0.42, 0.42), rng.randf_range(-0.42, 0.42)),
-			# How wide, as a fraction of the sheet - and this is the RADIUS OF ITS SUPPORT, not
-			# a gaussian sigma: the kernel is compact (see SheetJob.run), so outside this circle
-			# the land is untouched, exactly. A gaussian's tail is the reason the first cut of
-			# this read as the whole map evolving: at a tenth of its peak it is still moving a
-			# contour line visibly, and a tenth of a sigma-0.30 bump reaches most of the sheet.
-			"rf": rng.randf_range(0.10, 0.22),
-			# How tall, in contour intervals, either sign - land rises and land subsides.
-			"k": rng.randf_range(0.8, 2.4) * (1.0 if rng.randf() < 0.5 else -1.0),
-		})
-	for i in n_sw:
-		# Staggered: each swell has its own time constant and starts at its own point in the
-		# cycle, so they are never in step and there is always one somewhere in mid-move.
-		var slot: Dictionary = _sw_ring[i % _sw_ring.size()]
-		_swells.append({
-			"c": Vector2.ZERO,                       # field coords, set on the first retarget
-			"r": 0.0,
-			"k": 0.0,                                # current amplitude, in intervals
-			"tgt": 0.0,
-			# The EMA constant. Long enough that one re-print (half a second) moves the land by
-			# about a tenth of a contour - a line creeps, and the sheet is never seen to step -
-			# and short enough that a region visibly reorganises over ten or twenty seconds,
-			# which is the timescale the request asks for.
-			"tau": rng.randf_range(10.0, 22.0),
-			"rest": rng.randf_range(0.0, 9.0),       # a pause at each end of the cycle
-			"phase": rng.randf(),                    # 0 = about to grow, 1 = fully grown
-			"slot": slot,
-			"placed": false,
-		})
-	_sw_i = n_sw
+	# THE LAND'S OWN EVOLUTION, seeded - see the class doc and [method _step_tectonics]. Two
+	# spectral bases: uplift, whose wavelengths run from a third of the sheet to half again its
+	# width, and drift, deliberately SHORTER so it shears the sheet rather than translating it.
+	#
+	# The period scales WITH the wavelength, which is what makes a rate budget divide evenly:
+	# every wave then contributes about the same amount of movement per second, so no single
+	# component can dominate the step between two prints. It is also the way ground behaves -
+	# a gully re-cuts in a season, a range takes an age.
+	var n_up := rng.randi_range(5, 9)
+	var n_dr := rng.randi_range(3, 5)
+	_roll_waves(rng, n_up, 0.34, 1.55, rng.randf_range(55.0, 130.0),
+		_up_kx, _up_ky, _up_w, _up_ph, _up_a)
+	_roll_waves(rng, n_dr, 0.26, 0.80, rng.randf_range(40.0, 95.0),
+		_dr_kx, _dr_ky, _dr_w, _dr_ph, _dr_a)
+	for i in n_dr:
+		# Which way this wave pushes. Along its own wavevector the field is compressive - it
+		# crowds and spreads contours, which is a range building - and across it the field is
+		# pure shear, which slides one part of the country past another without changing how
+		# steep it is. A sheet wants both, so the angle between the two is sampled.
+		var rel := rng.randf_range(0.0, TAU)
+		var kn := Vector2(_dr_kx[i], _dr_ky[i]).normalized()
+		_dr_dx.append(kn.x * cos(rel) - kn.y * sin(rel))
+		_dr_dy.append(kn.x * sin(rel) + kn.y * cos(rel))
+	# The budget, per re-print rather than per second, because a print is the unit the viewer
+	# actually sees: whatever the cadence, this is the largest step any line can take between
+	# two frames of the sheet. An interval's worth of movement is a contour arriving where its
+	# neighbour used to be, so a twentieth of one is a line creeping by a pixel.
+	_up_print = rng.randf_range(0.026, 0.033)
+	_dr_print = rng.randf_range(0.00036, 0.00046)
 
 	return {
 		"land": kind,
@@ -441,7 +461,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"smooth": _smooth,
 		"alphabet": _gs.count(),
 		"warp_ring": n_ring,
-		"swells": n_sw,
+		"uplift_waves": n_up,
+		"drift_waves": n_dr,
+		"uplift_per_print": _up_print,
+		"drift_per_print": _dr_print,
 	}
 
 
@@ -498,7 +521,7 @@ func _step(dt: float) -> void:
 		_warp_idle += dt
 		if _warp_idle >= _warp_gap:
 			_rewarp()
-	_step_swells(dt)
+	_step_tectonics(dt)
 	var period := maxf(2.0, clampf(_f.beat_period, 0.25, 1.6) * _sweep_beats)
 	_sweep_prev = _sweep_p
 	_sweep_p = fposmod(_sweep_p + dt / period, 1.0)
@@ -550,12 +573,12 @@ func _ensure_sites() -> void:
 	# The sheet occupies -0.5..0.5; the warp ring reaches 0.55 either way, so the table
 	# has to cover a good deal more than the sheet or a wandering map runs out of summits.
 	#
-	# READ WITHOUT THE SWELLS, deliberately. This solves the elevation ladder and the summit
+	# READ WITHOUT THE TECTONICS, deliberately. This solves the elevation ladder and the summit
 	# table, and both are supposed to be FIXED: an interval is a claim about the land, and a
 	# survey mark that drifted because a hill nearby breathed would be a mark that means
-	# nothing. So a swell moves the contours in its region and leaves the ladder, the datum
-	# and the marks alone - which is also what makes it safe, since neither the interval nor
-	# any label can be pushed around by it.
+	# nothing. So the evolution moves the contours and leaves the ladder, the datum and the
+	# marks alone - which is also what makes it safe, since neither the interval nor any label
+	# can be pushed around by it.
 	var dom := 1.20
 	var nx := 56
 	var ny := 36
@@ -581,6 +604,7 @@ func _ensure_sites() -> void:
 	_lo = d_lo + _step_v
 	_sea = d_lo + _sea_frac * (d_hi - d_lo)
 	_ladder = true
+	_measure_relief(fspan)
 
 	# Summits: strict local maxima of the coarse grid, tallest first. Their positions are
 	# stored in SHEET FRACTIONS of the continent, so tracking one under a warp is a
@@ -616,6 +640,45 @@ func _ensure_sites() -> void:
 		_sites.append(e)
 
 
+## Measure the land's mean relief ACROSS ONE GRID CELL, once, and freeze it. This is the
+## reference the uplift is limited against in [method SheetJob.run], and the reason it exists
+## is that the same elevation change does not move a contour the same distance everywhere: a
+## line moves by `dv / |grad v|`, so on a basin where the contours already stand a long way
+## apart a change the eye can barely justify sends a line across a quarter of the sheet, while
+## on a scarp the same change is invisible. Unlimited, that is the sheet's flat parts swimming
+## while its mountains sit still - a different flavour of exactly the wrong picture.
+##
+## Measured at the SHEET'S OWN PITCH, not on the coarse survey grid above: relief is a
+## fractal, so a grid three times coarser reads a gradient several times smaller and the
+## reference would be meaningless. Sixteen small patches scattered over the region the window
+## can wander across, so it is the country's relief rather than one hill's.
+##
+## Frozen, and it has to be. Anything the limit is computed from that changed with the window
+## would perturb every sample on the sheet by a hair on every window move - a global step,
+## which is the one thing this scene may not have.
+func _measure_relief(fspan: Vector2) -> void:
+	var cs := fspan.x / float(maxi(2, _res) - 1)      # one grid cell, in field units
+	var pn := 10
+	var h := PackedFloat32Array()
+	h.resize(pn * pn)
+	var acc := 0.0
+	var cnt := 0
+	for py in 4:
+		for px in 4:
+			var o := Vector2(float(px) - 1.5, float(py) - 1.5) * 0.62 * fspan
+			for y in pn:
+				for x in pn:
+					h[y * pn + x] = _fld.at(o + Vector2(float(x) - 4.5, float(y) - 4.5) * cs)
+			for y in range(1, pn - 1):
+				for x in range(1, pn - 1):
+					var i := y * pn + x
+					var gx := (h[i + 1] - h[i - 1]) * 0.5
+					var gy := (h[i + pn] - h[i - pn]) * 0.5
+					acc += sqrt(gx * gx + gy * gy)
+					cnt += 1
+	_grad_cell = maxf(1e-6, acc / float(maxi(1, cnt)))
+
+
 ## Take the warp offset of the build whose packet is currently on screen. Call it after the
 ## forge has flushed, or in an export - where the build happens inside the draw - it would
 ## read the PREVIOUS sheet's offset against this sheet's lines.
@@ -644,79 +707,106 @@ func _rewarp() -> void:
 	_warp_idle = 0.0
 
 
-## THE LOCAL EVOLUTION - the answer to "the map should slowly evolve, not in large jumps, and
-## not the entire thing at once".
+## THE LAND'S OWN EVOLUTION - the answer to "the map should slowly evolve, in slow morphing
+## over time rather than in large jumps, and not by shifting every line uniformly".
 ##
-## What this scene had was a WINDOW that moved and land that never changed, and both halves of
-## that were wrong. The window's move is global by construction - every line in the frame goes at
-## once - and it was gated on a section change that a spoken chapter never produces, so the sheet
-## either lurched as a whole or sat perfectly still. Reported both ways: first "super jumpy...
-## shifting the entire map at once", then "zoomed, but no longer moves at all".
+## THREE THINGS HAVE BEEN WRONG HERE, and the third is the one this replaces.
 ##
-## A swell is a gaussian bump ON THE LAND, in field coordinates, added to the field when the sheet
-## is sampled. Three properties matter and each is deliberate:
+##   First the land never changed at all and the only motion was the WINDOW, gated on a
+##   `f.movement` edge a spoken chapter never produces: the sheet either sat dead still or
+##   lurched as a whole. A window move is global BY CONSTRUCTION - every line in the frame
+##   goes at once, by the same vector - which is exactly the uniform shift being asked against.
 ##
-##   LOCAL. Its radius is a tenth to a third of the sheet, so the contours reorganise inside its
-##   footprint and the rest of the map holds still. The reader gets a region to watch changing
-##   rather than a whole frame refusing to sit still.
+##   Then that was answered with a handful of compact BUMPS on the land, and it answered the
+##   wrong question. It read as reported: a couple of circles of the sheet breathing while the
+##   rest was frozen, and because one bump takes minutes to grow, rest, subside and only THEN
+##   move, the same two circles were the only thing that ever moved for the whole scene. The
+##   request was never "restrict the evolution to a region". It was "do not move the whole
+##   sheet by the same amount at the same instant".
 ##
-##   SLOW, AND AN EMA. The amplitude eases toward its target with a 7 to 18 second constant, so
-##   over one re-extraction (0.3 to 1.0 s) it moves by a few percent of a contour interval - a
-##   line creeps by a pixel or two. That is the difference between evolution and a step: a jump
-##   is not a matter of how far the land moved but of how much of it moved between two prints.
+##   What is here now lets the WHOLE sheet evolve and takes the uniformity out instead, which
+##   is what erosion and tectonics actually look like: everywhere is always changing, at rates
+##   that differ from place to place, and the places that are changing fastest keep moving.
 ##
-##   ANCHORED TO THE LAND, not to the window. The whole reason a re-print is invisible is that
-##   consecutive extractions read the same points of the field (see _make_job's lattice snap), and
-##   a swell that sat in sheet coordinates would slide under that snap and re-wobble every line in
-##   its reach. It is placed once, in field units, and stays there.
+## THE MECHANISM is a small spectral basis - five to nine travelling waves for uplift, three to
+## five for drift - summed in FIELD coordinates:
 ##
-## A swell that has relaxed to nothing MOVES, which is the trick that keeps this cheap: it is
-## invisible at zero amplitude, so its next position costs nothing to change. Places, widths and
-## heights come from a pre-rolled ring taken by a counter - no rng inside the running sim, so a
-## live session and its export evolve identically.
-func _step_swells(dt: float) -> void:
-	if _swells.is_empty() or not _ladder:
+##   d(q, t) = sum_i a_i sin(k_i . q + w_i t + phi_i)
+##
+## Nowhere is masked out and nowhere is pinned: every point of the land is inside every wave, so
+## every point evolves. What differs is HOW MUCH and WHEN, because at any instant the sum has
+## crests (ground rising fast), troughs (subsiding) and nodes (holding still) scattered across
+## the sheet - and since the waves travel at different speeds in different directions, those
+## nodes are never in the same place twice. A region that is quiet now is the region visibly
+## reorganising two minutes from now. That is the property a bump field could not have.
+##
+## Four things make it safe:
+##
+##   A RATE BUDGET, NOT AN AMPLITUDE BUDGET, and this is the whole difference between evolution
+##   and a jump. The sheet is re-printed on a [0.3, 1.0] s cadence, so ANY change lands as a
+##   step at that rate; what the viewer reads as jumpy is not how far the land has moved but how
+##   far it moved BETWEEN TWO PRINTS. So the seed sets `_up_print` - the elevation, in contour
+##   intervals, the land may travel in one re-print, worst case over the whole basis - and the
+##   per-second rate is derived from it by dividing by the cadence. A twentieth of an interval
+##   is a line creeping by about a pixel. Left to accumulate over a scene that same rate carries
+##   the land a couple of contours, which is a hill being born.
+##
+##   ANCHORED TO THE LAND. The waves are functions of the FIELD coordinate, not of the sheet, so
+##   the window's lattice snap still holds exactly: after a one-cell window move, grid point
+##   (x, y) reads the field point (x-1, y) read - same land, same wave phase, same value. The
+##   sheet is still only translated between prints, which is the property tests/contour_flow_check.gd
+##   exists for. A perturbation defined in sheet coordinates would slide under that snap and
+##   re-wobble every line on the sheet, which is the original fault all over again.
+##
+##   PURE IN TIME. Nothing is integrated - both fields are a function of `_tect_t` - so a
+##   pre-warm, an Echo fast-forward and an export reach the same sheet as a live session that
+##   arrived the slow way, and two builds at one instant are identical.
+##
+##   NO AUDIO ANYWHERE NEAR IT. The land is the one thing on this sheet the music does not
+##   touch (see the class doc): a map whose ground breathes on the beat is a graphic, not a
+##   survey. The window warp remains the audio-conditioned motion, and it stays rare.
+##
+## DRIFT is the second field and it is not decoration. Uplift alone can only inflate and deflate
+## the land in place; a drift field displaces the point the land is read at, so ridges wander
+## and - where the displacement converges - contours crowd together, which is the picture of
+## ground being pushed. It is bounded directly in pixels rather than in elevation, since a line
+## displaced by d moves by exactly d whatever the local slope is.
+func _step_tectonics(dt: float) -> void:
+	_tect_t += dt
+
+
+## Roll one spectral basis into the arrays given. Wavelengths are sheet WIDTHS, periods scale
+## with wavelength (so every wave contributes about equally to the rate, and the longest waves
+## are the slowest), amplitudes follow a red spectrum - longer waves are taller, the way any
+## natural relief is - and the whole set is normalised so `sum(a * |w|) == 1`. That last step
+## is what makes the budget in [method _step_tectonics] mean something: multiply these weights
+## by a rate and the basis moves at that rate, whatever was rolled.
+func _roll_waves(rng: RandomNumberGenerator, n: int, lam_lo: float, lam_hi: float,
+		period: float, kx: PackedFloat32Array, ky: PackedFloat32Array,
+		w: PackedFloat32Array, ph: PackedFloat32Array, a: PackedFloat32Array) -> void:
+	var norm := 0.0
+	for i in n:
+		var lam := rng.randf_range(lam_lo, lam_hi)
+		var ang := rng.randf_range(0.0, TAU)
+		var k := TAU / maxf(0.05, lam)
+		kx.append(cos(ang) * k)
+		ky.append(sin(ang) * k)
+		# The period jitter keeps the basis from beating: with periods in an exact ratio the
+		# whole sum returns to its starting shape, and the sheet would visibly loop.
+		var t_i := maxf(6.0, period * lam * rng.randf_range(0.72, 1.38))
+		var om := TAU / t_i
+		w.append(om if rng.randf() < 0.5 else -om)
+		ph.append(rng.randf_range(0.0, TAU))
+		a.append(lam)
+		norm += lam * om
+	if norm <= 1e-9:
 		return
-	var fspan := _fspan()
-	for sw in _swells:
-		if not bool(sw.placed):
-			_place_swell(sw, fspan)
-		# The EMA. `phase` is the target it is heading for: 1 = grown, 0 = gone.
-		var tgt := float(sw.tgt)
-		sw.k = lerpf(float(sw.k), tgt, 1.0 - exp(-dt / maxf(0.5, float(sw.tau))))
-		if absf(float(sw.k) - tgt) > 0.03:
-			continue
-		# Arrived. Rest a while at each end of the cycle - a map that never pauses reads as
-		# machinery - then either relax to nothing, or (having relaxed) move and grow again.
-		sw.rest = float(sw.rest) - dt
-		if float(sw.rest) > 0.0:
-			continue
-		if absf(tgt) > 0.01:
-			sw.tgt = 0.0                             # subside where it stands
-			sw.rest = 3.0 + 6.0 * float(sw.phase)
-		else:
-			_place_swell(sw, fspan)                  # invisible: move, then rise somewhere new
-	pass
-
-
-## Put a swell at the next pre-rolled slot, sized and aimed. Called at zero amplitude (or at
-## birth), so nothing on screen moves when it happens.
-func _place_swell(sw: Dictionary, fspan: Vector2) -> void:
-	var slot: Dictionary = _sw_ring[_sw_i % _sw_ring.size()]
-	_sw_i += 1
-	var frac: Vector2 = slot["frac"]
-	# In FIELD units, relative to where the window is now - so it lands inside the sheet the
-	# reader is looking at, and then stays on the land wherever the window goes afterward.
-	sw.c = (_warp_now() + frac) * fspan
-	sw.r = maxf(0.02, float(slot["rf"]) * maxf(fspan.x, fspan.y))
-	sw.tgt = float(slot["k"])
-	sw.k = 0.0
-	sw.rest = 2.0 + 5.0 * float(sw.phase)
-	sw.placed = true
+	for i in n:
+		a[a.size() - n + i] = a[a.size() - n + i] / norm
 
 
 ## The sheet's extent in FIELD units. One definition, used by the extraction, the summit table
-## and the swells - they have to agree about what a sheet fraction means.
+## and the tectonics - they have to agree about what a sheet fraction means.
 func _fspan() -> Vector2:
 	var u := maxf(1.0, unit())
 	return Vector2(size.x, size.y) * (SHEET * _span / u)
@@ -893,17 +983,32 @@ func _make_job() -> SheetJob:
 	var raw := _warp_now() * job.fspan
 	job.off = Vector2(round(raw.x / cellf.x) * cellf.x, round(raw.y / cellf.y) * cellf.y)
 	job.warp = Vector2(job.off.x / maxf(0.0001, job.fspan.x), job.off.y / maxf(0.0001, job.fspan.y))
-	# The swells, in field units, as of this print (see _step_swells). Only the ones with
-	# something to contribute: a swell resting at zero amplitude is not worth an exp() per sample.
-	for sw in _swells:
-		var amp := float(sw.k) * _step_v
-		if absf(amp) < 0.001 * maxf(_step_v, 0.0001) or float(sw.r) <= 0.0:
-			continue
-		var c: Vector2 = sw.c
-		job.sw_x.append(c.x)
-		job.sw_y.append(c.y)
-		job.sw_r.append(float(sw.r))
-		job.sw_a.append(amp)
+	# THE LAND'S EVOLUTION as of this print (see _step_tectonics), resolved out of sheet units
+	# into the field units the worker samples in. Two conversions and they are the whole
+	# contract with the budget:
+	#
+	#   The wavevectors are radians per sheet WIDTH, so dividing by the sheet's width in field
+	#   units anchors every wave to the ground - which is what keeps the lattice snap exact.
+	#
+	#   The weights are normalised so `sum(a |w|) == 1`, so multiplying by a rate makes the
+	#   basis move at that rate. The rate is the per-PRINT budget divided by the cadence,
+	#   because the cadence is how often that step is actually taken: a sheet re-printed three
+	#   times a second may evolve three times as fast per second and still step no further.
+	var fw := maxf(1e-6, job.fspan.x)
+	var up_rate := _up_print * _step_v / maxf(0.05, _cadence)
+	for i in _up_a.size():
+		job.up_kx.append(_up_kx[i] / fw)
+		job.up_ky.append(_up_ky[i] / fw)
+		job.up_p.append(_up_ph[i] + _up_w[i] * _tect_t)
+		job.up_a.append(_up_a[i] * up_rate)
+	var dr_rate := _dr_print * fw / maxf(0.05, _cadence)
+	for i in _dr_a.size():
+		job.dr_kx.append(_dr_kx[i] / fw)
+		job.dr_ky.append(_dr_ky[i] / fw)
+		job.dr_p.append(_dr_ph[i] + _dr_w[i] * _tect_t)
+		job.dr_ax.append(_dr_a[i] * dr_rate * _dr_dx[i])
+		job.dr_ay.append(_dr_a[i] * dr_rate * _dr_dy[i])
+	job.relief = _grad_cell
 	job.lo = _lo
 	job.step = _step_v
 	job.count = _levels
@@ -1193,13 +1298,23 @@ class SheetJob:
 	## KICKED, because the forge keeps one worker and replaces the pending snapshot when a
 	## newer kick arrives, so most kicked jobs are dropped without ever running.
 	var warp := Vector2.ZERO
-	## The local swells, flattened: centre, radius and amplitude in FIELD units, snapshotted at
-	## build time. Flat arrays rather than the scene's dictionaries because this crosses onto a
-	## worker thread - the sim keeps mutating its own copies while this one is being sampled.
-	var sw_x := PackedFloat32Array()
-	var sw_y := PackedFloat32Array()
-	var sw_r := PackedFloat32Array()
-	var sw_a := PackedFloat32Array()
+	## THE LAND'S EVOLUTION, flattened into FIELD units with the clock already folded into the
+	## phase, so the worker evaluates a static field and never needs the time (see the scene's
+	## [method _step_tectonics]). UPLIFT adds elevation; DRIFT displaces the point the land is
+	## read at, one 2-vector amplitude per wave. Flat arrays rather than the scene's own, because
+	## this crosses onto a worker thread while the sim keeps advancing its copies.
+	var up_kx := PackedFloat32Array()
+	var up_ky := PackedFloat32Array()
+	var up_p := PackedFloat32Array()
+	var up_a := PackedFloat32Array()
+	var dr_kx := PackedFloat32Array()
+	var dr_ky := PackedFloat32Array()
+	var dr_p := PackedFloat32Array()
+	var dr_ax := PackedFloat32Array()
+	var dr_ay := PackedFloat32Array()
+	## The land's mean relief across one grid cell (see the scene's _measure_relief) - what the
+	## uplift's contour displacement is limited against.
+	var relief := 0.01
 	var lo := 0.1
 	var step := 0.06
 	var count := 14
@@ -1228,39 +1343,140 @@ class SheetJob:
 	var band_lo := 0.0
 	var band_hi := 0.0
 
+	## How far the uplift may carry a contour from where the base field puts it, in GRID CELLS,
+	## before it starts to saturate - a hard bound on the land's wander, so nothing on flat
+	## ground can run away however little slope there is to divide by.
+	##
+	## MEASURED, IT DOES NOT BIND at the budget this scene ships with: moving it between 1.0 and
+	## 1.6 changes tests/contour_flow_check.gd's displacement figures by nothing at four
+	## decimals. It is kept at the tighter of the two, as the backstop it is - what actually
+	## shapes the picture is the rate budget and the slope weighting below.
+	const MAX_SHIFT := 1.0
+
+	## How far below the land's mean relief the limit stops tightening. Without a floor the
+	## limit divides by a gradient that goes to zero at every summit and every basin floor, so
+	## precisely the closed rings whose growth is the most legible thing on the sheet would be
+	## the one place the land is not allowed to move.
+	const RELIEF_FLOOR := 0.35
+
+	## The most the slope weighting may AMPLIFY the uplift where the ground is steep.
+	const SLOPE_CAP := 1.8
+
 	func run(_s: Dictionary) -> Array:
 		var tb := TriBatch.new()
 		if nx < 2 or ny < 2 or count <= 0:
 			return tb.take_chunks()
+		return _draw_sheet(sample(), tb)
+
+
+	## THE LAND THIS PRINT IS OF: the field, read at the grid points, with the evolution folded
+	## in. Split out of [method run] because it is the whole of what one print differs from the
+	## last BY - the drawing is a function of it - so a gate can take two of them and measure the
+	## difference in the elevation the reader is looking at, rather than in the vertices that
+	## happened to survive the simplify pass. Those are not the same question and the second one
+	## is unanswerable: a smoothed contour is re-traced along its whole length when it moves
+	## anywhere, and a point dropped as collinear in one print and kept in the next lands a whole
+	## grid cell from where it was, on a line that did not move at all.
+	func sample() -> PackedFloat32Array:
 		var h := PackedFloat32Array()
+		if nx < 2 or ny < 2:
+			return h
 		h.resize(nx * ny)
 		var ix := 1.0 / float(nx - 1)
 		var iy := 1.0 / float(ny - 1)
-		var nsw := sw_a.size()
+		# The sample positions, once. Both spectral bases are SEPARABLE - sin(A + B) is
+		# sinA cosB + cosA sinB - so a wave costs one row table, one column table and two
+		# multiplies a sample instead of a sin() a sample. At a dozen waves over nine thousand
+		# samples that is the difference between a frame budget and several.
+		var qx := PackedFloat32Array()
+		qx.resize(nx)
+		for x in nx:
+			qx[x] = (float(x) * ix - 0.5) * fspan.x + off.x
+		var qy := PackedFloat32Array()
+		qy.resize(ny)
 		for y in ny:
-			var qy := (float(y) * iy - 0.5) * fspan.y + off.y
+			qy[y] = (float(y) * iy - 0.5) * fspan.y + off.y
+
+		# --- DRIFT: the land is read a little away from where the grid points sit, and by a
+		# different amount in different places, so ridges wander and contours crowd where the
+		# displacement converges. Applied to the sample POSITION, which bounds what it does in
+		# pixels directly - a point displaced by d moves its contour by exactly d, whatever the
+		# local slope is - and that is why this half needs no limiter.
+		var nd := dr_ax.size()
+		var dsx := _table(dr_kx, qx, PackedFloat32Array(), true)
+		var dcx := _table(dr_kx, qx, PackedFloat32Array(), false)
+		var dsy := _table(dr_ky, qy, dr_p, true)
+		var dcy := _table(dr_ky, qy, dr_p, false)
+
+		# --- UPLIFT: ground rising and subsiding, which is the half that can change the
+		# TOPOLOGY - open a saddle, close a new ring around a hill that was not there.
+		var nu := up_a.size()
+		var usx := _table(up_kx, qx, PackedFloat32Array(), true)
+		var ucx := _table(up_kx, qx, PackedFloat32Array(), false)
+		var usy := _table(up_ky, qy, up_p, true)
+		var ucy := _table(up_ky, qy, up_p, false)
+
+		for y in ny:
 			var row := y * nx
 			for x in nx:
-				var qx := (float(x) * ix - 0.5) * fspan.x + off.x
-				var v := fld.at(Vector2(qx, qy))
-				# THE LOCAL EVOLUTION, added to the land itself (see the scene's _step_swells):
-				# one compact bump per swell, so the contours reorganise inside its footprint
-				# and NOWHERE ELSE. In field units, so the window's lattice snap still holds.
-				#
-				# COMPACT, not gaussian, and that is the difference between "a region evolves"
-				# and "the map evolves": a gaussian at a tenth of its peak still moves a contour
-				# line by something the eye catches (a small elevation change crosses a lot of
-				# ground on flat land), so its tail reached most of the sheet. (1 - q^2)^3 is
-				# zero outside the circle and smooth at its rim - the standard spline bump.
-				for k in nsw:
-					var dx := (qx - sw_x[k]) / sw_r[k]
-					var dy := (qy - sw_y[k]) / sw_r[k]
-					var q2 := dx * dx + dy * dy
-					if q2 < 1.0:
-						var w := 1.0 - q2
-						v += sw_a[k] * w * w * w
-				h[row + x] = v
+				var px := qx[x]
+				var py := qy[y]
+				for k in nd:
+					var sn := dsx[k * nx + x] * dcy[k * ny + y] + dcx[k * nx + x] * dsy[k * ny + y]
+					px += dr_ax[k] * sn
+					py += dr_ay[k] * sn
+				h[row + x] = fld.at(Vector2(px, py))
 
+		if nu > 0:
+			# The limit, and it is the reason a basin does not swim. A contour moves by
+			# `dv / |grad v|`, so the same uplift that nudges a scarp throws a line across a flat
+			# basin; the displacement is measured in cells against the LOCAL gradient, floored at
+			# a fraction of the land's own mean relief, and softened rather than clipped
+			# (`u / sqrt(1 + (u/lim)^2)` is the identity for small u and saturates smoothly), so
+			# there is no seam where the limit begins to bite.
+			#
+			# The gradient is read off the base grid, which is a function of the FIELD point, so
+			# after a one-cell window move every interior sample limits to exactly the value it
+			# limited to before. The lattice snap survives this pass.
+			# Solved into its own buffer and added afterwards, because the limit reads the
+			# base grid's gradient: written in place, every sample would be differencing land
+			# its own neighbour had already lifted.
+			var du := PackedFloat32Array()
+			du.resize(nx * ny)
+			var floor_g := RELIEF_FLOOR * relief
+			for y in ny:
+				var row := y * nx
+				var yn := maxi(0, y - 1) * nx
+				var yp := mini(ny - 1, y + 1) * nx
+				for x in nx:
+					var u := 0.0
+					for k in nu:
+						u += up_a[k] * (usx[k * nx + x] * ucy[k * ny + y]
+							+ ucx[k * nx + x] * usy[k * ny + y])
+					var gx := (h[row + mini(nx - 1, x + 1)] - h[row + maxi(0, x - 1)]) * 0.5
+					var gy := (h[yp + x] - h[yn + x]) * 0.5
+					var g := maxf(sqrt(gx * gx + gy * gy), floor_g)
+					# TIED TO THE LOCAL SLOPE, at the square root of it. The uplift budget is an
+					# elevation and what the reader sees is a DISPLACEMENT, and the two are
+					# related by the slope - so an unweighted uplift walks a line across a basin
+					# while barely nudging the same line on a scarp, and the sheet's flat parts
+					# swim. Weighting by the slope exactly would make the displacement uniform
+					# and also make the ELEVATION change vanish where the land is flat, which is
+					# where a new hill is most interesting; the square root halves the spread and
+					# leaves both halves something to do. Capped, because on a cliff the exact
+					# weight would be several contours of uplift in a few cells of ground.
+					u *= minf(sqrt(g / relief), SLOPE_CAP)
+					var lim := MAX_SHIFT * g
+					var r := u / lim
+					du[row + x] = u / sqrt(1.0 + r * r)
+			for i in nx * ny:
+				h[i] += du[i]
+		return h
+
+
+	func _draw_sheet(h: PackedFloat32Array, tb: TriBatch) -> Array:
+		var ix := 1.0 / float(nx - 1)
+		var iy := 1.0 / float(ny - 1)
 		var org := -half
 		var cell := Vector2(2.0 * half.x * ix, 2.0 * half.y * iy)
 		var cpx := maxf(0.5, (cell.x + cell.y) * 0.5)
@@ -1302,3 +1518,22 @@ class SheetJob:
 		if pick >= 0 and pick < count:
 			Contour.stroke(tb, levels[pick], pick_col, w_pick, org, cell, true)
 		return tb.take_chunks()
+
+
+	# One axis of a separable spectral basis: sin (or cos) of `k[i] * q[j] + bias[i]` for every
+	# wave i and every sample j, flattened i-major. The bias carries the phase AND the clock, so
+	# it belongs to exactly one of the two axes - passing an empty array is how the other one
+	# says it has none.
+	static func _table(k: PackedFloat32Array, q: PackedFloat32Array,
+			bias: PackedFloat32Array, want_sin: bool) -> PackedFloat32Array:
+		var n := k.size()
+		var m := q.size()
+		var out := PackedFloat32Array()
+		out.resize(n * m)
+		for i in n:
+			var b: float = bias[i] if i < bias.size() else 0.0
+			var base := i * m
+			for j in m:
+				var a := k[i] * q[j] + b
+				out[base + j] = sin(a) if want_sin else cos(a)
+		return out

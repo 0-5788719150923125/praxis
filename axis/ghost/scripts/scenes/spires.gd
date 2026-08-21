@@ -173,7 +173,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	var job := SpireJob.new()
 	job.f = f
 	job.life = _life
-	job.reveal = smoothstep(0.8, 1.0, view.presence)
+	job.reveal = view.reveal
 	job.glow = _glow
 	job.u = unit()
 	job.terrain = _terrain

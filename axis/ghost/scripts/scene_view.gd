@@ -18,6 +18,28 @@ var offset: Vector2 = Vector2.ZERO
 ## 0..1 transition presence (1 = fully on screen).
 var presence: float = 1.0
 
+## How much of a scene's BUILT GEOMETRY is on the paper, 0..1 - and a RATCHET, which is the
+## entire point of it existing separately from [member presence].
+##
+## Several scenes hold their contents back while they fade up, so a metropolis grows out of its
+## landscape and a canopy grows out of its trunks instead of the whole thing arriving at once on
+## the first frame. They each did that with `smoothstep(0.8, 1.0, presence)` - which is right on
+## the way in and badly wrong on the way out, because presence falls through the same window on a
+## fade to black. Every building in the city vanished the instant the scene reached 0.8 alpha,
+## and the viewer then watched an empty landscape fade out for the rest of the transition:
+## "the buildings disappear, and THEN the scene fades out."
+##
+## So it only ever rises. The Director arms it at zero when it puts a scene on screen behind a
+## fade ([method Director._begin_transition]) and it climbs as that scene arrives; nothing lowers
+## it again, so a scene fades out with everything it had still drawn on it, which is what a fade
+## is supposed to mean. A scene that arrives on a CUT never had a fade to grow through and starts
+## at 1, fully built, which is also what a cut is supposed to mean.
+var reveal: float = 1.0
+
+## Where the ratchet reaches full: geometry finishes arriving over the last fifth of the fade-up,
+## after the scene's ground and atmosphere are already established.
+const REVEAL_AT := 0.8
+
 ## Composition bias, applied ON TOP of the scene's own framing (the Director sets it during a
 ## LAYER transition to push two overlapping scenes to opposite regions so they don't collide at
 ## the focal point). The scene never touches these, so its own drift rides on top.
@@ -46,6 +68,8 @@ var _bias_zoom := 1.0
 ## Ease the actual transform toward the target. Called once per frame (and during
 ## pre-warm) by the Director, after the scene and any transition have written.
 func commit(dt: float) -> void:
+	# The geometry ratchet (see [member reveal]) - it tracks presence UP and never back down.
+	reveal = maxf(reveal, smoothstep(REVEAL_AT, 1.0, presence))
 	var a := 1.0 - exp(-smoothing * dt)
 	_zoom = lerpf(_zoom, zoom, a)
 	_rot = lerpf(_rot, rotation, a)

@@ -905,7 +905,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.size = size
 	job.clock = _sim.elapsed()
 	job.life = _life
-	job.reveal = smoothstep(0.8, 1.0, view.presence)
+	job.reveal = view.reveal
 	job.glow = _glow
 	# [Lighting]'s glow drives the bark RIM and nothing else - the one place a beat is allowed
 	# to touch the wood. It moves light across a trunk; it does not move the trunk.
