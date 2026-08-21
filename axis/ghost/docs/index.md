@@ -213,4 +213,4 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 - [`feedback.gd`](../scripts/feedback.gd) **FeedbackConsole** - the authoring feedback channel.
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
 
-Scene scripts (56) are catalogued separately in [scenes.md](scenes.md).
+Scene scripts (58) are catalogued separately in [scenes.md](scenes.md).

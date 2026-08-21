@@ -24,6 +24,29 @@ stack that moves).
 The timeout is deliberately generous. A step here is milliseconds, but the
 first compiled step can take minutes and an inference tick is not free, so this
 is a wedge detector, not a performance monitor.
+
+READING ``stalls.log``
+----------------------
+A ``Timeout (0:10:00)!`` block followed by a ``--- priority dump ---`` block is
+the good case: the priority dump names the thread that is stuck.
+
+A ``Timeout`` block with NO priority dump after it is itself the diagnosis: the
+priority dump needs the GIL, so its absence means the GIL is what is stuck, and
+no in-process tool can report from there. The faulthandler block is not a
+substitute - it caps at 100 threads, newest first, so the ~95 idle pool workers
+this process runs push the main thread off the end every time.
+
+That case needs an out-of-process sampler. Both threads' real stacks - Python
+AND native, which is where the answer was - come from::
+
+    docker cp .venv/bin/py-spy <container>:/tmp/py-spy
+    docker exec --privileged <container> /tmp/py-spy dump --pid 1 --native
+
+``--privileged`` is what grants ptrace; without it py-spy exits on permission
+alone. Use the container's own pid for the training process (``ps`` inside it),
+not the host pid. Dump twice: identical output is a hang, moving output is a
+slow step. That is how the snapshot-producer deadlock (see
+``praxis/web/snapshots.py``) was finally read off a wedged abstractinator-s.
 """
 
 import faulthandler
@@ -132,9 +155,13 @@ class StallWatchdogCallback(Callback):
 
         The priority dump cannot be driven from the training thread: a
         deadlocked run never reaches another hook, which is precisely when the
-        dump is wanted. So this runs on a daemon thread of its own. It needs
-        only the GIL, and in a futex deadlock every thread is parked and the
-        GIL is free - the case we actually hit.
+        dump is wanted. So this runs on a daemon thread of its own.
+
+        It needs the GIL, which covers the wedges where every thread is parked
+        on a futex and the GIL is free. It does NOT cover a wedge whose loser
+        IS the GIL - a thread blocked in C while holding it. That kind is
+        silent here by construction; the module docstring says how to read that
+        silence and what to reach for instead.
         """
         while not self._stop.wait(self.POLL_S):
             armed_at = self._armed_at

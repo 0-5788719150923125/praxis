@@ -16,7 +16,7 @@ from torch.nn.parameter import UninitializedParameter
 from praxis.activations import ACT2CLS
 from praxis.metrics import DYNAMICS_CHART_REGISTRY, get_metric_descriptions
 from praxis.web.app import api_logger
-from praxis.web.snapshots import serve_snapshot
+from praxis.web.snapshots import probe_model, serve_snapshot
 
 dynamics_bp = Blueprint("dynamics", __name__)
 
@@ -634,10 +634,10 @@ def get_activation_curves():
         # default window), so honor those requests live.
         custom = any(k in request.args for k in ("x_min", "x_max", "points"))
         if custom:
-            response = jsonify(_live())
+            response = jsonify(probe_model(_live))
             response.headers.add("Cache-Control", "max-age=5")
             return response
-        return serve_snapshot("activation_curves", _live)
+        return serve_snapshot("activation_curves", _live, touches_model=True)
 
     except Exception as e:
         api_logger.error(f"Error in get_activation_curves: {e}")
@@ -943,9 +943,8 @@ def get_head_snapshots():
         model = getattr(generator, "model", None) if generator else None
         return _recipe_head_snapshots(model)
 
-
     try:
-        return serve_snapshot("head_snapshots", _live)
+        return serve_snapshot("head_snapshots", _live, touches_model=True)
 
     except Exception as e:
         api_logger.error(f"Error in get_head_snapshots: {e}")

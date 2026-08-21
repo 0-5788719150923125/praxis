@@ -23,6 +23,7 @@ from .middleware import (
 from .routes import register_routes
 from .snapshots import (
     DEFAULT_RECIPES,
+    Recipe,
     SnapshotProducer,
     SnapshotStore,
     _recipe_data_metrics,
@@ -214,9 +215,10 @@ class APIServer:
         app.config["author"] = self.author
         app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
 
-        # Precompute the expensive model-probing endpoints on a background thread
-        # so every read is a cheap cached lookup and the model is only ever
-        # touched from this one producer (never from concurrent request threads).
+        # Precompute the expensive model-probing endpoints off the request path
+        # so every read is a cheap cached lookup and the model is never touched
+        # from a request thread (see snapshots.py for why that is fatal, not
+        # merely racy).
         self.snapshot_store = SnapshotStore()
         # Broadcast snapshot changes so clients refresh model-probe cards
         # (activation curves, head snapshots, evolution) on change, not on a
@@ -238,16 +240,25 @@ class APIServer:
             shutdown_event=self.shutdown_event,
             recipes={
                 **DEFAULT_RECIPES,
-                "dynamics": (
+                # Both are SQLite reads; the only thing either does with the
+                # model is walk it for metric descriptions, which reads no
+                # tensors. So they stay on the background thread, where their
+                # whole-table scans cost the training loop nothing.
+                "dynamics": Recipe(
                     lambda model: _recipe_dynamics(model, self.truncated_hash),
                     5.0,
+                    on_trainer=False,
                 ),
-                "data_metrics": (
+                "data_metrics": Recipe(
                     lambda model: _recipe_data_metrics(model, self.truncated_hash),
                     5.0,
+                    on_trainer=False,
                 ),
             },
         )
+        # Routes reach the producer to run their live cold-start probes at a
+        # safe point instead of on the request thread.
+        app.config["snapshot_producer"] = self.snapshot_producer
         self.snapshot_producer.start()
 
         # Start the server thread

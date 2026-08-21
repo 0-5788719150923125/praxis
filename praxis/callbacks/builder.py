@@ -257,6 +257,16 @@ def build_training_callbacks(
             )
         )
 
+    # Dashboard model probes (activation curves, head snapshots) run HERE, not
+    # on the API server's producer thread: a torch op on the live model from
+    # any other thread can deadlock the process on (GIL, AutogradMeta.mutex_).
+    # See praxis/web/snapshots.py.
+    _producer = getattr(api_server, "snapshot_producer", None)
+    if _producer is not None:
+        from praxis.callbacks.lightning import SnapshotPumpCallback
+
+        callbacks.append(SnapshotPumpCallback(_producer))
+
     # Host-RAM leak forensics: cheap always-on RSS/swap/rate samples appended to
     # {run_dir}/host_memory.log (flushed per write, so the tail survives an OOM
     # SIGKILL).

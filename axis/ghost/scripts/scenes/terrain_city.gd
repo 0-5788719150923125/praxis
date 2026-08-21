@@ -4,8 +4,8 @@ extends Scene3D
 ##
 ## The metropolis idea on the [Terrain] foundation: a [Swarm] development field creeps
 ## across a landscape (rolling hills / mesa), and where it has grown, blocks stand on the
-## surface - **upright** (real buildings are vertical whatever the ground does), with only a
-## faint lean toward the terrain normal so the field is not a perfectly rigid grid. Heights are driven
+## surface - **PLUMB**, because real buildings are vertical whatever the ground does, and what keeps
+## the field from being a rigid lattice is the STREET GRID rather than any lean (see _heading). Heights are driven
 ## by development x a per-block spectral band (nonlinear), so the skyline rises with the
 ## music. Some plots **detach**, their blocks floating a little off the ground. Camera
 ## orbits under a wide lens; the city grows over time from a few seeds.
@@ -54,6 +54,22 @@ var _foot := PackedFloat32Array()     # per-plot footprint scale (skewed: many s
 var _hclass := PackedFloat32Array()   # per-plot MAX height potential (reached only at critical mass)
 var _sky := PackedFloat32Array()      # per-plot "tower from the start" propensity (rare, for variety)
 var _phase := PackedFloat32Array()    # per-plot phase for the slow rearrange wobble
+## Per-plot heading, in radians - which way the block's footprint faces. See the roll in
+## [method build_params]: this is what stops the city being one rigid lattice, and it replaces a
+## faint lean toward the terrain normal that used to do that job.
+##
+## THAT LEAN WAS A MISTAKE and it is worth writing down why, because it looked reasonable in the
+## code. It was small - eight percent of the surface normal, five degrees at the very steepest -
+## but the normal is a nearest-cell finite difference of a fractal heightfield, so it points a
+## different way for every plot, and neighbouring towers leaned INDEPENDENTLY. A vertical edge is
+## the most sensitive thing the eye has for reading tilt (it has the frame's own edges to judge
+## against), and a hundred of them disagreeing by a few degrees does not read as "not a rigid
+## grid" - it reads as a city that is falling over. Reported exactly that way.
+##
+## A heading does the same job honestly. Real cities are not laid out on one lattice either; they
+## have a dominant grid, districts platted on their own alignment, and plots that sit a degree or
+## two off true - and every one of those buildings is plumb.
+var _heading := PackedFloat32Array()
 var _maturity := 0.0                  # 0..1, rises over the scene: thresholds drop -> arms thicken, gaps fill
 var _forge := FrameForge.new()        # off-thread frame builder (FrameForge contract)
 var _cores: Array = []                # the 1-2 valley cells the city grows out from (re-pinned each frame)
@@ -126,6 +142,21 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_hclass.resize(C * C)
 	_sky.resize(C * C)
 	_phase.resize(C * C)
+	_heading.resize(C * C)
+	# THE STREET GRID. One dominant alignment for the city, a second one for a district platted on
+	# its own (which nearly every real city has, and which is the thing that stops a grid reading as
+	# wallpaper), and a couple of degrees of per-plot slop on top. A square footprint repeats every
+	# quarter turn, so the second grid is offset by well inside one - anything more just lands back
+	# on the first.
+	var grid_a := rng.randf() * TAU
+	var grid_b := grid_a + rng.randf_range(0.30, 1.10)
+	var slop := rng.randf_range(0.012, 0.045)
+	# The district is a SMOOTH function of position, not a per-plot coin toss: two low harmonics
+	# across the grid, so the second alignment comes out as a contiguous quarter of the city rather
+	# than as salt and pepper through it.
+	var dk := Vector2(rng.randf_range(1.2, 3.0), rng.randf_range(1.2, 3.0))
+	var dp := Vector2(rng.randf() * TAU, rng.randf() * TAU)
+	var dthr := rng.randf_range(0.35, 1.15)
 	# A ridged "arm" field: its branching high ridges become the channels the city builds ALONG, so
 	# development reads as dendritic ARMS reaching out from the core rather than a filled blob.
 	var armf := Field.make("ridged", rng.randi(), rng.randf_range(float(lay.arm[0]), float(lay.arm[1])), 3)
@@ -160,6 +191,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			# A rare few plots are skyscrapers FROM THE START (variety) - most are 0 (grow up naturally).
 			_sky[i] = rng.randf_range(0.55, 1.0) if rng.randf() < float(sky_law.sky) else 0.0
 			_phase[i] = rng.randf() * TAU
+			var district := sin(p.x * dk.x + dp.x) + sin(p.y * dk.y + dp.y)
+			_heading[i] = (grid_b if district > dthr else grid_a) + rng.randf_range(-slop, slop)
 	# Per-plot detach: a few districts float off the ground (how many is the layout's).
 	_detach.resize(C * C)
 	for i in C * C:
@@ -248,6 +281,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.hclass = _hclass
 	job.sky = _sky
 	job.phase = _phase
+	job.yaw = _heading
 	job.lens = Lens3D.new()
 	job.lens.eye = lens.eye
 	job.lens.look = lens.look
@@ -291,6 +325,7 @@ class CityJob:
 	var hclass := PackedFloat32Array()
 	var sky := PackedFloat32Array()
 	var phase := PackedFloat32Array()
+	var yaw := PackedFloat32Array()
 
 	func run(_s: Dictionary) -> Array:
 		lens.prepare()
@@ -329,12 +364,15 @@ class CityJob:
 				var tall := lerpf(0.5, float(hclass[i]), realize)
 				var h := grown_i * tall * (0.42 + 0.4 * bgain + 0.5 * react) * wob
 				var bw_i := bw * float(foot[i])
-				var up := terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.92).normalized()
-				var bx := up.cross(Vector3(1, 0, 0))
-				if bx.length() < 1e-3:
-					bx = up.cross(Vector3(0, 0, 1))
-				bx = bx.normalized()
-				var bz := bx.cross(up).normalized()
+				# PLUMB, and turned on its own heading. The ground under a city does what it likes;
+				# the buildings on it do not follow it (see the scene's _heading for what leaning toward
+				# the terrain normal actually looked like).
+				var up := Vector3.UP
+				var ya: float = yaw[i]
+				var cy_ := cos(ya)
+				var sy_ := sin(ya)
+				var bx := Vector3(cy_, 0.0, sy_)
+				var bz := Vector3(-sy_, 0.0, cy_)
 				# Sink the base BELOW the surface so its bottom is buried; the top stays where it was.
 				var base := Vector3(wx, ground + float_off - embed, wz)
 				var htot := h + embed

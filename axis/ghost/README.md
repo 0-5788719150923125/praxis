@@ -146,7 +146,7 @@ Each scene is a small combination of shapes; behavior decides how it moves. The 
 
 <!-- AUTODOC:SCENES:BEGIN -->
 
-53 scenes in the auto rotation (56 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
+55 scenes in the auto rotation (58 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
 
 _Core catalogue_
 
@@ -211,6 +211,11 @@ _That should be done where it can actually be looked at, which is what --scene i
 - **`murmuration`** (particles, drift) - thousands of birds deciding together, against a bright sky.
 - **`neural_field`** (scene3d, drift) - a layered network in real depth, lit only where the harmony routes.
 - **`tidepool`** (canvas, drift, static) - sunlight through a hand's depth of moving water.
+
+_Completely fixed frame suits a fall that is already all the motion there is_
+
+- **`fractal_zoom`** (canvas, drift, static) - falling into (or back out of) an escape-time set, forever.
+- **`tunnel_run`** (scene3d, drift) - the camera on a track, falling forward through a tube that twists, banks and sometimes turns right over.
 
 _The-point scenes_
 

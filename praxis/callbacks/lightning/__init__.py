@@ -19,6 +19,7 @@ from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
 from praxis.callbacks.lightning.paper import PaperBuildCallback
 from praxis.callbacks.lightning.rlct import RLCTLandscapeCallback
+from praxis.callbacks.lightning.snapshot_pump import SnapshotPumpCallback
 from praxis.callbacks.lightning.spider import SpiderCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
@@ -41,6 +42,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "expert_pool": ExpertPoolCallback,
     "paper_build": PaperBuildCallback,
     "spider": SpiderCallback,
+    "snapshot_pump": SnapshotPumpCallback,
 }
 
 __all__ = [
@@ -62,5 +64,6 @@ __all__ = [
     "ExpertPoolCallback",
     "PaperBuildCallback",
     "SpiderCallback",
+    "SnapshotPumpCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

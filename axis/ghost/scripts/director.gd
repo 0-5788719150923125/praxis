@@ -111,6 +111,16 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/contour_map.gd"), "behavior": "drift"},
+	# Two things the catalogue had no version of at all. `fractal_zoom` is the only scene whose
+	# subject has detail at every scale, so it is the only one that can move FORWARD forever
+	# without repeating - and the only one where the camera's motion is the whole content.
+	# `tunnel_run` is the only RIDE: everything else here is looked at, and a first-person track
+	# puts the viewer inside the frame instead. Both are registered on `drift` (their own camera
+	# does the work; the 2D view adds almost nothing) and the fractal also on `static`, where a
+	# completely fixed frame suits a fall that is already all the motion there is.
+	{"script": preload("res://scripts/scenes/fractal_zoom.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/fractal_zoom.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/tunnel_run.gd"), "behavior": "drift"},
 	# "the-point" scenes (camera holds, per the brief).
 	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},

@@ -98,12 +98,18 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			var wx := _slot(gx) + rng.randf_range(-0.06, 0.06)
 			var wz := _slot(gy) + rng.randf_range(-0.06, 0.06)
 			var ground: float = _terrain.height_at(wx, wz) * _terrain.relief
-			var up: Vector3 = _terrain.normal_world(wx, wz).lerp(UP, 0.96).normalized()
-			var bx: Vector3 = up.cross(Vector3(1, 0, 0))
-			if bx.length() < 1e-3:
-				bx = up.cross(Vector3(0, 0, 1))
-			bx = bx.normalized()
-			var bz: Vector3 = bx.cross(up).normalized()
+			# PLUMB. This used to lean four percent toward the terrain normal, which is a nearest-cell
+			# finite difference of a fractal heightfield, so every tower tilted its own way. Measured
+			# on this scene it was only 1.2 degrees at the worst and invisible on a tapered loft -
+			# terrain_city, whose hard vertical box edges made the same rule read as a city falling
+			# over, is where it actually showed. Corrected here anyway, because it is the same
+			# mistake; the variety in this scene is in the PROFILES, which is where it belongs.
+			#
+			# Deliberately WITHOUT drawing from `rng`: an extra draw here shifts the whole stream and
+			# re-rolls every existing seed's city, which is a large change to make for 1.2 degrees.
+			var up := UP
+			var bx := Vector3(0.0, 0.0, -1.0)
+			var bz := Vector3(1.0, 0.0, 0.0)
 			var cxn := float(gx) / float(C - 1) * 2.0 - 1.0
 			var cyn := float(gy) / float(C - 1) * 2.0 - 1.0
 			var t := clampf(sqrt(cxn * cxn + cyn * cyn) / 1.415 + rng.randf_range(-0.06, 0.06), 0.0, 1.0)

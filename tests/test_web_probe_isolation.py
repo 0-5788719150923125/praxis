@@ -1,8 +1,14 @@
-"""Web probes run on the API thread. They must not touch training state.
+"""Web probes must not touch training state.
 
-The dashboard samples the live model while training runs on another thread.
-Anything a probe does to shared state is visible mid-step to the trainer, and
-the module tree is shared state:
+Probes no longer run on the API thread at all - ``SnapshotPumpCallback`` runs
+them from the training loop, because "read-only" was never enough: a pure
+``tensor[..., :k]`` still locks that tensor's ``AutogradMeta``, and holding the
+GIL while waiting for a lock the training thread holds deadlocks the process
+outright (praxis/web/snapshots.py has the ABBA). These rules still stand on top
+of that, both because they are what a probe means and because an inference-only
+server has no training loop to pump them.
+
+The dashboard samples the live model, and the module tree is shared state:
 
   * ``torch.func.functional_call`` swaps entries in a module's ``_parameters``
     dict. It is not thread-safe, and the activations it was briefly used on here
