@@ -131,6 +131,10 @@ var _ground_sat := 0.20
 
 # --- camera -----------------------------------------------------------------------
 var _fov := 46.0
+## How far past the visible edge the flock's walls sit. The birds have to be turning where the
+## camera cannot see them, not at the border of the frame.
+const WALL_OUT := 1.18
+
 var _dist := 1.9
 var _eye_lift := 0.10
 
@@ -173,6 +177,19 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var count := rng.randi_range(900, 2400)
 	_flock = Boids.new()
 	_flock.ext = _ext
+	# THE WALLS HAVE TO BE ABLE TO MOVE OUT. `_ext` is seeded, and a seeded box has no idea where
+	# the camera is: reported as "I can watch as birds bounce off of invisible boundaries". The
+	# box is widened from the live view every frame (see update), so the grid has to be laid for
+	# the widest it can reach - computed from THIS instance's own lens rather than a blind
+	# multiplier, so the extra cells are only the ones that can actually be needed.
+	#
+	# The worst case is a field scene's camera at its limit on an ultrawide frame: a `pull_back`
+	# shot bottoms out near 0.98 zoom, drift_view takes another 0.08 off it and pans about 0.17,
+	# and 21:9 puts the horizontal half-extent near 1.75 in unit fractions. It is the one bound
+	# here that has to be assumed rather than measured, because a scene's `size` is still zero
+	# while build_params runs - the Director does not add it to the tree until afterwards.
+	var m := _wall_scale()
+	_flock.ext_max = Vector3(maxf(_ext.x, 1.75 * m), maxf(_ext.y, 0.80 * m), _ext.z)
 	_flock.radius = rng.randf_range(0.028, 0.044)
 	_flock.sep_radius = _flock.radius * rng.randf_range(0.30, 0.50)
 	_flock.k_cap = rng.randi_range(6, 14)
@@ -379,6 +396,13 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_job.w_coh = _w_coh
 	_job.w_ali = _w_ali
 	_job.w_roost = _roost_pull
+	# THE BOX FOLLOWS THE CAMERA, and only ever outward: shrinking it would put birds through a
+	# wall that moved onto them. Through the job like every other steered value, because the
+	# solver may be mid-tick on a worker.
+	var need := view_half() * _wall_scale()
+	_ext.x = clampf(maxf(_ext.x, need.x), 0.0, _flock.ext_max.x)
+	_ext.y = clampf(maxf(_ext.y, need.y), 0.0, _flock.ext_max.y)
+	_job.box_ext = _ext
 	# Negative y is up here, so a rising thermal is a negative bias.
 	_job.thermal = -_thermal * (0.25 + 1.4 * clampf(f.bass * 1.4, 0.0, 1.0))
 
@@ -443,10 +467,22 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
+## How far out a wall has to sit, per unit of visible half-extent, for the birds to turn OFF
+## SCREEN. A bird at the box edge sits at the nearest face of the box, so its projected offset is
+## `focal * ext / (dist - ext.z)`; inverting that gives the box extent a given screen extent
+## demands, and the margin puts the turn safely outside the frame rather than on its edge.
+func _wall_scale() -> float:
+	var focal := 1.0 / tan(deg_to_rad(clampf(_fov, 10.0, 170.0)) * 0.5)
+	return WALL_OUT * maxf(0.25, _dist - _ext.z) / focal
+
+
 func _draw() -> void:
 	begin_draw()
-	var hx := size.x * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
-	var hy := size.y * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
+	# What the camera can see, not the viewport times a constant - dividing by the zoom covers a
+	# pull-back and nothing else. See [method SceneView.visible_half].
+	var hpx := view_half_px()
+	var hx := hpx.x
+	var hy := hpx.y
 	var tint := _ch.y * 0.45
 
 	# The ground is the pale air at the horizon, flat and full-bleed. `bed` cannot be this
@@ -560,6 +596,7 @@ class FlockJob:
 
 	# Steering, staged here by the scene and copied onto the solver at the top of run().
 	var w_sep := 1.5
+	var box_ext := Vector3.ZERO
 	var w_coh := 0.9
 	var w_ali := 1.0
 	var w_roost := 0.45
@@ -619,6 +656,8 @@ class FlockJob:
 		var n := pending
 		pending -= n          # consume; a concurrent increment losing a race costs one tick
 		flock.w_sep = w_sep
+		if box_ext.x > 0.0:
+			flock.ext = box_ext
 		flock.w_coh = w_coh
 		flock.w_ali = w_ali
 		flock.w_roost = w_roost

@@ -23,13 +23,13 @@ Source: [scripts/layer.gd:233](../scripts/layer.gd#L233)
 
 Surface - the lit water SURFACE far above: a bright wash of light pouring down from a distant sun in the sky, and drifting CAUSTIC ripples (the refracted light-net). Fills the "dead space" at the top of the underwater scenes with a real light source and topological refraction. Soft, additive, brightest at the top and fading into the depths; brightens and shimmers with the music.
 
-Source: [scripts/layer.gd:2129](../scripts/layer.gd#L2129)
+Source: [scripts/layer.gd:2140](../scripts/layer.gd#L2140)
 
 ## `kelp` - Kelp
 
 Kelp - the sea FLOOR: tall soft kelp fronds swaying up from the bottom, and a few blurry bioluminescent glows pooled among them - abstract, transparent, all out of focus in the deep water. Anchors the underwater scenes with a floor and life instead of empty blue below.
 
-Source: [scripts/layer.gd:2198](../scripts/layer.gd#L2198)
+Source: [scripts/layer.gd:2209](../scripts/layer.gd#L2209)
 
 ## `fog` - Fog
 
@@ -131,22 +131,22 @@ Source: [scripts/layer.gd:1829](../scripts/layer.gd#L1829)
 
 Planet - a REAL 3D sphere: a smooth-shaded `Mesh3D` icosphere drawn through a private `Lens3D`, exactly the way the eye's sclera is built, so it is genuinely round and lit with a true terminator (not a flat stack of discs). Opaque, so the stars behind it are occluded. Drawn AFTER the stars by the scene for that occlusion.
 
-Source: [scripts/layer.gd:1874](../scripts/layer.gd#L1874)
+Source: [scripts/layer.gd:1885](../scripts/layer.gd#L1885)
 
 ## `volumetric` - Volumetric
 
 Volumetric - REAL 3D clouds / fog. A field of soft gaussian puffs placed in 3D space, lit VOLUMETRICALLY (sorted from the sun inward, accumulating optical depth, so puffs facing the sun are bright and those buried behind others fall into shadow), depth-sorted and projected through a private `Lens3D`, drifting and billowing over time. Simulated dynamics, not a flat 2D sprite - and being atmospheric it washes well over other scenes (the LAYER transition can stack it).
 
-Source: [scripts/layer.gd:1922](../scripts/layer.gd#L1922)
+Source: [scripts/layer.gd:1933](../scripts/layer.gd#L1933)
 
 ## `veil` - Veil
 
 Veil - a composable harmonic OBSCURING layer: drifting gaussian masses (snow squalls, rain sheets, haze) that swell with musical intensity and fade out between, softening and hiding the scene behind. The general form of the snow whiteout, so ANY scene can add moving patterns of visibility and obscuration. Tint with hue/sat/val; floor/gain/max shape how the swell maps to opacity. Add it last (front) so it veils what is beneath.
 
-Source: [scripts/layer.gd:2101](../scripts/layer.gd#L2101)
+Source: [scripts/layer.gd:2112](../scripts/layer.gd#L2112)
 
 ## `flare` - Flare
 
 Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic streak, plus a chain of translucent "ghost" discs and rings marching along the line from the source through the optical centre to the far side (where real lens flares sit). Its brightness pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so any scene can wear a flare over the top. Add it LAST (front).
 
-Source: [scripts/layer.gd:2033](../scripts/layer.gd#L2033)
+Source: [scripts/layer.gd:2044](../scripts/layer.gd#L2044)

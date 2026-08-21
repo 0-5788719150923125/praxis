@@ -266,15 +266,31 @@ func paint_ground(hue: float, sat := 0.06, val := 0.94, tint := 0.0, tint_hue :=
 	# so it was the largest surface in the frame flipping across the antipodal boundary.
 	var h := blend_hue(hue, tint_hue, clampf(tint, 0.0, 1.0) * 0.5)
 	var col := Color.from_hsv(fposmod(h, 1.0), clampf(sat, 0.0, 1.0), clampf(val, 0.0, 1.0))
-	var x := size.x * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
-	var y := size.y * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
+	# Sized to what the camera can SEE (see [method SceneView.visible_half]) rather than to the
+	# viewport scaled by a constant: dividing by the zoom covered a pull-back and nothing else, so
+	# a panned or rolled camera still walked this quad's corner into frame.
+	var hv := view_half_px()
 	draw_colored_polygon(PackedVector2Array([
-		Vector2(-x, -y), Vector2(x, -y), Vector2(x, y), Vector2(-x, y)]), col)
+		Vector2(-hv.x, -hv.y), Vector2(hv.x, -hv.y),
+		Vector2(hv.x, hv.y), Vector2(-hv.x, hv.y)]), col)
 
 
 ## The shorter screen axis - use it to size geometry independent of aspect.
 func unit() -> float:
 	return minf(size.x, size.y)
+
+
+## The half-extent this scene must fill to cover the frame, IN UNIT FRACTIONS - the space layers,
+## spawn bounds and flock walls are expressed in. Ask this instead of assuming the viewport: it
+## follows the camera exactly, so nothing sized from it can have an edge the camera can reach.
+## See [method SceneView.visible_half] for why a fixed margin cannot work.
+func view_half() -> Vector2:
+	return view.visible_half(size) / maxf(1.0, unit())
+
+
+## The same, in PIXELS - for scenes that build in screen units rather than unit fractions.
+func view_half_px() -> Vector2:
+	return view.visible_half(size)
 
 
 ## Pull [param base] a fraction [param k] of the way toward [param toward], both hues in turns.
@@ -360,13 +376,13 @@ func update_layers(f: AudioFeatures, delta: float) -> void:
 	last_f = f
 	if layers.is_empty():
 		return
-	var u := maxf(1.0, unit())
-	# Overdraw margin: hand layers a half-extent a bit LARGER than the frame, so they paint past every
-	# edge. The camera drift (drift_view) slides/zooms the whole canvas, and without this the drawn
-	# region's edge slides into view as a hard seam (a plane's border). 1.15x covers the drift range.
-	var h := Vector2(size.x, size.y) / (2.0 * u) * 1.15
+	# WHAT THE CAMERA CAN ACTUALLY SEE, not a fixed guess. This was `size / (2u) * 1.15` for a
+	# long time and the constant IS the bug: 1.15 has no idea whether the shot has pulled back to
+	# 0.7 zoom or panned a third of a frame sideways, and at either of those the layer's drawn
+	# region ends inside the frame. Reported as edges walking into shot over and over - the hard
+	# border of a water plane, a light shaft beginning in mid air. See [method SceneView.visible_half].
 	for l in layers:
-		l.update(f, delta, h)
+		l.update(f, delta, view_half())
 
 
 ## Paint composed layers onto this scene's canvas, in add order. Call from _draw() after

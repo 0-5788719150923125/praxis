@@ -108,3 +108,33 @@ func matrix(size: Vector2) -> Transform2D:
 	var origin := size * 0.5 + (_off + _bias_off) * size
 	var z := _zoom * _bias_zoom * pulse_zoom
 	return Transform2D(_rot + pulse_rot, Vector2(z, z), _skew + pulse_skew, origin)
+
+
+## THE HALF-EXTENT A SCENE MUST FILL TO COVER THE SCREEN, in the scene's own centred
+## coordinates. This is the answer to "where is the camera looking", and it is exact.
+##
+## WHY IT EXISTS. Scenes draw around (0,0) and the view transform then zooms, pans, rolls and
+## skews the whole canvas. Anything sized to the raw viewport therefore has an EDGE somewhere
+## just outside the frame, and every camera move walks that edge into shot: the hard border of a
+## water plane, a light shaft starting in mid-air, a flock turning at nothing. The convention was
+## a fixed 1.15 overdraw, hard-coded in a dozen places, and a fixed margin cannot be right - it
+## has no idea whether the shot has pulled the camera back to 0.7 zoom or panned a third of a
+## frame sideways, and at either of those 1.15 is simply too small.
+##
+## HOW. The visible region is the screen rectangle pulled back through the inverse of the very
+## transform [method matrix] hands the renderer, so it accounts for zoom, offset, bias, rotation,
+## skew and the stinger punch together and BY CONSTRUCTION - there is nothing left to keep in
+## sync. Its corners give an axis-aligned bound, taken about the ORIGIN because that is where
+## scenes build from: fill [-h, h] and the frame is covered whatever the camera is doing.
+##
+## [param margin] covers the one frame of lag between this being asked in update() and the eased
+## transform that will actually draw (see commit), plus a little for a shot still moving.
+func visible_half(size: Vector2, margin := 1.06) -> Vector2:
+	var inv := matrix(size).affine_inverse()
+	var hx := 0.0
+	var hy := 0.0
+	for c in [Vector2.ZERO, Vector2(size.x, 0.0), size, Vector2(0.0, size.y)]:
+		var p: Vector2 = inv * c
+		hx = maxf(hx, absf(p.x))
+		hy = maxf(hy, absf(p.y))
+	return Vector2(hx, hy) * margin

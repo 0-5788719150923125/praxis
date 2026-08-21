@@ -65,8 +65,17 @@ class_name Boids
 # World and perception. Set these BEFORE calling build().
 # ---------------------------------------------------------------------------------
 
-## Half-extents of the box the flock lives in, in ghost's unit-fraction space.
+## Half-extents of the box the flock lives in, in ghost's unit-fraction space. May be widened
+## after [method build] - see [member ext_max].
 var ext := Vector3(0.78, 0.44, 0.62)
+
+## The largest box [method build] must lay a neighbour grid for. Set this BEFORE build when the
+## walls are going to move outward later: the grid's dimensions are fixed there, and a scene that
+## has to widen its box (because the camera pulled back and the birds were visibly turning at
+## nothing - see scenes/murmuration.gd) would otherwise be flying most of its flock outside the
+## grid, where every cell index clamps to the rim and neighbour queries quietly stop working.
+## Left at zero it means "the same as ext", which is what a fixed-box flock wants.
+var ext_max := Vector3.ZERO
 ## Perception radius. The grid cell edge is twice this, which is what reduces the
 ## neighbour search to eight cells.
 var radius := 0.032
@@ -197,10 +206,11 @@ func build(count: int, rng: RandomNumberGenerator) -> void:
 	_inv = 1.0 / _cell
 	# Two cells of margin below the box, so the block base index of a bird sitting on the
 	# low face is still non-negative and no clamp is needed on the hot path.
-	_org = Vector3(-ext.x, -ext.y, -ext.z) - Vector3(_cell, _cell, _cell) * 2.0
-	_gx = maxi(1, int(2.0 * ext.x * _inv) + 5)
-	_gy = maxi(1, int(2.0 * ext.y * _inv) + 5)
-	_gz = maxi(1, int(2.0 * ext.z * _inv) + 5)
+	var gext := Vector3(maxf(ext.x, ext_max.x), maxf(ext.y, ext_max.y), maxf(ext.z, ext_max.z))
+	_org = Vector3(-gext.x, -gext.y, -gext.z) - Vector3(_cell, _cell, _cell) * 2.0
+	_gx = maxi(1, int(2.0 * gext.x * _inv) + 5)
+	_gy = maxi(1, int(2.0 * gext.y * _inv) + 5)
+	_gz = maxi(1, int(2.0 * gext.z * _inv) + 5)
 	var cells := _gx * _gy * _gz
 	_start.resize(cells + 1)
 	_counts.resize(cells)

@@ -623,6 +623,38 @@ def check_syllabic_fold():
 
 
 @check
+@check
+def check_the_punctuation_hierarchy_survives_the_slider():
+    """A comma may never out-rest a full stop, at any Pause setting.
+
+    The sentence gap is capped (it compounds over a chapter); mid-sentence marks were not, so
+    at the slider's top a comma took 1.0 s of spliced silence on top of the ~0.3 s the model
+    already dwells there while a full stop stayed pinned at 1.2 s. Reported as a large breath
+    after every comma and none anywhere else, which is exactly what an inverted hierarchy
+    sounds like. The ordering has to hold at EVERY scale, not just at 1.
+    """
+    from backends import piper
+
+    for scale in (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 10.0):
+        p = {"pause_scale": scale}
+        comma = piper._pause_for(",", p)
+        semi = piper._pause_for(";", p)
+        colon = piper._pause_for(":", p)
+        gap = piper._gap_for(".", p)
+        ok(
+            comma <= semi <= colon < gap or scale == 0.0,
+            "at %gx the order , <= ; <= : < . holds (%.3f %.3f %.3f %.3f)"
+            % (scale, comma, semi, colon, gap))
+    # ...and the default render is untouched: below the ceiling the cap cannot bite, so
+    # everything anyone has already heard sounds the same.
+    for scale in (0.5, 1.0, 2.0, 3.0):
+        p = {"pause_scale": scale}
+        ok(
+            abs(piper._pause_for(",", p) - 0.10 * scale) < 1e-9,
+            "at %gx a comma is still exactly linear (%.4f)" % (scale, piper._pause_for(",", p)),
+        )
+
+
 def check_hyphen_is_a_word_boundary():
     """A hyphen INSIDE a word reaches the phonemizer as a word space.
 

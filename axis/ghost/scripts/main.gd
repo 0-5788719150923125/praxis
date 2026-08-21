@@ -443,6 +443,7 @@ func _open_synth_editor(mode := "fishing") -> void:
 func _open_generative_editor() -> void:
 	var editor := preload("res://scripts/generative_editor.gd").new()
 	editor.begin_stream = _begin_generative_stream
+	editor.end_stream = _end_generative_stream
 	_synth_editor = editor
 	_generative = editor
 	add_child(editor)
@@ -464,6 +465,21 @@ func _open_generative_editor() -> void:
 ## into a single continuous stream, so the show sees one unbroken take however
 ## many chunks it was made from. Subtitles ride the same array, which
 ## Subtitles.words explicitly allows to keep growing.
+## The closing half of _begin_generative_stream. Everything that function attaches, this one
+## lets go of - the stage, the audio stream and the subtitle overlay - so the editor's Stop can
+## actually end a reading. It was missing entirely: the generative path was wired `begin_stream`
+## and nothing else, so a reading could be started and restarted but never stopped, and the only
+## way out was to quit ghost.
+func _end_generative_stream() -> void:
+	Director.detach()
+	Spectrum.stop()
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.queue_free()
+	_subtitles = null
+	if _generative != null and is_instance_valid(_generative):
+		_generative.subtitles = null
+
+
 func _begin_generative_stream(fp: int, sr: int, words: Array) -> AudioStreamGeneratorPlayback:
 	# TEAR DOWN FIRST. This is called again every time the reading restarts - a
 	# new text, a voice change, a tone change - and it used to attach a fresh

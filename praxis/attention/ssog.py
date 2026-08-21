@@ -57,6 +57,7 @@ SIGMA_Q: float = 0.35  # atom width as a fraction of its own lag (constant-Q)
 SIGMA_MIN_EXCESS: float = 0.05  # smallest width the ladder asks for, above floor
 TEMPERATURE_RAW_INIT: float = -1.0  # softplus(-1) + 0.5 ~ 0.81, slightly sharp
 QK_DUMMY_DIM: int = 16  # flex needs Q/K tensors; theirs are zeros
+NULL_EMA_DECAY: float = 0.99  # smoothing on both realized null buffers
 # Null-atom logit at init, calibrated against the MEASURED denominator rather
 # than guessed. The field's logsumexp sits near -0.83 to -0.97 across sequence
 # lengths 64-512, so the null's share at init is sigmoid-close to
@@ -422,10 +423,28 @@ class SSOGAttention(nn.Module):
         self.raw_null = (
             nn.Parameter(torch.full((H,), NULL_LOGIT_INIT)) if self.null_atom else None
         )
+        self._register_null_buffers()
+
+    def _register_null_buffers(self) -> None:
+        """Both realized-value buffers, registered in ONE place.
+
+        Every number on the null card has to be read from the FORWARD, so both
+        buffers live here rather than beside whichever ``_build_null`` a
+        subclass happens to write. ``arc_ssog`` keeping its own copy of one of
+        them is how ``null_logit`` came to report a different tensor than
+        ``null_share``: see ``_note_null_logit``.
+        """
+        slots = self._null_slots()
         # Realized share, EMA'd in the forward. The PARAMETER says what the head
         # asked for; this says what the softmax actually gave it, which is the
         # position-dependent part and the only one worth reading.
-        self.register_buffer("null_share", torch.zeros(self._null_slots()), persistent=False)
+        self.register_buffer("null_share", torch.zeros(slots), persistent=False)
+        # Realized LOGIT, EMA'd the same way, and NOT a view of ``raw_null``.
+        self.register_buffer(
+            "null_logit_seen",
+            torch.full((slots,), float(NULL_LOGIT_INIT)),
+            persistent=False,
+        )
 
     def _null_slots(self) -> int:
         """How many null-share slots to track. One per depth where the field is
@@ -566,6 +585,7 @@ class SSOGAttention(nn.Module):
         null = self._null_logit(current_depth)  # [H]
         keep = torch.sigmoid(lse.float() - null[None, :, None])  # [B, H, T]
         self._note_null_share(1.0 - keep, current_depth)
+        self._note_null_logit(null, current_depth)
         return out * keep.unsqueeze(-1).to(out.dtype)
 
     def _null_logit(self, current_depth: int) -> Tensor:
@@ -579,12 +599,36 @@ class SSOGAttention(nn.Module):
         gave it, which is the position-dependent half and the only one worth
         reading.
         """
+        self._note_ema(self.null_share, share, current_depth)
+
+    def _note_null_logit(self, logit: Tensor, current_depth: int) -> None:
+        """EMA of the null logit AS APPLIED, which is not ``raw_null``.
+
+        A modular-SMEAR router targets this parameter, so the tensor the
+        sigmoid above actually sees is ``base + sum_e w_e * delta_e``,
+        materialised by ``functional_call`` for the duration of the forward.
+        ``training_metrics`` runs OUTSIDE that reparametrisation, so reading
+        ``self.raw_null`` there returns the base alone - on the -s run arm 0
+        carried +2.0 at depth 0, and the card under-reported by two logits
+        while sitting next to a share measured from the merged value. Two
+        halves of one card, disagreeing.
+
+        Recording it here costs one buffer write and is the only place the
+        merged tensor exists.
+        """
+        self._note_ema(self.null_logit_seen, logit, current_depth)
+
+    def _note_ema(self, buffer: Tensor, value: Tensor, current_depth: int) -> None:
+        """Shared decay for the realized-value buffers, so the halves of the
+        null card are smoothed identically and stay comparable."""
         with torch.no_grad():
-            value = share.mean().detach()
-            if not torch.isfinite(value):
+            v = value.mean().detach()
+            if not torch.isfinite(v):
                 return
-            idx = min(int(current_depth), self.null_share.numel() - 1)
-            self.null_share[idx].mul_(0.99).add_(0.01 * value.to(self.null_share.device))
+            idx = min(int(current_depth), buffer.numel() - 1)
+            buffer[idx].mul_(NULL_EMA_DECAY).add_(
+                (1.0 - NULL_EMA_DECAY) * v.to(buffer.device)
+            )
 
     # ---------------------------------------------------------------- forward
     def forward(
@@ -646,7 +690,7 @@ class SSOGAttention(nn.Module):
             ).mean().item(),
             **(
                 {
-                    "ssog_null_logit": self.raw_null.detach().float().mean().item(),
+                    "ssog_null_logit": self.null_logit_seen.item(),
                     "ssog_null_share": self.null_share.item(),
                 }
                 if self.raw_null is not None

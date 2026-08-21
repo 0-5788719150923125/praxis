@@ -1828,6 +1828,11 @@ class Vapor:
 # ---------------------------------------------------------------------------------
 class Rays:
 	extends Base
+
+	## How far outside the visible top a shaft starts, as a multiple of the visible half-height.
+	## Anything that has an END must begin beyond the frame by a real margin rather than at its
+	## boundary, or a camera still easing toward its target walks the end into shot.
+	const ORIGIN_OUT := 1.4
 	var _rays: Array = []
 	var _e := 0.0
 
@@ -1848,11 +1853,17 @@ class Rays:
 		var hue := num("hue", 0.52)
 		for ry in _rays:
 			var sway := sin(t * float(ry.sway) + float(ry.phase)) * 0.07
-			var top := Vector2((float(ry.x) + sway) * half.x, -half.y) * u   # from the top edge
+			# ABOVE the visible top, not on it. `half` is now what the camera can actually see
+			# (see [method SceneView.visible_half]), so a shaft starting at -half.y begins on the
+			# exact edge of frame and the smallest camera move brings its END CAP into shot -
+			# reported as "I am currently seeing the top of those lights". A shaft has no visible
+			# source; it has to come from off-screen.
+			var top := Vector2((float(ry.x) + sway) * half.x, -half.y * ORIGIN_OUT) * u
 			var ang := float(ry.ang) + sway * 0.6
 			var dir := Vector2(sin(ang), 1.0).normalized()
 			var perp := Vector2(-dir.y, dir.x)
-			var length := 2.4 * half.y * u
+			# Long enough to cross the frame from that raised origin and still run off the bottom.
+			var length := (2.4 + ORIGIN_OUT) * half.y * u
 			var w0: float = float(ry.w) * half.x * u * 0.35
 			var w1: float = float(ry.w) * half.x * u * 1.7
 			var br: float = float(ry.bright) * (0.6 + 0.5 * _e)

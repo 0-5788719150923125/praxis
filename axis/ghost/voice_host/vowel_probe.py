@@ -75,11 +75,27 @@ import re
 import sys
 from pathlib import Path
 
-# A stressed /iː/ with a consonant after it. The stress mark has to be in the SAME
+# A stressed /iː/ with an OBSTRUENT after it. The stress mark has to be in the SAME
 # word (no space and no second mark between), the lookahead has to find something
 # that is not a vowel, not a length mark and not the offglide already - and being a
 # lookahead, it also fails at the end of a word, which is what keeps `fɹˈiː` alone.
-OFFGLIDE = re.compile(r"(ˈ[^ˈˌ ]*?iː)(?=[^aeiouɐəɚɛɪʊʌɔɑːjˈˌ ])")
+#
+# NASALS ARE EXCLUDED, and that is a correction rather than an original nicety. Every
+# word this repair was measured on ends in an obstruent - the suspect is "reed", and
+# the onset-matched set that established the defect is feed / seed / beat / reach /
+# breed / freed. Before a nasal it was never measured at all, and firing there takes in
+# the entire -ine / -een / -eam family: machine, seen, mean, dream, scheme. Reported
+# from an export on the one voice this repair is active for, about the one word in that
+# family the reader used most: "machines was pronounced weirdly every single time... it
+# was like the speaker was taking a huge breath in the MIDDLE of that word".
+#
+# HONESTLY: that report is not reproduced here. Rendered on the same voice, in and out
+# of connected speech, the repaired string measures no internal gap the plain one does
+# not also have (21-37 ms either way on "machines", and the medians in a sentence are
+# if anything shorter WITH the repair). So this is not "the fix for that bug" - it is
+# the repair being pulled back inside the evidence that justified it, which happens to
+# be exactly the family the report came from. The A/B is in feedback/machines_*.wav.
+OFFGLIDE = re.compile(r"(ˈ[^ˈˌ ]*?iː)(?=[^aeiouɐəɚɛɪʊʌɔɑːjnmŋˈˌ ])")
 
 # ONE FRAME AND THREE WORDS.
 #

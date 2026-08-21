@@ -26,6 +26,9 @@ class_name GenerativeEditor
 
 ## Set by main: open ONE generator session for the whole chapter.
 var begin_stream: Callable     # begin_stream.call(fp, sample_rate, words) -> playback
+## The other half of begin_stream: closes the stream, detaches the Director from the stage and
+## frees the subtitle overlay. Optional - an owner that does not set it simply cannot Stop.
+var end_stream: Callable
 
 const TAKE_DIR := "user://generative"
 # The same file SynthEditor persists to, under its own section: one save for
@@ -156,6 +159,7 @@ var _panel: PanelContainer
 var _text: TextEdit
 var _voices: OptionButton
 var _go: Button
+var _stop: Button
 var _status: Label
 var _rate: HSlider
 var _rate_row: HBoxContainer
@@ -471,10 +475,18 @@ func _build_panel() -> void:
 	vrow.add_child(_voices)
 	_go = Button.new()
 	_go.text = "Speak"
-	_go.tooltip_text = "Read the script aloud and drive the visuals from it. Press again while it is running to stop. The scenes react to the narration exactly as they would to music."
+	_go.tooltip_text = "Read the script aloud and drive the visuals from it. Pressing it again restarts the reading from the top; Stop ends it. The scenes react to the narration exactly as they would to music."
 	_go.disabled = true
 	_go.pressed.connect(_on_speak)
 	vrow.add_child(_go)
+	# STOP, beside Speak. Ending the reading needs its own control: Speak restarts from the
+	# top, which is the opposite of what someone about to export wants.
+	_stop = Button.new()
+	_stop.text = "Stop"
+	_stop.tooltip_text = "End the reading and hand the stage back. Use this before an export - a live reading is still driving the visuals and holding the audio stream, and until now the only way to end one was to restart ghost."
+	_stop.disabled = true
+	_stop.pressed.connect(_stop_speaking)
+	vrow.add_child(_stop)
 
 	# Multi-speaker checkpoints carry hundreds of readers under one model -
 	# libritts-high has 904 - and they are the only way to change WHO is
@@ -558,6 +570,7 @@ func _build_panel() -> void:
 			return
 		_repace_timer.start())
 	_rate_row.add_child(_rate)
+	_slider_readout(_rate_row, _rate, "x")
 
 	# PAUSE. How long the reading rests on punctuation, as a multiple of the
 	# host's default rests (roughly: a tenth of a second on a comma, a quarter on
@@ -590,6 +603,7 @@ func _build_panel() -> void:
 			return
 		_repace_timer.start())
 	prow.add_child(_pause)
+	_slider_readout(prow, _pause, "x")
 
 	# Debounced rather than immediate: a slider drag emits a value per pixel,
 	# and each change throws away work in flight. One re-plan per gesture.
@@ -1005,6 +1019,7 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	sl.tooltip_text = tip
 	sl.value_changed.connect(apply)
 	row.add_child(sl)
+	_slider_readout(row, sl)
 	return sl
 
 
@@ -1071,6 +1086,31 @@ func _place_chunks(out: Array, body: String) -> void:
 		within += 1
 
 
+## A right-aligned number beside a slider, kept current.
+##
+## Every dial in this panel was a bare track with a label and no value on it, so there was no way
+## to know what any of them was actually set to - reported as "none of the toggles have actual
+## scale values printed on them, so I never know what the true value is". That matters most on
+## Pause, whose useful range is 0 to 10 and whose effect on a comma stops being linear past about
+## 3.7 (see piper._pause_for), and on Pace, where the difference between 0.95 and 1.05 is audible
+## across a chapter and invisible on the track.
+##
+## Wired to `value_changed`, which Godot also emits for programmatic sets, so the readout follows
+## a slot being loaded as well as a drag.
+func _slider_readout(row: HBoxContainer, sl: HSlider, suffix := "") -> Label:
+	var v := Label.new()
+	v.custom_minimum_size = Vector2(42, 0)
+	v.add_theme_font_size_override("font_size", 12)
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.tooltip_text = sl.tooltip_text
+	v.text = ("%.2f" % sl.value) + suffix
+	sl.value_changed.connect(func(nv: float) -> void:
+		v.text = ("%.2f" % nv) + suffix)
+	row.add_child(v)
+	return v
+
+
 func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -1100,6 +1140,7 @@ func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> 
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	row.add_child(sl)
+	_slider_readout(row, sl)
 	return sl
 
 
@@ -1250,6 +1291,7 @@ func _on_speak() -> void:
 		_set_status("Nothing speakable in that text.")
 		return
 	_go.text = "Speak"
+	_sync_speak_buttons()
 	_set_status("Planned %d chunk(s). Synthesizing the first…%s" % [_chunks.size(), _plan_note])
 	_pump()
 
@@ -1264,6 +1306,7 @@ func _restart_speaking() -> void:
 	_plan(body)
 	if _chunks.is_empty():
 		return
+	_sync_speak_buttons()
 	_set_status("Voice changed - reading again from the start…%s" % _plan_note)
 	_pump()
 
@@ -1271,7 +1314,14 @@ func _restart_speaking() -> void:
 ## Cut the text into chunks at sentence boundaries, recording per chunk the
 ## phone stream and the word spans within it. Planning is pure front end - no
 ## synthesis - so it stays cheap even for a whole chapter.
-func _plan(body: String) -> void:
+## EVERY PIECE OF STATE A READING OWNS, put back. Split out of [method _plan] so that
+## stopping and re-planning cannot drift apart: they were one block, and a Stop button that
+## reset "most of" it is the kind that leaves a stream half open.
+##
+## The pending request map is the important one. Replies for chunks already asked for are still
+## in flight on the host, and dropping their ids here is what makes them discarded on arrival
+## instead of spliced into a reading that no longer exists.
+func _reset_playback() -> void:
 	_chunks = []
 	_ready_takes = []
 	_req_chunk = {}
@@ -1294,21 +1344,58 @@ func _plan(body: String) -> void:
 	Spectrum.scrub_pos = Callable()
 	Spectrum.scrub_len = Callable()
 	Spectrum.scrub_seek = Callable()
-	# THE INTRO, seeded HERE rather than at the moment the stream opens, and the
-	# placement is the whole trick: `_elapsed` is the clock every word span and every
-	# seam is measured against, so starting it at the end of the silence offsets the
-	# entire reading - subtitles included - with no other code needing to know.
-	#
-	# Inserting it later would put it AFTER the first sentence, which is exactly the bug
-	# this replaces: the audition spoke its opening line, then went quiet for five
-	# seconds, then carried on.
+	# The intro silence belongs to a reading that is STARTING, so it is seeded in _plan and
+	# only cleared here. `_elapsed` is the clock every word span and every seam is measured
+	# against, so starting it at the end of that silence offsets the whole reading, subtitles
+	# included, with nothing else needing to know. Inserting it later would put it AFTER the
+	# first sentence - the audition spoke its opening line, went quiet for five seconds, then
+	# carried on.
+	_lead_in = 0.0
+	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
+
+
+## Speak and Stop, from one place. Two buttons whose enabled state is set at each of the
+## several points a reading starts or ends is two buttons that will eventually disagree.
+func _sync_speak_buttons() -> void:
+	var reading := not _chunks.is_empty()
+	if _stop != null:
+		_stop.disabled = not reading
+	if _go != null and not reading:
+		_go.text = "Speak"
+
+
+## Plan a reading: tear the old one down, then cut the text into chunks.
+func _plan(body: String) -> void:
+	_reset_playback()
+	# THE INTRO, seeded HERE rather than at the moment the stream opens - see the note in
+	# _reset_playback's lead-in block, which this replaces for a reading that is starting.
 	_lead_in = maxf(0.0, Director.intro_hold)
 	if _lead_in > 0.0:
 		_pending.resize(int(_lead_in * float(_sr)))
 		_elapsed = _lead_in
-	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
-
 	_chunks = _build_chunks(body)
+
+
+## STOP: end the reading and hand the stage back.
+##
+## There was no way to do this. The Speak button's tooltip claimed "press again while it is
+## running to stop" and that was simply untrue - _on_speak re-plans and reads again from the
+## top, whatever is playing. Reported as: "it would be preferable to stop the real-time scene
+## before I do an export, and today I've just been restarting the program."
+##
+## Tearing down the STREAM is the half the editor cannot do alone: the playback, the Director's
+## attachment to the stage and the subtitle overlay all belong to the owner, which is why
+## `end_stream` exists and is wired beside `begin_stream` (see main._end_generative_stream).
+## The synth editor has had both since it was written; this path was given only the opening
+## half, so nothing was ever able to close it.
+func _stop_speaking() -> void:
+	if _chunks.is_empty() and _playback == null:
+		return
+	_reset_playback()
+	if end_stream.is_valid():
+		end_stream.call()
+	_sync_speak_buttons()
+	_set_status("Stopped. Press Speak to read again from the top.")
 
 
 ## Pure: text in, chunk plan out. Shared by playback and by export, so an export

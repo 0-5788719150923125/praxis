@@ -41,7 +41,7 @@ Presets:
 
 SSOG with a per-depth field (see module docstring).
 
-Source: [praxis/attention/arc_ssog.py:160](../praxis/attention/arc_ssog.py#L160)
+Source: [praxis/attention/arc_ssog.py:195](../praxis/attention/arc_ssog.py#L195)
 
 Presets:
 - `arc_ssog` - class defaults
@@ -95,7 +95,7 @@ so a subclass can reshape the field without reimplementing ``__init__``, and
 ``_build_field`` / ``_field`` are the two seams a variant overrides. See
 ``praxis/attention/arc_ssog.py``.
 
-Source: [praxis/attention/ssog.py:96](../praxis/attention/ssog.py#L96)
+Source: [praxis/attention/ssog.py:97](../praxis/attention/ssog.py#L97)
 
 ## `syntaxes` - SyntaxesAttention
 

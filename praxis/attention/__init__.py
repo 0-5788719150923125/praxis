@@ -49,7 +49,9 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # what -r ran from 2026-08-18, kept reproducible rather than deleted -
     # twelve atoms over 0.5..128 diluted the softmax (0.083 per atom against
     # 0.25, with three atoms centred outside the ×1 window) and `far_mass`
-    # decayed at every depth for 11.8k steps. `arc_ssog` came back down to the
+    # decayed at every depth for 11.8k steps (measured with the centre-indicator
+    # far_mass; see _tail_mass for why those numbers do not compare to today's).
+    # `arc_ssog` came back down to the
     # faithful ladder; this stays so the measurement can be repeated.
     "arc_ssog_wide": partial(ArcSSOGAttention, num_atoms=12, mu_init_max=128.0),
     # ... plus a per-depth NULL ATOM: one learned logit per pass whose "value"

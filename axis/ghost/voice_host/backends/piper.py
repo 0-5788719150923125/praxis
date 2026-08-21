@@ -116,8 +116,28 @@ def _pause_scale(params: dict) -> float:
 
 
 def _pause_for(mark: str, params: dict) -> float:
-    """Seconds to insert after a MID-SENTENCE mark. Unknown marks get nothing."""
-    return PAUSE_AFTER.get(str(mark), 0.0) * _pause_scale(params)
+    """Extra silence after a MID-SENTENCE mark, in seconds.
+
+    CAPPED IN PROPORTION TO THE SENTENCE GAP, and that is the fix for a reported bug rather
+    than a precaution. `_gap_for` bounds a sentence's own pause at SEAM_CEILING because it
+    compounds over a chapter; this one used to be uncapped, and the two together invert the
+    punctuation hierarchy as soon as the Pause slider leaves 1. At the slider's top (10x, see
+    generative_editor.MAX_PAUSE_SCALE) a comma took 1.0 s of spliced silence ON TOP of the
+    ~0.3 s the model already dwells there, while a full stop stayed pinned at 1.2 s total - so
+    the commas became the longest rests in the paragraph and the full stops sounded skipped.
+    Reported exactly that way: "a large breath was being taken after every single comma... NO
+    breaths were being taken after punctuation: it was only happening on commas."
+
+    The ceiling is each mark's OWN SHARE of the sentence ceiling, so `,` < `;` < `:` < `.`
+    holds at every scale instead of only at 1. Below about 3.7x nothing changes at all - the
+    default render is sample for sample what it was.
+    """
+    m = str(mark)
+    base = PAUSE_AFTER.get(m, 0.0)
+    if base <= 0.0:
+        return 0.0
+    ceiling = SEAM_CEILING * (base / PAUSE_AFTER["."])
+    return min(base * _pause_scale(params), ceiling)
 
 
 def _discourse_plan(groups: list, params: dict) -> list[dict]:
@@ -314,7 +334,8 @@ def _gap_for(mark: str, params: dict) -> float:
             base = PAUSE_AFTER["."]
     # Capped to match the editor's own seam ceiling (generative_editor.SEAM_CEILING): the
     # gap between sentences compounds over a whole chapter, so it is the one place the
-    # slider is deliberately not linear. Mid-sentence marks are uncapped.
+    # slider is deliberately not linear. Mid-sentence marks are capped too, in proportion -
+    # see _pause_for for what leaving them uncapped did to the punctuation hierarchy.
     return min(max(0.0, base * _pause_scale(params)), SEAM_CEILING)
 
 

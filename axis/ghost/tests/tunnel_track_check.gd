@@ -51,6 +51,8 @@ func _ready() -> void:
 func _run() -> void:
 	_construction()
 	_loops()
+	_smooth()
+	_motes_stream()
 	_orthonormal()
 	_bounded()
 	print("")
@@ -145,6 +147,118 @@ func _loops() -> void:
 	_ok(bad.is_empty(), "%d of %d coasters never reached %.2f of vertical (%s) - the character "
 		% [bad.size(), tried, LOOPED, ", ".join(bad.slice(0, 6))] + "that exists to turn right "
 		+ "over does not")
+
+
+## THE RIDE IS SMOOTH, which is a claim about the camera's SECOND derivative and cannot be seen
+## in a still frame - which is how it shipped broken.
+##
+## Stations are joined by straight segments, so interpolating between them linearly puts the eye
+## on a polyline: continuous in position, discontinuous in VELOCITY. Every station the direction
+## of travel changes abruptly, and at eight units a second over a step of 0.55 that is fifteen
+## kicks a second. Reported from a render as "super jittery... a sequence of discrete jumps at
+## each step".
+##
+## MEASURED AS A SHAPE, NOT A SIZE, for the same reason the glyph gate measures its row that way:
+## an absolute limit on per-frame acceleration cannot tell a jolt from a fast corner, because a
+## genuinely tight track legitimately accelerates hard. What separates them is that a polyline
+## puts ALL of its direction change into one step between long stretches of none - so the peak of
+## the per-step acceleration against its mean is enormous, and on a smooth path it is small. The
+## old linear interpolation is computed alongside as the control, from the same track, so the
+## before and after of this bug sit next to each other and neither can drift unnoticed.
+func _smooth() -> void:
+	var sc = _make(31337, "weave")
+	if sc == null:
+		sc = _make(31337, "")
+	if sc == null:
+		_fails.append("could not build a tunnel at all")
+		return
+	var dt := 1.0 / 60.0
+	var v: float = sc._base_speed
+	var cubic := PackedVector3Array()
+	var linear := PackedVector3Array()
+	for i in 960:
+		sc._s += v * dt
+		sc._advance_track()
+		# The first second is discarded. A scene's opening is a transient by construction (the
+		# buffer is still filling out ahead) and a peak-over-mean measure is exactly the kind
+		# that one startup sample can dominate - it read 65x off a single spike.
+		if i < 60:
+			continue
+		cubic.append((sc._frame_at(sc._s) as Array)[0] as Vector3)
+		# The rule this replaced, run on the same stations at the same instant.
+		var fi: float = (sc._s - sc._s0) / sc.STEP
+		var idx := clampi(int(floor(fi)), 0, sc._pos.size() - 2)
+		var t: float = clampf(fi - float(idx), 0.0, 1.0)
+		linear.append((sc._pos[idx] as Vector3).lerp(sc._pos[idx + 1] as Vector3, t))
+
+	var rc := _jerk(cubic)
+	var rl := _jerk(linear)
+	print("  travel: per-step acceleration peaks at %.1fx its mean (the linear rule this "
+		% rc + "replaced: %.1fx)" % rl)
+	_ok(rc < 6.0, "the camera's per-step acceleration peaks at %.1f times its mean - it is "
+		% rc + "putting its direction changes into single steps, which is the jitter")
+	_ok(rl > rc * 2.0, "the linear control peaked at only %.1fx against the cubic's %.1fx - it "
+		% [rl, rc] + "is the defect this measure exists to catch, so if it does not show here "
+		+ "the measure is not working")
+	sc.free()
+
+
+## Peak over mean of the per-step acceleration along a path. A polyline concentrates every
+## direction change into one step; a C1 curve spreads it.
+func _jerk(p: PackedVector3Array) -> float:
+	if p.size() < 4:
+		return 0.0
+	var peak := 0.0
+	var acc := 0.0
+	var n := 0
+	for i in range(2, p.size()):
+		var a := (p[i] - p[i - 1]) - (p[i - 1] - p[i - 2])
+		var m := a.length()
+		peak = maxf(peak, m)
+		acc += m
+		n += 1
+	var mean := acc / float(maxi(1, n))
+	return peak / maxf(1e-9, mean)
+
+
+## The motes must be fixed in the WORLD and stream past. Held as an offset from the camera they
+## travel with it for ever and nothing in the near field moves at all - which is most of what
+## the jitter report was actually looking at, since they are the closest things to the lens.
+func _motes_stream() -> void:
+	var sc = _make(919, "")
+	if sc == null:
+		return
+	while sc._motes.is_empty():
+		sc.free()
+		sc = _make(919 + 977, "")
+		if sc == null:
+			return
+	# MEASURED AS A SHARE OF STEPS, not as a start-to-end difference, because a mote that has
+	# been recycled a view-length ahead ends FURTHER away than it began - the first cut of this
+	# measured -11.5 units and read that as a failure when it was the recycling working.
+	var closing := 0
+	var recycles := 0
+	var steps := 600
+	# Explicitly typed: `sc` is an untyped local, so nothing it holds carries a type.
+	var gap: float = float((sc._motes[0] as Dictionary)["at"]) - sc._s
+	for _i in steps:
+		sc._s += sc._base_speed / 60.0
+		sc._advance_track()
+		var now: float = float((sc._motes[0] as Dictionary)["at"]) - sc._s
+		if now > gap + 1.0:
+			recycles += 1
+		elif now < gap:
+			closing += 1
+		gap = now
+	var share := float(closing) / float(steps)
+	print("  motes: %d of them; the nearest closed on the camera on %.0f%% of steps and was "
+		% [sc._motes.size(), share * 100.0] + "recycled %d times in 10 s" % recycles)
+	_ok(share > 0.95, "the nearest mote closed on the camera on only %.0f%% of steps - motes "
+		% (share * 100.0) + "held as an offset from the eye travel WITH it, so the near field "
+		+ "never moves and the speed is invisible")
+	_ok(recycles > 0, "no mote was ever recycled in ten seconds - a fixed handful cannot serve "
+		+ "an endless track without being sent round again")
+	sc.free()
 
 
 ## Carry the frame over far more track than a session will ever generate and measure how far it

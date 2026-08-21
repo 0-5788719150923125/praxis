@@ -51,7 +51,10 @@ from ``abstractinator-r`` or a theorem, not a preference:
    renormalised onto the OLDEST tokens - a sink, not a long-range read, and the
    softmax has no way to decline. Measured over 11.8k steps on -r: ``far_mass``
    decayed at every depth while ``reach`` stayed flat, i.e. the model spent
-   training clawing back toward concentration. With the faithful 0.5 .. 32
+   training clawing back toward concentration. (That reading used the old
+   centre-indicator ``far_mass``. It survives the change to the tail integral -
+   the wide bank put five atoms well past 32, so the indicator had real
+   resolution there - but the numbers themselves do not compare.) With the faithful 0.5 .. 32
    ladder the same knob had gone the other way, lambda moving TOWARD the far
    atoms.
 
@@ -130,7 +133,39 @@ ARC_NUM_ATOMS: int = 4
 ARC_GATE_INIT: float = -2.0  # softplus(-2) ~ 0.13: warm, not open, not shut
 ARC_MU_INIT_MAX: float = 32.0  # farthest atom at init, in tokens
 MAX_DECLARED_DEPTHS: int = 12  # how many per-depth cards the dashboard declares
-FAR_LAG: float = 32.0  # "far" atom threshold for the far-mass diagnostic
+# "Far" threshold for the far-mass diagnostic, in tokens. It deliberately
+# equals ARC_MU_INIT_MAX - the question the card asks is whether the bank keeps
+# weight BEYOND the ladder it was handed. That coincidence was fatal while the
+# metric was an indicator on mu; `_tail_mass` integrates instead, so an atom
+# parked exactly on the threshold now reports ~0.5 rather than 0 or 1.
+FAR_LAG: float = 32.0
+
+
+def _tail_mass(mu: Tensor, sigma: Tensor, lag: float) -> Tensor:
+    """Share of each atom's OWN density sitting beyond ``lag``: P(x > lag).
+
+    What "far mass" was always meant to be. The predecessor asked
+    ``mu > FAR_LAG`` - an indicator on the CENTRE - and that is a coin flip
+    precisely here, because ``FAR_LAG`` is the same 32.0 as the ladder's top
+    rung and ``_build_field`` jitters every atom by ``exp(0.1 * randn)``. With
+    ``num_heads=1`` there is no head average to smooth the flip out, so on the
+    -s run depths 2 and 4 reported a hard 0.000 for 14k steps while holding
+    25-31% of their mixture on an atom at lag 27-31 with a sigma near 10 - the
+    card arguing against reach at the two depths that had the most of it.
+
+    The integral has no such edge: an atom centred at 31 with sigma 10 reports
+    just under half its weight as far, which is true, and the metric moves
+    continuously as mu and sigma do. NUMBERS FROM BEFORE THIS CHANGE ARE NOT
+    COMPARABLE - the indicator over-reported a wide far atom (all of its mass,
+    including the half inside the threshold) and under-reported a near one at
+    zero.
+
+    This measures the FIELD, not the post-softmax weight: the Gaussian has mass
+    at negative lag that causality removes and the softmax renormalises away.
+    ``ssog_reach`` reads the same way, and the pair only answers where the bank
+    is POINTED.
+    """
+    return 0.5 * torch.erfc((lag - mu) / (sigma * math.sqrt(2.0)))
 
 
 def _depth_cards(prefix: str, title: str, y_label: str, order: int, text: str) -> dict:
@@ -215,16 +250,20 @@ class ArcSSOGAttention(SSOGAttention):
         ),
         **_depth_cards(
             "ssog_far_mass",
-            f"SSOG Far Mass (lambda beyond lag {FAR_LAG:.0f}, per depth)",
+            f"SSOG Far Mass (mixture density beyond lag {FAR_LAG:.0f}, per depth)",
             "Share of mixture weight",
             90,
-            "The share of each pass's mixture sitting on atoms centred beyond "
-            f"lag {FAR_LAG:.0f}. This is the direct answer to whether the "
-            "block does anything at range: a populated bank is only worth its "
-            "parameters if the far half keeps weight. Decaying to zero says "
-            "the model paid for a delay line and then used the first few taps, "
-            "and the honest response is to shorten the ladder rather than to "
-            "keep claiming reach.",
+            "The share of each pass's mixture density sitting beyond lag "
+            f"{FAR_LAG:.0f} - sum_r lambda_r * P(x > {FAR_LAG:.0f}) under atom "
+            "r's own Gaussian, so a wide atom parked on the threshold "
+            "contributes the half of itself that is actually far. This is the "
+            "direct answer to whether the block does anything at range: a "
+            "populated bank is only worth its parameters if the far half keeps "
+            "weight. Decaying to zero says the model paid for a delay line and "
+            "then used the first few taps, and the honest response is to "
+            "shorten the ladder rather than to keep claiming reach. It read "
+            "the CENTRE (mu > threshold) until 2026-08-21, which made it a "
+            "coin flip at the ladder's top rung; earlier values do not compare.",
         ),
         **_depth_cards(
             "ssog_temperature",
@@ -264,7 +303,11 @@ class ArcSSOGAttention(SSOGAttention):
             "mass). Read it with the share card: the logit is what the pass "
             "asked for, the share is what the softmax gave it, and the gap is "
             "the position-dependent part. Driving strongly negative means the "
-            "pass is closing an outlet it was handed.",
+            "pass is closing an outlet it was handed. This is the APPLIED "
+            "value, EMA'd in the forward - a modular-SMEAR router targets "
+            "raw_null, so the base parameter is not what runs, and until "
+            "2026-08-21 the card plotted the base while the share beside it "
+            "came from the merge.",
         ),
         "ssog_geometry": {
             "description": (
@@ -379,9 +422,11 @@ class ArcSSOGAttention(SSOGAttention):
             if self.null_atom
             else None
         )
-        self.register_buffer(
-            "null_share", torch.zeros(self.depths), persistent=False
-        )
+        # Buffers from the base, never a local copy - `_null_slots` already
+        # says `self.depths`, and the one time this method registered its own
+        # the logit half of the card drifted onto a different tensor from the
+        # share half. See SSOGAttention._register_null_buffers.
+        self._register_null_buffers()
 
     def _null_logit(self, current_depth: int) -> Tensor:
         return self.raw_null[min(int(current_depth), self.depths - 1)].float()
@@ -517,15 +562,18 @@ class ArcSSOGAttention(SSOGAttention):
                 F.softplus(self.raw_temperature[d].detach().float()) + 0.5
             ).mean().item()
 
-            mu, _, lam = self._atoms(d)
+            mu, sigma, lam = self._atoms(d)
             # First moment of the MIXTURE, which is a real summary, rather than
             # a mean over the ladder, which names a lag no atom occupies.
             out[f"ssog_reach_d{d}"] = (lam * mu).sum(dim=-1).mean().item()
             out[f"ssog_far_mass_d{d}"] = (
-                (lam * (mu > FAR_LAG).float()).sum(dim=-1).mean().item()
+                (lam * _tail_mass(mu, sigma, FAR_LAG)).sum(dim=-1).mean().item()
             )
             if self.raw_null is not None:
-                out[f"ssog_null_logit_d{d}"] = self.raw_null[d].detach().float().mean().item()
+                # The APPLIED logit, EMA'd in the forward. `self.raw_null` is
+                # the pre-merge base and is not what ran; see
+                # SSOGAttention._note_null_logit.
+                out[f"ssog_null_logit_d{d}"] = self.null_logit_seen[d].item()
                 out[f"ssog_null_share_d{d}"] = self.null_share[d].item()
         self._snapshot_cache = self._build_snapshots()
         return out

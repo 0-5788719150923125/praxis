@@ -52,8 +52,20 @@ const STEP := 0.55
 
 ## How many stations are kept ahead of the camera, and how far behind. The view distance is
 ## STEP * AHEAD; the fog is sized from it so the far end is always haze.
+##
+## BEHIND IS LARGE BECAUSE THE CAMERA DOES NOT LOOK ALONG ITS OWN TANGENT. It aims at a point
+## several stations up the track (see update), so on a bend the view axis tilts tens of degrees
+## off the direction of travel - and then the frustum sweeps back over tube the camera has
+## already passed. At three stations there was not enough of it, and the gap showed as BLACK
+## WEDGES at the frame edges. Rings behind the eye are nearly free: they fail the near-plane
+## test and cost one comparison each.
 const AHEAD := 56
-const BEHIND := 3
+const BEHIND := 16
+
+## How far up the track the camera aims, in stations. Enough that a bend reads as a bend being
+## taken rather than as one permanently at the edge of frame; not so far that the view axis
+## leaves the tube on the tightest tracks (which is also what BEHIND has to cover).
+const LOOK_AHEAD := 5.0
 
 ## The cross-section's resolution. Sixteen was the first cut and the near wall came out as a
 ## handful of enormous flat plates: at a 90-degree lens the first ring subtends most of the
@@ -190,10 +202,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 
 	_mote_n = 0 if rng.randf() < 0.25 else rng.randi_range(30, 110)
 	for i in _mote_n:
-		# Fixed in the WORLD, not on the screen: each one holds its own place along the track
-		# and streams past as the camera reaches it, then is recycled a view-length ahead.
+		# `at` is an ABSOLUTE arclength, not an offset from the camera, and that distinction was
+		# the whole bug. Held as an offset, every mote sits the same distance ahead for ever: the
+		# field travels WITH the eye and nothing ever streams past, which on the nearest objects
+		# in the frame is most of what "jittery" was. It is recycled a view-length forward once
+		# the camera has gone by - see _advance_track.
 		_motes.append({
-			"ds": rng.randf() * STEP * float(AHEAD),
+			"at": rng.randf() * STEP * float(AHEAD),
 			"th": rng.randf() * TAU,
 			"rr": rng.randf_range(0.10, 0.86),
 			"sz": rng.randf_range(0.012, 0.045),
@@ -247,6 +262,13 @@ func _seed_track() -> void:
 	_pos.clear()
 	_bas.clear()
 	_s0 = 0.0
+	# THE CAMERA STARTS WHERE IT WILL LIVE, `BEHIND` stations into the buffer, and not at zero.
+	# _advance_track holds it at that offset for the rest of the scene, so starting anywhere else
+	# means the opening seconds run in a part of the buffer the interpolation cannot serve: with
+	# the cubic needing a station either side, the eye is PINNED at station one until the track
+	# has caught up, and then lurches into motion. It measured as a single acceleration spike
+	# sixty times the mean - worse, on that measure, than the polyline it replaced.
+	_s = float(BEHIND) * STEP
 	_pos.append(Vector3.ZERO)
 	_bas.append(Basis.IDENTITY)
 	while _pos.size() < AHEAD + BEHIND + 2:
@@ -281,20 +303,40 @@ func _advance_track() -> void:
 		_s0 += STEP
 	while _pos.size() < AHEAD + BEHIND + 2:
 		_extend()
+	# Motes the camera has gone past come back a view-length ahead, so a fixed handful of them
+	# serves an endless track.
+	var span := STEP * float(AHEAD)
+	for m in _motes:
+		if float(m["at"]) < _s - STEP:
+			m["at"] = float(m["at"]) + span
 
 
-## The frame at an arbitrary arclength, interpolated between stations. Returns [position, basis].
+## The frame at an arbitrary arclength. Returns [position, basis].
+##
+## CUBIC, AND THAT IS THE WHOLE FIX FOR THE JITTER. Stations are joined by STRAIGHT segments -
+## `_extend` steps along the frame's forward axis - so interpolating between them linearly puts
+## the eye on a POLYLINE. Its position is continuous, which is why this looked correct in a still
+## frame; its VELOCITY is not. At every station the direction of travel changes abruptly by the
+## curvature times the step, and at eight units a second over a step of 0.55 that is fifteen
+## direction changes a second. Reported as "super jittery... a sequence of discrete jumps at each
+## step", which is exactly what it is.
+##
+## A Catmull-Rom through the four surrounding stations is C1: the velocity is continuous, so
+## there is no per-station kink left to see. The orientation gets the same treatment on the
+## quaternion, because a lerp of two bases has the identical defect one derivative up. The
+## polyline was only ever Euler's approximation of the curve the curvature functions describe,
+## so this is nearer the real track as well as smoother.
 func _frame_at(s: float) -> Array:
 	var fi := (s - _s0) / STEP
-	var i := clampi(int(floor(fi)), 0, _pos.size() - 2)
+	# One station of margin either side, for the cubic's four points.
+	var i := clampi(int(floor(fi)), 1, _pos.size() - 3)
 	var t := clampf(fi - float(i), 0.0, 1.0)
-	var p: Vector3 = (_pos[i] as Vector3).lerp(_pos[i + 1] as Vector3, t)
-	var a: Basis = _bas[i]
-	var b: Basis = _bas[i + 1]
-	# Component-wise lerp then orthonormalize: over a step this small the two frames are within
-	# a couple of degrees, so this is a slerp to well inside a pixel and costs a fraction of one.
-	var m := Basis(a.x.lerp(b.x, t), a.y.lerp(b.y, t), a.z.lerp(b.z, t)).orthonormalized()
-	return [p, m]
+	var p: Vector3 = (_pos[i] as Vector3).cubic_interpolate(
+		_pos[i + 1] as Vector3, _pos[i - 1] as Vector3, _pos[i + 2] as Vector3, t)
+	var q := Quaternion(_bas[i] as Basis).spherical_cubic_interpolate(
+		Quaternion(_bas[i + 1] as Basis), Quaternion(_bas[i - 1] as Basis),
+		Quaternion(_bas[i + 2] as Basis), t)
+	return [p, Basis(q)]
 
 
 func update(f: AudioFeatures, delta: float) -> void:
@@ -322,7 +364,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# the tangent. Aiming at a point AHEAD is what makes a bend read as a bend being taken -
 	# the vanishing point leads into the turn the way a driver's eyes do - where a pure tangent
 	# keeps the turn permanently at the edge of frame.
-	var la := _frame_at(_s + STEP * 7.0)
+	var la := _frame_at(_s + STEP * LOOK_AHEAD)
 	lens.eye = p
 	lens.look = la[0]
 	lens.up = b.y
@@ -378,7 +420,15 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.glow = _glow
 	job.fog = _fog
 	job.light_th = _light_th
-	job.motes = _motes
+	# COPIED, not handed over. `_motes` keeps being recycled by _advance_track while the worker
+	# is reading, and a job that shares a mutable array with the sim is the one thing
+	# [FrameForge]'s contract forbids.
+	for m in _motes:
+		job.m_at.append(float(m["at"]))
+		job.m_th.append(float(m["th"]))
+		job.m_rr.append(float(m["rr"]))
+		job.m_sz.append(float(m["sz"]))
+		job.m_hue.append(float(m["hue"]))
 	_forge.kick(job.run, {}, self, job)
 
 
@@ -455,7 +505,11 @@ class TunnelJob:
 	var glow := 0.0
 	var fog := Color.BLACK
 	var light_th := 1.2
-	var motes: Array = []
+	var m_at := PackedFloat32Array()
+	var m_th := PackedFloat32Array()
+	var m_rr := PackedFloat32Array()
+	var m_sz := PackedFloat32Array()
+	var m_hue := PackedFloat32Array()
 
 	func run(_snapshot: Dictionary) -> Array:
 		var tb := TriBatch.new()
@@ -609,30 +663,41 @@ class TunnelJob:
 		# not empty. They are what makes the SPEED legible up close - the wall's own detail is
 		# all far away and slides slowly, and a fast tunnel with nothing near the lens reads
 		# oddly serene.
-		for m in motes:
-			var si2: float = s + float(m["ds"])
-			var idx := int((si2 - s0) / step)
-			if idx < 0 or idx >= n:
+		for k in m_at.size():
+			var si2: float = m_at[k]
+			# INTERPOLATED between stations, never snapped to one. `int((si - s0) / step)` was the
+			# first cut and it teleports every mote a whole station at a time - a fifth of a
+			# second of travel, on the objects nearest the lens, fifteen times a second.
+			var fidx := (si2 - s0) / step
+			var idx := int(floor(fidx))
+			if idx < 0 or idx >= n - 1:
 				continue
-			var rr2: float = rad[idx] * float(m["rr"])
-			var th2: float = float(m["th"]) + twist * si2
+			var ft := clampf(fidx - float(idx), 0.0, 1.0)
+			var rr2: float = lerpf(rad[idx], rad[idx + 1], ft) * m_rr[k]
+			var th2: float = m_th[k] + twist * si2
 			var cx2 := cos(th2)
 			var cy2 := sin(th2)
 			var pj2 := lens.project(Vector3(
-				px[idx] + rx[idx] * cx2 * rr2 + ux[idx] * cy2 * rr2,
-				py[idx] + ry[idx] * cx2 * rr2 + uy[idx] * cy2 * rr2,
-				pz[idx] + rz[idx] * cx2 * rr2 + uz[idx] * cy2 * rr2))
+				lerpf(px[idx], px[idx + 1], ft)
+					+ lerpf(rx[idx], rx[idx + 1], ft) * cx2 * rr2
+					+ lerpf(ux[idx], ux[idx + 1], ft) * cy2 * rr2,
+				lerpf(py[idx], py[idx + 1], ft)
+					+ lerpf(ry[idx], ry[idx + 1], ft) * cx2 * rr2
+					+ lerpf(uy[idx], uy[idx + 1], ft) * cy2 * rr2,
+				lerpf(pz[idx], pz[idx + 1], ft)
+					+ lerpf(rz[idx], rz[idx + 1], ft) * cx2 * rr2
+					+ lerpf(uz[idx], uz[idx + 1], ft) * cy2 * rr2))
 			if pj2.z <= 0.35:
 				continue                        # too close to be a speck; it would be a plate
 			# Clamped, and it has to be: a screen size of `world / depth` is unbounded as the
 			# depth goes to zero, and an unclamped mote arriving at the lens is a flat pasted
 			# square filling a tenth of the frame. Seen, in the first render.
-			var sz := clampf(float(m["sz"]) * u / pj2.z, 1.0, u * 0.008)
+			var sz := clampf(m_sz[k] * u / pj2.z, 1.0, u * 0.008)
 			var near_fade := clampf((pj2.z - 0.35) * 1.6, 0.0, 1.0)
 			var c := Vector2(pj2.x * u, pj2.y * u)
-			var mc := Color.from_hsv(float(m["hue"]), clampf(sat * 0.7, 0.0, 1.0),
+			var mc := Color.from_hsv(m_hue[k], clampf(sat * 0.7, 0.0, 1.0),
 				clampf(0.75 + 0.5 * glow, 0.0, 1.0), near_fade)
-			var fc := _fogged(mc, float(m["ds"]), reach)
+			var fc := _fogged(mc, si2 - s, reach)
 			fc.a = mc.a
 			faces.append({"d": pj2.z,
 				"p": PackedVector2Array([

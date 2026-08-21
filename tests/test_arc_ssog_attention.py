@@ -11,12 +11,14 @@ import torch.nn.functional as F
 
 from praxis import PraxisConfig
 from praxis.attention import ATTENTION_REGISTRY
-from praxis.attention.arc_ssog import ARC_GATE_INIT, ArcSSOGAttention
+from praxis.attention.arc_ssog import ARC_GATE_INIT, FAR_LAG, ArcSSOGAttention
 from praxis.attention.ssog import (
     COLD_GATE_INIT,
     NULL_LOGIT_INIT,
     NUM_ATOMS,
+    SIGMA_FLOOR,
     SSOGAttention,
+    _inv_softplus,
 )
 
 
@@ -287,3 +289,80 @@ def test_null_share_is_tracked_per_depth():
     assert metrics["ssog_null_share_d2"] > 0.0
     assert metrics["ssog_null_share_d0"] == 0.0  # depth 0 never ran
     assert metrics["ssog_null_logit_d2"] == pytest.approx(NULL_LOGIT_INIT)
+
+
+def test_null_logit_card_reports_the_merged_value_not_the_base():
+    """A modular-SMEAR router reparametrises ``raw_null`` for the duration of
+    the forward, so the base parameter is not what runs.
+
+    ``training_metrics`` is called OUTSIDE that reparametrisation, and reading
+    ``self.raw_null`` there put the base on the card while the share beside it
+    was measured from the merge. On the -s run arm 0 carried +2.0 at depth 0,
+    so the two halves of one card disagreed by two logits for 14k steps.
+    """
+    module, _ = _module(null_atom=True)
+    merged = module.raw_null.detach() + 4.0
+    x = torch.randn(2, 24, 64)
+    for _ in range(200):
+        torch.func.functional_call(module, {"raw_null": merged}, (x, None, None, None, 1))
+
+    seen = module.training_metrics()["ssog_null_logit_d1"]
+    # The base never moved; only the merged tensor ever reached the sigmoid.
+    assert module.raw_null[1].mean().item() == pytest.approx(NULL_LOGIT_INIT)
+    assert seen > NULL_LOGIT_INIT + 1.0, seen
+    assert seen < NULL_LOGIT_INIT + 4.0  # an EMA, so it approaches from below
+    # A depth that never ran keeps the init rather than inheriting depth 1's.
+    assert module.training_metrics()["ssog_null_logit_d0"] == pytest.approx(
+        NULL_LOGIT_INIT
+    )
+
+
+def test_far_mass_integrates_the_atom_rather_than_flipping_on_its_centre():
+    """``FAR_LAG`` equals the ladder's top rung on purpose, which made an
+    indicator on ``mu`` a coin flip exactly where the measurement matters.
+
+    On the -s run (num_heads=1, so no head average to smooth it) depths 2 and 4
+    reported a hard 0.000 for 14k steps while holding a quarter of their
+    mixture on an atom at lag 27-31 with a sigma near 10.
+    """
+    module, _ = _module()
+    d = 0
+    with torch.no_grad():
+        mu = torch.tensor([0.5, 2.0, 8.0, 31.0])
+        sigma = torch.tensor([0.05, 0.2, 1.0, 10.0])
+        module.raw_mu[d] = _inv_softplus(mu.expand_as(module.raw_mu[d]).clone())
+        module.raw_sigma[d] = _inv_softplus(
+            (sigma - SIGMA_FLOOR).clamp_min(1e-4).expand_as(module.raw_sigma[d]).clone()
+        )
+        module.log_lambda[d] = 0.0  # uniform, so lambda_r = 0.25
+
+    far = module.training_metrics()[f"ssog_far_mass_d{d}"]
+    # The old indicator: every centre is below 32, so it read exactly zero.
+    assert (mu > FAR_LAG).float().sum() == 0
+    # The integral: the top atom is wide enough that ~46% of it is past 32.
+    assert far == pytest.approx(0.25 * 0.5 * torch.erfc(
+        (FAR_LAG - mu[3]) / (sigma[3] * 2.0 ** 0.5)
+    ).item(), rel=1e-3)
+    assert 0.10 < far < 0.13, far
+
+
+def test_far_mass_does_not_jump_when_a_wide_atom_crosses_the_threshold():
+    """Continuity is the property the indicator lacked: nudging one centre
+    across ``FAR_LAG`` must not move the card by a whole lambda."""
+    module, _ = _module()
+    d = 1
+    reads = []
+    for centre in (31.5, 32.5):
+        with torch.no_grad():
+            mu = torch.tensor([0.5, 2.0, 8.0, centre])
+            sigma = torch.tensor([0.05, 0.2, 1.0, 10.0])
+            module.raw_mu[d] = _inv_softplus(mu.expand_as(module.raw_mu[d]).clone())
+            module.raw_sigma[d] = _inv_softplus(
+                (sigma - SIGMA_FLOOR)
+                .clamp_min(1e-4)
+                .expand_as(module.raw_sigma[d])
+                .clone()
+            )
+            module.log_lambda[d] = 0.0
+        reads.append(module.training_metrics()[f"ssog_far_mass_d{d}"])
+    assert abs(reads[1] - reads[0]) < 0.02, reads  # the indicator moved 0.25
