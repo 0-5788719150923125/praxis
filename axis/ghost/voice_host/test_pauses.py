@@ -208,6 +208,11 @@ def _zero_runs(a, minlen: int = 8):
 CHECKS: list = []
 
 
+def near(got, want, what, tol=1e-6):
+    """`eq` for a value that comes off a curve rather than out of a table."""
+    ok(abs(got - want) < tol, "%s == %.6f (got %.6f)" % (what, want, got))
+
+
 def check(fn):
     CHECKS.append(fn)
     return fn
@@ -230,22 +235,29 @@ def ok(cond, what: str):
 def test_table_and_scale():
     from backends.piper import PAUSE_AFTER, _gap_for, _pause_for
 
+    # AT 1.0 THE TABLE IS THE ANSWER, exactly - the dial's whole job is to leave the
+    # calibrated default alone and this is where that is pinned down.
     eq(_pause_for(",", {}), PAUSE_AFTER[","], "comma at default scale")
-    eq(_pause_for(":", {"pause_scale": 2.0}), PAUSE_AFTER[":"] * 2.0, "colon doubled")
     eq(_pause_for(";", {"pause_scale": 0.0}), 0.0, "semicolon at scale 0")
     eq(_pause_for("x", {}), 0.0, "a non-mark gets nothing")
     # the unification: no explicit sentence_gap means the table, and the table's
     # sentence-final value IS the old 0.32 default
     eq(_gap_for(".", {}), 0.32, "sentence gap default")
     eq(_gap_for("?", {}), 0.32, "question mark uses the same gap")
-    eq(_gap_for(".", {"pause_scale": 0.5}), 0.16, "sentence gap halved")
     eq(_gap_for(".", {"sentence_gap": 0.5}), 0.5, "explicit sentence_gap still wins")
-    eq(
-        _gap_for(".", {"sentence_gap": 0.5, "pause_scale": 2.0}),
-        1.0,
-        "explicit sentence_gap is scaled too",
-    )
     eq(_gap_for(".", {"pause_scale": "nonsense"}), 0.32, "a bad scale falls back")
+    # ...AND AWAY FROM 1.0 IT IS NOT A MULTIPLICATION. These were `table x scale` and are
+    # not any more, deliberately: the dial scales the whole rest (the model's own dwell
+    # included, see DWELL) along a saturating curve, so our share of it is what is left
+    # after the model's is subtracted back off. Doubling the dial does NOT double the
+    # splice - it doubles neither, it moves the REST toward its ceiling, which is the
+    # only reading a listener can hear as "the same pacing, slower".
+    near(_pause_for(":", {"pause_scale": 2.0}), 0.446739, "colon at 2.0 is the curve, not the table doubled")
+    near(_gap_for(".", {"pause_scale": 0.5}), 0.128006, "under 1.0 the model is already resting most of it")
+    near(_gap_for(".", {"sentence_gap": 0.5, "pause_scale": 2.0}), 0.923875,
+         "an explicit sentence_gap is a top-up at 1.0 like any other, and rides the same curve")
+    eq(_gap_for(".", {"sentence_gap": 0.5, "pause_scale": 1.0}), 0.5,
+       "...and is itself, exactly, at 1.0")
 
 
 # -- 2. splice maths -------------------------------------------------------
@@ -385,12 +397,31 @@ def test_synth_tokens_inserts_the_right_totals():
     def frames(r):
         return (r["bytes"] - 44) // 2
 
+    # ASK THE RULE, don't restate it. What this gates is that `_synth_tokens` inserts and
+    # accounts for what the pause rule says - the rule itself is gated in
+    # check_the_punctuation_hierarchy_survives_the_slider, and a second copy of it here
+    # only ever meant this test failed whenever that one changed. At scale 1.0 the rule
+    # returns the table exactly (asserted in test_table_and_scale), so the default case is
+    # pinned to the same numbers it always was.
+    # The fake voice's audio never goes quiet, so there is no dwell at these marks to
+    # measure and the top-up is scaled outright - which is itself the property being
+    # gated here: the splicer inserts what the rule says about THE AUDIO IN FRONT OF IT,
+    # not what a table guessed. On a real voice the same call subtracts the model's own
+    # rest, and that is measured end to end rather than here.
+    from backends.piper import _gap_for, _pause_multiplier, _rest_from
+
     for scale, res in ((1.0, one), (2.0, two)):
-        want = sum(round(PAUSE_AFTER[m] * scale * SR) for m in (",", ":", "."))
-        eq(
-            frames(res) - frames(zero),
-            want,
-            f"samples added at scale {scale} (comma + colon + sentence gap)",
+        mult = _pause_multiplier({"pause_scale": scale})
+        rule = {m: _rest_from(0.0, top, mult) for m, top in ((",", 0.10), (":", 0.16))}
+        rule["."] = _gap_for(".", {"pause_scale": scale})
+        want = sum(round(rule[m] * SR) for m in (",", ":", "."))
+        # Within a sample or two, not exact: the dwell is measured off the waveform, and
+        # even this fake voice dips under the quiet threshold for a sample here and there,
+        # which is the measurement working rather than an accounting error.
+        got = frames(res) - frames(zero)
+        ok(
+            abs(got - want) <= 2,
+            f"samples added at scale {scale} (comma + colon + sentence gap): {got} ~ {want}",
         )
 
     # the token AFTER the comma must move by the comma's pause, not by more
@@ -625,34 +656,87 @@ def check_syllabic_fold():
 @check
 @check
 def check_the_punctuation_hierarchy_survives_the_slider():
-    """A comma may never out-rest a full stop, at any Pause setting.
+    """A comma may never out-rest a full stop, and their RATIO may not move with the dial.
 
-    The sentence gap is capped (it compounds over a chapter); mid-sentence marks were not, so
-    at the slider's top a comma took 1.0 s of spliced silence on top of the ~0.3 s the model
-    already dwells there while a full stop stayed pinned at 1.2 s. Reported as a large breath
-    after every comma and none anywhere else, which is exactly what an inverted hierarchy
-    sounds like. The ordering has to hold at EVERY scale, not just at 1.
+    Three bugs live in this one function's history, all reported by ear, and the third is
+    only visible if you measure what a listener hears rather than what we splice.
+
+      1. An inversion. Mid-sentence marks were uncapped while the sentence gap was pinned,
+         so past 1.0 the commas overtook the full stops.
+      2. A dead dial. Capping each mark at its share of one absolute ceiling meant they all
+         hit it at 3.75x, and the top 62% of the slider did nothing.
+      3. Drifting proportions. Scaling only OUR silence linearly does not scale the REST
+         linearly, because the model is resting too - so the dial stretched the gaps between
+         the marks rather than the marks themselves, and no setting suited both ends of the
+         punctuation ladder at once.
+
+    So the assertions below are on the TOTAL rest, which is the only thing anyone hears.
     """
     from backends import piper
 
-    for scale in (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 10.0):
+    def total(mark, scale):
         p = {"pause_scale": scale}
-        comma = piper._pause_for(",", p)
-        semi = piper._pause_for(";", p)
-        colon = piper._pause_for(":", p)
-        gap = piper._gap_for(".", p)
-        ok(
-            comma <= semi <= colon < gap or scale == 0.0,
-            "at %gx the order , <= ; <= : < . holds (%.3f %.3f %.3f %.3f)"
-            % (scale, comma, semi, colon, gap))
-    # ...and the default render is untouched: below the ceiling the cap cannot bite, so
-    # everything anyone has already heard sounds the same.
-    for scale in (0.5, 1.0, 2.0, 3.0):
-        p = {"pause_scale": scale}
-        ok(
-            abs(piper._pause_for(",", p) - 0.10 * scale) < 1e-9,
-            "at %gx a comma is still exactly linear (%.4f)" % (scale, piper._pause_for(",", p)),
-        )
+        add = piper._gap_for(mark, p) if mark in ".!?" else piper._pause_for(mark, p)
+        return piper.DWELL[mark] + add
+
+    for scale in (1.0, 2.0, 3.0, 3.75, 5.0, 6.0, 7.5, 10.0):
+        c, sm, cl, g = (total(m, scale) for m in (",", ";", ":", "."))
+        ok(c <= sm <= cl <= g, "at %gx the order , <= ; <= : <= . holds (%.3f %.3f %.3f %.3f)"
+            % (scale, c, sm, cl, g))
+    # BELOW 1.0 THE ORDER IS THE MODEL'S, not ours, and that is not a failure to assert
+    # around: we can only ADD silence. This voice dwells 0.30 s at a colon and 0.18 after a
+    # full stop, so under about 0.6 on the dial - where the target rest falls below what the
+    # model is already doing - the colon genuinely out-rests the sentence and there is
+    # nothing to subtract. What must hold is that we are not making it worse: nothing is
+    # spliced anywhere down there.
+    for scale in (0.0, 0.25):
+        for mark in (",", ";", ":"):
+            ok(piper._pause_for(mark, {"pause_scale": scale}) == 0.0,
+               "at %gx `%s` splices nothing - the model is already resting longer" % (scale, mark))
+    # ...and just under 1.0 it is down to milliseconds rather than exactly nothing, which is
+    # the floor arriving smoothly instead of as a cliff.
+    for mark in (",", ";", ":"):
+        v = piper._pause_for(mark, {"pause_scale": 0.5})
+        ok(v < 0.02, "at 0.5x `%s` splices next to nothing (%.4fs)" % (mark, v))
+
+    # THE RATIO IS THE FIX. A full stop rests twice as long as a comma at 1.0; it has to
+    # rest twice as long as a comma everywhere, or one setting cannot suit both.
+    # From 1.0 up, which is the dial's whole working range: below it the floor above is
+    # what decides, and a ratio nobody can influence is not a claim about this rule.
+    at_one = total(".", 1.0) / total(",", 1.0)
+    for scale in (1.0, 2.0, 3.0, 3.75, 5.0, 6.0, 7.5, 10.0):
+        r = total(".", scale) / total(",", scale)
+        ok(abs(r - at_one) < 0.02,
+           "at %gx a full stop is still %.2fx a comma (%.2f)" % (scale, at_one, r))
+
+    # The default reading is the one it always was, to the millisecond.
+    for mark, base in ((",", 0.10), (";", 0.13), (":", 0.16)):
+        ok(abs(piper._pause_for(mark, {"pause_scale": 1.0}) - base) < 1e-6,
+           "at 1x `%s` splices exactly its table entry (%.4f)" % (mark, piper._pause_for(mark, {"pause_scale": 1.0})))
+    ok(abs(piper._gap_for(".", {"pause_scale": 1.0}) - 0.32) < 1e-6, "...and so does a full stop")
+
+    # Still live to the end of its travel - bug 2 must not come back.
+    ok(total(".", 10.0) > total(".", 3.75) * 1.9,
+       "the top of the slider rests far past its middle (%.2fs vs %.2fs)"
+       % (total(".", 10.0), total(".", 3.75)))
+    # AND THE TOP IS REACHABLE AT ALL. The curve this replaced was a saturating exponential
+    # that reached 3.2x at the dial's top, 3.28 at 20 and 3.29 at 100 - so "the pause effect
+    # barely seems to work at 10x" could not have been answered by allowing a bigger number.
+    # A power law keeps climbing, and this is the assertion that it does.
+    from backends.piper import _pause_multiplier
+    ok(abs(_pause_multiplier({"pause_scale": 10.0}) - 5.0) < 0.01,
+       "the top of the dial is 5x the natural rest (%.2f)" % _pause_multiplier({"pause_scale": 10.0}))
+
+    # ...and NOT finicky: every step up the dial adds less than the step before it, and the
+    # one the report named (5 to 6) is a nudge rather than a lurch.
+    steps = [total(".", s + 1.0) - total(".", s) for s in range(1, 10)]
+    ok(all(b <= a + 1e-9 for a, b in zip(steps, steps[1:])),
+       "from 1.0 up, each unit of dial adds less than the one before (%s)"
+       % " ".join("%.2f" % x for x in steps))
+    # Reach costs step size - that is the trade, made deliberately and bounded here. 13% per
+    # whole unit of dial is a nudge; the linear law that prompted the complaint moved 18%.
+    jump = (total(".", 6.0) - total(".", 5.0)) / total(".", 5.0)
+    ok(jump < 0.15, "5.0 -> 6.0 moves a full stop by %.0f%%, not a lurch" % (jump * 100.0))
 
 
 def check_hyphen_is_a_word_boundary():

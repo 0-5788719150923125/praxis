@@ -310,8 +310,31 @@ const FLURRY_CD_MIN := 6     # never fewer scenes between flurries, whatever the
 # purpose - see the sampler in _drive_stinger and the gate in
 # tests/sting_shape_check.gd, which checks the outward one against the margin
 # below rather than against a remembered number.
-const STING_PUSH := Vector2(0.07, 0.20)   # inward: crops, can expose nothing
-const STING_PULL := Vector2(0.02, 0.05)   # outward: walks the painted edge into shot
+# ...AND THE SIZE OF ONE IS ANCHORED TO THE CAMERA'S ORDINARY TRAVEL, below, rather than
+# picked. The first version of this gesture was reported as "the entire scene explodes
+# quickly, then recovers immediately" and the fix was its ENVELOPE - it had been a one-frame
+# step, and tests/sting_shape_check.gd has gated the attack ever since. The complaint came
+# back anyway, in the same words, about a punch that is now perfectly smooth: "they were
+# exploding/contracting quickly, in response to harmonics... nobody expects a scene to
+# explode and quickly contract." Smooth was necessary and was never sufficient. A 20% zoom
+# is a fifth of the frame, arriving three times in a row, and no envelope makes that calm.
+#
+# DRIFT_PULL is what the camera moves by on its own, all the time, and a punch is meant to
+# be an ACCENT over that rather than a different order of thing - so the inward kick tops
+# out at one and a half times it. That ratio is the number worth arguing about; the rest
+# follow from it.
+const STING_PUSH := Vector2(0.03, 0.12)   # inward: crops, can expose nothing
+const STING_PULL := Vector2(0.015, 0.04)  # outward: walks the painted edge into shot
+## What a punch is worth when the session is a READING rather than a song, applied to the
+## camera half of it and to the length of a run.
+##
+## A stinger is a music-video gesture - BANG, BANG, BANG - and ghost is also the thing a
+## chapter is read over, where the scene is a background and the words are the content. The
+## trigger deliberately fires in spoken sessions (it used to be gated on an absolute music
+## level and never fired there at all, see `_lean`), and that is right: a reading may still
+## be punctuated. It may not be interrupted. At this fraction the accent is a lean of a few
+## percent - present, and nothing anyone would look up at.
+const STING_READING := 0.45
 ## The overdraw margin layer-composed scenes are painted to - the literal 1.15 in
 ## [method GhostScene.update_layers], repeated here because the punch has to stay
 ## inside it and nothing else connects the two numbers.
@@ -962,15 +985,16 @@ func _drive_stinger(delta: float, bf: float) -> void:
 			_sting_zoom = _rng.randf_range(STING_PUSH.x, STING_PUSH.y)
 			if _rng.randf() < 0.5:
 				_sting_zoom = -_rng.randf_range(STING_PULL.x, STING_PULL.y)
-			_sting_rot = _rng.randf_range(-0.09, 0.09)
-			_sting_skew = _rng.randf_range(-0.06, 0.06)
-			_sting_flash = _rng.randf_range(0.20, 0.5)
+			_sting_rot = _rng.randf_range(-0.055, 0.055)
+			_sting_skew = _rng.randf_range(-0.04, 0.04)
+			_sting_flash = _rng.randf_range(0.15, 0.35)
 		elif _flurry_cd == 0 and _burst_left == 0:   # else maybe begin a run (rare, harmonic-gated)
 			# Same content-relative gate as the burst (see _lean): the old absolute `_audio_ema >= 0.2`
 			# is a music level, so spoken sessions never punched once either.
 			var lean := _lean()
 			if lean >= 0.0 and _rng.randf() < (0.02 + 0.07 * _flurry_drive(lean)) * flourish:
-				_sting_left = _rng.randi_range(2, 4)  # BANG, BANG (, BANG)
+				# BANG, BANG (, BANG) - or half of one, over a reading.
+				_sting_left = _rng.randi_range(1, 2) if _reading() else _rng.randi_range(2, 4)
 				_flurry_cd = _flurry_spacing()
 				print("ghost: STINGER x%d" % _sting_left)
 	if _sting_t >= 0.0:
@@ -987,6 +1011,9 @@ func _drive_stinger(delta: float, bf: float) -> void:
 	# from half the catalogue. The brightness flash is not a camera move and stays
 	# universal, which is what a static scene gets instead.
 	var g: float = 0.35 + 0.65 * float(_current.behavior.get("view", 1.0))
+	# ...and a reading is not a music video. See STING_READING.
+	if _reading():
+		g *= STING_READING
 	# ...and a FIELD scene is not rolled or sheared at all. Shot selection already
 	# denies fields `canted` and `pan` "so their edges never swing into view"
 	# (Shots.FIELD_BAG) - and then the punch rolled them 5 degrees anyway, which is
@@ -996,9 +1023,23 @@ func _drive_stinger(delta: float, bf: float) -> void:
 	_current.view.pulse_zoom = 1.0 + _sting_zoom * p * g
 	_current.view.pulse_rot = _sting_rot * p * g * swing
 	_current.view.pulse_skew = _sting_skew * p * g * swing
-	# Brightness/tint flash via the node modulate, preserving the fade alpha.
-	var fl := 1.0 + _sting_flash * p
+	# Brightness/tint flash via the node modulate, preserving the fade alpha. Softened over a
+	# reading too, but by less: a change of light is what a static scene gets INSTEAD of a
+	# camera move (see above), so taking it down as far as the camera would leave those
+	# scenes with no accent at all.
+	var fl := 1.0 + _sting_flash * p * (0.65 if _reading() else 1.0)
 	_current.modulate = Color(fl * (1.0 + 0.06 * _sting_rot), fl, fl * (1.0 - 0.06 * _sting_rot), bf)
+
+
+## Is this session a reading rather than a song?
+##
+## `Spectrum.is_streaming()` is true exactly when the audio is a take being synthesized into
+## a stream - the Generative panel reading a chapter, or the synth editor - and false for a
+## song loaded from a file. It is the only signal here that separates "the picture is the
+## content" from "the picture is the background", and it is one the show should be allowed
+## to know about: a flourish that suits a track is an interruption over a paragraph.
+func _reading() -> bool:
+	return Spectrum.is_streaming()
 
 
 # The punch envelope, 0 -> 1 -> 0 across `_sting_span`. The whole point of it is

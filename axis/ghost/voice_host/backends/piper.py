@@ -31,6 +31,7 @@ dataset AND its derivation chain. Adding a voice means reading its MODEL_CARD.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import urllib.request
 from pathlib import Path
@@ -82,9 +83,103 @@ PAUSE_AFTER: dict[str, float] = {
     "?": 0.32,
 }
 
-# Longest silence to leave BETWEEN two sentences, however far pause_scale is pushed - it is
-# the one gap that compounds over a whole chapter. Mirrors generative_editor.SEAM_CEILING.
-SEAM_CEILING = 1.2
+# WHAT THE MODEL ALREADY RESTS at each mark, in seconds, measured with its own noise
+# switched off so the number is the model's and not one sample of it. The comma, semicolon
+# and colon figures are the token-span increments recorded above; the sentence-final one is
+# the trailing silence of a rendered sentence (0.138-0.145 s here) plus the leading silence
+# of the one after it (0.044), because with one sentence per request those two are what sit
+# either side of a seam.
+#
+# THIS TABLE IS WHY THE PAUSE SLIDER GOT ITS PROPORTIONS BACK. What a reader hears at a mark
+# is the model's rest plus ours, and only the second half was ever being scaled - so turning
+# the dial up did not lengthen the rests, it lengthened the DIFFERENCES between them. At 1.0
+# a full stop rests twice as long as a comma; under a linear scale that was 2.3x by 2.0,
+# 2.8x by 6.0 and 2.9x at the top. Reported exactly that way: "the pause after a comma and
+# the pause after a sentence are very different: the pause after a sentence seems to be much
+# longer... at 6.0 the comma-pauses feel about right, while the period-pauses feel far too
+# slow." Both halves of that sentence are one bug.
+#
+# THESE FIGURES ARE AN ESTIMATE AND ONLY THE SEAM USES THEM. The dwell is a property of the
+# checkpoint, the pace and the sentence, and a table cannot be right about all three: the
+# comma entry here says 0.15 s and en_US-john-medium actually rests 0.41 at the comma in
+# "He waited, and the tide came in." Get it wrong and the dial scales the ERROR instead of
+# the rest - the same bug one level down - so `_splice_pauses` MEASURES it in the waveform
+# and this table is used only where there is no waveform to measure: the seam between two
+# separately rendered sentences, which the editor inserts, and the accounting.
+#
+# The seam is the one place an estimate is safe, because it is the one dwell that does not
+# vary much - the trailing silence of a render plus the leading silence of the next, both
+# measured repeatedly at 0.138-0.145 and 0.044.
+DWELL: dict[str, float] = {
+    ",": 0.15,
+    ";": 0.19,
+    ":": 0.30,
+    ".": 0.18,
+    "!": 0.18,
+    "?": 0.18,
+}
+
+# THE PAUSE CURVE. The dial multiplies the WHOLE rest - the model's own plus ours - so every
+# mark keeps its share of the reading at every setting.
+#
+# A POWER LAW, not the saturating exponential this was first written as, and the difference
+# is the whole of a report: "even completely maxxed-out at 10x, the pause effect barely seems
+# to work with the Urgent tone... perhaps we need to allow for 100x pause". The instinct was
+# right and the remedy would not have worked - an exponential that reaches 3.2 at the top of
+# the dial reaches 3.28 at 20 and 3.29 at 100, so a bigger number buys nothing whatever. It
+# was the CURVE that topped out, not the dial.
+#
+# `d ** PAUSE_GAIN` is exactly 1.0 at 1.0 by construction (no normalising constant to round
+# and no default to drift, which the fitted pair before it managed to do), tracks the old
+# curve within 3% up to 3.0 - the part nobody complained about - and then keeps climbing
+# instead of flattening: 5.0x at the top of the dial, where a full stop rests two and a half
+# seconds. The exponent is the reach, said once: log(5)/log(10).
+#
+# It is still concave, which is the other half of "the toggle feels very finicky": every unit
+# of dial adds less than the one before it. Reach costs step size and that is the trade being
+# made here - 5.0 to 6.0 moves a rest by 13% where the flatter curve moved it by 6%.
+PAUSE_GAIN = 0.69897
+
+
+def _pause_multiplier(params: dict) -> float:
+    """How much longer than natural every rest in this reading is. 1.0 at Pause 1.0."""
+    return _pause_scale(params) ** PAUSE_GAIN
+
+
+def _rest_from(have: float, top_up: float, mult: float) -> float:
+    """How much silence to ADD where `have` seconds of it already exist.
+
+    The whole pause rule, in one line: the rest a reader hears at Pause 1.0 is what the
+    model already rests plus our top-up, and the dial multiplies THAT. Whatever is already
+    there is then subtracted back off, because we can only add.
+
+    Floored at zero: below about 0.6 on the dial the model is resting longer than the dial
+    is asking for and there is nothing to take away. That is a real limit of splicing rather
+    than a choice - shortening a rest would mean re-synthesizing the sentence.
+    """
+    # At 1.0 the answer IS the top-up, said exactly rather than computed round the houses.
+    # `(0.18 + 0.5) * 1.0 - 0.18` is 0.49999999999999994 in binary floating point, and the
+    # default reading is the one thing here that has to be reproducible to the sample.
+    if mult == 1.0:
+        return max(0.0, top_up)
+    return max(0.0, (have + top_up) * mult - have)
+
+
+def _top_up(mark: str, params: dict, base: float | None = None) -> float:
+    """Our own share of the rest at Pause 1.0: the table, or the caller's sentence_gap."""
+    return PAUSE_AFTER.get(str(mark), 0.0) if base is None else base
+
+
+def _rest_for(mark: str, params: dict, base: float | None = None) -> float:
+    """`_rest_from` with the dwell taken from DWELL rather than from the audio.
+
+    For the two places that have no waveform to measure: the sentence seam, which the editor
+    inserts between two separate renders, and the accounting. `_splice_pauses` measures the
+    real thing - see the note there about why a table cannot do this job on its own.
+    """
+    m = str(mark)
+    return _rest_from(DWELL.get(m, 0.0), _top_up(m, params, base), _pause_multiplier(params))
+
 
 # Click avoidance for spliced silence - see _splice_pauses.
 SPLICE_SEARCH_MS = 3.0  # how far the cut may move to find a quieter sample
@@ -118,26 +213,30 @@ def _pause_scale(params: dict) -> float:
 def _pause_for(mark: str, params: dict) -> float:
     """Extra silence after a MID-SENTENCE mark, in seconds.
 
-    CAPPED IN PROPORTION TO THE SENTENCE GAP, and that is the fix for a reported bug rather
-    than a precaution. `_gap_for` bounds a sentence's own pause at SEAM_CEILING because it
-    compounds over a chapter; this one used to be uncapped, and the two together invert the
-    punctuation hierarchy as soon as the Pause slider leaves 1. At the slider's top (10x, see
-    generative_editor.MAX_PAUSE_SCALE) a comma took 1.0 s of spliced silence ON TOP of the
-    ~0.3 s the model already dwells there, while a full stop stayed pinned at 1.2 s total - so
-    the commas became the longest rests in the paragraph and the full stops sounded skipped.
-    Reported exactly that way: "a large breath was being taken after every single comma... NO
-    breaths were being taken after punctuation: it was only happening on commas."
+    ONE MULTIPLIER ON THE WHOLE REST, for every mark - see DWELL and `_rest_for`. That is
+    what keeps the punctuation hierarchy upright, and it has now been got wrong twice in
+    opposite directions, which is worth recording because both were reported by ear and both
+    were real.
 
-    The ceiling is each mark's OWN SHARE of the sentence ceiling, so `,` < `;` < `:` < `.`
-    holds at every scale instead of only at 1. Below about 3.7x nothing changes at all - the
-    default render is sample for sample what it was.
+    FIRST, as an inversion: this was uncapped while the sentence gap was pinned at an
+    absolute 1.2 s, so past 1.0 the commas overtook the full stops - "a large breath was
+    being taken after every single comma... NO breaths were being taken after punctuation".
+    Patched by giving each mark its own share of that same absolute ceiling.
+
+    SECOND, as a dead dial: shares of an absolute ceiling are still absolute, so every mark
+    hit its cap at the same 3.75x and the top 62% of a 10x slider did nothing whatever - "the
+    Pause option has no effect at all". Patched by scaling every mark linearly instead.
+
+    THIRD, and this is the one the two before it were hiding: scaling OUR silence linearly
+    does not scale the REST linearly, because the model is resting too and its share does not
+    move. So the dial stretched the gaps between the marks rather than the marks - the full
+    stop ran away from the comma, and no single setting could suit both. The multiplier now
+    applies to the total, so the ratios at 10x are the ratios at 1x, and the curve saturates
+    so the far end of the dial is long rather than broken.
     """
-    m = str(mark)
-    base = PAUSE_AFTER.get(m, 0.0)
-    if base <= 0.0:
+    if PAUSE_AFTER.get(str(mark), 0.0) <= 0.0:
         return 0.0
-    ceiling = SEAM_CEILING * (base / PAUSE_AFTER["."])
-    return min(base * _pause_scale(params), ceiling)
+    return _rest_for(mark, params)
 
 
 def _discourse_plan(groups: list, params: dict) -> list[dict]:
@@ -318,6 +417,253 @@ def _resample(a, ratio: float):
     return (a[lo] * (1.0 - frac) + a[hi] * frac).astype(np.float32)
 
 
+# --- THE SOURCE AND THE FILTER, SEPARATED -----------------------------------
+#
+# Two things this backend is asked for turn out to be one operation seen from two
+# sides. Speech is a SOURCE - the glottal buzz, which carries pitch - driven
+# through a FILTER, the vocal tract, whose resonances carry the words and the
+# identity of whoever is speaking. A whisper is that filter with the buzz taken
+# out and noise put in its place. A pitch move that keeps the speaker is the buzz
+# moved with the filter held still. Both need the same thing first: an estimate of
+# the filter, frame by frame, separated from whatever is driving it.
+#
+# LINEAR PREDICTION is that estimate, and it is the right one here for a reason
+# beyond convenience: measure_voice.py already tracks this voice's formants with
+# the same autocorrelation-plus-Levinson method, so the gate and the effect agree
+# by construction about where a formant is. An LPC fit of order p is a smooth
+# spectral envelope through the harmonics rather than a curve over them - which is
+# exactly the split being asked for, because the harmonics ARE the source.
+#
+# NUMPY ONLY. voice_host/requirements.txt is deliberately tiny and scipy is not in
+# it, which rules out lfilter and every IIR path. Nothing below needs one: both
+# effects are magnitude edits on a windowed FFT, overlap-added back, which numpy
+# does natively. The Levinson recursion is vectorised ACROSS frames - the loop
+# runs `order` times over a few hundred frames at once rather than a few hundred
+# times over one - so a sentence costs milliseconds rather than seconds.
+
+_LPC_FRAME = 0.032  # s: long enough for two pitch periods of a low male voice
+_LPC_HOP = 0.008    # s: 75% overlap, where a Hann window's square sums flat
+# The noise a whisper is made of. FIXED, because a re-render must be the same
+# performance - the same reason the duration-predictor jitter alternates by
+# sentence index instead of sampling (see `_discourse_plan`).
+_WHISPER_SEED = 0x5EED
+# How much smoother than the data the whisper's envelope is asked to be. See
+# `_lpc_envelopes`; 0.98 is where the fundamental leaves without the vowel going
+# with it. The formant lock does NOT use this - it wants the sharpest envelope it
+# can get, and it is putting one real envelope back rather than inventing one.
+_WHISPER_GAMMA = 0.98
+
+
+def _lpc_windows(sr: int) -> tuple:
+    """(window length, hop, FFT size, Hann window) for this sample rate."""
+    import numpy as np
+
+    win = max(64, int(round(_LPC_FRAME * sr)) // 2 * 2)
+    hop = max(16, int(round(_LPC_HOP * sr)))
+    nfft = 1
+    while nfft < win:
+        nfft *= 2
+    return win, hop, nfft, np.hanning(win).astype(np.float32)
+
+
+def _framed(x, win: int, hop: int):
+    """`x` cut into overlapping frames, one row each."""
+    import numpy as np
+
+    if x.size < win:
+        x = np.pad(x, (0, win - x.size))
+    n = 1 + (x.size - win) // hop
+    idx = np.arange(win)[None, :] + hop * np.arange(n)[:, None]
+    return x[idx].astype(np.float64)
+
+
+def _lpc_envelopes(frames, order: int, nfft: int, gamma: float = 1.0):
+    """The spectral envelope of every frame at once.
+
+    Levinson-Durbin, vectorised across frames: the recursion is over the ORDER,
+    and every quantity in it is a scalar per frame, so each of the `order` steps
+    is one vector operation over all of them. The autocorrelation comes from an
+    FFT for the same reason - one batched transform instead of a loop.
+
+    `gamma` under 1 is BANDWIDTH EXPANSION, and the whisper needs it. An envelope
+    is supposed to pass over the harmonics rather than through them, but a fit of
+    this order has enough poles to start tracking individual ones at a low pitch,
+    and any harmonic ripple left in the envelope is printed straight back onto the
+    noise - a whisper with the voice faintly still in it. Scaling the coefficients
+    by gamma^k pulls every pole in off the unit circle, which widens all of them
+    at once and is the standard speech-coding way to say "be smoother than the
+    data". Measured on a synthetic 118 Hz vowel: harmonicity 0.24 at gamma 1,
+    0.06 at 0.98, and at 210 Hz 0.28 against 0.09. It costs a little formant
+    accuracy - F1 reads about 12% high at 0.98, F2 and F3 within 3% - and a
+    raised F1 is what whispered vowels do anyway.
+    """
+    import numpy as np
+
+    n = frames.shape[1]
+    size = 1
+    while size < 2 * n:
+        size *= 2
+    spec = np.fft.rfft(frames, size, axis=1)
+    r = np.fft.irfft(spec * np.conj(spec), size, axis=1)[:, : order + 1]
+    # A ridge on the zero lag. Silence and pure tones are both singular for a
+    # plain fit, and a sentence has silence at both ends of it by construction.
+    r[:, 0] = r[:, 0] * 1.0001 + 1e-9
+    f = frames.shape[0]
+    a = np.zeros((f, order + 1))
+    a[:, 0] = 1.0
+    err = r[:, 0].copy()
+    for i in range(1, order + 1):
+        acc = r[:, i].copy()
+        if i > 1:
+            acc += np.sum(a[:, 1:i] * r[:, i - 1 : 0 : -1], axis=1)
+        k = -acc / np.maximum(err, 1e-12)
+        if i > 1:
+            prev = a[:, 1:i].copy()
+            a[:, 1:i] = prev + k[:, None] * prev[:, ::-1]
+        a[:, i] = k
+        err = np.maximum(err * (1.0 - k * k), 1e-12)
+    if gamma < 1.0:
+        a = a * (gamma ** np.arange(order + 1))[None, :]
+    # |H(w)| = sqrt(gain) / |A(w)|
+    aw = np.fft.rfft(a, nfft, axis=1)
+    return np.sqrt(err)[:, None] / np.maximum(np.abs(aw), 1e-9)
+
+
+def _overlap_add(frames, hop: int, length: int, window, incoherent: bool = False):
+    """Frames back to a signal, windowed again and normalised by what overlapped.
+
+    The second window is not decoration: a frame whose magnitude spectrum has been
+    edited is no longer confined to the frame it came from, and adding the raw
+    result back seams audibly. Dividing by the accumulated square of the window
+    makes the reconstruction exact where nothing was edited.
+
+    `incoherent` is for frames that are NOISE. Overlapping copies of a signal add
+    up; overlapping independent noise adds up in POWER, so the same division
+    leaves it 2.7 dB quiet - measured, and heard as the whisper being too far
+    away. The square root is the right normaliser there. (Making the noise
+    continuous instead, so that it adds coherently, is the obvious alternative and
+    is worse: the frames then agree with each other once per hop, which puts a
+    125 Hz buzz right in the middle of the pitch range a whisper is supposed to
+    have vacated. Measured at harmonicity 0.37 against 0.24.)
+    """
+    import numpy as np
+
+    win = frames.shape[1]
+    out = np.zeros(length + win, dtype=np.float64)
+    norm = np.zeros_like(out)
+    w2 = (window * window).astype(np.float64)
+    for i in range(frames.shape[0]):
+        s = i * hop
+        out[s : s + win] += frames[i] * window
+        norm[s : s + win] += w2
+    den = np.maximum(norm[:length], 1e-6)
+    return (out[:length] / (np.sqrt(den) if incoherent else den)).astype(np.float32)
+
+
+def _rms_match(frames, target_frames):
+    """Per-frame level, restored. Both effects rebuild a frame from scratch."""
+    import numpy as np
+
+    have = np.sqrt(np.mean(frames * frames, axis=1))
+    want = np.sqrt(np.mean(target_frames * target_frames, axis=1))
+    return frames * (want / np.maximum(have, 1e-9))[:, None]
+
+
+def _whisper(a, sr: int, amount: float):
+    """Keep the vocal tract, replace the voice in it with breath.
+
+    A whisper is not a quiet voice and it is not a breathy one: the vocal folds
+    are not vibrating at all, so there is no fundamental and no harmonics, and the
+    words survive entirely in the resonances. That is why no inference parameter
+    can produce one - a VITS checkpoint trained on modal speech has no whispered
+    speech to sample - and why a filter can: rebuild each frame as NOISE shaped by
+    that frame's own spectral envelope and the tract is untouched while the source
+    is gone.
+
+    `amount` blends against the original, which is a real setting rather than a
+    fader: half way is a stage whisper, a voice that has not quite left.
+    """
+    import numpy as np
+
+    amount = min(1.0, max(0.0, float(amount)))
+    if amount <= 1e-3 or a.size < 4:
+        return a
+    win, hop, nfft, window = _lpc_windows(sr)
+    frames = _framed(a, win, hop) * window
+    env = _lpc_envelopes(frames, _lpc_order(sr), nfft, _WHISPER_GAMMA)
+    # A FRESH DRAW PER FRAME, not one continuous noise - see `_overlap_add`.
+    rng = np.random.default_rng(_WHISPER_SEED)
+    noise = rng.standard_normal(frames.shape)
+    spec = np.fft.rfft(noise * window, nfft, axis=1) * env
+    built = np.fft.irfft(spec, nfft, axis=1)[:, :win]
+    built = _rms_match(built, frames)
+    wet = _overlap_add(built, hop, a.size, window, incoherent=True)
+    # ...and the level trimmed once at the end. The per-frame match and the
+    # incoherent normaliser between them still land about a decibel low, and a
+    # whisper that arrives quieter than it was asked to be is indistinguishable
+    # from the Presence dial having moved on its own.
+    dry = a.astype(np.float64)
+    have = float(np.sqrt(np.mean(wet.astype(np.float64) ** 2)))
+    want = float(np.sqrt(np.mean(dry * dry)))
+    if have > 1e-9:
+        wet = wet * (want / have)
+    out = amount * wet + (1.0 - amount) * dry
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+
+def _restore_formants(shifted, source, ratio: float, sr: int):
+    """Put `source`'s formants back onto `shifted` after a resample.
+
+    THE BUG THIS ANSWERS. A resample moves the whole spectrum, so buying a pitch
+    move with one also moves the formants - and formants are how big a speaker is.
+    The paragraph arc is bought exactly that way, and at any real depth it did not
+    read as a reader settling across a paragraph, it read as a different, larger
+    person finishing it: "the voice becomes lower and lower and lower... it
+    completely transforms the voice into another voice by the end of the arc".
+
+    The fix is the same split as the whisper, used the other way round. The
+    resampled frame already has the pitch that was wanted. Divide its spectrum by
+    its OWN envelope and multiply by the envelope of the frame it came from, and
+    the harmonics stay where the resample put them while the resonances go back
+    where the speaker had them. Frame i of the output stands at `i * hop * ratio`
+    in the source, because that is what the resample did to the time axis.
+    """
+    import numpy as np
+
+    if abs(ratio - 1.0) < 1e-4 or shifted.size < 4 or source.size < 4:
+        return shifted
+    win, hop, nfft, window = _lpc_windows(sr)
+    out_frames = _framed(shifted, win, hop) * window
+    n = out_frames.shape[0]
+    # the same frames, located in the pre-resample audio
+    src = source
+    if src.size < win:
+        src = np.pad(src, (0, win - src.size))
+    starts = np.minimum(
+        np.round(np.arange(n) * hop * ratio).astype(np.int64), src.size - win
+    )
+    starts = np.maximum(starts, 0)
+    src_frames = src[starts[:, None] + np.arange(win)[None, :]].astype(np.float64)
+    src_frames = src_frames * window
+    order = _lpc_order(sr)
+    nfft_env = nfft
+    want = _lpc_envelopes(src_frames, order, nfft_env)
+    have = _lpc_envelopes(out_frames, order, nfft_env)
+    # Bounded, because a frame of near-silence has an envelope that means nothing
+    # and dividing by it is how a click gets made.
+    corr = np.clip(want / np.maximum(have, 1e-9), 0.05, 20.0)
+    spec = np.fft.rfft(out_frames, nfft, axis=1) * corr
+    built = np.fft.irfft(spec, nfft, axis=1)[:, :win]
+    built = _rms_match(built, out_frames)
+    out = _overlap_add(built, hop, shifted.size, window)
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+
+def _lpc_order(sr: int) -> int:
+    """One pole pair per kHz, plus two for the glottal tilt - the usual rule."""
+    return int(min(36, 2 + sr // 1000))
+
+
 def _gap_for(mark: str, params: dict) -> float:
     """Seconds between two sentences, for a sentence ending in `mark`.
 
@@ -332,11 +678,11 @@ def _gap_for(mark: str, params: dict) -> float:
             base = float(raw)
         except (TypeError, ValueError):
             base = PAUSE_AFTER["."]
-    # Capped to match the editor's own seam ceiling (generative_editor.SEAM_CEILING): the
-    # gap between sentences compounds over a whole chapter, so it is the one place the
-    # slider is deliberately not linear. Mid-sentence marks are capped too, in proportion -
-    # see _pause_for for what leaving them uncapped did to the punctuation hierarchy.
-    return min(max(0.0, base * _pause_scale(params)), SEAM_CEILING)
+    # The same rule as every other mark, through the same function: the dial scales the whole
+    # rest and the model's own share is subtracted back off. A caller's `sentence_gap` still
+    # wins over the table - it is the same knob - but it is now a TOP-UP at 1.0 rather than
+    # the answer, exactly like the table entry it replaces.
+    return _rest_for(str(mark), params, base)
 
 
 def _quiet_point(
@@ -419,7 +765,7 @@ def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
         seg[seg.size - k :] *= w[::-1]
 
 
-def _splice_pauses(audio, points, sr: int):
+def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     """Insert real silence INTO an utterance without re-synthesizing it.
 
     `points` is [(time_seconds, pause_seconds)], ascending; each time is the
@@ -456,6 +802,16 @@ def _splice_pauses(audio, points, sr: int):
         for p in points
         if float(p[1]) > 0.0
     ]
+    # `mult` = 1.0 means "insert exactly what you were asked for", which is what every
+    # caller did before the dial learned to scale a whole rest, and what the tests still
+    # expect. Above it, the second field of a point is read as the TOP-UP at Pause 1.0 and
+    # the silence already at the mark is measured here, in the audio, rather than looked up.
+    #
+    # WHY MEASURED. The table said this voice dwells 0.15 s at a comma; it dwells 0.41. Get
+    # that wrong and the dial stops scaling the rest and starts scaling the ERROR - which is
+    # the bug this whole path was rewritten for, one level down. The dwell is a property of
+    # the checkpoint, the pace and the sentence, and the only honest source for it is the
+    # waveform in front of us.
     if not pts:
         return audio, []
     pts.sort(key=lambda p: p[0])
@@ -469,15 +825,19 @@ def _splice_pauses(audio, points, sr: int):
     inserted: list = []
     prev = 0
     need_in = False
+    quiet = float(np.max(np.abs(audio))) * 0.02 if audio.size else 0.0
     for t, secs, limit in pts:
-        pad = int(round(secs * sr))
-        if pad <= 0:
-            continue
         hi = int(round(limit * sr)) if limit > 0.0 else 0
         cut = max(
             prev,
             _quiet_point(audio, int(round(t * sr)), search, prev, hi, env, reach, back),
         )
+        if mult == 1.0:
+            pad = int(round(secs * sr))
+        else:
+            pad = int(round(_rest_from(_silence_around(audio, cut, quiet, sr), secs, mult) * sr))
+        if pad <= 0:
+            continue
         seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
         _ramp(seg, fade, need_in, True)
         pieces.append(seg)
@@ -512,6 +872,34 @@ def _splice_pauses(audio, points, sr: int):
 
 
 _warned_unaligned = False
+
+
+def _silence_around(audio, at: int, thresh: float, sr: int) -> float:
+    """Seconds of contiguous near-silence containing `at` - what the model rests here.
+
+    Walked outward from the cut rather than measured between the token spans, because a
+    span is the aligner's opinion about where a word ends and this is a question about the
+    waveform. Bounded at half a second in each direction: past that it is not a dwell, it is
+    the end of the utterance, and topping THAT up would put the sentence's own tail inside
+    the multiplier.
+    """
+    import numpy as np
+
+    if audio.size == 0 or thresh <= 0.0:
+        return 0.0
+    span = int(0.5 * sr)
+    lo = max(0, at - span)
+    hi = min(audio.size, at + span)
+    a = np.abs(audio[lo:hi])
+    i = min(max(at - lo, 0), a.size - 1)
+    if a[i] > thresh:
+        return 0.0
+    loud = np.where(a > thresh)[0]
+    left = loud[loud < i]
+    right = loud[loud > i]
+    start = int(left[-1]) + 1 if left.size else 0
+    end = int(right[0]) if right.size else a.size
+    return float(end - start) / sr
 
 
 def _warn_unaligned(marks) -> None:
@@ -1203,14 +1591,17 @@ class PiperBackend(Backend):
                 continue  # . ! ? are the gap between sentences, above
             if i < len(phone_times):
                 nxt = phone_times[i + 1]["t0"] if i + 1 < len(phone_times) else 0.0
+                # the top-up, like the token path - the splicer measures the rest
                 points.append(
-                    (float(phone_times[i]["t1"]), _pause_for(mark, params), float(nxt))
+                    (float(phone_times[i]["t1"]), _top_up(mark, params), float(nxt))
                 )
             else:
                 unplaceable.append(mark)
         _warn_unaligned(unplaceable)
         if points:
-            audio, inserted = _splice_pauses(audio, points, sample_rate)
+            audio, inserted = _splice_pauses(
+                audio, points, sample_rate, _pause_multiplier(params)
+            )
             for ph in phone_times:
                 ph["t0"] = round(_shift(ph["t0"], inserted, True), 4)
                 ph["t1"] = round(_shift(ph["t1"], inserted, False), 4)
@@ -1299,8 +1690,19 @@ class PiperBackend(Backend):
                     file=sys.stderr,
                 )
             audio = _effort(audio, sr, float(step["tilt"]), float(step["gain_db"]))
+            # THE SOURCE, if this reading wants a different one. Before the pitch
+            # move rather than after, because a whisper has no pitch to move and
+            # doing it the other way round would spend the work twice.
+            audio = _whisper(audio, sr, float(params.get("whisper", 0.0)))
             if abs(pr - 1.0) > 1e-4:
-                audio = _resample(audio, pr)
+                shifted = _resample(audio, pr)
+                # ...AND THE FILTER HELD STILL WHILE THE SOURCE MOVES. Default on:
+                # the arc is a change of REGISTER, and a register change that also
+                # changes how big the speaker is was the bug. `formant_lock` = 0
+                # restores the old behaviour, which is what the gate A/Bs against.
+                if float(params.get("formant_lock", 1.0)) > 0.5:
+                    shifted = _restore_formants(shifted, audio, pr, sr)
+                audio = shifted
                 # the alignment was measured before the resample, so it moves with it
                 per_token = {k: (v[0] / pr, v[1] / pr) for k, v in per_token.items()}
             # mid-sentence marks: splice their silence into this group's audio
@@ -1316,14 +1718,17 @@ class PiperBackend(Backend):
                     points.append(
                         (
                             float(per_token[ti][1]),
-                            _pause_for(mark, params),
+                            # the TOP-UP, not the finished figure: what to add here also
+                            # depends on what the model is already resting, and only the
+                            # splicer can see that (it has the audio). See _splice_pauses.
+                            _top_up(mark, params),
                             float(nxt[0]) if nxt is not None else 0.0,
                         )
                     )
                 else:
                     unplaceable.append(mark)
             _warn_unaligned(unplaceable)
-            audio, inserted = _splice_pauses(audio, points, sr)
+            audio, inserted = _splice_pauses(audio, points, sr, _pause_multiplier(params))
             for ti, span in per_token.items():
                 # float(): numpy scalars are not JSON-serializable and the
                 # protocol is JSON

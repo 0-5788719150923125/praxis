@@ -61,13 +61,24 @@ const LOOKAHEAD_SECONDS := 9.0
 # Ceiling for the Pause slider. 2 was the first guess and it was far too timid: measured
 # end to end through the real host, scale 2 stretched a 4.3 s sentence by only 0.81 s -
 # spread over three marks, which reads as no change at all. Scale 10 stretches the same
-# sentence by 3.46 s and gives a colon a 1.7 s rest, which is unmistakable. The base table
-# stays conservative (it is calibrated to what the model already does) and this opens the
-# range instead, so the choice is the reader's rather than baked in.
+# sentence by 3.46 s, which is unmistakable. The base table stays conservative (it is
+# calibrated to what the model already does) and this opens the range instead, so the
+# choice is the reader's rather than baked in.
+#
+# The number is no longer a stretch factor for our own silence: the dial scales the WHOLE
+# rest along a saturating curve, so 10 means "3.2 times the natural rest" rather than "ten
+# times the silence we splice". See [method _rest_for].
 const MAX_PAUSE_SCALE := 10.0
-# Longest silence to leave between two sentences, however far the slider is pushed.
-const SEAM_CEILING := 1.2
 const SENTENCE_GAP := 0.32
+# What the MODEL rests at a sentence end on its own: the trailing silence of one rendered
+# sentence plus the leading silence of the next, which with one sentence per chunk is what
+# sits either side of a seam. Measured, 0.138-0.145 + 0.044. Mirrors piper.DWELL - see
+# [method _rest_for] for why a rest has to know this in order to scale properly.
+const SENTENCE_DWELL := 0.18
+# The pause curve's exponent, which IS its reach: log(5)/log(10), so the multiplier is
+# exactly 1.0 at Pause 1.0 and 5.0 at the top of the slider. Mirrors piper.PAUSE_GAIN -
+# see [method _pause_multiplier] for why a power law and not a saturating one.
+const PAUSE_GAIN := 0.69897
 # The punctuation marks the host is allowed to receive.
 #
 # A mark is phonemized as part of its word, so whatever is sent here has to have
@@ -138,7 +149,16 @@ const LIVE_PREROLL := 2.5
 #
 # VITS has no affect control - the only handles are pace, how much variation the
 # model samples, and pitch. So a "tone" here is those three moved together, plus
-# a nudge to the ambience bed, which carries more of the mood than people expect.
+# nudges to the two things AROUND the voice that carry more of the mood than
+# people expect: the ambience bed (`amb`) and how close the reader is standing
+# (`pres`). Both are offsets to the slider of the same name rather than
+# replacements for it - see [method _pad_level_of] and [method _presence_of] - so
+# a preset colours a reading that the panel still has the last word on.
+#
+# ...and `whisper`, which is none of those things. It is not a parameter of the
+# model at all but a transform applied to what the model returns (piper.py
+# `_whisper`), because the one manner a modal-speech checkpoint categorically
+# cannot be asked for is the one where the vocal folds are not vibrating.
 #
 # The pitch shift is done by RESAMPLING, and the model compensates: to raise the
 # voice by r we ask it to speak r times SLOWER, then play back r times faster.
@@ -147,12 +167,112 @@ const LIVE_PREROLL := 2.5
 # formants with the pitch, so the speaker reads as a different SIZE - which is
 # exactly what "spooky" (larger, lower) and "excited" (smaller, higher) want.
 const TONE_PRESETS := {
-	"Neutral":  {"pace": 1.00, "semis":  0.0, "noise": 0.667, "noise_w": 0.333, "amb": 0.0},
-	"Warm":     {"pace": 0.96, "semis": -0.5, "noise": 0.60,  "noise_w": 0.35,  "amb": 0.1},
-	"Serious":  {"pace": 0.92, "semis": -1.5, "noise": 0.50,  "noise_w": 0.25,  "amb": 0.1},
-	"Excited":  {"pace": 1.15, "semis":  2.0, "noise": 0.85,  "noise_w": 0.50,  "amb": 0.0},
-	"Spooky":   {"pace": 0.85, "semis": -3.0, "noise": 0.45,  "noise_w": 0.20,  "amb": 0.35},
-}     # per chunk: fewer seams than 1, still quick to first audio
+	"Neutral":  {"pace": 1.00, "semis":  0.0, "noise": 0.667, "noise_w": 0.333, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
+	"Warm":     {"pace": 0.96, "semis": -0.5, "noise": 0.60,  "noise_w": 0.35,  "amb": 0.1, "pres": 0.0, "whisper": 0.0},
+	"Serious":  {"pace": 0.92, "semis": -1.5, "noise": 0.50,  "noise_w": 0.25,  "amb": 0.1, "pres": 0.0, "whisper": 0.0},
+	"Excited":  {"pace": 1.15, "semis":  2.0, "noise": 0.85,  "noise_w": 0.50,  "amb": 0.0, "pres": 0.0, "whisper": 0.0},
+	"Spooky":   {"pace": 0.85, "semis": -3.0, "noise": 0.45,  "noise_w": 0.20,  "amb": 0.35, "pres": 0.0, "whisper": 0.0},
+	# The three below fill quadrants the first five leave empty. `pace` and
+	# `noise_w` are close to independent - one is how fast the reading runs, the
+	# other how EVENLY it is divided - and everything above sits on the diagonal:
+	# slow readings are also metronomic (Serious, Spooky), quick ones also loose
+	# (Excited). The off-diagonal corners are where the manners that are not just
+	# "more" or "less" of the same delivery live.
+	#
+	# SARCASTIC is the drawl: slow, but unevenly slow. It is not guesswork - the
+	# acoustics of sarcasm have been measured (Cheang & Pell, "The sound of
+	# sarcasm", Speech Communication 50, 2008), and against neutral productions of
+	# the same sentences sarcasm came out lower in mean F0 (their most robust cue,
+	# ~5-7% below neutral, so about a semitone), reduced in F0 standard deviation
+	# (a flatter contour), reduced in HNR (a rougher voice), and slower - 9% on
+	# whole sentences, 28% on short keyphrases. So: a semitone down, a sixth slower,
+	# `noise` well under Neutral to flatten the melody, and `noise_w` the highest in
+	# the bank, which is what stretches some syllables and clips others. The flat
+	# melody over uneven timing is the whole effect; the lowered pitch alone reads
+	# as Serious.
+	#
+	# URGENT is the corner nothing occupied: FAST AND TIGHT. Excited is fast and
+	# loose - a voice that has lost its grip on the rhythm - and the opposite of
+	# that is a voice keeping a grip on it deliberately. Low `noise_w` is what
+	# makes it clipped rather than merely quick, and the pitch barely moves,
+	# because the tension is in the timing, not the register.
+	#
+	# DREAMY is slow and loose, like Sarcastic, and reads nothing like it: it is
+	# a semitone and a half UP (the formants go with the pitch, so the reader is
+	# smaller and lighter, not larger and darker like Spooky), the model is left
+	# free to wander at the top of the `noise` range, and the ambience bed comes up
+	# further than any other preset - the pad is doing as much of the work as the
+	# voice is.
+	"Sarcastic": {"pace": 0.86, "semis": -1.0, "noise": 0.42, "noise_w": 0.60, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
+	"Urgent":    {"pace": 1.22, "semis":  0.5, "noise": 0.40, "noise_w": 0.16, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
+	"Dreamy":    {"pace": 0.88, "semis":  1.5, "noise": 0.78, "noise_w": 0.52, "amb": 0.45, "pres": 0.0, "whisper": 0.0},
+	# ...and these three are the classic vocal-emotion table, as far as it
+	# translates. Murray & Arnott ("Toward the simulation of emotion in synthetic
+	# speech", Speech Communication 16, 1993) reviewed the human literature FOR
+	# synthesis and tabulated five emotions against neutral speech, in rate, pitch
+	# average, pitch range, intensity, voice quality and inflection. Three of those
+	# five survive the trip into this parameter space; see below for the two that
+	# do not.
+	#
+	# MOURNFUL is their sadness: slightly slower, slightly lower, slightly
+	# narrower pitch range, downward inflections. Narrow range is the one that
+	# matters here and it is why `noise` is the lowest in the bank - this is the
+	# flattest, most affectless reading available, and the flatness is doing the
+	# work, not the pitch. It is a semitone down, no more: Serious already owns
+	# -1.5, and past that the formants have moved far enough that it reads as a
+	# different, larger reader rather than the same one grieving.
+	#
+	# FIERCE is their anger: quicker, higher, wider, louder, with ABRUPT pitch
+	# changes on stressed syllables and a rough chest tone. Only half of that is
+	# available. The pitch half is not - raising F0 here resamples, which shrinks
+	# the speaker, and an angry voice that has gone SMALL reads as a complaint
+	# rather than a threat - so it sits a little BELOW neutral to keep the chest in
+	# it, and the two halves that do translate carry the whole thing: `noise` at
+	# the top of the bank for the roughness, `noise_w` near the bottom for the
+	# abruptness. Fast, rough and clipped, where Excited is fast, bright and loose.
+	#
+	# ANXIOUS is their fear: much quicker, much higher, and IRREGULAR VOICING -
+	# which is the one emotion in the table whose signature cue is jitter, so it is
+	# the one this parameter space renders most directly. Highest `noise_w` in the
+	# bank. It sits close to Excited by design, because they sit close in real
+	# speakers too: high-arousal emotions are the ones listeners confuse with each
+	# other, and the difference is that Excited is EVENLY quick and this is not.
+	#
+	# The two that did not translate: HAPPINESS is Excited already, and DISGUST
+	# (very much slower, very much lower, grumbled) is Spooky with worse manners.
+	"Mournful":  {"pace": 0.84, "semis": -1.0, "noise": 0.30, "noise_w": 0.45, "amb": 0.20, "pres": 0.0, "whisper": 0.0},
+	"Fierce":    {"pace": 1.10, "semis": -0.5, "noise": 0.90, "noise_w": 0.28, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
+	"Anxious":   {"pace": 1.18, "semis":  1.5, "noise": 0.80, "noise_w": 0.65, "amb": 0.10, "pres": 0.0, "whisper": 0.0},
+	# GRUFF is the growl behind the mask, and it is the first preset that needed
+	# `pres`. Low and rough are in reach without it - the deepest `semis` in the
+	# bank puts a bigger chest behind the voice, and `noise` near the top makes the
+	# source gravelly rather than clean - but MUFFLED and QUIETER are not, and they
+	# are half of what this voice is. Distance is a filter before it is a volume
+	# (see [member VoiceFX.presence]), which is exactly the right shape for it:
+	# -0.3 dulls the high end the way speaking through something does and takes the
+	# level down with it, rather than just pulling the fader.
+	#
+	# The timing is deliberate rather than drawled - this voice is forcing the
+	# words out, not savouring them - so `noise_w` sits low, near Fierce.
+	"Gruff":     {"pace": 0.90, "semis": -4.0, "noise": 0.88, "noise_w": 0.30, "amb": 0.10, "pres": -0.30, "whisper": 0.0},
+	# WHISPERED is the one manner in this bank that no inference parameter can
+	# reach, and the only one that is not a setting at all. A VITS checkpoint
+	# trained on modal speech has no whispered speech in it to sample, so there is
+	# nothing to ask for: turning the model's own variation up gives a rough voice,
+	# never a breathed one. What makes a whisper is the vocal folds not vibrating -
+	# no fundamental, no harmonics, the words carried entirely by the resonances -
+	# and that is a filter operation on the rendered audio, not a request to the
+	# model. piper.py `_whisper` does it: each frame rebuilt as noise shaped by its
+	# own spectral envelope, so the vocal tract survives and the voice in it does
+	# not.
+	#
+	# HUSHED is the same transform at half strength, which is a real manner rather
+	# than a fader position - a stage whisper is a voice that has not entirely
+	# left, and half is where it sits. It stands back a little as well, because
+	# that is what someone lowering their voice is doing.
+	"Whispered": {"pace": 0.92, "semis":  0.0, "noise": 0.55, "noise_w": 0.35, "amb": 0.15, "pres": 0.0, "whisper": 1.0},
+	"Hushed":    {"pace": 0.94, "semis": -0.5, "noise": 0.55, "noise_w": 0.33, "amb": 0.10, "pres": -0.12, "whisper": 0.45},
+}
 
 var _host: VoiceHost
 var _panel: PanelContainer
@@ -527,7 +647,7 @@ func _build_panel() -> void:
 	trow.add_child(tl)
 	_tone = OptionButton.new()
 	_tone.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_tone.tooltip_text = "The reading's overall manner: pace, pitch, and how much the model varies itself, moved together. The pitch shift moves the formants with it, so the reader reads as a different SIZE - which is what makes Spooky larger and lower, Excited smaller and higher. Regenerates the un-played chunks."
+	_tone.tooltip_text = "The reading's overall manner: pace, pitch, how much the model varies itself and how evenly it divides the words, moved together - plus a nudge to the ambience bed and to how close the reader stands, which is what makes Gruff muffled as well as low. The pitch shift moves the formants with it, so the reader reads as a different SIZE - which is what makes Spooky larger and lower, Excited smaller and higher. Regenerates the un-played chunks."
 	for k in TONE_PRESETS:
 		_tone.add_item(String(k))
 	_tone.item_selected.connect(func(_i: int) -> void:
@@ -597,7 +717,7 @@ func _build_panel() -> void:
 	_pause.step = 0.05
 	_pause.value = 1.0
 	_pause.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_pause.tooltip_text = "How long to rest on punctuation - commas, semicolons, colons and sentence ends. 1 is the natural rest the model already takes; 0 runs straight through. Measured on one sentence: 1 adds about a third of a second across it, 2 about four fifths, 10 about three and a half - at 10 a colon rests for well over a second. Takes effect from the next chunk; already-generated audio keeps its pauses."
+	_pause.tooltip_text = "How long to rest on punctuation - commas, semicolons, colons and sentence ends. It scales the WHOLE rest, the model's own included, so every mark keeps its share of the reading at every setting rather than the long ones running away from the short ones. 1 is the natural rest; 0 runs straight through; 10 is five times natural, a two-and-a-half second full stop, and deliberately too much for most material. A quicker Tone rests proportionally less at the same setting - that is what quicker means - so a fast reading wants a higher number here than a slow one. Takes effect from the next chunk; already-generated audio keeps its pauses."
 	_pause.value_changed.connect(func(_v: float) -> void:
 		if _syncing:
 			return
@@ -641,10 +761,10 @@ func _build_panel() -> void:
 	_arc = _fx_slider(box, "Arc", 0.4,
 		"Pitch shape ACROSS a paragraph, in semitones. A speaker opens a new paragraph in a higher "
 		+ "register and settles as it goes, then resets on the next - it is what makes a paragraph "
-		+ "land rather than just stop. 0 is off, 0.4 is three semitones top to bottom and 1 is "
-		+ "seven and a half. Past about 0.5 the resampling audibly moves the formants too, so the "
-		+ "reader starts changing SIZE between paragraphs - which is either the effect you want "
-		+ "or the reason to back off.")
+		+ "land rather than just stop. 0 is off, 0.15 is half a semitone top to bottom, 0.4 is "
+		+ "one and a half, and 1 is four. The whole travel is usable now: the shift holds the "
+		+ "reader's own formants, so the register moves without the speaker changing SIZE, and "
+		+ "the ceiling is set by what a speaker would actually do rather than by the DSP.")
 	_fx_echo = _fx_slider(box, "Echo", 0.0,
 		"The room the voice is in. Low settings are a small close room - the repeat is short enough "
 		+ "to fuse with the voice rather than be heard as a separate sound. It opens out into a "
@@ -1046,6 +1166,13 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 ## Sections are runs of SECTION_PARAS paragraphs, so the slow movement is phase-locked to
 ## the prose the same way the fast one is.
 const SECTION_PARAS := 5
+## ...and the longest run of sentences that may be called one paragraph. Nothing to
+## do with style: a paragraph is where the pitch arc RESETS, so an unbroken block is
+## an arc with no reset in it, and the register just falls for as long as the block
+## does. Eight is a long paragraph; past that the text is not telling us where its
+## paragraphs are, and reading it as consecutive ones of this length is the same
+## guard SECTION_PARAS is a level up.
+const PARA_CEILING := 8
 
 func _place_chunks(out: Array, body: String) -> void:
 	# Paragraph boundaries come from the SOURCE text (a blank line), which is the only place
@@ -1053,7 +1180,37 @@ func _place_chunks(out: Array, body: String) -> void:
 	# them. Counting sentence-final marks per paragraph maps one onto the other without
 	# parsing the body twice.
 	var per_para: Array = []
-	for para in body.split("\n\n", false):
+	# A BLANK LINE IS THE MARKER, BUT ONLY IF THE WRITER USED ANY. A script typed
+	# with one newline between paragraphs - which is most of them, in a plain text
+	# box with no formatting to lose - has no blank line anywhere in it, so this
+	# found exactly one paragraph and handed the entire chapter a single arc that
+	# descends from the first sentence to the last and never resets. That is half
+	# of the "lower and lower and lower" report ([method _arc_semis] is the other
+	# half); measured on one, the register fell monotonically across all sixteen
+	# sentences instead of resetting six times.
+	var para_mark := "\n\n"
+	if body.find("\n\n") < 0:
+		# ...but a line break is only a PARAGRAPH break if the lines are paragraphs.
+		# Hard-wrapped prose breaks in the middle of sentences, and reading each of
+		# those lines as a paragraph would reset the arc mid-sentence. The test is
+		# whether the lines END the way sentences do - within a character or two of
+		# the last one, so a closing quote or bracket still counts. Text that fails
+		# it keeps the blank-line marker, finds no paragraphs, and is bounded by
+		# PARA_CEILING instead, which is the right answer for prose that genuinely
+		# carries no structure.
+		var lines := 0
+		var ended := 0
+		for ln in body.split("\n", false):
+			var t := String(ln).strip_edges()
+			if t.is_empty():
+				continue
+			lines += 1
+			var tail := t.substr(maxi(0, t.length() - 2))
+			if tail.contains(".") or tail.contains("!") or tail.contains("?"):
+				ended += 1
+		if lines > 0 and float(ended) / float(lines) >= 0.6:
+			para_mark = "\n"
+	for para in body.split(para_mark, false):
 		var t := String(para).strip_edges()
 		if t.is_empty():
 			continue
@@ -1064,6 +1221,16 @@ func _place_chunks(out: Array, body: String) -> void:
 		per_para.append(maxi(1, c))
 	if per_para.is_empty():
 		per_para = [maxi(1, out.size())]
+	# ...and prose pasted as one unbroken block has no marker of either kind, so the
+	# length of a paragraph is bounded whether the text says where they end or not.
+	var capped: Array = []
+	for n in per_para:
+		var left := int(n)
+		while left > PARA_CEILING:
+			capped.append(PARA_CEILING)
+			left -= PARA_CEILING
+		capped.append(maxi(1, left))
+	per_para = capped
 	# sentence index -> (paragraph index, position within it)
 	var pi := 0
 	var within := 0
@@ -1159,7 +1326,7 @@ func _apply_fx(fx: VoiceFX, s: Dictionary) -> void:
 		return
 	fx.echo_wet = float(s["echo"])
 	fx.resonance = float(s["resonance"])
-	fx.presence = float(s["presence"])
+	fx.presence = _presence_of(s)
 	fx.pad = _pad_level_of(s)
 	# One dial, so [RoomFX] does the collapsing: size and wet open together, and
 	# Resonance colours the tail the same way it does on Masking's bus.
@@ -1549,19 +1716,55 @@ func _pitch_ratio_of(s: Dictionary) -> float:
 func _delivery_of(s: Dictionary) -> Dictionary:
 	return {
 		"dynamics": _open_up(float(s["dynamics"])),
-		# ARC IN SEMITONES peak-to-peak. 3 was the old ceiling and is an ordinary
-		# paragraph reset; the curve below takes the top of the dial past it.
-		"prosody_arc": _open_up(float(s["arc"])) * 3.0,
+		"prosody_arc": _arc_semis(float(s["arc"])),
 		"effort": _open_up(float(s["effort"])),
 	}
+
+
+## THE PARAGRAPH PITCH ARC, in semitones peak-to-peak.
+##
+## Its own curve rather than [method _open_up] x a ceiling, because this dial had a
+## hard limit the other two do not, and it was not a limit of taste. The arc's pitch
+## move is bought by RESAMPLING (piper.py `_discourse_plan` -> `_resample`, the same
+## trick the Tone shift uses), and a resample moves the formants with the pitch - so
+## it did not change how high the reader was speaking, it changed HOW BIG THEY WERE.
+##
+## Reported exactly that way: "the voice becomes lower and lower and lower; it
+## completely transforms the voice into another voice by the end of the arc - the
+## voice doesn't actually maintain its identity", with everything past 0.2 unusable.
+## Measured on a sixteen-sentence script, the dial spanned 7.5 semitones at the top
+## of its travel, a 54% change in apparent vocal-tract scale between a paragraph's
+## opening sentence and its last. The dial was not too strong. It was asking a
+## formant-SHIFTING resampler for a thing only a formant-PRESERVING shifter can do.
+##
+## So the shifter was fixed instead of the dial being capped to hide it: piper.py
+## `_restore_formants` puts the speaker's own resonances back after the resample,
+## leaving the pitch move and nothing else. What bounds the ceiling now is the
+## linguistics rather than the DSP - 't Hart, Collier & Cohen put declination at
+## one to two semitones over an utterance, with the deepest boundaries resetting
+## further - so 4 semitones peak to peak is a top of travel that is more than any
+## speaker would do and still the same speaker doing it.
+##
+## The exponent is FITTED, not chosen: it holds the old curve's value at 0.15,
+## because 0.10 and 0.15 were reported as the settings that already work and a fix
+## for the top of a dial has no business moving the bottom of it. It tracks the old
+## curve within 5% up to about 0.4 and only then bends away, which is precisely the
+## half that was broken.
+const ARC_CEILING_SEMIS := 4.0
+const ARC_KNEE := 1.13
+
+func _arc_semis(k: float) -> float:
+	return ARC_CEILING_SEMIS * pow(clampf(k, 0.0, 1.0), ARC_KNEE)
 
 
 ## The top of a delivery dial, opened up - identity at the bottom, 2.5x at the top.
 ##
 ## The first ceilings were set where I thought the results stopped being good, which
 ## is not my call to make: at full travel Dynamics only slowed the last sentence of a
-## paragraph by 18% and Arc reached 3 semitones, so the upper half of both dials was
-## doing almost nothing and the reported symptom was exactly that. Rescaling linearly
+## paragraph by 18%, so the upper half of the dial was doing almost nothing and the
+## reported symptom was exactly that. (Arc was opened up the same way and has since
+## been given its own curve - see [method _arc_semis] - because its ceiling is set by
+## the resampler rather than by taste.) Rescaling linearly
 ## would have been wrong too, because the LOW half is where the settings that already
 ## sound right live - moving those to make room at the top would break what works to
 ## fix what doesn't. Cubic keeps the bottom of the travel where it was (0.25 moves by
@@ -1585,6 +1788,17 @@ func _pad_level_of(s: Dictionary) -> float:
 	return clampf(float(s["ambience"]) + float(_preset_of(s)["amb"]), 0.0, 1.0)
 
 
+## How close the reader stands: the slider PLUS the Tone preset's own nudge.
+##
+## The pad's twin, and here for the same reason - a preset that can only reach the
+## model's own parameters cannot be MUFFLED, because muffled is a property of the
+## air between the reader and the microphone rather than of the reader. Floored
+## well above zero: a preset may push the voice back, never mute it, and
+## [member VoiceFX.presence] is a gain as well as a filter.
+func _presence_of(s: Dictionary) -> float:
+	return clampf(float(s["presence"]) + float(_preset_of(s)["pres"]), 0.25, 1.0)
+
+
 func _pause_scale_of(s: Dictionary) -> float:
 	return clampf(float(s["pause"]), 0.0, MAX_PAUSE_SCALE)
 
@@ -1593,11 +1807,38 @@ func _pause_scale_of(s: Dictionary) -> float:
 ## sentences INSIDE a chunk, so a seam and an interior boundary stay the same
 ## length however the reading happens to have been cut up.
 func _seam_gap_of(s: Dictionary) -> float:
-	# Mid-sentence marks scale all the way - that is the complaint this slider answers.
-	# The gap BETWEEN sentences is capped, because it is the one that compounds: at 10x an
-	# uncapped seam is 3.2 s of dead air after every single sentence, which over a chapter is
-	# not a longer rest, it is a broken reading. 1.2 s is already a long, deliberate beat.
-	return minf(SENTENCE_GAP * _pause_scale_of(s), SEAM_CEILING)
+	return _rest_for(SENTENCE_GAP, SENTENCE_DWELL, _pause_scale_of(s))
+
+
+## The silence to place at a mark whose natural rest is `dwell` and whose top-up at
+## Pause 1.0 is `top_up`. MIRRORS piper._rest_for, and has to: the host owns the marks
+## inside a sentence and this owns the seam between two of them, so a reading cut one
+## way has to rest exactly as long as the same reading cut the other way.
+##
+## WHY THE DIAL MULTIPLIES THE WHOLE REST rather than our own share of it. What a reader
+## hears at a full stop is the model's own trailing silence plus the seam we add, and
+## scaling only the second half stretches the DIFFERENCES between the marks instead of
+## the marks. Reported as "the pause after a comma and the pause after a sentence are
+## very different... at 6.0 the comma-pauses feel about right, while the period-pauses
+## feel far too slow" - no one setting could suit both, because their ratio was moving
+## with the dial. It no longer moves: a full stop rests twice as long as a comma at 1.0
+## and at 10.0 and everywhere between. See piper.DWELL for the measurements.
+func _rest_for(top_up: float, dwell: float, scale: float) -> float:
+	var mult := _pause_multiplier(scale)
+	# At 1.0 the answer IS the top-up, said exactly - see piper._rest_for for the float.
+	if is_equal_approx(mult, 1.0):
+		return maxf(0.0, top_up)
+	return maxf(0.0, (dwell + top_up) * mult - dwell)
+
+
+## How much longer than natural every rest in this reading is. Mirrors piper's, and the
+## power law is deliberate: the saturating curve this replaces reached 3.2 at the top of
+## the dial and 3.29 at a hundred, so "the pause effect barely seems to work at 10x" could
+## not have been answered by allowing a bigger number - the curve had topped out, not the
+## dial. This one is exactly 1.0 at Pause 1.0 by construction, within 3% of the old curve
+## up to 3.0, and 5.0 at the top, where a full stop rests two and a half seconds.
+func _pause_multiplier(scale: float) -> float:
+	return pow(clampf(scale, 0.0, MAX_PAUSE_SCALE), PAUSE_GAIN)
 
 
 ## The silence BEFORE chunk `idx` - the ordinary sentence seam, plus the turn
@@ -1667,6 +1908,7 @@ func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
 	return {
 		"length_scale": r / maxf(float(s["pace"]) * float(t["pace"]), 0.1),
 		"noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
+		"whisper": float(t["whisper"]),
 		"speaker": _speaker_of(s),
 		"sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale_of(s),
 		"dynamics": d["dynamics"],

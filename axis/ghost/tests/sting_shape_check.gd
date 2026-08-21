@@ -29,7 +29,20 @@ extends Node
 
 const FRAME := 1.0 / 60.0
 ## The largest zoom kick `_drive_stinger` can sample - the worst case, not a typical one.
-const MAX_KICK := 0.20
+## READ from the sampler's own range rather than remembered: this was a literal 0.20, which
+## is a promise that the two numbers stay in step and nothing to keep them there. The whole
+## point of walking the shipped envelope is that the gate cannot drift away from what ships.
+const MAX_KICK := Director.STING_PUSH.y
+## How much larger than the camera's ordinary travel a punch is allowed to be.
+##
+## THE HALF THIS GATE WAS MISSING. Everything above measures whether the punch is SUDDEN, and
+## it has passed since the day it was written - while the same complaint came back in the same
+## words about a punch that had become perfectly smooth and was still a fifth of the frame.
+## Smooth was necessary and never sufficient, so the amplitude is now gated too, against the
+## one number in this project that says how far the camera moves when nothing special is
+## happening. An accent may be larger than the ordinary travel. It may not be a different
+## order of thing.
+const MAX_KICK_OVER_DRIFT := 2.0
 ## Per-frame zoom change, in percent of frame, that separates a move from a jump. A 60 Hz pan
 ## across the frame in a second is ~1.7%/frame; ghost's own eased camera (SceneView.smoothing = 5)
 ## covers 8% of its remaining error per frame. 5% is comfortably above both and far below a step.
@@ -73,6 +86,7 @@ func _ready() -> void:
 	Director._sting_t = t_saved
 	Director._sting_span = span_saved
 	_check_pullback()
+	_check_amplitude()
 
 	if _fails.is_empty():
 		print("sting_shape_check: ALL OK")
@@ -102,6 +116,28 @@ func _check_pullback() -> void:
 	if Director.STING_PULL.y >= Director.STING_PUSH.y:
 		_fails.append("the outward kick (%.2f) is no smaller than the inward one (%.2f) - they are not symmetric and must not be made so"
 			% [Director.STING_PULL.y, Director.STING_PUSH.y])
+
+
+## The punch is an ACCENT over the camera's own travel, not a different order of thing.
+func _check_amplitude() -> void:
+	var drift: float = Director.DRIFT_PULL
+	var ratio: float = Director.STING_PUSH.y / drift
+	print("sting_shape_check: largest kick %.3f against a %.3f ordinary drift - %.2fx"
+		% [Director.STING_PUSH.y, drift, ratio])
+	if ratio > MAX_KICK_OVER_DRIFT:
+		_fails.append("the largest punch is %.2fx the camera's ordinary travel (limit %.1fx) - that is an explosion, however smoothly it arrives"
+			% [ratio, MAX_KICK_OVER_DRIFT])
+	# ...and a reading gets a fraction of even that. Not a taste threshold: a scene under a
+	# chapter is a background, and this is the number that says so.
+	var reading: float = Director.STING_PUSH.y * Director.STING_READING
+	print("sting_shape_check: over a reading, %.3f - %.2fx the drift" % [reading, reading / drift])
+	if reading >= drift:
+		_fails.append("a punch over a READING (%.3f) is no smaller than the camera's own drift (%.3f) - it is not a background at that size"
+			% [reading, drift])
+	# The floor of the range has to stay a punch at all, or the softening has quietly deleted it.
+	if Director.STING_PUSH.x * Director.STING_READING < 0.005:
+		_fails.append("the smallest punch over a reading is %.4f - that is not an accent, it is nothing"
+			% (Director.STING_PUSH.x * Director.STING_READING))
 
 
 ## Walk the SHIPPED envelope one 60 Hz frame at a time, through Director's own function.

@@ -86,6 +86,18 @@ const MARKUP := [
 	# line of dialogue could never be resolved.
 	["he said, \"I know.\"\nThen left.", ["he", "said", "i", "know", "then", "left"]],
 	["(aside),\nnext", ["aside", "next"]],
+	# UNDERSCORE EMPHASIS. eSpeak drops these itself, even word by word - `_the` comes
+	# back as ðə - so nothing was ever spoken wrong. The page was: `display` is read off
+	# the normalized text, so the subtitle showed `_no one_` with its markers on. See the
+	# NORMALIZE table below for that half; these are the SPOKEN side.
+	["She said _nothing_ at all.", ["she", "said", "nothing", "at", "all"]],
+	["They read _the same page_ twice.", ["they", "read", "the", "same", "page", "twice"]],
+	# ...and the HOLDS, which are why the rule flanks instead of stripping every `_`.
+	# An identifier a technical book quotes is not emphasis and must survive intact.
+	["the snake_case field", ["the", "snake_case", "field"]],
+	["Call __init__ first.", ["call", "__init__", "first"]],
+	# An opener with nothing closing it is not emphasis either - it is a name.
+	["the _private field", ["the", "_private", "field"]],
 ]
 
 # TEXT NORMALIZATION - what is SAID and what is SEEN, which are not the same string and
@@ -115,6 +127,11 @@ const NORMALIZE := [
 	["That is the thing about you that I could never -",
 		"that is the thing about you that i could never",
 		"That is the thing about you that I could never -"],
+	# THE PAGE, for the underscore emphasis above. This is the half that was broken:
+	# both spellings came through the strip, so the marker reached the screen.
+	["She said _nothing_ at all.", "she said nothing at all", "She said nothing at all."],
+	["the snake_case field", "the snake_case field", "the snake_case field"],
+	["Call __init__ first.", "call __init__ first", "Call __init__ first."],
 ]
 
 # SENTENCE GROUPING - what lands on one subtitle card. (source, expected blocks)

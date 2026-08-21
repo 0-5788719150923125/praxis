@@ -188,15 +188,32 @@ static func normalize_marked(text: String) -> Dictionary:
 ## emphasised phrase, and there were three chapters full of them. Nothing anywhere
 ## warned about it; it would simply have been read aloud that way.
 ##
-## Underscore emphasis is left alone deliberately - eSpeak already drops `_like this_`
-## correctly, and stripping underscores here would damage identifiers a technical book
-## legitimately quotes.
+## UNDERSCORE EMPHASIS IS A NARROWER CASE and used to be left alone entirely, on the
+## grounds that eSpeak already drops `_like this_` and that stripping underscores would
+## damage identifiers a technical book legitimately quotes. The first half is true - it
+## drops them even word by word, which is how this phonemizes (measured: `_the` -> ðə) -
+## but the second half missed that the page sees them too. Nothing was spoken, and the
+## SUBTITLE read `_no one_` with the markers on it, because `display` is taken from this
+## text and there is no earlier copy of it to fall back to.
+##
+## So the emphasis pair is dropped and everything else is left exactly as it was, by the
+## flanking rule markdown itself uses: an opener is preceded by whitespace or an opening
+## bracket and followed by a non-space, a closer is preceded by a non-space and followed
+## by whitespace or punctuation, and BOTH must be present on the same line before either
+## is touched. `snake_case` is untouched because neither underscore flanks anything;
+## `_private` alone is untouched because nothing closes it; and a RUN of underscores is
+## never emphasis here, which keeps `__init__` whole. That last exclusion costs `__bold__`
+## and is the right trade: prose writes bold as `**bold**`, and a dunder is unambiguous.
 static func _strip_markdown(text: String) -> String:
+	var drop := _emphasis_underscores(text)
 	var out := ""
 	var at_line_start := true
 	var i := 0
 	while i < text.length():
 		var c := text[i]
+		if c == "_" and drop.has(i):
+			i += 1
+			continue
 		if c == "\n":
 			at_line_start = true
 			out += c
@@ -220,6 +237,62 @@ static func _strip_markdown(text: String) -> String:
 		out += c
 		i += 1
 	return out
+
+
+## Which underscores in `text` are emphasis markers, as a set of indices.
+##
+## Separate from the strip itself because it needs to look FORWARD: an underscore is
+## only a marker if its partner exists, and that cannot be decided by a scanner that
+## has read one character. See [method _strip_markdown] for the rule and what it
+## deliberately leaves alone.
+static func _emphasis_underscores(text: String) -> Dictionary:
+	const OPEN_BEFORE := " \t\n([{\"'\u201c\u2018"
+	const SPACE := " \t\n"
+	const CLOSE_AFTER := " \t\n.,;:!?)]}\"'\u201d\u2019"
+	var drop := {}
+	var n := text.length()
+	var i := 0
+	while i < n:
+		if text[i] != "_":
+			i += 1
+			continue
+		var run := i
+		while run < n and text[run] == "_":
+			run += 1
+		if run - i != 1:
+			i = run                     # `__` and longer are never emphasis here
+			continue
+		var before := text[i - 1] if i > 0 else " "
+		var after := text[i + 1] if i + 1 < n else " "
+		if not OPEN_BEFORE.contains(before) or SPACE.contains(after) or after == "_":
+			i += 1
+			continue
+		# ...and its partner, on this line only: emphasis does not span a paragraph,
+		# and an unmatched opener that reached the end of a chapter would take every
+		# underscore after it with it.
+		var k := i + 1
+		var close := -1
+		while k < n and text[k] != "\n":
+			if text[k] != "_":
+				k += 1
+				continue
+			var kr := k
+			while kr < n and text[kr] == "_":
+				kr += 1
+			if kr - k == 1:
+				var pb := text[k - 1]
+				var pa := text[k + 1] if k + 1 < n else " "
+				if not SPACE.contains(pb) and pb != "_" and CLOSE_AFTER.contains(pa):
+					close = k
+					break
+			k = kr
+		if close < 0:
+			i += 1
+			continue
+		drop[i] = true
+		drop[close] = true
+		i = close + 1
+	return drop
 
 
 ## Every `${...}` in `text`, as [{at, end, name, has_default, value, broken}].
