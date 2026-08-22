@@ -8,17 +8,36 @@ extends GhostScene
 ## is the spectrum: the same three lines of arithmetic are a spiral, a seahorse valley, a
 ## dendrite, a filigree web or a burning coastline depending on six or seven rolls.
 ##
-## THE ZOOM IS THE SUBJECT, and it goes BOTH WAYS. A fractal zoom is normally a fall inward;
-## the pull - the same journey run backwards, structure assembling out of the middle of the
-## frame and receding - is a different and rarer picture, so it is a first-class mode here
-## rather than a negative sign somebody could set. `direction` is one of:
-##   PUSH    - inward, forever. The classic.
-##   PULL    - outward, opening from a deep point back toward the whole set.
-##   BREATHE - in, then out, then in, on its own slow clock and at its own turning points.
-## Speed is sampled independently and wide (a slow drift to a genuine plunge), and the music
-## scales it: loud passages fall faster. That is a RATE, which is the only thing audio is
-## allowed to touch here - the SET itself never deforms to the music, because a fractal that
-## wobbles on the beat stops being a fractal and becomes a plasma effect.
+## THE ZOOM IS THE SUBJECT, IT GOES ONE WAY, AND IT NEVER TURNS ROUND. A fractal zoom is
+## normally a fall inward; the pull - the same journey run backwards, structure assembling out
+## of the middle of the frame and receding - is a different and rarer picture, so it is a
+## first-class mode here rather than a negative sign somebody could set. `direction` is one of:
+##   PUSH - inward. The classic, and two rolls in three.
+##   PULL - outward, opening from a deep point back toward the whole set.
+##
+## THERE USED TO BE A THIRD, `breathe`, which turned round on its own clock, and it is gone.
+## Reported: "it rolled forward for a bit, before slowing and rolling backwards again... the
+## most interesting part of a fractal zoom is the continuous zoom-in, or continuous zoom-out.
+## Reversing direction just reveals the same patterns we've already seen." That is right, and
+## it is right about the mode as well as about the bug - a reversal is the one camera move
+## that is guaranteed to show you nothing new, because it is the shot you have just watched,
+## played backwards.
+##
+## AND IT WAS A BUG BEFORE IT WAS A MODE. The breathe clock was armed in `build_params` before
+## the direction was even chosen, so every push and every pull turned round after 11-26
+## seconds too. Measured over 240 seeds: ONE HUNDRED PERCENT of scenes reversed inside thirty
+## seconds, the first turn landing at 18 s on average, and the net travel over a whole scene
+## was under two e-folds because the picture kept coming back to where it started.
+##
+## SPEED IS A JOURNEY TIME, NOT A RATE, and that is what keeps the fall continuous now. What a
+## family can resolve varies by twenty-fold (see the floors below), so a sampled rate makes a
+## shallow family run out in twenty seconds and a deep one crawl. Sampling how long the whole
+## descent should TAKE and dividing by the depth available inverts that: every instance falls
+## for minutes, the deep families plunge and the shallow ones drift, and neither reaches a
+## bound while anybody is watching. The music scales the rate around that - loud passages fall
+## faster - which is the only thing audio is allowed to touch here. The SET itself never
+## deforms to the music, because a fractal that wobbles on the beat stops being a fractal and
+## becomes a plasma effect.
 ##
 ## THE ZOOM FLOOR, and it is the one hard constraint in the file. Zooming is a scale going to
 ## zero, and float32 runs out at about 3e-4 of the starting view - twelve seconds, and then
@@ -26,8 +45,10 @@ extends GhostScene
 ## PERTURBATION (see the shader's header): the reference orbit is iterated here in GDScript,
 ## whose floats are 64-bit, and the shader only ever handles the small difference from it.
 ## Every other family iterates directly and is CLAMPED to the depth float32 can hold. So the
-## floor is a property of the family, `_zl_min` is set from it, and the zoom bounces off it
-## rather than grinding into it - which is also where a PUSH turns into a pull on its own.
+## floor is a property of the family, `_zl_min` is set from it, and the zoom EASES TO REST
+## against it rather than grinding into it or bouncing off it. Arriving is not a failure - the
+## journey is sized so it takes minutes - but if a scene is held long enough to get there, the
+## camera settling is the graceful end of the shot and a rewind is not.
 ##
 ## FLOAT64 IS NOT OPTIONAL ON THIS SIDE. The anchor is held as two loose `float`s and never as
 ## a Vector2: Godot's vectors are 32-bit, so a Vector2 anchor would quietly round away the
@@ -71,8 +92,25 @@ const FAMILIES := ["mandelbrot", "julia", "burning_ship", "tricorn", "celtic", "
 ## Colourings, by shader index.
 const COLOURS := ["smooth", "stripe", "trap_point", "trap_cross", "trap_circle", "distance"]
 
-## The zoom's directions. See the class doc.
-const DIRECTIONS := ["push", "pull", "breathe"]
+## The zoom's directions, as a bag rather than a list: the fall inward is the picture people
+## come to a fractal for, and the climb out is the one worth being rarer. See the class doc for
+## why there is no third entry any more.
+const DIRECTION_BAG := ["push", "push", "pull"]
+
+## How long the WHOLE descent takes at nominal loudness, in seconds - sampled per instance, and
+## then divided by the depth available to get a rate. See the class doc.
+##
+## The floor of the range is what makes the "never turns round" claim true in practice rather
+## than in principle: a scene holds for at most `Director.max_hold` x `pace_calm_scale` x
+## `pacing`, which is about 60 s at the pacing this was reported on and 134 s at the top of
+## that dial. At 95 s nominal - 65 s if the passage is loud the whole way - a fast instance can
+## still reach its bound in a long-held scene, and that is what the ease-to-rest below is for.
+const JOURNEY_MIN := 95.0
+const JOURNEY_MAX := 260.0
+
+## How many e-folds out from a bound the rate starts easing off. Wide enough that the slowing
+## reads as the camera settling rather than as the zoom stalling.
+const ARRIVE_SPAN := 1.6
 
 ## The family roll, weighted rather than uniform. The quadratic Mandelbrot is the one that can
 ## be flown into indefinitely (it is the only one perturbation is implemented for), so it earns
@@ -131,10 +169,7 @@ var _zl := 0.0                # ln of the current scale
 var _zl_min := 0.0
 var _zl_max := 0.0
 var _speed := 0.2             # e-folds per second at nominal loudness
-var _dir := -1.0              # -1 inward (scale shrinking), +1 outward
-var _dir_now := -1.0          # eased, so a turn is a glide and not a jerk
-var _breathe := 0.0           # seconds until a BREATHE instance turns of its own accord
-var _breathe_span := 18.0
+var _dir := -1.0              # -1 inward (scale shrinking), +1 outward. NEVER REASSIGNED.
 
 # Live state.
 var _rot := 0.0
@@ -226,27 +261,25 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		clampf(_sch.sat * rng.randf_range(0.3, 0.9), 0.0, 1.0), iv)
 
 	# The zoom.
-	var dir_name := String(DIRECTIONS[rng.randi() % DIRECTIONS.size()])
-	_speed = rng.randf_range(0.055, 0.30)
+	var dir_name := String(DIRECTION_BAG[rng.randi() % DIRECTION_BAG.size()])
 	_zl_max = log(SCALE_WIDE)
 	_zl_min = log(floor_scale)
-	_breathe_span = rng.randf_range(11.0, 26.0)
-	_breathe = _breathe_span
-	match dir_name:
-		"push":
-			_dir = -1.0
-			# Start wide and fall in. A push begins at the top of its range or there is
-			# nowhere to go.
-			_zl = _zl_max - rng.randf_range(0.0, 1.2)
-		"pull":
-			_dir = 1.0
-			# A pull begins DEEP - the whole picture of it is structure receding out of the
-			# middle of the frame, and that only happens if there is depth to climb out of.
-			_zl = _zl_min + rng.randf_range(0.4, 2.0)
-		_:
-			_dir = -1.0 if rng.randf() < 0.5 else 1.0
-			_zl = lerpf(_zl_min, _zl_max, rng.randf_range(0.25, 0.85))
-	_dir_now = _dir
+	if dir_name == "pull":
+		_dir = 1.0
+		# A pull begins DEEP - the whole picture of it is structure receding out of the
+		# middle of the frame, and that only happens if there is depth to climb out of.
+		_zl = _zl_min + rng.randf_range(0.4, 2.0)
+	else:
+		_dir = -1.0
+		# Start wide and fall in. A push begins at the top of its range or there is
+		# nowhere to go.
+		_zl = _zl_max - rng.randf_range(0.0, 1.2)
+	# THE RATE COMES OUT OF THE DISTANCE, not out of a hat - see JOURNEY_MIN. `_zl` is already
+	# placed, so this is the depth THIS instance actually has in front of it rather than the
+	# family's nominal range, which matters most for a pull: it starts a hair off the floor and
+	# has one to two e-folds less to climb than a push has to fall.
+	var journey := rng.randf_range(JOURNEY_MIN, JOURNEY_MAX)
+	_speed = absf(_zl_bound() - _zl) / journey
 	_rot_rate = rng.randf_range(-0.055, 0.055)
 	_rot = rng.randf() * TAU
 
@@ -260,6 +293,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"colour": COLOURS[_colour],
 		"direction": dir_name,
 		"speed": _speed,
+		"journey": "%.0fs" % journey,
 		"mood": _sch.name,
 		"interior": _interior,
 		"iter_base": _iter_base,
@@ -291,29 +325,31 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
+## Where this instance is headed, and the only bound it will ever meet: the floor for a push,
+## the whole set for a pull.
+func _zl_bound() -> float:
+	return _zl_max if _dir > 0.0 else _zl_min
+
+
 ## THE ZOOM, on a logarithmic scale because that is what a zoom is: a constant e-folds per
 ## second, so the picture opens at the same visual rate whatever depth it is at. Anything
 ## linear in the scale itself crawls when deep and tears when wide.
+##
+## ONE DIRECTION, chosen once. `_dir` is not written anywhere below and nothing else writes it
+## either - see the class doc for the report that made that a rule rather than a default.
 func _step_zoom(dt: float) -> void:
-	# The turn is EASED rather than flipped. Reversing the sign of the rate the instant a bound
-	# is touched puts a corner in the motion at exactly the moment the eye is tracking it; a
-	# second of glide through zero reads as the camera changing its mind.
-	_dir_now = lerpf(_dir_now, _dir, 1.0 - exp(-1.4 * dt))
-	_zl += _dir_now * _speed * (0.55 + 0.9 * _energy) * dt
-	# BOUNCE, never grind. Past the floor the picture pixelates and past the ceiling there is
-	# nothing left to see, so both ends turn the journey around instead of clamping it - which
-	# is also how a push eventually becomes a pull without anybody choosing it.
-	if _zl <= _zl_min:
-		_zl = _zl_min
-		_dir = 1.0
-	elif _zl >= _zl_max:
-		_zl = _zl_max
-		_dir = -1.0
-	elif _breathe > 0.0:
-		_breathe -= dt
-		if _breathe <= 0.0:
-			_breathe = _breathe_span
-			_dir = -_dir
+	# ARRIVE, never bounce and never grind. Past the floor the picture pixelates and past the
+	# ceiling there is nothing left to see, so the rate is taken off over the last ARRIVE_SPAN
+	# e-folds instead. Smoothstep, so the slowing has no corner in it at either end: the camera
+	# eases to rest against the bound and asymptotes rather than touching it.
+	#
+	# The frame does not die there - `_rot` and the palette phase keep running - and the
+	# journey is sized (see JOURNEY_MIN) so that only a long-held scene gets this far at all.
+	var left := clampf(absf(_zl_bound() - _zl) / ARRIVE_SPAN, 0.0, 1.0)
+	var arrive := left * left * (3.0 - 2.0 * left)
+	_zl += _dir * _speed * (0.55 + 0.9 * _energy) * arrive * dt
+	# Belt and braces: the ease above cannot overshoot, but a caller stepping a huge dt could.
+	_zl = clampf(_zl, _zl_min, _zl_max)
 
 
 ## Place the Julia parameter at angle [param t] on the main cardioid, pushed off it by
