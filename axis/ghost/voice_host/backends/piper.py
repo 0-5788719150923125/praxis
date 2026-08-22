@@ -146,23 +146,57 @@ def _pause_multiplier(params: dict) -> float:
     return _pause_scale(params) ** PAUSE_GAIN
 
 
-def _rest_from(have: float, top_up: float, mult: float) -> float:
-    """How much silence to ADD where `have` seconds of it already exist.
+def _rest_from(
+    dwell: float, top_up: float, mult: float, have: float | None = None
+) -> float:
+    """How much silence to ADD at a mark, given `have` seconds of it already there.
 
-    The whole pause rule, in one line: the rest a reader hears at Pause 1.0 is what the
-    model already rests plus our top-up, and the dial multiplies THAT. Whatever is already
-    there is then subtracted back off, because we can only add.
+    The whole pause rule, in two halves that must not be confused:
+
+      THE TARGET is `(dwell + top_up) * mult` - the rest a reader should hear at this
+      mark, which is the mark's natural rest at Pause 1.0 with the dial applied to the
+      whole of it. It comes from the TABLE, so it is the same at every comma in a chapter
+      and it keeps the same ratio to a full stop at every dial setting.
+
+      WHAT IS ALREADY THERE is `have`, measured off the waveform by `_splice_pauses`, and
+      it is subtracted, because we can only add.
+
+    THOSE TWO USED TO BE THE SAME NUMBER AND THAT WAS THE BUG. The target was
+    `(have + top_up) * mult`: the dial multiplied the dwell this particular comma happened
+    to get. But the dwell is not a property of the checkpoint, it is a draw from its
+    stochastic duration predictor - measured over four sentences of the reporter's chapter
+    at his own settings, the same mark in the same voice came back 0.000, 0.000, 0.023,
+    0.077, 0.320 and 0.401 seconds - so multiplying it by 3.62 turned a 0.4 s scatter into
+    a 1.45 s one. The commas in one reading came out 0.36, 0.44, 1.52 and 1.81 seconds,
+    against 1.77 for a full stop. Reported as "the pause after a comma feels twice as long
+    as a pause after a sentence... the comma-pauses feel far too slow", and both halves of
+    that are true of the same reading at different commas.
+
+    The measurement stays where it belongs. `have` is a fact about this render and it is
+    the only honest way to know how much of the target is already paid for - the table
+    cannot answer that, which is what `_splice_pauses` learned the hard way. What it may
+    not do is decide how long the rest should BE.
+
+    `have` defaults to `dwell` for the callers that have no waveform to measure - the
+    sentence seam and the accounting - where the two genuinely are the same number.
 
     Floored at zero: below about 0.6 on the dial the model is resting longer than the dial
     is asking for and there is nothing to take away. That is a real limit of splicing rather
     than a choice - shortening a rest would mean re-synthesizing the sentence.
     """
-    # At 1.0 the answer IS the top-up, said exactly rather than computed round the houses.
-    # `(0.18 + 0.5) * 1.0 - 0.18` is 0.49999999999999994 in binary floating point, and the
-    # default reading is the one thing here that has to be reproducible to the sample.
-    if mult == 1.0:
+    # At 1.0, WHERE THERE IS NOTHING TO MEASURE, the answer IS the top-up, said exactly
+    # rather than computed round the houses: `(0.18 + 0.5) * 1.0 - 0.18` is
+    # 0.49999999999999994 in binary floating point, and the seam is the one figure here
+    # that has to be reproducible to the sample.
+    #
+    # IT IS NOT A SHORTCUT WHERE THERE IS. `have` is what this render actually rests, so
+    # `(dwell + top_up) * 1.0 - have` is a different number from `top_up` and returning
+    # the second would put a step in the dial AT ITS OWN DEFAULT - a comma of 0.10 s at
+    # 1.0 and 0.29 s at 1.2. The exactness argument only applies when the two are the same
+    # number, so that is exactly when it is taken.
+    if mult == 1.0 and (have is None or have == dwell):
         return max(0.0, top_up)
-    return max(0.0, (have + top_up) * mult - have)
+    return max(0.0, (dwell + top_up) * mult - (dwell if have is None else have))
 
 
 def _top_up(mark: str, params: dict, base: float | None = None) -> float:
@@ -178,7 +212,23 @@ def _rest_for(mark: str, params: dict, base: float | None = None) -> float:
     real thing - see the note there about why a table cannot do this job on its own.
     """
     m = str(mark)
-    return _rest_from(DWELL.get(m, 0.0), _top_up(m, params, base), _pause_multiplier(params))
+    return _rest_from(
+        _dwell_for(m, base), _top_up(m, params, base), _pause_multiplier(params)
+    )
+
+
+def _dwell_for(mark: str, base: float | None = None) -> float:
+    """The mark's own natural rest at Pause 1.0 - what the target is built on.
+
+    `base` is the caller's `sentence_gap` overriding the top-up, and a caller who names
+    its own top-up for a mark the table does not carry still needs a dwell to go with it;
+    a full stop's is the honest default, since the only caller that does this is the
+    sentence seam.
+    """
+    m = str(mark)
+    if m in DWELL:
+        return DWELL[m]
+    return DWELL["."] if base is not None else 0.0
 
 
 # Click avoidance for spliced silence - see _splice_pauses.
@@ -237,6 +287,14 @@ def _pause_for(mark: str, params: dict) -> float:
     if PAUSE_AFTER.get(str(mark), 0.0) <= 0.0:
         return 0.0
     return _rest_for(mark, params)
+
+
+# The largest `dynamics` this file can be handed - generative_editor._open_up's value at
+# the top of the slider. Every timing coefficient below is written as the figure it should
+# deliver THERE, divided by this, so the numbers in the comments are the numbers a reader
+# gets at full travel. Kept here rather than imported because the editor is Godot and this
+# is Python; if that curve changes, this changes with it.
+DEPTH_TOP = 2.5
 
 
 def _discourse_plan(groups: list, params: dict) -> list[dict]:
@@ -319,27 +377,48 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
             + arc * (0.5 - v_in * v_in * 0.5 - v_in * 0.5) * 0.38
         )
         # Progressive final lengthening into the unit's boundary, strongest at the
-        # end. 18% at full depth: a real pre-boundary rime lengthens far more than
-        # that, but this is applied to the WHOLE sentence, not just its last rime.
-        rate = 1.0 - depth * 0.18 * (u * u) - depth * 0.07 * (v_in * v_in)
+        # end. 18% AT THE TOP OF THE DIAL: a real pre-boundary rime lengthens far more
+        # than that, but this is applied to the WHOLE sentence, not just its last rime.
+        #
+        # THE CEILING HAD TO BE DIVIDED BY `_open_up`'s AND THAT IS THE BUG THIS FIXES.
+        # These coefficients were written against a `depth` of 0..1 and read as their own
+        # ceilings - the comment above has said "18%" since the day it was written.
+        # generative_editor._open_up later opened the delivery dials to 2.5x at the top of
+        # their travel, which multiplied every number here by two and a half without
+        # touching this file: the paragraph term reached 45%, the section term 17%, and a
+        # sentence at the end of both ran at rate 0.375, i.e. two and a half times its own
+        # length. Reported as "the cadence/pace/speed of the voice becomes slower and
+        # slower and slower... even at very small Arc values", and the Arc was innocent -
+        # at the reported settings (arc 0.06, dynamics 0.62) the arc contributes 0.0% of
+        # it and Dynamics contributes 15%, measured on the reporter's own voice and text.
+        #
+        # Scaled by DEPTH_TOP so the documented figures are what the top of the dial
+        # actually delivers, which is what everything in this function was calibrated as.
+        rate = (
+            1.0
+            - depth * (0.18 / DEPTH_TOP) * (u * u)
+            - depth * (0.07 / DEPTH_TOP) * (v_in * v_in)
+        )
         # Long sentences run a little faster, short ones a little slower.
         rel = lens[i] / typical if typical > 0 else 1.0
-        rate *= 1.0 + depth * 0.10 * (1.0 - min(max(rel, 0.5), 2.0)) * 0.5
+        rate *= 1.0 + depth * (0.10 / DEPTH_TOP) * (1.0 - min(max(rel, 0.5), 2.0)) * 0.5
         mark = ""
         for t in reversed(g):
             mark = str(t.get("punct", ""))
             if mark:
                 break
         if mark == "?":
-            rate *= 1.0 + depth * 0.04  # questions run slightly quicker...
+            rate *= 1.0 + depth * (
+                0.04 / DEPTH_TOP
+            )  # questions run slightly quicker...
             semis += arc * 0.20  # ...and end higher
         elif mark == "!":
-            rate *= 1.0 + depth * 0.06
+            rate *= 1.0 + depth * (0.06 / DEPTH_TOP)
             semis += arc * 0.12
         # Rhythmic variety: the duration predictor's own noise, varied per sentence
         # instead of pinned for the take. Alternating rather than random so a
         # re-render is identical - an export must not be a different performance.
-        nw = 1.0 + depth * 0.25 * (1.0 if i % 2 == 0 else -1.0)
+        nw = 1.0 + depth * (0.25 / DEPTH_TOP) * (1.0 if i % 2 == 0 else -1.0)
         # +1 at the top of the unit, -1 at its end: the effort contour, shared by
         # the tilt and the level so they can never disagree about which way is
         # louder. Squared-ish like the pitch decline, for the same reason.
@@ -442,7 +521,7 @@ def _resample(a, ratio: float):
 # times over one - so a sentence costs milliseconds rather than seconds.
 
 _LPC_FRAME = 0.032  # s: long enough for two pitch periods of a low male voice
-_LPC_HOP = 0.008    # s: 75% overlap, where a Hann window's square sums flat
+_LPC_HOP = 0.008  # s: 75% overlap, where a Hann window's square sums flat
 # The noise a whisper is made of. FIXED, because a re-render must be the same
 # performance - the same reason the duration-predictor jitter alternates by
 # sentence index instead of sampling (see `_discourse_plan`).
@@ -607,7 +686,52 @@ def _whisper(a, sr: int, amount: float):
     want = float(np.sqrt(np.mean(dry * dry)))
     if have > 1e-9:
         wet = wet * (want / have)
-    out = amount * wet + (1.0 - amount) * dry
+    # POWER-PRESERVING, because the two halves of this blend are UNCORRELATED. A whisper is
+    # noise through the vocal tract and the voice under it is periodic, so they do not add
+    # the way two takes of the same signal would - they add in POWER, and a straight
+    # `a*wet + (1-a)*dry` therefore lands at sqrt(a^2 + (1-a)^2) of the level. That is -2.95 dB
+    # at Hushed's 0.45 and nothing at all at either end, which is exactly how it was reported:
+    # "with hushed specifically, it is too quiet", while Whispered at full strength was fine.
+    # Measured against the prediction to 0.02 dB before it was touched.
+    norm = math.sqrt(amount * amount + (1.0 - amount) ** 2)
+    out = (amount * wet + (1.0 - amount) * dry) / max(norm, 1e-9)
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+
+def _muffle(a, sr: int, amount: float):
+    """A voice coming through something: the high end taken off, and a little level with it.
+
+    Not the same thing as distance, which is what the panel's Presence dial does, and that
+    is the whole reason this exists rather than reusing it. Distance is a property of the
+    ROOM and belongs to whoever is directing the reading; a muffle is a property of the
+    VOICE - Gruff speaks through a mask - and belongs to the tone that asked for it. Wiring
+    a tone into the Presence dial made those two the same knob and cost the reader control
+    of both: "there is no way to correct that."
+
+    A one-pole low-pass, which is the right amount of crude. Something over the mouth is a
+    gentle, wide-band roll-off rather than a filter with a corner you can hear, and the
+    single pole is also the cheapest thing that cannot ring. The level trim goes with it
+    because a covered voice really is quieter - not by much, or it stops being a reading.
+    """
+    import numpy as np
+
+    amount = min(1.0, max(0.0, float(amount)))
+    if amount <= 1e-3 or a.size < 2:
+        return a
+    # 9 kHz wide open down to about 1.4 kHz at full - a mask, not a telephone.
+    cut = 9000.0 * math.pow(0.155, amount)
+    x = math.exp(-2.0 * math.pi * cut / float(sr))
+    # The pole written out as its impulse response rather than run as a recursion: a
+    # per-sample Python loop over a sentence is 200k iterations for a filter whose kernel
+    # is spent inside 40 taps (x^40 is 1e-7 at the widest setting here).
+    taps = np.arange(40)
+    kernel = (1.0 - x) * np.power(x, taps)
+    out = np.convolve(a.astype(np.float64), kernel)[: a.size]
+    # ...and put back what the filter took off the level, less the trim the muffle is worth.
+    have = float(np.sqrt(np.mean(out.astype(np.float64) ** 2)))
+    want = float(np.sqrt(np.mean(a.astype(np.float64) ** 2))) * (1.0 - 0.18 * amount)
+    if have > 1e-9:
+        out = out * (want / have)
     return np.clip(out, -1.0, 1.0).astype(np.float32)
 
 
@@ -662,6 +786,89 @@ def _restore_formants(shifted, source, ratio: float, sr: int):
 def _lpc_order(sr: int) -> int:
     """One pole pair per kHz, plus two for the glottal tilt - the usual rule."""
     return int(min(36, 2 + sr // 1000))
+
+
+def _nominal_seconds(frames, ratio: float, sr: int) -> float:
+    """How long this sentence WOULD have run at `1/ratio` of the length scale it was given.
+
+    THE BUG THIS ANSWERS. A per-sentence pitch move is bought by rendering `pr` times slower
+    and playing back `pr` times faster, and the two are assumed to cancel in duration. They
+    do not. The duration predictor's output is CEILED to whole frames per phoneme id - pads
+    and BOS/EOS included, which is most of the ids - so a token already at its one-frame
+    floor cannot get shorter, and a sizeable part of every sentence does not respond to
+    length_scale at all. Measured across three voices, that fixed part is 13% to 46% of a
+    sentence, varying with the voice and the sentence both, which is why no constant can
+    stand in for it.
+
+    What it sounds like: the paragraph arc opens a unit high (pr > 1, renders long, plays
+    back short) and closes it low (pr < 1, renders short, plays back long), so the reading
+    accelerates into every paragraph and drags out of it - by 5.1% and 2.0% at the top of
+    the Arc dial, on a 3-second sentence. Reported as "the pace grows slower and slower over
+    time, decreasing in speed with the increase in the Arc value", and the report is exact:
+    the tilt is proportional to the arc.
+
+    The frames are the plan the synthesizer actually used, so the answer is computable rather
+    than remembered: `frames_i = ceil(d_i * L)` bounds each `d_i` to within one frame, its
+    midpoint is the unbiased choice inside that bound, and rescaling that midpoint gives what
+    the other scale would have asked for.
+
+    THE EXPECTATION IS EXACT, not a half-frame rule of thumb. `frames_i = m` says only that
+    `d_i * L` fell in `(m-1, m]`, so at the other scale it falls in `((m-1)/r, m/r]` - an
+    interval whose width is one frame divided by the ratio. Averaging the ceiling over it is
+    the integral of a staircase, which is closed form - and it has to be general in the width,
+    because a PULL-DOWN (ratio under 1) widens the interval past a whole frame and a two-term
+    version that assumed one straddle read 6% long on exactly those, which is the end of every
+    paragraph. Two cruder versions were
+    measured first and both left a systematic tilt behind: ceiling the midpoint counts the
+    rounding twice (+3.1% of a sentence), and adding half a frame back counts it slightly
+    short (-1.1% on one voice, -4.4% on another, because how much a voice floors at one
+    frame varies).
+
+    Exact at ratio 1 by construction, which is the property worth having: with no arc there
+    is no correction and the render is what it always was, byte for byte.
+    """
+    import numpy as np
+
+    if frames is None or ratio <= 0.0:
+        return 0.0
+
+    def area(x):
+        """The integral of ceil() from 0 to x - a staircase, so it is closed form."""
+        k = np.floor(x)
+        return k * (k + 1.0) * 0.5 + (k + 1.0) * (x - k)
+
+    m = np.asarray(frames, dtype=np.float64)
+    lo = np.maximum(m - 1.0, 0.0) / ratio
+    hi = m / ratio
+    width = np.maximum(hi - lo, 1e-12)
+    exp = (area(hi) - area(lo)) / width
+    # AN ID AT THE FLOOR STAYS AT THE FLOOR, and this is the whole fixed fraction. A one-frame
+    # id is one frame because its predicted duration was UNDER a frame, and most of them are
+    # the pads between phonemes, whose duration is near zero rather than anywhere near uniform
+    # in the frame they were rounded up into. Averaging the ceiling over that frame credits
+    # them with half of one they never had, and then a pull-down (which widens the interval
+    # past a whole frame) turns that into a whole extra frame each: measured +6% of a
+    # sentence on all three voices at the bottom of the range, which is every paragraph end.
+    exp = np.where(m <= 1.0, 1.0, exp)
+    return float(np.maximum(exp, 1.0).sum()) * HOP_LENGTH / float(sr)
+
+
+# A first guess at that fixed fraction, used to ASK for a length scale that will land near
+# the pitch move requested. It only has to be in the right neighbourhood: whatever it gets
+# wrong, `_nominal_seconds` measures afterwards and the resample corrects, so the timing is
+# exact either way and only the delivered semitones drift a little with it.
+PACE_FIXED_GUESS = 0.30
+
+
+def _pitch_length(pr: float) -> float:
+    """The length-scale factor to REQUEST for a pitch move of `pr`.
+
+    Solving `A*L + b = pr * (A*ls + b)` for L, with `b/(A*ls) = f/(1-f)`: asking for exactly
+    `pr` lands short of it, because the fixed part comes back unscaled and then gets divided
+    by `pr` along with everything else.
+    """
+    f = PACE_FIXED_GUESS / (1.0 - PACE_FIXED_GUESS)
+    return pr + f * (pr - 1.0)
 
 
 def _gap_for(mark: str, params: dict) -> float:
@@ -794,24 +1001,34 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     """
     import numpy as np
 
-    # A point may carry a third field: the time of the next token, which bounds how far
-    # the cut may slide forward. Two-field points (the older form, and the tests) mean
-    # 'no bound'.
+    # A point is (nominal time, top-up, next token's start, the mark's own dwell). The
+    # third field bounds how far the cut may slide forward; the fourth is the mark's
+    # natural rest from DWELL, which is what the TARGET is built on - see `_rest_from`.
+    # Shorter points are the older form and the tests: no bound, and no table entry, in
+    # which case the measured dwell stands in for it and the rule is what it was before
+    # the target and the measurement were separated.
     pts = [
-        (float(p[0]), float(p[1]), (float(p[2]) if len(p) > 2 else 0.0))
+        (
+            float(p[0]),
+            float(p[1]),
+            (float(p[2]) if len(p) > 2 else 0.0),
+            (float(p[3]) if len(p) > 3 else None),
+        )
         for p in points
         if float(p[1]) > 0.0
     ]
-    # `mult` = 1.0 means "insert exactly what you were asked for", which is what every
-    # caller did before the dial learned to scale a whole rest, and what the tests still
-    # expect. Above it, the second field of a point is read as the TOP-UP at Pause 1.0 and
-    # the silence already at the mark is measured here, in the audio, rather than looked up.
+    # ONE RULE AT EVERY SETTING OF THE DIAL, INCLUDING ITS DEFAULT. `mult` = 1.0 used to
+    # short-circuit to "insert exactly what you were asked for", which is what every caller
+    # did before the dial learned to scale a whole rest. That left a step at the dial's own
+    # default - a comma of 0.10 s at 1.0 and 0.29 s at 1.2 - so it is gone, and the rule
+    # below runs at 1.0 like everywhere else.
     #
-    # WHY MEASURED. The table said this voice dwells 0.15 s at a comma; it dwells 0.41. Get
-    # that wrong and the dial stops scaling the rest and starts scaling the ERROR - which is
-    # the bug this whole path was rewritten for, one level down. The dwell is a property of
-    # the checkpoint, the pace and the sentence, and the only honest source for it is the
-    # waveform in front of us.
+    # WHY THE SILENCE IS MEASURED HERE. Because it is the only place that can see it, and
+    # because the table's guess at it is wrong: it said this voice dwells 0.15 s at a comma
+    # and the measured figures run from 0.000 to 0.401. What is measured is used for what
+    # it can answer - HOW MUCH OF THE TARGET IS ALREADY PAID FOR - and nothing else. It
+    # does not set the target: multiplying a per-instance draw by the dial is what made one
+    # reading's commas come out 0.36, 0.44, 1.52 and 1.81 seconds. See `_rest_from`.
     if not pts:
         return audio, []
     pts.sort(key=lambda p: p[0])
@@ -826,16 +1043,18 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     prev = 0
     need_in = False
     quiet = float(np.max(np.abs(audio))) * 0.02 if audio.size else 0.0
-    for t, secs, limit in pts:
+    for t, secs, limit, dwell in pts:
         hi = int(round(limit * sr)) if limit > 0.0 else 0
         cut = max(
             prev,
             _quiet_point(audio, int(round(t * sr)), search, prev, hi, env, reach, back),
         )
-        if mult == 1.0:
-            pad = int(round(secs * sr))
-        else:
-            pad = int(round(_rest_from(_silence_around(audio, cut, quiet, sr), secs, mult) * sr))
+        have = _silence_around(audio, cut, quiet, sr)
+        pad = int(
+            round(
+                _rest_from(dwell if dwell is not None else have, secs, mult, have) * sr
+            )
+        )
         if pad <= 0:
             continue
         seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
@@ -874,32 +1093,143 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
 _warned_unaligned = False
 
 
-def _silence_around(audio, at: int, thresh: float, sr: int) -> float:
-    """Seconds of contiguous near-silence containing `at` - what the model rests here.
+# THE CEILING ON A REST NOBODY ASKED FOR, as a multiple of the median rest between two
+# words in the SAME sentence, floored so a brisk sentence still has room for a real one.
+#
+# Relative rather than absolute because every one of pace, length_scale, the tone preset,
+# the Arc resample and the checkpoint itself moves the whole distribution together; a
+# figure in seconds would fire constantly at a slow pace and never at a quick one. The
+# sentence's own median is the only reference that tracks all of them at once.
+#
+# 3.0 IS WHERE THE HISTOGRAM IS EMPTY, and that is the whole argument for it. Every
+# unmarked boundary rest over its own sentence's median, 3036 of them across 16 sentences
+# of the reporter's chapter, four speakers and three paces:
+#
+#     x1.50-1.75  205 |  x2.25-2.50  22  |  x3.00-3.25   0  |  x4.00-5.00   0
+#     x1.75-2.00   76 |  x2.50-2.75  13  |  x3.25-3.50   2  |  x5.00-5.25   1
+#     x2.00-2.25   27 |  x2.75-3.00   5  |  x3.50-4.00   2  |  x5.25-5.50   1
+#
+# One continuous mass thinning out to nothing at 3.0, an empty bin, and then a handful
+# scattered out to 5.4x with nothing between. That is two distributions, not one tail, and
+# 0.16% of boundaries are in the second one. The cut brings those back to 3.0 rather than
+# to the median: the point is to make the rest indistinguishable from one the model meant,
+# not to flatten it.
+#
+# The floor is a safety net for a short sentence, where a median over four or five
+# boundaries is not a reliable estimate of anything. It binds at a brisk pace and nowhere
+# else - at the reporter's settings the median rest is 0.046 s, so the ratio decides.
+REST_RATIO = 3.0
+REST_FLOOR = 0.12
 
-    Walked outward from the cut rather than measured between the token spans, because a
+
+def _trim_rests(audio, rests, sr: int):
+    """Cut the unplanned pause out of the middle of a clause.
+
+    THE DEFECT. Piper's duration predictor is stochastic - that is what `noise_w` is the
+    noise of - and the thing it predicts a duration FOR includes the blanks between the
+    phonemes. A blank is also where the model puts a pause, so a blank's duration is not
+    scattered around one value, it is bimodal: a few tens of milliseconds nearly always,
+    and a quarter of a second when the sample lands in the other mode. Draw enough of them
+    and every so often one lands there in the middle of a clause, with no punctuation
+    anywhere near it and nothing in the text asking for it.
+
+    Reported as "weird stuttering in their cadence, around specific words" - the
+    reporter's own opening sentence has one, a 0.29 s hole between `house` and `in it` at
+    -34 dB, in three renders out of eight. Reading in the sentence rather than word by
+    word (see WORD_BREAK) shortened the tail a long way - the 99th percentile of a
+    boundary rest went 0.120 -> 0.104 - but it cannot remove the mode, and on the
+    reporter's own speaker it did not: 0.383 s after `country`, 0.302 s after `it`.
+
+    It is not fixable at the source. The duration plan and the waveform come out of one
+    ONNX call, so there is nothing to clamp before the audio exists, and the only dial
+    that reaches it is `noise_w` - which is the rhythmic variety of the whole reading, and
+    turning it down to stop one hole in six hundred boundaries buys a metronome.
+
+    THE PLAN SAYS WHERE, THE WAVEFORM SAYS HOW LONG. `rests` is [(t0, t1)] from the frame
+    plan, for word boundaries carrying NO punctuation - a marked one is `_splice_pauses`'s
+    to own, and shortening a full stop because the model was generous with it would be
+    this function arguing with the Pause dial. But the plan is not the hole: a word tapers
+    into a rest and starts up out of it, and a phone beside the blank can render as
+    silence itself, so the audible gap runs past the plan's idea of it at both ends.
+    Measured - bringing the PLAN back to the ceiling left one boundary with 0.264 s of
+    silence still in it. So the plan is used only to find the boundary, the real silence
+    around it is measured, and the ceiling applies to that. Which is the lesson
+    `_splice_pauses` had to learn one dial over, in the other direction.
+
+    The excess comes out of the MIDDLE of the silence, so the ramp that keeps the join
+    from clicking has silence to land on at both ends rather than the last few
+    milliseconds of a word. Returns `(audio, removed)` with `removed` in the form `_shift`
+    takes, the seconds negative. With nothing to cut the input array is returned
+    untouched - byte-identical, not merely equal.
+    """
+    import numpy as np
+
+    spans = [(float(a), float(b)) for a, b in rests if float(b) > float(a)]
+    if not spans or audio.size == 0:
+        return audio, []
+    lens = sorted(b - a for a, b in spans)
+    cap = max(REST_FLOOR, REST_RATIO * lens[len(lens) // 2])
+    fade = max(1, int(round(SPLICE_FADE_MS * sr / 1000.0)))
+    quiet = float(np.max(np.abs(audio))) * 0.02
+    pieces: list = []
+    removed: list = []
+    prev = 0
+    need_in = False
+    for a, b in spans:
+        mid = int(round(0.5 * (a + b) * sr))
+        lo, hi = _silent_span(audio, mid, quiet, sr)
+        lo = max(lo, prev)
+        n = int(round(((hi - lo) / float(sr) - cap) * sr))
+        if n <= 0 or hi - lo <= n + 2 * fade:
+            continue
+        at = lo + (hi - lo - n) // 2
+        seg = np.array(audio[prev:at], dtype=audio.dtype, copy=True)
+        _ramp(seg, fade, need_in, True)
+        pieces.append(seg)
+        removed.append((at / float(sr), -n / float(sr)))
+        prev, need_in = at + n, True
+    if not removed:
+        return audio, []
+    tail = np.array(audio[prev:], dtype=audio.dtype, copy=True)
+    _ramp(tail, fade, need_in, False)
+    pieces.append(tail)
+    return np.concatenate(pieces), removed
+
+
+def _silent_span(audio, at: int, thresh: float, sr: int) -> tuple:
+    """(first, last+1) of the contiguous near-silence containing sample `at`.
+
+    Walked outward from the point rather than measured between the token spans, because a
     span is the aligner's opinion about where a word ends and this is a question about the
     waveform. Bounded at half a second in each direction: past that it is not a dwell, it is
     the end of the utterance, and topping THAT up would put the sentence's own tail inside
-    the multiplier.
+    the multiplier. `(at, at)` - an empty span - if `at` is not in silence at all.
     """
     import numpy as np
 
     if audio.size == 0 or thresh <= 0.0:
-        return 0.0
+        return at, at
     span = int(0.5 * sr)
     lo = max(0, at - span)
     hi = min(audio.size, at + span)
     a = np.abs(audio[lo:hi])
+    if a.size == 0:
+        return at, at
     i = min(max(at - lo, 0), a.size - 1)
     if a[i] > thresh:
-        return 0.0
+        return at, at
     loud = np.where(a > thresh)[0]
     left = loud[loud < i]
     right = loud[loud > i]
     start = int(left[-1]) + 1 if left.size else 0
     end = int(right[0]) if right.size else a.size
-    return float(end - start) / sr
+    return lo + start, lo + end
+
+
+def _silence_around(audio, at: int, thresh: float, sr: int) -> float:
+    """Seconds of contiguous near-silence containing `at` - what the model rests here."""
+    lo, hi = _silent_span(audio, at, thresh, sr)
+    return float(hi - lo) / sr
 
 
 def _warn_unaligned(marks) -> None:
@@ -991,6 +1321,45 @@ BOS, EOS, PAD = 1, 2, 0
 # Word-spaces prepended to every utterance so the model's onset ramp does not land on
 # the first real word. Two, by measurement - see the table in _symbols.
 LEAD_IN_SPACES = 2
+
+# THE WORD BREAK THAT COSTS NOTHING - U+200B ZERO WIDTH SPACE, written between the words
+# of a sentence before it is handed to eSpeak.
+#
+# eSpeak reads a SENTENCE, and reading a sentence is how it decides which words are
+# stressed. Handed one word at a time it can only give the citation form, and the
+# citation form of a function word carries a primary stress no reader would ever put
+# there. Measured over this chapter's 4148 words, with `_espeak_word` spellings:
+#
+#     a      ˈeɪ  alone      ɐ    in the sentence     46 times
+#     I      ˈaɪ             aɪ                       37
+#     in     ˈɪn             ɪn                       29
+#     to     tuː             tə                       24
+#     that   ðˈæt            ðæt                      22
+#     it     ɪt              ɪɾ                       12
+#
+# `a` is the one to look at twice: ˈeɪ is not a stressed schwa, it is the LETTER A, and
+# ghost was saying it that way 46 times in one chapter. The rest are a rhythm defect
+# rather than a wrong word - a reading in which every preposition, article and modal is
+# stressed is by definition an even one, and an even one is what a listener calls jerky.
+#
+# Reported as "weird stuttering in their cadence, around specific words... `in` and
+# `in it`", with the delivery generally "jerky/uneven".
+#
+# So why not simply phonemize the sentence? Because eSpeak WELDS across word boundaries
+# when it does - "not a" comes back nˌɑːɾə, "in the" as ɪnðə, "out of" as ˌaʊɾəv - and
+# ghost cannot use a reading it cannot cut into words: the karaoke line, the per-token
+# timings and every pause placement are keyed to knowing which phones belong to which
+# word. Measured on the same chapter, a plain join loses that on 103 of 230 sentences.
+#
+# A zero-width space between the words is the whole fix. It is a word boundary to
+# eSpeak, so nothing welds across it; it has no phones of its own, so nothing leaks into
+# the transcription; and it does not stop eSpeak analysing the sentence, so the stresses
+# stay the sentence's own. Same chapter: 6 sentences of 230 still come back with a
+# different number of pieces than words (2.6%, and those fall back to the old path), and
+# of the 127 sentences a plain join DID align, the zero-width version agrees with it on
+# 124. A pipe and a double bar were measured too; the pipe behaves identically and the
+# double bar disturbs the stresses, so the invisible one wins on nothing but taste.
+WORD_BREAK = "\u200b"
 
 # U+0329 COMBINING VERTICAL LINE BELOW - the IPA "syllabic" mark. eSpeak puts it on a
 # consonant that is carrying a syllable on its own, which in American English is mostly
@@ -1100,6 +1469,9 @@ class PiperBackend(Backend):
         self._vowels = vowel_probe.VowelProbe(
             self._espeak, self._render_symbols, self._root()
         )
+        # The frame plan of the most recent render - see `_render_symbols`.
+        self._last_frames = None
+        self._last_rests: list = []
 
     # -- storage -----------------------------------------------------------
 
@@ -1253,9 +1625,11 @@ class PiperBackend(Backend):
     def _espeak(cls, words: list[str], voice: str = "en-us") -> list[str]:
         """eSpeak's IPA for a list of words, in the voice's OWN eSpeak language.
 
-        Word by word rather than whole-sentence, because ghost needs to know
-        which phones belong to which word to place the karaoke subtitles, and
-        eSpeak gives no word boundaries in a sentence-level transcription.
+        Each item of the list is its own utterance, so what an item contains is
+        what eSpeak gets to read. `_in_sentence` hands it a whole sentence with
+        zero-width breaks between the words, which is the normal path; the
+        word-by-word batch below it is the fallback for a sentence eSpeak runs
+        together anyway, and `homographs.py` hands it carrier phrases.
 
         THE LANGUAGE MUST COME FROM THE VOICE CONFIG, not from the voice's name.
         en_US-ljspeech-medium declares `espeak.voice = "en"`, which eSpeak
@@ -1287,14 +1661,13 @@ class PiperBackend(Backend):
         # the whole point of reading it from the config.
         lang = {"en": "en-gb", "en-uk": "en-gb"}.get(voice, voice)
         # EACH ITEM OF `words` IS ITS OWN UTTERANCE - a list is a batch, not a
-        # sentence - and callers pass one word per item, so this is the isolated
-        # reading by construction. That is deliberate (the docstring above says
-        # why: alignment) and it is also what costs the homograph: eSpeak reads
-        # "live" as laɪv alone and lɪv in "where they live", so ghost was getting
-        # the isolated reading for every occurrence. The separator is what makes
-        # a MULTI-word item splittable, which is how homographs.py asks the same
-        # question again with the syntax attached - it is not sentence context
-        # here.
+        # sentence. One word per item is therefore the ISOLATED reading by
+        # construction, and that reading costs both the homograph and the stress:
+        # eSpeak reads "live" as laɪv alone and lɪv in "where they live", and it
+        # stresses every function word it is shown on its own. The separator is
+        # what makes a MULTI-word item splittable again, which is how both
+        # `_in_sentence` and homographs.py get a reading back per word after
+        # asking the question with the syntax attached.
         out = phonemize(
             words,
             language=lang,
@@ -1305,6 +1678,83 @@ class PiperBackend(Backend):
             separator=Separator(word=" ", phone=""),
         )
         return [o.strip() for o in out]
+
+    def _in_sentence(
+        self, tokens: list, need: list, espeak_voice: str
+    ) -> dict[int, str]:
+        """eSpeak's reading of each word AS IT SITS IN THIS SENTENCE.
+
+        Returns {token index: IPA} for every index in `need`, or {} if the reading
+        could not be cut back into words - in which case the caller falls back to the
+        word-by-word batch, which is what this whole file did before. See WORD_BREAK
+        for what the sentence buys and why the words are separated the way they are.
+
+        EVERY token contributes its spelling to the sentence, including the ones that
+        are not in `need`: a word carrying an authored override or a homograph reading
+        still conditions the stress of its neighbours, and dropping it from the string
+        would be asking eSpeak about a sentence nobody wrote. Only the pieces for `need`
+        are read back out.
+
+        A token may be more than one eSpeak word - `_espeak_word` turns an internal
+        hyphen into a boundary, which is the whole point of that function - so the
+        pieces are taken by COUNT rather than one apiece, and rejoined with the space
+        that keeps the boundary the hyphen asked for.
+        """
+        spoken: list[str] = []
+        counts: dict[int, tuple[int, int]] = {}
+        for i, t in enumerate(tokens):
+            text = str(t.get("text", ""))
+            if not text.strip():
+                continue
+            w = _espeak_word(text)
+            parts = w.split()
+            if not parts:
+                continue
+            counts[i] = (len(spoken), len(parts))
+            spoken.extend(parts)
+        if not spoken:
+            return {}
+        joined = (" %s " % WORD_BREAK).join(spoken)
+        try:
+            got = (self._espeak([joined], espeak_voice) or [""])[0].split()
+        except BackendError:
+            raise
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a phonemizer fault must not lose audio
+            print(
+                "ghost/voice: sentence-level phonemization failed (%s); "
+                "falling back to word by word" % exc,
+                file=sys.stderr,
+            )
+            return {}
+        if len(got) != len(spoken):
+            # eSpeak still ran the words together somewhere, so there is no honest way
+            # to say which phones belong to which word. The isolated batch is wrong
+            # about stress but right about alignment, and alignment is the one this
+            # file cannot trade away - a mis-cut reading puts the karaoke line and
+            # every pause on the wrong word for the rest of the sentence.
+            self._warn_welded()
+            return {}
+        out: dict[int, str] = {}
+        for i in need:
+            at = counts.get(i)
+            if at is None:
+                return {}
+            start, n = at
+            out[i] = " ".join(got[start : start + n])
+        return out
+
+    def _warn_welded(self) -> None:
+        """Once per process: the sentence reading could not be cut into words."""
+        if "\u200b" in self._warned_symbols:
+            return
+        self._warned_symbols.add("\u200b")
+        print(
+            "ghost/voice: eSpeak ran words together in a sentence despite the word "
+            "break; those sentences are read word by word instead (about 3% of them)",
+            file=sys.stderr,
+        )
 
     def _symbols(
         self,
@@ -1354,6 +1804,8 @@ class PiperBackend(Backend):
         ]
         espoke: dict[int, str] = {}
         if need and phonemizer == "espeak":
+            espoke = self._in_sentence(tokens, need, espeak_voice)
+        if need and phonemizer == "espeak" and not espoke:
             words = [_espeak_word(str(tokens[i]["text"])) for i in need]
             got = self._espeak(words, espeak_voice)
             if len(got) != len(words):
@@ -1591,9 +2043,15 @@ class PiperBackend(Backend):
                 continue  # . ! ? are the gap between sentences, above
             if i < len(phone_times):
                 nxt = phone_times[i + 1]["t0"] if i + 1 < len(phone_times) else 0.0
-                # the top-up, like the token path - the splicer measures the rest
+                # the top-up and the table dwell, like the token path - the splicer
+                # measures what is already there and tops it up to the target
                 points.append(
-                    (float(phone_times[i]["t1"]), _top_up(mark, params), float(nxt))
+                    (
+                        float(phone_times[i]["t1"]),
+                        _top_up(mark, params),
+                        float(nxt),
+                        _dwell_for(mark),
+                    )
                 )
             else:
                 unplaceable.append(mark)
@@ -1658,20 +2116,20 @@ class PiperBackend(Backend):
             step = plan[gi]
             pr = 2.0 ** (float(step["semis"]) / 12.0)
             gp = dict(params)
-            gp["length_scale"] = (
-                float(
-                    params.get(
-                        "length_scale",
-                        cfg.get("inference", {}).get("length_scale", 1.0),
-                    )
+            base_ls = float(
+                params.get(
+                    "length_scale", cfg.get("inference", {}).get("length_scale", 1.0)
                 )
-                * pr
-                / float(step["rate"])
             )
+            # ...and ASK for more than `pr`, because part of a sentence does not scale and
+            # the playback divides all of it. See `_pitch_length` / `_nominal_seconds`.
+            gp["length_scale"] = base_ls * _pitch_length(pr) / float(step["rate"])
             gp["noise_w"] = float(
                 params.get("noise_w", cfg.get("inference", {}).get("noise_w", 0.333))
             ) * float(step["noise_w_mul"])
             audio, per_token = self._run(group, voice, gp, cfg, sess, phonemizer)
+            # The frame plan's word-boundary rests, before anything resamples them.
+            group_rests = list(self._last_rests)
             # SAY WHICH WORDS CAME BACK WITHOUT A SPAN. ghost keeps them in the karaoke line
             # either way now (it interpolates their timing - see
             # GenerativeEditor._bridge_words), but a token the aligner cannot place is a real
@@ -1694,7 +2152,26 @@ class PiperBackend(Backend):
             # move rather than after, because a whisper has no pitch to move and
             # doing it the other way round would spend the work twice.
             audio = _whisper(audio, sr, float(params.get("whisper", 0.0)))
+            audio = _muffle(audio, sr, float(params.get("muffle", 0.0)))
             if abs(pr - 1.0) > 1e-4:
+                # THE RATIO IS MEASURED, NOT ASSUMED. Playing back by exactly `pr` is what
+                # tilted the pace across every paragraph; playing back by the ratio between
+                # what this sentence actually rendered to and what it would have rendered to
+                # unshifted lands the timing exactly, whatever the voice did with the length
+                # scale. The pitch then moves by that same measured ratio rather than by the
+                # nominal one, which is a few percent either way of what was asked for and
+                # is the half of this trade nobody can hear.
+                nominal = _nominal_seconds(self._last_frames, _pitch_length(pr), sr)
+                played = float(audio.size) / float(sr)
+                ratio = pr
+                if nominal > 0.05 and played > 0.05:
+                    ratio = played / nominal
+                    # A guard, not a tuning: a mis-shaped frame plan must not be able to
+                    # halve or double a sentence. Outside this the nominal figure is not
+                    # believable and the requested move is the better answer.
+                    if ratio < pr * 0.6 or ratio > pr * 1.6:
+                        ratio = pr
+                pr = ratio
                 shifted = _resample(audio, pr)
                 # ...AND THE FILTER HELD STILL WHILE THE SOURCE MOVES. Default on:
                 # the arc is a change of REGISTER, and a register change that also
@@ -1705,6 +2182,28 @@ class PiperBackend(Backend):
                 audio = shifted
                 # the alignment was measured before the resample, so it moves with it
                 per_token = {k: (v[0] / pr, v[1] / pr) for k, v in per_token.items()}
+                group_rests = [(a / pr, b / pr, w) for a, b, w in group_rests]
+            # A REST NOBODY ASKED FOR, shortened before the ones that were asked for are
+            # put in. Unmarked boundaries only: a mark's rest belongs to `_splice_pauses`
+            # and to the Pause dial, and this must never be caught arguing with either.
+            audio, cut = _trim_rests(
+                audio,
+                [
+                    (a, b)
+                    for a, b, w in group_rests
+                    if w < len(group) and not str(group[w].get("punct", ""))
+                ],
+                sr,
+            )
+            if cut:
+                per_token = {
+                    k: (
+                        max(0.0, _shift(v[0], cut, True)),
+                        max(0.0, _shift(v[1], cut, False)),
+                    )
+                    for k, v in per_token.items()
+                }
+                per_token = {k: (a, max(a, b)) for k, (a, b) in per_token.items()}
             # mid-sentence marks: splice their silence into this group's audio
             points, unplaceable = [], []
             for ti, tok in enumerate(group):
@@ -1723,12 +2222,19 @@ class PiperBackend(Backend):
                             # splicer can see that (it has the audio). See _splice_pauses.
                             _top_up(mark, params),
                             float(nxt[0]) if nxt is not None else 0.0,
+                            # ...and the mark's own natural rest, which is what the
+                            # target is built on. The measured dwell says how much of
+                            # that target is already paid for; it does not get to say
+                            # how long the rest should be. See `_rest_from`.
+                            _dwell_for(mark),
                         )
                     )
                 else:
                     unplaceable.append(mark)
             _warn_unaligned(unplaceable)
-            audio, inserted = _splice_pauses(audio, points, sr, _pause_multiplier(params))
+            audio, inserted = _splice_pauses(
+                audio, points, sr, _pause_multiplier(params)
+            )
             for ti, span in per_token.items():
                 # float(): numpy scalars are not JSON-serializable and the
                 # protocol is JSON
@@ -1834,6 +2340,13 @@ class PiperBackend(Backend):
         ids: list[int] = [BOS]
         owner: list[int] = [-1]
         missing: list[str] = []
+        # Which ids are the REST between two words - the blanks and the word-space
+        # itself. `_trim_rests` needs to know where a boundary rest starts and stops,
+        # and the id stream is the only place that is written down: a token's span
+        # runs to the end of its own trailing space, so the rest is split between two
+        # spans and cannot be recovered from them afterwards. -1 = not a rest, else the
+        # index of the token whose word-space this run carries.
+        rest_of: list[int] = [-2]
         for sym, src in symbols:
             mapped = pmap.get(sym)
             if mapped is None:
@@ -1841,13 +2354,17 @@ class PiperBackend(Backend):
                 continue
             ids.append(PAD)
             owner.append(src)
+            rest_of.append(-1)
             for m in mapped:
                 ids.append(int(m))
                 owner.append(src)
+                rest_of.append(src if sym == " " else -2)
         ids.append(PAD)
         owner.append(-1)
+        rest_of.append(-1)
         ids.append(EOS)
         owner.append(-1)
+        rest_of.append(-2)
         if folded and SYLLABIC not in self._warned_symbols:
             self._warned_symbols.add(SYLLABIC)
             print(
@@ -1896,13 +2413,39 @@ class PiperBackend(Backend):
         audio = np.asarray(out[0]).squeeze().astype(np.float32)
 
         spans: dict = {}
+        # THE DURATION PLAN, kept: `_pace_keep` needs it to undo what a per-sentence
+        # length_scale does to the timing. Stashed rather than returned because the vowel
+        # probe renders through this same function and unpacks a pair.
+        self._last_frames = None
+        # [(t0, t1, token index)] for every run of blanks carrying a word-space, in the
+        # same seconds `spans` is in. Stashed rather than returned for the reason
+        # `_last_frames` is: the vowel probe renders through here and unpacks a pair.
+        self._last_rests: list = []
         if len(out) > 1:
             frames = np.asarray(out[1]).squeeze().astype(np.float64)
             if frames.ndim == 1 and frames.size == len(owner):
+                self._last_frames = frames
                 t = 0.0
-                for dur, who in zip(
-                    frames * HOP_LENGTH / float(cfg["audio"]["sample_rate"]), owner
+                run_at = 0.0
+                run_of = -1
+                spoke = False
+                for dur, who, rest in zip(
+                    frames * HOP_LENGTH / float(cfg["audio"]["sample_rate"]),
+                    owner,
+                    rest_of,
                 ):
+                    if rest == -2:
+                        # A rest is only a rest when speech stands on BOTH sides of it.
+                        # The lead-in (see LEAD_IN_SPACES) and the utterance's own tail
+                        # are neither, and shortening either would be undoing something
+                        # this file asked for on purpose.
+                        if run_of >= 0 and spoke and who >= 0:
+                            self._last_rests.append((run_at, t, run_of))
+                        spoke = spoke or who >= 0
+                        run_of = -1
+                        run_at = t + dur
+                    elif rest >= 0:
+                        run_of = rest
                     if who >= 0:
                         if who not in spans:
                             spans[who] = [t, t + dur]

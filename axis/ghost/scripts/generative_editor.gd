@@ -149,16 +149,29 @@ const LIVE_PREROLL := 2.5
 #
 # VITS has no affect control - the only handles are pace, how much variation the
 # model samples, and pitch. So a "tone" here is those three moved together, plus
-# nudges to the two things AROUND the voice that carry more of the mood than
-# people expect: the ambience bed (`amb`) and how close the reader is standing
-# (`pres`). Both are offsets to the slider of the same name rather than
-# replacements for it - see [method _pad_level_of] and [method _presence_of] - so
-# a preset colours a reading that the panel still has the last word on.
+# A TONE OWNS THE VOICE AND NOTHING ELSE. It reached into two of the panel's own
+# dials once - the ambience bed and Presence - and both were mistakes, in opposite
+# directions.
 #
-# ...and `whisper`, which is none of those things. It is not a parameter of the
-# model at all but a transform applied to what the model returns (piper.py
-# `_whisper`), because the one manner a modal-speech checkpoint categorically
-# cannot be asked for is the one where the vocal folds are not vibrating.
+# The bed was never the voice's business: it is a drone under the reading, a choice
+# about the room, and it neither competes with the voice nor belongs to any manner of
+# speaking. It was also pointless at the sizes used - "if we EVER set ambience to 0.1,
+# then there is essentially no ambience at all."
+#
+# Presence WAS the voice's business, because Gruff really is muffled, but a preset has
+# no business writing a control the reader has set - and as a hidden offset it was
+# worse than that: Presence rests at the TOP of its travel, so subtracting from it
+# could not be undone by pushing the slider up. "There is no way to correct that; I
+# can ramp presence up to 1.0 and it's still too quiet." What Gruff wanted was not
+# distance anyway. It wanted to sound like a voice coming through something, which is
+# a property of the SOURCE, and `muffle` is now exactly that - a filter the preset
+# owns, in the backend beside the whisper, leaving every dial on the panel alone.
+#
+# ...and `whisper` and `muffle`, which are neither. Those two are not parameters of
+# the model at all but transforms applied to what it returns (piper.py `_whisper`,
+# `_muffle`): the two manners a modal-speech checkpoint categorically cannot be asked
+# for are the one where the vocal folds are not vibrating and the one where the voice
+# is coming through something.
 #
 # The pitch shift is done by RESAMPLING, and the model compensates: to raise the
 # voice by r we ask it to speak r times SLOWER, then play back r times faster.
@@ -167,11 +180,11 @@ const LIVE_PREROLL := 2.5
 # formants with the pitch, so the speaker reads as a different SIZE - which is
 # exactly what "spooky" (larger, lower) and "excited" (smaller, higher) want.
 const TONE_PRESETS := {
-	"Neutral":  {"pace": 1.00, "semis":  0.0, "noise": 0.667, "noise_w": 0.333, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
-	"Warm":     {"pace": 0.96, "semis": -0.5, "noise": 0.60,  "noise_w": 0.35,  "amb": 0.1, "pres": 0.0, "whisper": 0.0},
-	"Serious":  {"pace": 0.92, "semis": -1.5, "noise": 0.50,  "noise_w": 0.25,  "amb": 0.1, "pres": 0.0, "whisper": 0.0},
-	"Excited":  {"pace": 1.15, "semis":  2.0, "noise": 0.85,  "noise_w": 0.50,  "amb": 0.0, "pres": 0.0, "whisper": 0.0},
-	"Spooky":   {"pace": 0.85, "semis": -3.0, "noise": 0.45,  "noise_w": 0.20,  "amb": 0.35, "pres": 0.0, "whisper": 0.0},
+	"Neutral":  {"pace": 1.00, "semis":  0.0, "noise": 0.667, "noise_w": 0.333, "muffle": 0.0, "whisper": 0.0},
+	"Warm":     {"pace": 0.96, "semis": -0.5, "noise": 0.60,  "noise_w": 0.35, "muffle": 0.0, "whisper": 0.0},
+	"Serious":  {"pace": 0.92, "semis": -1.5, "noise": 0.50,  "noise_w": 0.25, "muffle": 0.0, "whisper": 0.0},
+	"Excited":  {"pace": 1.15, "semis":  2.0, "noise": 0.85,  "noise_w": 0.50, "muffle": 0.0, "whisper": 0.0},
+	"Spooky":   {"pace": 0.85, "semis": -3.0, "noise": 0.45,  "noise_w": 0.20, "muffle": 0.0, "whisper": 0.0},
 	# The three below fill quadrants the first five leave empty. `pace` and
 	# `noise_w` are close to independent - one is how fast the reading runs, the
 	# other how EVENLY it is divided - and everything above sits on the diagonal:
@@ -203,9 +216,9 @@ const TONE_PRESETS := {
 	# free to wander at the top of the `noise` range, and the ambience bed comes up
 	# further than any other preset - the pad is doing as much of the work as the
 	# voice is.
-	"Sarcastic": {"pace": 0.86, "semis": -1.0, "noise": 0.42, "noise_w": 0.60, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
-	"Urgent":    {"pace": 1.22, "semis":  0.5, "noise": 0.40, "noise_w": 0.16, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
-	"Dreamy":    {"pace": 0.88, "semis":  1.5, "noise": 0.78, "noise_w": 0.52, "amb": 0.45, "pres": 0.0, "whisper": 0.0},
+	"Sarcastic": {"pace": 0.86, "semis": -1.0, "noise": 0.42, "noise_w": 0.60, "muffle": 0.0, "whisper": 0.0},
+	"Urgent":    {"pace": 1.22, "semis":  0.5, "noise": 0.40, "noise_w": 0.16, "muffle": 0.0, "whisper": 0.0},
+	"Dreamy":    {"pace": 0.88, "semis":  1.5, "noise": 0.78, "noise_w": 0.52, "muffle": 0.0, "whisper": 0.0},
 	# ...and these three are the classic vocal-emotion table, as far as it
 	# translates. Murray & Arnott ("Toward the simulation of emotion in synthetic
 	# speech", Speech Communication 16, 1993) reviewed the human literature FOR
@@ -240,21 +253,21 @@ const TONE_PRESETS := {
 	#
 	# The two that did not translate: HAPPINESS is Excited already, and DISGUST
 	# (very much slower, very much lower, grumbled) is Spooky with worse manners.
-	"Mournful":  {"pace": 0.84, "semis": -1.0, "noise": 0.30, "noise_w": 0.45, "amb": 0.20, "pres": 0.0, "whisper": 0.0},
-	"Fierce":    {"pace": 1.10, "semis": -0.5, "noise": 0.90, "noise_w": 0.28, "amb": 0.0, "pres": 0.0, "whisper": 0.0},
-	"Anxious":   {"pace": 1.18, "semis":  1.5, "noise": 0.80, "noise_w": 0.65, "amb": 0.10, "pres": 0.0, "whisper": 0.0},
+	"Mournful":  {"pace": 0.84, "semis": -1.0, "noise": 0.30, "noise_w": 0.45, "muffle": 0.0, "whisper": 0.0},
+	"Fierce":    {"pace": 1.10, "semis": -0.5, "noise": 0.90, "noise_w": 0.28, "muffle": 0.0, "whisper": 0.0},
+	"Anxious":   {"pace": 1.18, "semis":  1.5, "noise": 0.80, "noise_w": 0.65, "muffle": 0.0, "whisper": 0.0},
 	# GRUFF is the growl behind the mask, and it is the first preset that needed
 	# `pres`. Low and rough are in reach without it - the deepest `semis` in the
 	# bank puts a bigger chest behind the voice, and `noise` near the top makes the
 	# source gravelly rather than clean - but MUFFLED and QUIETER are not, and they
-	# are half of what this voice is. Distance is a filter before it is a volume
-	# (see [member VoiceFX.presence]), which is exactly the right shape for it:
-	# -0.3 dulls the high end the way speaking through something does and takes the
-	# level down with it, rather than just pulling the fader.
+	# are half of what this voice is - and they are a property of the SOURCE, not of
+	# how far away it is standing. `muffle` is the preset's own filter (piper._muffle),
+	# so Gruff sounds like it is speaking through something without spending the
+	# reader's Presence dial, which stays theirs for the room.
 	#
 	# The timing is deliberate rather than drawled - this voice is forcing the
 	# words out, not savouring them - so `noise_w` sits low, near Fierce.
-	"Gruff":     {"pace": 0.90, "semis": -4.0, "noise": 0.88, "noise_w": 0.30, "amb": 0.10, "pres": -0.30, "whisper": 0.0},
+	"Gruff":     {"pace": 0.90, "semis": -4.0, "noise": 0.88, "noise_w": 0.30, "muffle": 0.55, "whisper": 0.0},
 	# WHISPERED is the one manner in this bank that no inference parameter can
 	# reach, and the only one that is not a setting at all. A VITS checkpoint
 	# trained on modal speech has no whispered speech in it to sample, so there is
@@ -268,10 +281,14 @@ const TONE_PRESETS := {
 	#
 	# HUSHED is the same transform at half strength, which is a real manner rather
 	# than a fader position - a stage whisper is a voice that has not entirely
-	# left, and half is where it sits. It stands back a little as well, because
-	# that is what someone lowering their voice is doing.
-	"Whispered": {"pace": 0.92, "semis":  0.0, "noise": 0.55, "noise_w": 0.35, "amb": 0.15, "pres": 0.0, "whisper": 1.0},
-	"Hushed":    {"pace": 0.94, "semis": -0.5, "noise": 0.55, "noise_w": 0.33, "amb": 0.10, "pres": -0.12, "whisper": 0.45},
+	# left, and half is where it sits. It used to stand back a little as well, on
+	# the theory that someone lowering their voice does; that came out as "too
+	# quiet, and there is no way to correct that", and the distance was never the
+	# reason - a half blend of two UNCORRELATED signals loses 3 dB all by itself
+	# (piper._whisper, which now normalises for it). The dial is back at 1.0 and
+	# the reader can push it away if they want the distance.
+	"Whispered": {"pace": 0.92, "semis":  0.0, "noise": 0.55, "noise_w": 0.35, "muffle": 0.0, "whisper": 1.0},
+	"Hushed":    {"pace": 0.94, "semis": -0.5, "noise": 0.55, "noise_w": 0.33, "muffle": 0.0, "whisper": 0.45},
 }
 
 var _host: VoiceHost
@@ -647,7 +664,7 @@ func _build_panel() -> void:
 	trow.add_child(tl)
 	_tone = OptionButton.new()
 	_tone.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_tone.tooltip_text = "The reading's overall manner: pace, pitch, how much the model varies itself and how evenly it divides the words, moved together - plus a nudge to the ambience bed and to how close the reader stands, which is what makes Gruff muffled as well as low. The pitch shift moves the formants with it, so the reader reads as a different SIZE - which is what makes Spooky larger and lower, Excited smaller and higher. Regenerates the un-played chunks."
+	_tone.tooltip_text = "The reading's overall manner: pace, pitch, how much the model varies itself, how evenly it divides the words, and whether it is whispered or muffled - all of it the VOICE, and none of it the dials below, which stay yours. The pitch shift moves the formants with it, so the reader reads as a different SIZE - which is what makes Spooky larger and lower, Excited smaller and higher. Regenerates the un-played chunks."
 	for k in TONE_PRESETS:
 		_tone.add_item(String(k))
 	_tone.item_selected.connect(func(_i: int) -> void:
@@ -658,10 +675,6 @@ func _build_panel() -> void:
 		# to be regenerated - the same path a pace change takes
 		if not _chunks.is_empty():
 			_repace()
-		# ...and it nudges the ambience bed, which is a LIVE effect: without this
-		# the preset's contribution only arrived at the next stream open, so a
-		# tone change mid-reading moved the voice and not the room around it.
-		_live_fx()
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	trow.add_child(_tone)
@@ -745,13 +758,12 @@ func _build_panel() -> void:
 	# cannot supply: it never sees the paragraph, so every sentence starts from the
 	# same register at the same rate. See piper._discourse_plan for the rules.
 	_dynamics = _fx_slider(box, "Dynamics", 0.5,
-		"How much the delivery varies from sentence to sentence. The model reads every sentence "
-		+ "the same way because it never sees the paragraph, so this supplies what it cannot: "
-		+ "sentences slow as they approach the end of a paragraph, long ones run a little quicker "
-		+ "and short ones dwell, and the rhythm shifts between neighbours. 0 is the flat delivery; "
-		+ "0.4 is about a fifth slower by the last sentence of a paragraph, and the top of the "
-		+ "dial is roughly two and a half times that - far enough to be too much for some "
-		+ "material, which is the point of having the range.")
+		"How much the READING's timing follows its own structure: a sentence at the end of a "
+		+ "paragraph is drawn out, a short one after a long one lands harder, a question runs a "
+		+ "little quicker. 0 reads every sentence at the same rate. At the top a closing sentence "
+		+ "runs about a third longer than an opening one, which is deliberately more than any "
+		+ "reader would do - if a chapter seems to be getting slower and slower as it goes, this "
+		+ "is the dial, not Arc.")
 	_effort = _fx_slider(box, "Effort", 0.35,
 		"Vocal effort across a paragraph - which is not the same as volume. A louder voice has a "
 		+ "brighter source spectrum, not just a higher level, so this moves the two together: "
@@ -901,8 +913,9 @@ func _load_persisted() -> void:
 	_slot = clampi(int(cfg.get_value("generative", "tab", 0)), 0, _slots.size() - 1)
 	_rebuild_tabs()
 	_apply_slot(_slot)
-	# Last, and once: the Tone preset nudges the ambience bed, so the chain cannot
-	# be dialled before the preset is chosen.
+	# Last, and once: every dial the chain reads is now in the slot (the Tone preset
+	# wrote its own suggestions there when it was picked), so this is the one place
+	# the loaded session's room is applied.
 	_apply_fx(_fx, _cfg(_slot))
 
 
@@ -1764,39 +1777,40 @@ func _arc_semis(k: float) -> float:
 ## paragraph by 18%, so the upper half of the dial was doing almost nothing and the
 ## reported symptom was exactly that. (Arc was opened up the same way and has since
 ## been given its own curve - see [method _arc_semis] - because its ceiling is set by
-## the resampler rather than by taste.) Rescaling linearly
-## would have been wrong too, because the LOW half is where the settings that already
-## sound right live - moving those to make room at the top would break what works to
-## fix what doesn't. Cubic keeps the bottom of the travel where it was (0.25 moves by
-## 9%) and opens the top (1.0 goes to 2.5x), so the far end is now genuinely too much
-## for some material, and choosing that is the reader's business.
+## the resampler rather than by taste.)
+##
+## AND THIS FUNCTION IS ONLY HALF OF A DIAL. It multiplies what the backend is handed;
+## the backend then multiplies its own coefficients by that. Those coefficients were
+## written as their own ceilings - piper's `_discourse_plan` has documented "18% at
+## full depth" since it was written - so opening the dial to 2.5x quietly took the
+## paragraph's final lengthening to 45%, the section's to 17%, and a sentence sitting
+## at the end of both to two and a half times its own length. Reported as "the
+## cadence/pace/speed of the voice becomes slower and slower and slower", attributed
+## to Arc, and measured on the reporter's own settings as 15% from Dynamics and 0.0%
+## from Arc. piper.DEPTH_TOP now divides it back out, so the figures documented there
+## are what the top of THIS dial delivers. A ceiling opened here has to be paid for
+## there; the two files are one control.
 func _open_up(k: float) -> float:
 	return k * (1.0 + 1.5 * k * k)
 
 
-## The ambience bed's level: the slider PLUS the Tone preset's own nudge.
+## The ambience bed's level. Just the slider now - see [constant TONE_PRESETS] for why
+## the preset writes this dial instead of secretly adding to it.
 ##
-## ONE definition, because there were three and they disagreed. The stream-open path and
-## the export both added the preset's `amb`; the config-load and slider-change paths set
-## the bare slider value. So moving the Ambience slider during a reading silently dropped
-## the preset's contribution and the export then put it back - live and render disagreeing
-## about the bed by the whole of that nudge. This is NOT the reported symptom (it makes the
-## export louder, not quieter, and the take WAV and the finished MP4 measure within a
-## decibel of each other on the pad band), but the two paths have to agree about this or
-## nothing measured on one says anything about the other.
+## Kept as a named function rather than inlined because the stream open, the export, the
+## slider callback and the config load all have to agree about it, and they did not once:
+## two of the four added the preset's contribution and two did not, so moving the slider
+## during a reading silently dropped it and the export put it back.
 func _pad_level_of(s: Dictionary) -> float:
-	return clampf(float(s["ambience"]) + float(_preset_of(s)["amb"]), 0.0, 1.0)
+	return clampf(float(s["ambience"]), 0.0, 1.0)
 
 
-## How close the reader stands: the slider PLUS the Tone preset's own nudge.
+## How close the reader stands. The pad's twin, and the same story.
 ##
-## The pad's twin, and here for the same reason - a preset that can only reach the
-## model's own parameters cannot be MUFFLED, because muffled is a property of the
-## air between the reader and the microphone rather than of the reader. Floored
-## well above zero: a preset may push the voice back, never mute it, and
+## Floored well above zero: the dial may push the voice back, never mute it, and
 ## [member VoiceFX.presence] is a gain as well as a filter.
 func _presence_of(s: Dictionary) -> float:
-	return clampf(float(s["presence"]) + float(_preset_of(s)["pres"]), 0.25, 1.0)
+	return clampf(float(s["presence"]), 0.25, 1.0)
 
 
 func _pause_scale_of(s: Dictionary) -> float:
@@ -1908,7 +1922,7 @@ func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
 	return {
 		"length_scale": r / maxf(float(s["pace"]) * float(t["pace"]), 0.1),
 		"noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
-		"whisper": float(t["whisper"]),
+		"whisper": float(t["whisper"]), "muffle": float(t["muffle"]),
 		"speaker": _speaker_of(s),
 		"sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale_of(s),
 		"dynamics": d["dynamics"],

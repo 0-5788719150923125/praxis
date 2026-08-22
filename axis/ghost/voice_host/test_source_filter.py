@@ -45,12 +45,17 @@ for p in (str(HERE), str(GHOST)):
 
 import measure_voice as MV  # noqa: E402
 from backends.piper import (  # noqa: E402
+    _muffle,
     _resample,
     _restore_formants,
     _whisper,
 )
 
 SR = 22050
+## generative_editor._open_up at the top of its travel - the largest `dynamics` the backend
+## can be handed. Mirrors piper.DEPTH_TOP; the point of the check below is that the two
+## agree, so it is written out here rather than imported from the thing under test.
+DEPTH_TOP_FOR_TEST = 2.5
 F0 = 118.0
 FORMANTS = (700.0, 1220.0, 2600.0)  # a synthetic open vowel
 BANDWIDTHS = (80.0, 90.0, 140.0)
@@ -256,10 +261,51 @@ def check_whisper(v: np.ndarray) -> None:
         "half way is half way - a stage whisper, not a switch",
         "harmonicity %.2f, between %.2f and %.2f" % (mid, after, before),
     )
+    # ...AND IT DOES NOT DUCK ON THE WAY THROUGH. The two halves of this blend are
+    # uncorrelated - noise through the tract against the periodic voice under it - so they
+    # add in power, and a plain `a*wet + (1-a)*dry` sits at sqrt(a^2+(1-a)^2) of the level:
+    # nothing at either end and -3 dB in the middle, which is exactly where Hushed lives.
+    # Reported as "with hushed specifically, it is too quiet", and invisible to every check
+    # here because both ends measured fine.
+    ref = float(np.sqrt(np.mean(v.astype(np.float64) ** 2)))
+    worst = 0.0
+    for a in (0.1, 0.25, 0.45, 0.5, 0.6, 0.75, 0.9):
+        blend = _whisper(v, SR, a)
+        db = 20.0 * math.log10(
+            max(1e-9, float(np.sqrt(np.mean(blend.astype(np.float64) ** 2)))) / max(ref, 1e-9)
+        )
+        worst = max(worst, abs(db))
+    ok(worst < 0.5, "no blend amount ducks the level", "worst %.2f dB over the range" % worst)
     ok(
         np.array_equal(_whisper(v, SR, 1.0), w),
         "the same input renders the same whisper twice",
     )
+
+
+def check_muffle(v: np.ndarray) -> None:
+    """4. A voice through something: the top taken off, the words left in place."""
+    print("\nMuffle:")
+    # Thresholds measured on THIS fixture, which is three resonators and therefore has less
+    # top than speech does: the same 0.55 reads 4.5 dB on a real rendered sentence.
+    for amount, want_tilt in ((0.55, 2.5), (1.0, 6.0)):
+        m = _muffle(v, SR, amount)
+        ok(m.size == v.size, "length is unchanged at %.2f" % amount, "%d samples" % m.size)
+        spec_v, spec_m = np.abs(np.fft.rfft(v.astype(np.float64))), np.abs(np.fft.rfft(m.astype(np.float64)))
+        freq = np.fft.rfftfreq(v.size, 1.0 / SR)
+        low = (freq > 100.0) & (freq < 1000.0)
+        high = (freq > 3000.0) & (freq < 8000.0)
+        tilt = 20.0 * math.log10(
+            (spec_m[high].mean() / spec_m[low].mean()) / (spec_v[high].mean() / spec_v[low].mean())
+        )
+        ok(tilt < -want_tilt, "at %.2f the top is off by %.1f dB (wanted %.0f+)" % (amount, -tilt, want_tilt))
+        lvl = 20.0 * math.log10(
+            max(1e-9, float(np.sqrt(np.mean(m.astype(np.float64) ** 2))))
+            / max(1e-9, float(np.sqrt(np.mean(v.astype(np.float64) ** 2))))
+        )
+        # Quieter, but only a little: a covered voice is not a distant one, and this must
+        # never become the Presence dial by another name.
+        ok(-2.5 < lvl < 0.0, "at %.2f it is a touch quieter, not far away" % amount, "%+.2f dB" % lvl)
+    ok(np.array_equal(_muffle(v, SR, 0.0), v), "at 0 it is the input, untouched")
 
 
 def check_real_voice() -> None:
@@ -327,6 +373,77 @@ def check_real_voice() -> None:
     )
     ok(abs(lvl) < 2.0, "at the level it was rendered at", "%+.2f dB" % lvl)
 
+    # THE PARAGRAPH ARC MUST NOT TILT THE PACE. The arc buys its pitch move by rendering at
+    # a different length scale and playing back to compensate, and the two do not cancel by
+    # themselves - part of every sentence is frame-quantised and does not scale - so the
+    # reading used to accelerate into each paragraph and drag out of it, by 5.1% and 2.0% at
+    # the top of the dial. "The pace grows slower and slower over time, decreasing in speed
+    # with the increase in the Arc value." Measured here on the real voice, both ends of the
+    # arc against no arc at all, with the model's noise off so a render is repeatable.
+    def render(extra):
+        be.synthesize(
+            "", voice, str(out),
+            {"tokens": tokens, "phonemizer": "espeak", "noise_scale": 0.0, "noise_w": 0.0, **extra},
+        )
+        a, rate = MV.read_wav(out)
+        return float(len(a)) / rate, np.asarray(a, dtype=np.float64), rate
+
+    flat, _, _ = render({})
+    for u, tag in ((0.0, "opening"), (1.0, "closing")):
+        got, wave, rate = render({"prosody_arc": 4.0, "plan_u": u, "plan_v": 0.0})
+        drift = 100.0 * (got - flat) / flat
+        ok(abs(drift) < 3.5, "the arc leaves the %s sentence's pace alone" % tag, "%+.1f%%" % drift)
+    # AND NEITHER MAY DYNAMICS RUN AWAY WITH IT. The timing coefficients in
+    # `_discourse_plan` are written as the figures they should deliver at the TOP of the
+    # dial, and for a while the editor's own curve multiplied every one of them by 2.5
+    # without this file knowing - a sentence at the end of a paragraph AND a section ran at
+    # rate 0.375, two and a half times its own length. Reported as "the cadence/pace/speed
+    # of the voice becomes slower and slower and slower", and blamed on the Arc, which at
+    # the reported settings was contributing 0.0% of it.
+    #
+    # The claim is about the RATIO between a unit's first sentence and its last, at the top
+    # of the dial, which is where any future rescaling of that curve would show up first.
+    top = DEPTH_TOP_FOR_TEST
+    opening, _, _ = render({"dynamics": top, "plan_u": 0.0, "plan_v": 0.0})
+    closing, _, _ = render({"dynamics": top, "plan_u": 1.0, "plan_v": 1.0})
+    slowdown = 100.0 * (closing - opening) / opening
+    # The design figure is 18% off the rate for the paragraph and 7% for the section, which
+    # is 33% of duration if a sentence sits at the end of both - a lot, deliberately, at the
+    # very top of the dial. The bound is there to catch the coefficients being multiplied
+    # again behind this file's back, which is exactly what happened last time.
+    ok(
+        5.0 < slowdown < 35.0,
+        "at the top of Dynamics a unit closes slower than it opens, and by a bounded amount",
+        "%+.0f%%" % slowdown,
+    )
+    flat_dyn, _, _ = render({"dynamics": 0.0, "plan_u": 1.0, "plan_v": 1.0})
+    ok(
+        abs(flat_dyn - flat) / flat < 0.02,
+        "...and with Dynamics at zero a sentence is the same length wherever it sits",
+        "%+.1f%%" % (100.0 * (flat_dyn - flat) / flat),
+    )
+
+    # ...while still moving the pitch, or the pace would be flat for the wrong reason.
+    _, high, rate = render({"prosody_arc": 4.0, "plan_u": 0.0, "plan_v": 0.0})
+    _, low, _ = render({"prosody_arc": 4.0, "plan_u": 1.0, "plan_v": 0.0})
+
+    def f0(x):
+        # On the loudest window, not the middle half: a whole sentence is mostly not a
+        # vowel, and an autocorrelation over one lands wherever the energy happens to be -
+        # measured -3.9 semitones across an arc that plainly rises, because the two renders
+        # were being measured on different phones.
+        seg = loudest(x) - loudest(x).mean()
+        n = 1
+        while n < 2 * seg.size:
+            n *= 2
+        sp = np.fft.rfft(seg, n)
+        ac = np.fft.irfft(sp * np.conj(sp), n)[: seg.size]
+        lo_l, hi_l = int(rate / 400.0), int(rate / 60.0)
+        return float(rate / (lo_l + int(np.argmax(ac[lo_l:hi_l]))))
+
+    span = 12.0 * math.log2(f0(high) / f0(low))
+    ok(span > 1.5, "and the arc is still an arc", "%.2f semitones across the unit" % span)
+
 
 def main() -> int:
     v = vowel()
@@ -344,6 +461,7 @@ def main() -> int:
         check_resample_moves_formants(v, ratio)
         check_formant_lock(v, ratio)
     check_whisper(v)
+    check_muffle(v)
     check_real_voice()
     print()
     if _fails:

@@ -228,6 +228,19 @@ def ok(cond, what: str):
     print(f"    ok  {what}")
 
 
+def within(got, want, what: str, slop: int = 2):
+    """`eq` for a SAMPLE COUNT that went through the waveform on its way here.
+
+    The splicer measures the silence already at a mark rather than looking it up, and
+    even this fake voice - a continuous sine - dips under the quiet threshold for a
+    sample here and there. So a prediction made with `have = 0` lands a sample or two off
+    the real insertion, every time, and always by the same tiny amount. That is the
+    measurement working; demanding exactness here would only ever gate the sine's zero
+    crossings.
+    """
+    ok(abs(got - want) <= slop, "%s == %r (got %r)" % (what, want, got))
+
+
 # -- 1. the table and the scale -------------------------------------------
 
 
@@ -252,12 +265,26 @@ def test_table_and_scale():
     # after the model's is subtracted back off. Doubling the dial does NOT double the
     # splice - it doubles neither, it moves the REST toward its ceiling, which is the
     # only reading a listener can hear as "the same pacing, slower".
-    near(_pause_for(":", {"pause_scale": 2.0}), 0.446739, "colon at 2.0 is the curve, not the table doubled")
-    near(_gap_for(".", {"pause_scale": 0.5}), 0.128006, "under 1.0 the model is already resting most of it")
-    near(_gap_for(".", {"sentence_gap": 0.5, "pause_scale": 2.0}), 0.923875,
-         "an explicit sentence_gap is a top-up at 1.0 like any other, and rides the same curve")
-    eq(_gap_for(".", {"sentence_gap": 0.5, "pause_scale": 1.0}), 0.5,
-       "...and is itself, exactly, at 1.0")
+    near(
+        _pause_for(":", {"pause_scale": 2.0}),
+        0.446739,
+        "colon at 2.0 is the curve, not the table doubled",
+    )
+    near(
+        _gap_for(".", {"pause_scale": 0.5}),
+        0.128006,
+        "under 1.0 the model is already resting most of it",
+    )
+    near(
+        _gap_for(".", {"sentence_gap": 0.5, "pause_scale": 2.0}),
+        0.923875,
+        "an explicit sentence_gap is a top-up at 1.0 like any other, and rides the same curve",
+    )
+    eq(
+        _gap_for(".", {"sentence_gap": 0.5, "pause_scale": 1.0}),
+        0.5,
+        "...and is itself, exactly, at 1.0",
+    )
 
 
 # -- 2. splice maths -------------------------------------------------------
@@ -404,15 +431,20 @@ def test_synth_tokens_inserts_the_right_totals():
     # returns the table exactly (asserted in test_table_and_scale), so the default case is
     # pinned to the same numbers it always was.
     # The fake voice's audio never goes quiet, so there is no dwell at these marks to
-    # measure and the top-up is scaled outright - which is itself the property being
-    # gated here: the splicer inserts what the rule says about THE AUDIO IN FRONT OF IT,
-    # not what a table guessed. On a real voice the same call subtracts the model's own
-    # rest, and that is measured end to end rather than here.
-    from backends.piper import _gap_for, _pause_multiplier, _rest_from
+    # MEASURE - and the splicer therefore has to supply the whole of the target, which is
+    # the property being gated here. The target comes from the table (`_dwell_for`) and
+    # what is already in the waveform is subtracted from it; those are two different
+    # numbers and conflating them is the bug `_rest_from` documents. On a real voice the
+    # measured dwell is not zero and the same call adds less, which is measured end to
+    # end rather than here.
+    from backends.piper import _dwell_for, _gap_for, _pause_multiplier, _rest_from
 
     for scale, res in ((1.0, one), (2.0, two)):
         mult = _pause_multiplier({"pause_scale": scale})
-        rule = {m: _rest_from(0.0, top, mult) for m, top in ((",", 0.10), (":", 0.16))}
+        rule = {
+            m: _rest_from(_dwell_for(m), top, mult, 0.0)
+            for m, top in ((",", 0.10), (":", 0.16))
+        }
         rule["."] = _gap_for(".", {"pause_scale": scale})
         want = sum(round(rule[m] * SR) for m in (",", ":", "."))
         # Within a sample or two, not exact: the dwell is measured off the waveform, and
@@ -424,12 +456,16 @@ def test_synth_tokens_inserts_the_right_totals():
             f"samples added at scale {scale} (comma + colon + sentence gap): {got} ~ {want}",
         )
 
-    # the token AFTER the comma must move by the comma's pause, not by more
+    # the token AFTER the comma must move by the comma's pause, not by more. ASK THE RULE
+    # here too: the fake voice rests nothing at the mark, so the splicer supplies the whole
+    # target rather than only the top-up, and restating the top-up would be gating what
+    # this file used to do instead of what it does.
     t_zero = {t["index"]: t for t in zero["tokens"]}
     t_one = {t["index"]: t for t in one["tokens"]}
+    comma_at_1 = _rest_from(_dwell_for(","), PAUSE_AFTER[","], 1.0, 0.0)
     eq(
         round(t_one[1]["t0"] - t_zero[1]["t0"], 4),
-        round(round(PAUSE_AFTER[","] * SR) / SR, 4),
+        round(round(comma_at_1 * SR) / SR, 4),
         "token 1 shifted by the comma",
     )
     eq(
@@ -437,10 +473,11 @@ def test_synth_tokens_inserts_the_right_totals():
         0.0,
         "the comma's OWN token is not shifted",
     )
-    eq(
-        round(t_one[2]["t0"] - t_zero[2]["t0"], 4),
-        round(round(PAUSE_AFTER[","] * SR) / SR + round(PAUSE_AFTER[":"] * SR) / SR, 4),
-        "token 2 shifted by comma + colon",
+    within(
+        round((t_one[2]["t0"] - t_zero[2]["t0"]) * SR),
+        round(comma_at_1 * SR)
+        + round(_rest_from(_dwell_for(":"), PAUSE_AFTER[":"], 1.0, 0.0) * SR),
+        "token 2 shifted by comma + colon (samples)",
     )
     ok(
         t_one[4]["t1"] <= one["duration"] + 1e-6,
@@ -450,7 +487,7 @@ def test_synth_tokens_inserts_the_right_totals():
 
 @check
 def test_semicolon_and_bang():
-    from backends.piper import PAUSE_AFTER
+    from backends.piper import PAUSE_AFTER, _dwell_for, _gap_for, _rest_from
 
     toks = [
         _tok("one", ";", ["W", "AH1", "N"]),
@@ -460,19 +497,30 @@ def test_semicolon_and_bang():
     zero = synth(toks, {"pause_scale": 0.0})
     one = synth(toks, {"pause_scale": 1.0})
     eq(one["sentences"], 2, "! ends a sentence")
-    want = round(PAUSE_AFTER[";"] * SR) + round(PAUSE_AFTER["!"] * SR)
-    eq((one["bytes"] - zero["bytes"]) // 2, want, "semicolon + ! gap")
+    # The `;` is spliced INTO the sentence, so it is topped up to its target against a
+    # fake voice that rests nothing; the `!` ends one, so it goes through `_gap_for` and
+    # is the top-up exactly. Two different paths through the same rule, which is the point
+    # of checking them in one sentence.
+    want = round(_rest_from(_dwell_for(";"), PAUSE_AFTER[";"], 1.0, 0.0) * SR) + round(
+        _gap_for("!", {"pause_scale": 1.0}) * SR
+    )
+    within((one["bytes"] - zero["bytes"]) // 2, want, "semicolon + ! gap")
 
 
 @check
 def test_phones_path_inserts_the_right_totals():
-    from backends.piper import PAUSE_AFTER
+    from backends.piper import PAUSE_AFTER, _dwell_for, _gap_for, _rest_from
 
     zero = synth_phones(PHONES_MARKS, {"pause_scale": 0.0})
     one = synth_phones(PHONES_MARKS, {"pause_scale": 1.0})
     eq(one["sentences"], 2, "the phones front end still splits on the full stop")
-    want = sum(round(PAUSE_AFTER[m] * SR) for m in (",", ":", "."))
-    eq(
+    # Same rule as the token path, asked the same way - the two front ends splicing
+    # different amounts at the same mark is a thing this file exists to catch.
+    want = sum(
+        round(_rest_from(_dwell_for(m), PAUSE_AFTER[m], 1.0, 0.0) * SR)
+        for m in (",", ":")
+    ) + round(_gap_for(".", {"pause_scale": 1.0}) * SR)
+    within(
         (one["bytes"] - zero["bytes"]) // 2,
         want,
         "samples added on the phones path (comma + colon + sentence gap)",
@@ -481,17 +529,19 @@ def test_phones_path_inserts_the_right_totals():
     # phone timings shift with the audio, same rule as tokens
     pz = {i: p for i, p in enumerate(zero["phones"])}
     po = {i: p for i, p in enumerate(one["phones"])}
-    comma, colon = round(PAUSE_AFTER[","] * SR) / SR, round(PAUSE_AFTER[":"] * SR) / SR
+    # Ask the rule, with the fake voice's zero dwell, exactly as the totals above do.
+    comma = round(_rest_from(_dwell_for(","), PAUSE_AFTER[","], 1.0, 0.0) * SR) / SR
+    colon = round(_rest_from(_dwell_for(":"), PAUSE_AFTER[":"], 1.0, 0.0) * SR) / SR
     eq(round(po[3]["t1"] - pz[3]["t1"], 4), 0.0, "the comma phone itself does not move")
     eq(
         round(po[4]["t0"] - pz[4]["t0"], 4),
         round(comma, 4),
         "the phone after the comma moves by the comma",
     )
-    eq(
-        round(po[7]["t0"] - pz[7]["t0"], 4),
-        round(comma + colon, 4),
-        "the phone after the colon moves by comma + colon",
+    within(
+        round((po[7]["t0"] - pz[7]["t0"]) * SR),
+        round((comma + colon) * SR),
+        "the phone after the colon moves by comma + colon (samples)",
     )
     ok(
         po[-1 + len(po)]["t1"] <= one["duration"] + 1e-6,
@@ -681,8 +731,11 @@ def check_the_punctuation_hierarchy_survives_the_slider():
 
     for scale in (1.0, 2.0, 3.0, 3.75, 5.0, 6.0, 7.5, 10.0):
         c, sm, cl, g = (total(m, scale) for m in (",", ";", ":", "."))
-        ok(c <= sm <= cl <= g, "at %gx the order , <= ; <= : <= . holds (%.3f %.3f %.3f %.3f)"
-            % (scale, c, sm, cl, g))
+        ok(
+            c <= sm <= cl <= g,
+            "at %gx the order , <= ; <= : <= . holds (%.3f %.3f %.3f %.3f)"
+            % (scale, c, sm, cl, g),
+        )
     # BELOW 1.0 THE ORDER IS THE MODEL'S, not ours, and that is not a failure to assert
     # around: we can only ADD silence. This voice dwells 0.30 s at a colon and 0.18 after a
     # full stop, so under about 0.6 on the dial - where the target rest falls below what the
@@ -691,8 +744,11 @@ def check_the_punctuation_hierarchy_survives_the_slider():
     # spliced anywhere down there.
     for scale in (0.0, 0.25):
         for mark in (",", ";", ":"):
-            ok(piper._pause_for(mark, {"pause_scale": scale}) == 0.0,
-               "at %gx `%s` splices nothing - the model is already resting longer" % (scale, mark))
+            ok(
+                piper._pause_for(mark, {"pause_scale": scale}) == 0.0,
+                "at %gx `%s` splices nothing - the model is already resting longer"
+                % (scale, mark),
+            )
     # ...and just under 1.0 it is down to milliseconds rather than exactly nothing, which is
     # the floor arriving smoothly instead of as a cliff.
     for mark in (",", ";", ":"):
@@ -706,37 +762,56 @@ def check_the_punctuation_hierarchy_survives_the_slider():
     at_one = total(".", 1.0) / total(",", 1.0)
     for scale in (1.0, 2.0, 3.0, 3.75, 5.0, 6.0, 7.5, 10.0):
         r = total(".", scale) / total(",", scale)
-        ok(abs(r - at_one) < 0.02,
-           "at %gx a full stop is still %.2fx a comma (%.2f)" % (scale, at_one, r))
+        ok(
+            abs(r - at_one) < 0.02,
+            "at %gx a full stop is still %.2fx a comma (%.2f)" % (scale, at_one, r),
+        )
 
     # The default reading is the one it always was, to the millisecond.
     for mark, base in ((",", 0.10), (";", 0.13), (":", 0.16)):
-        ok(abs(piper._pause_for(mark, {"pause_scale": 1.0}) - base) < 1e-6,
-           "at 1x `%s` splices exactly its table entry (%.4f)" % (mark, piper._pause_for(mark, {"pause_scale": 1.0})))
-    ok(abs(piper._gap_for(".", {"pause_scale": 1.0}) - 0.32) < 1e-6, "...and so does a full stop")
+        ok(
+            abs(piper._pause_for(mark, {"pause_scale": 1.0}) - base) < 1e-6,
+            "at 1x `%s` splices exactly its table entry (%.4f)"
+            % (mark, piper._pause_for(mark, {"pause_scale": 1.0})),
+        )
+    ok(
+        abs(piper._gap_for(".", {"pause_scale": 1.0}) - 0.32) < 1e-6,
+        "...and so does a full stop",
+    )
 
     # Still live to the end of its travel - bug 2 must not come back.
-    ok(total(".", 10.0) > total(".", 3.75) * 1.9,
-       "the top of the slider rests far past its middle (%.2fs vs %.2fs)"
-       % (total(".", 10.0), total(".", 3.75)))
+    ok(
+        total(".", 10.0) > total(".", 3.75) * 1.9,
+        "the top of the slider rests far past its middle (%.2fs vs %.2fs)"
+        % (total(".", 10.0), total(".", 3.75)),
+    )
     # AND THE TOP IS REACHABLE AT ALL. The curve this replaced was a saturating exponential
     # that reached 3.2x at the dial's top, 3.28 at 20 and 3.29 at 100 - so "the pause effect
     # barely seems to work at 10x" could not have been answered by allowing a bigger number.
     # A power law keeps climbing, and this is the assertion that it does.
     from backends.piper import _pause_multiplier
-    ok(abs(_pause_multiplier({"pause_scale": 10.0}) - 5.0) < 0.01,
-       "the top of the dial is 5x the natural rest (%.2f)" % _pause_multiplier({"pause_scale": 10.0}))
+
+    ok(
+        abs(_pause_multiplier({"pause_scale": 10.0}) - 5.0) < 0.01,
+        "the top of the dial is 5x the natural rest (%.2f)"
+        % _pause_multiplier({"pause_scale": 10.0}),
+    )
 
     # ...and NOT finicky: every step up the dial adds less than the step before it, and the
     # one the report named (5 to 6) is a nudge rather than a lurch.
     steps = [total(".", s + 1.0) - total(".", s) for s in range(1, 10)]
-    ok(all(b <= a + 1e-9 for a, b in zip(steps, steps[1:])),
-       "from 1.0 up, each unit of dial adds less than the one before (%s)"
-       % " ".join("%.2f" % x for x in steps))
+    ok(
+        all(b <= a + 1e-9 for a, b in zip(steps, steps[1:])),
+        "from 1.0 up, each unit of dial adds less than the one before (%s)"
+        % " ".join("%.2f" % x for x in steps),
+    )
     # Reach costs step size - that is the trade, made deliberately and bounded here. 13% per
     # whole unit of dial is a nudge; the linear law that prompted the complaint moved 18%.
     jump = (total(".", 6.0) - total(".", 5.0)) / total(".", 5.0)
-    ok(jump < 0.15, "5.0 -> 6.0 moves a full stop by %.0f%%, not a lurch" % (jump * 100.0))
+    ok(
+        jump < 0.15,
+        "5.0 -> 6.0 moves a full stop by %.0f%%, not a lurch" % (jump * 100.0),
+    )
 
 
 def check_hyphen_is_a_word_boundary():

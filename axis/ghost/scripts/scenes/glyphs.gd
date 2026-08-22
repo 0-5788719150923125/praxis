@@ -112,11 +112,32 @@ var _chasing := false             # the nib is out of shot: close fast, not loos
 var _zoom_in := 2.6               # how far the framing is pushed past whole-page
 var _drift_rate := 0.006
 
-# The spiral's own cursor: arc length along the coil, and how far the whole coil has
-# been drawn back in toward the centre.
+# The spiral's own cursor: arc length along the coil, and the scale the whole coil is
+# drawn at so that what has been written stays in frame.
+#
+# IT USED TO SLIDE THE PARAMETER INSTEAD, pulling every glyph back along the arc as the
+# coil filled, and that is a rotation of the entire picture. A glyph's angle is
+# `sqrt(2 s / coil)`, so subtracting from `s` turns all of them at once, and hardest at
+# the middle where the square root is steepest - measured about a radian per character
+# for the innermost turn, which at eight characters a second is more than a revolution
+# a second. Reported as "they remained rooted for ~30 seconds, and then the entire scene
+# full of them started rotating rapidly", and both halves of that are this one line: the
+# shift is zero while the coil is still filling, and the moment it fills it starts
+# advancing once per character.
+#
+# A written page does not move once it is written. This one does not either: what changes
+# is how far away it is being seen from.
 var _s := 0.0
-var _sshift := 0.0
-var _sshift_to := 0.0
+# `_coil_fit`, not `_fit`: this scene already has a `_fit` and it is a different thing (the
+# HAND's scale, chosen once at layout so a dense page stays inside the glyph budget). This one
+# changes every frame and applies to the coil only.
+var _coil_fit := 1.0
+var _coil_fit_to := 1.0
+## Turns of coil to keep. Not a look - a bound: the writing never stops, and without one
+## the glyph list and the zoom-out both grow for as long as the scene is on screen. Well
+## past what a scene's own lifetime reaches (measured about twelve turns in sixty seconds),
+## so in an ordinary shot nothing is ever retired.
+const MAX_TURNS := 16.0
 var _coil := 0.02                 # r = coil * theta
 var _s_min := 0.0
 var _s_max := 1.0
@@ -357,7 +378,7 @@ func _step(dt: float) -> void:
 		_reveal = 1.0
 		_commit()                       # _start resets the reveal, _advance sets the next rest
 	_scroll = lerpf(_scroll, _scroll_to, 1.0 - exp(-9.0 * dt))
-	_sshift = lerpf(_sshift, _sshift_to, 1.0 - exp(-6.0 * dt))
+	_coil_fit = lerpf(_coil_fit, _coil_fit_to, 1.0 - exp(-3.0 * dt))
 	_ease_shift(dt)
 
 
@@ -540,9 +561,7 @@ func _advance(gi: int) -> void:
 	_joined_now = _gs.joined and gap <= 0.0 and not was_mark and not next_mark
 	if _layout == "spiral":
 		_s += w + gap
-		if _s - _sshift_to > _s_max:
-			_sshift_to = _s - _s_max
-			_drop_spiral()
+		_refit()
 	else:
 		_cx += w + gap
 		if _cx + _adv > _right:
@@ -629,10 +648,24 @@ func _drop_lines() -> void:
 			_shifts.erase(k)
 
 
-func _drop_spiral() -> void:
+## How far out the writing now reaches, and therefore how small the coil has to be drawn.
+##
+## Eased at the draw rate rather than applied here (see the `_fit` lerp), so a long word
+## landing on the frame edge is a glide and not a step.
+func _refit() -> void:
+	var r_out := _coil * sqrt(2.0 * maxf(_s, _s_min) / maxf(0.000001, _coil))
+	var h := _half / maxf(0.001, _zoom_in)
+	_coil_fit_to = clampf(minf(h.x, h.y) * 0.98 / maxf(0.000001, r_out), 0.05, 1.0)
+	# ...and the safety valve. Retiring an inner turn moves NOTHING: every surviving glyph
+	# keeps the `s` it was written at, which is the whole point of this rewrite.
+	var theta_out := sqrt(2.0 * maxf(_s, _s_min) / maxf(0.000001, _coil))
+	var theta_keep := theta_out - MAX_TURNS * TAU
+	if theta_keep <= TAU:
+		return
+	var s_keep := _coil * theta_keep * theta_keep * 0.5
 	var keep: Array = []
 	for e in _placed:
-		if float(e["s"]) - _sshift_to > _s_min * 0.9:
+		if float(e["s"]) >= s_keep:
 			keep.append(e)
 	_placed = keep
 
@@ -767,10 +800,10 @@ func _pen_at() -> Vector2:
 		# The tracker's own 1.4 s constant means a camera aimed at it lags by more than half a
 		# unit, i.e. further than the whole visible width, so it can only ever chase and never
 		# arrive: measured at 1.3% of frames with the nib in shot, which is WORSE than the old
-		# rule's parked corner. The coil re-centres itself instead (`_sshift` pulls it inward
-		# and _drop_spiral retires the middle), so the composition is already where it needs to
-		# be and the frame simply holds still on it - which is why `_zoom_in` is sampled low for
-		# this layout in build_params, so the whole coil is in shot rather than its empty hub.
+		# rule's parked corner. The coil is drawn to FIT instead (see `_refit`), so the
+		# composition is already where it needs to be and the frame simply holds still on it -
+		# which is why `_zoom_in` is sampled low for this layout in build_params, so the whole
+		# coil is in shot rather than its empty hub.
 		return Vector2.ZERO
 	# The SAME eased shift the glyphs are drawn with (see _ease_shift). Recomputing the raw
 	# target here would have the camera stepping while the row glides.
@@ -795,8 +828,9 @@ func _clamp_cam(c: Vector2) -> Vector2:
 		# A coil is written outward from its centre, so the written DISC is the bound, and it
 		# grows with `_s` - which is also why the opening frame stays centred: at `_s_min` the
 		# whole coil is smaller than the view and there is nowhere to go.
-		var s := maxf(_s - _sshift, _s_min)
-		var r := _coil * sqrt(2.0 * s / maxf(0.000001, _coil))
+		# The coil is scaled to fit, so there is nowhere for the camera to go - and saying so
+		# here rather than trusting it keeps the bound true if the fit is ever floored.
+		var r := _coil * sqrt(2.0 * maxf(_s, _s_min) / maxf(0.000001, _coil)) * _coil_fit
 		return c.limit_length(maxf(0.0, r - minf(h.x, h.y)))
 	# A page narrower or shorter than the view (a column, mostly) has no pan to do on that axis,
 	# so it centres instead of clamping to an inverted range.
@@ -944,13 +978,16 @@ func _pose(e: Dictionary, u: float) -> bool:
 	# scales the writing. A page that breathed with the amplitude would read as a gif.
 	var sc := _em * u
 	if _layout == "spiral":
-		var s: float = float(e["s"]) - _sshift
+		var s: float = float(e["s"])
 		if s < _s_min * 0.9:
 			return false
 		var theta := sqrt(2.0 * s / _coil)
-		var r := _coil * theta
-		_pfade = clampf((r - _line_step) / maxf(0.001, _line_step * 0.8), 0.0, 1.0)
-		_pxf = Transform2D(theta + PI * 0.5, Vector2(sc, sc), 0.0,
+		# The coil is drawn smaller as it grows, and the glyphs with it - one scale for the
+		# whole picture, so nothing moves relative to anything else.
+		var r := _coil * theta * _coil_fit
+		_pfade = clampf((r - _line_step * _coil_fit)
+			/ maxf(0.001, _line_step * _coil_fit * 0.8), 0.0, 1.0)
+		_pxf = Transform2D(theta + PI * 0.5, Vector2(sc * _coil_fit, sc * _coil_fit), 0.0,
 			Vector2(cos(theta), sin(theta)) * r * u)
 		return true
 	var p: Vector2 = e["p"]

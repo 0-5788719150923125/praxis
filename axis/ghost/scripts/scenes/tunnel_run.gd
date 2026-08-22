@@ -546,7 +546,18 @@ class TunnelJob:
 			# The radius: the seeded swell (chambers opening and necking down) in arclength, so
 			# it belongs to the TUNNEL and not to the camera.
 			var rr := radius * (1.0 + swell * sin(TAU * si / maxf(4.0, swell_w)))
-			var rib := rib_every > 0 and (i % rib_every) == 0
+			# THE RIBS BELONG TO THE TUNNEL, not to the window on it. `i % rib_every` counts
+			# from whichever station happens to be at the near end of the buffer, and that end
+			# moves: `_advance_track` retires one station every time the camera covers a step,
+			# which at this speed is ten times a second. So every rib in shot stepped BACKWARD
+			# by a station, ten times a second, while the walls and the fog - which are keyed
+			# to arclength - carried on forward. Reported exactly that way: "it almost feels
+			# like the camera is moving forward while the geometry is moving backward, and then
+			# it jumps ahead to correct itself... at least 5 times per second."
+			#
+			# `si / step` is the ABSOLUTE station number (s0 advances by exactly one step per
+			# retirement, so the quotient stays a whole number), which is fixed in the world.
+			var rib := rib_every > 0 and (int(round(si / step)) % rib_every) == 0
 			if rib:
 				rr *= 1.0 - rib_depth
 			rad[i] = rr
