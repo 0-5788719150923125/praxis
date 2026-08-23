@@ -750,7 +750,7 @@
     justify-content: flex-start;
     background-color: var(--background);
     color: var(--term-text);
-    font-family: 'Cascadia Code', 'Fira Code', 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-mono);
     font-size: 0.625rem;
     line-height: 1.0;
     padding: 0.625rem;
@@ -774,48 +774,9 @@
     padding: 0.125rem 0.3125rem;
 }
 
-.dashboard-wrapper {
-    max-width: 100%;
-    width: 100%;
-    position: relative;
-    background-color: var(--term-bg);
-    overflow-x: auto;
-    overflow-y: hidden;
-}
-
-.dashboard-frame {
-    background-color: var(--term-bg);
-    color: var(--term-text);
-    padding: 0.5rem;
-    border-radius: var(--radius-small);
-    box-shadow: 0 0.125rem 0.5rem rgba(0, 0, 0, 0.2);
-    display: inline-block;
-    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
-    font-size: 0.625rem;
-    line-height: 1.2;
-    letter-spacing: 0;
-    font-variant-ligatures: none;
-    -webkit-font-smoothing: none;
-    -moz-osx-font-smoothing: auto;
-    text-rendering: optimizeSpeed;
-    font-feature-settings: "liga" 0, "calt" 0;
-}
-
-.dashboard-line {
-    white-space: pre;
-    margin: 0;
-    padding: 0;
-    background-color: transparent !important;
-    color: inherit !important;
-    font-family: inherit;
-    font-size: inherit;
-    line-height: inherit;
-    letter-spacing: inherit;
-}
-
 /* ==================== Live Dashboard ==================== */
 .live-dashboard {
-    font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     line-height: 1.5;
     background-color: var(--term-bg);
@@ -1169,7 +1130,7 @@
 }
 
 .spec-hash {
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     margin-bottom: 1rem;
 }
@@ -1183,7 +1144,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-small);
     padding: 1rem;
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     color: #333;
     white-space: pre;
@@ -1346,7 +1307,7 @@
 .agent-url {
     font-size: 0.8125rem;
     color: var(--light-text);
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-family: var(--font-mono);
     word-break: break-all;
 }
 
@@ -1361,7 +1322,7 @@
     row-gap: 0.15rem;
     font-size: 0.8125rem;
     color: var(--light-text);
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-family: var(--font-mono);
 }
 
 .agent-metric {
@@ -2081,7 +2042,7 @@
     flex: 1;
     font-size: 0.85rem;
     color: var(--text);
-    font-family: 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-mono);
 }
 
 .run-steps {

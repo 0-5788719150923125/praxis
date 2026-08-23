@@ -188,19 +188,6 @@
         overscroll-behavior-y: auto;
     }
 
-    .dashboard-frame {
-        padding: 0.25rem;
-        font-size: 0.5rem;
-        font-family: monospace, 'Courier', 'Courier New';
-        max-width: 100%;
-    }
-
-    .dashboard-line {
-        font-size: inherit;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-    }
-
     .live-dashboard {
         font-size: 0.6875rem;
         /* Horizontal inset only - no top/bottom padding, so the header/footer are

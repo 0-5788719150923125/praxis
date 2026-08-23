@@ -79,6 +79,16 @@
     --icon-padding: 0.5em;
     --seed-font-size: 0.2em;
 
+    /* Monospace stack. NO 'Courier New': Android's fonts.xml aliases both
+       "courier" and "courier new" to serif-monospace (Cutive Mono, a spindly
+       typewriter face), and Chrome honors that alias while Firefox does not -
+       so naming it made the Terminal tab render in a near-unreadable font on
+       Chrome Mobile only. Every entry here is either a real coding font on
+       desktop or a generic the platform resolves sanely; Android lands on
+       'Roboto Mono'/'Droid Sans Mono', which is what Firefox was already
+       picking. Keep generic `monospace` last as the final backstop. */
+    --font-mono: 'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Roboto Mono', 'Droid Sans Mono', 'DejaVu Sans Mono', monospace;
+
     /* Functional Layout Constraints - Applied Universally to All Tabs */
     --tab-padding: 1.25rem;
     --tab-padding-mobile: 1rem;
