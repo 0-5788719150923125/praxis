@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.attention.infini import InfiniAttention
+from praxis.attention.infini import InfiniAttention, NoCompressiveMemory
 
 
 class ArcAttention(InfiniAttention):
@@ -160,3 +160,8 @@ class ArcAttention(InfiniAttention):
             out["arc_output_specialization"] = outp["specialization"]
             out["arc_output_similarity"] = outp["similarity"]
         return out
+
+
+class ArcNoMemAttention(NoCompressiveMemory, ArcAttention):
+    """ArcAttention with the compressive memory removed. See
+    :class:`~praxis.attention.infini.NoCompressiveMemory`."""

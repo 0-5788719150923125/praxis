@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (14 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (17 entries)
 
 ## `arc`, `arc_dropoff` - ArcAttention
 
@@ -23,6 +23,13 @@ Presets:
 - `arc` - class defaults
 - `arc_dropoff` - `dropoff='warp'`
 
+## `arc_nomem` - ArcNoMemAttention
+
+ArcAttention with the compressive memory removed. See
+:class:`~praxis.attention.infini.NoCompressiveMemory`.
+
+Source: [praxis/attention/arc.py:165](../praxis/attention/arc.py#L165)
+
 ## `arc_single`, `arc_single_dropoff` - SingleHeadArcAttention
 
 ArcAttention with one head, a shared Q/K representation, and a SiLU gate.
@@ -31,11 +38,22 @@ Everything else - the per-depth biases, the segment memory, ghostmax, the cached
 path, the dropoff ablation - is inherited unchanged. Only the three subclass hooks and
 the tensors whose shapes depend on the head count are replaced.
 
-Source: [praxis/attention/single.py:86](../praxis/attention/single.py#L86)
+Source: [praxis/attention/single.py:87](../praxis/attention/single.py#L87)
 
 Presets:
 - `arc_single` - class defaults
 - `arc_single_dropoff` - `dropoff='warp'`
+
+## `arc_single_dropoff_nomem`, `arc_single_nomem` - SingleHeadArcNoMemAttention
+
+SingleHeadArcAttention with the compressive memory removed. See
+:class:`~praxis.attention.infini.NoCompressiveMemory`.
+
+Source: [praxis/attention/single.py:247](../praxis/attention/single.py#L247)
+
+Presets:
+- `arc_single_dropoff_nomem` - `dropoff='warp'`
+- `arc_single_nomem` - class defaults
 
 ## `arc_ssog`, `arc_ssog_null`, `arc_ssog_wide` - ArcSSOGAttention
 

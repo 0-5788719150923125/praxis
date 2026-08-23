@@ -81,6 +81,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.attention.arc import ArcAttention
+from praxis.attention.infini import NoCompressiveMemory
 
 
 class SingleHeadArcAttention(ArcAttention):
@@ -241,3 +242,8 @@ class SingleHeadArcAttention(ArcAttention):
             out["arc_gate_negative"] = self._gate_negative.item()
             out["arc_gate_magnitude"] = self._gate_magnitude.item()
         return out
+
+
+class SingleHeadArcNoMemAttention(NoCompressiveMemory, SingleHeadArcAttention):
+    """SingleHeadArcAttention with the compressive memory removed. See
+    :class:`~praxis.attention.infini.NoCompressiveMemory`."""

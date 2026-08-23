@@ -4,14 +4,17 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import torch
 from torch import nn
 
-from praxis.attention.arc import ArcAttention
+from praxis.attention.arc import ArcAttention, ArcNoMemAttention
 from praxis.attention.arc_ssog import ArcSSOGAttention
 from praxis.attention.modular import ModularAttention
 from praxis.attention.causal import CausalAttention
 from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.pk_attention import ProductKeyAttention
-from praxis.attention.single import SingleHeadArcAttention
+from praxis.attention.single import (
+    SingleHeadArcAttention,
+    SingleHeadArcNoMemAttention,
+)
 from praxis.attention.ssog import SSOGAttention
 from praxis.attention.syntaxes import SyntaxesAttention
 
@@ -36,6 +39,25 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # head_size as usual. See praxis/attention/single.py.
     "arc_single": SingleHeadArcAttention,
     "arc_single_dropoff": partial(SingleHeadArcAttention, dropoff="warp"),
+    # The same three, with Infini's segment-level compressive memory removed
+    # (praxis.attention.infini.NoCompressiveMemory). Attention sees the whole
+    # sequence in one flex call; the per-depth biases, ghostmax, ArcHoPE, the
+    # SiLU gate and the dropoff ablation are all inherited unchanged, so an
+    # A/B against the entry above it isolates the memory and nothing else.
+    #
+    # The memory is not free and, measurably, has not been earning it. On
+    # abstractinator-t at step 450 `attn_memory_share` read 0.4999 over a
+    # [0.4998, 0.5] range - the blend never left its zero init, which with a
+    # sequence that fits in one segment means half the attention output was
+    # multiplied by a branch that is identically zero. Where the sequence DOES
+    # span segments the cost is wall-clock: measured at beta.yml's dimensions
+    # (hidden 96, depth 6, batch 16, fused flex, fwd+bwd), `arc` at
+    # window_size 64 / T 256 ran 178 ms/step against 84 ms with the memory
+    # inert and 48 ms for plain `causal`, and the gap WIDENS with length
+    # because the segment loop is serial Python.
+    "arc_nomem": ArcNoMemAttention,
+    "arc_single_nomem": SingleHeadArcNoMemAttention,
+    "arc_single_dropoff_nomem": partial(SingleHeadArcNoMemAttention, dropoff="warp"),
     # Query-steered Gaussian field over causal lag, no Q/K (Pisoni's SSOG,
     # ported to 1D). Position-addressed only; see praxis/attention/ssog.py.
     "ssog": SSOGAttention,

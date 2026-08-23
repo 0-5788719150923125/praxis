@@ -49,6 +49,9 @@ def greedy(model, ids, use_cache):
         dict(attention_type="vanilla", embeddings="positional", encoding="nope"),
         dict(attention_type="infini", encoding="rope", window_size=8),
         dict(attention_type="arc", encoding="arc", window_size=8),
+        # Memory-free Arc: a plain growing KV cache, no memory fold.
+        dict(attention_type="arc_nomem", encoding="arc", window_size=8),
+        dict(attention_type="arc_single_dropoff_nomem", encoding="arc", window_size=8),
         # Harmonic stem (input envelope + fast weights) + crystal SMEAR arm:
         # both carry context across chunks through the head-side cache state.
         dict(
@@ -59,7 +62,7 @@ def greedy(model, ids, use_cache):
             block_size=128,
         ),
     ],
-    ids=["vanilla", "infini", "arc", "prismatic6"],
+    ids=["vanilla", "infini", "arc", "arc_nomem", "arc_single_dropoff_nomem", "prismatic6"],
 )
 def test_cached_generate_matches_uncached(kwargs):
     model = build_model(**kwargs)

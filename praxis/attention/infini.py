@@ -226,7 +226,11 @@ class InfiniAttention(CausalAttention):
         out: dict = {}
         if self._attn_span is not None:
             out["attn_span"] = self._attn_span.item()
-        out["attn_memory_share"] = torch.sigmoid(self.betas).mean().item()
+        # Absent on the memory-free variants, which delete the blend rather
+        # than leave it inert - reporting a constant 0.5 there would read as
+        # "the gate never moved" instead of "there is no gate".
+        if hasattr(self, "betas"):
+            out["attn_memory_share"] = torch.sigmoid(self.betas).mean().item()
         return out
 
     def _retrieve_memory(
@@ -605,6 +609,98 @@ class InfiniAttention(CausalAttention):
             state["k"], state["v"] = seg_k[:, :, :0], seg_v[:, :, :0]
         else:
             state["k"], state["v"] = seg_k, seg_v
+        state["pos"] = state["pos"] + 1
+
+        return output
+
+
+class NoCompressiveMemory:
+    """Mixin that strips the segment-level compressive memory from Infini/Arc.
+
+    Everything the Infini lineage adds APART from the memory - ghostmax, the
+    per-depth biases, ArcHoPE, the dropoff ablation, the SiLU gate, the
+    block-aware masking, the cached decode path - is orthogonal to it and is
+    inherited unchanged. What this removes is exactly three things:
+
+      * the segment loop, so attention sees the whole sequence at once and
+        the flex kernel is issued once per forward instead of once per
+        segment (the loop is serial Python, so its cost grows with sequence
+        length rather than amortizing);
+      * ``_retrieve_memory`` / ``_update_memory`` and the ``[B, H, D, D]``
+        state they carry;
+      * the ``betas`` blend, which is the part that actively costs something.
+        ``output = sigmoid(b) * memory + (1 - sigmoid(b)) * local``, and
+        ``betas`` is zero-init, so a run whose sequence fits in one segment
+        emits ``0.5 * local`` against a memory branch that is identically
+        zero. That is the state ``attn_memory_share`` reports, and on
+        abstractinator-t it read 0.4999 with a slope of 8.8e-4 per 1k steps
+        at step 450 - the gate had not moved off its init at all.
+
+    Why a mixin rather than putting the per-depth biases on CausalAttention
+    directly: the point of the variant is an A/B, and duplicating Arc's
+    machinery onto another base would change more than the one thing under
+    test. Subclassing keeps every other code path bit-identical.
+
+    NOT a subclass of InfiniAttention itself - it is mixed in ahead of the
+    concrete class so ``super()`` still reaches the real implementations.
+    """
+
+    def __init__(self, config, **kwargs) -> None:
+        super().__init__(config, **kwargs)
+        # Drop the memory tensors rather than leaving them unused: an unused
+        # nn.Parameter still takes weight decay and still shows up in the
+        # parameter count, and an unused buffer still lands in checkpoints.
+        del self.betas
+        del self.init_mem
+        del self.init_z
+        self.segment_size = None
+
+    def _forward_segments(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        block_ids: Optional[Tensor],
+        device: torch.device,
+        cache=None,
+        slot: int = 0,
+    ) -> Tensor:
+        """One attention call over the full sequence. No segments, no memory."""
+        seq_len = q.size(2)
+        self._record_span(q, k)
+
+        output = self._local_attention(
+            q, k, v, seq_len, device, seg_block_ids=block_ids
+        )
+
+        if cache is not None:
+            # A plain KV cache: with no memory to fold into, every key and
+            # value stays live, which is what the decode step below reads.
+            cache.set_state(slot, {"k": k, "v": v, "pos": seq_len})
+
+        return output
+
+    def _decode_step(self, q: Tensor, k: Tensor, v: Tensor, state: dict) -> Tensor:
+        """One cached decode token against the full KV history.
+
+        Mirrors the parent's decode arithmetic (ghostmax included) with the
+        memory retrieval and the blend removed, so cached generation stays
+        equivalent to a full recompute - the property tests/test_kv_cache.py
+        checks.
+        """
+        seg_k = torch.cat([state["k"], k], dim=2)
+        seg_v = torch.cat([state["v"], v], dim=2)
+
+        k_exp, v_exp = self._expand_gqa(seg_k, seg_v)
+        scale = 1.0 / (self.head_dim**0.5)
+        scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, 1, L]
+        scores = self.encoding.after_scores(scores)
+        # Ghostmax: implicit exp(0)=1 column with a zero value vector.
+        ghost = torch.zeros_like(scores[..., :1])
+        weights = F.softmax(torch.cat([ghost, scores], dim=-1), dim=-1)
+        output = weights[..., 1:] @ v_exp
+
+        state["k"], state["v"] = seg_k, seg_v
         state["pos"] = state["pos"] + 1
 
         return output
