@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 from praxis.activations.serpent import Serpent
@@ -89,3 +91,105 @@ def test_uninitialized_module_reports_nothing():
     """training_metrics runs on the logging cadence and may fire before the
     first forward has materialized the lazy parameters."""
     assert Servant().training_metrics() == {}
+
+
+def test_the_swing_stash_ignores_a_no_grad_probe():
+    """The dashboard samples every activation on a `linspace(-6, 6)` under
+    `torch.no_grad()`, without changing train/eval mode (it races the trainer).
+
+    While `self.training` was the only guard, that read-only probe overwrote the
+    realized-swing stash with the swing of a synthetic ramp, and `servant_chirp`
+    went bimodal - roughly 6% of logged points carried the probe's number.
+    """
+    act = Servant()
+    act(torch.randn(4, 16, 32))  # materialize
+    with torch.no_grad():
+        act.v.fill_(1.0)  # something to chirp with
+    real = torch.randn(4, 16, 32) * 3.0
+    act(real)
+    stashed = float(act._swing)
+
+    probe = torch.linspace(-6.0, 6.0, 256).unsqueeze(-1).expand(256, 32).contiguous()
+    with torch.no_grad():
+        act(probe)
+    assert float(act._swing) == stashed, "a no_grad probe wrote the training stash"
+
+    # ...and a real forward still updates it.
+    act(torch.randn(4, 16, 32) * 0.01)
+    assert float(act._swing) != stashed
+
+
+def test_the_energy_signal_survives_a_shift_in_activation_scale():
+    """The defect that killed the original: `tanh(log s - log_s_ref)` centred on
+    a scalar frozen at init.
+
+    A network's activation scale drifts several nats over training, and a tanh
+    is one nat wide, so the signal saturates and stops being a signal. Measured
+    on abstractinator-s, mean |m| was 0.999 from step 4000 to step 24000. The
+    standardized form has to stay graded through the same drift.
+    """
+    act = Servant()
+    x = torch.randn(8, 64, 32)
+    act(x)  # materialize + seed the running stats
+
+    # Scale up by e^4 - a bigger drift than the real run showed.
+    for _ in range(400):
+        act(torch.randn(8, 64, 32) * math.exp(4.0))
+
+    signal = float(act._signal)
+    assert 0.1 < signal < 0.9, f"signal saturated or dead at {signal}"
+
+
+def test_chirp_measures_dispersion_not_magnitude():
+    """A constant swing is a rescaling of `a`, not a chirp, and must read ~0."""
+    act = Servant()
+    act(torch.randn(8, 64, 32))
+    with torch.no_grad():
+        act.v.fill_(2.0)  # strongly coupled
+
+    # Every token carries the SAME energy -> m is constant -> no chirp, however
+    # large the coupling. The magnitude-based metric read MOD_MAX*coupling here.
+    flat = torch.ones(8, 64, 32)
+    act(flat)
+    assert float(act._swing) < 1e-4, float(act._swing)
+
+    # A spread of token energies IS a chirp, and registers.
+    varied = torch.randn(8, 64, 32) * torch.rand(8, 64, 1).mul(4.0).add(0.1)
+    act(varied)
+    assert float(act._swing) > 1e-3, float(act._swing)
+
+
+def test_the_signal_is_centered_so_v_is_not_a_second_copy_of_a():
+    """With E[m] ~ 0 the swing averages out, so `a_eff` averages to `a` and the
+    coupling is not a redundant reparametrisation the optimizer can decay away
+    along a degenerate direction - which is what the falling-chirp arc was."""
+    act = Servant()
+    x = torch.randn(16, 64, 32)
+    act(x)
+    for _ in range(200):
+        act(torch.randn(16, 64, 32))
+    with torch.no_grad():
+        act.v.fill_(1.5)
+        m = act._energy_signal(torch.randn(16, 64, 32), live=False)
+    assert abs(float(m.mean())) < 0.15, float(m.mean())
+
+
+def test_running_stats_are_buffers_and_stay_out_of_the_optimizer():
+    act = Servant()
+    act(torch.randn(4, 16, 32))
+    names = {n for n, _ in act.named_parameters()}
+    assert "log_s_mean" not in names and "log_s_var" not in names
+    assert not hasattr(act, "log_s_ref")
+    buffers = dict(act.named_buffers())
+    assert buffers["log_s_mean"].shape == (1,)
+    assert buffers["log_s_var"].shape == (1,)
+
+
+def test_a_no_grad_probe_does_not_advance_the_running_stats():
+    act = Servant()
+    act(torch.randn(4, 16, 32))
+    before = act.log_s_mean.clone()
+    probe = torch.linspace(-6.0, 6.0, 256).unsqueeze(-1).expand(256, 32).contiguous()
+    with torch.no_grad():
+        act(probe)
+    assert torch.equal(act.log_s_mean, before)

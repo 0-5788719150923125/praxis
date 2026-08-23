@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor
 
-from praxis.activations.serpent import Serpent
+from praxis.activations.serpent import ENERGY_EPS, SIGNAL_SIGMAS, Serpent
 
 # Maximum fractional swing of the frequency under test-time modulation. A fixed,
 # model-agnostic constant (not a per-run knob): the live signal can bend each
@@ -9,15 +9,13 @@ from praxis.activations.serpent import Serpent
 # chirp keeps the measure -> frequency loop stable.
 MOD_MAX: float = 0.5
 
-# Numerical floor inside the log-energy.
-ENERGY_EPS: float = 1e-6
-
 
 class Servant(Serpent):
     """Serpent with a test-time-modulated frequency: a learnable chirp.
 
         s     = rms(x, over features)               # live per-token energy
-        m     = tanh(log(s) - log_s_ref)            # centered test-time signal in (-1, 1)
+        z     = (log s - mean_t) / std_t            # standardized on RUNNING stats
+        m     = tanh(z / SIGNAL_SIGMAS)             # test-time signal in (-1, 1)
         a_eff = a * (1 + MOD_MAX * tanh(v) * m)     # frequency breathes with energy
         y     = x + sin^2(a_eff*x) * a_eff/(a_eff^2 + eps^2) + g*sin(b*x)
 
@@ -30,8 +28,13 @@ class Servant(Serpent):
 
     The per-feature coupling ``v`` (the watchable "velocity") is zero-initialized,
     so at init ``a_eff == a`` and Servant is *exactly* Serpent; it anneals into
-    test-time dependence as ``v`` leaves zero. ``log_s_ref`` centers the live
-    energy signal and is materialized from the first batch's mean log-energy.
+    test-time dependence as ``v`` leaves zero.
+
+    The energy signal is standardized against RUNNING mean and variance of the
+    live log-energy (``Serpent._energy_signal``), not centred on a scalar frozen
+    at init. Read that method before touching this one: the frozen-reference
+    version saturated its tanh within 4k steps, which turned the whole mechanism
+    into a static rescaling of ``a``, and there was no gradient path back out.
 
     The modulation reads only ``x`` (reduced over the feature axis, per token),
     so it is causal, instance-local, and needs no plumbing. The energy ``s`` is
@@ -43,36 +46,56 @@ class Servant(Serpent):
 
     def _declare_extra_parameters(self) -> None:
         self._declare_parameter("v")
-        self._declare_parameter("log_s_ref")
+        self._declare_energy_stats()
 
     def _initialize_extra_parameters(self, x: Tensor) -> None:
         feature_shape = x.shape[-1:]
         device, dtype = x.device, x.dtype
         # Velocity coupling starts at zero: Servant == Serpent at init.
         initial_v = torch.zeros(feature_shape, dtype=dtype, device=device)
-        # Center the live energy signal on the first batch's mean log-energy.
-        # Shape [1], never 0-dim: the schedule_free optimizer wrapper swaps
-        # parameters via `x.view(torch.uint8).bitwise_xor_(...)`, which raises on
-        # a 0-dim tensor. Broadcasting against [..., 1] is unaffected.
-        s = x.detach().square().mean(dim=-1).clamp_min(ENERGY_EPS).sqrt()
-        initial_ref = s.log().mean().to(dtype=dtype).reshape(1)
-        self._materialize(("v", initial_v), ("log_s_ref", initial_ref))
+        self._materialize(("v", initial_v))
+        self._initialize_energy_stats(x)
 
     def _effective_frequency(self, a: Tensor, x: Tensor) -> Tensor:
         v = self._broadcast(self.v, x)
-        # Live, per-token energy reduced over the feature axis (causal,
-        # instance-local). Detached: a measurement, not a trained path.
-        s = x.detach().square().mean(dim=-1, keepdim=True).clamp_min(ENERGY_EPS).sqrt()
-        m = torch.tanh(s.log() - self.log_s_ref)
+        # A REAL training forward, as opposed to the dashboard's activation-curve
+        # probe: that walks every activation module under `torch.no_grad()` with
+        # a `linspace(-6, 6)` tiled across features, and deliberately does NOT
+        # change train/eval mode because it races the trainer. While
+        # `self.training` was the only guard, the probe both advanced the running
+        # statistics and overwrote the metric stash with the numbers from a
+        # synthetic ramp - visible in the logs as a bimodal `servant_chirp`, ~6%
+        # of points carrying the probe's value.
+        live = self.training and torch.is_grad_enabled()
+        m = self._energy_signal(x, live)
         # Frequency breathes with the signal: a learnable chirp. v=0 -> a_eff == a.
         swing = MOD_MAX * torch.tanh(v) * m
-        if self.training:
-            # Realized fractional frequency swing, stashed ON-DEVICE (no host
-            # sync in the hot path) and read on the logging cadence. A plain
-            # detached tensor, so it holds no graph and cannot go stale across
-            # iterations the way an accumulated one would.
-            self._swing = swing.detach().abs().mean()
+        if live:
+            self._stash(swing, m)
         return a * (1.0 + swing)
+
+    def _stash(self, swing: Tensor, m: Tensor) -> None:
+        """Realized chirp statistics, ON-DEVICE (no host sync in the hot path).
+
+        Plain detached tensors, so they hold no graph and cannot go stale across
+        iterations the way accumulated ones would.
+
+        ``_swing`` is the DISPERSION of the swing across tokens, not its
+        magnitude, and that distinction is the whole diagnostic. A chirp is a
+        frequency that MOVES; a magnitude reads maximal precisely when the swing
+        is a large constant, which is the failure this activation actually hit.
+        """
+        token_dims = tuple(range(swing.dim() - 1))
+        tokens = 1
+        for d in token_dims:
+            tokens *= swing.shape[d]
+        detached = swing.detach()
+        self._swing = (
+            detached.std(dim=token_dims).mean()
+            if tokens > 1
+            else torch.zeros_like(detached.mean())
+        )
+        self._signal = m.detach().abs().mean()
 
     # -- diagnostics -------------------------------------------------------
 
@@ -110,24 +133,50 @@ class Servant(Serpent):
         },
         "servant_chirp": {
             "description": (
-                "Mean REALIZED fractional frequency swing on live data, "
-                "|a_eff/a - 1|, bounded by MOD_MAX. Differs from the coupling "
-                "when the energy signal itself is flat: a feature can be fully "
-                "coupled and still barely chirp if every token carries the same "
-                "energy, which would say the measurement, not the mechanism, is "
-                "the thing that failed."
+                "REALIZED chirp: the spread of a_eff/a ACROSS TOKENS, per "
+                "feature, averaged over features. A chirp is a frequency that "
+                "MOVES, so dispersion is the measure and magnitude is not - "
+                "mean |a_eff/a - 1| reads maximal exactly when the swing is a "
+                "large CONSTANT, which is a static rescaling of `a` wearing a "
+                "chirp's name. This card read the magnitude until 2026-08-22 "
+                "and reported a healthy rising chirp through 20k steps of a run "
+                "that was not chirping at all; earlier values do not compare. "
+                "Read it against the signal card below: near-zero chirp with a "
+                "saturated signal is the mechanism failing, near-zero chirp with "
+                "a graded signal is the model declining it."
             ),
             "chart": {
                 "title": "Servant Realized Chirp",
-                "y_label": "|a_eff/a - 1|",
+                "y_label": "Std_tokens(a_eff/a)",
                 "y_scale": "linear",
                 "group": "servant",
                 "order": 30,
             },
         },
+        "servant_signal": {
+            "description": (
+                "Mean |m|, how hard the standardized live-energy signal is "
+                "pushed into its tanh. This is the HEALTH of the measurement "
+                "itself and it has one reading that means death: 1.0. A "
+                "saturated m is a constant, the frequency stops moving, and "
+                "there is no gradient path back - so the useful range is the "
+                "graded middle, roughly 0.3 to 0.7. The predecessor centred the "
+                "signal on a scalar frozen at init instead of standardizing it, "
+                "and sat at 0.999 from step 4000 onward with nothing on any "
+                "card able to say so."
+            ),
+            "chart": {
+                "title": "Servant Signal Saturation",
+                "y_label": "mean |m|",
+                "y_scale": "linear",
+                "group": "servant",
+                "order": 40,
+            },
+        },
     }
 
     _swing = None
+    _signal = None
 
     def training_metrics(self) -> dict:
         if self.has_uninitialized_params():
@@ -142,10 +191,13 @@ class Servant(Serpent):
             }
             if self._swing is not None:
                 out["servant_chirp"] = float(self._swing)
+            if self._signal is not None:
+                out["servant_signal"] = float(self._signal)
         return out
 
     def extra_repr(self) -> str:
         return (
-            "a_eff = a*(1 + %s*tanh(v)*tanh(log rms(x) - log_s_ref)), "
-            "v zero-init (== Serpent at init)" % MOD_MAX
+            "a_eff = a*(1 + %s*tanh(v)*tanh(z/%s)), z = (log rms(x) - mean)/std "
+            "on running stats, v zero-init (== Serpent at init)"
+            % (MOD_MAX, SIGNAL_SIGMAS)
         )

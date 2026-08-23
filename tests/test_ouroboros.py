@@ -218,7 +218,12 @@ def test_token_spread_is_independent_of_feature_spread():
     regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
     activation = _built(Ouroboros, x).train()
     with torch.no_grad():
-        activation.p.fill_(3.0)  # same energy coupling for every feature
+        # 3.0 sufficed while `m` was a SATURATED tanh, where this 6-nat energy
+        # spread mapped to a near-full +/-0.995. Standardizing the signal maps
+        # the same spread to +/-0.70 by design - amplitude traded for a live
+        # gradient - so a given gate swing costs more coupling. The property
+        # under test (token axis moves, feature axis flat) is unchanged.
+        activation.p.fill_(5.0)  # same energy coupling for every feature
         activation.u[1].fill_(0.0)  # unsaturate two steps so depth can move
         activation.u[2].fill_(0.0)
     drain_step_counts()

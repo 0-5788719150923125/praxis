@@ -219,21 +219,21 @@ The `1/α` factor in the original Snake is replaced by the smooth-rectified `α 
 ε^2)`: matches `1/α` for `|α| >> ε`, bounded by `1/ε` for `|α| ~ 0`. Prevents the tiny-α
 feature explosion ...
 
-Source: [praxis/activations/serpent.py:17](../praxis/activations/serpent.py#L17)
+Source: [praxis/activations/serpent.py:29](../praxis/activations/serpent.py#L29)
 
 ## `servant` - Servant
 
 Serpent with a test-time-modulated frequency: a learnable chirp.
 
-s     = rms(x, over features)               # live per-token energy     m     =
-tanh(log(s) - log_s_ref)            # centered test-time signal in (-1, 1)     a_eff = a
-* (1 + MOD_MAX * tanh(v) * m)     # frequency breathes with energy     y     = x +
-sin^2(a_eff*x) * a_eff/(a_eff^2 + eps^2) + g*sin(b*x)
+s     = rms(x, over features)               # live per-token energy     z     = (log s -
+mean_t) / std_t            # standardized on RUNNING stats     m     = tanh(z /
+SIGNAL_SIGMAS)             # test-time signal in (-1, 1)     a_eff = a * (1 + MOD_MAX *
+tanh(v) * m)     # frequency breathes with energy     y     = x + sin^2(a_eff*x) *
+a_eff/(a_eff^2 + eps^2) + g*sin(b*x)
 
-Serpent learns a *static* per-feature frequency ``a``. Servant lets that frequency move
-at inference with the energy of ...
+Serpent learns a *static* per-feature frequency ...
 
-Source: [praxis/activations/servant.py:16](../praxis/activations/servant.py#L16)
+Source: [praxis/activations/servant.py:13](../praxis/activations/servant.py#L13)
 
 ## `sigmoid` - Sigmoid
 

@@ -155,7 +155,7 @@ class Ouroboros(Serpent):
         self._declare_parameter("p")  # [D] coupling to token energy
         self._declare_parameter("q")  # [D] coupling to convergence
         self._declare_parameter("w")  # [D] coupling of carried state to frequency
-        self._declare_parameter("log_s_ref")  # scalar energy reference
+        self._declare_energy_stats()  # running log-energy mean/var (buffers)
 
     def _initialize_extra_parameters(self, x: Tensor) -> None:
         feature_shape = x.shape[-1:]
@@ -171,26 +171,15 @@ class Ouroboros(Serpent):
         initial_u[0].fill_(OPEN_INIT)
 
         zeros = torch.zeros(feature_shape, dtype=dtype, device=device)
-        s = x.detach().square().mean(dim=-1).clamp_min(ENERGY_EPS).sqrt()
-        # Shape [1], never 0-dim: the schedule_free wrapper swaps parameters via
-        # `x.view(torch.uint8).bitwise_xor_(...)`, and a 0-dim tensor cannot be
-        # viewed as a different element size. Broadcasting is unaffected.
-        initial_ref = s.log().mean().to(dtype=dtype).reshape(1)
-
         self._materialize(
             ("u", initial_u),
             ("p", zeros.clone()),
             ("q", zeros.clone()),
             ("w", zeros.clone()),
-            ("log_s_ref", initial_ref),
         )
+        self._initialize_energy_stats(x)
 
     # -- pieces ------------------------------------------------------------
-
-    def _energy_signal(self, x: Tensor) -> Tensor:
-        """Servant's centered per-token log-energy, in (-1, 1). Detached."""
-        s = x.detach().square().mean(dim=-1, keepdim=True).clamp_min(ENERGY_EPS).sqrt()
-        return torch.tanh(s.log() - self.log_s_ref)
 
     def _serpent_step(self, x: Tensor, a_eff: Tensor, b: Tensor, g: Tensor) -> Tensor:
         inv_a = a_eff / (a_eff * a_eff + INV_FLOOR_EPS * INV_FLOOR_EPS)
@@ -240,7 +229,15 @@ class Ouroboros(Serpent):
         w = self._broadcast(self.w, x)
         tanh_w = torch.tanh(w)
 
-        m = self._energy_signal(x)
+        # Standardized against RUNNING log-energy statistics, and only advanced
+        # from a real training forward. The predecessor centred on a learnable
+        # scalar frozen at the first batch, which saturates its tanh as the
+        # network's activation scale drifts - measured at mean |m| = 0.999 from
+        # step 4000 onward in Servant, which shares this signal. It hurt less
+        # here than there because `m` only biases the GATE; Ouroboros' visible
+        # chirps come from `h`, the carried state, on the line above. That is
+        # also why Servant's chirps were invisible and these are not.
+        m = self._energy_signal(x, self.training and torch.is_grad_enabled())
 
         state = x.detach()
         h = torch.zeros_like(state)
