@@ -48,6 +48,9 @@ class Generator:
     # Maximum number of results to keep in memory to prevent VRAM leaks
     MAX_RESULTS = 100
 
+    # Smoothing for the inference-cost EMAs (see _record_inference).
+    INFER_EMA_ALPHA = 0.1
+
     def __init__(
         self, model=None, tokenizer=None, device="cuda", backend=None, synchronous=False
     ):
@@ -75,6 +78,14 @@ class Generator:
         # Tool calling safety limits
         self.max_tool_calls_per_request = 3  # Maximum recursive tool calls
         self.max_tool_call_time = 10.0  # Maximum time (seconds) for all tool calls
+
+        # Inference cost accounting. Every served request - rolling contexts,
+        # the web chat, Discord - goes through _process_single_request, so this
+        # is the one place that sees all of it. EMAs rather than instantaneous
+        # values because request shapes differ wildly (a 3-byte terminal tick
+        # against a 256-byte chat turn) and the run-level question is the trend.
+        self._infer_time_ema: Optional[float] = None
+        self._infer_rate_ema: Optional[float] = None
 
         print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
 
@@ -535,12 +546,54 @@ class Generator:
                 if strip is not None and incomplete_tail(tokens[0].tolist()):
                     tokens = tokens[:, : len(strip(tokens[0].tolist()))]
 
+        self._record_inference(time.time() - start_time, produced)
+
         ids = tokens[0]
         text = self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
         return GenerationResult(
             text,
             self._reply_start_char(ids, reply_start_tokens, text, skip_special_tokens),
         )
+
+    def _record_inference(self, seconds: float, produced: int) -> None:
+        """Fold one served request into the inference EMAs.
+
+        ``produced`` counts only what the MODEL wrote, so a spliced tool result
+        never inflates the rate - the same reason the decode loop counts it
+        directly rather than deriving it from the sequence length.
+
+        A request that produced nothing (an immediate halt, a deadline hit
+        before the first token) carries no rate signal, so it updates the
+        latency EMA and leaves the rate alone rather than logging a zero.
+        """
+        if seconds <= 0:
+            return
+        a = self.INFER_EMA_ALPHA
+        self._infer_time_ema = (
+            seconds
+            if self._infer_time_ema is None
+            else a * seconds + (1 - a) * self._infer_time_ema
+        )
+        if produced > 0:
+            rate = produced / seconds
+            self._infer_rate_ema = (
+                rate
+                if self._infer_rate_ema is None
+                else a * rate + (1 - a) * self._infer_rate_ema
+            )
+
+    def training_metrics(self) -> Dict[str, Any]:
+        """Run-level inference cost, for the Research tab.
+
+        Empty until the first request is served, so the series starts where
+        inference does instead of pinning a zero across the warmup.
+        """
+        metrics: Dict[str, Any] = {}
+        if self._infer_time_ema is not None:
+            metrics["inference_time"] = float(self._infer_time_ema)
+        if self._infer_rate_ema is not None:
+            metrics["inference_rate"] = float(self._infer_rate_ema)
+        return metrics
 
     def _reply_start_char(
         self,

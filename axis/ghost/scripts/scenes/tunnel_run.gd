@@ -618,7 +618,27 @@ class TunnelJob:
 					sa = clampf(sat * 0.55, 0.0, 1.0)
 				vc[vi] = _fogged(Color.from_hsv(h, sa, clampf(vv, 0.0, 1.35)), si - s, reach)
 
-		# --- The wall, one quad per (station, side), with its four vertex colours.
+		# --- The wall, TWO TRIANGLES per (station, side), each culled on its own normal.
+		#
+		# ONE QUAD, ONE NORMAL WAS THE BUG. A tube quad is planar only while the cross-section
+		# is smooth. Put a groove in it - the ribbed, fluted and star profiles all have one -
+		# and the quad spanning that groove is a saddle whose two halves face opposite ways.
+		# The cull took the normal of the FIRST half and applied its verdict to both, so
+		# wherever they disagreed the back-facing half was drawn anyway: the unlit outside of
+		# the far wall, painted over the near wall. Half a quad is a triangle, which is exactly
+		# how it was reported - "black, triangular artifacts that often appear along faces of
+		# the walls... geometry is not drawing correctly".
+		#
+		# Measured on the reported symptom: 473 to 532 quads of the ~1080 in a frame had halves
+		# that disagreed. That is most of a grooved tube, not an edge case.
+		#
+		# Per-triangle culling costs the quad fast path and buys the silhouette back: where the
+		# halves disagree the front one is kept and the back one dropped, which is the fold of
+		# the groove appearing where it belongs. Nothing is uncovered by it - the tube is a
+		# closed surface, so whatever a dropped half was in front of is the adjacent triangle's
+		# to draw. It also retires a second, quieter fault: a fan is only valid on a convex
+		# polygon, and a projected tube quad over a groove is often not one, so ~25% of faces
+		# were being fanned into a shape that was not their own. A triangle cannot be concave.
 		for i in n - 1:
 			for k in sides:
 				var k2 := (k + 1) % sides
@@ -626,49 +646,65 @@ class TunnelJob:
 				var i1 := i * sides + k2
 				var i2 := (i + 1) * sides + k2
 				var i3 := (i + 1) * sides + k
-				var c0 := Vector3(wx[i0], wy[i0], wz[i0])
-				var c2 := Vector3(wx[i2], wy[i2], wz[i2])
-				var nrm := (Vector3(wx[i1], wy[i1], wz[i1]) - c0).cross(c2 - c0)
-				if nrm.length_squared() < 1e-12:
+				# THE CULL IS THE QUAD'S, THE DEPTH IS EACH TRIANGLE'S. Culling per triangle
+				# was tried first and it pops: a saddle's back half is hidden behind the near
+				# lip of its own groove, but "hidden" under a painter's sort is a matter of
+				# draw order rather than of a depth buffer, so dropping it opens a hole that
+				# whatever is behind shows through - and at a grazing angle it drops and
+				# returns frame to frame. Measured: 25 spikes in 89 frames, 16.9 a second,
+				# where the quad rule has none. So nothing that used to be drawn is dropped;
+				# the two halves are merely SORTED APART, each at its own depth, which is what
+				# puts the dark far half behind the lit near one where it belongs.
+				var q1 := Vector3(wx[i1], wy[i1], wz[i1])
+				var q3 := Vector3(wx[i3], wy[i3], wz[i3])
+				var q0 := Vector3(wx[i0], wy[i0], wz[i0])
+				var q2 := Vector3(wx[i2], wy[i2], wz[i2])
+				var mid := (q0 + q1 + q2 + q3) * 0.25
+				var nA := (q1 - q0).cross(q2 - q0)
+				var nB := (q2 - q0).cross(q3 - q0)
+				var toward := lens.eye - mid
+				if nA.length_squared() < 1e-12 and nB.length_squared() < 1e-12:
 					continue
-				# Back-face cull. Inside a tube the visible surface is the one whose normal
-				# points back at the eye; the other half of every ring is the far wall's
-				# outside, which is hidden and costs a quad to draw.
-				if nrm.dot(lens.eye - (c0 + c2) * 0.5) <= 0.0:
+				if nA.dot(toward) <= 0.0 and nB.dot(toward) <= 0.0:
 					continue
-				var behind := int(vd[i0] <= NEAR) + int(vd[i1] <= NEAR) \
-					+ int(vd[i2] <= NEAR) + int(vd[i3] <= NEAR)
-				if behind == 4:
-					continue
-				if behind == 0:
-					faces.append({"d": (vd[i0] + vd[i2]) * 0.5,
-						"p": PackedVector2Array([
-							Vector2(vx[i0], vy[i0]), Vector2(vx[i1], vy[i1]),
-							Vector2(vx[i2], vy[i2]), Vector2(vx[i3], vy[i3])]),
-						"c": PackedColorArray([vc[i0], vc[i1], vc[i2], vc[i3]])})
-					continue
-				# STRADDLING THE EYE PLANE, and this case is the whole reason the clip exists.
-				# Dropping such a quad outright was the first cut and it punches BLACK WEDGES
-				# into the frame - not slivers at the very edge, because at a wide field of view
-				# the ring nearest the camera is enormous on screen, so one lost quad of it is
-				# a hole a tenth of the frame across. Seen in the first render, three of them.
-				var cl := _clip_near(
-					[Vector3(wx[i0], wy[i0], wz[i0]), Vector3(wx[i1], wy[i1], wz[i1]),
-						c2, Vector3(wx[i3], wy[i3], wz[i3])],
-					[vd[i0], vd[i1], vd[i2], vd[i3]],
-					[vc[i0], vc[i1], vc[i2], vc[i3]])
-				var cp: Array = cl[0]
-				if cp.size() < 3:
-					continue
-				var sp := PackedVector2Array()
-				var sc := PackedColorArray()
-				var dsum := 0.0
-				for w in cp.size():
-					var pj3 := lens.project(cp[w])
-					sp.append(Vector2(pj3.x * u, pj3.y * u))
-					sc.append((cl[1] as Array)[w])
-					dsum += pj3.z
-				faces.append({"d": dsum / float(cp.size()), "p": sp, "c": sc})
+				for t in 2:
+					var a := i0
+					var b := i1 if t == 0 else i2
+					var c := i2 if t == 0 else i3
+					var pa := Vector3(wx[a], wy[a], wz[a])
+					var pb := Vector3(wx[b], wy[b], wz[b])
+					var pc := Vector3(wx[c], wy[c], wz[c])
+					if (pb - pa).cross(pc - pa).length_squared() < 1e-12:
+						continue
+					var behind := int(vd[a] <= NEAR) + int(vd[b] <= NEAR) + int(vd[c] <= NEAR)
+					if behind == 3:
+						continue
+					if behind == 0:
+						faces.append({"d": (vd[a] + vd[b] + vd[c]) / 3.0,
+							"p": PackedVector2Array([
+								Vector2(vx[a], vy[a]), Vector2(vx[b], vy[b]),
+								Vector2(vx[c], vy[c])]),
+							"c": PackedColorArray([vc[a], vc[b], vc[c]])})
+						continue
+					# STRADDLING THE EYE PLANE, and this case is the whole reason the clip
+					# exists. Dropping such a face outright was the first cut and it punches
+					# BLACK WEDGES into the frame - not slivers at the very edge, because at a
+					# wide field of view the ring nearest the camera is enormous on screen, so
+					# one lost piece of it is a hole a tenth of the frame across.
+					var cl := _clip_near([pa, pb, pc], [vd[a], vd[b], vd[c]],
+						[vc[a], vc[b], vc[c]])
+					var cp: Array = cl[0]
+					if cp.size() < 3:
+						continue
+					var sp := PackedVector2Array()
+					var sc := PackedColorArray()
+					var dsum := 0.0
+					for w in cp.size():
+						var pj3 := lens.project(cp[w])
+						sp.append(Vector2(pj3.x * u, pj3.y * u))
+						sc.append((cl[1] as Array)[w])
+						dsum += pj3.z
+					faces.append({"d": dsum / float(cp.size()), "p": sp, "c": sc})
 
 		# --- Motes: specks hanging in the tube, so the air between the camera and the wall is
 		# not empty. They are what makes the SPEED legible up close - the wall's own detail is

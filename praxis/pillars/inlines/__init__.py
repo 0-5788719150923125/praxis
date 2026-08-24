@@ -196,6 +196,14 @@ def _harmonic_concentration() -> Optional[float]:
     return _latest_metric("harmonic_concentration")
 
 
+@provider("mtp_accept_run")
+def _mtp_accept_run() -> Optional[float]:
+    """Latest accepted-run EMA for the current run's speculative decode - the
+    measured extrapolation horizon, in bytes committed per verify. Only logged
+    once generation has run, so ``None`` (paragraph unchanged) before then."""
+    return _latest_metric("mtp_accept_run")
+
+
 @provider("mtp_field_concentration")
 def _mtp_field_concentration() -> Optional[float]:
     """Latest Hoyer sparsity of the vear MTP bank's Serpent frequency spectrum -

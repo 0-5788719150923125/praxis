@@ -1,0 +1,10 @@
+# The realized speculative accepted-run length for the current run - how many
+# drafted bytes actually survive verification per commit, i.e. the extrapolation
+# horizon as measured at inference rather than as a training-time ceiling.
+# Gated: mtp_accept_run is only logged once generation has actually run, so the
+# provider returns None and the empty fallback leaves the paragraph unchanged
+# for a run that has not decoded yet (or has no MTP head at all).
+macro: paperMtpAcceptRun
+provider: mtp_accept_run
+format: " Read at inference rather than as a training-time ceiling, the horizon this run actually sustains is an accepted run of \\(\\approx {value:.1f}\\) bytes per commit."
+fallback: ""

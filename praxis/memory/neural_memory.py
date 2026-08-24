@@ -28,6 +28,8 @@ the energy.
 """
 
 import contextlib
+import logging
+from contextlib import contextmanager
 from typing import Any, Dict, NamedTuple, Optional, Tuple, TypeVar
 
 import torch
@@ -47,6 +49,56 @@ for _name, _entry in ACT2CLS.items():
     _ACTIVATION_NAMES.setdefault(
         _entry[0] if isinstance(_entry, tuple) else _entry, _name
     )
+
+
+_log = logging.getLogger("praxis.memory")
+
+# Static shapes, matching praxis.trainers.compile. `dynamic=True` was measured
+# here and is WORSE on the only axis that separates them: steady state is a
+# wash (29.1s vs 29.8s on a 128-byte turn) but it warms in at 155s against 86s
+# and leaves the first real turn at 109s against 55s. Decode walks a range of
+# sequence lengths, so symbolic shapes looked like the obvious fit; they are
+# not, and the reason to write that down is so the next person does not
+# re-derive the obvious guess.
+_DECODE_COMPILE_KWARGS = dict(mode="default", fullgraph=False, dynamic=False)
+
+
+@contextmanager
+def decode_compiled(model: nn.Module, enabled: bool = True):
+    """Install compiled bodies on every :class:`NeuralMemory` under ``model``
+    for the duration of the block, then restore eager.
+
+    Compilation happens once per module and is cached on the instance, so only
+    the first generation of a run pays for it (~3-4 minutes, well inside the
+    stall watchdog's 600s). A failure to compile is not worth losing a
+    generation over, so it degrades to eager and stays there.
+
+    Scoped rather than permanent because the model object is shared with the
+    trainer: outside this block the module tree must be byte-for-byte what
+    training compiled against.
+    """
+    if not enabled:
+        yield
+        return
+    installed = []
+    for module in model.modules():
+        if not isinstance(module, NeuralMemory):
+            continue
+        fn = module._compiled_body
+        if fn is None:
+            try:
+                fn = torch.compile(module._forward_impl, **_DECODE_COMPILE_KWARGS)
+            except Exception:
+                _log.debug("Could not compile NeuralMemory for decode", exc_info=True)
+                continue
+            module._compiled_body = fn
+        module._decode_forward = fn
+        installed.append(module)
+    try:
+        yield
+    finally:
+        for module in installed:
+            module._decode_forward = None
 
 
 def _shift_chunks(t: Tensor, d: int, fill: float) -> Tensor:
@@ -231,6 +283,22 @@ class NeuralMemory(nn.Module):
         self.last_event_mean: Optional[Tensor] = None
         self.last_event_min: Optional[Tensor] = None
         self.last_event_max: Optional[Tensor] = None
+
+    # Compiled copy of ``_forward_impl``, installed for the duration of a
+    # generation by ``decode_compiled``. None (eager) everywhere else.
+    #
+    # Why this module and not the whole decoder: measured on abstractinator-t,
+    # one forward issues ~8.6k aten dispatches and ~59% of them come from here,
+    # on tensors small enough that every one is dispatch cost rather than
+    # arithmetic. Compiling this module alone took a 128-byte generation from
+    # 42.5s to 25.0s (1.7x) with byte-identical output. Compiling the whole
+    # decoder instead is 100x SLOWER: the recurrent loop passes current_depth
+    # as a python int and KL halting varies the loop count per input, so Dynamo
+    # re-traces on nearly every call. This module's shapes are stable by
+    # construction - it pads to a whole number of chunks internally - which is
+    # exactly why it is the piece that compiles cleanly.
+    _decode_forward = None
+    _compiled_body = None
 
     def _activation_name(self) -> str:
         for module in self.memory_model.modules():
@@ -444,7 +512,23 @@ class NeuralMemory(nn.Module):
     def forward(
         self, seq: Tensor, state: Optional[NeuralMemState] = None
     ) -> Tuple[Tensor, NeuralMemState]:
-        """Store ``seq`` into memory and retrieve causally. Returns (out, state)."""
+        """Store ``seq`` into memory and retrieve causally. Returns (out, state).
+
+        Dispatches to a compiled copy of the body during generation, when one
+        has been installed (see ``decode_compiled`` and
+        ``praxis.generation.decode_backend``). Training and validation always
+        take the eager body: the trainer already compiles the whole model, and
+        a nested compiled region inside that is a different and unmeasured
+        proposition.
+        """
+        fn = self._decode_forward
+        if fn is not None:
+            return fn(seq, state)
+        return self._forward_impl(seq, state)
+
+    def _forward_impl(
+        self, seq: Tensor, state: Optional[NeuralMemState] = None
+    ) -> Tuple[Tensor, NeuralMemState]:
         b, n, d = seq.shape
         # Segmentation runs the update on a finer base grid; events merge blocks.
         c = self.segment_block if self.segment else self.chunk_size

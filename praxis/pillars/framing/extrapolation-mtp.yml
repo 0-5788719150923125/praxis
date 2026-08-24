@@ -1,0 +1,33 @@
+# Section 3.2, after the claim-boundary fragment (order 10). The second
+# discriminator - reading the state off the interval it consumed - is not a
+# thought experiment for a run with a multi-token head: that head IS the query,
+# and its per-depth draft accuracy is the decay curve. Gated on any mtp_type,
+# since every variant logs mtp_draft_acc_d{k}; the mechanism-specific question
+# of whether the query can be pushed PAST K is the next fragment's subject.
+#
+# Honesty guards, both deliberate: (1) any autoregressive state carries some
+# information about upcoming positions, so a nonzero profile is not evidence by
+# itself - the shape is the claim, not the level; (2) the head trains on all K
+# offsets, so the measured profile is interpolation inside the trained window,
+# not the extrapolation the reading actually predicts.
+section: extrapolation
+order: 20
+requires:
+  mtp_type: "*"
+body: >
+  This run does not have to speculate about the second one. The multi-token
+  draft head described below is exactly that query: $K$ bytes read off a single
+  trunk state, at positions that state never consumed, with
+  \texttt{mtp\_draft\_acc\_d$k$} recording how often the read at distance $k$ is
+  right. The profile across depths is the decay curve the fitted-signal reading
+  predicts, and it is the \textit{shape} of that profile that carries the claim,
+  not its height.\paperMtpAcceptRun{}
+
+  Two things keep the measurement honest. Any autoregressive state carries some
+  information about the positions after it, so a profile that merely declines is
+  what every architecture would produce; what the reading predicts is graded
+  decay across the patch boundary rather than a step down at it. And the head is
+  trained on all $K$ offsets at once, so what the profile measures is
+  interpolation \textit{within} the trained window. The clean test is a read at
+  $k > K$, off the trained window entirely, where nothing in the objective ever
+  supervised the answer.

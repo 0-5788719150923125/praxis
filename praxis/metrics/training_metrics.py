@@ -160,6 +160,41 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "inference_time": {
+        "description": (
+            "EMA of wall-clock seconds per served generation request "
+            "(rolling contexts, web chat, Discord - every caller funnels "
+            "through the same Generator). These run INSIDE the training "
+            "loop, so this is time the run is not stepping."
+        ),
+        "chart": {
+            "title": "Inference Time",
+            "y_label": "Seconds / Request",
+            "y_scale": "linear",
+            "order": 81,
+            "is_validation": False,
+            # Request shapes differ by two orders of magnitude (a 3-byte
+            # terminal tick against a 256-byte chat turn), so the raw series
+            # is a comb. The trend is the readable part.
+            "smooth": True,
+        },
+    },
+    "inference_rate": {
+        "description": (
+            "EMA of tokens produced per second, across all served generation "
+            "requests. Read against inference_time to tell a slow request "
+            "apart from a long one: latency scales with how much was asked "
+            "for, this does not."
+        ),
+        "chart": {
+            "title": "Inference Rate",
+            "y_label": "Tokens / Second",
+            "y_scale": "linear",
+            "order": 82,
+            "is_validation": False,
+            "smooth": True,
+        },
+    },
     "softmax_collapse": {
         "description": (
             "Fraction of softmax distributions whose top probability "

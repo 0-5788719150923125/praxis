@@ -819,8 +819,8 @@ class HarmonicField(nn.Module):
         ``[T, D]`` spectrum, but never materializing it: only F_t * F_d bins
         are nonzero, so the transform is separable. ``scaled`` is the complex
         amplitude grid ``[..., F_t, F_d]``; returns ``[..., seq_len, D]``.
-        Memory is O(seq_len * D) instead of O(T * D) - load-bearing when T
-        spans the full context and seq_len is one block.
+        Memory is O(seq_len * D) instead of O(T * D), which is what makes this
+        affordable when T spans the full context and seq_len is one block.
 
         The 2/sqrt(T*D) factor folds the Hermitian doubling on the T axis
         into irfft2's ortho norm, preserving spectral energy: field std stays

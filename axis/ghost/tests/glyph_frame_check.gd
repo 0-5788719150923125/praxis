@@ -68,9 +68,29 @@ const MAX_STEP := 0.20
 const MAX_GONE := 30
 ## And it has to be in frame for most of the hold, not merely return to it.
 const MIN_INSIDE := 0.90
+## THE CAMERA'S OWN SMOOTHNESS, which went ungated until it was reported: "the camera can be
+## rather jerky at times - because it is responding to new glyphs being drawn, which is
+## constant". The row-shift ratio above did not catch it because the row and the camera are
+## different things - the row was already steady while the frame carrying it was not.
+##
+## ACCELERATION, not speed, is the measure. A camera that pans quickly is fine; one that
+## CHANGES how fast it is panning is what reads as a jerk, and the retired rule (a position
+## lerp, whose velocity IS its error, switched between two gains 13x apart) changed it on every
+## commit. Measured paired on the same writing: peak acceleration 139-594 on the old rule
+## against a flat 16 on the new one, which is the cap the tracker now enforces.
+##
+## The bound is the cap plus room for ONE bound contact. The camera can still be stopped by the
+## page edge, and that is a real deceleration the cap cannot govern - measured at 48.5 on the
+## worst seed - but it happens at most once a line, where the old rule did it every character.
+const MAX_CAM_ACCEL := 90.0
+## ...and the retired rule has to be worse than that, or this is measuring nothing.
+const MIN_CAM_ACCEL_GAIN := 2.5
 
 var _fails: Array = []
 var _seen: Dictionary = {}
+## The worst ratio of retired-rule to shipped-rule peak acceleration, over every layout in the
+## run. See the control note in the camera block below.
+var _accel_gain := 0.0
 
 
 func _ready() -> void:
@@ -83,6 +103,13 @@ func _ready() -> void:
 	for want in ["page", "column", "banner", "spiral"]:
 		if not _seen.has(want):
 			_fails.append("no seed in 0..399 produced the %s layout - the probe never tested it" % want)
+	# THE CAMERA CONTROL, once for the run. See the note where `_accel_gain` is accumulated.
+	if _accel_gain < MIN_CAM_ACCEL_GAIN:
+		_fails.append("the retired camera peaked at only %.1fx the shipped one's worst frame "
+			% _accel_gain + "(want %.1fx) - no layout here shows the jerk this measures"
+			% MIN_CAM_ACCEL_GAIN)
+	else:
+		print("glyph_frame_check: the retired camera peaked at %.1fx the shipped one" % _accel_gain)
 	if _fails.is_empty():
 		print("glyph_frame_check: ALL OK")
 		get_tree().quit()
@@ -118,6 +145,12 @@ func _run(script, seed_value: int) -> void:
 
 	var dt := 1.0 / FPS
 	var old_cam: Vector2 = sc._cam          # the shadow camera, on the rule that was there
+	var chasing := false                    # ...and its gain switch, which is half of the point
+	var cam_sp: Array = []
+	var old_sp: Array = []
+	var cam_prev: Vector2 = sc._cam
+	var old_prev: Vector2 = sc._cam
+	var old_sw: Vector2 = sc._cam           # the retired rule COMPLETE, gain switch included
 	var inside := 0
 	var old_inside := 0
 	var gone := 0
@@ -141,6 +174,29 @@ func _run(script, seed_value: int) -> void:
 		# The OLD target: the raw page cursor, no centring shift, and nothing for the spiral.
 		var old_target := Vector2(sc._cx + sc._adv * 0.5,
 			sc._cy - sc._scroll - sc._line_step * 0.25)
+		# THE RETIRED CAMERA IN FULL - and aimed where IT was aimed, which is not where the
+		# shadow above is aimed. Those are two different controls for two different bugs and
+		# conflating them made this check wrong for one layout:
+		#
+		#   `old_cam` above is the loose lerp at the RAW cursor, no centring shift. That is the
+		#   camera from before the row-centring fix, and it is the control for the in-frame
+		#   column - it is meant to be badly aimed, which is why banner scores 26% on it.
+		#
+		#   `old_sw` here is the camera as it shipped LAST: the same committed-cursor target the
+		#   scene was using a change ago, centring shift included, with the 0.7/9.0 gain switch.
+		#   Anything else is not a fair control for the acceleration - measured with the raw
+		#   target by mistake, banner's shadow flew around the page chasing a swing of half a
+		#   measure and travelled twice as far as the real thing, which read as the new camera
+		#   having "stopped following" when what it had stopped doing was missing.
+		var sw_target := Vector2(sc._cx + sc._adv * 0.5 + sc._shift_cur,
+			sc._cy - sc._scroll - sc._line_step * 0.25)
+		var sw_off := sw_target - old_sw
+		var sw_h: Vector2 = sc._half / maxf(0.001, sc._zoom_in)
+		if absf(sw_off.x) > sw_h.x or absf(sw_off.y) > sw_h.y:
+			chasing = true
+		elif absf(sw_off.x) < sw_h.x * 0.7 and absf(sw_off.y) < sw_h.y * 0.7:
+			chasing = false
+		old_sw = sc._clamp_cam(old_sw.lerp(sw_target, 1.0 - exp((-9.0 if chasing else -0.7) * dt)))
 		old_cam = old_cam.lerp(old_target, 1.0 - exp(-0.7 * dt))
 
 		if sc._centred:
@@ -178,6 +234,12 @@ func _run(script, seed_value: int) -> void:
 		var oo: Vector2 = pen - old_cam
 		if absf(oo.x) <= h.x and absf(oo.y) <= h.y:
 			old_inside += 1
+		# The frame's own motion, both ways round. Speed this frame, from which the check
+		# below takes the change in speed - the acceleration.
+		cam_sp.append((sc._cam - cam_prev).length() * FPS)
+		old_sp.append((old_sw - old_prev).length() * FPS)
+		cam_prev = sc._cam
+		old_prev = old_sw
 
 	var frac := float(inside) / float(FRAMES)
 	var old_frac := float(old_inside) / float(FRAMES)
@@ -217,4 +279,48 @@ func _run(script, seed_value: int) -> void:
 		if absf(raw_mean - mean_step) > 0.35 * maxf(raw_mean, mean_step):
 			_fails.append("%s: the two rules travel different distances (%.4f vs %.4f per frame), "
 				% [sc._layout, raw_mean, mean_step] + "so the comparison is not about jumpiness")
+
+	# --- THE FRAME'S OWN MOTION: how hard it CHANGES SPEED, against the rule it replaced ---
+	# The spiral is exempt: it is framed rather than tracked (see _pen_at), so its camera holds
+	# still and there is no acceleration to bound - and a ratio taken on a mean of 0.0003 is
+	# noise, not a measurement.
+	if sc._layout != "spiral":
+		var now_acc := _peak_accel(cam_sp)
+		var was_acc := _peak_accel(old_sp)
+		var now_mean := _mean(cam_sp)
+		var was_mean := _mean(old_sp)
+		print("                   camera: peak accel %.1f (old rule %.1f), mean speed %.3f (old %.3f)"
+			% [now_acc, was_acc, now_mean, was_mean])
+		if now_acc > MAX_CAM_ACCEL:
+			_fails.append("%s: the camera changed speed at %.0f per second squared (want under "
+				% [sc._layout, now_acc] + "%.0f) - that is a lurch, not a pan" % MAX_CAM_ACCEL)
+		# THE CONTROL, kept for the RUN rather than for each layout, and that is not a
+		# loophole - it is where the jerk actually was. Measured: peak acceleration on the
+		# retired rule was 594 on `page` and 227 on `column`, and 15 on `banner`, which
+		# recentres its live line and so barely pans at all. Demanding that every layout show
+		# a jerk would be demanding that banner have a bug it never had. One layout has to
+		# show it or the measure is blind, and that is asserted once, below.
+		_accel_gain = maxf(_accel_gain, was_acc / maxf(1.0, now_acc))
+		# ...and the two have to be doing the same JOB, or the comparison is between a tracker
+		# and a parked frame rather than between two ways of tracking.
+		if now_mean < was_mean * 0.5:
+			_fails.append("%s: the camera now travels %.3f against the old rule's %.3f - it is "
+				% [sc._layout, now_mean, was_mean] + "smoother because it stopped following")
 	sc.free()
+
+
+func _mean(a: Array) -> float:
+	if a.is_empty():
+		return 0.0
+	var t := 0.0
+	for v in a:
+		t += float(v)
+	return t / float(a.size())
+
+
+## The largest change in speed between consecutive frames, per second squared.
+func _peak_accel(sp: Array) -> float:
+	var worst := 0.0
+	for i in range(1, sp.size()):
+		worst = maxf(worst, absf(float(sp[i]) - float(sp[i - 1])) * FPS)
+	return worst

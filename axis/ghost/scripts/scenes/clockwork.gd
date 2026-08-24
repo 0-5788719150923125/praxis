@@ -46,6 +46,41 @@ const FINISHES := [
 	{"name": "plate", "flat": 0.88},
 ]
 
+## HOW MUCH OF THE RIM THE SPOKES TAKE UP, sampled per machine and jittered per wheel. This is
+## the knob the wheel vocabulary was missing entirely: the spoke was a `draw_line` at a FIXED
+## 1.4% of the wheel's radius, so every spoked wheel in every machine wore the same hairline.
+## Measured over 60 machines and 1038 wheels before this existed, spoke width over radius was
+## the constant 0.014 - not a narrow range, a single value - which is what "the gears always
+## have a very similar kind of look: long spokes, with many of them" was.
+##
+## Expressed as a FRACTION OF THE CIRCUMFERENCE rather than as a width, because that is the
+## quantity that has to stay sane: whatever the spoke count, the spokes together take up this
+## much of the rim and the gaps take up the rest, so three fat spokes and eight thin ones are
+## both reachable and neither can ever overlap itself.
+const FILL_MIN := 0.12
+const FILL_MAX := 0.78
+
+## WHAT THE MACHINE HAS CORRODED INTO. Wear used to be one colour and one shape: the mark hue
+## was `0.05 + hue * 0.1` (orange-brown, always), the saturation was the constant 0.60 and the
+## value the constant 0.30, and every mark was a soft round blob. Reported as "rust is always
+## brown, and blotchy; it always looks exactly the same", and two of its three colour channels
+## were literally constants, so it was.
+##
+## Metals do not all fail the same way, and the ones here are the ones you can name on sight:
+## iron goes orange, copper and bronze go green, brass darkens to olive, a hot machine sooths
+## over black, a neglected one pits, and a machine in service wears BRIGHT where it is handled.
+## `mark` picks the shape as well as the colour - a blotch, a radial streak, a scatter of pits,
+## or a burnished arc - because a patina that is always the same shape reads as a texture that
+## was pasted on rather than as something that happened to the metal.
+const WEARS := [
+	{"name": "rust", "h": [0.015, 0.075], "s": [0.45, 0.85], "v": [0.18, 0.44], "mark": "blotch"},
+	{"name": "verdigris", "h": [0.33, 0.45], "s": [0.25, 0.60], "v": [0.20, 0.46], "mark": "blotch"},
+	{"name": "soot", "h": [0.02, 0.13], "s": [0.04, 0.22], "v": [0.015, 0.10], "mark": "blotch"},
+	{"name": "tarnish", "h": [0.07, 0.15], "s": [0.12, 0.42], "v": [0.07, 0.20], "mark": "streak"},
+	{"name": "pitting", "h": [0.01, 0.07], "s": [0.30, 0.70], "v": [0.08, 0.26], "mark": "pits"},
+	{"name": "burnish", "h": [0.05, 0.16], "s": [0.02, 0.16], "v": [0.35, 0.62], "mark": "arc"},
+]
+
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
 var _gears: Array = []        # each: {group, pos, R, teeth, phase, omega, depth, geom...}
@@ -56,6 +91,9 @@ var _glow_hue := 0.08        # the scheme's accent: the hub light, a colour the 
 var _glow_sat := 0.10
 var _flat_p := 0.4           # this machine's finish: chance any one wheel is a solid plate
 var _spoke_pool: Array = [3, 4, 5, 6]   # its spoke vocabulary (usually one repeated count)
+var _fill := 0.30            # what fraction of the rim's circumference the spokes occupy
+var _hole_p := 0.0           # chance a solid plate is drilled with lightening holes
+var _wear_kind: Dictionary = WEARS[0]   # what this machine has corroded INTO - see WEARS
 var _mod_mul := 1.0          # tooth-size multiplier: fine teeth or chunky ones, machine-wide
 var _wear := 0.45            # how corroded this machine is - 0 for a pristine one
 var _glow := 0.0
@@ -80,9 +118,17 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_flat_p = float(finish["flat"])
 	# Most machines are built to ONE spoke pattern, as a single shop would; a minority
 	# are assembled from mixed parts.
-	var spokes_all := [3, 4, 5, 6, 8]
+	# TWO IS A COUNT. A wheel cast with a pair of opposed arms is a real thing and it was not
+	# reachable - the pool started at three - which is half of "fewer".
+	var spokes_all := [2, 3, 3, 4, 4, 5, 6, 8]
 	_spoke_pool = spokes_all if rng.randf() < 0.35 \
 		else [spokes_all[rng.randi() % spokes_all.size()]]
+	# ...and how heavy the arms are, machine-wide, because a shop casts to one weight.
+	_fill = rng.randf_range(FILL_MIN, FILL_MAX)
+	# A plate cog with holes drilled in it is a spoked wheel by another name, and it is the
+	# only interior structure a solid cog has ever had here - before this they were blank discs.
+	_hole_p = 0.0 if rng.randf() < 0.35 else rng.randf_range(0.35, 0.9)
+	_wear_kind = WEARS[rng.randi() % WEARS.size()]
 	# Tooth size, machine-wide: a fine-toothed instrument or a chunky mill drive. Every
 	# module sample below scales by this, so meshing stays exact - only the grain changes.
 	_mod_mul = rng.randf_range(0.7, 1.6)
@@ -124,7 +170,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Paint far wheels first so near ones occlude them.
 	_gears.sort_custom(func(a, b): return float(a.depth) < float(b.depth))
 	return {"mode": mode, "mood": sch.name, "finish": String(finish["name"]),
-		"tooth_scale": _mod_mul, "wear": _wear, "gears": _gears.size()}
+		"tooth_scale": _mod_mul, "wear": _wear, "gears": _gears.size(),
+		# What the wheels are SHAPED like and what they have corroded into - the two rolls the
+		# console could not show before, and the two the scene was reported as never varying.
+		"patina": String(_wear_kind["name"]), "arms": _spoke_pool, "arm_weight": _fill,
+		"drilled": _hole_p > 0.0}
 
 
 # --- group + gear construction ----------------------------------------------
@@ -182,21 +232,67 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	for i in spoke_n:
 		spokes.append(s0 + TAU * float(i) / float(spoke_n))
 
-	# Rust: some wheels carry corroded patches - soft orange-brown blobs in their alpha, pinned
-	# to the wheel (polar a, d) so they turn with it, mottling the metal as a worn texture.
+	# THE WHEEL'S PROPORTIONS, and all three of them were missing. A spoke ran from the hub to
+	# very nearly the tooth root at a fixed hairline width, so every spoked wheel was long,
+	# thin and many-armed. It now has a hub to start at, a RIM BAND to stop against, and a real
+	# width - so a wheel can be three fat arms between a heavy hub and a heavy rim, or eight
+	# hairlines, or anything between.
+	#
+	# `rim_in` is where the spokes end and the rim begins; a low one is a thick rim, which
+	# shortens the spokes from the outside as a bigger hub shortens them from the inside.
+	var rim_in := root_r * _rng.randf_range(0.55, 0.94)
+	var hub_r := root_r * _rng.randf_range(0.16, 0.42)
+	# Half-width in wheel units: the fraction of the ROOM BETWEEN ARMS that the arm fills,
+	# jittered per wheel off the machine's figure. Half the gap between two adjacent arms at
+	# the rim is `rim_in * sin(PI / n)`, so scaling by that is self-limiting - at any count the
+	# arms can be hairlines or nearly touching and can never overlap, and the same number means
+	# the same visual weight whether the wheel has two arms or eight.
+	#
+	# Arc length was the first parameterisation and it does not survive a wide arm: a straight
+	# bar of half-width w subtends 2*asin(w/r), not 2w/r, so a "78% of the circumference" wheel
+	# with two arms came out with a half-width of 2.03 - an arm twice as wide as the wheel it
+	# was on. Measured, before this line was rewritten.
+	var fill := clampf(_fill * _rng.randf_range(0.75, 1.3), FILL_MIN, FILL_MAX)
+	var spoke_w := rim_in * sin(PI / float(spoke_n)) * fill
+	# A drilled plate: one hole per gap, sized to the gap it sits in. This is what gives a
+	# solid cog any interior at all.
+	var holes := _rng.randf() < _hole_p
+
+	# WEAR: patches of whatever this machine has corroded into (see WEARS), pinned to the wheel
+	# in polar (a, d) so they turn with it. Every mark rolls its OWN colour inside the finish's
+	# ranges - the old code fixed saturation at 0.60 and value at 0.30 for every mark on every
+	# wheel of every machine, which is most of why it always looked the same.
 	var rust := []
 	if _rng.randf() < _wear:
-		for i in _rng.randi_range(4, 9):
-			rust.append({"a": _rng.randf_range(-PI, PI), "d": _rng.randf_range(0.10, root_r * 0.9),
-				"r": root_r * _rng.randf_range(0.12, 0.36), "al": _rng.randf_range(0.18, 0.45)})
+		var kind := String(_wear_kind["mark"])
+		var n_marks := int(round(_rng.randf_range(3.0, 7.0) + _wear * 6.0))
+		if kind == "pits":
+			n_marks *= 3                       # pitting is many small marks, not a few big ones
+		for i in n_marks:
+			var big: float = 0.10 if kind == "pits" else 0.34
+			rust.append({
+				"a": _rng.randf_range(-PI, PI),
+				"d": _rng.randf_range(hub_r * 0.6, root_r * 0.95),
+				"r": root_r * _rng.randf_range(big * 0.35, big),
+				"al": _rng.randf_range(0.14, 0.50),
+				# the mark's own colour, inside the finish's ranges
+				"h": _rng.randf_range(float(_wear_kind["h"][0]), float(_wear_kind["h"][1])),
+				"s": _rng.randf_range(float(_wear_kind["s"][0]), float(_wear_kind["s"][1])),
+				"v": _rng.randf_range(float(_wear_kind["v"][0]), float(_wear_kind["v"][1])),
+				# how far a streak runs, and which way an arc bends - unused by the other shapes
+				"len": _rng.randf_range(0.10, 0.34) * root_r,
+				"span": _rng.randf_range(0.35, 1.5) * (1.0 if _rng.randf() < 0.5 else -1.0),
+			})
 
 	var g := {
 		"group": group, "pos": pos, "R": R, "teeth": teeth, "style": style,
 		"phase": phase, "omega": omega, "depth": depth, "rust": rust,
 		"teeth_local": pts, "tip_r": tip_r, "root_r": root_r,
-		"hub_r": root_r * _rng.randf_range(0.18, 0.30),
-		"bore_r": root_r * _rng.randf_range(0.06, 0.12),
+		"hub_r": hub_r,
+		"bore_r": hub_r * _rng.randf_range(0.24, 0.45),
 		"body_r": root_r * 0.99, "spokes": spokes,
+		"rim_in": rim_in, "spoke_w": spoke_w, "holes": holes,
+		"wear_mark": String(_wear_kind["mark"]),
 	}
 	_gears.append(g)
 	return g
@@ -449,29 +545,85 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 	var rw := maxf(1.5, 0.010 * sc)
 
 	var world: PackedVector2Array = xf * PackedVector2Array(g.teeth_local)
+	var rim_in: float = float(g.rim_in)
+	var hub_r: float = float(g.hub_r)
 	if String(g.style) == "flat":
 		# Solid flat-colour cog: the whole tooth ring filled, with a dark rim edge for relief.
 		draw_colored_polygon(world, Color.from_hsv(_hue, _sat, clampf(0.16 * db + 0.26 + 0.30 * _glow, 0.0, 1.0), 0.95 * af))
 		draw_polyline(world, Color.from_hsv(_hue, _sat, 0.05, 0.6 * af), maxf(1.0, rw * 0.7), true)
+		# ...and, if this shop drills them, lightening holes: one in each gap between the arms
+		# the casting would have had. A blank disc is the one thing a real cog never is.
+		if bool(g.holes):
+			var hole_c := Color.from_hsv(_hue, _sat * 0.7, 0.045 * db + 0.012, 0.85 * af)
+			var mid_r := (hub_r + rim_in) * 0.5
+			var gap := TAU / float((g.spokes as Array).size())
+			# Sized to the gap it sits in AND to the band it spans, so it can never eat the
+			# hub or the rim however few arms the wheel has.
+			var hr := minf(mid_r * sin(gap * 0.5) * 0.72, (rim_in - hub_r) * 0.42)
+			if hr > 0.01:
+				for sa in g.spokes:
+					var ha := theta + float(sa) + gap * 0.5
+					draw_circle(centre + Vector2(cos(ha), sin(ha)) * mid_r * sc, hr * sc, hole_c)
 	else:
-		# Skeletal wire wheel: a near-black body, spokes + bolts, and a bright luminous tooth rim.
+		# Skeletal wire wheel: a dark body, a rim band, the arms, and a bright tooth rim.
 		draw_circle(centre, float(g.body_r) * sc, Color.from_hsv(_hue, _sat * 0.55, 0.05 * db + 0.015, 0.6 * af))
 		var spoke_c := Color.from_hsv(_hue, _sat * 0.85, clampf(0.22 * db + 0.20 + 0.30 * _glow, 0.0, 1.0), 0.85 * af)
-		var sw := maxf(1.5, 0.014 * sc)
+		# THE RIM AS A BAND, not as a line. It is what the arms stop against, and without it a
+		# wheel with short heavy arms reads as a hub with stubs rather than as a cast wheel.
+		var band: float = (float(g.body_r) - rim_in) * sc
+		if band > 1.0:
+			draw_arc(centre, (rim_in + float(g.body_r)) * 0.5 * sc, 0.0, TAU, 48, spoke_c, band, true)
+		# THE ARMS, as filled bars rather than as lines, which is the whole of "fewer, shorter,
+		# wider". A line has one width for every wheel; a bar has the width the casting was
+		# given, and it is flared where it meets the hub the way a fillet is.
+		var half: float = maxf(float(g.spoke_w) * sc, 1.0)
 		for sa in g.spokes:
 			var a := theta + float(sa)
 			var d := Vector2(cos(a), sin(a))
-			draw_line(centre + d * float(g.hub_r) * sc, centre + d * float(g.body_r) * 0.95 * sc, spoke_c, sw, true)
-			draw_circle(centre + d * float(g.body_r) * 0.80 * sc, sw * 1.1, spoke_c)
+			var q := Vector2(-d.y, d.x)
+			var r0 := hub_r * 0.85
+			# A fillet where the arm meets the hub, and a MODEST one: flaring by a fixed
+			# fraction of the arm's own width turns a broad cast arm into a petal, because the
+			# flare grows with the thing it is supposed to be a detail on.
+			var flare := 1.0 + 0.9 * minf(1.0, 3.0 / maxf(1.0, half))
+			draw_colored_polygon(PackedVector2Array([
+				centre + d * r0 * sc - q * half * flare,
+				centre + d * r0 * sc + q * half * flare,
+				centre + d * rim_in * sc + q * half,
+				centre + d * rim_in * sc - q * half]), spoke_c)
+			# A BOLT IS A BOLT, whatever the arm is. Sized to the wheel, not to the arm, and
+			# only where there is arm to put it on - scaled to the arm it became a round pad
+			# the width of the arm, and every wide wheel came out looking like a propeller.
+			var boss := clampf(0.022 * sc, 1.2, half * 0.7)
+			draw_circle(centre + d * (rim_in * sc - boss * 1.6), boss, spoke_c)
 		draw_polyline(world, Color.from_hsv(_hue, _sat, clampf(0.26 * db + 0.28 + 0.35 * _glow, 0.0, 1.0), 0.92 * af), rw, true)
 
-	# Rust: soft orange-brown patches mottling the metal in the alpha, turning with the wheel -
-	# a worn, corroded texture over the body (under the hub).
+	# WEAR, in whatever this machine corroded into and in that finish's own shape - see WEARS.
+	# Pinned to the wheel in polar (a, d) so it turns with the metal, and every mark carries the
+	# colour it rolled for itself rather than one the whole scene shares.
+	var mark := String(g.wear_mark)
 	for sp in g.rust:
 		var ra := theta + float(sp.a)
-		var rp := centre + Vector2(cos(ra), sin(ra)) * float(sp.d) * sc
-		Layer.soft_blob(self, rp, float(sp.r) * sc,
-			Color.from_hsv(fposmod(0.05 + _hue * 0.1, 1.0), 0.6, 0.30 * db, float(sp.al) * af), 5)
+		var dir := Vector2(cos(ra), sin(ra))
+		var rp := centre + dir * float(sp.d) * sc
+		var wc := Color.from_hsv(float(sp.h), float(sp.s), float(sp.v) * (0.55 + 0.45 * db),
+			float(sp.al) * af)
+		match mark:
+			"streak":
+				# A run of corrosion following the metal outward, not a dot.
+				var steps := 5
+				var step := dir * float(sp.len) * sc / float(steps - 1)
+				for k in steps:
+					Layer.puff(self, rp + step * float(k), float(sp.r) * 0.55 * sc,
+						Color(wc.r, wc.g, wc.b, wc.a * 0.55))
+			"pits":
+				Layer.puff(self, rp, float(sp.r) * sc, wc)
+			"arc":
+				# Burnished where the wheel is handled: a bright band worn along its travel.
+				var aw := maxf(float(sp.r) * 0.8 * sc, 1.5)
+				draw_arc(centre, float(sp.d) * sc, ra, ra + float(sp.span), 20, wc, aw, true)
+			_:
+				Layer.soft_blob(self, rp, float(sp.r) * sc, wc, 5)
 
 	# Hub and bore.
 	draw_circle(centre, float(g.hub_r) * sc, Color.from_hsv(_hue, _sat, clampf(0.30 * db + 0.18 + 0.30 * _glow, 0.0, 1.0), 0.95 * af))

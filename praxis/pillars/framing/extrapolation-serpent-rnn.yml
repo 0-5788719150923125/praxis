@@ -1,0 +1,24 @@
+# Section 3.2, closing the extrapolation family. The k > K test named in the
+# previous fragment is architecture-dependent: a bank of K independent modules
+# simply has no module for depth K+1, so the query is undefined. The shared
+# recurrent cell is the one MTP variant where it is nearly free - one cell,
+# unrolled, O(1) params in depth - and the only thing missing at K+1 is the
+# per-depth signature, which is zero-initialized. Stated as an affordance, NOT
+# as a result: the unroll has not been run, and the fragment says so.
+section: extrapolation
+order: 30
+requires:
+  mtp_type: [serpent_rnn]
+body: >
+  Whether that test is even available depends on which draft bank the run
+  built, and this one makes it cheap. A bank of $K$ independent per-depth
+  modules has nothing to evaluate at depth $K{+}1$ - the query is undefined, not
+  merely untrained. The shared cell has the opposite property: it is one
+  function unrolled, $O(1)$ in depth, so the unroll can simply be continued, and
+  the only parameter that does not exist beyond $K$ is the per-depth signature
+  the cell adds - itself zero-initialized, so holding it at zero past the
+  trained window is the cell's own default rather than an invention. Continuing
+  the unroll and recording accuracy against the true bytes at $k > K$ would
+  measure the extrapolation horizon directly, and separate graded decay from a
+  cliff at the edge of supervision. It is not reported here: the measurement has
+  not been made, and the profile below stops where the training does.

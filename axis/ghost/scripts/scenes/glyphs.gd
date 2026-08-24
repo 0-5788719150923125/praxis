@@ -101,14 +101,25 @@ var _shifts: Dictionary = {}      # finished line -> its frozen centring shift
 var _shift_cur := 0.0
 var _scroll := 0.0
 var _scroll_to := 0.0
+## HOW HARD THE CAMERA IS DRAWN TOWARD THE PEN, and HOW FAST ITS OWN SPEED MAY CHANGE - the two
+## halves of the tracker's inertia. Together they are a damped spring: omega = sqrt(PULL * EASE)
+## and zeta = sqrt(EASE / (4 * PULL)), so 1.5 and 6.0 are critically damped at omega 3, which
+## settles a carriage return in about a second with no overshoot and no corner in the motion.
+##
+## The old rule was a position lerp at 0.7, switched to 9.0 whenever the nib left the frame.
+## That is faster on paper and it is what made the camera jerky: a lerp's speed IS its error, so
+## every commit and every switch was a step change in how fast the frame was travelling.
+const CAM_PULL := 8.0
+const CAM_ACCEL := 16.0
+
 # THE CAMERA. The page used to be framed whole - a sheet of small sparse characters with
 # its margins showing - which reads as a screenshot of a document rather than as writing
 # happening. The view now sits IN the text: glyphs are large enough to overflow the frame,
 # and the camera follows the pen instead of the paper, with a slow independent downward
 # creep so the frame is never quite still even while a single character is being drawn.
 var _cam := Vector2.ZERO          # eased camera centre, in the same unit space as _cx/_cy
+var _cam_vel := Vector2.ZERO      # its SPEED, which is what is eased now - see _track_pen
 var _cam_drift := 0.0             # seconds, for the bounded breath (see _track_pen)
-var _chasing := false             # the nib is out of shot: close fast, not loosely (see _track_pen)
 var _zoom_in := 2.6               # how far the framing is pushed past whole-page
 var _drift_rate := 0.006
 
@@ -321,6 +332,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 		# already FRAMED. Easing in from the centre would have the opening seconds of every
 		# session drift across whatever the prefill happened to leave under the middle.
 		_cam = _clamp_cam(_pen_at())
+		_cam_vel = Vector2.ZERO
 	# AFTER _metrics and the opening, never before: the tracker reads `_left` / `_right` /
 	# `_bottom` / `_line_step` for its bound and the cursor for its target, and on the first
 	# frame none of those exist yet - it would aim at, and clamp against, the declared defaults.
@@ -726,13 +738,37 @@ func _frame(u: float) -> void:
 		* Transform2D(0.0, Vector2(z, z), 0.0, -_cam * u * z))
 
 
-## Follow the pen, loosely.
+## Follow the pen, loosely - and at a speed that does not jump.
 ##
-## Eased hard (a ~1.4 s time constant) rather than locked to the nib: a camera that pinned
-## the pen would make the PAGE move under a stationary point, which is the opposite of
-## reading and is nauseating at this zoom. Loose tracking lets the character being written
-## drift across the frame and the camera catch up between words, which is how an eye
-## actually follows a hand.
+## Eased rather than locked to the nib: a camera that pinned the pen would make the PAGE move
+## under a stationary point, which is the opposite of reading and is nauseating at this zoom.
+## Loose tracking lets the character being written drift across the frame and the camera catch
+## up between words, which is how an eye actually follows a hand.
+##
+## WHAT IS EASED IS THE SPEED, NOT THE POSITION, and that is the whole of a report: "the camera
+## can be rather jerky at times - because it is responding to new glyphs being drawn, which is
+## constant. It would be better if we could move the camera at a smooth, mostly-constant speed".
+## A position lerp has no inertia - its velocity is proportional to the error, so anything that
+## moves the target moves the camera's SPEED in the same instant. Measured over 60 seeds, 45 s
+## each, on the rule this replaces:
+##
+##   page    speed mean 0.231  p99 4.95   (x22 the mean)   worst acceleration 676
+##   column  speed mean 0.108  p99 2.24   (x18)                              315
+##   banner  speed mean 0.087  p99 1.50   (x17)                              222
+##
+## i.e. most frames barely moved and one frame in a hundred bolted. Two causes, both fixed:
+##
+##   THE TARGET STEPPED. `_pen_at` aimed at the COMMITTED cursor plus half an advance, so it
+##   jumped a whole character every time one was committed - eight times a second. It reads
+##   the reveal now, exactly as `_shift_target` does and for the same reason: `_cx` gains the
+##   character's width in the same instant `_reveal` drops from 1 to 0, and the two cancel.
+##
+##   THE GAIN SWITCHED. The rate was 0.7 while the nib was in shot and 9.0 while it was not -
+##   a thirteen-fold step in the camera's speed, applied at exactly the moment the eye was
+##   following something. It is one constant now, and the saccade falls out of the physics
+##   instead of being branched on: a nib far out of frame is a large error, a large error is
+##   a large target speed, and the speed ease turns that into an accelerate-and-settle rather
+##   than a snap. One rule, no threshold to chatter on, and nothing to keep in sync.
 ##
 ## The downward creep is independent of the writing and never stops, so a held character
 ## or a silent passage still has motion in the frame - without it, "the pen rests where it
@@ -747,25 +783,36 @@ func _track_pen(delta: float) -> void:
 	# holding a character - is a bounded breath instead.
 	_cam_drift += delta
 	var breath := sin(_cam_drift * _drift_rate * TAU * 12.0) * _line_step * 0.18
-	# THE SACCADE. Loose tracking is the whole feel of this scene, but a line break is not a
-	# drift - it is a CARRIAGE RETURN, and an eye does not glide back across a page, it jumps.
-	# Measured with the loose constant alone (tests/glyph_frame_check.gd): after every newline the
-	# frame spent 1.47 s sailing over blank paper while the hand wrote at the start of the new
-	# line, and the nib was out of shot for 32% of the hold. So the rate is loose while the nib
-	# is IN frame and fast while it is not - ONE rule, which also covers every other jump (the
-	# opening frames, a page scroll landing) without having to name them.
-	#
-	# The two thresholds are a commit band, the same shape as contour_map's _pick_index: it
-	# starts chasing at the frame edge but does not stop until the nib is comfortably back
-	# inside, so a nib hovering ON the boundary cannot chatter between the two rates.
-	var target := _pen_at() + Vector2(0.0, breath)
-	var h := _half / maxf(0.001, _zoom_in)
-	var off := target - _cam
-	if absf(off.x) > h.x or absf(off.y) > h.y:
-		_chasing = true
-	elif absf(off.x) < h.x * 0.7 and absf(off.y) < h.y * 0.7:
-		_chasing = false
-	_cam = _clamp_cam(_cam.lerp(target, 1.0 - exp((-9.0 if _chasing else -0.7) * delta)))
+	# THE TARGET IS CLAMPED BEFORE IT IS CHASED, not only the camera after. Aiming somewhere the
+	# camera may not go winds the speed up against the bound and then spends it in a lurch the
+	# moment the bound releases; aiming at the nearest place it MAY go cannot.
+	var target := _clamp_cam(_pen_at() + Vector2(0.0, breath))
+	# A position lerp's rate, read as the speed it is ASKING for rather than applied as a
+	# position - and then that speed is what gets eased. The camera therefore has inertia: it
+	# cannot change how fast it is moving faster than CAM_ACCEL allows, whatever the pen does.
+	var to := target - _cam
+	var dist := to.length()
+	# THE SPEED IT IS ALLOWED TO BE DOING, which is the smaller of two things: a settle
+	# (proportional to the error, so it eases in over the last of the distance) and a BRAKING
+	# limit, sqrt(2 a d) - the fastest it can be going and still stop by the time it arrives.
+	# The braking term is what wins on a carriage return, and it is why there is no overshoot
+	# and nothing for the page bound to stop dead: the camera is already slowing before it
+	# gets there. Without it the frame flew back across the line and hit the margin at speed,
+	# losing 1.2 unit/s in a single frame - an acceleration of 74 against a cap of 4.
+	var cruise := minf(dist * CAM_PULL, sqrt(2.0 * CAM_ACCEL * dist))
+	var want := to.normalized() * cruise if dist > 0.000001 else Vector2.ZERO
+	# ...and it may not CHANGE speed faster than the cap. This is the whole of "a smooth,
+	# mostly-constant speed": whatever the pen does, the frame's velocity is Lipschitz.
+	var dv := want - _cam_vel
+	var lim := CAM_ACCEL * delta
+	_cam_vel += dv if dv.length() <= lim else dv.normalized() * lim
+	var was := _cam
+	_cam = _clamp_cam(_cam + _cam_vel * delta)
+	# ...and the speed is then taken from what ACTUALLY happened. The clamp above can refuse
+	# part of a step (the page edge, a coil smaller than the view), and a velocity that keeps
+	# integrating into a wall is stored-up motion that comes out all at once later.
+	if delta > 0.0:
+		_cam_vel = (_cam - was) / delta
 	# NOTE the camera is NOT written into `view`. Doing that compounds: `view.zoom` and
 	# `view.offset` are only re-set each frame by the assigned SHOT, and a scene running
 	# without one - the catalogue smoke gate builds every scene shotless - multiplies its
@@ -807,7 +854,15 @@ func _pen_at() -> Vector2:
 		return Vector2.ZERO
 	# The SAME eased shift the glyphs are drawn with (see _ease_shift). Recomputing the raw
 	# target here would have the camera stepping while the row glides.
-	return Vector2(_cx + _adv * 0.5 + _shift_cur, _cy - _scroll - _line_step * 0.25)
+	#
+	# AND THE SAME REVEAL, for the same reason `_shift_target` reads it: `_cx` is the COMMITTED
+	# cursor, so `_cx + _adv * 0.5` jumped a whole character every commit - eight times a second,
+	# straight into the camera's speed. Following the nib's actual position instead is continuous
+	# across the handover, because `_cx` gains the character's width at the same instant
+	# `_reveal` drops from 1 to 0.
+	var w := _adv * (0.62 if _cur_mark else 1.0)
+	return Vector2(_cx + w * clampf(_reveal, 0.0, 1.0) + _shift_cur,
+		_cy - _scroll - _line_step * 0.25)
 
 
 ## Keep the frame ON the writing.

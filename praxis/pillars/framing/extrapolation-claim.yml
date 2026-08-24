@@ -1,0 +1,33 @@
+# Section 3.2, immediately after the time-series reframe in body.tex. The
+# reframe on its own is a genre statement, not a claim: every architecture that
+# embeds discrete symbols in R^d can be narrated as fitting a real-valued
+# signal, so the description separates nothing. This fragment gives it the same
+# treatment the Koopman claim gets in Section 2 - a stated boundary and a
+# falsifier - and names the two places where the fitted-signal reading and the
+# token reading actually disagree. Always active: the boundary belongs wherever
+# the reframe appears, and the reframe is unconditional prose in the body.
+section: extrapolation
+order: 10
+body: >
+  Stated that loosely the reading buys nothing. Any architecture that embeds
+  discrete symbols in $\mathbb{R}^d$ can be narrated as fitting a real-valued
+  signal, and a description that fits every architecture distinguishes none of
+  them. It is worth keeping only where it predicts something the token account
+  does not, and there are two such places.
+
+  The first is \textit{where the error lives}. A fitted signal that mostly holds
+  its standing shape needs correcting only where it departs from it, so the
+  computation is \textit{event-driven} and \textit{sparsely activated} by
+  construction: most positions are null work and compute falls on the
+  deviations. That is the regime the conjecture below pushes to its limit, and
+  the reported \texttt{harmonic\_delta\_norm} concentration already tests it.
+
+  The second is \textit{off the sampled interval}. A fitted signal has values
+  where no sample was taken; a sequence of discrete tokens does not. If a state
+  is genuinely an address into a fixed basis rather than a summary of the
+  symbols it consumed, then reading it at positions it has not consumed should
+  degrade \textit{gradually} with distance, and should not break at the patch
+  boundary - the boundary is an artifact of how the input was cut, not a
+  feature of the underlying signal. The falsifier is sharp: a read that is
+  accurate inside the consumed span and collapses at its edge is a model that
+  memorized a window, and the address language should be dropped.

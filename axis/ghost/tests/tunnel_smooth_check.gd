@@ -39,6 +39,10 @@ const WARMUP := 40
 ## (measured 2.2 to 3.7 against a 2.8 mean, a spread of 1.3x) and well under a station step
 ## (measured 10 to 12 against 3.3, a spread of 3.6x).
 const SPIKE := 1.8
+## How many engine frames to wait for the worker to deliver a packet before giving up on it.
+## Generous: the point is to notice a forge that has stopped, not to time one that is merely
+## busy. At the rates measured here a packet lands within a dozen frames.
+const SPIN_LIMIT := 240
 
 var _fails: Array = []
 
@@ -105,7 +109,18 @@ func _check_rule() -> void:
 		_fails.append("the OLD index rule did not move a single rib, so this control is measuring nothing")
 
 
-## What the flight actually looks like, one frame at a time.
+## Wait until the worker hands over a NEW packet, so one call to this is exactly one step of
+## the flight however fast the harness happens to be spinning. False if it never arrived.
+func _next_packet(sc) -> bool:
+	var src: Variant = sc._forge.packet_source()
+	for _spin in SPIN_LIMIT:
+		await get_tree().process_frame
+		if sc._forge.packet_source() != src:
+			return true
+	return false
+
+
+## What the flight actually looks like, one step at a time.
 func _check_picture() -> void:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(W, H)
@@ -115,14 +130,39 @@ func _check_picture() -> void:
 	var sc = load("res://scripts/scenes/tunnel_run.gd").new()
 	vp.add_child(sc)
 	sc.init_with_seed(7, "drift")
+	# WARMED UP THE SAME WAY IT IS MEASURED. Spinning `update` without waiting for packets
+	# leaves the forge a long way behind, and the first measured packet then arrives carrying
+	# all of that backlog at once - a 10.5 against a 2.9 mean, which is a startup transient
+	# being reported as a step in the flight. Entering the measurement in the regime the
+	# measurement assumes is the fix; discarding the first sample would only hide it.
 	for _i in WARMUP:
 		sc.update(_features(), DT)
-		await get_tree().process_frame
+		await _next_packet(sc)
 	var prev := PackedByteArray()
 	var diffs: Array = []
+	var starved := 0
 	for _i in FRAMES:
 		sc.update(_features(), DT)
-		await get_tree().process_frame
+		# ONE SAMPLE PER PACKET, not one per engine frame, and getting that wrong made this
+		# file measure the harness instead of the scene. tunnel_run builds its geometry on a
+		# worker (see FrameForge) and the picture only changes when a packet lands. This probe
+		# runs unthrottled - measured at 224 to 293 fps under xvfb - while the forge delivers
+		# 30 to 50 packets a second, so nine samples in ten were of the SAME picture and the
+		# tenth carried nine frames of travel at once. That reads as a step every fourth frame
+		# and it is nothing of the kind; the scene had not moved between the samples that
+		# showed nothing and it had moved nine times between the ones that showed a lot.
+		#
+		# It also explains why this passed the day it was written and failed later on the
+		# identical commit: nothing about the scene changed, the machine's spare capacity did.
+		# A gate whose verdict depends on how fast the probe happens to spin is not measuring
+		# the thing it names.
+		#
+		# Waiting for the packet source to CHANGE makes every sample exactly one `update` of
+		# travel apart, whatever the frame rate, so the diffs are comparable to each other -
+		# which is the whole basis of calling one of them a spike.
+		if not await _next_packet(sc):
+			starved += 1
+		await RenderingServer.frame_post_draw
 		var img := vp.get_texture().get_image()
 		img.convert(Image.FORMAT_L8)
 		var cur := img.get_data()
@@ -136,6 +176,9 @@ func _check_picture() -> void:
 		prev = cur
 	vp.queue_free()
 	await get_tree().process_frame
+	if starved > 0:
+		_fails.append("the forge failed to deliver a packet within %d frames on %d of %d samples - the scene is not building"
+			% [SPIN_LIMIT, starved, FRAMES])
 	if diffs.size() < 10:
 		_fails.append("the probe captured %d usable frames - it is not measuring the scene" % diffs.size())
 		return
@@ -155,6 +198,23 @@ func _check_picture() -> void:
 	if spikes > 0:
 		_fails.append("the picture steps %.1f times a second (%d frames over %.1fx the mean) - a flight through a tube does not"
 			% [per_sec, spikes, SPIKE])
+	# THE INSTRUMENT'S OWN CONTROL, and it costs nothing to run: what WOULD a step score? A
+	# skipped station delivers two steps of travel in one frame, so the smallest step this
+	# measure has to catch is the sum of two adjacent diffs. If that does not clear the spike
+	# threshold then the threshold is too loose to see the fault the file exists for, and a
+	# green run above means nothing.
+	#
+	# Written as arithmetic on the samples already taken rather than as a second render: the
+	# quantity is exactly defined, and a probe that deliberately drops packets would be a
+	# second, differently-wrong harness to keep in step with the first.
+	var pair := 0.0
+	for k in range(1, diffs.size()):
+		pair = maxf(pair, float(diffs[k]) + float(diffs[k - 1]))
+	print("tunnel_smooth_check: a doubled step would score %.2f, %.2fx the mean (threshold %.1fx)"
+		% [pair, pair / maxf(0.01, mean), SPIKE])
+	if pair <= mean * SPIKE:
+		_fails.append("two steps at once would only score %.2fx the mean - this measure cannot see a skipped station, so it is not gating anything"
+			% (pair / maxf(0.01, mean)))
 	# ...and it must still be MOVING, or a scene that froze would pass the test above.
 	if mean < 0.5:
 		_fails.append("the picture barely changes at all (mean %.2f) - it is smooth because nothing is happening" % mean)

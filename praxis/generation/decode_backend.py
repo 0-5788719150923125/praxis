@@ -20,11 +20,16 @@ preferred sampling temperature). Everything else is shared.
 from __future__ import annotations
 
 import contextlib
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Set
 
 import torch
 from transformers import GenerationConfig
+
+from praxis.environments import EnvironmentFeatures
+
+_log = logging.getLogger("praxis.generation")
 
 
 class DecodeBackend(ABC):
@@ -49,6 +54,16 @@ class DecodeBackend(ABC):
     def eval_mode(self):
         """Scope generation in inference mode. Default is a no-op."""
         yield
+
+    def warmup(self) -> None:
+        """Pay any one-time decode setup now, before a caller is waiting.
+
+        Default is a no-op. A backend that compiles on first use overrides it,
+        because that cost otherwise lands inside somebody's request: the web
+        chat gives up after 60s (``generate_from_messages``) and the deadline
+        cannot interrupt a single forward, so a first request arriving during
+        compilation comes back empty.
+        """
 
     @abstractmethod
     def generate_until_halt(
@@ -78,8 +93,37 @@ class ModelBackend(DecodeBackend):
     """Standard in-process ``model.generate`` backend."""
 
     def __init__(self, model, tokenizer) -> None:
-        self.model = model
+        # Decode on the UNCOMPILED module, deliberately. Whole-model compile is
+        # ruinous here (see eval_mode), and today the Generator is handed
+        # `bundle.model` while the LightningModule keeps the `try_compile`
+        # wrapper, so this is already what happens - unwrapping just stops that
+        # from being an accident of wiring that a future caller could undo.
+        self.model = getattr(model, "_orig_mod", model)
         self.tokenizer = tokenizer
+        # OFF BY DEFAULT, and the reason is a measured regression rather than
+        # caution. Compiling the decode-time memory bodies is worth 1.43x on a
+        # turn, but with static shapes it recompiles as the rolling context
+        # GROWS: the terminal generates every `infer_every` seconds from a
+        # buffer that gains bytes each time, and every crossing of a patch
+        # boundary (patch_size 8) is a new trunk length, a new graph, and
+        # another wake-up for Inductor's 8-worker compile pool. Measured across
+        # two runs of the same model, child-process memory:
+        #
+        #     abstractinator-t (off)  mean  599MB,  4% of samples over 1GB
+        #     abstractinator-u (on)   mean 2839MB, 62% of samples over 1GB
+        #
+        # -u died at its first validation with swap exhausted, ~2h in, where -t
+        # had run 14h on the same host. The benchmark that justified this ran a
+        # FIXED prompt length, which is exactly the case that never recompiles,
+        # so it measured wall clock and missed the cost entirely.
+        #
+        # Re-enable per environment once the shape set is bounded (symbolic
+        # shapes, or bucketing the decode length), and measure host RSS and
+        # child memory over a GROWING context, not a fixed one.
+        cfg = getattr(self.model, "config", None)
+        self._compile_memory = EnvironmentFeatures.is_enabled(
+            "compile_decode_memory"
+        ) and not bool(getattr(cfg, "no_compile", False))
 
     @property
     def device(self):
@@ -97,22 +141,78 @@ class ModelBackend(DecodeBackend):
 
     @contextlib.contextmanager
     def eval_mode(self):
-        # Generation must not run through torch.compile: the decode loop
-        # changes python-level guard inputs every token (cache pos, live
-        # segment length, current_depth), so compiled frames blow the
-        # dynamo recompile limit; eager decode is cheap with the KV cache.
+        """Scope a generation: eval mode, no whole-model compile, compiled
+        NeuralMemory.
+
+        WHOLE-MODEL COMPILE STAYS OFF, and the original reason for that holds
+        up: the recurrent loop passes ``current_depth`` as a python int and KL
+        halting varies the loop count per input, so Dynamo re-traces on nearly
+        every call. Measured on abstractinator-t, compiling the decoder made a
+        136-byte forward 21288 ms against 202 ms eager - a hundred times slower,
+        with 143 compiled frames and no sign of settling.
+
+        THE ``force_eager`` STANCE IS GONE, and it has to be: the stance is
+        global, so it forces ANY compiled callable entered inside the window
+        back to eager - including the one this method now installs on purpose.
+        With it in place the compiled memory measured 1.01x, i.e. exactly
+        nothing. What keeps the trunk eager instead is the constructor
+        unwrapping ``_orig_mod``, which is narrow enough to name the thing it
+        is preventing.
+
+        A second, independent blocker is worth recording so nobody re-attempts
+        it blind: flex attention's Triton template needs power-of-two block
+        shapes, and ``head_size: 37`` is not one, so on abstractinator-t the
+        decoder fails to compile at ANY sequence length with `Shape element 2
+        must be a power of 2`. Training never trips it because the packer
+        supplies ``block_ids``, which routes to the materialized
+        ``_local_attention_blocked`` path instead of flex.
+
+        What DOES pay is compiling the one module that is ~59% of the forward's
+        dispatch count and has stable shapes - see ``decode_compiled``.
+        """
+        from praxis.memory.neural_memory import decode_compiled
+
         training = self.model.training
         self.model.eval()
-        stance = contextlib.ExitStack()
         try:
-            try:
-                stance.enter_context(torch.compiler.set_stance("force_eager"))
-            except Exception:
-                pass  # older torch: stance API unavailable, run as-is
-            yield
+            with decode_compiled(self.model, enabled=self._compile_memory):
+                yield
         finally:
-            stance.close()
             self.model.train(training)
+
+    # Probe lengths for warmup, spread over the range a rolling context and a
+    # chat turn actually occupy. Cheap to add to (each is one short forward);
+    # the cost that matters is Inductor's, and that is per distinct shape.
+    WARMUP_LENGTHS = (8, 64, 128, 256, 512, 1024)
+
+    def warmup(self) -> None:
+        """Compile the decode-time memory bodies on throwaway forwards.
+
+        Cold, this is minutes of Inductor; Torch's on-disk graph cache makes
+        every later run of the same config far cheaper.
+
+        A LADDER of lengths, because the bodies compile with static shapes and
+        a turn walks a range of them (see ``_DECODE_COMPILE_KWARGS`` for why
+        symbolic shapes lost). The ladder is what makes this worth doing: a
+        single-length probe left the first real turn at 55s against 44s eager,
+        still tracing its way up, while the ladder lands it at 30s - steady
+        state from the very first request. Anything past ``max_positions`` is
+        skipped rather than clamped, since a probe the model cannot represent
+        is not a warm graph.
+        """
+        if not self._compile_memory:
+            return
+        cap = self.max_positions
+        try:
+            with self.eval_mode(), torch.no_grad():
+                for length in self.WARMUP_LENGTHS:
+                    if cap is not None and length > cap:
+                        break
+                    probe = torch.zeros((1, length), dtype=torch.long, device=self.device)
+                    self.model(input_ids=probe)
+        except Exception:
+            # A warmup is an optimization. Never let it end a run.
+            _log.debug("Decode warmup failed; first request pays instead", exc_info=True)
 
     def generate_until_halt(
         self,
