@@ -1,0 +1,35 @@
+# The per_depth mechanism paragraph of the multi-token family: sits between the
+# generic intro (mtp-draft, order 13) and the shared short-curve/figure body
+# (mtp-draft-window, order 15). Gated on the independent bank alone, so the
+# paper only describes per-depth parameters when the run actually built them.
+#
+# The counterpart to mtp-serpent-rnn-mechanism: that fragment argues the
+# correlation between adjacent offsets is strong enough to build in, this one
+# declines to assume it and pays K transforms to find out.
+section: harmonic
+order: 14
+requires:
+  mtp_type: [per_depth]
+body: >
+  Each draft depth here is its own transform, and nothing is shared between
+  them. Depth $k$ normalizes the previous depth's state and the next position's
+  embedding, concatenates them, and passes the pair through a projection and a
+  harmonic activation that belong to depth $k$ alone. The chain that carries
+  information forward is the hidden state, not the parameters - which is the
+  arrangement the multi-token literature settled on, and the one that assumes
+  least. A merged pool builds the overlap between adjacent offsets in by
+  construction and a recurrent cell removes the question entirely by having
+  only one transform; this bank declines to decide in advance, and lets each
+  offset choose its own map.
+
+  What it gives up is the guarantee. A shared cell cannot drift apart, so its
+  failure mode is legible - gates pinned, signatures flat. Independent depths
+  can converge on the same transform anyway, spending $K$ times the parameters
+  to arrive where one would have, and that outcome is invisible unless it is
+  measured. So it is: the pairwise distinctness of the depths' harmonic spectra
+  is logged without a repulsion penalty holding it up, alongside each depth's
+  own transform scale. Flat profiles there are the result that would argue for
+  the shared cell. The transform is pointwise, so the drafted form at inference
+  is exactly the trained form - the property a depth transform containing
+  attention cannot offer, since drafting sees a single position and training
+  saw the whole sequence.

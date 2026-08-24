@@ -1,3 +1,4 @@
+import copy
 import pytest
 import torch
 
@@ -793,6 +794,89 @@ def test_serpent_rnn_mtp_bank(spec_config):
     n4 = sum(p.numel() for p in SerpentRNNMTPBank(view, 4).parameters())
     n16 = sum(p.numel() for p in SerpentRNNMTPBank(view, 16).parameters())
     assert n16 - n4 == 12 * (view.hidden_size + view.embed_size)
+
+
+def test_per_depth_mtp_bank(spec_config):
+    """per_depth: K independent light harmonic transforms, chained by hidden.
+
+    The DeepSeek shape - nothing shared between depths, no forced blend back
+    toward the previous state - with a POINTWISE transform, which is what keeps
+    the drafted function equal to the trained one. Grows linearly in depth (the
+    price of independence) and its depths are instrumented for the failure the
+    shared cell cannot have: converging on one transform anyway.
+    """
+    import copy
+
+    spec_config.mtp_type = "per_depth"
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config)
+    mtp = model.mtp
+    assert mtp.bank is not None and mtp.depths is None
+
+    ids = torch.randint(4, 260, (2, 24))
+    hidden = torch.randn(2, 24, spec_config.embed_size)
+    losses = mtp(mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head))
+    assert torch.isfinite(losses.get_loss("mtp"))
+    # No repulsion term: distinctness is measured here, not enforced.
+    assert "mtp_vear_repulsion" not in losses.loss_dict
+
+    metrics = mtp.training_metrics()
+    assert isinstance(metrics["mtp_field_distinctness"], float)
+    for k in range(spec_config.mtp_depth):
+        assert metrics[f"mtp_depth_weight_d{k}"] > 0.0
+    # Every metric this bank emits must reach a chart, or it is invisible.
+    described = mtp.field_metric_descriptions()
+    assert not [
+        k
+        for k in metrics
+        if k not in described and not k.startswith("mtp_draft_acc")
+    ]
+
+    with torch.no_grad():
+        drafted = mtp.draft_next_tokens(
+            hidden[:1, -1:, :], ids[:1, :1], model.embeds, model.head
+        )
+    assert drafted.shape == (1, mtp.draft_width)
+
+    # Linear in depth: independence is exactly what costs K transforms.
+    from praxis.heads.mtp.independent import PerDepthMTPBank
+
+    view = copy.copy(spec_config)
+    view.hidden_size = spec_config.embed_size  # byte-level depth space
+    n2 = sum(p.numel() for p in PerDepthMTPBank(view, 2).parameters())
+    n4 = sum(p.numel() for p in PerDepthMTPBank(view, 4).parameters())
+    assert n4 == 2 * n2
+
+
+def test_pointwise_banks_draft_what_they_trained(spec_config):
+    """A depth transform is run over the whole sequence at training time and
+    over a SINGLE position at draft time, with no cache. Any transform that
+    reads context is therefore a different function in the two settings - the
+    silent failure that makes drafts garbage while the aux loss still falls.
+
+    The pointwise banks agree to float noise, and the context-dependent
+    registry modules are refused outright on the drafting path rather than
+    allowed to build.
+    """
+    from praxis.heads.mtp import MultiTokenPrediction
+
+    ids_h = torch.randn(2, 16, spec_config.embed_size)
+    ids_e = torch.randn(2, 16, spec_config.embed_size)
+    for mtp_type in ("per_depth", "vear", "serpent_rnn"):
+        cfg = copy.copy(spec_config)
+        cfg.mtp_type = mtp_type
+        torch.manual_seed(0)
+        mtp = MultiTokenPrediction(cfg).eval()
+        with torch.no_grad():
+            full = mtp._run_depth(0, ids_h, ids_e, None)
+            one = mtp._run_depth(0, ids_h[:, -1:], ids_e[:, -1:], None)
+        assert torch.allclose(full[:, -1:], one, atol=1e-5), mtp_type
+
+    for mtp_type in ("transformer", "conv"):
+        cfg = copy.copy(spec_config)
+        cfg.mtp_type = mtp_type
+        with pytest.raises(ValueError, match="context-dependent"):
+            MultiTokenPrediction(cfg)
 
 
 def test_draft_window_from_mtp_depth(spec_config):

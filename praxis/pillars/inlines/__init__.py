@@ -206,9 +206,10 @@ def _mtp_accept_run() -> Optional[float]:
 
 @provider("mtp_field_concentration")
 def _mtp_field_concentration() -> Optional[float]:
-    """Latest Hoyer sparsity of the vear MTP bank's Serpent frequency spectrum -
-    the light-expert analogue of the harmonic field's concentration, for a run
-    with ``mtp_type: vear``. ``None`` (paragraph unchanged) otherwise."""
+    """Latest Hoyer sparsity of the MTP bank's Serpent frequency spectrum - the
+    light-transform analogue of the harmonic field's concentration. Logged by
+    every harmonic bank (vear, serpent_rnn, per_depth); ``None`` (paragraph
+    unchanged) for a run whose MTP is something else, or has none."""
     return _latest_metric("mtp_field_concentration")
 
 

@@ -29,6 +29,18 @@ MTP_REGISTRY = {
     "conv": ConvMTPModule,
 }
 
+# Depth transforms whose output at a position depends on the positions before
+# it. Training runs them over the whole sequence; ``draft_next_tokens`` runs
+# them over ONE position with no cache, so the drafted function is not the
+# trained one - the transformer bank's last-position output moves by 2.02 on a
+# scale of 2.96 between the two forms at abstractinator-u's width, and conv
+# loses its history to zero padding the same way. Both predate the byte-latent
+# draft path and were written for the token-path auxiliary loss, where nothing
+# ever drafts. Pointwise banks (per_depth, vear, serpent_rnn) agree to float
+# noise. Refuse the combination rather than let it draft garbage silently;
+# lifting this needs a KV cache threaded through the depth modules.
+_CONTEXT_DEPENDENT_TYPES = frozenset({"transformer", "conv"})
+
 # Speculative width control. Fixed, model-agnostic constants: the width itself
 # is learned from the run's own accepted-run lengths (see MultiTokenPrediction).
 # Decay is a slow EMA so a single unlucky commit cannot collapse the window;
@@ -113,6 +125,16 @@ class MultiTokenPrediction(nn.Module):
         # depths run in embed_size space, not the trunk's hidden_size.
         self.byte_level = self.encoder_path and _is_byte_latent(config.encoder_type)
 
+        if self.byte_level and self.mtp_type in _CONTEXT_DEPENDENT_TYPES:
+            raise ValueError(
+                f"mtp_type='{self.mtp_type}' has a context-dependent depth "
+                "transform, and byte-latent MTP drafts one position at a time "
+                "with no cache - it would draft a different function than it "
+                "trained. Use a pointwise bank ('per_depth' for independent "
+                "per-depth parameters, 'vear' for a merged pool, 'serpent_rnn' "
+                "for a shared recurrent cell)."
+            )
+
         depth_config = config
         if self.byte_level:
             # Depths operate on the byte head's input width. Build them from a
@@ -124,8 +146,10 @@ class MultiTokenPrediction(nn.Module):
         # Bank types own ALL depths in one module (forward takes depth=k):
         # vear = shared pool of light harmonic experts, sliding-window merged
         # per depth (praxis/heads/mtp/vear.py); serpent_rnn = one shared gated
-        # serpent cell unrolled K times (praxis/heads/mtp/rnn.py). Other types:
-        # K independent per-depth modules from the registry.
+        # serpent cell unrolled K times (praxis/heads/mtp/rnn.py); per_depth = K
+        # independent light harmonic transforms, nothing shared
+        # (praxis/heads/mtp/independent.py). Registry types: K independent
+        # per-depth modules built from MTP_REGISTRY.
         self.is_vear = config.mtp_type == "vear"
         self.bank = None
         self.depths = None
@@ -137,6 +161,10 @@ class MultiTokenPrediction(nn.Module):
             from praxis.heads.mtp.rnn import SerpentRNNMTPBank
 
             self.bank = SerpentRNNMTPBank(depth_config, self.num_depths)
+        elif config.mtp_type == "per_depth":
+            from praxis.heads.mtp.independent import PerDepthMTPBank
+
+            self.bank = PerDepthMTPBank(depth_config, self.num_depths)
         else:
             module_cls = MTP_REGISTRY[config.mtp_type]
             self.depths = nn.ModuleList(

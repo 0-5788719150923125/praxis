@@ -77,7 +77,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
-| `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv, vear, serpent_rnn) |
+| `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv, vear, serpent_rnn, per_depth) |
 | `--norm-type` | str | `rms_norm` | The type of normalization to use (choices: none, layer_norm, rms_norm, post_rms_norm, sandwich) |
 | `--num-experts` | int | `1` | Number of experts per layer (1 = no MoE) |
 | `--num-heads` | int | `4` | Number of attention heads |

@@ -422,8 +422,10 @@ class ArchitectureGroup:
             # Bank types (one module owns all depths) are special-cased in
             # MultiTokenPrediction rather than per-depth registry modules:
             # "vear" = shared harmonic-expert pool, sliding-window merged;
-            # "serpent_rnn" = one shared gated serpent cell unrolled K times.
-            choices=list(MTP_REGISTRY.keys()) + ["vear", "serpent_rnn"],
+            # "serpent_rnn" = one shared gated serpent cell unrolled K times;
+            # "per_depth" = K independent light harmonic transforms, nothing
+            # shared (the DeepSeek shape with a pointwise transform).
+            choices=list(MTP_REGISTRY.keys()) + ["vear", "serpent_rnn", "per_depth"],
             default=None,
             help="MTP module type (omit to disable MTP)",
         )
