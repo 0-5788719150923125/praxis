@@ -261,7 +261,11 @@ class VowelProbe:
             got = json.loads(self._path(voice).read_text())
         except Exception:  # noqa: BLE001 - absent, unreadable or half-written
             return None
-        return bool(got["offglide"]) if isinstance(got, dict) and "offglide" in got else None
+        return (
+            bool(got["offglide"])
+            if isinstance(got, dict) and "offglide" in got
+            else None
+        )
 
     def _save(self, voice: str, offglide: bool) -> None:
         try:
@@ -299,7 +303,8 @@ class VowelProbe:
         want = [
             k
             for k in range(at, at + len(word_ipa))
-            if symbols[k][0] in "iɪ" or (symbols[k][0] == "ː" and symbols[k - 1][0] in "iɪ")
+            if symbols[k][0] in "iɪ"
+            or (symbols[k][0] == "ː" and symbols[k - 1][0] in "iɪ")
         ]
         if not want:
             raise RuntimeError(f"no vowel to measure in {word_ipa!r}")
@@ -359,9 +364,11 @@ class VowelProbe:
                 abs(f_suspect - f_tense) / scale,
                 f_tense,
                 f_lax,
-                "writing the offglide (F1 %.0f)" % f_fixed
-                if better
-                else "the offglide makes it worse (F1 %.0f), leaving it" % f_fixed,
+                (
+                    "writing the offglide (F1 %.0f)" % f_fixed
+                    if better
+                    else "the offglide makes it worse (F1 %.0f), leaving it" % f_fixed
+                ),
             ),
             file=sys.stderr,
         )

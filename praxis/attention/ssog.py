@@ -286,7 +286,9 @@ class SSOGAttention(nn.Module):
         self.patch_config(config)
         hidden_size = config.hidden_size
         self.num_heads = config.num_heads
-        self.head_dim = getattr(config, "head_size", None) or hidden_size // self.num_heads
+        self.head_dim = (
+            getattr(config, "head_size", None) or hidden_size // self.num_heads
+        )
         self.num_atoms = int(num_atoms or self.default_atoms)
         # Instance override so a registry PROFILE can set the ladder's span
         # alongside its atom count; the two are one decision, not two.
@@ -468,9 +470,12 @@ class SSOGAttention(nn.Module):
         raw_mu = self.raw_mu.float()[None, :, None, :]
         mu = F.softplus(raw_mu + gate[0] * MAX_OFFSET * torch.tanh(steer[..., 0]))
         sigma0 = F.softplus(self.raw_sigma.float()) + _EPS + SIGMA_FLOOR
-        sigma = sigma0[None, :, None, :] * torch.exp(gate[1] * torch.tanh(steer[..., 1]))
+        sigma = sigma0[None, :, None, :] * torch.exp(
+            gate[1] * torch.tanh(steer[..., 1])
+        )
         loglam = torch.log_softmax(
-            self.log_lambda.float()[None, :, None, :] + gate[2] * torch.tanh(steer[..., 2]),
+            self.log_lambda.float()[None, :, None, :]
+            + gate[2] * torch.tanh(steer[..., 2]),
             dim=-1,
         )
         tau = F.softplus(self.raw_temperature.float()) + 0.5
@@ -687,7 +692,9 @@ class SSOGAttention(nn.Module):
             "ssog_gate_lambda": gate[2].item(),
             "ssog_temperature": (
                 F.softplus(self.raw_temperature.detach().float()) + 0.5
-            ).mean().item(),
+            )
+            .mean()
+            .item(),
             **(
                 {
                     "ssog_null_logit": self.null_logit_seen.item(),
@@ -834,8 +841,13 @@ class SSOGAttention(nn.Module):
         lattice = torch.arange(length, dtype=torch.float32, device=mu.device)
 
         kernel = (
-            lam[..., None] * torch.exp(_log_kernel(lattice, mu[..., None], sigma[..., None]))
-        ).mean(dim=0).sum(dim=0)  # [length]
+            (
+                lam[..., None]
+                * torch.exp(_log_kernel(lattice, mu[..., None], sigma[..., None]))
+            )
+            .mean(dim=0)
+            .sum(dim=0)
+        )  # [length]
         kernel = kernel / kernel.sum().clamp_min(_EPS)
 
         spectrum = torch.fft.rfft(kernel, n=2 * length)

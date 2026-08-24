@@ -445,7 +445,9 @@ class ArcSSOGAttention(SSOGAttention):
         raw_mu = self.raw_mu[d].float()[None, :, None, :]
         mu = F.softplus(raw_mu + gate[0] * MAX_OFFSET * torch.tanh(steer[..., 0]))
         sigma0 = F.softplus(self.raw_sigma[d].float()) + _EPS + SIGMA_FLOOR
-        sigma = sigma0[None, :, None, :] * torch.exp(gate[1] * torch.tanh(steer[..., 1]))
+        sigma = sigma0[None, :, None, :] * torch.exp(
+            gate[1] * torch.tanh(steer[..., 1])
+        )
         loglam = torch.log_softmax(
             self.log_lambda[d].float()[None, :, None, :]
             + gate[2] * torch.tanh(steer[..., 2]),
@@ -467,7 +469,9 @@ class ArcSSOGAttention(SSOGAttention):
         """
         d = min(int(depth), self.depths - 1)
         mu = F.softplus(self.raw_mu[d].detach().float().cpu())
-        sigma = F.softplus(self.raw_sigma[d].detach().float().cpu()) + _EPS + SIGMA_FLOOR
+        sigma = (
+            F.softplus(self.raw_sigma[d].detach().float().cpu()) + _EPS + SIGMA_FLOOR
+        )
         lam = torch.softmax(self.log_lambda[d].detach().float().cpu(), dim=-1)
         return mu, sigma, lam
 
@@ -485,9 +489,13 @@ class ArcSSOGAttention(SSOGAttention):
         mu, sigma, lam = self._atoms(depth)
         lattice = torch.arange(length, dtype=torch.float32, device=mu.device)
         kernel = (
-            lam[..., None]
-            * torch.exp(_log_kernel(lattice, mu[..., None], sigma[..., None]))
-        ).mean(dim=0).sum(dim=0)
+            (
+                lam[..., None]
+                * torch.exp(_log_kernel(lattice, mu[..., None], sigma[..., None]))
+            )
+            .mean(dim=0)
+            .sum(dim=0)
+        )
         return kernel / kernel.sum().clamp_min(_EPS)
 
     def _cascade(self) -> Tensor:
@@ -559,8 +567,10 @@ class ArcSSOGAttention(SSOGAttention):
             out[f"ssog_gate_sigma_d{d}"] = gate[1].item()
             out[f"ssog_gate_lambda_d{d}"] = gate[2].item()
             out[f"ssog_temperature_d{d}"] = (
-                F.softplus(self.raw_temperature[d].detach().float()) + 0.5
-            ).mean().item()
+                (F.softplus(self.raw_temperature[d].detach().float()) + 0.5)
+                .mean()
+                .item()
+            )
 
             mu, sigma, lam = self._atoms(d)
             # First moment of the MIXTURE, which is a real summary, rather than

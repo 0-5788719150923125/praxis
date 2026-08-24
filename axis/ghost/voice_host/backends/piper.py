@@ -1486,11 +1486,15 @@ class PiperBackend(Backend):
         # a hard-coded ~/.local/share would have the panel reporting "no voices" on
         # a Mac forever while the host quietly downloaded them somewhere else.
         if sys.platform == "win32":
-            base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+            base = Path(
+                os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+            )
         elif sys.platform == "darwin":
             base = Path.home() / "Library" / "Application Support"
         else:
-            base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+            base = Path(
+                os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+            )
         root = base / "ghost" / "voices" / "piper"
         root.mkdir(parents=True, exist_ok=True)
         return root

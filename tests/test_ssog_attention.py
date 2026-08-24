@@ -148,7 +148,9 @@ def test_attention_walk_reaches_the_field():
     model = nn.Sequential(nn.Identity(), module)
 
     assert collect_attention_metrics(model).keys() == module.training_metrics().keys()
-    assert collect_attention_snapshots(model).keys() == module.dashboard_snapshots().keys()
+    assert (
+        collect_attention_snapshots(model).keys() == module.dashboard_snapshots().keys()
+    )
 
     descriptions = get_metric_descriptions(model)
     for key in module.training_metrics():

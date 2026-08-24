@@ -99,9 +99,7 @@ def _attention_modules(root) -> Iterator:
     from praxis.attention import ATTENTION_REGISTRY
     from praxis.attention.arc import ArcAttention
 
-    classes = tuple(
-        {getattr(v, "func", v) for v in ATTENTION_REGISTRY.values()}
-    )
+    classes = tuple({getattr(v, "func", v) for v in ATTENTION_REGISTRY.values()})
     for module in root.modules():
         if (
             isinstance(module, classes)

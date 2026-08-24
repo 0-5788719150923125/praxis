@@ -129,8 +129,11 @@ def main() -> int:
             # A model revision with fewer points would silently write short rows
             # and desynchronise every sample after it - refuse instead.
             if len(row) != 1 + POINTS * 2:
-                print("face_track: model returned %d points, expected %d"
-                      % (len(pts), POINTS), file=sys.stderr)
+                print(
+                    "face_track: model returned %d points, expected %d"
+                    % (len(pts), POINTS),
+                    file=sys.stderr,
+                )
                 return 2
         else:
             prev = samples[-1][1:] if samples else [0.5] * (POINTS * 2)
@@ -159,8 +162,10 @@ def main() -> int:
         _write_progress(args.progress, 1.0)
 
     found = sum(1 for r in samples if r[0])
-    print("face_track: %d samples at %.1f Hz, face found in %d (%.0f%%) -> %s"
-          % (len(samples), args.rate, found, 100.0 * found / len(samples), args.out))
+    print(
+        "face_track: %d samples at %.1f Hz, face found in %d (%.0f%%) -> %s"
+        % (len(samples), args.rate, found, 100.0 * found / len(samples), args.out)
+    )
     return 0
 
 
@@ -169,7 +174,7 @@ def _write_progress(path: str, frac: float) -> None:
         with open(path, "w") as f:
             f.write("%.4f\n" % max(0.0, min(1.0, frac)))
     except OSError:
-        pass   # progress is a convenience; never fail the run over it
+        pass  # progress is a convenience; never fail the run over it
 
 
 if __name__ == "__main__":

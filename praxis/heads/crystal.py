@@ -616,9 +616,7 @@ class CrystalVearHead(BaseHead):
         """
         return torch.stack([e.centers for e in self.bank.experts], dim=0)
 
-    def _training_logits(
-        self, hidden_states: Tensor, mask: Optional[Tensor]
-    ) -> Tensor:
+    def _training_logits(self, hidden_states: Tensor, mask: Optional[Tensor]) -> Tensor:
         """Training merge: ONE crystal for the whole batch.
 
         ``sharp.mean(dim=0)`` is the honest limit named in the class docstring,
@@ -632,8 +630,9 @@ class CrystalVearHead(BaseHead):
         sharp = probs.pow(self._sharpen)
         sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
         ew = sharp.mean(dim=0)
-        merged = torch.einsum("n,nvd->vd", ew.to(self._expert_centers().dtype),
-                              self._expert_centers())
+        merged = torch.einsum(
+            "n,nvd->vd", ew.to(self._expert_centers().dtype), self._expert_centers()
+        )
         return self._crystal_logits(hidden_states, merged, self.bank.experts[0])
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
@@ -774,18 +773,10 @@ class CrystalVearHead(BaseHead):
         )
         if lam > 0.0:
             rms = (
-                self._expert_centers()
-                .pow(2)
-                .mean(dim=1)
-                .clamp_min(1e-12)
-                .sqrt()
-                .mean()
+                self._expert_centers().pow(2).mean(dim=1).clamp_min(1e-12).sqrt().mean()
             )
             out["centers_rms"] = lam * rms
         return out
-
-
-
 
     @torch.no_grad()
     def _bank_distinctness(self) -> float:
@@ -953,9 +944,7 @@ class CrystalSmearHead(CrystalVearHead):
         delta = torch.einsum("evr,erd->evd", self.lora_b, self.lora_a)
         return base.unsqueeze(0) + delta
 
-    def _training_logits(
-        self, hidden_states: Tensor, mask: Optional[Tensor]
-    ) -> Tensor:
+    def _training_logits(self, hidden_states: Tensor, mask: Optional[Tensor]) -> Tensor:
         """Per-EXAMPLE merge, which is the whole point of this subclass."""
         if hidden_states.dim() < 3:
             # No batch axis to route over; the parent's path is already correct.
@@ -963,9 +952,7 @@ class CrystalSmearHead(CrystalVearHead):
         probs = self._route(hidden_states, mask)  # [B, N], padded-masked
         stack = self._expert_centers()  # [N, V, D]
         merged = torch.einsum("bn,nvd->bvd", probs.to(stack.dtype), stack)
-        return self._crystal_logits_perseq(
-            hidden_states, merged, self.bank.experts[0]
-        )
+        return self._crystal_logits_perseq(hidden_states, merged, self.bank.experts[0])
 
     def all_metric_descriptions(self) -> dict:
         # The parent's per-expert wording ("identical clouds mean the bank

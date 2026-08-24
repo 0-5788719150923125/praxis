@@ -262,7 +262,10 @@ def check_present_coordination() -> None:
         # Either the pass rewrote it to the present reading, or it left the base reading -
         # which for `read` IS the present one. Both are correct; being rewritten to the PAST
         # reading is not.
-        assert got in ("", want), f"{sentence!r}: {word} -> {got}, wanted {want} or no change"
+        assert got in (
+            "",
+            want,
+        ), f"{sentence!r}: {word} -> {got}, wanted {want} or no change"
         print(f"    {sentence[:58]:60s} {word} -> {got or 'left alone'}")
 
 

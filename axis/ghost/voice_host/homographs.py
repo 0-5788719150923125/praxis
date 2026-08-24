@@ -252,7 +252,7 @@ def _enclitic_aux(word: str) -> bool:
 
 
 def _tense_at(tags: list, lower: list, j: int) -> str:
-    """"past", "present" or "" for the verb at `j` - a participle's tense read off its AUXILIARY.
+    """ "past", "present" or "" for the verb at `j` - a participle's tense read off its AUXILIARY.
 
     "are issued" is present and "was issued" is past, and the participle is VBN in both, so a
     scan that took VBN at face value read the passive of a present clause as evidence FOR the
@@ -264,7 +264,7 @@ def _tense_at(tags: list, lower: list, j: int) -> str:
     """
     tag = tags[j]
     if tag in ("VBN", "VBG") and j and lower[j - 1] in BE_HAVE:
-        return _tense_at(tags, lower, j - 1)      # the auxiliary carries the tense
+        return _tense_at(tags, lower, j - 1)  # the auxiliary carries the tense
     if tag in PAST_TAGS:
         return "past"
     if tag == "VBZ" or (tag == "VBP" and lower[j] in BE_HAVE):
@@ -571,7 +571,14 @@ class Homographs:
         #     reason: a participle tag names a FORM, not a tense the tagger guessed at, and
         #     `read` as a participle is ɹˈɛd whatever tense the clause around it carries.)
         subject_before = wi > 0 and tags[wi - 1] in (
-            "PRP", "NN", "NNS", "NNP", "NNPS", "EX", "WDT", "WP"
+            "PRP",
+            "NN",
+            "NNS",
+            "NNP",
+            "NNPS",
+            "EX",
+            "WDT",
+            "WP",
         )
         if penn == "VBD" and subject_before and not lower[wi].endswith("ed"):
             crossed = False

@@ -208,11 +208,15 @@ class ModelBackend(DecodeBackend):
                 for length in self.WARMUP_LENGTHS:
                     if cap is not None and length > cap:
                         break
-                    probe = torch.zeros((1, length), dtype=torch.long, device=self.device)
+                    probe = torch.zeros(
+                        (1, length), dtype=torch.long, device=self.device
+                    )
                     self.model(input_ids=probe)
         except Exception:
             # A warmup is an optimization. Never let it end a run.
-            _log.debug("Decode warmup failed; first request pays instead", exc_info=True)
+            _log.debug(
+                "Decode warmup failed; first request pays instead", exc_info=True
+            )
 
     def generate_until_halt(
         self,

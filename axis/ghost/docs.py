@@ -958,9 +958,7 @@ def check_panel_controls() -> None:
     written to but never assigned. Same drift-detection idea as CLI_FLAGS above.
     """
     src = (ROOT / "scripts" / "mask_editor.gd").read_text(encoding="utf-8")
-    written = set(
-        re.findall(r"\b(_\w+)\.set_(?:value|pressed)_no_signal\(", src)
-    )
+    written = set(re.findall(r"\b(_\w+)\.set_(?:value|pressed)_no_signal\(", src))
     for name in sorted(written):
         # `var _x` alone is a declaration, not a construction - the assignment is
         # what proves something was actually made and handed to the panel.

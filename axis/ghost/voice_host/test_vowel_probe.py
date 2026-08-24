@@ -44,7 +44,10 @@ def check(name: str, got, want) -> None:
     ok = got == want
     if not ok:
         _failed += 1
-    print(f"    {'ok ' if ok else 'FAIL'} {name} == {got!r}" + ("" if ok else f" (want {want!r})"))
+    print(
+        f"    {'ok ' if ok else 'FAIL'} {name} == {got!r}"
+        + ("" if ok else f" (want {want!r})")
+    )
 
 
 # -- the rewrite -----------------------------------------------------------
@@ -120,9 +123,7 @@ def test_the_probe_picks_the_broken_checkpoint() -> None:
         "en_US-john-medium": False,
         "en_US-norman-medium": False,
     }
-    installed = {
-        v["id"] for v in be.voices() if v["installed"] and v["id"] in want
-    }
+    installed = {v["id"] for v in be.voices() if v["installed"] and v["id"] in want}
     if not installed:
         print("    SKIP no piper voices installed; nothing to measure")
         return

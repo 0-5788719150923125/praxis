@@ -827,9 +827,7 @@ def test_per_depth_mtp_bank(spec_config):
     # Every metric this bank emits must reach a chart, or it is invisible.
     described = mtp.field_metric_descriptions()
     assert not [
-        k
-        for k in metrics
-        if k not in described and not k.startswith("mtp_draft_acc")
+        k for k in metrics if k not in described and not k.startswith("mtp_draft_acc")
     ]
 
     with torch.no_grad():

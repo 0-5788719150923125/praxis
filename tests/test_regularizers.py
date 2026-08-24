@@ -105,13 +105,29 @@ def test_repr_anisotropy_equals_squared_magnetization():
     [
         # The two readings the mean cosine gets BACKWARDS, which is why the
         # spectral pair exists. Expected values are (low, high) bounds.
-        ("isotropic", lambda t, d: torch.randn(t, d), (None, 0.1), (0.9, None), (None, 0.1)),
+        (
+            "isotropic",
+            lambda t, d: torch.randn(t, d),
+            (None, 0.1),
+            (0.9, None),
+            (None, 0.1),
+        ),
         # Only translated: mean cosine screams collapse, the space is untouched.
-        ("translated", lambda t, d: torch.randn(t, d) * 0.1 + torch.randn(1, d),
-         (0.9, None), (0.9, None), (None, 0.1)),
+        (
+            "translated",
+            lambda t, d: torch.randn(t, d) * 0.1 + torch.randn(1, d),
+            (0.9, None),
+            (0.9, None),
+            (None, 0.1),
+        ),
         # Genuinely degenerate: mean cosine reports a healthy isotropic space.
-        ("rank_3", lambda t, d: torch.randn(t, 3) @ torch.randn(3, d),
-         (None, 0.2), (None, 0.15), (0.3, None)),
+        (
+            "rank_3",
+            lambda t, d: torch.randn(t, 3) @ torch.randn(3, d),
+            (None, 0.2),
+            (None, 0.15),
+            (0.3, None),
+        ),
     ],
 )
 def test_spectral_metrics_catch_what_mean_cosine_inverts(
@@ -146,12 +162,12 @@ def test_spectral_metrics_normalized_against_their_isotropic_null():
         for dim in (64, 111, 384):
             reg(torch.randn(1, seq_len, dim), None)
             m = reg.training_metrics()
-            assert m["repr_dimensions"] == pytest.approx(1.0, abs=0.05), (
-                f"T={seq_len} D={dim}: repr_dimensions = {m['repr_dimensions']:.4f}"
-            )
-            assert m["repr_nematic"] < 0.05, (
-                f"T={seq_len} D={dim}: repr_nematic = {m['repr_nematic']:.4f}"
-            )
+            assert m["repr_dimensions"] == pytest.approx(
+                1.0, abs=0.05
+            ), f"T={seq_len} D={dim}: repr_dimensions = {m['repr_dimensions']:.4f}"
+            assert (
+                m["repr_nematic"] < 0.05
+            ), f"T={seq_len} D={dim}: repr_nematic = {m['repr_nematic']:.4f}"
 
 
 def test_nematic_sees_antipodal_domains_that_mean_cosine_cancels():

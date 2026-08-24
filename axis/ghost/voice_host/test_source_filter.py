@@ -64,7 +64,9 @@ _fails: list[str] = []
 
 
 def ok(cond: bool, what: str, detail: str = "") -> None:
-    print(("  ok   " if cond else "  FAIL ") + what + (("  " + detail) if detail else ""))
+    print(
+        ("  ok   " if cond else "  FAIL ") + what + (("  " + detail) if detail else "")
+    )
     if not cond:
         _fails.append(what)
 
@@ -272,10 +274,15 @@ def check_whisper(v: np.ndarray) -> None:
     for a in (0.1, 0.25, 0.45, 0.5, 0.6, 0.75, 0.9):
         blend = _whisper(v, SR, a)
         db = 20.0 * math.log10(
-            max(1e-9, float(np.sqrt(np.mean(blend.astype(np.float64) ** 2)))) / max(ref, 1e-9)
+            max(1e-9, float(np.sqrt(np.mean(blend.astype(np.float64) ** 2))))
+            / max(ref, 1e-9)
         )
         worst = max(worst, abs(db))
-    ok(worst < 0.5, "no blend amount ducks the level", "worst %.2f dB over the range" % worst)
+    ok(
+        worst < 0.5,
+        "no blend amount ducks the level",
+        "worst %.2f dB over the range" % worst,
+    )
     ok(
         np.array_equal(_whisper(v, SR, 1.0), w),
         "the same input renders the same whisper twice",
@@ -289,22 +296,37 @@ def check_muffle(v: np.ndarray) -> None:
     # top than speech does: the same 0.55 reads 4.5 dB on a real rendered sentence.
     for amount, want_tilt in ((0.55, 2.5), (1.0, 6.0)):
         m = _muffle(v, SR, amount)
-        ok(m.size == v.size, "length is unchanged at %.2f" % amount, "%d samples" % m.size)
-        spec_v, spec_m = np.abs(np.fft.rfft(v.astype(np.float64))), np.abs(np.fft.rfft(m.astype(np.float64)))
+        ok(
+            m.size == v.size,
+            "length is unchanged at %.2f" % amount,
+            "%d samples" % m.size,
+        )
+        spec_v, spec_m = np.abs(np.fft.rfft(v.astype(np.float64))), np.abs(
+            np.fft.rfft(m.astype(np.float64))
+        )
         freq = np.fft.rfftfreq(v.size, 1.0 / SR)
         low = (freq > 100.0) & (freq < 1000.0)
         high = (freq > 3000.0) & (freq < 8000.0)
         tilt = 20.0 * math.log10(
-            (spec_m[high].mean() / spec_m[low].mean()) / (spec_v[high].mean() / spec_v[low].mean())
+            (spec_m[high].mean() / spec_m[low].mean())
+            / (spec_v[high].mean() / spec_v[low].mean())
         )
-        ok(tilt < -want_tilt, "at %.2f the top is off by %.1f dB (wanted %.0f+)" % (amount, -tilt, want_tilt))
+        ok(
+            tilt < -want_tilt,
+            "at %.2f the top is off by %.1f dB (wanted %.0f+)"
+            % (amount, -tilt, want_tilt),
+        )
         lvl = 20.0 * math.log10(
             max(1e-9, float(np.sqrt(np.mean(m.astype(np.float64) ** 2))))
             / max(1e-9, float(np.sqrt(np.mean(v.astype(np.float64) ** 2))))
         )
         # Quieter, but only a little: a covered voice is not a distant one, and this must
         # never become the Presence dial by another name.
-        ok(-2.5 < lvl < 0.0, "at %.2f it is a touch quieter, not far away" % amount, "%+.2f dB" % lvl)
+        ok(
+            -2.5 < lvl < 0.0,
+            "at %.2f it is a touch quieter, not far away" % amount,
+            "%+.2f dB" % lvl,
+        )
     ok(np.array_equal(_muffle(v, SR, 0.0), v), "at 0 it is the input, untouched")
 
 
@@ -341,7 +363,12 @@ def check_real_voice() -> None:
             "",
             voice,
             str(out),
-            {"tokens": tokens, "phonemizer": "espeak", "noise_scale": 0.0, "noise_w": 0.0},
+            {
+                "tokens": tokens,
+                "phonemizer": "espeak",
+                "noise_scale": 0.0,
+                "noise_w": 0.0,
+            },
         )
         dry_raw, sr = MV.read_wav(out)
         dry = np.asarray(dry_raw, dtype=np.float64)
@@ -382,8 +409,16 @@ def check_real_voice() -> None:
     # arc against no arc at all, with the model's noise off so a render is repeatable.
     def render(extra):
         be.synthesize(
-            "", voice, str(out),
-            {"tokens": tokens, "phonemizer": "espeak", "noise_scale": 0.0, "noise_w": 0.0, **extra},
+            "",
+            voice,
+            str(out),
+            {
+                "tokens": tokens,
+                "phonemizer": "espeak",
+                "noise_scale": 0.0,
+                "noise_w": 0.0,
+                **extra,
+            },
         )
         a, rate = MV.read_wav(out)
         return float(len(a)) / rate, np.asarray(a, dtype=np.float64), rate
@@ -392,7 +427,11 @@ def check_real_voice() -> None:
     for u, tag in ((0.0, "opening"), (1.0, "closing")):
         got, wave, rate = render({"prosody_arc": 4.0, "plan_u": u, "plan_v": 0.0})
         drift = 100.0 * (got - flat) / flat
-        ok(abs(drift) < 3.5, "the arc leaves the %s sentence's pace alone" % tag, "%+.1f%%" % drift)
+        ok(
+            abs(drift) < 3.5,
+            "the arc leaves the %s sentence's pace alone" % tag,
+            "%+.1f%%" % drift,
+        )
     # AND NEITHER MAY DYNAMICS RUN AWAY WITH IT. The timing coefficients in
     # `_discourse_plan` are written as the figures they should deliver at the TOP of the
     # dial, and for a while the editor's own curve multiplied every one of them by 2.5
@@ -442,7 +481,11 @@ def check_real_voice() -> None:
         return float(rate / (lo_l + int(np.argmax(ac[lo_l:hi_l]))))
 
     span = 12.0 * math.log2(f0(high) / f0(low))
-    ok(span > 1.5, "and the arc is still an arc", "%.2f semitones across the unit" % span)
+    ok(
+        span > 1.5,
+        "and the arc is still an arc",
+        "%.2f semitones across the unit" % span,
+    )
 
 
 def main() -> int:

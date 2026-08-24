@@ -22,16 +22,19 @@ from praxis.attention.ssog import (
 )
 
 
-def _module(cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, null_atom=False, **overrides):
+def _module(
+    cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, null_atom=False, **overrides
+):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0, depth=4)
     cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
     if cls is ArcSSOGAttention:
-        return cls(
-            cfg, num_atoms=num_atoms, mu_init_max=mu_init_max, null_atom=null_atom
-        ), cfg
+        return (
+            cls(cfg, num_atoms=num_atoms, mu_init_max=mu_init_max, null_atom=null_atom),
+            cfg,
+        )
     return cls(cfg), cfg
 
 
@@ -53,9 +56,7 @@ def test_the_faithful_port_did_not_move():
     base, _ = _module(SSOGAttention)
     assert base.num_atoms == NUM_ATOMS == 4
     assert base.raw_mu.shape == (base.num_heads, 4)  # no depth axis
-    assert torch.allclose(
-        base.raw_gate, torch.full_like(base.raw_gate, COLD_GATE_INIT)
-    )
+    assert torch.allclose(base.raw_gate, torch.full_like(base.raw_gate, COLD_GATE_INIT))
     assert not hasattr(base, "depths")
 
 
@@ -95,7 +96,9 @@ def test_depth_index_is_clamped():
 def test_gate_is_warm_but_the_field_still_starts_frozen():
     module, _ = _module()
     gate = F.softplus(module.raw_gate)
-    assert torch.allclose(gate, torch.full_like(gate, F.softplus(torch.tensor(ARC_GATE_INIT))))
+    assert torch.allclose(
+        gate, torch.full_like(gate, F.softplus(torch.tensor(ARC_GATE_INIT)))
+    )
     assert 0.1 < gate.mean().item() < 0.2  # warm, not open
     # Zero-init on the probe is what actually freezes the field at step 0, and
     # is the reason the second (gate) barrier was redundant.
@@ -137,7 +140,14 @@ def test_metrics_and_snapshots_are_per_depth_and_declared():
     module, cfg = _module()
     metrics = module.training_metrics()
     for d in range(cfg.depth):
-        for key in ("gate_mu", "gate_sigma", "gate_lambda", "temperature", "reach", "far_mass"):
+        for key in (
+            "gate_mu",
+            "gate_sigma",
+            "gate_lambda",
+            "temperature",
+            "reach",
+            "far_mass",
+        ):
             assert f"ssog_{key}_d{d}" in metrics
     assert all(torch.isfinite(torch.tensor(v)) for v in metrics.values())
     # Nothing averaged over depth: that average is what -r reported, and it hid
@@ -260,7 +270,11 @@ def test_null_share_falls_with_query_position():
     x = torch.randn(1, 96, 64)
     with torch.no_grad():
         B, T, _ = x.shape
-        v = module.value(x).view(B, T, module.num_heads, module.head_dim).transpose(1, 2)
+        v = (
+            module.value(x)
+            .view(B, T, module.num_heads, module.head_dim)
+            .transpose(1, 2)
+        )
         _, lse = module._materialised(v, *module._field(x, 0))
         share = (1.0 - torch.sigmoid(lse - module._null_logit(0)[None, :, None]))[0, 0]
 
@@ -304,7 +318,9 @@ def test_null_logit_card_reports_the_merged_value_not_the_base():
     merged = module.raw_null.detach() + 4.0
     x = torch.randn(2, 24, 64)
     for _ in range(200):
-        torch.func.functional_call(module, {"raw_null": merged}, (x, None, None, None, 1))
+        torch.func.functional_call(
+            module, {"raw_null": merged}, (x, None, None, None, 1)
+        )
 
     seen = module.training_metrics()["ssog_null_logit_d1"]
     # The base never moved; only the merged tensor ever reached the sigmoid.
@@ -340,9 +356,10 @@ def test_far_mass_integrates_the_atom_rather_than_flipping_on_its_centre():
     # The old indicator: every centre is below 32, so it read exactly zero.
     assert (mu > FAR_LAG).float().sum() == 0
     # The integral: the top atom is wide enough that ~46% of it is past 32.
-    assert far == pytest.approx(0.25 * 0.5 * torch.erfc(
-        (FAR_LAG - mu[3]) / (sigma[3] * 2.0 ** 0.5)
-    ).item(), rel=1e-3)
+    assert far == pytest.approx(
+        0.25 * 0.5 * torch.erfc((FAR_LAG - mu[3]) / (sigma[3] * 2.0**0.5)).item(),
+        rel=1e-3,
+    )
     assert 0.10 < far < 0.13, far
 
 

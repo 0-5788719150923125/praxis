@@ -62,7 +62,14 @@ def greedy(model, ids, use_cache):
             block_size=128,
         ),
     ],
-    ids=["vanilla", "infini", "arc", "arc_nomem", "arc_single_dropoff_nomem", "prismatic6"],
+    ids=[
+        "vanilla",
+        "infini",
+        "arc",
+        "arc_nomem",
+        "arc_single_dropoff_nomem",
+        "prismatic6",
+    ],
 )
 def test_cached_generate_matches_uncached(kwargs):
     model = build_model(**kwargs)

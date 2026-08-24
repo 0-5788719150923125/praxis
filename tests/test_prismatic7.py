@@ -79,8 +79,10 @@ def test_training_routes_per_example_not_on_the_batch_mean():
     head = make()
     with torch.no_grad():  # give the deviations something to say
         nn.init.normal_(head.lora_b, std=0.3)
-        nn.init.normal_(head.router.weight if hasattr(head, "router")
-                        else head.bank.router.weight, std=3.0)
+        nn.init.normal_(
+            head.router.weight if hasattr(head, "router") else head.bank.router.weight,
+            std=3.0,
+        )
     head.train()
 
     same = torch.randn(1, 5, Cfg.hidden_size)
@@ -112,9 +114,9 @@ def test_batch_mean_parent_fails_that_same_property():
     b = torch.cat([same, torch.randn(1, 5, Cfg.hidden_size) * 8], dim=0)
     with torch.no_grad():
         la, lb = head(a), head(b)
-    assert not torch.allclose(la[0], lb[0], rtol=1e-3, atol=1e-3), (
-        "the parent no longer merges on the batch mean; this control is stale"
-    )
+    assert not torch.allclose(
+        la[0], lb[0], rtol=1e-3, atol=1e-3
+    ), "the parent no longer merges on the batch mean; this control is stale"
 
 
 def test_shared_trunk_receives_gradient_however_routing_falls():
@@ -153,7 +155,9 @@ def test_pca_panels_share_one_frame_and_are_deterministic():
 
     with torch.no_grad():  # give expert 2 a deviation to show
         head.lora_b[2].normal_(0.0, 0.5)
-    moved = [head.dashboard_snapshots()[f"crystal_centers_pca_{k}"]["grid"] for k in range(4)]
+    moved = [
+        head.dashboard_snapshots()[f"crystal_centers_pca_{k}"]["grid"] for k in range(4)
+    ]
     assert moved[2] != moved[1], "the deviation left no mark on its own panel"
     # The frame spans every expert, so the untouched panels are re-drawn too;
     # what must hold is that they still agree with EACH OTHER.
