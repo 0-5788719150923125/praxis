@@ -896,7 +896,7 @@ func _load_external(path: String) -> AudioStream:
 # to a temp WAV with ffmpeg. Degrades gracefully if ffmpeg isn't on PATH.
 func _load_flac(path: String) -> AudioStream:
 	var tmp := ProjectSettings.globalize_path("user://ghost_flac.wav")
-	var code := OS.execute("ffmpeg", ["-y", "-loglevel", "error", "-i", path, tmp])
+	var code := Deps.execute("ffmpeg", ["-y", "-loglevel", "error", "-i", path, tmp])
 	if code == 0 and FileAccess.file_exists(tmp):
 		return AudioStreamWAV.load_from_file(tmp)
 	push_warning("ghost: FLAC playback needs ffmpeg on PATH to decode (%s)" % path)

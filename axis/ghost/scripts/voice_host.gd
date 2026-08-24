@@ -54,7 +54,9 @@ func start() -> void:
 	if _state in ["up", "starting"]:
 		return
 	if not _python_available():
-		failed.emit("python", "python3 was not found on PATH")
+		# Name the fix, not just the fact - this is the most common first-run failure
+		# and the message is all the user gets.
+		failed.emit("python", "Python 3 was not found on this machine. " + Deps.hint("python"))
 		return
 	if _venv_python().is_empty():
 		_begin_venv()
@@ -122,23 +124,22 @@ func is_up() -> bool:
 # --- bootstrap ---------------------------------------------------------------
 
 
-static func _which(prog: String) -> String:
-	# a GUI-launched Godot does not inherit a shell PATH, so ask explicitly -
-	# the same resolution mask_editor.gd and assistant.gd already use
-	var out := []
-	if OS.execute("which", [prog], out) == 0 and out.size() > 0:
-		var p := String(out[0]).strip_edges().split("\n")[0].strip_edges()
-		if not p.is_empty():
-			return p
-	return ""
+## The system interpreter, by absolute path. [Deps] owns resolution for the whole
+## app - a GUI-launched Godot does not inherit a shell PATH, and on Windows the
+## interpreter is `python.exe`, not `python3` - so this is a lookup, not a search.
+static func _system_python() -> String:
+	return Deps.resolve_any(["python", "python3", "py"] if OS.get_name() == "Windows"
+		else ["python3", "python"])
 
 
 func _python_available() -> bool:
-	return not _which("python3").is_empty()
+	return not _system_python().is_empty()
 
 
+## The venv's OWN interpreter - `bin/python` on Unix, `Scripts\python.exe` on
+## Windows, which is why this asks [Deps] rather than joining "bin" itself.
 func _venv_python() -> String:
-	var p := ProjectSettings.globalize_path(VENV_DIR).path_join("bin").path_join("python")
+	var p := Deps.venv_bin(VENV_DIR, "python")
 	return p if FileAccess.file_exists(p) else ""
 
 
@@ -167,7 +168,7 @@ func _begin_venv() -> void:
 	_state = "venv"
 	progress.emit("venv", "Creating the voice environment…")
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(VENV_DIR))
-	_boot_pid = Subprocess.start(_which("python3"),
+	_boot_pid = Subprocess.start(_system_python(),
 		["-m", "venv", ProjectSettings.globalize_path(VENV_DIR)])
 	if _boot_pid <= 0:
 		_fail("venv", "could not start python3 -m venv")

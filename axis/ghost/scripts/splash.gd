@@ -170,6 +170,12 @@ func _build_ui() -> void:
 	hint.add_theme_color_override("font_color", Color(0.4, 0.46, 0.56))
 	col.add_child(hint)
 
+	# THE ENVIRONMENT PANEL, bottom-right and out of the column's way. ghost's
+	# optional half is all subprocesses (ffmpeg, python, a JS runtime), and a
+	# missing one used to surface as a mode failing deep inside itself. Added
+	# LAST so it sits above the full-rect CenterContainer in pick order.
+	add_child(preload("res://scripts/deps_panel.gd").new())
+
 	# Native file picker (falls back to Godot's built-in if no native dialog).
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE

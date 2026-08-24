@@ -9,6 +9,7 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--scene` | `<name\|N>` | Pin one scene for authoring (by script-name substring or registry index). |  |
 | `--storyboard` | `<name>` | Manual mode: play `storyboards/<name>.yaml` (or `.json`). |  |
 | `--no-splash` |  | Boot straight to auto mode, bundled/no audio. |  |
+| `--deps` |  | Print the environment report - every external program ghost uses, its version and resolved path, and a per-platform install hint for anything missing - then exit. Exits non-zero if a feature dependency is absent, so it can gate a setup script. Pairs with `--headless`; the same report is the home screen's bottom-right panel. |  |
 | `--seed` | `<N>` | Override the session seed (default derives from the audio's own content fingerprint, so the same song replays the same show). |  |
 | `--dial-demo` |  | Auto-turn the first Dial hands-free (demos, renders). |  |
 | `--synth` | `[text-file]` | Open the voice-synthesis editor: write or paste a script, sample a voice by seed, Speak renders a WAV take and plays it as a normal session (scenes react to the narration; karaoke subtitles track it). |  |

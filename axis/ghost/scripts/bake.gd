@@ -119,7 +119,7 @@ static func _load_samples(song_path: String) -> PackedFloat32Array:
 		src = ProjectSettings.globalize_path(src)
 	var tmp := ProjectSettings.globalize_path("user://ghost_bake.f32")
 	var out := []
-	var code := OS.execute("ffmpeg",
+	var code := Deps.execute("ffmpeg",
 		["-y", "-loglevel", "error", "-i", src, "-ac", "1", "-ar", str(RATE), "-f", "f32le", tmp],
 		out, true)
 	if code != 0 or not FileAccess.file_exists(tmp):

@@ -663,6 +663,24 @@ func _ready() -> void:
 		# while a render IS running: Godot reads it once, at that process's startup.
 		_clear_render_override()
 		_build_status_label()   # built up front - prep needs it before a session exists
+		_warn_missing_tools()
+
+
+## Masking is the mode that CANNOT work without ffmpeg: every clip is transcoded
+## on import, every waveform and thumbnail is an ffmpeg pass, and ffprobe answers
+## the frame count. Say so at the door rather than letting the first import fail
+## with an unexplained "prep did not finish". Two resolves, no version probe, so
+## this costs nothing - the home screen's panel is where the full report lives, and
+## this mode can be launched straight from the CLI without ever seeing it.
+func _warn_missing_tools() -> void:
+	var missing: PackedStringArray = []
+	for prog in ["ffmpeg", "ffprobe"]:
+		if not Deps.has(prog):
+			missing.append(prog)
+	if missing.is_empty():
+		return
+	_set_status("⚠  %s not found - clips cannot be imported or rendered.  %s"
+		% [" and ".join(missing), Deps.hint("ffmpeg")])
 
 
 ## `path` is either a prepared session .json, a raw source video (transcoded once
@@ -916,7 +934,7 @@ func _probe_duration(path: String) -> float:
 	if d > 0.0:
 		return d
 	var out := []
-	OS.execute("ffprobe", ["-v", "error", "-select_streams", "v:0", "-count_packets",
+	Deps.execute("ffprobe", ["-v", "error", "-select_streams", "v:0", "-count_packets",
 		"-show_entries", "stream=nb_read_packets,r_frame_rate", "-of", "default=nw=1", path], out)
 	if out.size() > 0:
 		var packets := 0.0
@@ -946,7 +964,7 @@ func _ffprobe_float(entries: Array, path: String) -> float:
 	args.append("csv=p=0")
 	args.append(path)
 	var out := []
-	OS.execute("ffprobe", args, out)
+	Deps.execute("ffprobe", args, out)
 	if out.size() > 0:
 		var s := String(out[0]).strip_edges()
 		if s.is_valid_float():
@@ -958,7 +976,7 @@ func _ffprobe_float(entries: Array, path: String) -> float:
 ## `csv=p=0:s=x` makes the whole answer one token - "1080x1920".
 func _probe_size(path: String) -> Vector2i:
 	var out := []
-	OS.execute("ffprobe", ["-v", "error", "-select_streams", "v:0",
+	Deps.execute("ffprobe", ["-v", "error", "-select_streams", "v:0",
 		"-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path], out)
 	if out.size() > 0:
 		var parts := String(out[0]).strip_edges().split("x")
@@ -1048,22 +1066,25 @@ static func _youtube_id(url: String) -> String:
 
 
 func _yt_bin(tool_name: String) -> String:
-	return ProjectSettings.globalize_path(YT_VENV_DIR).path_join("bin").path_join(tool_name)
+	return Deps.venv_bin(YT_VENV_DIR, tool_name)
 
 
 func _yt_dl_dir() -> String:
 	return ProjectSettings.globalize_path(YT_DL_DIR)
 
 
-## Resolve a binary the way assistant.gd resolves claude: a GUI-launched Godot
-## doesn't inherit a shell PATH, so ask `which` explicitly.
+## Resolve a binary. [Deps] owns this for the whole app - a GUI-launched Godot
+## doesn't inherit a shell PATH, and the answer has to be the same one
+## [Subprocess] and the home screen's Environment panel get.
 static func _which(prog: String) -> String:
-	var out := []
-	if OS.execute("which", [prog], out) == 0 and out.size() > 0:
-		var p := String(out[0]).strip_edges().split("\n")[0].strip_edges()
-		if not p.is_empty():
-			return p
-	return ""
+	return Deps.resolve(prog)
+
+
+## The system interpreter both venv bootstraps need, named the way each platform
+## names it ("python3" does not exist on Windows).
+static func _python() -> String:
+	return Deps.resolve_any(["python", "python3", "py"] if OS.get_name() == "Windows"
+		else ["python3", "python"])
 
 
 func _start_url_import(url: String) -> void:
@@ -1090,11 +1111,10 @@ func _start_url_import(url: String) -> void:
 
 
 func _yt_make_venv() -> void:
-	var py := _which("python3")
+	var py := _python()
 	if py.is_empty():
-		py = _which("python")
-	if py.is_empty():
-		_set_status("⚠  No python3 on PATH - can't bootstrap yt-dlp")
+		_set_status("⚠  Python 3 is not installed - can't bootstrap yt-dlp.  "
+			+ Deps.hint("python"))
 		return
 	print("ghost yt: bootstrapping venv at ", ProjectSettings.globalize_path(YT_VENV_DIR),
 		" with ", py)
@@ -1346,7 +1366,7 @@ func _ready_with_session() -> void:
 		_waveform_path = session.audio_path.get_base_dir().path_join("waveform_sqrt.png")
 		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
 		if not FileAccess.file_exists(abs_wave):
-			OS.execute("ffmpeg", _waveform_args(abs_wave))
+			Deps.execute("ffmpeg", _waveform_args(abs_wave))
 		_load_waveform(abs_wave)
 	else:
 		_build_editor_ui()
@@ -5235,7 +5255,7 @@ func _ft_apply_model(t: float) -> void:
 
 
 func _ft_bin(tool_name: String) -> String:
-	return ProjectSettings.globalize_path(FACE_VENV_DIR).path_join("bin").path_join(tool_name)
+	return Deps.venv_bin(FACE_VENV_DIR, tool_name)
 
 
 func _ft_model_path() -> String:
@@ -5270,11 +5290,10 @@ func _ft_ensure() -> void:
 
 
 func _ft_make_venv() -> void:
-	var py := _which("python3")
+	var py := _python()
 	if py.is_empty():
-		py = _which("python")
-	if py.is_empty():
-		_ft_fail("no python3 on PATH - the clown can't build its face tracker")
+		_ft_fail("Python 3 is not installed - the clown can't build its face tracker.  "
+			+ Deps.hint("python"))
 		return
 	print("ghost face: bootstrapping venv at ", ProjectSettings.globalize_path(FACE_VENV_DIR))
 	_ft_pid = Subprocess.start(py, PackedStringArray(

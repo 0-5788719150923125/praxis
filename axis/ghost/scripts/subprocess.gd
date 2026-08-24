@@ -51,17 +51,22 @@ class_name Subprocess
 static var _tracked := {}
 ## Resolved once: "" not looked up yet, "-" no pact available, otherwise the setpriv path.
 static var _pact := ""
+## Programs already reported missing, so a per-frame caller complains once, not 60x/s.
+static var _warned := {}
 
 
 ## Start `path` with `args`, bound to this process, and return its pid (<= 0 on failure).
 ## `tag` is a human label for the shutdown log; it defaults to the program's own name.
 static func start(path: String, args: PackedStringArray, tag := "") -> int:
+	var prog := _program(path)
+	if prog.is_empty():
+		return -1
 	var bin := _pact_bin()
 	var pid := -1
 	if bin == "-":
-		pid = OS.create_process(path, args)
+		pid = OS.create_process(prog, args)
 	else:
-		var full := PackedStringArray(["--pdeathsig", "KILL", "--", path])
+		var full := PackedStringArray(["--pdeathsig", "KILL", "--", prog])
 		full.append_array(args)
 		pid = OS.create_process(bin, full)
 	if pid > 0:
@@ -74,12 +79,15 @@ static func start(path: String, args: PackedStringArray, tag := "") -> int:
 ## failure. `setpriv` execs the real program, so the returned pid and the pipe are the real
 ## program's; nothing about the caller's protocol changes.
 static func start_with_pipe(path: String, args: PackedStringArray, tag := "") -> Dictionary:
+	var prog := _program(path)
+	if prog.is_empty():
+		return {}
 	var bin := _pact_bin()
 	var info := {}
 	if bin == "-":
-		info = OS.execute_with_pipe(path, args)
+		info = OS.execute_with_pipe(prog, args)
 	else:
-		var full := PackedStringArray(["--pdeathsig", "KILL", "--", path])
+		var full := PackedStringArray(["--pdeathsig", "KILL", "--", prog])
 		full.append_array(args)
 		info = OS.execute_with_pipe(bin, full)
 	var pid := int(info.get("pid", -1))
@@ -92,7 +100,24 @@ static func start_with_pipe(path: String, args: PackedStringArray, tag := "") ->
 ## site must justify itself in a comment, because this is the behaviour every reported
 ## orphan came from.
 static func start_detached(path: String, args: PackedStringArray) -> int:
-	return OS.create_process(path, args)
+	var prog := _program(path)
+	return OS.create_process(prog, args) if not prog.is_empty() else -1
+
+
+## EVERY child goes through [Deps] first, so a bare "ffmpeg" becomes an absolute path
+## before the kernel sees it. That is not a convenience: a GUI-launched app does not
+## inherit a shell's PATH, so on macOS a Homebrew ffmpeg is invisible to a bare name
+## and the child simply never starts. Returns "" - and says why, once - when the
+## program is not installed at all, which used to present as an unexplained pid of -1
+## somewhere far from the cause.
+static func _program(path: String) -> String:
+	var bin := Deps.resolve(path)
+	if bin.is_empty() and not _warned.has(path):
+		_warned[path] = true
+		push_warning("ghost: '%s' is not installed (or not on PATH) - "
+			% path + "see the Environment panel on the home screen")
+		printerr("ghost: cannot start '%s' - not found on this machine" % path)
+	return bin
 
 
 ## THE REGISTRY IS THE AUTHORITY ON WHETHER A PID IS OURS TO ASK ABOUT, and both calls below
@@ -181,12 +206,11 @@ static func _pact_bin() -> String:
 	_pact = "-"
 	if OS.get_name() != "Linux":
 		return _pact          # PR_SET_PDEATHSIG is a Linux facility; elsewhere the registry stands alone
-	var out: Array = []
-	if OS.execute("which", ["setpriv"], out) != 0 or out.is_empty():
+	var bin := Deps.resolve("setpriv")
+	if bin.is_empty():
 		push_warning("ghost: setpriv not found - background programs will only be stopped on a "
 			+ "clean quit, not if ghost is killed outright")
 		return _pact
-	var bin := String(out[0]).strip_edges().split("\n")[0]
-	if bin != "" and OS.execute(bin, ["--pdeathsig", "KILL", "--", "true"]) == 0:
+	if OS.execute(bin, ["--pdeathsig", "KILL", "--", "true"]) == 0:
 		_pact = bin
 	return _pact

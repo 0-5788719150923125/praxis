@@ -195,6 +195,11 @@ func _write(query: String, img: Image, desc: Dictionary) -> void:
 	var png_ok := img.save_png(stem + ".png")
 	desc["query"] = query
 	desc["index"] = n
+	# THE MACHINE, in the record. A dispatched fix that can see "this user has no
+	# ffmpeg" does not spend a session chasing a Masking bug that is really a
+	# missing-dependency report. Cheap enough here: a report is only built when a
+	# note is actually submitted, never per frame.
+	desc["environment"] = Deps.snapshot()
 	if png_ok == OK:
 		desc["screenshot"] = "%04d.png" % n
 	var json := JSON.stringify(to_jsonable(desc), "\t")

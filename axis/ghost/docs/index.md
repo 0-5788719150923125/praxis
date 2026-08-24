@@ -78,6 +78,8 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`main.gd`](../scripts/main.gd) **main** - ghost entry point.
 - [`boot.gd`](../scripts/boot.gd) **boot** - Boot - the earliest hook (first autoload), for things that must happen before the window is ever drawn into. In export-render mode (--export) it keeps the render window out of the way as early as GDScript can - off-screen, no focus - so it barely flickers into view before the render takes over. ...
 - [`subprocess.gd`](../scripts/subprocess.gd) **Subprocess** - every external program ghost starts, in one place, with one promise: A CHILD NEVER OUTLIVES THE APP THAT STARTED IT.
+- [`deps.gd`](../scripts/deps.gd) **Deps** - every external program ghost needs, in one place, with one promise: RESOLUTION AND REPORTING ARE THE SAME CODE.
+- [`deps_panel.gd`](../scripts/deps_panel.gd) **DepsPanel** - the environment readout in the home screen's bottom-right corner.
 - [`chrome.gd`](../scripts/chrome.gd) **Chrome** - the shared session furniture every mode of ghost carries.
 - [`console.gd`](../scripts/console.gd) **ConsoleView** - The in-app console - a live tail of Godot's own log file. print(), push_warning(), push_error() and engine SCRIPT ERRORs all land in user://logs/godot*.log via the engine's default file logging, but anyone launching ghost as a compiled app or from the Godot launcher never sees that stream - it used ...
 - [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.

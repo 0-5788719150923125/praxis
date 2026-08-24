@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -1477,9 +1478,20 @@ class PiperBackend(Backend):
 
     @staticmethod
     def _root() -> Path:
-        # Weights never live in the repo. This mirrors user:// on the Godot
-        # side and is created on demand.
-        root = Path.home() / ".local" / "share" / "ghost" / "voices" / "piper"
+        # Weights never live in the repo. This mirrors user:// on the Godot side
+        # and is created on demand.
+        #
+        # PER-PLATFORM, and it has to agree with Deps.data_dir() on the Godot side -
+        # that is what the home screen's Environment panel counts .onnx files in, so
+        # a hard-coded ~/.local/share would have the panel reporting "no voices" on
+        # a Mac forever while the host quietly downloaded them somewhere else.
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+        root = base / "ghost" / "voices" / "piper"
         root.mkdir(parents=True, exist_ok=True)
         return root
 

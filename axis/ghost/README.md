@@ -257,6 +257,38 @@ Any of `--audio` / `--scene` / `--storyboard` / `--synth` / `--mask-edit` / `--n
 
 Controls: `Space` next scene · `F11` full-screen · `` ` `` feedback · `>_` log console · `Esc` quit.
 
+### What it needs installed
+
+Godot 4.6+ and nothing else, to watch the show. Everything past that is a program
+ghost shells out to, and the home screen lists all of them in the bottom-right with
+their versions and resolved paths - click a row for what it is used for and the
+install command for your platform, or run the same report from a terminal:
+
+```
+godot --headless --path axis/ghost -- --deps
+```
+
+- **FFmpeg** (with **ffprobe**) - Masking, video export, and decoding FLAC and some MP3s.
+- **Python 3**, with its `venv` and `pip` modules - the Generative voice, the clown
+  effect's face tracking, and URL clip import. Debian and Ubuntu split `python3-venv`
+  and `python3-pip` into separate packages; the panel checks for them separately
+  because that split is the usual reason a first run fails.
+- **Deno or Node** (optional) - YouTube's nsig challenge. Imports work without one,
+  at YouTube's punitive throttle.
+- **setpriv** (optional, Linux) - lets the kernel kill ghost's background programs
+  when ghost dies, rather than only on a clean quit.
+
+Python packages are never installed system-wide or into your own environment: each
+feature gets a private virtualenv under the user data directory, built the first
+time that feature is used. The panel lists those too, with what they will cost to
+download. Nothing is fetched until you open the mode that needs it.
+
+Programs are resolved by [`scripts/deps.gd`](scripts/deps.gd), which searches `PATH`
+*and* the places each platform actually installs things - a GUI-launched app does
+not inherit a shell's `PATH`, so a Homebrew `ffmpeg` in `/opt/homebrew/bin` is
+invisible to a bare name on macOS. Same resolver for the panel and for every
+subprocess, so the panel cannot report green while a launch fails.
+
 If no audio is found it still runs - scenes animate on an idle clock with zeroed features, so a scene can be developed with no song loaded.
 
 ## Adding a scene

@@ -82,6 +82,8 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "main.gd",
             "boot.gd",
             "subprocess.gd",
+            "deps.gd",
+            "deps_panel.gd",
             "chrome.gd",
             "console.gd",
             "splash.gd",
@@ -263,6 +265,16 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
     ),
     ("--no-splash", "", "Boot straight to auto mode, bundled/no audio.", False),
     (
+        "--deps",
+        "",
+        "Print the environment report - every external program ghost uses, its "
+        "version and resolved path, and a per-platform install hint for anything "
+        "missing - then exit. Exits non-zero if a feature dependency is absent, so "
+        "it can gate a setup script. Pairs with `--headless`; the same report is "
+        "the home screen's bottom-right panel.",
+        False,
+    ),
+    (
         "--seed",
         "<N>",
         "Override the session seed (default derives from the audio's own "
@@ -358,6 +370,9 @@ ENGINE_FLAGS = {
     # setpriv's interface (subprocess.gd binds every child's lifetime to ghost's with it),
     # an argument to a subprocess, not a ghost flag.
     "--pdeathsig",
+    # What deps.gd ASKS other programs, to read their versions out - every one of
+    # these is an argument handed to somebody else's binary, not a ghost flag.
+    "--version",
 }
 
 # Top-level entries for the README LAYOUT block and docs/index.md.

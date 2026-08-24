@@ -94,16 +94,14 @@ func _ready() -> void:
 	_refresh_list()
 
 
-## `which claude` once at startup - PATH when Godot is launched from a GUI
-## entry (vs. a shell) doesn't always match an interactive shell's PATH, so
-## resolve the real binary rather than assume bare "claude" works.
+## Resolve `claude` once at startup - PATH when Godot is launched from a GUI entry
+## (vs. a shell) doesn't always match an interactive shell's PATH, so resolve the
+## real binary rather than assume bare "claude" works. [Deps] is the app-wide
+## answer to that, and the home screen's Environment panel reports the same one.
 func _resolve_claude_bin() -> void:
-	var out := []
-	var code := OS.execute("which", ["claude"], out)
-	if code == 0 and not out.is_empty():
-		var path: String = str(out[0]).strip_edges()
-		if not path.is_empty():
-			_claude_bin = path
+	var path := Deps.resolve("claude")
+	if not path.is_empty():
+		_claude_bin = path
 
 
 ## ghost's project root is axis/ghost - the actual git repo (praxis) is two

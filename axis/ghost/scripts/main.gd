@@ -66,6 +66,15 @@ func _ready() -> void:
 	# button must run our teardown, not the engine's default instant quit
 	get_tree().set_auto_accept_quit(false)
 	var args := OS.get_cmdline_user_args()
+	# `--deps` before everything: it is the thing you run when nothing else works,
+	# so it must not depend on a mode, a window or an audio device coming up. Pairs
+	# with `--headless`, and exits non-zero when something a feature needs is
+	# missing, so it can gate an install script.
+	if args.has("--deps"):
+		var rows := Deps.report()
+		print(Deps.format_report(rows))
+		get_tree().quit(0 if Deps.verdict(rows).is_empty() else 1)
+		return
 	# Mask mode is a standalone authoring tool (see mask_editor.gd) - tied to one
 	# specific external clip, not the audio-reactive show - so it does not touch
 	# Director/Spectrum at all and is checked before everything else.
