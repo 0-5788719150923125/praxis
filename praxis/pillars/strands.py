@@ -31,7 +31,7 @@ COLORMAPS_JSON = os.path.join(REPO_ROOT, "praxis", "web", "src", "colormaps.json
 TILT = 26.0 * math.pi / 180.0
 HEIGHT = 2.4
 STEPS = 28
-TWIST = 1.25 * math.pi
+TWIST = -1.25 * math.pi  # winds against the card's rotation (see the JS renderer)
 ROT = 0.6  # fixed 3/4 view (the card slowly rotates; we freeze one frame)
 
 

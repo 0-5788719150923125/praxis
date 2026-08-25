@@ -1741,7 +1741,10 @@ function renderHarmonicStrands(canvas, data) {
     if (N < 2) return;
 
     const ctx = canvas.getContext('2d');
-    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, STEPS = 28, TWIST = Math.PI * 1.25;
+    // TWIST is negative so the strands wind against the scene's rotation
+    // (frame * 0.005, counter-clockwise): the spiral then reads as trailing
+    // behind the turn instead of unwinding into it.
+    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, STEPS = 28, TWIST = -Math.PI * 1.25;
     const SAMP = STEPS + 1, cosE = Math.cos(TILT), sinE = Math.sin(TILT);
     let frame = 0;
 
