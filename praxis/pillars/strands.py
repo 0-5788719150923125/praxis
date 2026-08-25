@@ -2,9 +2,10 @@
 
 A 1-to-1 still of the dashboard's "Bias/Variance Strands" card, for the arms
 of the prismatic (ParallelHead) head side by side: the bias arm (a static field,
-its feature-hairs pure bias = blue), the variance arm (an input-conditional
-field, its hairs spanning the blue-to-red bias/variance spectrum), and - with
-prismatic3 - a pure-variance arm (no static spectrum, hairs grow pure red).
+its feature-hairs pure bias = blue, the fan still shut), the variance arm (an
+input-conditional field, its hairs spanning the blue-to-red spectrum as the
+spiral opens beneath it), and - with prismatic3 - a pure-variance arm (no static
+spectrum, so the fan hangs from a point and spills into a red spiral).
 
 The data is exactly what the card uses - each arm's
 ``HarmonicField.field_strands()`` (angle, per-feature bias/variance energy). The
@@ -98,9 +99,8 @@ def _segments_and_colors(data):
     # Scale by peak energy on either axis, so a bias-free ("pure") arm still
     # spans the unit geometry instead of collapsing to a point.
     bmax = max(float(bias.max()), float(var.max()), 1e-6)
-    r = np.sqrt(bias / bmax)  # [n]
-    px = r * 2.0 - 1.0
-    py = np.sqrt(var / bmax) * 2.0 - 1.0
+    bx = np.sqrt(bias / bmax) * 2.0 - 1.0  # flat bias axis (the z=0 end) [n]
+    rv = np.sqrt(var / bmax)  # flare radius at the z=1 end = variance [n]
     t = np.where(bias + var > 1e-9, var / (bias + var), 0.0)  # variance fraction [n]
 
     # Color by variance share RELATIVE to the heaviest feature (mirrors the
@@ -111,12 +111,15 @@ def _segments_and_colors(data):
     tref = max(float(t.max()), 0.04)
     rel = np.minimum(1.0, t / tref)  # [n]
 
+    # Flat fan (bias, on top) -> corkscrew ring (variance, hanging below): the
+    # shape carries the same statement as the hue, so a pure-bias arm converges
+    # on the axis and only learned variance opens the spiral.
     s = np.arange(STEPS + 1) / STEPS  # [S]
     wgt = 1.0 - s
     th = angle[:, None] + s[None, :] * TWIST  # [n, S]
-    gx = r[:, None] * np.cos(th) * wgt[None, :] + px[:, None] * s[None, :]
-    gy = r[:, None] * np.sin(th) * wgt[None, :] + py[:, None] * s[None, :]
-    gz = (s - 0.5) * HEIGHT  # [S]
+    gx = bx[:, None] * wgt[None, :] + rv[:, None] * np.cos(th) * s[None, :]
+    gy = rv[:, None] * np.sin(th) * s[None, :]
+    gz = (0.5 - s) * HEIGHT  # [S] bias end on top, the spiral hangs below
 
     cosA, sinA, cosE, sinE = (
         math.cos(ROT),
@@ -132,13 +135,11 @@ def _segments_and_colors(data):
 
     # Each hair ramps base(blue)->tip via cmap(rel*z); split into per-segment
     # lines so the gradient renders. Segment s->s+1 takes z=(s+1)/STEPS, like
-    # the card. Per-hair depth alpha (far hairs dimmer). A bias-free ("pure")
-    # arm reverses the ramp - variance pushes back from the other end of the
-    # corkscrew, so red enters at the ring.
-    pure = float(bias.max()) <= 1e-12
+    # the card. Per-hair depth alpha (far hairs dimmer). No special case for a
+    # bias-free ("pure") arm any more: its bias end collapses to a point on its
+    # own, so it draws as a red crown blooming out of nothing.
     cmap = _cmap("bias_variance")
-    zmid = (np.arange(STEPS) + 1) / STEPS  # [STEPS]
-    zcol = (1.0 - zmid) if pure else zmid
+    zcol = (np.arange(STEPS) + 1) / STEPS  # [STEPS]
     alpha = 0.2 + 0.5 * np.clip((depth + 1.5) / 3.0, 0.0, 1.0)  # [n]
     order = np.argsort(depth)  # back-to-front
     segs, cols = [], []
@@ -247,22 +248,26 @@ def export_strands(model=None) -> dict:
 
     third = (
         "Head C (right) is the pure-variance arm: it carries no static "
-        "spectrum at all, so its hairs grow pure red from nothing - variance "
-        "arriving from the opposite end of the decomposition. "
+        "spectrum at all, so its fan hangs from a single point and spills "
+        "into a red spiral - variance with no bias above it. "
         if n_arms >= 3
         else ""
     )
     caption = (
         f"The prismatic head's {'three' if n_arms >= 3 else 'two'} arms, "
         "rendered exactly as the dashboard's "
-        "bias/variance strand card. Each hair is one feature, morphing from a "
-        "ring (its static-field phase) out to its (bias, variance) position with "
-        "a helical twist; color runs blue (pure bias) to red (pure variance). "
-        "Head A (left) is the bias arm: it reads a static field, so every hair "
-        f"stays blue - a constant structural vote. Head B {'(center)' if n_arms >= 3 else '(right)'} "
+        "bias/variance strand card. Each hair is one feature. It leaves the flat "
+        "end on top - the bias axis, one line, placed by static-field energy, "
+        "because a static field has no second dimension to spread into - and "
+        "falls to a ring whose radius is that feature's input-conditional "
+        "energy, at its field phase, twisted on the way down. Shape and color "
+        "therefore say the same thing: blue and shut is bias, red and open is "
+        "variance. "
+        "Head A (left) is the bias arm: it reads a static field, so the fan "
+        f"stays blue and closed - a constant structural vote. Head B {'(center)' if n_arms >= 3 else '(right)'} "
         "is the variance "
-        "arm, whose input-conditional envelope lets hairs swing toward red - the "
-        f"data-dependent vote. {third}"
+        "arm, whose input-conditional envelope opens the spiral and swings hairs "
+        f"toward red - the data-dependent vote. {third}"
         "Each panel's subtitle lists that arm's head stack. "
         "Together they are the orthogonal bias/variance decomposition made "
         "architectural - convex and radial from the center, chaotic in the arms."

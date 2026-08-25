@@ -482,19 +482,20 @@ class HarmonicField(nn.Module):
                 "order": 105,
             },
         },
-        # The bias/variance strands. Each feature is a particle; one cylinder end
-        # arranges them by phase (the static field, pure bias), the other by
-        # (static energy, input-conditional energy) - the orthogonal axes made
-        # literal. With amp_modulation != "input" the variance axis is ~0 and the
-        # plane stays collapsed: the split appearing is the trained result.
+        # The bias/variance strands. Each feature is a particle leaving the flat
+        # bias axis on top (static energy, one line - a static field has no
+        # second dimension) and falling to a ring whose radius is its
+        # input-conditional energy, at its field phase. With amp_modulation !=
+        # "input" that radius is ~0 and the spiral stays shut: the opening is
+        # the trained result.
         "harmonic_strands": {
             "description": (
-                "Bias and variance as a morphing cylinder. Particles are "
-                "features: one end is the static field's phase ring (pure bias, "
-                "all structure), the other is the (bias energy, variance energy) "
-                "plane where the input-conditional envelope pulls features off "
-                "the bias axis. A collapsed plane means the field is still pure "
-                "bias; a split means structured variance has been learned."
+                "Bias and variance as a fan falling from flat into a corkscrew. "
+                "Particles are features: they leave the flat bias axis on top - "
+                "one line, placed by static-field energy - and fall to a ring "
+                "whose radius is that feature's input-conditional energy, at its "
+                "field phase. Shape and color say the same thing: blue and shut "
+                "is pure bias, red and open is structured variance learned."
             ),
             "snapshot": {
                 "title": "Bias/Variance Strands",

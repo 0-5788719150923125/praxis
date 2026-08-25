@@ -1724,13 +1724,15 @@ function renderHarmonicStaircase(canvas, data) {
 }
 
 /**
- * Bias/variance strands: a morphing cylinder of feature-particles. One flat end
- * (z=0) arranges them by phase on a ring - the static field, pure bias, white.
- * The other end (z=1) is the (bias energy, variance energy) plane: x = static
- * energy, y = input-conditional energy. Variance-dominant features lift off the
- * bias axis and take the accent color. With no input-conditional field the plane
- * stays collapsed on the bias axis - the split appearing is the trained result.
- * Endpoints are measured; the cylinder between them is interpolation.
+ * Bias/variance strands: a fan of feature-particles falling from flat into a
+ * corkscrew. The bias end (z=0, drawn on top) is flat by construction - every
+ * feature on one line, placed by its static-field energy, because a static
+ * field has no second dimension to spread into. The variance end (z=1, drawn
+ * below) is a ring: radius = that feature's input-conditional energy, angle =
+ * its field phase, twisted on the way down. So shape and hue say the same
+ * thing - a pure-bias field is a tight blue fan converging on the axis, and
+ * learned variance is the fan spilling open into a red spiral. Endpoints are
+ * measured; the morph between them is interpolation.
  */
 function renderHarmonicStrands(canvas, data) {
     if (canvas._strandsRAF) cancelAnimationFrame(canvas._strandsRAF);
@@ -1750,39 +1752,41 @@ function renderHarmonicStrands(canvas, data) {
     // First pass: peak energy on either axis (geometry scale - so a bias-free
     // "pure" arm still spans the geometry) and the heaviest per-feature
     // variance share (color reference).
-    let bmax = 1e-6, tmax = 0, biasMax = 0;
+    let bmax = 1e-6, tmax = 0;
     for (let i = 0; i < N; i++) {
         const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
         bmax = Math.max(bmax, b, v);
-        biasMax = Math.max(biasMax, b);
         if (b + v > 1e-9) tmax = Math.max(tmax, v / (b + v));
     }
-    // A bias-free ("pure") arm reverses the color ramp: variance pushes back
-    // from the other end of the corkscrew, so red enters at the ring.
-    const pure = biasMax <= 1e-9;
     // Color reference: the field's heaviest per-feature variance, floored so a
     // near-zero-variance field stays blue (we don't amplify noise to red). When
     // variance IS present, each strand's tip color is its variance share RELATIVE
     // to that heaviest feature - so per-feature specialization shows even when the
     // absolute field fraction is small (the absolute % is the readout up top).
     const tref = Math.max(tmax, 0.04);
-    // Each hair ramps from the blue bias reference at its base (z=0) to its own
-    // relative balance at the tip: the most variance-heavy feature reddens, a
-    // half-as-heavy one tops out white, a bias-dominant one stays blue.
+    // Geometry and hue say the same thing, so the shape reads without the legend:
+    // the BIAS end (z=0, blue, on top) is a flat fan - every feature on one line,
+    // placed by its static-field energy, no second dimension because a static
+    // field has none. The VARIANCE end (z=1, red, below) is a ring whose radius
+    // IS that feature's input-conditional energy, at its field phase, twisted
+    // into a corkscrew. A pure-bias field therefore stays a tight blue fan
+    // converging on the axis; learned variance is literally the fan spilling
+    // open into a red spiral underneath it.
     const segCol = new Array(N * SAMP);
     const gx = new Float32Array(N * SAMP), gy = new Float32Array(N * SAMP), gz = new Float32Array(N * SAMP);
     for (let i = 0; i < N; i++) {
         const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
-        const r = Math.sqrt(b / bmax), px = r * 2 - 1, py = Math.sqrt(v / bmax) * 2 - 1;
+        const bx = Math.sqrt(b / bmax) * 2 - 1;   // flat bias axis
+        const rv = Math.sqrt(v / bmax);           // flare radius = variance
         const t = b + v > 1e-9 ? v / (b + v) : 0;
         const rel = Math.min(1, t / tref);   // variance share vs the heaviest feature
         const a = angle[i], o = i * SAMP;
         for (let s = 0; s < SAMP; s++) {
             const z = s / STEPS, wgt = 1 - z, th = a + z * TWIST;
-            gx[o + s] = r * Math.cos(th) * wgt + px * z;   // ring -> plane morph
-            gy[o + s] = r * Math.sin(th) * wgt + py * z;
-            gz[o + s] = (z - 0.5) * HEIGHT;                // pre-centered cylinder height
-            const c = sampleColormap('bias_variance', rel * (pure ? 1 - z : z));   // blue base -> colormap(rel) tip (reversed for pure)
+            gx[o + s] = bx * wgt + rv * Math.cos(th) * z;   // flat fan -> ring morph
+            gy[o + s] = rv * Math.sin(th) * z;
+            gz[o + s] = (0.5 - z) * HEIGHT;                 // pre-centered; bias on top, the spiral hangs below
+            const c = sampleColormap('bias_variance', rel * z);   // blue bias base -> colormap(rel) variance tip
             segCol[o + s] = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
         }
     }
@@ -1857,19 +1861,20 @@ function renderHarmonicStrands(canvas, data) {
         ctx.fillText(`variance ${(100 * sep).toFixed(0)}% of field energy`, 10, 16);
         ctx.fillText(
             sep < 0.01
-                ? 'pure bias - strands not separated yet'
-                : 'hue = per-feature share, relative to the heaviest',
+                ? 'pure bias - the spiral has not opened yet'
+                : 'flare = variance energy, hue = share vs the heaviest',
             10, 30
         );
 
-        // Spectrum key: each hair runs blue (pure bias) -> red (pure variance).
+        // Spectrum key, named by the end it belongs to: the flat end is blue
+        // (bias), the spiral it falls into is red (variance).
         const lo = sampleColormap('bias_variance', 0), hi = sampleColormap('bias_variance', 1);
         ctx.fillStyle = `rgb(${lo[0]}, ${lo[1]}, ${lo[2]})`;
-        ctx.fillText('bias', 10, h - 10);
+        ctx.fillText('bias (flat)', 10, h - 10);
         ctx.fillStyle = textColor;
-        ctx.fillText('-', 38, h - 10);
+        ctx.fillText('-', 82, h - 10);
         ctx.fillStyle = `rgb(${hi[0]}, ${hi[1]}, ${hi[2]})`;
-        ctx.fillText('variance', 48, h - 10);
+        ctx.fillText('variance (spiral)', 92, h - 10);
 
         frame++;
         canvas._strandsRAF = requestAnimationFrame(draw);
