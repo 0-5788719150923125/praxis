@@ -207,6 +207,49 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         activation="mish",
         parallel_scan=False,
     ),
+    # ONE memory, gated, at the FIRST recurrent pass only - the Titans-faithful
+    # arrangement, after the depth bank measured as a bank of static MLPs.
+    #
+    # passes=[0]. The depth bank spread four cores along the recurrence and the
+    # late ones starved: `*_memory_core_use` read 0.46 / 0.28 / 0.17 / 0.09,
+    # which is not a routing decision, it is the halting distribution. Training
+    # samples a loop count up front (halting/kl.py:122-133) and eval exits at
+    # loop boundaries (:154), so pass 0 is the ONLY station every input reaches,
+    # every gradient step trains, and the speculative decoder sees identically
+    # on every forward. One memory call per forward instead of ~3.
+    #
+    # segment_block=4, matching the reference (lucidrains' train_mac.py runs
+    # SEQ_LEN 512 on a 4-token grid = 128 chunks). This is the number that
+    # decides whether test-time learning happens at all: retrieval reads
+    # PRE-write weights, so the writes the model can feel is chunks - 1, and on
+    # a 16-token grid this repo's latent lengths (bytes/8) gave 0.70 writes per
+    # forward with 62% of forwards getting ZERO. A 4-token grid gives ~5.
+    #
+    # swish, NOT serpent. Every parameter of the memory net is a fast weight, so
+    # a periodic activation puts its per-feature FREQUENCIES in the test-time
+    # update - and the energy rule's step is sign-like at a fixed magnitude,
+    # which is well-conditioned on a linear map and not on a frequency (sin(a*x)
+    # is not locally linear in a). A parameter-free activation keeps the whole
+    # fast-weight set linear, which is what the Adam rule's scale-invariance
+    # argument assumes, and it hands the trunk a genuinely different function
+    # class - everything else here is periodic (Servant experts, ArcHoPE's phase
+    # warp, the harmonic head). `swish` is torch's SiLU, the paper's activation;
+    # the `silu` key is transformers' copy.
+    "mag_energy": dict(
+        surfacing="mag",
+        passes=[0],
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        segment_block=4,
+        momentum=True,
+        activation="swish",
+        use_energy=True,
+        segment=True,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
 }
 
 # Rendered by the auto-docs generator in place of class docstrings, since
@@ -284,6 +327,19 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "
         "and blended with it through a learned gate."
+    ),
+    "mag_energy": (
+        "One gated memory at the FIRST recurrent pass only, with the detached "
+        "(energy) update, a predictive NextLat write target and a 4-token "
+        "update grid. The gate makes the model state whether it wants the "
+        "memory as a single readable number instead of leaving it to cancel a "
+        "full-weight residual add; pass 0 is the only recurrent step every "
+        "input reaches and every gradient step trains, so nothing starves the "
+        "way a depth-spread bank does; and the fine grid is what gives the "
+        "test-time update enough chunks to be visible at all, since retrieval "
+        "reads pre-write weights. The memory net is a plain swish MLP - the one "
+        "non-periodic function class in an otherwise harmonic model, and the "
+        "only kind whose whole fast-weight set is linear maps."
     ),
 }
 

@@ -340,12 +340,122 @@ def test_segment_still_memorizes():
     assert mem.memory_loss(seq, warm.weights) < mem.memory_loss(seq, cold.weights)
 
 
+# --- pad handling and the chunk-count floor ---------------------------------
+
+
+def _pad_mem(**kw):
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.GELU(), nn.Linear(128, 64))
+    base = dict(
+        dim=64,
+        model=model,
+        chunk_size=64,
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+    )
+    base.update(kw)
+    return NeuralMemory(**base)
+
+
+@pytest.mark.parametrize("objective", ["recon", "predictive"])
+@pytest.mark.parametrize("n", [17, 33, 47])
+def test_pad_does_not_enter_the_write(monkeypatch, objective, n):
+    """A tail pad must be inert, and the sharpest statement of that is that its
+    CONTENTS cannot matter. A zero pad is not self-evidently a no-op: the store
+    path RMS-normalizes, which maps the zero vector to itself, so the surprise
+    reads a full-magnitude "predict nothing from nothing" error and the update
+    chases it. Filling the pad with a large constant instead must therefore leave
+    the fast weights and the reported surprise bit-identical."""
+    import praxis.memory.neural_memory as nm
+
+    seq = torch.randn(2, n, 64)
+
+    def run(fill):
+        real_pad = torch.nn.functional.pad
+        if fill is not None:
+            monkeypatch.setattr(
+                nm.F, "pad", lambda t, p, **kw: real_pad(t, p, value=fill)
+            )
+        else:
+            monkeypatch.setattr(nm.F, "pad", real_pad)
+        mem = _pad_mem(write_objective=objective)
+        _, st = mem(seq)
+        return st, float(mem.last_surprise_norm), float(mem.last_surprise)
+
+    zero_pad, s_norm_z, s_raw_z = run(None)
+    junk_pad, s_norm_j, s_raw_j = run(7.5)
+
+    for k in zero_pad.weights:
+        assert torch.equal(
+            zero_pad.weights[k], junk_pad.weights[k]
+        ), f"pad contents changed the fast weights ({k})"
+    assert s_norm_z == s_norm_j, "pad contents changed the reported surprise"
+    assert s_raw_z == s_raw_j
+
+
+def test_pad_masking_matches_an_unpadded_reference():
+    """The masked write on a padded grid must equal the write the same real
+    tokens produce when they happen to fill the grid exactly."""
+    seq = torch.randn(2, 32, 64)
+    exact = _pad_mem()  # 32 tokens on a 16-grid: 2 chunks, no pad
+    _, st_exact = exact(seq)
+    again = _pad_mem()
+    _, st_again = again(seq.clone())
+    for k in st_exact.weights:
+        assert torch.equal(st_exact.weights[k], st_again.weights[k])
+    assert exact.last_num_chunks == 2
+
+
+def test_predictive_target_does_not_shift_off_the_end():
+    """The last REAL token has no successor and must target itself. Shifting the
+    padded tensor would hand it a zero pad, training the memory to forecast
+    nothing at every sequence end."""
+    mem = _pad_mem(write_objective="predictive")
+    stored = torch.randn(2, 48, 64)
+    n = 33  # 15 pad positions follow
+    tgt = mem._shift_targets(stored, n)
+    assert tgt.shape == stored.shape
+    assert torch.equal(tgt[:, : n - 1], stored[:, 1:n])  # interior: next latent
+    assert torch.equal(tgt[:, n - 1], stored[:, n - 1])  # last real: itself
+    # With no pad the behaviour is unchanged (last token still targets itself).
+    full = mem._shift_targets(stored, stored.shape[1])
+    assert torch.equal(full[:, -1], stored[:, -1])
+
+
+@pytest.mark.parametrize("n,expected", [(8, 1), (16, 1), (32, 2), (33, 3), (128, 8)])
+def test_chunk_count_is_reported(n, expected):
+    """``memory_chunks`` is the ceiling on adaptation, so it is surfaced rather
+    than left to be inferred from the sequence length."""
+    mem = _pad_mem()
+    mem(torch.randn(2, n, 64))
+    assert mem.last_num_chunks == expected
+
+
+def test_single_chunk_cannot_adapt():
+    """Retrieval reads PRE-write weights, so at one chunk the readout is the
+    cold one and the update is discarded - adapt is exactly 0 while gain and
+    write still look healthy. This is the failure mode that made a memory read
+    as a static MLP; it must stay visible."""
+    mem = _pad_mem()
+    mem.train()
+    mem(torch.randn(2, 16, 64))  # 16 tokens on a 16-token grid -> 1 chunk
+    assert mem.last_num_chunks == 1
+    assert float(mem.last_adapt) == 0.0
+    assert float(mem.last_write) > 0.0  # the update happened, it is just unread
+
+    mem2 = _pad_mem()
+    mem2.train()
+    mem2(torch.randn(2, 64, 64))  # 4 chunks -> 3 visible writes
+    assert float(mem2.last_adapt) > 0.0
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
-SURFACINGS = ["mal", "mal_energy", "mal_energy_serpent", "mag"]
+SURFACINGS = ["mal", "mal_energy", "mal_energy_serpent", "mag", "mag_energy"]
 
 # Energy-mode profiles (scale-free surprise + event-size stats surfaced).
-_ENERGY_SURFACINGS = {"mal_energy", "mal_energy_serpent"}
+_ENERGY_SURFACINGS = {"mal_energy", "mal_energy_serpent", "mag_energy"}
 
 
 def _block_config(memory_type, depth=2):
@@ -450,14 +560,18 @@ def test_surprise_metric_surfaced(memory_type):
     for key in ("memory_surprise", "memory_gain", "memory_write", "memory_adapt"):
         assert key in metrics and torch.isfinite(torch.as_tensor(metrics[key]))
         assert key in descriptions
-    # The scale-free surprise and event-size stats are energy/segment only.
+    # The scale-free surprise is reported in BOTH modes. Energy mode optimizes
+    # it; standard mode optimizes the paper's raw MSE - but the readout sits
+    # behind out_norm either way, so the memory net's output magnitude is a free
+    # mode in both and a drifting raw surprise is otherwise indistinguishable
+    # from a memory that stopped learning.
+    assert torch.isfinite(torch.as_tensor(metrics["memory_surprise_norm"]))
+    # Event-size stats stay segmentation-only (energy).
     event_keys = ("memory_event_size", "memory_event_min", "memory_event_max")
     if memory_type in _ENERGY_SURFACINGS:
-        assert torch.isfinite(torch.as_tensor(metrics["memory_surprise_norm"]))
         for key in event_keys:
             assert torch.isfinite(torch.as_tensor(metrics[key]))
     else:
-        assert "memory_surprise_norm" not in metrics
         assert all(key not in metrics for key in event_keys)
     # Charts are declared for all memory modules regardless of mode.
     assert "memory_surprise_norm" in descriptions
@@ -484,7 +598,10 @@ def test_sequential_matches_parallel_scan(kwargs):
     torch.manual_seed(1)
     model = nn.Sequential(nn.Linear(32, 32), nn.GELU(), nn.Linear(32, 32))
     mem = NeuralMemory(dim=32, model=model, chunk_size=32, segment_block=8, **kwargs)
-    seq = torch.randn(2, 96, 32)
+    # 100 is NOT block-aligned (100 % 8 != 0), so this also pins the two paths
+    # to the same pad masking and the same event-boundary threshold - the
+    # sequential path carried a relative tolerance the parallel one lacked.
+    seq = torch.randn(2, 100, 32)
 
     def run(parallel):
         mem.parallel_scan = parallel
@@ -497,6 +614,151 @@ def test_sequential_matches_parallel_scan(kwargs):
             assert torch.allclose(
                 getattr(st_p, field)[k], getattr(st_s, field)[k], atol=1e-4
             )
+
+
+# --- standard (backprop) mode -----------------------------------------------
+
+
+def _standard_mem(chunk_size=4):
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.SiLU(), nn.Linear(128, 64))
+    return NeuralMemory(dim=64, model=model, chunk_size=chunk_size, use_energy=False)
+
+
+@pytest.mark.parametrize("n,chunks", [(8, 2), (16, 4), (32, 8), (64, 16)])
+def test_forgetting_gate_starts_at_retain(n, chunks):
+    """alpha_t (paper Eq. 13) compounds ONCE PER CHUNK, so its init decides
+    whether a store pass writes to the meta-learned memory or erases it. A
+    default Linear init sits at sigmoid(0) = 0.5 - halfway to the paper's "clear
+    the entire memory" - which left 0.06% of W0 alive after 16 chunks, and got
+    worse the more chunks the memory was given."""
+    mem = _standard_mem()
+    _, st = mem(torch.randn(2, n, 64))
+    assert mem.last_num_chunks == chunks
+    w0 = {k: v.detach() for k, v in mem._init_weights(2).items()}
+    retained = min(float(st.weights[k].detach().norm() / w0[k].norm()) for k in w0)
+    assert (
+        retained > 0.5
+    ), f"{chunks} chunks erased the memory: ||W_T||/||W0||={retained}"
+
+
+def test_forgetting_gate_can_still_forget():
+    """Retention at init must be a starting point, not a wall: the gate is
+    learnable and driving it positive still clears the memory."""
+    mem = _standard_mem()
+    with torch.no_grad():
+        mem.to_decay.bias.fill_(5.0)  # alpha -> 1, "clear the entire memory"
+    _, st = mem(torch.randn(2, 32, 64))
+    w0 = {k: v.detach() for k, v in mem._init_weights(2).items()}
+    retained = max(float(st.weights[k].detach().norm() / w0[k].norm()) for k in w0)
+    assert retained < 0.1
+
+
+def test_standard_mode_reports_the_scale_free_surprise():
+    """Standard mode optimizes the paper's raw MSE, but its readout is behind
+    out_norm just like energy mode's - so the output magnitude is a free mode and
+    the scale-free line has to be readable, or a drifting surprise cannot be told
+    apart from a memory that stopped learning."""
+    mem = _standard_mem()
+    seq = torch.randn(2, 32, 64)
+    mem(seq)
+    raw0, norm0 = float(mem.last_surprise), float(mem.last_surprise_norm)
+    with torch.no_grad():  # simulate the memory net's weights growing
+        for p in mem.memory_model.parameters():
+            p.mul_(50.0)
+    mem(seq)
+    raw1, norm1 = float(mem.last_surprise), float(mem.last_surprise_norm)
+    assert raw1 / raw0 > 100.0  # the raw line is scale-sensitive, as documented
+    assert norm1 == pytest.approx(norm0, rel=0.05)  # the scale-free one is not
+
+
+# --- pass gating and the MAG verdict line -----------------------------------
+
+
+def _mag_block_config(memory_type):
+    return PraxisConfig(
+        depth=6,
+        num_layers=1,
+        num_experts=1,
+        hidden_size=64,
+        embed_size=64,
+        num_heads=1,
+        head_size=32,
+        memory_type=memory_type,
+    )
+
+
+def test_passes_gates_the_memory_to_one_recurrent_step():
+    """``passes`` keys the memory to the PASS index. Pass 0 is the only station
+    every input reaches (training samples a loop count up front, eval exits at
+    loop boundaries), which is why the depth bank's late cores starved."""
+    from praxis.memory import build_memory
+
+    cfg = _mag_block_config("mag_energy")
+    mem = build_memory(cfg)
+    mem.train()
+    assert mem.passes == frozenset({0})
+
+    x = torch.randn(2, 32, 64)
+    fired = []
+    for depth in range(cfg.depth):
+        out, _ = mem(x, x, None, current_depth=depth)
+        fired.append(not torch.equal(out, x))
+    assert fired == [True, False, False, False, False, False]
+
+
+def test_passes_none_runs_every_step():
+    """The default is unchanged: no ``passes`` key means every pass fires."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mal_energy"))
+    mem.train()
+    x = torch.randn(2, 32, 64)
+    assert mem.passes is None
+    assert all(
+        not torch.equal(mem(x, x, None, current_depth=d)[0], x) for d in range(6)
+    )
+
+
+def test_pass_gate_is_a_true_identity():
+    """A skipped pass must return the stream and the state untouched - not a
+    zero-gain write, an actual no-op, so a gated pass costs nothing."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_energy"))
+    mem.train()
+    x = torch.randn(2, 32, 64)
+    sentinel = object()
+    out, state = mem(x, x, sentinel, current_depth=3)
+    assert out is x and state is sentinel
+
+
+def test_mag_reports_the_gate():
+    """The gate is the verdict line: the model's own answer to whether it wants
+    the memory. It must start near-identity (bias -3) and be surfaced."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_energy"))
+    mem.train()
+    mem(torch.randn(2, 32, 64), torch.randn(2, 32, 64), None, current_depth=0)
+    metrics = mem.training_metrics()
+    assert metrics["memory_gate"] == pytest.approx(
+        torch.sigmoid(torch.tensor(-3.0)).item(), abs=1e-3
+    )
+    assert "memory_gate" in type(mem).metric_descriptions
+
+
+def test_fine_grid_gives_the_update_room_to_be_seen():
+    """The point of the 4-token grid: retrieval reads pre-write weights, so the
+    writes the model can feel is chunks - 1. The 16-token grid this repo ran
+    resolved typical latent lengths to a single chunk, where adapt is exactly 0."""
+    from praxis.memory import build_memory
+
+    fine = build_memory(_mag_block_config("mag_energy"))
+    fine.train()
+    fine(torch.randn(2, 32, 64), torch.randn(2, 32, 64), None, current_depth=0)
+    assert fine.mem.last_num_chunks == 8
+    assert float(fine.mem.last_adapt) > 0.0
 
 
 # --- N-arm reward-bandit memory bank (dual / triple smear) ------------------

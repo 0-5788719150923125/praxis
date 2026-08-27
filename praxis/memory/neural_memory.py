@@ -62,6 +62,15 @@ _log = logging.getLogger("praxis.memory")
 # re-derive the obvious guess.
 _DECODE_COMPILE_KWARGS = dict(mode="default", fullgraph=False, dynamic=False)
 
+# Init bias for the standard-mode forgetting gate (alpha_t, paper Eq. 13), which
+# compounds once per chunk. sigmoid(-5) = 0.0067 forgetting per chunk, so the
+# meta-learned init survives the horizons this repo actually runs (90% over 16
+# chunks, 42% over the reference's 128) instead of being erased by it. Chosen for
+# the shape of the compounding, not tuned per experiment: any value here is a
+# judgement call, but the direction is not - a gate that erases by default
+# inverts what the paper's alpha means.
+_DECAY_GATE_BIAS: float = -5.0
+
 
 @contextmanager
 def decode_compiled(model: nn.Module, enabled: bool = True):
@@ -267,6 +276,21 @@ class NeuralMemory(nn.Module):
             self.to_lr = nn.Linear(dim, 1)
             self.to_momentum = nn.Linear(dim, 1)
             self.to_decay = nn.Linear(dim, 1)
+            # The forgetting gate must START AT RETAIN and learn to forget.
+            # alpha_t is the paper's Eq. 13 gate: "it can update the memory
+            # without affecting the past abstraction by letting alpha -> 0, and
+            # can clear the entire memory by letting alpha -> 1". A default
+            # Linear init sits at sigmoid(~0) = 0.5, i.e. exactly halfway to
+            # "clear the entire memory" - and it compounds per chunk, so the
+            # meta-learned W0 is annihilated before the sequence ends: measured
+            # ||W_T||/||W0|| of 0.22 at 2 chunks, 0.056 at 4, 0.0029 at 8 and
+            # 0.00059 at 16. The memory was being erased rather than written to,
+            # worse the more chunks it got - the exact axis a longer horizon
+            # moves along. Biasing the gate to near-zero forgetting matches how
+            # every other gate in this repo enters (MAG's -3, ReZero): start at
+            # identity, let the task open it.
+            nn.init.zeros_(self.to_decay.weight)
+            nn.init.constant_(self.to_decay.bias, _DECAY_GATE_BIAS)
 
         # Diagnostics from the last store pass, logged as metrics: cold-start
         # surprise, the memory's output magnitude relative to the stream, the
@@ -277,6 +301,15 @@ class NeuralMemory(nn.Module):
         self.last_gain: Optional[Tensor] = None
         self.last_write: Optional[Tensor] = None
         self.last_adapt: Optional[Tensor] = None
+        # How many chunks the last call's sequence resolved to. Retrieval reads
+        # PRE-write weights, so a chunk's own update is only ever visible to the
+        # chunks after it: the effective number of in-context writes is
+        # ``num_chunks - 1``, and at one chunk the module degenerates to a static
+        # readout at W0 with the update computed and thrown away. That is a
+        # silent failure - gain and write both look healthy while adapt is
+        # exactly 0 - so the count is surfaced rather than left to be inferred.
+        self.last_num_chunks: Optional[int] = None
+        self._warned_single_chunk: bool = False
         # -1 so the very first call probes, rather than PROBE_EVERY calls in.
         self._probe_tick: int = -1
         # Event-size stats from the last segmented store pass (tokens per event).
@@ -402,7 +435,13 @@ class NeuralMemory(nn.Module):
         count = idx.clamp(min=1).to(s_blocks.dtype)
         mean = csum / count
         var = (csq / count - mean * mean).clamp(min=0.0)
-        spike = s_blocks > mean + self.segment_gamma * var.sqrt()
+        # Relative tolerance on the threshold, matching _forward_sequential: the
+        # variance is a difference of two large cumulative sums, so on a
+        # near-constant stream it rounds to a spurious spike and cuts an event
+        # every block. Both paths must agree or ``parallel_scan`` stops being a
+        # pure perf knob.
+        thresh = mean + self.segment_gamma * var.sqrt() + 1e-5 * mean.abs()
+        spike = s_blocks > thresh
         spike[:, 0] = False  # no history at block 0
 
         # Walk the blocks to apply the cap, which is a stateful recurrence
@@ -470,6 +509,56 @@ class NeuralMemory(nn.Module):
 
     # --- functional grad of the surprise loss --------------------------------
 
+    def _note_chunks(self, num_chunks: int, n: int, c: int) -> None:
+        """Record the call's chunk count, and warn once if the memory cannot
+        actually adapt in context at this sequence length."""
+        if torch.compiler.is_compiling():
+            return
+        self.last_num_chunks = int(num_chunks)
+        if num_chunks > 1 or self._warned_single_chunk:
+            return
+        self._warned_single_chunk = True
+        _log.warning(
+            "NeuralMemory: %d tokens on a %d-token grid is a single chunk, so "
+            "retrieval reads the cold weights and the test-time update is "
+            "discarded - memory_adapt will be exactly 0. Shorten the update "
+            "grid (segment_block/chunk_size) or lengthen the sequence.",
+            n,
+            c,
+        )
+
+    def _valid_grid(self, seq: Tensor, num_chunks: int, c: int, pad: int) -> Tensor:
+        """``(1, nc, c)`` mask marking the real (non-pad) grid positions.
+
+        Broadcasts over the batch: the pad is a tail of the sequence, so every
+        row shares it.
+
+        The masking is MULTIPLICATIVE (``lr`` scales each token's contribution
+        to the surprise sum), so the pad is still forwarded through the memory
+        net and its loss is still computed - only its weight is zero. Any FINITE
+        pad value is therefore equivalent, which the invariance test pins by
+        refilling the pad and requiring bit-identical weights. A non-finite one
+        is not: ``0 * inf`` is nan and would poison the carried state. The pad
+        comes from ``F.pad``'s default 0.0 on a hidden-state tensor - not a
+        token id, so the ``IGNORE_INDEX``/-100 label convention does not apply
+        here - and zero is the one fill that is finite through any memory net.
+        """
+        valid = seq.new_ones(num_chunks * c)
+        if pad:
+            valid[-pad:] = 0.0
+        return valid.reshape(1, num_chunks, c)
+
+    def _shift_targets(self, stored: Tensor, n: int) -> Tensor:
+        """Next-latent write targets over the padded grid.
+
+        Position ``t`` targets ``t + 1`` for ``t < n - 1``; the last REAL token
+        targets itself (no successor exists). Naively shifting the whole padded
+        tensor would hand that token a zero pad as its target - a write that
+        teaches the memory to forecast nothing at the end of every sequence.
+        The pad's own targets are arbitrary; ``_valid_grid`` zeroes their lr.
+        """
+        return torch.cat([stored[:, 1:n], stored[:, n - 1 : n], stored[:, n:]], dim=1)
+
     def _recon_per_token(self, pred: Tensor, v: Tensor, normalize: bool) -> Tensor:
         """Per-token surprise loss against the write target. Energy mode compares
         RMS-normalized (directional) vectors - matching the out_norm'd readout -
@@ -498,14 +587,22 @@ class NeuralMemory(nn.Module):
 
         def loss_single(w: Weights, k: Tensor, v: Tensor, step: Tensor):
             pred = functional_call(self.memory_model, w, (k,))
-            driver = self._recon_per_token(pred, v, self.use_energy)  # (c,)
             raw = self._recon_per_token(pred, v, False)
-            return (step * driver).sum(), (driver, raw)
+            normed = self._recon_per_token(pred, v, True)
+            # Energy mode OPTIMIZES the scale-free form; standard mode optimizes
+            # the paper's raw MSE (Eq. 12). Both are reported either way: the
+            # readout sits behind out_norm in both modes, so the memory net's
+            # output magnitude is a free mode in both, and without the scale-free
+            # line a drifting raw surprise is indistinguishable from a memory
+            # that stopped learning. That ambiguity cost a run once already.
+            driver = normed if self.use_energy else raw
+            return (step * driver).sum(), (raw, normed)
 
-        grads, (_, (driver, raw)) = vmap(grad_and_value(loss_single, has_aux=True))(
+        grads, (_, (raw, normed)) = vmap(grad_and_value(loss_single, has_aux=True))(
             weights, keys, values, lr
         )
-        return grads, driver, raw
+        driver = normed if self.use_energy else raw
+        return grads, driver, raw, normed
 
     # --- forward -------------------------------------------------------------
 
@@ -543,6 +640,14 @@ class NeuralMemory(nn.Module):
         if pad:
             seq = F.pad(seq, (0, 0, 0, pad))
         num_chunks = seq.shape[1] // c
+        # Which grid positions are real. The pad is zeros, and a zero token is
+        # not a no-op for the write: RMS-normalizing it gives the zero vector,
+        # so the surprise loss reads a full-magnitude "predict nothing from
+        # nothing" error and the update chases it. Masking the per-token lr is
+        # what makes the pad inert - it is the only term multiplying every
+        # token's contribution to the surprise, in both modes.
+        valid = self._valid_grid(seq, num_chunks, c, pad)
+        self._note_chunks(num_chunks, n, c)
 
         if not self.parallel_scan:
             return self._forward_sequential(
@@ -569,29 +674,32 @@ class NeuralMemory(nn.Module):
             # is a forecast rather than an echo of the residual. Reading pre-write
             # weights (each chunk sees only earlier chunks' writes) keeps this
             # causal: an interior token's own target is written by its own chunk,
-            # invisible at retrieval. The global last token has no successor, so it
-            # falls back to itself (a single self-recon token, harmless).
+            # invisible at retrieval. The LAST REAL token has no successor, so it
+            # falls back to itself (a single self-recon token, harmless) - the
+            # shift is taken over the real prefix, never off the end into the
+            # pad, which would train it to predict zero.
             tgt = (
-                torch.cat([stored[:, 1:], stored[:, -1:]], dim=1)
+                self._shift_targets(stored, n)
                 if self.predictive
                 else self.to_values(stored)
             )
             values = tgt.unflatten(1, (num_chunks, c))
             # Energy mode takes the raw surprise (lr=1) and applies a fixed lr in
             # the Adam step; standard mode weights it by a learned per-token lr.
+            # Both are zeroed on the pad, which is what keeps it out of the write.
             if self.use_energy:
-                lr = stored.new_ones(b, num_chunks, c)
+                lr = valid.expand(b, num_chunks, c)
             else:
                 lr = (self.to_lr(stored).squeeze(-1).sigmoid() * self.max_lr).unflatten(
                     1, (num_chunks, c)
-                )  # (b, nc, c)
+                ) * valid  # (b, nc, c)
 
             # Surprise for every chunk, taken against the frozen segment-start
             # weights, in one batched pass over (b * nc).
             w0_rep = {
                 k: v.repeat_interleave(num_chunks, dim=0) for k, v in weights.items()
             }
-            grads, per_token, per_token_raw = self._surprise_grads(
+            grads, per_token, per_token_raw, per_token_norm = self._surprise_grads(
                 w0_rep,
                 keys.reshape(bn, c, d),
                 values.reshape(bn, c, d),
@@ -605,10 +713,6 @@ class NeuralMemory(nn.Module):
             reset_mask = t_event = None
             if self.segment:
                 # Per-block surprise (real tokens only), then event boundaries.
-                valid = per_token.new_ones(num_chunks * c)
-                if pad:
-                    valid[-pad:] = 0.0
-                valid = valid.reshape(num_chunks, c)
                 pt = per_token.reshape(b, num_chunks, c)
                 s_blocks = (pt * valid).sum(-1) / valid.sum(-1).clamp(min=1.0)
                 reset_mask, t_event = self._segment(s_blocks)
@@ -626,7 +730,15 @@ class NeuralMemory(nn.Module):
                 )
             else:
                 # Learned momentum then weight-decay, each a scan over chunks.
-                chunk_rep = stored.unflatten(1, (num_chunks, c)).mean(dim=2)  # (b,nc,d)
+                # The chunk summary the gates read averages REAL positions only:
+                # a mean over the padded tail is diluted toward zero, so the
+                # trailing chunk's forget/momentum gates would be driven by how
+                # far the sequence happened to sit from a chunk boundary.
+                chunk_rep = (
+                    stored.unflatten(1, (num_chunks, c)) * valid.unsqueeze(-1)
+                ).sum(dim=2) / valid.sum(-1).clamp(min=1.0).unsqueeze(
+                    -1
+                )  # (b, nc, d)
                 eta = self.to_momentum(chunk_rep).sigmoid().squeeze(-1)  # (b, nc)
                 alpha = self.to_decay(chunk_rep).sigmoid().squeeze(-1)  # (b, nc)
                 chunk_weights, new_weights, new_momentum = {}, {}, {}
@@ -658,9 +770,19 @@ class NeuralMemory(nn.Module):
 
         with torch.no_grad():
             # Raw surprise (scale-sensitive, kept for continuity) and, in energy
-            # mode, the scale-free surprise the update actually optimizes.
-            self.last_surprise = per_token_raw.mean()
-            self.last_surprise_norm = per_token.mean() if self.use_energy else None
+            # mode, the scale-free surprise the update actually optimizes. Both
+            # are averaged over REAL positions only: the pad no longer drives the
+            # update, so letting it into the mean would report a surprise the
+            # memory is not being asked to reduce, biased by how far the sequence
+            # sat from a chunk boundary.
+            vmask = valid.reshape(1, -1)
+            vsum = vmask.sum().clamp(min=1.0)
+            self.last_surprise = (per_token_raw.reshape(b, -1) * vmask).sum() / (
+                vsum * b
+            )
+            self.last_surprise_norm = (per_token_norm.reshape(b, -1) * vmask).sum() / (
+                vsum * b
+            )
             # Output magnitude relative to the stream: catches the model routing
             # around the memory (combine -> 0). Per-sequence write magnitude:
             # confirms the test-time update is doing real work (not collapsing).
@@ -710,9 +832,7 @@ class NeuralMemory(nn.Module):
         w = dict(weights)  # running weights (retrieval reads these pre-write)
         m, v = dict(momentum), dict(second_moment)
 
-        valid = seq.new_ones(num_chunks * c).reshape(num_chunks, c)  # tail-pad mask
-        if pad:
-            valid.view(-1)[-pad:] = 0.0
+        valid = self._valid_grid(seq, num_chunks, c, pad)[0]  # (nc, c) tail-pad mask
         queries = self.to_queries(self.retrieve_norm(seq)).unflatten(1, (num_chunks, c))
 
         # Predictive write target: the next-latent stream, stop-gradded, sliced
@@ -722,7 +842,7 @@ class NeuralMemory(nn.Module):
         if self.predictive:
             with torch.no_grad():
                 sn = self.store_norm(seq)
-                pred_target = torch.cat([sn[:, 1:], sn[:, -1:]], dim=1)
+                pred_target = self._shift_targets(sn, n)
 
         retrieved_chunks, reset_list = [], []
         raw_sum = drv_sum = seq.new_zeros(())
@@ -748,17 +868,23 @@ class NeuralMemory(nn.Module):
                     if self.predictive
                     else self.to_values(stored)
                 )
+                # Pad-masked exactly as the parallel path: valid[i] is this
+                # chunk's row of the tail mask.
                 lr_i = (
-                    stored.new_ones(b, c)
+                    valid[i].expand(b, c)
                     if self.use_energy
-                    else self.to_lr(stored).squeeze(-1).sigmoid() * self.max_lr
+                    else self.to_lr(stored).squeeze(-1).sigmoid()
+                    * self.max_lr
+                    * valid[i]
                 )
-                grads, driver, raw = self._surprise_grads(W0, k_i, val_i, lr_i)
+                grads, driver, raw, normed = self._surprise_grads(W0, k_i, val_i, lr_i)
                 surprise = {k: -g for k, g in grads.items()}
-                raw_sum = raw_sum + raw.sum()
-                drv_sum = drv_sum + driver.sum()
-                raw_cnt += raw.numel()
-                drv_cnt += driver.numel()
+                # Real positions only, matching the parallel path: the pad is
+                # masked out of the update, so it stays out of the mean too.
+                raw_sum = raw_sum + (raw * valid[i]).sum()
+                drv_sum = drv_sum + (normed * valid[i]).sum()
+                raw_cnt += int(valid[i].sum()) * b
+                drv_cnt += int(valid[i].sum()) * b
 
                 # Event boundary for this chunk, from causal stats over prior
                 # blocks (matches _segment). Resets the EMAs and re-bases t_event.
@@ -784,16 +910,16 @@ class NeuralMemory(nn.Module):
                     is_b = None
                     t_event = torch.full((b,), i + 1, device=seq.device)
 
-                self._update_chunk(w, m, v, surprise, is_b, t_event, b, stored)
+                self._update_chunk(
+                    w, m, v, surprise, is_b, t_event, b, stored, valid[i]
+                )
 
         retrieved = torch.cat(retrieved_chunks, dim=1)
         retrieved = self.combine(self.out_norm(retrieved))[:, :n]
 
         with torch.no_grad():
             self.last_surprise = raw_sum / max(raw_cnt, 1)
-            self.last_surprise_norm = (
-                drv_sum / max(drv_cnt, 1) if self.use_energy else None
-            )
+            self.last_surprise_norm = drv_sum / max(drv_cnt, 1)
             self.last_gain = retrieved.norm() / (seq[:, :n].norm() + self.eps)
             wnum = sum((w[p] - W0[p]).pow(2).sum() for p in self._param_names)
             wden = sum(W0[p].pow(2).sum() for p in self._param_names)
@@ -813,7 +939,7 @@ class NeuralMemory(nn.Module):
 
         return retrieved, NeuralMemState(seq_index + n, w, m, v)
 
-    def _update_chunk(self, w, m, v, surprise, is_b, t_event, b, stored):
+    def _update_chunk(self, w, m, v, surprise, is_b, t_event, b, stored, valid=None):
         """One chunk of the test-time weight update, in place on the running
         ``w``/``m``/``v`` dicts. Energy mode = the Adam-style rule; standard mode
         = learned momentum/decay gates. Mirrors ``_adam_update`` / the standard
@@ -838,7 +964,15 @@ class NeuralMemory(nn.Module):
                 u = m_hat / ((v[name] / c2.reshape(shp)).sqrt() + self.eps)
                 w[name] = (1.0 - self.weight_decay) * w[name] + self.max_lr * u
         else:
-            chunk_rep = stored.mean(dim=1)
+            # Real positions only, matching the parallel path: a mean over the
+            # padded tail is diluted toward zero and would drive the trailing
+            # chunk's forget/momentum gates by the pad length.
+            if valid is None:
+                chunk_rep = stored.mean(dim=1)
+            else:
+                chunk_rep = (stored * valid.unsqueeze(-1)).sum(
+                    dim=1
+                ) / valid.sum().clamp(min=1.0)
             eta = self.to_momentum(chunk_rep).sigmoid().squeeze(-1)
             alpha = self.to_decay(chunk_rep).sigmoid().squeeze(-1)
             for name in self._param_names:

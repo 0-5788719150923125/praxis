@@ -160,6 +160,49 @@ class MemorySurfacing(MemoryBase):
                 "order": 14,
             },
         },
+        "memory_gate": {
+            "description": (
+                "Mean opening of the MAG gate: how much of the stream the model "
+                "replaces with the memory's readout, averaged over channels and "
+                "positions. This is the verdict line - the model's own answer to "
+                "whether it wants the memory, in one number. It starts near 0.05 "
+                "(bias -3) so the module eases in from a near-identity, and a "
+                "decay back toward 0 is the model routing around it, stated "
+                "plainly instead of hidden in a residual it has to cancel "
+                "downstream. Read against Memory Adaptation: a rising gate with "
+                "adaptation near 0 means the model wants the memory net as a "
+                "static function, not as a memory."
+            ),
+            "chart": {
+                "title": "Memory Gate",
+                "y_label": "gate opening",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 9,
+            },
+        },
+        "memory_chunks": {
+            "description": (
+                "Chunks the store pass resolved the sequence into. This is the "
+                "ceiling on every other line in this group: retrieval reads "
+                "PRE-write weights, so a chunk's update is only ever visible to "
+                "the chunks after it and the number of writes the model can "
+                "actually feel is chunks - 1. At 1 the memory is a static "
+                "readout at the cold weights, the update is computed and "
+                "discarded, and Memory Adaptation is exactly 0 while Gain and "
+                "Write still look healthy - read this line before concluding "
+                "anything from those. Set by the sequence length against the "
+                "update grid (segment_block, or chunk_size when unsegmented), "
+                "so it moves with the sequence-length curriculum."
+            ),
+            "chart": {
+                "title": "Memory Chunks",
+                "y_label": "chunks / store pass",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 10,
+            },
+        },
         # Event sizes share one chart (mean/min/max are the same scale) via a
         # series_group; the lowest-order member supplies the title/axis/subtitle.
         "memory_event_size": {
@@ -219,6 +262,23 @@ class MemorySurfacing(MemoryBase):
             parallel_scan=spec.get("parallel_scan", True),
             write_objective=spec.get("write_objective", "recon"),
         )
+        # Which recurrent passes run the memory. None = every pass, the old
+        # behaviour. A list keys the memory to the PASS index
+        # (``current_depth // num_layers``), the same unit MemoryDepthBank uses
+        # and the only unit halting can cut at: KL checks fire at loop
+        # boundaries and training samples a loop count up front, so pass 0 is
+        # the only station every input reaches and every gradient step trains.
+        # Anything deeper is seen with the halting distribution's own frequency,
+        # which is how the depth bank's late cores starved.
+        passes = spec.get("passes")
+        self.passes = None if passes is None else frozenset(int(p) for p in passes)
+        self.num_layers = max(1, int(getattr(config, "num_layers", 1) or 1))
+
+    def _runs_at(self, current_depth: int) -> bool:
+        """Whether the memory fires at this recurrent step."""
+        if self.passes is None:
+            return True
+        return (int(current_depth) // self.num_layers) in self.passes
 
     def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         raise NotImplementedError
@@ -236,6 +296,8 @@ class MemorySurfacing(MemoryBase):
             out["memory_write"] = float(m.last_write)
         if m.last_adapt is not None:
             out["memory_adapt"] = float(m.last_adapt)
+        if m.last_num_chunks is not None:
+            out["memory_chunks"] = float(m.last_num_chunks)
         if m.last_event_mean is not None:
             out["memory_event_size"] = float(m.last_event_mean)
             out["memory_event_min"] = float(m.last_event_min)
@@ -247,6 +309,8 @@ class MemoryAsLayer(MemorySurfacing):
     """MAL: memory as its own residual sub-layer within the block."""
 
     def forward(self, stream, attn_output, state=None, current_depth: int = 0):
+        if not self._runs_at(current_depth):
+            return stream, state
         retrieved, state = self.mem(stream, state)
         return stream + retrieved, state
 
@@ -261,11 +325,26 @@ class MemoryAsGate(MemorySurfacing):
         self.gate = nn.Linear(self.hidden_size, self.hidden_size)
         nn.init.zeros_(self.gate.weight)
         nn.init.constant_(self.gate.bias, -3.0)
+        # Mean gate opening from the last firing. Unlike MAL's full-weight
+        # residual add - which the trunk can only neutralize by cancelling it
+        # downstream, invisibly - this is the model's own answer to "do I want
+        # the memory", as one number.
+        self.last_gate: Optional[Tensor] = None
 
     def forward(self, stream, attn_output, state=None, current_depth: int = 0):
+        if not self._runs_at(current_depth):
+            return stream, state
         retrieved, state = self.mem(stream, state)
         g = self.gate(stream).sigmoid()
+        with torch.no_grad():
+            self.last_gate = g.mean()
         return g * retrieved + (1 - g) * stream, state
+
+    def training_metrics(self) -> dict:
+        out = super().training_metrics()
+        if self.last_gate is not None:
+            out["memory_gate"] = float(self.last_gate)
+        return out
 
 
 # EML (core B) can never be weighted below this - the exploration floor that

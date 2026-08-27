@@ -3,12 +3,24 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (9 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (10 entries)
 
 ## `mag`
 
 Memory-as-Gate (Titans): a memory branch run parallel to attention and blended with it
 through a learned gate.
+
+## `mag_energy`
+
+One gated memory at the FIRST recurrent pass only, with the detached (energy) update, a
+predictive NextLat write target and a 4-token update grid. The gate makes the model
+state whether it wants the memory as a single readable number instead of leaving it to
+cancel a full-weight residual add; pass 0 is the only recurrent step every input reaches
+and every gradient step trains, so nothing starves the way a depth-spread bank does; and
+the fine grid is what gives the test-time update enough chunks to be visible at all,
+since retrieval reads pre-write weights. The memory net is a plain swish MLP - the one
+non-periodic function class in an otherwise harmonic model, and the only kind whose
+whole fast-weight set is linear maps.
 
 ## `mal`
 
