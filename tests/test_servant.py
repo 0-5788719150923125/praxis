@@ -193,3 +193,37 @@ def test_a_no_grad_probe_does_not_advance_the_running_stats():
     with torch.no_grad():
         act(probe)
     assert torch.equal(act.log_s_mean, before)
+
+
+# ── print(model) is a structural listing ─────────────────────────────────
+
+
+def test_extra_repr_follows_pytorch_convention():
+    """Servant's repr used to be the modulation formula, in prose.
+
+    ``print(model)`` - and the web blueprint tab that renders it - is a listing
+    of structure, where every other module reports ``key=value``. A sentence in
+    that position breaks the column the reader is scanning. The formula belongs
+    in the class docstring.
+    """
+    import torch
+
+    from praxis.activations.servant import MOD_MAX, SIGNAL_SIGMAS, Servant
+
+    act = Servant()
+    fields = [part.strip() for part in act.extra_repr().split(",")]
+    assert fields, "extra_repr is empty"
+    for field in fields:
+        assert "=" in field, f"not a key=value field: {field!r}"
+        key, value = field.split("=", 1)
+        assert key.isidentifier(), f"not an identifier: {key!r}"
+        assert value.strip(), f"no value for {key!r}"
+
+    assert f"mod_max={MOD_MAX}" in fields
+    assert f"signal_sigmas={SIGNAL_SIGMAS}" in fields
+
+    # Lazily materialized: the feature count only exists after a forward pass.
+    assert not any(f.startswith("features=") for f in fields)
+    act(torch.randn(2, 3, 8))
+    assert "features=8" in [p.strip() for p in act.extra_repr().split(",")]
+    assert repr(act).startswith("Servant(features=8,")

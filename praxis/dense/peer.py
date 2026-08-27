@@ -282,8 +282,12 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         nn.init.normal_(self.up.weight, std=(self.num_heads * self.k) ** -0.5)
 
     def extra_repr(self) -> str:
+        # Fields only. ``num_experts`` is ``num_keys ** 2`` by construction -
+        # the product-key grid is two-dimensional - but a parenthetical inside
+        # a value is not a field, and it broke the key=value listing that the
+        # rest of the module tree prints.
         return (
-            f"num_experts={self.num_experts} ({self.num_keys}^2), "
+            f"num_experts={self.num_experts}, num_keys={self.num_keys}, "
             f"key_dims={self.key_dims}, num_heads={self.num_heads}, k={self.k}, "
             f"expert={'glu' if self.glu else 'rank1'}, "
             f"projection={'gather' if self._gathers() else 'dense'}"

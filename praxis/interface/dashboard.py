@@ -10,7 +10,7 @@ import time
 import warnings
 from collections import deque
 from datetime import datetime
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread, current_thread
 
 import blessed
 
@@ -50,6 +50,18 @@ class TerminalDashboard:
         # Display state
         self.running = False
         self.lock = Lock()
+        # The render thread is the only writer to the terminal, and stopping it
+        # is a handshake, not a flag flip: see stop().
+        self._render_thread = None
+        self._stop_lock = RLock()
+        self._paint_lock = Lock()
+        self._streams_captured = False
+        # Distinct from terminal_manager.terminal_restored, which only says
+        # whether the terminal needs restoring - headless callers set that flag
+        # up front precisely because they never took the terminal. This one says
+        # the dashboard HAD a screen and has since given it back, which is the
+        # condition under which a log line has nowhere to be rendered.
+        self._screen_released = False
         self.previous_size = self._get_terminal_size()
         self.previous_frame = None
         self.fullscreen_log_mode = False  # Flag for fullscreen log mode
@@ -164,6 +176,13 @@ class TerminalDashboard:
     def start(self):
         """Start the dashboard."""
         self.running = True
+        self._screen_released = False
+
+        # A restarted dashboard claims a fresh screen: clear the restored flag
+        # and reopen the painter's output tap, both of which stop() shut.
+        self.terminal_manager.reset()
+        self.dashboard_output.enable()
+        self.differential_renderer.reset()
 
         # Save terminal state
         self.terminal_manager.save_state()
@@ -182,6 +201,7 @@ class TerminalDashboard:
         # Capture stdout and stderr
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
+        self._streams_captured = True
 
         # Force unbuffered output
         if hasattr(sys.stdout, "reconfigure"):
@@ -189,35 +209,92 @@ class TerminalDashboard:
         if hasattr(sys.stderr, "reconfigure"):
             sys.stderr.reconfigure(line_buffering=True)
 
-        # Start dashboard thread
-        Thread(target=self._run_dashboard).start()
+        # Start dashboard thread. Daemon, so a wedged painter can never hold
+        # the interpreter open past the force-exit watchdog.
+        self._render_thread = Thread(
+            target=self._run_dashboard, name="dashboard-render", daemon=True
+        )
+        self._render_thread.start()
 
-    def stop(self, error=False):
-        """Stop the dashboard."""
-        self.running = False
-        self.error_exit = error
-
-        # Restore stdout/stderr first
+    def _release_streams(self):
+        """Give sys.stdout/stderr back, but only if we were the ones to take them."""
+        if not self._streams_captured:
+            return
+        self._streams_captured = False
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
 
-        # Perform terminal restoration
-        if not self.terminal_manager.terminal_restored:
-            self.terminal_manager.restore_terminal()
+    def _join_render_thread(self, timeout=2.0):
+        """Wait for the painter to leave the screen.
+
+        Returns True if it stopped. Called from the render thread itself
+        (crash_with_error) this is a no-op - joining yourself deadlocks.
+        """
+        thread = self._render_thread
+        if thread is None or not thread.is_alive():
+            return True
+        if thread is current_thread():
+            return False
+        thread.join(timeout)
+        return not thread.is_alive()
+
+    def stop(self, error=False):
+        """Stop the dashboard and hand the terminal back.
+
+        Order is the whole point, and getting it wrong is what wrote dashboard
+        frames into the user's scrollback on Ctrl+C. ``stop`` is called from the
+        signal handler's cleanup thread while the render thread is mid-frame or
+        asleep in its 100ms tick; flipping ``running`` and immediately leaving
+        fullscreen let that in-flight frame paint absolute-positioned box
+        drawing onto the restored screen, interleaved with the shutdown's own
+        prints. So:
+
+          1. tell the painter to stop,
+          2. wait for it to actually stop and release the screen,
+          3. only then give stdout/stderr back to the process.
+
+        If the painter will not stop in time we shut its output tap instead, so
+        the worst case is a missing frame rather than a corrupted terminal.
+        """
+        with self._stop_lock:
+            self.running = False
+            self.error_exit = error
+
+            # The render thread owns the alternate screen and releases it on
+            # its way out of managed_terminal.
+            self._join_render_thread()
+            # Shut the painter's private tap on the real stdout unconditionally:
+            # a wedged thread waking late, or one we could not join because we
+            # ARE it, must not be able to write to a terminal we no longer own.
+            self.dashboard_output.disable()
+
+            # Perform terminal restoration (a no-op if the painter already did)
+            if not self.terminal_manager.terminal_restored:
+                self.terminal_manager.restore_terminal()
+
+            # Screen is ours again: hand stdout/stderr back so shutdown output
+            # goes to the real terminal instead of a log panel nobody renders.
+            self._screen_released = True
+            self._release_streams()
 
     def crash_with_error(self, error_text):
         """Immediately crash the dashboard and display the error."""
-        # Restore original stdout/stderr first
-        sys.stdout = self.original_stdout
-        sys.stderr = self.original_stderr
-
-        # Force stop the dashboard
+        # Force stop the dashboard. This runs ON the render thread, so no
+        # further frame can be produced once running is clear - but the tap is
+        # closed anyway, because the error path below writes to the same
+        # terminal we are about to release.
         self.running = False
         self.error_exit = True
+        self._screen_released = True
+        self.dashboard_output.disable()
 
-        # Restore terminal
+        # Release the screen BEFORE handing stdout back, so anything another
+        # thread prints in the meantime lands on the restored terminal rather
+        # than on the alternate screen we are tearing down.
         if not self.terminal_manager.terminal_restored:
             self.terminal_manager.restore_terminal()
+
+        self._release_streams()
 
         # Small delay to ensure terminal mode switch completes
         time.sleep(0.1)
@@ -240,7 +317,17 @@ class TerminalDashboard:
         sys.exit(1)
 
     def add_log(self, message):
-        """Add a log message."""
+        """Add a log message.
+
+        Once the dashboard has released the screen there is no LOG panel left
+        to render into, and the dashboard strips every other handler off every
+        logger when it starts - so buffering here would silently swallow all of
+        the shutdown's logging. Forward to the real stderr instead.
+        """
+        if self._screen_released:
+            self._log_to_original(message)
+            return
+
         with self.lock:
             # Strip ANSI codes and split the message into lines
             stripped_message = self.text_utils.strip_ansi(message)
@@ -260,6 +347,17 @@ class TerminalDashboard:
                     lm.add_log(line)
             except Exception:
                 pass
+
+    def _log_to_original(self, message):
+        """Write a log line to the process's real stderr, never raising."""
+        try:
+            text = self.text_utils.strip_ansi(str(message)).rstrip()
+            if not text:
+                return
+            self.original_stderr.write(text + "\n")
+            self.original_stderr.flush()
+        except Exception:
+            pass
 
     def force_redraw(self):
         """Force a full redraw."""
@@ -348,11 +446,18 @@ class TerminalDashboard:
             new_frame, self._get_terminal_size().columns
         )
 
-        # Use differential renderer for efficient character-level updates
-        self.differential_renderer.render_frame(new_frame, self.dashboard_output)
-
-        # Store frame for web streaming
+        # Store frame for web streaming. Unconditional: the web Terminal still
+        # wants the frame even when the CLI no longer owns the screen.
         self.previous_frame = new_frame
+
+        # Use differential renderer for efficient character-level updates.
+        # The check is inside the lock and re-checked after acquiring it: stop()
+        # can land between the two, and a frame that escapes here after the
+        # terminal is restored is exactly the scrollback corruption this guards.
+        with self._paint_lock:
+            if not self.running or self.terminal_manager.terminal_restored:
+                return
+            self.differential_renderer.render_frame(new_frame, self.dashboard_output)
 
     def _create_frame(self):
         """Create a new dashboard frame."""

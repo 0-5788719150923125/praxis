@@ -112,6 +112,27 @@ def test_repr_names_the_expert_form():
     assert "expert=glu" in gated.extra_repr()
 
 
+def test_repr_is_a_field_list():
+    """It read ``num_experts=289 (17^2)`` - a parenthetical inside a value.
+
+    ``print(model)`` is a field listing; the product-key grid is real
+    information, but it is a field of its own, not an annotation glued to a
+    number that no longer parses as one.
+    """
+    peer = ParameterEfficientExpertRetrieval(make_config())
+    fields = [part.strip() for part in peer.extra_repr().split(",")]
+    for field in fields:
+        key, sep, value = field.partition("=")
+        assert sep, f"not a key=value field: {field!r}"
+        assert key.isidentifier(), f"not an identifier: {key!r}"
+        assert value.strip(), f"no value for {key!r}"
+
+    assert f"num_experts={peer.num_experts}" in fields
+    assert f"num_keys={peer.num_keys}" in fields
+    # The invariant the parenthetical was trying to convey, still visible.
+    assert peer.num_keys**2 == peer.num_experts
+
+
 def test_explicit_expert_count_overrides_the_budget():
     """Registry profiles may pin the bank; the rows factor must not fight it."""
     module = ParameterEfficientExpertRetrieval(make_config(), num_experts=256, glu=True)

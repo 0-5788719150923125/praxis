@@ -71,7 +71,12 @@ CONVERSATION = [
 # --beta's instantiated module tree (captured from build/runs/<hash>/spec.json).
 MODEL_ARCHITECTURE = """PraxisForCausalLM(
   (encoder): ByteLatentEncoder(architecture='conv', patching='space', n_encoders=2, n_decoders=2)
-  (embeds): AdditiveEmbedding(ByteEmbedding(vocab=264, dim=64) + HashEmbedding(vocab=16384, dim=64, groups=[3, 4, 5], functions=1))
+  (embeds): AdditiveEmbedding(
+    (embeddings): ModuleList(
+      (0): ByteEmbedding(vocab=264, dim=64)
+      (1): HashEmbedding(vocab=16384, dim=64, groups=[3, 4, 5], functions=1)
+    )
+  )
   (decoder): SequentialDecoder(
     (width): FullWidth()
     (controller): BaseController()

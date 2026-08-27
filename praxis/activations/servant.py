@@ -196,8 +196,15 @@ class Servant(Serpent):
         return out
 
     def extra_repr(self) -> str:
-        return (
-            "a_eff = a*(1 + %s*tanh(v)*tanh(z/%s)), z = (log rms(x) - mean)/std "
-            "on running stats, v zero-init (== Serpent at init)"
-            % (MOD_MAX, SIGNAL_SIGMAS)
-        )
+        """Configuration, in PyTorch's ``key=value`` convention.
+
+        ``print(model)`` is a structural listing, and every other module in it
+        reports its config as comma-separated assignments. The modulation
+        formula belongs in the class docstring (above), not in the one line a
+        reader scans to find the shape of a layer.
+        """
+        parts = [f"mod_max={MOD_MAX}", f"signal_sigmas={SIGNAL_SIGMAS}"]
+        if not self.has_uninitialized_params():
+            # Lazily materialized: features only exist after the first forward.
+            parts.insert(0, f"features={self.v.shape[-1]}")
+        return ", ".join(parts)

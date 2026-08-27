@@ -33,7 +33,3 @@ class AdditiveEmbedding(nn.Module):
             embed = module(tokens)
             out = embed if out is None else out + embed
         return out
-
-    def __repr__(self) -> str:
-        parts = " + ".join(repr(m) for m in self.embeddings)
-        return f"{self.__class__.__name__}({parts})"

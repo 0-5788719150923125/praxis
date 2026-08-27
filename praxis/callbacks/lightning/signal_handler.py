@@ -85,6 +85,40 @@ class SignalHandlerCallback(Callback):
             except Exception:
                 continue
 
+    def _release_terminal(self) -> None:
+        """Put the terminal back, without taking a lock.
+
+        The paths that call this end in ``os._exit``, which runs no atexit
+        handler and gives the dashboard no chance to release the alternate
+        screen - that is how a run ends with box drawing left sitting in the
+        shell. Deliberately lock-free: this can run in signal context, where
+        blocking on a lock another thread holds would hang the process instead
+        of killing it. The exit sequence is written only if we actually entered
+        fullscreen, because an unmatched rmcup moves the cursor back into the
+        scrollback and the next writes overwrite it.
+        """
+        dashboard = getattr(self.terminal_interface, "dashboard", None)
+        manager = getattr(dashboard, "terminal_manager", None)
+        try:
+            if dashboard is not None:
+                dashboard.running = False
+                dashboard.dashboard_output.disable()
+        except Exception:
+            pass
+        try:
+            sequence = ""
+            if manager is not None and getattr(manager, "in_fullscreen", False):
+                manager.in_fullscreen = False
+                manager.terminal_restored = True
+                sequence += "\033[?1049l"  # leave the alternate screen
+            sequence += "\033[0m\033[?25h"  # reset attributes, show cursor
+            stream = sys.__stderr__
+            if stream is not None and not getattr(stream, "closed", False):
+                stream.write(sequence)
+                stream.flush()
+        except Exception:
+            pass
+
     def _handle_signal(self, signum, frame):
         """Handle shutdown signals with minimal operations in signal context.
 
@@ -133,19 +167,15 @@ class SignalHandlerCallback(Callback):
             sys.exit(130)
 
         # Third+ signal: immediate hard exit
+        self._release_terminal()
         self._emit("\n💀 Emergency exit!\n")
         os._exit(130)
 
     def _immediate_cleanup(self):
         """Perform immediate critical cleanup before forced exit."""
-        # Always try to restore cursor visibility
-        try:
-            sys.stderr.write("\033[?25h")
-            sys.stderr.flush()
-        except:
-            pass
-
-        # Stop dashboard if running
+        # Stop the dashboard FIRST: it owns the screen, and stop() waits for
+        # the render thread to leave it. Writing escape sequences while that
+        # thread is still painting is what interleaves the two.
         if self.terminal_interface and hasattr(self.terminal_interface, "dashboard"):
             try:
                 dashboard = self.terminal_interface.dashboard
@@ -153,6 +183,9 @@ class SignalHandlerCallback(Callback):
                     dashboard.stop()
             except:
                 pass
+
+        # Belt and braces if stop() could not finish.
+        self._release_terminal()
 
     def _deferred_cleanup(self):
         """Perform cleanup operations outside of signal handler context."""
@@ -219,6 +252,10 @@ class SignalHandlerCallback(Callback):
 
             time.sleep(5.0)  # Give Lightning 5 seconds to stop gracefully
             if self.signal_count == 1:  # Only if still on first signal
+                # Nothing runs after os._exit, so the screen has to be handed
+                # back here or the dashboard's last frame is what the user is
+                # left looking at.
+                self._release_terminal()
                 self._emit(
                     "\n⏱️  Timeout waiting for graceful shutdown, forcing exit...\n"
                 )

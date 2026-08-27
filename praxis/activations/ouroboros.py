@@ -338,7 +338,8 @@ class Ouroboros(Serpent):
         _STEP_COUNTS.append((curve.mean(dim=1), spread))
 
     def extra_repr(self) -> str:
-        return (
-            "max_steps=%d, per-feature hard-concrete halting, "
-            "p/q/w zero-init (== Serpent at init)" % MAX_STEPS
-        )
+        """Configuration, in PyTorch's ``key=value`` convention (see Servant)."""
+        parts = [f"max_steps={MAX_STEPS}", f"mod_max={MOD_MAX}"]
+        if not self.has_uninitialized_params():
+            parts.insert(0, f"features={self.p.shape[-1]}")
+        return ", ".join(parts)
