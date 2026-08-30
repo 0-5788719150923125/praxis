@@ -28,6 +28,7 @@ from praxis.losses.regularizers import build_regularizers
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
+from praxis.memory import MemoryBase
 from praxis.utils import create_block_ids
 
 
@@ -112,6 +113,7 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
         labels: Optional[torch.LongTensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        row_continues: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         losses = LossContainer()
@@ -183,6 +185,11 @@ class PraxisModel(PreTrainedModel):
         if patch_lengths is not None:
             positions = torch.cumsum(patch_lengths, dim=1) - patch_lengths
 
+        # Publish the batch's row linkage to the memory modules for the duration
+        # of this forward. Set unconditionally (None clears it) so a forward
+        # without links can never inherit the previous one's grouping.
+        MemoryBase.set_row_links(self.decoder, row_continues)
+
         last_hidden_state, new_key_values, new_state, losses = self.decoder(
             inputs,
             attention_mask,
@@ -192,6 +199,7 @@ class PraxisModel(PreTrainedModel):
             losses,
             labels,
             positions,
+            row_continues=row_continues,
         )
 
         return PraxisModelOutput(
@@ -612,6 +620,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         task_type_ids: Optional[torch.LongTensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        row_continues: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         # Unconditionally, before anything runs: regularizers that collect state
@@ -656,6 +665,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             block_ids=block_ids,
+            row_continues=row_continues,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             labels=labels,

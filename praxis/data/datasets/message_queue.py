@@ -278,8 +278,16 @@ class MessageQueueManager:
         assistant_mask_seqs: List[torch.Tensor] = []
         block_id_seqs: List[torch.Tensor] = []
         batch_metadata: List[Dict] = []
+        # Per-row flag: this row opens by draining the previous row's carryover,
+        # i.e. it CONTINUES the document the previous row was cut off in the
+        # middle of. Rows are emitted in order here, so the linkage is plain
+        # adjacency and a consumer can recover contiguous runs with a cumsum.
+        # The packer already knew this and threw it away at the row boundary;
+        # `block_ids` restart at 1 per row and cannot express it.
+        row_continues: List[bool] = []
 
         for _ in range(batch_size):
+            row_continues.append(self._carry_tokens is not None)
             seq_parts: List[torch.Tensor] = []
             seq_task_parts: List[torch.Tensor] = []
             seq_mask_parts: List[torch.Tensor] = []
@@ -420,6 +428,7 @@ class MessageQueueManager:
             "task_type_ids": task_id_seqs,
             "assistant_mask": assistant_mask_seqs,
             "block_ids": block_id_seqs,
+            "row_continues": row_continues,
             "metadata": batch_metadata,
         }
 

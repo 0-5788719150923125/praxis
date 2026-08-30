@@ -104,6 +104,7 @@ class WeightedIterableDataset(IterableDataset):
             task_type_ids = result.get("task_type_ids")
             assistant_mask = result.get("assistant_mask")
             block_ids = result.get("block_ids")
+            row_continues = result.get("row_continues")
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
@@ -112,6 +113,11 @@ class WeightedIterableDataset(IterableDataset):
                 torch.stack(assistant_mask) if assistant_mask else None
             )
             block_ids_tensor = torch.stack(block_ids) if block_ids else None
+            row_continues_tensor = (
+                torch.as_tensor(row_continues, dtype=torch.bool)
+                if row_continues is not None
+                else None
+            )
 
             # Per-token side channels, attached identically to every yielded
             # shape below. Collected once so a new channel is added in one
@@ -127,6 +133,8 @@ class WeightedIterableDataset(IterableDataset):
                 extras["assistant_mask"] = assistant_mask_tensor
             if block_ids_tensor is not None:
                 extras["block_ids"] = block_ids_tensor
+            if row_continues_tensor is not None:
+                extras["row_continues"] = row_continues_tensor
 
             # Handle rewards if RL is enabled. rewards is None or a 1-D tensor,
             # so test it explicitly - bool() on a multi-element tensor raises.

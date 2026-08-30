@@ -235,6 +235,106 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
     # class - everything else here is periodic (Servant experts, ArcHoPE's phase
     # warp, the harmonic head). `swish` is torch's SiLU, the paper's activation;
     # the `silu` key is transformers' copy.
+    # mag_energy's twin with the update DIFFERENTIABLE (the paper's own mode).
+    #
+    # Energy mode detaches the whole test-time update, which severs the outer
+    # loss from the memory net: retrieval reads PRE-write weights, so only chunk
+    # 0 reads W0 itself and every later chunk reads a detached constant.
+    # Measured, the gradient reaching W0 decays as 1/nc - 1.00x / 0.52x / 0.31x
+    # / 0.18x at 2 / 4 / 8 / 16 chunks - while standard mode holds it flat
+    # (1.00x / 1.00x / 1.01x / 1.03x). So under energy mode W0 is trained to be
+    # a good COLD READOUT and never to be a good INITIALIZATION for the update,
+    # which is exactly the shape every run in this line reported: gate high,
+    # gain high, adapt ~0. We were training a static function and then measuring
+    # that it behaved like one.
+    #
+    # chunk_size 4, NOT segment_block. Standard mode hard-gates segmentation off
+    # (`segment and use_energy`), so the update grid is chunk_size - leaving it
+    # at 64 would give ONE chunk at this model's latent lengths and a memory
+    # that cannot adapt at all. This keeps mag_energy's 4-latent grid by the
+    # only route standard mode has.
+    #
+    # The learned gates come back with it: to_lr / to_momentum / to_decay are
+    # theta_t / eta_t / alpha_t from the paper's Eqs. 13-14, all data-dependent,
+    # and they are what makes the step size LEARNED rather than a constant the
+    # energy rule has to hardcode. The forgetting gate is init-biased to retain
+    # (_DECAY_GATE_BIAS); at its old default it erased the memory within a few
+    # chunks.
+    "mag_standard": dict(
+        surfacing="mag",
+        passes=[0],
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=4,
+        momentum=True,
+        activation="swish",
+        use_energy=False,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
+    # mag_energy + STITCHED WRITES across linked batch rows.
+    #
+    # The write span, not the credit path, is the last standing explanation for
+    # why this line's memories never learn. A pass writes over its whole
+    # sequence, which at patch_size 8 and block_size 64 is 8-64 latents - 64-512
+    # bytes. That is enough for grammar and not for a fact, and the trunk cannot
+    # afford longer sequences at this model size.
+    #
+    # It does not have to. The packer already splits long documents across
+    # consecutive rows and drains the remainder into the next one; it simply
+    # discarded the linkage at the row boundary, because `block_ids` restart at
+    # 1 per row and cannot express it. With `row_continues` published, the
+    # memory threads its state along a run of linked rows - so the write span
+    # becomes the run's total length while the TRUNK still only ever sees one
+    # row. Memory horizon is decoupled from trunk sequence length, which no
+    # config change can buy.
+    #
+    # Total work is unchanged (a run of G rows is G batched calls over b/G rows
+    # each); what it costs is serialization into G sequential memory calls.
+    # Read `memory_run_length` x `memory_chunks` for the span actually written.
+    "mag_energy_stitch": dict(
+        surfacing="mag",
+        passes=[0],
+        stitch=True,
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        segment_block=4,
+        momentum=True,
+        activation="swish",
+        use_energy=True,
+        segment=True,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
+    # mag_energy with the test-time write FROZEN (max_lr=0): same module, same
+    # gate, same parameters, same step cost - the surprise is still computed, so
+    # the governor sees an identical run - and the only thing removed is whether
+    # the write lands. THE control the thread never had: -v, -x and -y all
+    # confounded "a gated nonlinear module at this depth" with "test-time
+    # memory", and -y's own numbers say the split is lopsided (gate 0.55 and
+    # gain 2.56 put the branch at ~76% of the output magnitude, while adapt of
+    # 0.004 puts the write at 0.4% of the readout). If this matches its live
+    # twin, the adaptation is contributing nothing measurable and the honest
+    # comparison for anything bigger is against a dense of the same size.
+    "mag_energy_static": dict(
+        surfacing="mag",
+        passes=[0],
+        max_lr=0.0,
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        segment_block=4,
+        momentum=True,
+        activation="swish",
+        use_energy=True,
+        segment=True,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     "mag_energy": dict(
         surfacing="mag",
         passes=[0],
@@ -327,6 +427,30 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "
         "and blended with it through a learned gate."
+    ),
+    "mag_standard": (
+        "mag_energy with the test-time update differentiable instead of "
+        "detached - the paper's own formulation. The outer loss can then see "
+        "the memory THROUGH its writes, so the meta-learned weights are trained "
+        "as an initialization for the update rather than only as a cold "
+        "readout, and the per-token learning rate, momentum and forgetting "
+        "gates are learned rather than fixed. Costs the scan trajectory in "
+        "VRAM, which is affordable at one memory call per forward."
+    ),
+    "mag_energy_stitch": (
+        "mag_energy with writes stitched across linked batch rows. The packer "
+        "splits long documents across consecutive rows; threading the memory "
+        "state along such a run makes the write span the run's total length "
+        "while the trunk still sees only one row, decoupling the memory's "
+        "horizon from the sequence length the model can afford to train on."
+    ),
+    "mag_energy_static": (
+        "mag_energy with the test-time write frozen at the meta-learned init "
+        "(max_lr=0). A control, not a way to run the model: it isolates how "
+        "much of a memory profile's benefit comes from the module being a "
+        "gated nonlinearity at that depth versus from the memory actually "
+        "learning in context. Same parameters and same step cost as its live "
+        "twin, so the two differ in exactly one thing."
     ),
     "mag_energy": (
         "One gated memory at the FIRST recurrent pass only, with the detached "

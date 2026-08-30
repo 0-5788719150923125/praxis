@@ -39,6 +39,25 @@ class MemoryBase(nn.Module):
     ) -> Tuple[Tensor, Optional[NeuralMemState]]:
         return stream, state
 
+    # Per-forward row linkage, set by the model before the decoder runs (see
+    # ``set_row_links``). Not threaded through the block's positional call
+    # chain on purpose: that chain already dispatches on argument count in
+    # places, and a ninth positional is how those traps get sprung.
+    _row_links: Optional[Tensor] = None
+
+    @staticmethod
+    def set_row_links(root: nn.Module, links: Optional[Tensor]) -> None:
+        """Publish this forward's row linkage to every memory under ``root``.
+
+        ``links[i]`` is True when batch row i CONTINUES row i-1 - the packer
+        split one document across them. Consumed only while training: a
+        generation forward is a single continuous stream with no batch to
+        stitch, and honouring a stale flag there would group unrelated rows.
+        """
+        for module in root.modules():
+            if isinstance(module, MemoryBase):
+                module._row_links = links
+
     def training_metrics(self) -> dict:
         """Diagnostic scalars surfaced each logging step (no-op by default)."""
         return {}
@@ -181,6 +200,25 @@ class MemorySurfacing(MemoryBase):
                 "order": 9,
             },
         },
+        "memory_run_length": {
+            "description": (
+                "Mean batch rows per stitched run. The packer splits long "
+                "documents across consecutive rows; with row linkage published "
+                "the memory threads its state along a run, so the WRITE SPAN is "
+                "this many rows' worth of latents while the trunk still only "
+                "sees one row. 1.0 means no stitching happened - either the "
+                "linkage was absent or every row started a fresh document. "
+                "Multiply by Memory Chunks to read the span the memory actually "
+                "wrote over."
+            ),
+            "chart": {
+                "title": "Memory Run Length",
+                "y_label": "rows / run",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 8,
+            },
+        },
         "memory_chunks": {
             "description": (
                 "Chunks the store pass resolved the sequence into. This is the "
@@ -255,6 +293,12 @@ class MemorySurfacing(MemoryBase):
             dim=self.hidden_size,
             model=build_memory_model(config, spec),
             chunk_size=spec.get("chunk_size", 64),
+            # 0.0 freezes the fast weights at W0 while leaving everything else
+            # in place - the static-memory control (see the "..._static"
+            # profiles). The surprise is still computed, so step cost and the
+            # governor's view of the run are unchanged and the only difference
+            # against the live profile is whether the write lands.
+            max_lr=spec.get("max_lr", 0.01),
             momentum=spec.get("momentum", True),
             use_energy=spec.get("use_energy", False),
             segment=spec.get("segment", False),
@@ -273,6 +317,120 @@ class MemorySurfacing(MemoryBase):
         passes = spec.get("passes")
         self.passes = None if passes is None else frozenset(int(p) for p in passes)
         self.num_layers = max(1, int(getattr(config, "num_layers", 1) or 1))
+        # Opt-in, so every profile written before row linkage existed keeps
+        # its exact behaviour and a stitched run differs from its unstitched
+        # twin by one declared key.
+        self.stitch = bool(spec.get("stitch", False))
+        # Mean rows per stitched run for the last forward (1.0 = no stitching).
+        self.last_run_length: Optional[float] = None
+
+    def _stitched(self, stream: Tensor, state):
+        """Run the memory over CONTIGUOUS RUNS of batch rows instead of over
+        each row independently.
+
+        The packer splits long documents across consecutive rows and drains the
+        remainder into the next one, so a run of rows is often one document cut
+        into pieces. Nothing downstream knew that: ``block_ids`` restart at 1
+        per row and cannot express a link across rows. With ``row_continues``
+        published for the forward, a run is recovered by a cumsum and the
+        memory threads its state along it - row k of a run is stored into the
+        weights row k+1 retrieves from, so the WRITE SPAN becomes the run's
+        total length while the trunk still only ever sees one row.
+
+        That decoupling is the point. The write span was 8-64 latents (64-512
+        bytes), which is enough for local syntax and not for anything that
+        deserves the word memory; the trunk cannot afford longer sequences at
+        this model size, but the memory can afford a longer stream because its
+        cost is linear in tokens and it is only reading.
+
+        Cost is unchanged in total work: a run of length G is G batched calls
+        over b/G rows each, not G calls over b rows. What it costs is
+        serialization - G sequential memory calls per forward instead of one.
+
+        APPROXIMATION worth stating: a continuing row holds the tail of the
+        carried document AND whatever fresh documents were packed after it, so
+        a stitched write crosses those boundaries. The memory already writes
+        across document boundaries inside a single row (it does not consume
+        ``block_ids``), so this widens an existing approximation rather than
+        introducing one. Resetting on document starts is the follow-up.
+        """
+        links = self._row_links
+        b = stream.shape[0]
+        if (
+            not self.stitch
+            or links is None
+            or not self.training
+            or links.shape[0] != b
+            or not bool(links.any())
+        ):
+            return self.mem(stream, state)
+
+        links = links.to(stream.device)
+        starts = ~links
+        starts[0] = True  # row 0 can never continue anything
+        gid = torch.cumsum(starts.long(), 0) - 1  # (b,) run index, 0-based
+        num_runs = int(gid[-1].item()) + 1
+        # Position within the run: distance from the run's first row.
+        first = torch.zeros(num_runs, dtype=torch.long, device=stream.device)
+        first.scatter_reduce_(
+            0,
+            gid,
+            torch.arange(b, device=stream.device),
+            reduce="amin",
+            include_self=False,
+        )
+        pos = torch.arange(b, device=stream.device) - first[gid]
+
+        run_state = self.mem.init_state(num_runs, stream.device)
+        out = torch.zeros_like(stream)
+        row_state = self.mem.init_state(b, stream.device)
+        for step in range(int(pos.max().item()) + 1):
+            idx = (pos == step).nonzero(as_tuple=True)[0]
+            if idx.numel() == 0:
+                break
+            runs = gid[idx]
+            sub = NeuralMemState(
+                run_state.seq_index,
+                {k: v[runs] for k, v in run_state.weights.items()},
+                {k: v[runs] for k, v in run_state.momentum.items()},
+                {k: v[runs] for k, v in run_state.second_moment.items()},
+            )
+            o, new = self.mem(stream[idx], sub)
+            out = out.index_copy(0, idx, o)
+            # index_copy (out-of-place) rather than in-place assignment: the
+            # standard-mode update is differentiable and these carry a graph.
+            run_state = NeuralMemState(
+                new.seq_index,
+                {
+                    k: v.index_copy(0, runs, new.weights[k])
+                    for k, v in run_state.weights.items()
+                },
+                {
+                    k: v.index_copy(0, runs, new.momentum[k])
+                    for k, v in run_state.momentum.items()
+                },
+                {
+                    k: v.index_copy(0, runs, new.second_moment[k])
+                    for k, v in run_state.second_moment.items()
+                },
+            )
+            row_state = NeuralMemState(
+                new.seq_index,
+                {
+                    k: v.index_copy(0, idx, new.weights[k])
+                    for k, v in row_state.weights.items()
+                },
+                {
+                    k: v.index_copy(0, idx, new.momentum[k])
+                    for k, v in row_state.momentum.items()
+                },
+                {
+                    k: v.index_copy(0, idx, new.second_moment[k])
+                    for k, v in row_state.second_moment.items()
+                },
+            )
+        self.last_run_length = float(b) / max(num_runs, 1)
+        return out, row_state
 
     def _runs_at(self, current_depth: int) -> bool:
         """Whether the memory fires at this recurrent step."""
@@ -298,6 +456,8 @@ class MemorySurfacing(MemoryBase):
             out["memory_adapt"] = float(m.last_adapt)
         if m.last_num_chunks is not None:
             out["memory_chunks"] = float(m.last_num_chunks)
+        if self.last_run_length is not None:
+            out["memory_run_length"] = float(self.last_run_length)
         if m.last_event_mean is not None:
             out["memory_event_size"] = float(m.last_event_mean)
             out["memory_event_min"] = float(m.last_event_min)
@@ -311,7 +471,7 @@ class MemoryAsLayer(MemorySurfacing):
     def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         if not self._runs_at(current_depth):
             return stream, state
-        retrieved, state = self.mem(stream, state)
+        retrieved, state = self._stitched(stream, state)
         return stream + retrieved, state
 
 
@@ -334,7 +494,7 @@ class MemoryAsGate(MemorySurfacing):
     def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         if not self._runs_at(current_depth):
             return stream, state
-        retrieved, state = self.mem(stream, state)
+        retrieved, state = self._stitched(stream, state)
         g = self.gate(stream).sigmoid()
         with torch.no_grad():
             self.last_gate = g.mean()

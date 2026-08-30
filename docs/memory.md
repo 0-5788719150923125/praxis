@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (10 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (13 entries)
 
 ## `mag`
 
@@ -21,6 +21,30 @@ the fine grid is what gives the test-time update enough chunks to be visible at 
 since retrieval reads pre-write weights. The memory net is a plain swish MLP - the one
 non-periodic function class in an otherwise harmonic model, and the only kind whose
 whole fast-weight set is linear maps.
+
+## `mag_energy_static`
+
+mag_energy with the test-time write frozen at the meta-learned init (max_lr=0). A
+control, not a way to run the model: it isolates how much of a memory profile's benefit
+comes from the module being a gated nonlinearity at that depth versus from the memory
+actually learning in context. Same parameters and same step cost as its live twin, so
+the two differ in exactly one thing.
+
+## `mag_energy_stitch`
+
+mag_energy with writes stitched across linked batch rows. The packer splits long
+documents across consecutive rows; threading the memory state along such a run makes the
+write span the run's total length while the trunk still sees only one row, decoupling
+the memory's horizon from the sequence length the model can afford to train on.
+
+## `mag_standard`
+
+mag_energy with the test-time update differentiable instead of detached - the paper's
+own formulation. The outer loss can then see the memory THROUGH its writes, so the meta-
+learned weights are trained as an initialization for the update rather than only as a
+cold readout, and the per-token learning rate, momentum and forgetting gates are learned
+rather than fixed. Costs the scan trajectory in VRAM, which is affordable at one memory
+call per forward.
 
 ## `mal`
 

@@ -16,8 +16,15 @@ With ``use_energy=True`` the whole test-time update runs detached: the surprise
 gradient is a purely local learning rule and no scan trajectory / second-order
 graph is retained (that trajectory dominates VRAM). The learned update gates are
 replaced by a fixed Adam-style rule - per-chunk EMAs of the surprise (1st/2nd
-moment) give a scale-invariant step, so a constant learning rate stays safe and
-there are no untrained gate heads. Training the encoder on the reconstruction
+moment) give a direction, which is then scaled by the segment-start weights' own
+RMS so the write is a constant RELATIVE perturbation. That second half is not
+cosmetic: ``m_hat / sqrt(v_hat)`` is sign-like, so without it the step is a fixed
+ABSOLUTE ``max_lr`` while W0 is a trained parameter that grows unchecked (the
+readout is behind ``out_norm``, so nothing constrains the memory net's output
+magnitude), and the test-time update decays into irrelevance over a run - see
+``_step_scale``, which also divides by ``sqrt(num_chunks)`` so the update grid
+is not a second, undeclared learning rate. There are no untrained gate heads
+either way. Training the encoder on the reconstruction
 energy would collapse (value -> 0), so instead the key projection is tied to the
 query projection - the shared addressing map learns on the task through
 retrieval - and the value side is fixed to identity, leaving ``combine`` to adapt
@@ -213,10 +220,12 @@ class NeuralMemory(nn.Module):
         # hold. The target is stop-gradded (the detached update ctx) and the loss
         # is Huber, both per NextLat. Only meaningful in energy mode (recon mode
         # there fixes the value side to identity).
+        # The predictive target is stop-gradded EXPLICITLY (see the forward), not
+        # merely by sitting inside energy mode's no_grad region - so it is
+        # available in standard mode too. Without that detach the encoder could
+        # minimize its own surprise by making the next latent trivially
+        # predictable, the BYOL/SimSiam collapse.
         assert write_objective in ("recon", "predictive"), write_objective
-        assert (
-            write_objective == "recon" or use_energy
-        ), "predictive write_objective requires use_energy"
         self.write_objective = write_objective
         self.predictive = write_objective == "predictive"
         # True: differentiate every chunk in one batched pass and collapse the
@@ -459,6 +468,56 @@ class NeuralMemory(nn.Module):
             t_event[:, j] = run
         return reset, t_event
 
+    def _step_scale(
+        self, w0: Weights, name: str, ndim: int, b: int, num_chunks: int = 1
+    ) -> Tensor:
+        """What one chunk's update step is scaled by, shaped to broadcast over a
+        surprise/update tensor of ``ndim`` dims. Two normalizations, so that
+        ``max_lr`` means the same thing regardless of how big the memory net's
+        weights have grown and regardless of how finely the pass is chunked.
+
+        ``u = m_hat / (sqrt(v_hat) + eps)`` is sign-like, so without this the
+        test-time step is a FIXED ABSOLUTE ``max_lr`` per element while ``W0``
+        is a trained parameter free to grow - and it does, because the readout
+        sits behind ``out_norm`` (RMSNorm, exactly scale-invariant), leaving the
+        memory net's output magnitude a mode the outer loss cannot see and a
+        sign-based optimizer random-walks upward. abstractinator-x measured the
+        consequence: raw surprise up 85,935x (an output scale of ~185x),
+        ``memory_write`` down 14x and ``memory_adapt`` down 78x to 0.010, so the
+        module ended the run as a large static nonlinearity that the gate still
+        wanted (0.53) but that no longer learned anything in context. Scaling by
+        the parameter's own RMS makes the write a constant RELATIVE
+        perturbation, which is the invariance this rule always claimed: measured
+        across a 185x weight-scale sweep, write holds at 0.031 and adapt at
+        0.07-0.09 where the absolute step decayed to 0.0027 and 0.0087.
+
+        Taken from the SEGMENT-START weights, not the running ones, so every
+        chunk in a pass is scaled identically and the parallel and sequential
+        paths cannot drift apart.
+
+        The second normalization is ``1/sqrt(num_chunks)``, and it exists so the
+        UPDATE GRID stops acting as a hidden learning rate. ``u`` is sign-like
+        and roughly decorrelated across chunks, so a pass's total write
+        accumulates as ``max_lr * sqrt(nc)``: measured, ``write / sqrt(nc)``
+        sits at 0.0104-0.0115 against a ``max_lr`` of 0.01 across grids from 2
+        to 32 chunks. Halving ``segment_block`` therefore multiplied the
+        effective step by 1.41 as a silent side effect, so two profiles sharing
+        a ``max_lr`` but differing in grid were not running the same rule - the
+        kind of undeclared knob this repo's no-tuning rule exists to remove.
+        With this, ``max_lr`` is the TOTAL RELATIVE WRITE PER PASS and the grid
+        sets only granularity, not strength.
+
+        NOTE this REDEFINES ``max_lr`` rather than merely tidying it. Runs
+        before this were writing ``max_lr * sqrt(nc)`` per pass - for
+        abstractinator-y, whose median grid is 5-9 chunks, an effective
+        0.022-0.030 against the nominal 0.01. A later run at the same nominal
+        value is a genuinely gentler one, and is not comparable to -y on that
+        axis.
+        """
+        rms = w0[name].flatten(1).pow(2).mean(-1).sqrt().clamp(min=self.eps)
+        rms = rms / max(1.0, float(num_chunks)) ** 0.5
+        return rms.reshape((b,) + (1,) * (ndim - 1))
+
     def _adam_update(
         self,
         weights: Weights,
@@ -500,7 +559,12 @@ class NeuralMemory(nn.Module):
             else:
                 m, m_hat = s, s
             u = m_hat / ((v / c2.reshape(bshape)).sqrt() + self.eps)
-            w_t = _affine_scan(keep, self.max_lr * u, weights[name])  # (b, nc, *p)
+            step = (
+                self.max_lr
+                * u
+                * self._step_scale(weights, name, s.dim(), b, num_chunks)
+            )
+            w_t = _affine_scan(keep, step, weights[name])  # (b, nc, *p)
             chunk_weights[name] = w_t
             new_weights[name] = w_t[:, -1]
             new_m[name] = m[:, -1] if self.use_momentum else momentum[name]
@@ -678,8 +742,14 @@ class NeuralMemory(nn.Module):
             # falls back to itself (a single self-recon token, harmless) - the
             # shift is taken over the real prefix, never off the end into the
             # pad, which would train it to predict zero.
+            # The predictive target is detached explicitly. In energy mode the
+            # surrounding no_grad already did it; in standard mode nothing would,
+            # and a differentiable next-latent target lets the encoder minimize
+            # surprise by collapsing the stream instead of by memorizing it. The
+            # recon target is NOT detached - `to_values` is a W_V the paper
+            # trains in the outer loop (Eq. 12).
             tgt = (
-                self._shift_targets(stored, n)
+                self._shift_targets(stored, n).detach()
                 if self.predictive
                 else self.to_values(stored)
             )
@@ -911,7 +981,17 @@ class NeuralMemory(nn.Module):
                     t_event = torch.full((b,), i + 1, device=seq.device)
 
                 self._update_chunk(
-                    w, m, v, surprise, is_b, t_event, b, stored, valid[i]
+                    w,
+                    m,
+                    v,
+                    surprise,
+                    is_b,
+                    t_event,
+                    b,
+                    stored,
+                    valid[i],
+                    W0,
+                    num_chunks,
                 )
 
         retrieved = torch.cat(retrieved_chunks, dim=1)
@@ -939,7 +1019,20 @@ class NeuralMemory(nn.Module):
 
         return retrieved, NeuralMemState(seq_index + n, w, m, v)
 
-    def _update_chunk(self, w, m, v, surprise, is_b, t_event, b, stored, valid=None):
+    def _update_chunk(
+        self,
+        w,
+        m,
+        v,
+        surprise,
+        is_b,
+        t_event,
+        b,
+        stored,
+        valid=None,
+        w0=None,
+        num_chunks=1,
+    ):
         """One chunk of the test-time weight update, in place on the running
         ``w``/``m``/``v`` dicts. Energy mode = the Adam-style rule; standard mode
         = learned momentum/decay gates. Mirrors ``_adam_update`` / the standard
@@ -962,7 +1055,14 @@ class NeuralMemory(nn.Module):
                 else:
                     m_hat = s
                 u = m_hat / ((v[name] / c2.reshape(shp)).sqrt() + self.eps)
-                w[name] = (1.0 - self.weight_decay) * w[name] + self.max_lr * u
+                # Relative step, from the SEGMENT-START weights - see
+                # _step_scale. w0 is None only for direct calls in tests.
+                scale = (
+                    1.0
+                    if w0 is None
+                    else self._step_scale(w0, name, s.dim(), b, num_chunks)
+                )
+                w[name] = (1.0 - self.weight_decay) * w[name] + self.max_lr * u * scale
         else:
             # Real positions only, matching the parallel path: a mean over the
             # padded tail is diluted toward zero and would drive the trailing

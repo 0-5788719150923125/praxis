@@ -6,7 +6,13 @@ import torch.nn as nn
 
 from praxis import PraxisConfig
 from praxis.blocks.transformer import TransformerBlock
-from praxis.memory import NeuralMemory, NeuralMemState, mem_state_detach
+from praxis.memory import (
+    MemoryBase,
+    NeuralMemory,
+    NeuralMemState,
+    mem_state_detach,
+)
+from praxis.memory.surfacings import MemorySurfacing
 from praxis.memory.neural_memory import _affine_scan
 from praxis.modeling import PraxisForCausalLM
 
@@ -193,13 +199,18 @@ def test_readout_delta_is_zero_without_writes():
     assert float(mem.last_write) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_readout_delta_is_not_a_restatement_of_the_write_ratio():
-    """Growing the meta-learned weights by k divides the WRITE ratio by exactly
-    k - it is a fixed update step over a growing ||W0||, and carries no news
-    about the memory. The readout delta does not follow that law: its
-    denominator is RMS-normalized by out_norm and stays put, so what it reports
-    is how much the trunk's view of the memory actually moved."""
-    scale = 32.0
+@pytest.mark.parametrize("scale", [3.0, 32.0, 185.0])
+def test_write_strength_is_invariant_to_the_weight_scale(scale):
+    """The test-time step is RELATIVE to ||W0||, so growing the meta-learned
+    weights by k leaves the write ratio where it was.
+
+    Before this, the step was a fixed absolute max_lr while W0 was a trained
+    parameter free to grow - and it does grow, because the readout sits behind
+    out_norm (exactly scale-invariant), so nothing constrains the memory net's
+    output magnitude. abstractinator-x drifted to ~185x over 19k steps, and the
+    write ratio fell 14x with memory_adapt following it 78x down to 0.010: the
+    module ended up a static nonlinearity the gate still wanted but that no
+    longer learned in context. This is the invariance that failure needed."""
     seq = torch.randn(2, 32, 64)
     small = _energy_mem()
     small(seq)
@@ -209,12 +220,58 @@ def test_readout_delta_is_not_a_restatement_of_the_write_ratio():
             param.mul_(scale)
     big(seq)
 
-    # The write ratio is mechanical: 1/k, to within a few percent.
-    assert float(big.last_write) == pytest.approx(
-        float(small.last_write) / scale, rel=0.1
+    assert float(big.last_write) == pytest.approx(float(small.last_write), rel=0.15)
+    # And the mechanism the write drives keeps working, rather than decaying
+    # like 1/k - the old rule reached adapt 0.0087 at this scale.
+    assert float(big.last_adapt) > 0.5 * float(small.last_adapt)
+
+
+@pytest.mark.parametrize("segment_block,chunks", [(32, 2), (16, 4), (8, 8), (4, 16)])
+def test_update_grid_is_not_a_hidden_learning_rate(segment_block, chunks):
+    """Write strength must not depend on how finely the pass is chunked.
+
+    ``u`` is sign-like and roughly decorrelated across chunks, so a pass's total
+    write used to accumulate as ``max_lr * sqrt(nc)`` - 0.0148 at 2 chunks
+    rising to 0.0649 at 32, a 4.4x swing from a knob nobody declared as a
+    learning rate. Taking abstractinator-x's segment_block from 16 to 4 silently
+    multiplied its effective step by 1.41 on exactly that mechanism. ``max_lr``
+    now means the total relative write per pass, and the grid sets granularity
+    only."""
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.SiLU(), nn.Linear(128, 64))
+    mem = NeuralMemory(
+        dim=64,
+        model=model,
+        chunk_size=64,
+        segment_block=segment_block,
+        max_lr=0.01,
+        use_energy=True,
+        segment=True,
+        write_objective="predictive",
     )
-    # The readout delta is not; it decays far more slowly than 1/k.
-    assert float(big.last_adapt) > 1.4 * float(small.last_adapt) / scale
+    mem.train()
+    mem(torch.randn(4, 64, 64))
+    assert mem.last_num_chunks == chunks
+    assert float(mem.last_write) == pytest.approx(0.01, rel=0.25)
+
+
+def test_readout_delta_is_not_a_restatement_of_the_write_ratio():
+    """The two metrics still measure different things, and the grid separates
+    them cleanly now that write strength is grid-invariant. Write is a
+    weight-space number pinned to ``max_lr`` per pass however the pass is
+    chunked; the readout delta is a function-space one that still rises with the
+    number of VISIBLE writes, because retrieval reads pre-write weights and only
+    ``chunks - 1`` of them ever reach the trunk."""
+    seq = torch.randn(2, 64, 64)
+    few = _energy_mem()
+    few(seq[:, :16])  # 2 chunks -> 1 visible write
+    many = _energy_mem()
+    many(seq)  # 8 chunks -> 7 visible writes
+
+    # Write is held flat by the grid normalization...
+    assert float(many.last_write) == pytest.approx(float(few.last_write), rel=0.3)
+    # ...while the readout still feels the extra visible writes.
+    assert float(many.last_adapt) > 1.3 * float(few.last_adapt)
 
 
 def test_readout_delta_matches_sequential_path():
@@ -452,10 +509,25 @@ def test_single_chunk_cannot_adapt():
 
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
-SURFACINGS = ["mal", "mal_energy", "mal_energy_serpent", "mag", "mag_energy"]
+SURFACINGS = [
+    "mal",
+    "mal_energy",
+    "mal_energy_serpent",
+    "mag",
+    "mag_energy",
+    "mag_energy_static",
+    "mag_standard",
+    "mag_energy_stitch",
+]
 
 # Energy-mode profiles (scale-free surprise + event-size stats surfaced).
-_ENERGY_SURFACINGS = {"mal_energy", "mal_energy_serpent", "mag_energy"}
+_ENERGY_SURFACINGS = {
+    "mal_energy",
+    "mal_energy_serpent",
+    "mag_energy",
+    "mag_energy_static",
+    "mag_energy_stitch",
+}
 
 
 def _block_config(memory_type, depth=2):
@@ -614,6 +686,185 @@ def test_sequential_matches_parallel_scan(kwargs):
             assert torch.allclose(
                 getattr(st_p, field)[k], getattr(st_s, field)[k], atol=1e-4
             )
+
+
+# --- stitched writes across linked batch rows -------------------------------
+
+
+def _links(pattern):
+    return torch.tensor(pattern, dtype=torch.bool)
+
+
+def test_stitch_is_opt_in():
+    """Profiles written before row linkage existed must be untouched by it, so
+    a stitched run differs from its twin by one declared key."""
+    from praxis.memory import build_memory
+
+    plain = build_memory(_mag_block_config("mag_energy"))
+    stitched = build_memory(_mag_block_config("mag_energy_stitch"))
+    plain.train()
+    stitched.train()
+    x = torch.randn(8, 32, 64)
+    links = _links([0, 1, 1, 1, 0, 1, 0, 0])
+
+    MemoryBase.set_row_links(plain, links)
+    MemoryBase.set_row_links(stitched, links)
+    a, _ = plain(x, x, None, current_depth=0)
+    b, _ = stitched(x, x, None, current_depth=0)
+    assert plain.last_run_length is None  # never stitched
+    assert stitched.last_run_length == pytest.approx(2.0)
+    assert not torch.allclose(a, b, atol=1e-6)
+
+
+def test_stitch_threads_state_along_a_run_only():
+    """A run's FIRST row has nothing to inherit and must be bit-identical to the
+    unstitched result; a row deeper in the run reads the earlier rows' writes."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_energy_stitch"))
+    mem.train()
+    x = torch.randn(8, 32, 64)
+
+    MemoryBase.set_row_links(mem, None)
+    base, _ = mem(x, x, None, current_depth=0)
+    MemoryBase.set_row_links(mem, _links([0, 1, 1, 1, 0, 1, 0, 0]))
+    out, state = mem(x, x, None, current_depth=0)
+
+    assert torch.allclose(base[0], out[0], atol=1e-6)  # run start
+    assert torch.allclose(base[6], out[6], atol=1e-6)  # singleton run
+    assert torch.allclose(base[7], out[7], atol=1e-6)  # singleton run
+    assert not torch.allclose(base[3], out[3], atol=1e-6)  # deep in a run
+    assert not torch.allclose(base[5], out[5], atol=1e-6)
+    # The returned state keeps the per-ROW contract the block expects.
+    assert next(iter(state.weights.values())).shape[0] == 8
+
+
+def test_stitch_is_training_only():
+    """Generation is a single continuous stream with no batch to stitch, and a
+    stale flag there would group unrelated rows."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_energy_stitch"))
+    x = torch.randn(8, 32, 64)
+    links = _links([0, 1, 1, 1, 0, 1, 0, 0])
+
+    mem.train()
+    MemoryBase.set_row_links(mem, None)
+    unstitched, _ = mem(x, x, None, current_depth=0)
+    mem.eval()
+    MemoryBase.set_row_links(mem, links)
+    evaled, _ = mem(x, x, None, current_depth=0)
+    assert torch.allclose(unstitched, evaled, atol=1e-6)
+
+
+def test_stitch_lengthens_the_write_span():
+    """The point of the feature: the span the memory writes over is
+    run_length x chunks, while the trunk still only sees one row."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_energy_stitch"))
+    mem.train()
+    x = torch.randn(8, 32, 64)
+    MemoryBase.set_row_links(mem, _links([0, 1, 1, 1, 1, 1, 1, 1]))  # one run of 8
+    mem(x, x, None, current_depth=0)
+    assert mem.last_run_length == pytest.approx(8.0)
+    assert mem.last_run_length * mem.mem.last_num_chunks >= 8 * 2
+
+
+def test_row_links_reach_the_memory_from_the_model():
+    """End-to-end: the model publishes the batch's linkage before the decoder
+    runs, so nothing has to thread it through the block's positional chain."""
+    model = PraxisForCausalLM(_block_config("mag_energy_stitch"))
+    model.train()
+    ids = torch.randint(0, 256, (4, 32))
+    model(input_ids=ids, row_continues=_links([0, 1, 0, 1]))
+    mems = [m for m in model.modules() if isinstance(m, MemorySurfacing)]
+    assert mems and all(m.last_run_length == pytest.approx(2.0) for m in mems)
+    # And a forward without linkage cannot inherit the previous one's grouping.
+    model(input_ids=ids)
+    assert all(m._row_links is None for m in mems)
+
+
+def test_standard_mode_keeps_the_outer_loss_connected_to_the_memory_net():
+    """THE reason mag_standard exists. Energy mode detaches the update, so
+    retrieval reads W0 only at chunk 0 and a detached constant at every later
+    chunk - the gradient reaching the memory net decays as 1/nc, and the meta
+    weights get trained as a cold readout rather than as an initialization for
+    the update. Differentiating through the update keeps every chunk connected."""
+    from praxis.memory import build_memory
+
+    def grad_at(memory_type, n):
+        cfg = _mag_block_config(memory_type)
+        mem = build_memory(cfg)
+        mem.train()
+        torch.manual_seed(1)
+        x = torch.randn(4, n, 64)
+        out, _ = mem(x, x, None, current_depth=0)
+        mem.zero_grad()
+        out.pow(2).mean().backward()
+        g = sum(p.grad.pow(2).sum() for p in mem.mem.memory_model.parameters()).sqrt()
+        return float(g), mem.mem.last_num_chunks
+
+    e_lo, nc_lo = grad_at("mag_energy", 8)
+    e_hi, nc_hi = grad_at("mag_energy", 64)
+    s_lo, _ = grad_at("mag_standard", 8)
+    s_hi, _ = grad_at("mag_standard", 64)
+    assert nc_hi > nc_lo
+    # Energy loses most of the signal as the grid gets finer; standard keeps
+    # substantially more of it.
+    assert (s_hi / s_lo) > 2.0 * (e_hi / e_lo)
+
+
+def test_standard_mode_supports_the_predictive_target_and_stop_grads_it():
+    """The predictive (NextLat) objective is no longer gated on energy mode, but
+    its target MUST stay stop-gradded: a differentiable next-latent target lets
+    the encoder minimize surprise by collapsing the stream rather than by
+    memorizing it."""
+    from praxis.memory import build_memory
+
+    mem = build_memory(_mag_block_config("mag_standard"))
+    mem.train()
+    assert mem.mem.predictive and not mem.mem.use_energy
+    x = torch.randn(2, 32, 64)
+    out, _ = mem(x, x, None, current_depth=0)
+    out.pow(2).mean().backward()
+    # It still trains (standard mode's store projections receive gradient)...
+    assert mem.mem.to_keys.weight.grad is not None
+    # ...and the target carries no graph.
+    tgt = mem.mem._shift_targets(mem.mem.store_norm(x), 32).detach()
+    assert not tgt.requires_grad
+
+
+def test_static_control_matches_its_live_twin_except_for_the_write():
+    """``mag_energy_static`` must differ from ``mag_energy`` in exactly one
+    thing: whether the write lands. Same parameters, same chunk count, same
+    surprise - otherwise it is not a control, it is a second variable."""
+    from praxis.memory import build_memory
+
+    live = build_memory(_mag_block_config("mag_energy"))
+    static = build_memory(_mag_block_config("mag_energy_static"))
+    live.train()
+    static.train()
+    x = torch.randn(2, 32, 64)
+    live(x, x, None, current_depth=0)
+    static(x, x, None, current_depth=0)
+
+    assert sum(p.numel() for p in live.parameters()) == sum(
+        p.numel() for p in static.parameters()
+    )
+    assert live.mem.last_num_chunks == static.mem.last_num_chunks
+    assert static.mem.max_lr == 0.0
+    # The write is frozen, and so is everything downstream of it...
+    # abs tolerance, not exact: retrieval and the readout probe are two
+    # separate vmapped forwards, so they differ at float noise even when the
+    # weights are identical.
+    assert float(static.mem.last_write) == pytest.approx(0.0, abs=1e-6)
+    assert float(static.mem.last_adapt) == pytest.approx(0.0, abs=1e-6)
+    assert float(live.mem.last_write) > 0.0
+    # ...but the surprise is still computed, so step cost and the governor's
+    # view of the run are unchanged.
+    assert static.mem.last_surprise_norm is not None
+    assert float(static.mem.last_surprise_norm) > 0.0
 
 
 # --- standard (backprop) mode -----------------------------------------------

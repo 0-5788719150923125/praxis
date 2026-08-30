@@ -39,6 +39,7 @@ class SequentialDecoder(BaseDecoder):
         losses: LossContainer = None,
         labels: Optional[Tensor] = None,
         positions: Optional[Tensor] = None,
+        row_continues: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
