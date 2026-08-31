@@ -1,6 +1,8 @@
 # Magnetism: The Right Instinct, Pointed at a Broken Instrument
 
 > Status: **idea assessed 2026-08-22, one correctness fix SHIPPED, rest parked.**
+> Followed up in [collapse_regime.md](collapse_regime.md), which finds an
+> alternating drive the static verdict here does not cover.
 > Companion to [structural_variance.md](structural_variance.md),
 > [harmony.md](harmony.md), and [harmonic_koopman.md](harmonic_koopman.md).
 > The shipped part is in `praxis/losses/contrastive_isotropy.py`.

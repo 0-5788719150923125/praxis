@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ACT2FN
+from praxis.activations import ACT2CLS, ACT2FN
 from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -70,6 +70,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         k: Optional[int] = None,
         offset_heads: bool = False,
         sparse: bool = False,
+        act_value: Optional[str] = None,
         glu: bool = False,
     ):
         """
@@ -153,6 +154,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         self.hidden_size: int = hidden_size
         self.sparse: bool = sparse
+        # Second activation for the GLU value branch (default: identity,
+        # i.e. unchanged behaviour). Named by a profile as `act_value`.
+        self.act_value: nn.Module = ACT2CLS[act_value]() if act_value else nn.Identity()
 
         # No parity constraint on hidden_size. Every use of it here is a
         # projection width, never a split: the `2` throughout is the
@@ -387,6 +391,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # A GLU expert multiplies its activated gate by a linear branch, so the
         # activation gates the value instead of merely shaping it.
         if self.gate is not None:
+            # The value branch carries `act_value` when a profile names one -
+            # otherwise it stays linear and this is the ordinary GLU expert. Two
+            # multiplied function classes, rather than one steering a linear
+            # half; see praxis/dense/dual_act.py for the argument.
+            outputs = self.act_value(outputs)
             outputs = self.act(self._project(inputs, self.gate, indices)) * outputs
         else:
             outputs = self.act(outputs)
