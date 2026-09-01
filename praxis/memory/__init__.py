@@ -309,6 +309,36 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # Stitched writes AND a differentiable update - the only pairing in which a
+    # longer write span can actually pay.
+    #
+    # `mag_energy_stitch` was self-defeating and abstractinator-e measured it:
+    # in energy mode the state handed from one row of a run to the next is
+    # DETACHED, so a row at position >= 1 reads detached weights at every chunk
+    # including chunk 0, and only RUN-START rows give the memory net any
+    # gradient at all. Measured ||grad W0|| against unstitched: 0.72x at runs of
+    # 2, 0.48x at 4, 0.35x at 8. -e ran at run_length 1.94, i.e. ~0.70x the
+    # gradient of its unstitched twin, and duly gave up that twin's advantage.
+    # Standard mode keeps a graph through the carried state, so the same sweep
+    # reads 0.99x / 0.97x / 0.93x - the span is nearly free.
+    #
+    # Everything else tracks mag_standard, including `chunk_size: 4` (standard
+    # mode has no segmentation, so the grid comes from chunk_size and leaving it
+    # at 64 would give one chunk and a dead memory).
+    "mag_standard_stitch": dict(
+        surfacing="mag",
+        passes=[0],
+        stitch=True,
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=4,
+        momentum=True,
+        activation="swish",
+        use_energy=False,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     # mag_energy with the test-time write FROZEN (max_lr=0): same module, same
     # gate, same parameters, same step cost - the surprise is still computed, so
     # the governor sees an identical run - and the only thing removed is whether
@@ -443,6 +473,12 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "state along such a run makes the write span the run's total length "
         "while the trunk still sees only one row, decoupling the memory's "
         "horizon from the sequence length the model can afford to train on."
+    ),
+    "mag_standard_stitch": (
+        "mag_standard with writes stitched across linked batch rows - the only "
+        "pairing where a longer span can pay, because a differentiable update "
+        "keeps gradient flowing back across the whole run. Stitching a DETACHED "
+        "update instead starves the memory net: only run-start rows train it."
     ),
     "mag_energy_static": (
         "mag_energy with the test-time write frozen at the meta-learned init "

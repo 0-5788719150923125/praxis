@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (13 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (14 entries)
 
 ## `mag`
 
@@ -45,6 +45,13 @@ learned weights are trained as an initialization for the update rather than only
 cold readout, and the per-token learning rate, momentum and forgetting gates are learned
 rather than fixed. Costs the scan trajectory in VRAM, which is affordable at one memory
 call per forward.
+
+## `mag_standard_stitch`
+
+mag_standard with writes stitched across linked batch rows - the only pairing where a
+longer span can pay, because a differentiable update keeps gradient flowing back across
+the whole run. Stitching a DETACHED update instead starves the memory net: only run-
+start rows train it.
 
 ## `mal`
 

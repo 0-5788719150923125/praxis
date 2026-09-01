@@ -59,7 +59,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator, abstractinator_harmonic, abstractinator_harmonic_serpent, abstractinator_harmonic_serpent_avg, abstractinator_harmonic_serpent_vocab_bank, abstractinator_harmonic_vocab_bank, abstractinator_harmonic_gdn_vocab_bank, abstractinator_harmonic_gdn_vocab_bank_static, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_byte_harmonic, calm_byte_fixed, calm_byte_hybrid, calm_byte_harmonic_codec, calm_byte_harmonic_serpent, calm_tm_ref, calm_bpe) |
 | `--encoding-type` | str | `rope` | The positional encoding to use for sequence length extrapolation (choices: nope, alibi, rope, hope, arc) |
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
-| `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline) |
+| `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, dual_act, arc, poly, scatter, kan, peer, peer_glu, peer_dual, eml_tree, spline) |
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
@@ -72,7 +72,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
-| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag, mag_standard, mag_energy_stitch, mag_energy_static, mag_energy) |
+| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag, mag_standard, mag_energy_stitch, mag_standard_stitch, mag_energy_static, mag_energy) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
@@ -84,7 +84,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--num-layers` | int | `2` | Number of layer components for controllers |
 | `--num-queries` | int | `2` | Number of queries per attention head (for GQA/MQA) |
 | `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
-| `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, activation, harmonic_kl, ouroboros_budget) |
+| `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, isotropy_probe, activation, harmonic_kl, ouroboros_budget) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper, rezero, smear) |
 | `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, arc_mixture, smear, vear, smear_batch, smear_token, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |

@@ -518,6 +518,7 @@ SURFACINGS = [
     "mag_energy_static",
     "mag_standard",
     "mag_energy_stitch",
+    "mag_standard_stitch",
 ]
 
 # Energy-mode profiles (scale-free surprise + event-size stats surfaced).
@@ -693,6 +694,41 @@ def test_sequential_matches_parallel_scan(kwargs):
 
 def _links(pattern):
     return torch.tensor(pattern, dtype=torch.bool)
+
+
+def test_stitching_a_detached_update_starves_the_memory_net():
+    """Stitching only pays with a DIFFERENTIABLE update. In energy mode the
+    state handed between rows of a run carries no graph, so a row past the first
+    reads detached weights at every chunk - only run-START rows train the memory
+    net, and the signal falls with run length. abstractinator-e ran this pairing
+    at run_length 1.94 and gave up its unstitched twin's advantage."""
+    from praxis.memory import build_memory
+
+    def grad_at(memory_type, links):
+        mem = build_memory(_mag_block_config(memory_type))
+        mem.train()
+        mem.stitch = True  # force the pairing, for energy mode
+        torch.manual_seed(1)
+        x = torch.randn(8, 32, 64)
+        MemoryBase.set_row_links(mem, links)
+        out, _ = mem(x, x, None, current_depth=0)
+        mem.zero_grad()
+        out.pow(2).mean().backward()
+        return float(
+            sum(p.grad.pow(2).sum() for p in mem.mem.memory_model.parameters()).sqrt()
+        )
+
+    one_run = _links([0, 1, 1, 1, 1, 1, 1, 1])
+    e_flat, e_run = grad_at("mag_energy_stitch", None), grad_at(
+        "mag_energy_stitch", one_run
+    )
+    s_flat, s_run = grad_at("mag_standard_stitch", None), grad_at(
+        "mag_standard_stitch", one_run
+    )
+    # Detached: most of the gradient is gone at a run of 8.
+    assert e_run / e_flat < 0.6
+    # Differentiable: nearly all of it survives.
+    assert s_run / s_flat > 0.85
 
 
 def test_stitch_is_opt_in():

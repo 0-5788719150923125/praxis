@@ -208,3 +208,34 @@ def test_contrastive_active_frac_reports_hinge_saturation():
     # No pair above the margin: the hinge is inactive and the term is dead.
     reg(torch.randn(1, seq_len, dim), None)
     assert reg.training_metrics()["contrastive_active_frac"] < 0.05
+
+
+def test_isotropy_probe_measures_without_forcing():
+    """`isotropy_probe` is the same class as an INSTRUMENT: every metric, zero
+    gradient. Removing the isotropy loss to stop demagnetizing otherwise removes
+    repr_anisotropy / repr_nematic / repr_dimensions too - which are the only
+    evidence that could say whether removing it helped. abstractinator-f lost
+    exactly that way."""
+    import torch
+    from praxis.losses.regularizers import REGULARIZER_REGISTRY
+
+    # Collapsed reps, so the hinge is genuinely active and the loss is nonzero.
+    base = torch.randn(1, 1, 32)
+    h = (base + 0.02 * torch.randn(2, 16, 32)).requires_grad_(True)
+    ids = torch.randint(1, 50, (2, 16))
+
+    live = REGULARIZER_REGISTRY["contrastive_isotropy"]()
+    probe = REGULARIZER_REGISTRY["isotropy_probe"]()
+    live_loss, probe_loss = live(h, ids), probe(h, ids)
+
+    assert float(live_loss.detach()) > 0.0
+    # The probe contributes nothing to the objective...
+    assert float(probe_loss) == 0.0
+    assert not probe_loss.requires_grad
+    # ...but reports the identical measurements, including the nonzero loss it
+    # is declining to apply.
+    lm, pm = live.training_metrics(), probe.training_metrics()
+    assert set(lm) == set(pm)
+    for key in lm:
+        assert pm[key] == pytest.approx(lm[key], rel=1e-5)
+    assert pm["contrastive_loss"] > 0.0

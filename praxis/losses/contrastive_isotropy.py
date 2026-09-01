@@ -115,15 +115,35 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         },
     }
 
-    def __init__(self, pad_id: int = 0, margin: float = RHO):
+    def __init__(
+        self, pad_id: int = 0, margin: float = RHO, observe_only: bool = False
+    ):
         super().__init__()
         self.pad_id = pad_id
         self.margin = margin
+        # Diagnostic-only mode: compute every metric, contribute NO gradient.
+        # The geometry readings this class owns - repr_anisotropy (the squared
+        # magnetization), repr_nematic (the second moment), repr_dimensions -
+        # are the instruments for representation collapse, and they lived only
+        # on the path that also applied the loss. Removing the term to stop
+        # demagnetizing therefore removed the only way to see whether that
+        # helped: abstractinator-f dropped the loss and lost the evidence in the
+        # same stroke. Measurement and force are now separable.
+        self.observe_only = observe_only
         self._metrics: dict = {}
 
     def forward(self, hidden_states: Tensor, input_ids: Tensor, **_) -> Tensor:
         # hidden_states: [B, T, D] last-layer reps. Cost is O(T^2 * D) per
         # sequence; fine at experiment scale, revisit with chunking for long T.
+        if self.observe_only:
+            with torch.no_grad():
+                self._forward_impl(hidden_states, input_ids)
+            # An exact zero with no graph: added to the loss it is a no-op, and
+            # nothing downstream has to know this regularizer is only watching.
+            return hidden_states.new_zeros(())
+        return self._forward_impl(hidden_states, input_ids)
+
+    def _forward_impl(self, hidden_states: Tensor, input_ids: Tensor) -> Tensor:
         h = F.normalize(hidden_states, dim=-1)
         sims = torch.matmul(h, h.transpose(1, 2))  # [B, T, T] cosine, diagonal = 1
 

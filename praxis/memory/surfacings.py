@@ -9,6 +9,7 @@ present. Each real surfacing wraps the shared ``NeuralMemory`` core:
 - MAG blends a parallel memory branch with attention through a learned gate.
 """
 
+import logging
 from collections import deque
 from typing import Optional, Tuple, TypeVar
 
@@ -20,6 +21,8 @@ from praxis.memory.models import build_memory_model
 from praxis.memory.neural_memory import NeuralMemory, NeuralMemState
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
+_log = logging.getLogger("praxis.memory")
 
 
 class MemoryBase(nn.Module):
@@ -321,6 +324,17 @@ class MemorySurfacing(MemoryBase):
         # its exact behaviour and a stitched run differs from its unstitched
         # twin by one declared key.
         self.stitch = bool(spec.get("stitch", False))
+        if self.stitch and self.mem.use_energy:
+            # Not an error - abstractinator-e ran this way and its curve is a
+            # real datapoint - but it is self-defeating and nothing else says so.
+            _log.warning(
+                "Memory profile stitches writes across linked rows while the "
+                "update is DETACHED (use_energy=True). The state handed between "
+                "rows carries no graph, so only run-START rows give the memory "
+                "net gradient: measured 0.72x/0.48x/0.35x of the unstitched "
+                "signal at run lengths 2/4/8. Stitching pays only with a "
+                "differentiable update - see mag_standard_stitch."
+            )
         # Mean rows per stitched run for the last forward (1.0 = no stitching).
         self.last_run_length: Optional[float] = None
 
