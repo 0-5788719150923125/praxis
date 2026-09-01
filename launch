@@ -37,6 +37,9 @@ PORT_FLAGS=(--port:PRAXIS_PORT:2100 --master-port:PRAXIS_MASTER_PORT:29500)
 # How many ports to walk past a busy one before giving up.
 PORT_SEARCH_SPAN=64
 
+# Seconds a container gets after SIGTERM to shut down before it is killed.
+STOP_GRACE_SECONDS=60
+
 # In-container identity: HOME for the re-exec'd host user, and the venv dir
 # (a named volume in Docker, a plain directory on the host).
 CONTAINER_HOME=/home/dev
@@ -183,17 +186,45 @@ allocate_ports() {
     done
 }
 
+# Tear down whatever this project has running. Two wrinkles:
+#   - Every run is started with `docker compose run`, which labels its
+#     container oneoff=True; `docker compose down` ignores those entirely (they
+#     are also hidden from a bare `compose ps`), so down alone left the training
+#     container up and printed "Done". We stop them by id first, taken from
+#     `ps -aq`, which does list one-offs, and before `down` so the network is
+#     free to be removed.
+#   - Inside the container there is no docker socket, so stopping from there is
+#     impossible; say so instead of silently succeeding.
 cmd_stop() {
     echo "[STOP] Stopping Praxis..."
     local cf
     cf=$(compose_file)
-    if command -v docker &>/dev/null && [ -f "$cf" ]; then
-        docker compose -f "$cf" down --remove-orphans
+    if ! command -v docker &>/dev/null; then
+        echo "[STOP] No docker here - run './launch stop' on the host." >&2
+        return 1
     fi
+    [ -f "$cf" ] || { echo "[STOP] No compose file at $cf." >&2; return 1; }
+
+    local ids
+    ids=$(docker compose -f "$cf" ps -aq 2>/dev/null)
+    if [ -n "$ids" ]; then
+        # SIGTERM first: the trainer installs a handler that flushes state.
+        echo "[STOP] Signalling $(echo "$ids" | wc -l) container(s); up to ${STOP_GRACE_SECONDS}s to exit..."
+        docker stop --timeout "$STOP_GRACE_SECONDS" $ids
+        docker rm -f $ids >/dev/null 2>&1
+    fi
+    docker compose -f "$cf" down --remove-orphans
     echo "[STOP] Done."
 }
 
 cmd_compose() {
+    # `./launch compose stop` means stop, not "start a container that runs
+    # stop": docker is not reachable from inside one, so the spawned container
+    # printed "[STOP] Done." while the real run kept going.
+    if [ "${1:-}" = "stop" ]; then
+        cmd_stop
+        return $?
+    fi
     echo "[DOCKER] Starting Praxis in Docker Compose environment..."
     local cf
     cf=$(compose_file)
@@ -315,8 +346,11 @@ if [ "$1" = "test" ]; then
     pytest "$@"
     EXIT_CODE=$?
 else
-    python "$SCRIPT_DIR/main.py" "$@"
-    EXIT_CODE=$?
+    # exec, so the trainer is PID 1 in the container and `docker stop`'s
+    # SIGTERM reaches its handler. As a bash child it never did: non-interactive
+    # bash defers signals until the foreground child returns, so every stop was
+    # really the post-timeout SIGKILL.
+    exec python "$SCRIPT_DIR/main.py" "$@"
 fi
 
 deactivate
