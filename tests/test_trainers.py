@@ -428,3 +428,75 @@ class TestRLCTProbeUnpacksTheBatch:
 
         assert captured.get("block_ids") is not None
         assert captured["block_ids"].shape == captured["input_ids"].shape
+
+
+def test_byte_nll_bits_is_calibrated_against_chance():
+    """The whole point of this metric is that its LEVEL means something.
+
+    `val_bits_per_byte` is the objective / ln(2), so under a composite loss it
+    can sit anywhere; this one has to read 8.0 for a uniform 256-way predictor
+    and 0.0 for a certain one, or it cannot be compared to a scaling law.
+
+    The trainer is not constructed here - `_compute_byte_nll_bits` only touches
+    `self.outputs_are_aligned`, so a stub isolates the arithmetic from the
+    Lightning module's dependencies.
+    """
+    import math
+    import types
+
+    import torch
+
+    from praxis.trainers.backpropagation import BackpropagationTrainer
+
+    stub = types.SimpleNamespace(
+        outputs_are_aligned=True,
+        _compute_byte_nll_bits=BackpropagationTrainer._compute_byte_nll_bits,
+    )
+
+    def run(logits, labels):
+        out = types.SimpleNamespace(logits=logits)
+        return stub._compute_byte_nll_bits(stub, out, labels)
+
+    labels = torch.randint(0, 256, (2, 32))
+
+    # Chance: uniform over 256 bytes is exactly 8 bits, by definition.
+    uniform = torch.zeros(2, 32, 256)
+    assert abs(float(run(uniform, labels)) - 8.0) < 1e-4
+
+    # Certainty: all mass on the right byte is 0 bits.
+    certain = torch.full((2, 32, 256), -1e4)
+    certain.scatter_(-1, labels.unsqueeze(-1), 1e4)
+    assert float(run(certain, labels)) < 1e-3
+
+    # Padding must not be averaged in. Masking half the targets to the ignore
+    # index has to leave a uniform predictor at 8.0, not pull it toward 0.
+    masked = labels.clone()
+    masked[:, ::2] = -100
+    assert abs(float(run(uniform, masked)) - 8.0) < 1e-4
+
+
+def test_byte_nll_bits_shifts_for_unaligned_encoders():
+    """An unaligned encoder's last position has no target, and the caller has
+    already shifted the labels - so the logits must lose their last step. If the
+    two conventions ever drift apart, the metric silently scores position t
+    against byte t+1 and the number stops being comparable to anything."""
+    import types
+
+    import torch
+
+    from praxis.trainers.backpropagation import BackpropagationTrainer
+
+    def run(aligned, logits, labels):
+        stub = types.SimpleNamespace(outputs_are_aligned=aligned)
+        out = types.SimpleNamespace(logits=logits)
+        return BackpropagationTrainer._compute_byte_nll_bits(stub, out, labels)
+
+    labels = torch.randint(0, 256, (2, 31))
+    logits = torch.zeros(2, 32, 256)
+
+    # Unaligned: 32 logits, 31 labels - the trim makes them meet.
+    assert abs(float(run(False, logits, labels)) - 8.0) < 1e-4
+
+    # Aligned with a mismatched shape returns None rather than raising: a
+    # missing series is readable, an exception inside validation is not.
+    assert run(True, logits, labels) is None

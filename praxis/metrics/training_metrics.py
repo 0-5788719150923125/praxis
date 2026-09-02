@@ -114,6 +114,26 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": True,
         },
     },
+    "val_byte_nll_bits": {
+        "description": (
+            "Per-byte cross-entropy in bits - MEASURED, never optimized. "
+            "val_bits_per_byte is the training objective / log(2), and under a "
+            "composite objective (HALO = CE + a geometric term, 1:1) its level "
+            "is not calibrated: a 256-way byte predictor at chance is 8.0 bits, "
+            "and composite runs open above 16. This is the plain unweighted CE "
+            "of the emitted logits against the byte labels, which is the "
+            "quantity byte-level scaling laws are written in - so it is the one "
+            "that says how far a run sits between chance (8.0) and the data's "
+            "entropy floor. Absent when logits are never materialized (cut-CE)."
+        ),
+        "chart": {
+            "title": "Byte NLL (bits)",
+            "y_label": "Bits per byte",
+            "y_scale": "linear",
+            "order": 51,
+            "is_validation": True,
+        },
+    },
     "val_codec_bpb": {
         "description": (
             "Codec reconstruction bits/byte for autoencoder encoders (CALM): "

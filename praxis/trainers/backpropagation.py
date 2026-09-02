@@ -1,5 +1,6 @@
 """Backpropagation training module for Praxis models."""
 
+import math
 import re
 import time
 
@@ -517,6 +518,10 @@ class BackpropagationTrainer(LightningModule):
                 stats["val_bits_per_byte"] = self._compute_bits_per_byte(
                     input_ids, loss
                 )
+            # The calibrated companion. See `_compute_byte_nll_bits`.
+            nll_bits = self._compute_byte_nll_bits(outputs, labels)
+            if nll_bits is not None:
+                stats["val_byte_nll_bits"] = nll_bits
         else:
             # Detach logits to prevent memory accumulation from computation graph.
             # For aligned encoders (CALM) labels stay full-length, so don't chop.
@@ -643,6 +648,24 @@ class BackpropagationTrainer(LightningModule):
         """
         From "Byte Latent Transformer: Patches Scale Better Than Tokens":
         https://arxiv.org/abs/2412.09871
+
+        NOTE ON WHAT THIS ACTUALLY IS. ``num_bytes`` cancels: multiplying the
+        mean loss up to a sum and dividing by the same count leaves
+        ``loss / ln(2)``. So this converts nats to bits and nothing more, and it
+        is per-BYTE only when ``loss`` is itself a mean per-byte NLL.
+
+        Under several of our objectives it is not. ``HALOLoss`` in honest mode
+        is explicitly composite - "standard CE on the model's emitted logits
+        PLUS the HALO geometric objective on the trunk embeddings", 1:1 - so
+        this reports (CE + a geometry penalty) / ln(2). That is monotone in the
+        objective and fine for ranking checkpoints WITHIN a run, but its LEVEL
+        is not calibrated against an entropy floor: a byte model at chance
+        should read 8.0 bits and ours have opened above 16.
+
+        The arithmetic is kept exactly as-is anyway. Every run in the archive
+        was ranked on it, and silently changing what the series means would
+        invalidate those comparisons for no gain. ``val_byte_nll_bits`` is the
+        calibrated number; this is the historical one.
         """
         batch_size, seq_length = batch.shape
         # Calculate number of bytes
@@ -651,6 +674,51 @@ class BackpropagationTrainer(LightningModule):
         sum_loss = loss * num_bytes
         # Calculate bits per byte using sum loss
         return sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
+
+    @torch.no_grad()
+    def _compute_byte_nll_bits(self, outputs, labels):
+        """Plain per-byte NLL in bits, measured and never optimized.
+
+        WHY THIS EXISTS. ``val_bits_per_byte`` is whatever the training
+        objective is, divided by ln(2) - see above. That makes the absolute
+        level uninterpretable, and the level is the thing you need to know
+        where a run sits on a scaling curve: bits per byte has a hard chance
+        ceiling (8.0 for a 256-way byte prediction) and a data-dependent floor,
+        and "how far between those are we" is not answerable from a composite.
+
+        This is the same quantity every byte-level scaling law is written in:
+        unweighted mean cross-entropy of the emitted logits against the byte
+        labels, in bits. Unweighted is deliberate - task weights and loss
+        weights are training-time policy, and folding them in would make the
+        number a property of the curriculum rather than of the model.
+
+        Returns None rather than raising when logits were never materialized
+        (cut-cross-entropy) or the head emits a non-vocab space; a missing
+        series is a readable failure, an exception in a validation loop is not.
+        """
+        logits = getattr(outputs, "logits", None)
+        if logits is None or labels is None or logits.dim() != 3:
+            return None
+
+        # Mirror `PraxisForCausalLM._compute_loss` exactly. An aligned encoder
+        # emits one logit per label already; otherwise the last position has no
+        # target and the labels were pre-shifted by the caller.
+        if not self.outputs_are_aligned:
+            logits = logits[..., :-1, :]
+        if logits.shape[:-1] != labels.shape:
+            return None
+
+        # ignore_index catches both the packer's pad and any negative sentinel
+        # (we use negative token values for internal slots), so the mean is over
+        # real bytes only. Float32 because a bf16 log_softmax over a 256-way
+        # vocab loses enough precision to move the third decimal.
+        nll = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)).float(),
+            labels.reshape(-1),
+            ignore_index=-100,
+            reduction="mean",
+        )
+        return nll / math.log(2.0)
 
     @torch.compiler.disable
     def _compute_softmax_collapse(self, output):
