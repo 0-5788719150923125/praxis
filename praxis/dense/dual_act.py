@@ -29,9 +29,13 @@ a fixed two-way split earns its keep, the scale-up path exists.
 
 A NOTE ON THE 25/25/50 VARIANT. Splitting into two quarter-width activated
 branches plus a half-width linear one would restore the GLU's linear path
-alongside both function classes. Deliberately not built: it is a third
-hypothesis, and this module exists to answer whether two multiplied function
-classes beat one at all.
+alongside both function classes. Still not built HERE, but the question it asks
+now has an answer path: ``peer_split`` (praxis/dense/peer.py, ``act_alt``) keeps
+the GLU's linear branch and makes the GATE heterogeneous instead - half the
+expert bank periodic, half swish. Same underlying hypothesis, that the model
+wants both function classes AVAILABLE rather than COMPOSED, reached without
+narrowing either branch. If that pays, a channel-split version of this class is
+the obvious next step; if it does not, there is nothing here worth widening.
 """
 
 from typing import Any, Optional, TypeVar
