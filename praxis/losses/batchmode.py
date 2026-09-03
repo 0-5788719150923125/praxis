@@ -138,8 +138,7 @@ class ModeCrossEntropyLoss(nn.Module):
     metric_descriptions = {
         "batchmode_mode": {
             "description": (
-                "Modal per-token loss (peak of the smoothed batch loss "
-                "density) - the consensus band the mode-level criterion "
+                "Modal per-token loss - the consensus band the mode-level criterion "
                 "anchors to."
             ),
             "chart": {
@@ -151,10 +150,9 @@ class ModeCrossEntropyLoss(nn.Module):
         },
         "batchmode_mean_gap": {
             "description": (
-                "Mean loss minus modal loss: the tail mass. Near 0 = the "
-                "distribution is unimodal and tight (mode ~ mean, the "
-                "criterion is inert); large = a heavy tail the mode-weighting "
-                "is actively re-weighting."
+                "Mean loss minus modal loss, the tail mass. Near 0 = unimodal and "
+                "tight, so the criterion is inert; large = a heavy tail being "
+                "re-weighted."
             ),
             "chart": {
                 "title": "Loss Mean - Mode Gap",
@@ -164,8 +162,7 @@ class ModeCrossEntropyLoss(nn.Module):
         },
         "batchmode_weight_mean": {
             "description": (
-                "Mean per-token weight over valid tokens, in [FLOOR, 1]. Low "
-                "= the density is concentrated and most tokens sit off-peak "
+                "Mean per-token weight, in [FLOOR, 1]. Low = most tokens sit off-peak "
                 "(strong selection); near 1 = weighting is nearly uniform."
             ),
             "chart": {"title": "Mode Weight Mean", "group": "batchmode", "order": 2},

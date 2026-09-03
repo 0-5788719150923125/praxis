@@ -54,10 +54,8 @@ class HaloClassifier(nn.Module):
     metric_descriptions = {
         "halo_centers_norm_mean": {
             "description": (
-                "Mean L2 norm of the HALO centroids (before centering). "
-                "Under HALO the frequency prior lives in centroid norms "
-                "(prior ~ -gamma*||c||^2/D), so drift here reads how hard "
-                "Zipf is bending the geometry."
+                "Mean L2 norm of the HALO centroids. The frequency prior lives in "
+                "these norms, so drift reads how hard Zipf is bending the geometry."
             ),
             "chart": {
                 "title": "HALO Center Norm (Mean)",

@@ -17,11 +17,11 @@ requires:
 body: >
   This run does not have to speculate about the second one. The multi-token
   draft head described below is exactly that query: $K$ bytes read off a single
-  trunk state, at positions that state never consumed, with
-  \texttt{mtp\_draft\_acc\_d$k$} recording how often the read at distance $k$ is
-  right. The profile across depths is the decay curve the fitted-signal reading
-  predicts, and it is the \textit{shape} of that profile that carries the claim,
-  not its height.\paperMtpAcceptRun{}
+  trunk state, at positions that state never consumed, with the draft accuracy
+  at each distance $k$ recording how often that read is right. The profile
+  across depths is the decay curve the fitted-signal reading predicts, and it is
+  the \textit{shape} of that profile that carries the claim, not its
+  height.\paperMtpAcceptRun{}
 
   Two things keep the measurement honest. Any autoregressive state carries some
   information about the positions after it, so a profile that merely declines is

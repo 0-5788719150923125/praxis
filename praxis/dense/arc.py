@@ -30,10 +30,8 @@ class ArcGLU(BaseDense):
     metric_descriptions = {
         "arc_act_specialization": {
             "description": (
-                "Depth-specific fraction of the per-pass activation parameters "
-                "(1 - ||mean||^2 / mean||row||^2). 0 = every recurrent pass "
-                "learned identical activation params (collapsed); rising = "
-                "passes specializing. Empty for parameter-free activations."
+                "Depth-specific fraction of the per-pass activation parameters. 0 = "
+                "every pass learned identical params; rising = passes specializing."
             ),
             "chart": {
                 "title": "Arc Depth Specialization",
@@ -49,8 +47,8 @@ class ArcGLU(BaseDense):
         "arc_act_similarity": {
             "description": (
                 "Mean pairwise cosine between the per-pass activation parameter "
-                "vectors. ~1 = all passes converged to the same activation "
-                "(collapsed); falling = passes diverging."
+                "vectors. ~1 = all passes converged to the same activation; falling = "
+                "diverging."
             ),
             "chart": {
                 "title": "Arc Depth Similarity",

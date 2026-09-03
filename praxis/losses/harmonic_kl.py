@@ -105,13 +105,8 @@ class HarmonicKLRegularizer(BaseRegularizer):
         },
         "harmonic_drift": {
             "description": (
-                "Raw mean KL in nats between the EMA readout and the live one - "
-                "how far the output distribution has moved from its own recent "
-                "past. The direct test of the constitutive-basis claim: near "
-                "zero means the readout is holding its form. Log-scaled because "
-                "a converged run spans orders of magnitude near zero; steps "
-                "where the teacher is (re)seeded emit no value at all rather "
-                "than a misleading 0."
+                "Mean KL in nats between the EMA readout and the live one - how far "
+                "the output distribution has moved from its recent past. Log-scaled."
             ),
             "chart": {
                 "title": "Readout Drift (nats)",
@@ -123,9 +118,9 @@ class HarmonicKLRegularizer(BaseRegularizer):
         },
         "harmonic_live_entropy": {
             "description": (
-                "Mean entropy of the live output distribution, in nats. Read it "
-                "beside the drift: a falling entropy with low drift is the "
-                "readout sharpening in place, which is collapse, not stability."
+                "Mean entropy of the live output distribution, in nats. Falling "
+                "entropy with low drift is the readout sharpening in place - collapse, "
+                "not stability."
             ),
             "chart": {
                 "title": "Readout Entropy",

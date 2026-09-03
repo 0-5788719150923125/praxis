@@ -126,7 +126,7 @@ def export_datasets(n: int = 4) -> dict:
         "\\captionof{table}{Training-data mixtures behind the "
         f"{len(selected)} most recent experiments, resolved from each run's "
         "recorded configuration: named collections expand to their member "
-        "datasets, and every \\texttt{--data-path} directory is its own "
+        "datasets, and every explicitly configured data directory is its own "
         "sampler. Cells are the configured per-dataset sampling weights "
         "(pre-normalization), not token counts; -- marks a dataset absent "
         "from that run's mixture.}",

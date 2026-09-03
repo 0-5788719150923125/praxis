@@ -35,10 +35,8 @@ class ArcAttention(InfiniAttention):
         **InfiniAttention.metric_descriptions,
         "arc_qkv_specialization": {
             "description": (
-                "Depth-specific fraction of the per-depth QKV bias "
-                "(1 - ||mean||^2 / mean||row||^2). 0 = every recurrent depth "
-                "learned the same bias (collapsed, no benefit over a shared "
-                "bias); rising = each depth is specializing its QKV projection."
+                "Depth-specific fraction of the per-depth QKV bias. 0 = every depth "
+                "learned the same bias; rising = each depth specializes."
             ),
             "chart": {
                 "title": "Arc Depth Specialization",
@@ -53,9 +51,8 @@ class ArcAttention(InfiniAttention):
         },
         "arc_output_specialization": {
             "description": (
-                "Depth-specific fraction of the per-depth output-projection "
-                "bias. 0 = collapsed to a shared bias; rising = each recurrent "
-                "depth specializes its output bias."
+                "Depth-specific fraction of the per-depth output-projection bias. 0 = "
+                "collapsed to a shared bias; rising = specializing."
             ),
             "chart": {
                 "title": "Arc Depth Specialization",
@@ -69,9 +66,8 @@ class ArcAttention(InfiniAttention):
         },
         "arc_qkv_similarity": {
             "description": (
-                "Mean pairwise cosine between the per-depth QKV biases. ~1 = "
-                "all depths point the same way (collapsed); falling = bias "
-                "directions diverging across depth."
+                "Mean pairwise cosine between the per-depth QKV biases. ~1 = all "
+                "depths point the same way; falling = diverging."
             ),
             "chart": {
                 "title": "Arc Depth Similarity",

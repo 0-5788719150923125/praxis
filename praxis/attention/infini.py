@@ -94,17 +94,9 @@ class InfiniAttention(CausalAttention):
     metric_descriptions = {
         "attn_span": {
             "description": (
-                "Mean attended lookback distance as a fraction of the uniform "
-                "expectation: E_attn[i-j] / (i/2), averaged over queries. 1.0 = "
-                "attention has no distance preference at all (a query's mass is "
-                "spread as if position did not exist); below 1 = recency-biased, "
-                "the local dependency prior Mega's damped EMA supplies "
-                "explicitly; above 1 = biased toward distant context. This "
-                "measures POSITION structure, not sharpness - concentrated but "
-                "position-blind scores still read ~1.0. Encodings that only "
-                "rotate phase (RoPE/HoPE/ArcHoPE) impose no envelope, so a "
-                "reading pinned at 1.0 means any locality is being learned "
-                "through content alone."
+                "Mean attended lookback as a fraction of the uniform expectation. 1.0 "
+                "= no distance preference; below 1 = recency-biased; above 1 = "
+                "distance-biased."
             ),
             "chart": {
                 "title": "Attention Span",
@@ -119,11 +111,8 @@ class InfiniAttention(CausalAttention):
         },
         "attn_memory_share": {
             "description": (
-                "Mean sigmoid(betas), the share of the attention output taken "
-                "from compressive memory rather than local attention. Pinned at "
-                "0.5 means the blend never moved off its zero init - and when "
-                "the sequence fits in one segment the memory branch is "
-                "identically zero, so that half of the output is a hard zero."
+                "Mean sigmoid(betas) - the share of the output taken from compressive "
+                "memory. Pinned at 0.5 = the blend never moved off its zero init."
             ),
             "chart": {
                 "title": "Attention Span",

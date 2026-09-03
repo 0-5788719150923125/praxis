@@ -102,10 +102,9 @@ class Servant(Serpent):
     metric_descriptions = {
         "servant_coupling": {
             "description": (
-                "Mean |tanh(v)| across features - how strongly the frequency is "
-                "allowed to follow the signal. Zero-init by construction, so "
-                "this IS the gate on the whole mechanism: flat at 0 means the "
-                "model declined the chirp and Servant is still exactly Serpent."
+                "Mean |tanh(v)| across features - how strongly the frequency follows "
+                "the signal. Zero-init, so flat at 0 means Servant is still exactly "
+                "Serpent."
             ),
             "chart": {
                 "title": "Servant Chirp Coupling",
@@ -118,10 +117,8 @@ class Servant(Serpent):
         },
         "servant_coupling_std": {
             "description": (
-                "Spread of the coupling ACROSS features. Distinguishes 'every "
-                "feature chirps a little' from 'some features chirp and others "
-                "stay static' - the latter is per-feature specialization, the "
-                "former is a uniform change of activation shape."
+                "Spread of the coupling across features. Separates 'every feature "
+                "chirps a little' from 'some chirp and others stay static'."
             ),
             "chart": {
                 "title": "Servant Coupling Spread",
@@ -133,17 +130,9 @@ class Servant(Serpent):
         },
         "servant_chirp": {
             "description": (
-                "REALIZED chirp: the spread of a_eff/a ACROSS TOKENS, per "
-                "feature, averaged over features. A chirp is a frequency that "
-                "MOVES, so dispersion is the measure and magnitude is not - "
-                "mean |a_eff/a - 1| reads maximal exactly when the swing is a "
-                "large CONSTANT, which is a static rescaling of `a` wearing a "
-                "chirp's name. This card read the magnitude until 2026-08-22 "
-                "and reported a healthy rising chirp through 20k steps of a run "
-                "that was not chirping at all; earlier values do not compare. "
-                "Read it against the signal card below: near-zero chirp with a "
-                "saturated signal is the mechanism failing, near-zero chirp with "
-                "a graded signal is the model declining it."
+                "Realized chirp: the spread of a_eff/a across tokens, per feature. "
+                "Dispersion is the measure - a large constant swing is a static "
+                "rescaling, not a chirp."
             ),
             "chart": {
                 "title": "Servant Realized Chirp",
@@ -155,15 +144,9 @@ class Servant(Serpent):
         },
         "servant_signal": {
             "description": (
-                "Mean |m|, how hard the standardized live-energy signal is "
-                "pushed into its tanh. This is the HEALTH of the measurement "
-                "itself and it has one reading that means death: 1.0. A "
-                "saturated m is a constant, the frequency stops moving, and "
-                "there is no gradient path back - so the useful range is the "
-                "graded middle, roughly 0.3 to 0.7. The predecessor centred the "
-                "signal on a scalar frozen at init instead of standardizing it, "
-                "and sat at 0.999 from step 4000 onward with nothing on any "
-                "card able to say so."
+                "Mean |m| - how hard the standardized energy signal is pushed into its "
+                "tanh. 1.0 is death (a saturated constant); the useful range is "
+                "roughly 0.3 to 0.7."
             ),
             "chart": {
                 "title": "Servant Signal Saturation",

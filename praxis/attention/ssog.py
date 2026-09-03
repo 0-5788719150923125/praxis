@@ -206,13 +206,9 @@ class SSOGAttention(nn.Module):
         },
         "ssog_temperature": {
             "description": (
-                "The one learned sharpening knob, floored at 0.5. Tempering a "
-                "Gaussian keeps it Gaussian with variance scaled by tau, so "
-                "this is a width multiplier on the whole field at once. "
-                "Driving hard into the floor is the cue that the head is "
-                "trying to manufacture an outlet it does not have: SSOG has no "
-                "null atom, so a query wanting to contribute nothing can only "
-                "approximate it by going needle-narrow onto one key."
+                "The one learned sharpening knob, floored at 0.5 - a width multiplier "
+                "on the whole field. Driving into the floor = the head wants a null "
+                "atom it doesn't have."
             ),
             "chart": {
                 "title": "SSOG Field Temperature",
@@ -223,21 +219,9 @@ class SSOGAttention(nn.Module):
         },
         "ssog_geometry": {
             "description": (
-                "The reference's own claim is that a head stops being a "
-                "heatmap and a shrug: it is a few blobs you can plot and read "
-                "with a ruler. This is that plot, 1D and causal. Each band is "
-                "one Gaussian atom with its mixture weight folded in (so an "
-                "atom the field stopped using goes dark rather than staying a "
-                "bright blob nobody reads), nearest at the bottom, the summed "
-                "mixture on top; x is lag on a geometric axis from 0.5 to 512 "
-                "tokens. Separated blobs is the ladder as initialized; "
-                "everything crowding the left edge is a previous-token head; "
-                "one band smeared across the width is a causal bag of words. "
-                "The axis deliberately runs past the sequence length, so mass "
-                "the field has walked outside its own window shows as such. "
-                "The field's SHAPE, from the learned atoms - not a measured "
-                "attention row, so the causal truncation and the per-query "
-                "steering are not in it."
+                "The learned Gaussian atoms over lag (geometric axis, 0.5 to 512 "
+                "tokens), mixture-weighted, summed field on top. Blobs at the left "
+                "edge = a previous-token head."
             ),
             "snapshot": {
                 "title": "Attention Geometry",
@@ -249,21 +233,9 @@ class SSOGAttention(nn.Module):
         },
         "ssog_cascade": {
             "description": (
-                "The reference plots geometry per LAYER, and that is the one "
-                "axis which does not port: this field is depth-SHARED, so "
-                "there is no per-layer field to draw. The analogue for a "
-                "recurrent-depth model is the cascade. An attention row here "
-                "IS the mixture density, Gaussians are closed under "
-                "convolution, and residual connections keep every hop count "
-                "live at once - so one shared field gives a scale-space "
-                "pyramid whose h-th level is the h-fold self-convolution, mean "
-                "lag h*mu and width sqrt(h)*sigma. Bottom band is one hop, top "
-                "is the full depth; each is normalized to its own peak, since "
-                "the question is where a hop lands, not how thin it is. Read "
-                "it as reach: the top band is the farthest this block can see, "
-                "and if it sits inside a handful of tokens then nothing here "
-                "is doing long range. Ignores the causal window and whatever "
-                "the residual stream does between passes."
+                "Scale-space cascade: band h is the shared field self-convolved h "
+                "times, so the top band is the farthest this block can reach. Each "
+                "normalized to its own peak."
             ),
             "snapshot": {
                 "title": "Field by Recurrent Depth",

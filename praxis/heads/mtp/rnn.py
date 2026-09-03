@@ -187,10 +187,9 @@ class SerpentRNNMTPBank(nn.Module):
         )
         out["mtp_field_freq_norm"] = {
             "description": (
-                "L2 norm of the shared MTP cell's per-feature primary frequency "
-                "(Serpent alpha) - the magnitude of the learned harmonic "
-                "spectrum in the depth transform. Stable near init = no "
-                "structure learned; growing = the field is shaping itself."
+                "L2 norm of the shared MTP cell's primary frequency (Serpent alpha). "
+                "Flat = no structure learned; growing = the spectrum is shaping "
+                "itself."
             ),
             "chart": {
                 "title": "MTP Field Frequency Norm",
@@ -203,10 +202,8 @@ class SerpentRNNMTPBank(nn.Module):
         }
         out["mtp_field_concentration"] = {
             "description": (
-                "Hoyer sparsity of the shared MTP cell's frequency spectrum in "
-                "[0, 1] (1 = all energy on one feature, 0 = uniform) - evidence "
-                "the depth transform commits to specific harmonics. Same Hoyer "
-                "definition as HarmonicField, comparable with vear runs."
+                "Hoyer sparsity of the shared MTP cell's frequency spectrum: 1 = all "
+                "energy on one feature, 0 = uniform."
             ),
             "chart": {
                 "title": "MTP Field Concentration",
@@ -218,10 +215,8 @@ class SerpentRNNMTPBank(nn.Module):
         }
         out["mtp_field_amp_depth"] = {
             "description": (
-                "Peak-to-trough of the shared MTP cell's secondary amplitude "
-                "(Serpent gamma) - how much harmonic modulation the transform "
-                "carries. 0 = a flat (near-linear) transform; >0 = an "
-                "oscillatory field."
+                "Peak-to-trough of the shared MTP cell's secondary amplitude (Serpent "
+                "gamma). 0 = a flat, near-linear transform."
             ),
             "chart": {
                 "title": "MTP Field Amplitude Depth",

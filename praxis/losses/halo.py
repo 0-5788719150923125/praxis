@@ -438,7 +438,11 @@ class HALOLoss(nn.Module):
             "chart": {"title": "HALO Abstain Rate", "group": "halo", "order": 4},
         },
         "halo_ring": {
-            "description": "Radial energy map of token-to-centroid distance: the bright ring marks consensus tokens settled on the hyperspherical shell, with the dark interior (collapse) and exterior (variance) carrying no structure - a geometry of bias and variance.",
+            "description": (
+                "Radial energy map of token-to-centroid distance. The bright ring is "
+                "tokens settled on the shell; the interior is collapse, the exterior "
+                "variance."
+            ),
             "snapshot": {
                 "title": "HALO Energy Ring",
                 "renderer": "halo_ring",

@@ -80,8 +80,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_brierlm": {
         "description": (
-            "BrierLM score over a small validation batch - bounded "
-            "proper scoring rule, less sensitive to outliers than NLL."
+            "BrierLM on a small validation batch - a bounded proper score, less "
+            "outlier-sensitive than NLL."
         ),
         "chart": {
             "title": "BrierLM",
@@ -102,9 +102,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "val_brier_4": {"description": "BrierLM order-4 raw score, x100."},
     "val_bits_per_byte": {
         "description": (
-            "val_loss / log(2). Byte-latent runs only - the comparable "
-            "metric to BPB reported by the BLT paper. Not emitted for codec "
-            "encoders (CALM); see val_codec_bpb and val_brierlm instead."
+            "val_loss / log(2). Byte-latent runs only; codec encoders report "
+            "val_codec_bpb instead."
         ),
         "chart": {
             "title": "Bits per Byte",
@@ -116,15 +115,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_byte_nll_bits": {
         "description": (
-            "Per-byte cross-entropy in bits - MEASURED, never optimized. "
-            "val_bits_per_byte is the training objective / log(2), and under a "
-            "composite objective (HALO = CE + a geometric term, 1:1) its level "
-            "is not calibrated: a 256-way byte predictor at chance is 8.0 bits, "
-            "and composite runs open above 16. This is the plain unweighted CE "
-            "of the emitted logits against the byte labels, which is the "
-            "quantity byte-level scaling laws are written in - so it is the one "
-            "that says how far a run sits between chance (8.0) and the data's "
-            "entropy floor. Absent when logits are never materialized (cut-CE)."
+            "Plain per-byte cross-entropy of the emitted logits, in bits - measured, "
+            "never optimized. Chance is 8.0. Absent under cut-CE."
         ),
         "chart": {
             "title": "Byte NLL (bits)",
@@ -136,10 +128,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_codec_bpb": {
         "description": (
-            "Codec reconstruction bits/byte for autoencoder encoders (CALM): "
-            "teacher-forced encode-then-decode fidelity. This is NOT "
-            "generation quality - it is near-zero for any working codec. "
-            "Judge the model with val_brierlm, not this."
+            "Teacher-forced reconstruction bits/byte for codec encoders (CALM). "
+            "Fidelity, not generation quality."
         ),
         "chart": {
             "title": "Codec Recon (bits/byte)",
@@ -182,10 +172,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "inference_time": {
         "description": (
-            "EMA of wall-clock seconds per served generation request "
-            "(rolling contexts, web chat, Discord - every caller funnels "
-            "through the same Generator). These run INSIDE the training "
-            "loop, so this is time the run is not stepping."
+            "EMA of seconds per served generation request. These run inside the "
+            "training loop, so it is time not spent stepping."
         ),
         "chart": {
             "title": "Inference Time",
@@ -201,10 +189,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "inference_rate": {
         "description": (
-            "EMA of tokens produced per second, across all served generation "
-            "requests. Read against inference_time to tell a slow request "
-            "apart from a long one: latency scales with how much was asked "
-            "for, this does not."
+            "EMA of tokens per second across served generation requests - separates a "
+            "slow request from a merely long one."
         ),
         "chart": {
             "title": "Inference Rate",
@@ -217,9 +203,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "softmax_collapse": {
         "description": (
-            "Fraction of softmax distributions whose top probability "
-            "exceeds 0.999. Rising = the model is overcommitting to "
-            "single tokens."
+            "Fraction of softmax distributions with top probability above 0.999. "
+            "Rising = overcommitting to single tokens."
         ),
         "chart": {
             "title": "Softmax Collapse",
@@ -234,9 +219,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # Only emitted when an expert pool is active (--orchestration-type).
     "swarm_loss": {
         "description": (
-            "Mean training loss across a sampled subset of swarm experts "
-            "(each tiny expert's own EMA on real batches). The swarm's "
-            "population-level learning curve, distinct from the main model's."
+            "Mean EMA training loss across a sample of swarm experts - the "
+            "population's learning curve, not the main model's."
         ),
         "chart": {
             "title": "Swarm Loss (sampled)",
@@ -248,8 +232,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "swarm_loss_std": {
         "description": (
-            "Std of expert EMA loss across the sample - how much the swarm "
-            "disagrees. High = a diverse population; collapsing = consensus."
+            "Spread of expert EMA loss across the sample. High = a diverse population; "
+            "falling = consensus."
         ),
         "chart": {
             "title": "Swarm Loss Spread",
@@ -297,8 +281,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "spider_new_pages": {
         "description": (
-            "Cumulative never-before-seen pages fetched. The slope is the "
-            "discovery rate; it flattens as watched sites are fully walked."
+            "Cumulative never-before-seen pages fetched. The slope is the discovery "
+            "rate."
         ),
         "chart": {
             "title": "Spider Discoveries",
@@ -310,9 +294,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "spider_revisits": {
         "description": (
-            "Cumulative re-fetches of known pages (content refreshes plus "
-            "cheap 304s). Rises once the frontier dries up - the eventually-"
-            "consistent watch phase."
+            "Cumulative re-fetches of known pages, including cheap 304s. Rises once "
+            "the frontier dries up."
         ),
         "chart": {
             "title": "Spider Revisits",
@@ -324,8 +307,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "spider_frontier": {
         "description": (
-            "URLs queued for a first fetch across all sites. Growth means "
-            "discovery is outpacing the one-fetch-per-tick budget."
+            "URLs queued for a first fetch. Growth means discovery outpaces the "
+            "per-tick fetch budget."
         ),
         "chart": {
             "title": "Spider Frontier",
@@ -351,9 +334,7 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "kb_size_mb": {
         "description": (
-            "On-disk size of the knowledge base (FTS index + spider store, with "
-            "write-ahead logs) in MB. Rises as the spider grounds more pages; "
-            "a monitor for crawl storage growth."
+            "On-disk size of the knowledge base (FTS index + spider store) in MB."
         ),
         "chart": {
             "title": "Knowledge Base Size",
@@ -373,11 +354,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # at each episode end, carried forward between episodes.
     "rl_reward": {
         "description": (
-            "EMA-integrated return over the horizon: the loss improvement vs "
-            "L_before, accumulated per post-edit step with a slow-decay EMA so "
-            "a benefit that ramps in slowly still counts. Positive = the edit "
-            "helped. Compare with rl_reward_instant (the one-step endpoint "
-            "delta) to see delayed credit appear."
+            "EMA-integrated loss improvement over the post-edit horizon, so slow "
+            "benefits still count. Positive = the edit helped."
         ),
         "chart": {
             "title": "RL Reward",
@@ -389,9 +367,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_reward_instant": {
         "description": (
-            "Endpoint delta L_before - L_after at the horizon's end - the old "
-            "one-step reward, kept as a diagnostic. When it lags rl_reward, the "
-            "edit's benefit is manifesting slowly (the reason for the EMA return)."
+            "One-step endpoint delta L_before - L_after. Lagging rl_reward means the "
+            "benefit arrives slowly."
         ),
         "chart": {
             "title": "RL Reward (Endpoint)",
@@ -416,8 +393,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_advantage": {
         "description": (
-            "reward - baseline, the signed learning signal. Watch its scale "
-            "and sign-flipping: wild swings are the credit-assignment problem."
+            "reward - baseline, the signed learning signal. Wild sign-flipping is the "
+            "credit-assignment problem."
         ),
         "chart": {
             "title": "RL Advantage",
@@ -439,8 +416,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_entropy": {
         "description": (
-            "Policy entropy. Collapsing toward 0 = exploration dying (the "
-            "policy is committing); staying high = it hasn't learned to act."
+            "Policy entropy. Falling to 0 = exploration dying; staying high = the "
+            "policy hasn't learned to act."
         ),
         "chart": {
             "title": "RL Policy Entropy",
@@ -492,9 +469,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_edit_kept": {
         "description": (
-            "Rolling fraction of edits kept (an EMA of the per-episode keep/roll-back "
-            "decision) - how often the controller finds an edit that improves loss. "
-            "Near 1: most proposals help; near 0: most are rolled back."
+            "Rolling fraction of proposed edits kept rather than rolled back. Near 1: "
+            "most help; near 0: most are reverted."
         ),
         "chart": {
             "title": "RL Edit Kept",
@@ -506,8 +482,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_gate_frac": {
         "description": (
-            "anchor_gate mode: fraction of the row's elements reset to the "
-            "frozen anchor on the last edit (the gate density the policy chose)."
+            "anchor_gate mode: fraction of the row reset to the frozen anchor on the "
+            "last edit."
         ),
         "chart": {
             "title": "RL Gate Fraction",
@@ -522,10 +498,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # energy climbing toward its setpoint?
     "engagement_energy": {
         "description": (
-            "Homeostatic energy: fast-accumulating, satiating, wall-clock "
-            "decaying (1h half-life). Climbs as the policy lands predicted "
-            "answers and live interactions arrive; folded into the RL reward. "
-            "Flat near 0 = not learning."
+            "Homeostatic energy: satiating, 1h half-life decay. Climbs as predicted "
+            "answers land; folded into the RL reward."
         ),
         "chart": {
             "title": "Engagement Energy",
@@ -537,8 +511,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "engagement_activation_rate": {
         "description": (
-            "Fraction of examples where any predicted answer token is mentioned "
-            "in the response ('answered at all') - the headline reward activation."
+            "Fraction of examples where any predicted answer token appears in the "
+            "response - 'answered at all'."
         ),
         "chart": {
             "title": "Engagement Activation Rate",
@@ -550,8 +524,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "engagement_recall": {
         "description": (
-            "Graded recall |A_hat & R| / |A_hat| over the answer tokens - the "
-            "smoother reward the policy gradient actually optimizes."
+            "Graded recall over the predicted answer tokens - the smooth signal the "
+            "policy gradient optimizes."
         ),
         "chart": {
             "title": "Engagement Recall",
@@ -563,9 +537,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "engagement_reward": {
         "description": (
-            "Total REINFORCE reward: recall + homeostatic energy. Live Gymnasium "
-            "interactions spike the energy term, then it decays back - a "
-            "transient reward pulse on top of the dense recall signal."
+            "Total REINFORCE reward: recall + homeostatic energy. Live interactions "
+            "spike the energy term, then it decays."
         ),
         "chart": {
             "title": "Engagement Reward",
@@ -577,9 +550,7 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "engagement_reward_baseline": {
         "description": (
-            "Slow EMA of the total reward (recall + energy) - the REINFORCE "
-            "variance-reduction baseline. Advantages are reward minus this, so "
-            "they stay zero-mean."
+            "Slow EMA of the total reward - the REINFORCE variance-reduction baseline."
         ),
         "chart": {
             "title": "Engagement Reward Baseline",
@@ -591,9 +562,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "engagement_advantage": {
         "description": (
-            "reward - reward-EMA baseline, the signed REINFORCE signal. Zero-mean "
-            "by construction: positive on better-than-recent predictions, negative "
-            "on worse, balanced so it never systematically suppresses tokens."
+            "reward - baseline, the signed REINFORCE signal. Zero-mean by "
+            "construction."
         ),
         "chart": {
             "title": "Engagement Advantage",
@@ -606,8 +576,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # Live (real-user) `Print` rewards drained from the web UI into training.
     "engagement_live_reward": {
         "description": (
-            "Recall of the most recent live interaction: a real user answered a "
-            "model-led question and this is how well the model predicted it."
+            "Recall on the most recent live interaction - how well the model predicted "
+            "a real user's answer."
         ),
         "chart": {
             "title": "Engagement Live Reward",
@@ -618,10 +588,7 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
     },
     "engagement_live_count": {
-        "description": (
-            "Cumulative count of live `Print` interactions consumed by training - "
-            "how much real-user signal the online channel has delivered."
-        ),
+        "description": "Cumulative live `Print` interactions consumed by training.",
         "chart": {
             "title": "Engagement Live Interactions",
             "y_label": "count",
@@ -631,10 +598,7 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
     },
     "engagement_live_energy": {
-        "description": (
-            "Homeostatic energy of the live channel (real-user activations only) - "
-            "the slow online signal folded into the policy's baseline."
-        ),
+        "description": "Homeostatic energy from real-user activations only.",
         "chart": {
             "title": "Engagement Live Energy",
             "y_label": "energy",
@@ -647,8 +611,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # grounding from well-rated jokes, live signal from human approval (Loop UI).
     "joke_energy": {
         "description": (
-            "Homeostatic energy of the joke policy - climbs as the model "
-            "reproduces well-rated jokes and earns live human approval."
+            "Homeostatic energy of the joke policy - climbs on well-rated jokes and "
+            "live approval."
         ),
         "chart": {
             "title": "Joke Energy",
@@ -720,10 +684,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "joke_live_correction": {
         "description": (
-            "Calibration error of the most recent live loop interaction: |user "
-            "score - model's self-predicted want->need score| (0..2). The "
-            "decisive calibration-mode metric - shrinking = the model is "
-            "learning to predict its own reception."
+            "Calibration error of the last live interaction: |user score - model's "
+            "self-predicted score| (0..2). Shrinking = better calibrated."
         ),
         "chart": {
             "title": "Joke Live Correction",
@@ -780,19 +742,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Whole-Sequence Readout by Position",
         "y_label": "R\u00b2 above chance",
         "description": (
-            "fig:density, measured. Each cell: how much of the WHOLE window a "
-            "linear readout recovers from ONE hidden state at that position "
-            "(x, head of the window to tip), at loop exit, for one resolution "
-            "of the window's content (y: 0 = bag of content, DFT mode 0 along "
-            "position; 1 = coarse, modes 1-3, window-scale structure; 2 = mid, "
-            "modes 4-7). Scored as R\u00b2 above a shuffled-target null, so "
-            "grey = nothing readable beyond chance and full accent = fully "
-            "read; the shade is the paper's density envelope. Received "
-            "picture: the bag row brightens linearly toward the tip and the "
-            "head stays grey - a causal state knows only its prefix. The "
-            "conjecture: the head end of the bag and coarse rows is lit - the "
-            "early vectors already carry the compressed whole. EMA over "
-            "sampled forwards; the step slider scrubs the history."
+            "Per position (x) and band (y: bag, coarse, mid), how much of the whole "
+            "window a linear readout recovers from that one hidden state. R² above a "
+            "shuffled null."
         ),
         # Group 1 = row label (rendered along x), group 2 = column index (y).
         "key_pattern": r"^readout_cell_([a-z0-9]+)_(\d)$",
@@ -807,13 +759,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Whole-Sequence Readout: Tip minus Head",
         "y_label": "R\u00b2(tip) - R\u00b2(head)",
         "description": (
-            "The conjecture's reading in one number per band, over training: "
-            "readout R\u00b2 (above chance) at the tip bucket minus the head "
-            "bucket. The received picture keeps the BAG line large and "
-            "positive - the tip has seen everything, the head only its own "
-            "token. Density pushed to the rim, in fig:density's sense, is the "
-            "bag and coarse lines closing toward zero: the head anticipating "
-            "the window-scale whole."
+            "Readout R² at the tip minus at the head, per band. Large and positive = "
+            "only the tip has seen the window; closing = the head anticipates it."
         ),
         "key_pattern": r"^readout_(bag|coarse|mid)_rim_gap$",
         "legend": True,
@@ -825,11 +772,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Whole-Sequence Readout: Gain over Depth",
         "y_label": "R\u00b2(exit) - R\u00b2(entry)",
         "description": (
-            "Whether the depth loop BUILDS whole-sequence content into the "
-            "states: readout R\u00b2 at loop exit minus at loop entry (the raw "
-            "embeddings, which cannot carry the whole beyond their own token), "
-            "averaged over positions, per band. Zero means the loop adds "
-            "nothing a linear readout can see."
+            "Readout R² at loop exit minus at loop entry, averaged over positions. "
+            "Zero = the depth loop adds nothing a linear readout can see."
         ),
         "key_pattern": r"^readout_(bag|coarse|mid)_depth_gain$",
         "legend": True,
@@ -843,9 +787,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "type": "evolution",
         "title": "Praxis Evolution (self-history)",
         "description": (
-            "Per-subsystem line churn over Praxis's git history, faded by "
-            "distance from HEAD. The framework's recency kernel turned on its "
-            "own development - the same data the research-paper figure renders."
+            "Per-subsystem line churn over Praxis's git history, faded by distance "
+            "from HEAD."
         ),
         "source": "standalone",
         "order": 90,
@@ -858,9 +801,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "type": "spider_citations",
         "title": "Spider Citations",
         "description": (
-            "Top cited URLs (and top referrers) in the spider's link graph. "
-            "Citation count is the frontier's ranking signal: well-referenced "
-            "links are fetched first, one-off links sink."
+            "Top cited URLs and referrers in the spider's link graph. Citation count "
+            "ranks the fetch frontier."
         ),
         "source": "standalone",
         "order": 95,
@@ -972,16 +914,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Router Depth Specialization",
         "y_label": "specialization / cosine",
         "description": (
-            "Whether the recurrent passes have learned to route DIFFERENTLY. "
-            "arc_smear/arc_vear give each pass its own additive bias on the "
-            "router logits; specialization is that table's between-depth "
-            "variance over total energy (0 = every pass merges the same expert "
-            "mixture, which is also the value at zero-init; higher = the passes "
-            "have diverged), and similarity is the mean pairwise cosine between "
-            "the per-pass biases (~1 = all leaning the same way). Both start at "
-            "0 by construction, so early flatness is 'nothing learned yet', not "
-            "collapse. Absent under the plain smear/vear routers, which share "
-            "one routing across every pass."
+            "Per-pass router bias under arc_smear/arc_vear: between-depth variance (0 "
+            "= every pass routes alike) and mean pairwise cosine. Both start at 0."
         ),
         "key_pattern": r"^router_depth_(specialization|similarity)$",
         "order": 199,
@@ -992,12 +926,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Routing Entropy (Balance)",
         "y_label": "Entropy",
         "description": (
-            "Per-depth entropy of the batch-MEAN routing weights (one line per "
-            "layer). High = the batch spreads across experts; low = the whole "
-            "batch is landing on one expert. Measured on the ROUTER's own output, "
-            "before expert dropout and before any subclass transform - under VEAR "
-            "this is the pre-sharpening distribution, so it reports what the "
-            "router learned rather than VEAR's p**4 exponent."
+            "Entropy of the batch-mean routing weights, per layer. High = load spread "
+            "across experts; low = the whole batch lands on one."
         ),
         "key_pattern": r"^layer_\d+_routing_entropy$",
         "order": 200,
@@ -1008,11 +938,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Routing Entropy (per-sequence)",
         "y_label": "Entropy",
         "description": (
-            "Mean entropy of the PER-SEQUENCE routing distribution - how undecided "
-            "a typical single routing decision is, as opposed to how balanced the "
-            "aggregate load is. Read against Routing Entropy (Balance): equal "
-            "values mean every sequence routes alike, and a gap means different "
-            "sequences are choosing differently."
+            "Mean entropy of a single sequence's routing distribution. Equal to the "
+            "balance card = every sequence routes alike; a gap = they differ."
         ),
         "key_pattern": r"^layer_\d+_routing_entropy_seq$",
         "order": 205,
@@ -1023,14 +950,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR/VEAR Routing Input Dependence",
         "y_label": "I(input; expert) / log N",
         "description": (
-            "Normalized mutual information between the input and the expert "
-            "choice: H(mean p) - mean H(p), divided by log(num_experts). THE "
-            "gauge for whether the router is reading its input at all. 0 = every "
-            "sequence in the batch received the same routing distribution, so the "
-            "router is effectively a constant; 1 = each sequence commits to a "
-            "different expert. Neither load balance nor specialization can "
-            "distinguish those cases alone - a router that sends the WHOLE batch "
-            "to one expert scores maximum specialization while learning nothing."
+            "Normalized mutual information between input and expert choice. 0 = the "
+            "router is a constant; 1 = each sequence picks a different expert."
         ),
         "key_pattern": r"^layer_\d+_routing_input_dependence$",
         "order": 235,
@@ -1041,11 +962,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR/VEAR Merge Entropy (post-transform)",
         "y_label": "Entropy",
         "description": (
-            "Entropy of the batch-mean weights the parameter merge ACTUALLY used. "
-            "For plain SMEAR this equals Routing Entropy (Balance); under VEAR the "
-            "gap between the two is exactly what the p**4 sharpening is doing, so "
-            "reading them together shows how much of the discreteness is learned "
-            "versus imposed."
+            "Entropy of the weights the parameter merge actually used. The gap from "
+            "the balance card is what VEAR's p**4 sharpening does."
         ),
         "key_pattern": r"^layer_\d+_routing_merge_entropy$",
         "order": 245,
@@ -1056,9 +974,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Routing Concentration (Collapse)",
         "y_label": "Max weight",
         "description": (
-            "Per-depth maximum routing weight for SMEAR routers (one line per "
-            "layer). 1.0 = collapsed onto one expert; 1/num_experts = uniform "
-            "merge."
+            "Per-layer maximum routing weight. 1.0 = collapsed onto one expert; "
+            "1/num_experts = uniform merge."
         ),
         "key_pattern": r"^layer_\d+_routing_concentration$",
         "order": 210,
@@ -1069,12 +986,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Load-Balance Variance (normalized)",
         "y_label": "Variance [0,1]",
         "description": (
-            "Per-depth variance of the BATCH-MEAN routing weights, normalized to "
-            "[0,1] (0 = balanced load across experts, 1 = collapsed onto one "
-            "expert). This is LOAD BALANCE, not per-sequence specialization - it "
-            "stays near 0 even when VEAR is sharply committing each sequence "
-            "(different sequences pick different experts, averaging back to "
-            "uniform). Watch Routing Specialization for that."
+            "Variance of the batch-mean routing weights, normalized (0 = balanced "
+            "load, 1 = collapsed). Load balance, not per-sequence specialization."
         ),
         "key_pattern": r"^layer_\d+_routing_variance$",
         "order": 220,
@@ -1085,11 +998,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR/VEAR Routing Specialization (per-sequence)",
         "y_label": "Specialization [0,1]",
         "description": (
-            "Per-sequence routing commitment, computed BEFORE the batch-mean and "
-            "rescaled to [0,1]: 0 = uniform routing, 1 = every sequence commits to "
-            "a single expert. This is the gauge VEAR's sharpening + repulsion "
-            "actually move; it rises as experts specialize even when load stays "
-            "balanced (which the load-balance cards cannot show)."
+            "Per-sequence routing commitment before the batch mean, rescaled to [0,1]: "
+            "0 = uniform, 1 = every sequence commits to one expert."
         ),
         "key_pattern": r"^layer_\d+_routing_specialization$",
         "order": 230,
@@ -1100,9 +1010,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR/VEAR Routing Peak (mean per-sequence top weight)",
         "y_label": "Mean peak weight",
         "description": (
-            "Mean per-sequence maximum routing weight (1/num_experts = uniform .. "
-            "1.0 = each sequence fully committed). The raw per-sequence "
-            "concentration behind Routing Specialization."
+            "Mean per-sequence top routing weight (1/num_experts = uniform, 1.0 = "
+            "fully committed)."
         ),
         "key_pattern": r"^layer_\d+_routing_peak$",
         "order": 240,
@@ -1122,12 +1031,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Merge Coefficients (per target module)",
         "y_label": "Merge weight",
         "description": (
-            "One row per DISCOVERED TARGET, one column per expert deviation: "
-            "the weights the parameter merge actually used. Where SMEAR had a "
-            "single scalar deciding the whole block's geometry, each module "
-            "here routes independently, so this card shows the entire routing "
-            "state at once. A row pinned at 1/N means that module declined to "
-            "specialize; a row at 1.0 means it committed."
+            "One row per routed target module, one column per expert deviation: the "
+            "weights the merge used. A row at 1/N declined to specialize; 1.0 "
+            "committed."
         ),
         # Two capture groups, in the order the heatmap renderer reads them:
         # group 1 the ROW (a target module label), group 2 the COLUMN index.
@@ -1144,14 +1050,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Target Dispersion (did per-module granularity earn it?)",
         "y_label": "Mean pairwise row distance",
         "description": (
-            "THE gauge on this design. Mean pairwise L1 distance between "
-            "different target modules' coefficient rows, normalized to [0, 1]. "
-            "Zero means every module chose the same mixture - per-module "
-            "granularity bought nothing and the block is behaviourally back to "
-            "SMEAR's single scalar. Rising means the modules genuinely want "
-            "different geometries, which is the only thing that justifies the "
-            "extra rows. Zero at init by construction, so early flatness reads "
-            "as 'nothing learned yet', not as collapse."
+            "Mean pairwise L1 distance between modules' coefficient rows, normalized. "
+            "0 = every module chose the same mixture, so per-module routing bought "
+            "nothing."
         ),
         "key_pattern": r"^smear_target_dispersion$",
         "order": 261,
@@ -1162,12 +1063,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Routing Input Dependence",
         "y_label": "I(input; expert) / log N",
         "description": (
-            "Normalized mutual information between the input and the expert "
-            "choice, H(mean p) - mean H(p) over log(N), averaged over targets "
-            "(and the per-target maximum alongside). Zero means every sequence "
-            "in the batch received the same coefficients, so the router is a "
-            "constant and the merge is a reparametrized base. This is the "
-            "measurement that decayed to ~1e-5 under VEAR on abstractinator-g."
+            "Normalized mutual information between input and expert choice, averaged "
+            "over targets (per-target max alongside). 0 = the router is a constant."
         ),
         "key_pattern": r"^smear_input_dependence(_max)?$",
         "order": 262,
@@ -1178,13 +1075,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Deviation Utilization",
         "y_label": "Fraction in use",
         "description": (
-            "Fraction of deviations carrying more than half their fair share of "
-            "a target's coefficient, averaged over targets. 1.0 = every "
-            "deviation is being used; 1/num_experts = each target has picked one "
-            "and abandoned the rest, which is what the deviations' gradient then "
-            "reflects. This is the number expert dropout exists to hold up - the "
-            "SMEAR paper's own load-balancing mechanism, and the one the first "
-            "cut of this router omitted."
+            "Fraction of deviations carrying over half their fair share of a target's "
+            "coefficient. 1.0 = all used; 1/num_experts = one picked, the rest "
+            "abandoned."
         ),
         "key_pattern": r"^smear_expert_utilization$",
         "order": 263,
@@ -1195,16 +1088,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Selection: Sharpness vs Diversity",
         "y_label": "Normalized",
         "description": (
-            "Two numbers that must be read together, because utilization above "
-            "averages over the batch first and so cannot tell collapse from "
-            "specialization. Sharpness is how peaked ONE routing decision is "
-            "(0 = uniform blend, 1 = a single deviation chosen outright). "
-            "Diversity is whether different decisions land on different "
-            "deviations (0 = everyone picks the same one, 1 = spread evenly). "
-            "Sharp AND diverse is what VEAR's p**4 is built to produce; sharp "
-            "but not diverse is the dead-expert failure of abstractinator-g. "
-            "Both are measured before expert dropout, so smear and vear runs "
-            "are directly comparable."
+            "Sharpness = how peaked one routing decision is. Diversity = whether "
+            "decisions spread over different deviations. Sharp but not diverse means "
+            "dead experts."
         ),
         "key_pattern": r"^smear_selection_(sharpness|diversity)$",
         "order": 264,
@@ -1215,13 +1101,9 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Deviation Magnitude",
         "y_label": "||merged delta|| / ||base||",
         "description": (
-            "How far the routed deviations actually move each target's weights, "
-            "as a fraction of that target's own norm, plus the mean across "
-            "targets. The coefficient heatmap says how the deviations are MIXED; "
-            "this says whether the mixture moves anything. A rich mixture over "
-            "numerically tiny deviations is a router arguing about nothing, and "
-            "is indistinguishable from a real one on coefficients alone. Exactly "
-            "0 at init, since LoRA-style zero-init makes the merge identity."
+            "How far the merged deviations move each target's weights, as a fraction "
+            "of its norm. Rich coefficients over tiny deviations move nothing. 0 at "
+            "init."
         ),
         "key_pattern": r"^smear_delta_scale_.+$",
         "order": 265,
@@ -1232,12 +1114,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Depth Trajectory: Step Size (spectral-attractor probe)",
         "y_label": "Relative step",
         "description": (
-            "Per recurrent-depth transition, the relative move of the hidden "
-            "state's fingerprint (mean over batch+seq). The conjecture's signature "
-            "(next/harmonic_memory_velocity.md): a fixed-point iteration should "
-            "show steps shrinking toward zero (settling to a spectral attractor), "
-            "ideally as a few discrete hops rather than a smooth drift. One line "
-            "per depth transition."
+            "Relative move of the hidden state's fingerprint per depth transition, one "
+            "line each. A settling iteration shrinks toward zero."
         ),
         "key_pattern": r"^depth/step_d\d+$",
         "order": 250,
@@ -1248,10 +1126,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Depth Convergence Ratio (settling)",
         "y_label": "last step / first step",
         "description": (
-            "Ratio of the last to the first depth-transition step. < 1 = the "
-            "iteration settles toward a fixed point across depth (spectral "
-            "attractor); ~ 1 = no convergence; > 1 = diverging. Should fall over "
-            "training if the model learns to compute to a cluster within budget."
+            "Last depth step over the first. < 1 = settling toward a fixed point; ~1 = "
+            "no convergence; > 1 = diverging."
         ),
         "order": 251,
     },
@@ -1261,10 +1137,8 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "Depth Jump Concentration (discrete vs smooth)",
         "y_label": "max step / mean step",
         "description": (
-            "How concentrated the depth movement is: high = one large hop then "
-            "settle (discrete jump between clusters, the conjectured mechanism); "
-            "~ 1 = uniform movement (smooth drift). The static-FFT periodicity "
-            "test was the wrong shape; this is the dynamics-over-depth version."
+            "How concentrated depth movement is: high = one large hop then settle; ~1 "
+            "= smooth drift."
         ),
         "order": 252,
     },
@@ -1443,10 +1317,8 @@ X_AXIS_REGISTRY: list = [
         "source": "num_tokens",
         "order": 20,
         "description": (
-            "Cumulative training tokens. Exact on validation rows - the val "
-            "write merges into the same step-keyed row the training step wrote, "
-            "so a val point carries the token count at the step it ran, not a "
-            "carried-forward one."
+            "Cumulative training tokens. Exact on validation rows, not carried "
+            "forward."
         ),
     },
     {
@@ -1457,9 +1329,8 @@ X_AXIS_REGISTRY: list = [
         "unit_scale": 3600.0,
         "order": 30,
         "description": (
-            "Time the run actually spent training. Rebuilt from per-row "
-            "timestamp deltas with pauses discounted, so a resumed run is not "
-            "billed for the hours it sat stopped."
+            "Time actually spent training, rebuilt from row timestamps with pauses "
+            "discounted."
         ),
     },
 ]

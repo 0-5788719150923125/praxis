@@ -42,8 +42,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_grad_rms": {
         "description": (
-            "RMS of the raw gradient aggregated over all params - the global "
-            "gradient magnitude the optimizer is working from."
+            "RMS of the raw gradient over all parameters - the global magnitude the "
+            "optimizer is working from."
         ),
         "chart": {
             "title": "Gradient RMS",
@@ -55,12 +55,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_grad_norm": {
         "description": (
-            "MAX pre-clip global gradient L2 norm over the logging interval - "
-            "the worst-case the clip saw, measured every step so a spike "
-            "between logged steps still surfaces (a sampled snapshot would "
-            "miss it). This is the quantity gradient_clip_val compares "
-            "against; pair it with Clip Rate to read both the spike size and "
-            "how often it bites."
+            "Max pre-clip global gradient L2 norm over the logging interval, measured "
+            "every step. This is what gradient_clip_val compares against."
         ),
         "chart": {
             "title": "Gradient Norm (pre-clip, interval max)",
@@ -72,12 +68,9 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_clip_rate": {
         "description": (
-            "Fraction of optimizer steps in the interval whose pre-clip "
-            "gradient norm exceeded gradient_clip_val - how often clipping "
-            "actually fires. ~0 means the threshold is slack and its value is "
-            "irrelevant; persistently high means clipping is throttling many "
-            "steps and the threshold may be too low. The honest answer to 'is "
-            "the clip value right', counted every step (not sampled)."
+            "Fraction of steps whose pre-clip gradient norm exceeded "
+            "gradient_clip_val. ~0 = the threshold is slack; persistently high = it "
+            "may be too low."
         ),
         "chart": {
             "title": "Clip Rate",
@@ -89,15 +82,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_clip_intensity": {
         "description": (
-            "Mean clip severity over the interval: how much of the gradient "
-            "magnitude clipping shaved off each step (1 - gradient_clip_val / "
-            "norm, 0 on steps that did not clip), averaged across all enabled "
-            "steps. Norm-mode clipping rescales every parameter by the same "
-            "factor, so there is no 'fraction of parameters' to report - this "
-            "is the real-valued 'how hard is the clip biting' signal. Unlike "
-            "Clip Rate (a binary count, quantized by the small window), this is "
-            "continuous: 0 means clipping never bites, 0.4 means on average 40% "
-            "of the gradient magnitude is being removed when it does."
+            "Mean clip severity: the fraction of gradient magnitude clipping shaved "
+            "off, 0 on steps that did not clip. 0.4 = 40% removed on average."
         ),
         "chart": {
             "title": "Clip Intensity",
@@ -109,8 +95,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_momentum_rms": {
         "description": (
-            "RMS of the optimizer's momentum buffer (exp_avg / momentum_buffer)."
-            " The smoothed direction the optimizer is actually following."
+            "RMS of the optimizer's momentum buffer - the smoothed direction it is "
+            "actually following."
         ),
         "chart": {
             "title": "Momentum RMS",
@@ -122,9 +108,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_momentum_grad_cos": {
         "description": (
-            "Cosine between the momentum and the current gradient, aggregated. "
-            "~1 = consistent descent; near 0 / negative = the optimizer is "
-            "turning or thrashing. (Any momentum optimizer.)"
+            "Cosine between momentum and the current gradient. ~1 = consistent "
+            "descent; near 0 or negative = turning or thrashing."
         ),
         "chart": {
             "title": "Momentum-Gradient Cosine",
@@ -136,9 +121,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_update_rms": {
         "description": (
-            "RMS of the implied Adam update lr*m/(sqrt(v)+eps). Needs a second "
-            "moment (Adam-family, or a tracked low-rank estimate); under a sign "
-            "optimizer like Lion this is the reference step, not the one taken."
+            "RMS of the implied Adam update lr*m/(sqrt(v)+eps). Needs a second moment; "
+            "under a sign optimizer it is the reference step, not the one taken."
         ),
         "chart": {
             "title": "Update RMS",
@@ -150,9 +134,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_update_weight_ratio": {
         "description": (
-            "Implied-update RMS / weight RMS - the relative step size. Healthy "
-            "Adam training sits near 1e-3. Needs a second moment (Adam-family or "
-            "a tracked low-rank estimate)."
+            "Implied-update RMS / weight RMS, the relative step size. Healthy Adam "
+            "training sits near 1e-3."
         ),
         "chart": {
             "title": "Update / Weight Ratio",
@@ -164,9 +147,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_second_moment_rms": {
         "description": (
-            "sqrt(mean(v)) - the running estimate of the gradient scale. From "
-            "exp_avg_sq (Adam-family) or a factored low-rank estimate tracked "
-            "over any base optimizer."
+            "sqrt(mean(v)), the running estimate of gradient scale. From Adam's "
+            "exp_avg_sq or a factored estimate over any base optimizer."
         ),
         "chart": {
             "title": "Second-Moment RMS",
@@ -178,10 +160,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_geo_share": {
         "description": (
-            "Mean share of the SPECTRAL arm across LionGeo's blended matrices: "
-            "the orthogonalized, Muon-like geometry. The three arm shares sum "
-            "to 1 at every matrix, so this chart reads as a mixture; the logit "
-            "clamp floors each arm so none is ever extinguished."
+            "Mean share of LionGeo's spectral arm - the orthogonalized, Muon-like "
+            "geometry. The three arm shares sum to 1 at every matrix."
         ),
         "chart": {
             "title": "Geometry Mixture (share per norm)",
@@ -195,9 +175,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_geo_share_sign": {
         "description": (
-            "Mean share of the SIGN arm: Lion's geometry, steepest descent "
-            "under the elementwise-infinity norm. Discards gradient magnitude "
-            "coordinatewise."
+            "Mean share of the sign arm: Lion's geometry, steepest descent under the "
+            "elementwise-infinity norm."
         ),
         # No title/axis: rides opt_geo_share's chart via series_group.
         "chart": {
@@ -209,10 +188,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_geo_share_frobenius": {
         "description": (
-            "Mean share of the FROBENIUS arm: the RMS-rescaled momentum "
-            "itself, the only arm that does not whiten. Mass here means the "
-            "matrix prefers its gradient's own conditioning to either "
-            "normalization."
+            "Mean share of the Frobenius arm: RMS-rescaled momentum, the only arm that "
+            "does not whiten."
         ),
         # No title/axis: rides opt_geo_share's chart via series_group.
         "chart": {
@@ -224,11 +201,9 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_geo_share_spread": {
         "description": (
-            "Disagreement BETWEEN matrices: max minus min share across "
-            "LionGeo's matrices, averaged over the arms. Near 0 = every matrix "
-            "agrees and a single global geometry would do; wide = different "
-            "matrices want different norm geometries, which is the case the "
-            "per-matrix SMEAR exists for."
+            "Disagreement between matrices: max minus min arm share, averaged over "
+            "arms. Near 0 = one global geometry would do; wide = they want different "
+            "ones."
         ),
         "chart": {
             "title": "Geometry Share Spread",
@@ -240,9 +215,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_sf_spread": {
         "description": (
-            "Schedule-free iterate-vs-average spread ||z - x|| / ||x||: how far "
-            "the responsive iterate has diverged from the deployed average - "
-            "the bias-variance gap in weight space."
+            "Schedule-free spread ||z - x|| / ||x|| - how far the responsive iterate "
+            "has diverged from the deployed average."
         ),
         "chart": {
             "title": "Schedule-Free Spread",
@@ -254,9 +228,8 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_gate_mean": {
         "description": (
-            "Mean averaging gate of the gated/wave schedule-free variants "
-            "(SNR gate or standing wave). Tracks how much the iterate is "
-            "admitted into the average per coordinate."
+            "Mean averaging gate of the gated/wave schedule-free variants - how much "
+            "of the iterate is admitted into the average."
         ),
         "chart": {
             "title": "Averaging Gate (mean)",

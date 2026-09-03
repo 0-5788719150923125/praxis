@@ -77,7 +77,6 @@ def test_no_query_or_key_projections_exist():
 # --------------------------------------------------------------------- the turn
 
 
-
 def test_different_sequences_get_different_geometry():
     a = _attn()
     with torch.no_grad():
@@ -188,7 +187,6 @@ def test_window_size_bounds_the_reach():
     a = _attn(window_size=3)
     out, _, _ = a(torch.randn(1, 16, 32))
     assert out.shape == (1, 16, 32)
-
 
 
 def test_patch_config_forces_a_single_head():
@@ -310,7 +308,9 @@ def test_ghostmax_matches_an_explicit_zero_logit_column():
     s = s.masked_fill(~((pos[:, None] - pos[None, :]) >= 0), float("-inf"))
     v = torch.randn(B, a.num_heads, T, a.head_dim)
 
-    ours = (torch.softmax(s, -1) @ v) * torch.sigmoid(torch.logsumexp(s, -1)).unsqueeze(-1)
+    ours = (torch.softmax(s, -1) @ v) * torch.sigmoid(torch.logsumexp(s, -1)).unsqueeze(
+        -1
+    )
 
     ghost_logit = torch.zeros(B, a.num_heads, T, 1)
     wide = torch.cat([ghost_logit, s], dim=-1)
@@ -397,7 +397,9 @@ def test_always_profile_is_registered_and_differs_from_the_one_beat_profile():
     from praxis.attention import ATTENTION_REGISTRY
 
     once = ATTENTION_REGISTRY["kaleido_dropoff"](_config(depth=6, num_layers=1))
-    always = ATTENTION_REGISTRY["kaleido_dropoff_always"](_config(depth=6, num_layers=1))
+    always = ATTENTION_REGISTRY["kaleido_dropoff_always"](
+        _config(depth=6, num_layers=1)
+    )
     once.train()
     always.train()
     assert once.dropoff_every is False and always.dropoff_every is True
@@ -443,10 +445,11 @@ def test_arc_inherits_the_training_gate_and_the_always_schedule():
 # ------------------------------------------------------- static blend (base)
 
 
-
 def test_turn_depth_specialization_reads_collapse():
     a = _attn(depth=4)
-    assert a.training_metrics()["kaleido_turn_depth_specialization"] == pytest.approx(0.0)
+    assert a.training_metrics()["kaleido_turn_depth_specialization"] == pytest.approx(
+        0.0
+    )
     with torch.no_grad():  # identical across depths -> still collapsed
         a.turn_static.weight.copy_(torch.ones_like(a.turn_static.weight))
     assert a.training_metrics()["kaleido_turn_depth_specialization"] == pytest.approx(
@@ -478,10 +481,19 @@ def test_block_is_merge_opaque_to_the_smear_target_walker():
 
     assert KaleidoscopeAttention.MERGE_OPAQUE is True
     cfg = PraxisConfig(
-        depth=4, num_layers=1, hidden_size=64, embed_size=64, vocab_size=256,
-        num_heads=4, num_queries=2, head_size=16, block_size=64,
-        max_position_embeddings=128, attention_type="kaleido",
-        router_type="smear", device_map="cpu",
+        depth=4,
+        num_layers=1,
+        hidden_size=64,
+        embed_size=64,
+        vocab_size=256,
+        num_heads=4,
+        num_queries=2,
+        head_size=16,
+        block_size=64,
+        max_position_embeddings=128,
+        attention_type="kaleido",
+        router_type="smear",
+        device_map="cpu",
     )
     groups, skipped = discover_targets(PraxisForCausalLM(cfg), TARGET_PROFILES["all"])
     names = [getattr(g, "name", "") for g in groups]
@@ -509,10 +521,13 @@ def test_score_matrix_is_exactly_zero_at_init():
     """
     a = _attn()
     x = torch.randn(2, 12, 32)
-    w = (a.turn_static.weight[0].view(1, 1, a.num_heads, a.num_mirrors)
-         + TURN_MOD * torch.tanh(a.turn(x).view(2, 12, a.num_heads, a.num_mirrors)))
+    w = a.turn_static.weight[0].view(
+        1, 1, a.num_heads, a.num_mirrors
+    ) + TURN_MOD * torch.tanh(a.turn(x).view(2, 12, a.num_heads, a.num_mirrors))
     assert torch.equal(w, torch.zeros_like(w))
-    assert torch.equal(a._scores(w, a._faceted(0, 12)), torch.zeros(2, a.num_heads, 12, 12))
+    assert torch.equal(
+        a._scores(w, a._faceted(0, 12)), torch.zeros(2, a.num_heads, 12, 12)
+    )
 
 
 def test_weights_are_not_a_simplex():
@@ -557,7 +572,9 @@ def test_pre_softmax_blend_leaves_the_convex_hull_of_the_mirrors():
 
     onehot = torch.zeros(a.num_mirrors, 1)
     onehot[0] = 1.0
-    assert torch.allclose(torch.softmax((onehot * row).sum(0), -1), per_mirror[0], atol=1e-6)
+    assert torch.allclose(
+        torch.softmax((onehot * row).sum(0), -1), per_mirror[0], atol=1e-6
+    )
 
 
 def test_turn_scale_is_the_effective_temperature():
@@ -614,10 +631,17 @@ def test_dropping_every_mirror_falls_back_to_uniform_attention():
     """SMEAR's safety property, inherited: an all-dropped blend is w = 0, which
     is this module's identity state, not a degenerate one."""
     a = _attn()
-    scores = a._scores(torch.zeros(2, 12, a.num_heads, a.num_mirrors), a._faceted(0, 12))
+    scores = a._scores(
+        torch.zeros(2, 12, a.num_heads, a.num_mirrors), a._faceted(0, 12)
+    )
     assert torch.equal(scores, torch.zeros_like(scores))
-    probs = torch.softmax(scores.masked_fill(
-        ~((torch.arange(12)[:, None] - torch.arange(12)[None, :]) >= 0), float("-inf")), -1)
+    probs = torch.softmax(
+        scores.masked_fill(
+            ~((torch.arange(12)[:, None] - torch.arange(12)[None, :]) >= 0),
+            float("-inf"),
+        ),
+        -1,
+    )
     assert torch.allclose(probs[0, 0, -1], torch.full((12,), 1 / 12), atol=1e-6)
 
 
@@ -629,8 +653,13 @@ def test_turn_metrics_are_absent_at_init_rather_than_reporting_collapse():
     a.train()
     a(torch.randn(4, 16, 32))
     m = a.training_metrics()
-    for k in ("kaleido_turn_modes", "kaleido_turn_negative", "kaleido_turn_scale",
-              "kaleido_mirror_utilization", "kaleido_turn_static_share"):
+    for k in (
+        "kaleido_turn_modes",
+        "kaleido_turn_negative",
+        "kaleido_turn_scale",
+        "kaleido_mirror_utilization",
+        "kaleido_turn_static_share",
+    ):
         assert k not in m
     with torch.no_grad():
         a.turn_static.weight.normal_(std=0.5)
@@ -732,3 +761,210 @@ def test_ratio_structure_survives_but_fixed_lag_smears():
     up = F.interpolate(diag, size=(256, 256), mode="bilinear", align_corners=True)[0, 0]
     for row in (64, 128, 192):
         assert abs(int(up[row].argmax()) - row) <= 2
+
+
+# ------------------------------------------------- the 1/k^alpha envelope
+def _pink(**over):
+    from praxis.attention import ATTENTION_REGISTRY
+
+    torch.manual_seed(0)
+    return ATTENTION_REGISTRY["kaleido_pink"](_config(**over))
+
+
+def test_base_dictionary_is_flat_and_pink_is_not():
+    """alpha=0 is the paper's own alpha=0 corner, not an oversight."""
+    a, p = _attn(), _pink()
+    assert a.alpha == 0.0 and p.alpha == 1.0
+    assert torch.equal(a.envelope, torch.ones(a.num_mirrors))
+    assert torch.allclose(p.envelope, 1.0 / torch.arange(1.0, p.num_mirrors + 1))
+
+
+def test_envelope_suppresses_later_mirrors_by_1_over_k():
+    p = _pink()
+    norms = [float(m.norm()) for m in p.mirrors]
+    for k in range(1, len(norms)):
+        assert norms[k] == pytest.approx(norms[0] / (k + 1), rel=0.1)
+
+
+def test_flat_and_pink_share_the_same_draw_so_the_ab_isolates_the_envelope():
+    a, p = _attn(), _pink()
+    assert torch.allclose(a.mirrors[0], p.mirrors[0])
+    assert torch.allclose(a.mirrors[2] / 3.0, p.mirrors[2], atol=1e-6)
+
+
+def test_envelope_fight_is_calibrated_against_proposition_iii():
+    """0 = accepting the prior (so it has only cost capacity), 1 = compensating
+    exactly, >1 = the suppressed mirrors dominating. The paper's claim is that
+    capacity exists only above 0."""
+    p = _pink()
+    p.train()
+    N = p.num_mirrors
+    for weights, want in [
+        (torch.ones(N), 0.0),  # flat |w| -> accepting
+        (torch.arange(1.0, N + 1), 1.0),  # |w| ~ k^alpha -> exact
+        (torch.arange(1.0, N + 1) ** 2, 2.0),  # over-compensating
+    ]:
+        with torch.no_grad():
+            p.turn_static.weight[:] = weights.repeat(p.num_heads)
+        p(torch.randn(4, 16, 32), current_depth=0)
+        assert p.training_metrics()["kaleido_envelope_fight"] == pytest.approx(
+            want, abs=1e-3
+        )
+
+
+def test_envelope_fight_is_absent_without_an_envelope():
+    a = _attn()
+    a.train()
+    with torch.no_grad():
+        a.turn_static.weight.normal_(std=0.5)
+    a(torch.randn(4, 16, 32))
+    assert "kaleido_envelope_fight" not in a.training_metrics()
+
+
+def test_pink_variant_trains_end_to_end():
+    p = _pink()
+    p.train()
+    out, _, _ = p(torch.randn(2, 40, 32), current_depth=1)
+    out.sum().backward()
+    assert p.turn_static.weight.grad.abs().sum() > 0
+    assert not p.envelope.requires_grad
+
+
+# -------------------------------------------------- split coordinate systems
+def _split(**over):
+    torch.manual_seed(0)
+    return KaleidoscopeAttention(_config(**over), coords="split")
+
+
+def test_default_coords_are_ratio_only():
+    """The warp is opt-in, so -i and -j stay exactly the block they trained."""
+    a = _attn()
+    assert a.coords == "ratio"
+    assert (a.n_ratio, a.n_lag) == (a.num_mirrors, 0)
+
+
+def test_split_halves_the_dictionary():
+    a = _split()
+    assert (a.n_ratio, a.n_lag) == (2, 2)
+    assert a.n_ratio + a.n_lag == a.num_mirrors
+
+
+def test_unknown_coords_rejected():
+    with pytest.raises(ValueError, match="coordinates"):
+        KaleidoscopeAttention(_config(), coords="polar")
+
+
+def test_split_shares_the_dictionary_draw_with_ratio():
+    """Same seed, same mirrors - so a ratio/split A/B isolates the coordinates."""
+    assert torch.equal(_attn().mirrors, _split().mirrors)
+
+
+def test_lag_coordinate_resolves_a_single_token_at_length():
+    """The whole point of the warp: lag 1 stays one token wide at any T.
+
+    A one-cell canonical feature at the column the log warp assigns to lag 1
+    must resample to a band of width 1, where the ratio half smears the same
+    feature across T/R positions.
+    """
+    a = _split()
+    R = a.resolution
+    for T in (256, 512):
+        col = round(math.log1p(1.0) / math.log1p(T - 1) * (R - 1))
+        m = torch.zeros(a.num_mirrors, R, R)
+        m[a.n_ratio, :, col] = 1.0
+        row = a._resample(m, T)[a.n_ratio][T // 2]
+        nz = (row > 1e-3).nonzero().flatten()
+        assert len(nz) == 1, f"T={T}: lag band spans {len(nz)} positions"
+        assert T // 2 - int(nz[0]) == 1
+
+
+def test_ratio_coordinate_still_smears_fixed_lag():
+    """The control for the test above - and why both halves exist."""
+    a = _split()
+    R, T = a.resolution, 512
+    m = torch.zeros(a.num_mirrors, R, R)
+    m[0, :, 1] = 1.0
+    row = a._resample(m, T)[0][T // 2]
+    nz = (row > 1e-3).nonzero().flatten()
+    assert len(nz) > 8
+
+
+def test_lag_coordinate_preserves_causality():
+    """Nothing in the warp may sample across the diagonal."""
+    a = _split()
+    T = 32
+    g = a._lag_grid(T, torch.device("cpu"), torch.float32)[0]
+    i = T - 1
+    # Lag is clamped at 0, so future keys all collapse onto the diagonal cell
+    # rather than reaching around to a different part of the mirror.
+    assert torch.allclose(g[0, 1:, 0], g[0, 0, 0])
+
+
+def test_split_is_length_free():
+    """Every T works, including the T=1 of a cached decode."""
+    a = _split()
+    for T in (1, 2, 7, 64, 129):
+        assert a._faceted(0, T).shape == (a.num_mirrors, T, T)
+
+
+def test_split_forward_runs_and_is_finite():
+    a = _split()
+    x = torch.randn(2, 24, 32)
+    out, _, _ = a(x, current_depth=1)
+    assert out.shape == x.shape and torch.isfinite(out).all()
+
+
+def test_facets_learn_through_the_warp():
+    """grid_sample must stay differentiable or the lag half is frozen dead."""
+    a = _split()
+    a.train()
+    a.facet_u.data.normal_(0, 0.1)
+    # The score is einsum(w, mirrors), so a zero blend gives the WHOLE
+    # dictionary zero gradient - ratio half included. Open the turn first, or
+    # this passes vacuously for the wrong reason.
+    a.turn_static.weight.data.normal_(0, 0.5)
+    out, _, _ = a(torch.randn(2, 16, 32), current_depth=0)
+    out.sum().backward()
+    assert a.facet_u.grad is not None
+    assert a.facet_u.grad[:, a.n_ratio :].abs().sum() > 0
+    assert a.facet_u.grad[:, : a.n_ratio].abs().sum() > 0
+
+
+def test_envelope_ranks_within_each_coordinate_group():
+    """Global ranking would suppress the lag half for being stored second."""
+    a = KaleidoscopeAttention(_config(), coords="split", alpha=1.0)
+    assert a.env_rank.tolist() == [1.0, 2.0, 1.0, 2.0]
+    assert torch.allclose(a.envelope, torch.tensor([1.0, 0.5, 1.0, 0.5]))
+    # Both coordinate systems get the same capacity ladder.
+    assert a.envelope[: a.n_ratio].tolist() == a.envelope[a.n_ratio :].tolist()
+
+
+def test_ratio_only_envelope_is_unchanged_by_the_split_machinery():
+    """-j's dictionary must be exactly what it was before coords existed."""
+    a = KaleidoscopeAttention(_config(), alpha=1.0)
+    assert a.env_rank.tolist() == [1.0, 2.0, 3.0, 4.0]
+    assert torch.allclose(a.envelope, torch.tensor([1.0, 0.5, 1 / 3, 0.25]))
+
+
+def test_lag_share_reported_only_when_split():
+    a = _split()
+    a.train()
+    a.turn_static.weight.data.normal_(0, 0.5)
+    a(torch.randn(2, 16, 32), current_depth=0)
+    share = a.training_metrics()["kaleido_lag_share"]
+    assert 0.0 <= share <= 1.0
+
+    b = _attn()
+    b.train()
+    b.turn_static.weight.data.normal_(0, 0.5)
+    b(torch.randn(2, 16, 32), current_depth=0)
+    assert "kaleido_lag_share" not in b.training_metrics()
+
+
+def test_lag_share_reads_one_when_only_lag_mirrors_are_used():
+    a = _split()
+    a.train()
+    w = torch.zeros(2, 16, a.num_heads, a.num_mirrors)
+    w[..., a.n_ratio :] = 1.0
+    a._note_turn(w, torch.zeros_like(w), torch.zeros(1, 1, a.num_heads, a.num_mirrors))
+    assert a._metrics["kaleido_lag_share"] == pytest.approx(1.0)

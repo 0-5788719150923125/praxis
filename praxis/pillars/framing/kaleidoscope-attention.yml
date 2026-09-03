@@ -1,0 +1,72 @@
+# Enables on the kaleido* attention family. The claim is narrow and checkable:
+# the input-conditional blend over a frozen dictionary is the one variant
+# Synthesizer's own design space leaves unbuilt, because its authors made the
+# mixture weights static learned scalars. Everything asserted here is measured
+# by a kaleido_* metric, so the section cannot outrun the run that renders it.
+section: harmonic
+order: 27
+requires:
+  attention_type: [kaleido*]
+body: >
+  \subsection{Attention as a blend of frozen geometries}
+
+  The harmonic argument of Section~\ref{sec:manifold} is made on the
+  $(\text{position}, \text{feature})$ axis: a frozen basis, learned amplitudes,
+  an input-conditional deviation on top. Nothing in it is specific to that axis.
+  Applied instead to $(\text{query}, \text{key})$, it says the attention matrix
+  need not be computed from content at all - it can be a coefficient vector on a
+  fixed dictionary of mixing geometries.
+
+  This is what Kaleidoscope attention builds. $N$ full mixing matrices are drawn
+  once at construction and \emph{never trained}; a per-token router emits one
+  free signed coefficient for each; their blend is the score matrix. There is no
+  $Q$ and no $K$, so those projections are gone entirely, and the score half of
+  attention costs $N T^2$ rather than $T^2 d$. The coefficients are
+  unconstrained rather than a distribution over the dictionary, which is what
+  makes the blend more than a choice among the mirrors: the reachable set is
+  their linear span rather than their convex hull, and a negative coefficient
+  \emph{subtracts} a mirror. Blending happens before the softmax, so the score
+  is a log-linear pool of the dictionary - a product of experts, putting mass
+  where mirrors agree - and a spread blend therefore reaches attention rows that
+  no single mirror expresses. That freedom is not decorative: an earlier
+  softmax-weighted version of this block concentrated roughly nine tenths of the
+  blend on one mirror, which collapses the score to a single frozen matrix.
+
+  The mirrors are functions on the unit square in \emph{relative} position,
+  stored at a canonical resolution and resampled to whatever length the batch
+  supplies - so the geometry is length-free, and under a sequence curriculum the
+  model sees one dictionary stretched to fit rather than a different slice at
+  every length. That is the same move the harmonic field makes, evaluating a
+  continuous frozen basis at the positions in use rather than storing a table of
+  them.
+
+  \paragraph{What is and is not new.} Synthesizer~\cite{tay2021synthesizer}
+  asked exactly this question and built nearly every neighboring variant: a
+  single frozen random alignment matrix, a single trained one - which its own
+  later note identifies as an \mbox{MLP-Mixer} token-mixing
+  layer~\cite{tolstikhin2021mixer} - and a ``Mixture of Synthesizers'' blending
+  several. But their mixture weights are $\alpha_{i,h,\ell}$, indexed by head
+  and layer: \emph{parameters}, not functions of the input. FNet is the limiting
+  case in the other direction, replacing the matrix with an unparameterized
+  Fourier transform~\cite{leethorp2022fnet}. The variant they did not build is
+  the input-conditional blend, and their own numbers say it is the interesting
+  one - a fixed random matrix already reaches within a few BLEU of a
+  Transformer, and their \emph{static} mixture reaches parity, so a frozen basis
+  working at all is not the result. The question is whether making the blend a
+  function of the input beats making it a parameter.
+
+  \paragraph{Where the expression lives.} With the geometry frozen from
+  initialization, everything learned is amplitude: the coefficient norm $\lVert
+  w \rVert$ sets the score variance and therefore the model's own attention
+  temperature, a degree of freedom a simplex does not have. This is the same
+  arrangement as the harmonic head, whose amplitudes are likewise a free real
+  parameter over a frozen basis rather than a distribution over it.
+  Section~\ref{sec:scaling}'s proposition~\emph{(iii)} then bites directly. A
+  flat dictionary - every mirror at unit scale - is the $\alpha = 0$ corner,
+  where nothing is suppressed and amplitude buys capacity without resistance.
+  Under a $k^{-\alpha}$ envelope over the dictionary, the same radial prior the
+  frequency grid carries, capacity is available only if the blend spends
+  amplitude against it. That is not a matter of taste: the log-slope of $\lvert
+  w_k \rvert$ against $\log k$, normalized by $\alpha$, reads $0$ when the blend
+  accepted the prior and $1$ when it cancelled it, and a run that sits near zero
+  has falsified the useful form of the capacity claim on this axis.

@@ -61,11 +61,9 @@ class ArcMixture(MixtureOfDepths):
     metric_descriptions = {
         "arc_router_specialization": {
             "description": (
-                "Depth-specific fraction of the per-pass router weight delta "
-                "(between-pass variance / total energy). 0 = every recurrent "
-                "pass learned the same routing direction (collapsed, no benefit "
-                "over a shared router, and the zero-init case); rising = each "
-                "pass is specializing which tokens it routes."
+                "Depth-specific fraction of the per-pass router weight delta. 0 = "
+                "every pass learned the same routing direction (also the init value); "
+                "rising = specializing."
             ),
             "chart": {
                 "title": "Arc Depth Specialization",

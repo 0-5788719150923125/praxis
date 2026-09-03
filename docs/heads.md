@@ -23,7 +23,7 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 (so the distance computation lives in the encoder's feature space) and replaces the
 encoder's dot-product projection at the loss boundary.
 
-Source: [praxis/heads/crystal.py:306](../praxis/heads/crystal.py#L306)
+Source: [praxis/heads/crystal.py:301](../praxis/heads/crystal.py#L301)
 
 ## `crystal_harmonic`, `crystal_harmonic_static` - SequentialHead
 
@@ -59,7 +59,7 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 ``forward`` modulates the features with the field, then projects through ``lm_head`` -
 identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:1555](../praxis/heads/harmonic.py#L1555)
+Source: [praxis/heads/harmonic.py:1496](../praxis/heads/harmonic.py#L1496)
 
 ## `prismatic`, `prismatic3`, `prismatic3_repel`, `prismatic4`, `prismatic5`, `prismatic6`, `prismatic6_vear`, `prismatic7` - ParallelHead
 

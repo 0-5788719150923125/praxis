@@ -209,15 +209,71 @@ NUM_MIRRORS: int = 4
 # FIXED-LAG structure does not: a canonical previous-token band (lag 1 at R=64)
 # resamples to lag 2 with width 5 at T=128, and lag 5 with width 21 at T=512.
 # So R is the knob trading length-invariance against positional acuity, and a
-# dictionary of ratio mirrors cannot express "the token immediately before" at
-# large T. A Toeplitz mirror built from a 1D lag kernel would be length-free in
-# the other coordinate system and is the natural way to span both; not built.
+# dictionary of ratio mirrors alone cannot express "the token immediately
+# before" at large T.
+#
+# THAT IS THE UNIFORM STRETCH, NOT RELATIVE INDEXING - see MIRROR_COORDS, where
+# "split" reads half the dictionary on a LOG LAG axis and recovers single-token
+# acuity at any length. This constant only governs the ratio half.
 MIRROR_RES: int = 64
 # Logit scale of a fresh mirror. Softmax over t keys with iid N(0, 1) logits
 # puts its peak roughly sqrt(2 ln t) above the mean - about 3.5 at t = 512 - so
 # a unit-scale mirror is sparse without being one-hot. Flatter than this and
 # every mirror is the prefix mean; sharper and each is a single random key.
 MIRROR_SCALE: float = 1.0
+# Radial envelope over the dictionary: mirror ``k`` (1-indexed) is scaled by
+# ``k^-alpha``, the same pink-noise prior HarmonicField puts on its frequency
+# grid. Zero here, so the base variant has a FLAT dictionary - every mirror
+# unit-scale, nothing suppressed.
+#
+# The flat case is not an oversight, it is the alpha=0 corner of the paper's own
+# interference-capacity argument (research/framing.tex, proposition (iii)): the
+# count is in EFFECTIVE coefficients, amplitude after the envelope, and
+# "interference capacity is available only if the model spends amplitude against
+# the envelope where the envelope is suppressing it." With no envelope there is
+# nothing to spend against and amplitude buys capacity directly. With one, the
+# prior costs capacity unless the blend fights it - which is a prediction, and
+# ``kaleido_envelope_fight`` is the measurement.
+#
+# One honest caveat on the analogy. HarmonicField's envelope is indexed by
+# FREQUENCY, so suppressing high f is a smoothness prior with a meaning. The
+# mirrors are iid random and carry no frequency ordering, so an index envelope
+# is a CAPACITY-ALLOCATION prior ("use few mirrors unless you have reason to use
+# more") rather than a smoothness one. It is the paper's mechanism on an
+# arbitrary ordering. Making the ordering real - mirror k band-limited to
+# spatial frequency ~k, so the index IS a frequency - is the principled version
+# and is not built.
+MIRROR_ALPHA: float = 0.0
+# Which coordinate system each mirror is read in. A mirror is a function on the
+# unit square; this says what the square's axes MEAN.
+#
+#   "ratio" - (query fraction, key fraction). The original. Ratio structure
+#       survives resampling exactly ("attend to the start", "attend a third of
+#       the way back", the diagonal), and FIXED LAG does not: uniform bilinear
+#       stretch sends a canonical lag-1 band to peak lag 2 spanning 6 positions
+#       at T=128, and peak lag 5 spanning 24 at T=512 (measured, R=64).
+#
+#   "split" - half the dictionary in ratio coordinates, half in (query
+#       fraction, WARPED LAG), where the lag axis is sampled at
+#       ``log1p(i - j) / log1p(T - 1)``. That log warp is the whole point: it
+#       gives every small lag its own canonical cell at any length. At T=512,
+#       R=64, lags 0/1/2/3 land on canonical columns 0/7/11/14 where the
+#       uniform grid puts them at 0/0.1/0.2/0.4 - indistinguishable. Fine near
+#       the diagonal, compressed away from it.
+#
+# WHY BOTH RATHER THAN A WARP. A lag-warped mirror spans fixed lags and loses
+# ratios, exactly as a ratio mirror spans ratios and loses lags: warping the
+# whole dictionary swaps the limitation rather than removing it. Splitting it
+# lets the blend reach both, and the router decides - which is the same
+# argument the block already makes for blending geometries at all, applied one
+# level up to the coordinate systems those geometries live in.
+#
+# This is the acuity half of the limits paragraph in the paper. The SELECTION
+# half is not touched by it: a smooth router over a frozen dictionary emits a
+# smooth attention row however well the geometry resolves position, and
+# induction wants a discrete pointer. Acuity is fixable, selection is
+# structural, and only the first of them is what a warp is for.
+MIRROR_COORDS: str = "ratio"
 # Fixed seed for the dictionary. The mirrors are never trained, so they are
 # reproducible constants of the architecture rather than learned state: they
 # are generated deterministically here and registered non-persistent, exactly
@@ -280,22 +336,15 @@ class KaleidoscopeAttention(nn.Module):
 
     num_mirrors: int = NUM_MIRRORS
     resolution: int = MIRROR_RES
+    alpha: float = MIRROR_ALPHA
+    coords: str = MIRROR_COORDS
 
     metric_descriptions = {
         "kaleido_turn_modes": {
             "description": (
-                "Effective number of mirrors in the blend - the participation "
-                "ratio of the weight vector, the same statistic "
-                "harmonic_env_modes reports for the envelope coefficients. 1 = "
-                "one mirror carries everything, which is the collapse this "
-                "parameterization exists to avoid: at one mirror the score IS "
-                "that frozen matrix and the block is Synthesizer's Fixed Random "
-                "evaluated per token. N = all mirrors in play, where the "
-                "log-linear pool reaches geometry outside the dictionary's "
-                "hull. THIS IS THE FIRST NUMBER TO READ. The softmax version of "
-                "this block saturated to ~90% on one mirror, which is what "
-                "smear.py records for itself before it added expert dropout. "
-                "Absent at init, where the blend is identically zero."
+                "Effective number of mirrors in the blend (participation ratio). 1 = "
+                "collapsed onto a single frozen matrix; N = all in play. Absent at "
+                "init."
             ),
             "chart": {
                 "title": "Kaleidoscope Turn",
@@ -310,14 +359,8 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_turn_negative": {
             "description": (
-                "Fraction of blend weights below zero - the direct falsifier "
-                "for leaving the simplex. A softmax blend cannot produce one, "
-                "and a negative weight SUBTRACTS a mirror: in the "
-                "product-of-experts reading it is a negative exponent, 'attend "
-                "where this mirror says not to', which no mixture of any "
-                "weighting can reach. Pinned near 0 means the free "
-                "parameterization bought nothing a softmax could not have done, "
-                "and the simplex was not the constraint after all."
+                "Fraction of blend weights below zero - what a softmax blend cannot "
+                "produce. Pinned near 0 = the free parameterization bought nothing."
             ),
             "chart": {
                 "title": "Kaleidoscope Turn",
@@ -331,15 +374,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_turn_scale": {
             "description": (
-                "Mean ||w|| across mirrors. With unit-scale mirrors the score "
-                "is ~N(0, ||w||^2), so this IS the effective softmax "
-                "temperature: the model controls its own attention sharpness "
-                "through it, a degree of freedom a simplex does not have. "
-                "Growing without bound is the failure to watch - it sharpens "
-                "attention toward a single key - and is why the "
-                "input-conditional half is tanh-bounded while the static half "
-                "is free. 0 at init, where the score is exactly zero and "
-                "attention is uniform over the causal prefix."
+                "Mean ||w|| across mirrors, which is the effective softmax "
+                "temperature. Unbounded growth sharpens attention onto one key. 0 at "
+                "init."
             ),
             "chart": {
                 "title": "Kaleidoscope Turn Scale",
@@ -351,18 +388,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_turn_static_share": {
             "description": (
-                "Which half of the blend is doing the work: variance across "
-                "mirrors of the per-depth STATIC term over the total of static "
-                "plus input-conditional, on the axis that actually drives the "
-                "softmax (a constant added to every mirror cancels there, so a "
-                "raw norm would be the wrong quantity). 1.0 = the blend is a "
-                "learned constant per depth and the input is ignored, which is "
-                "Synthesizer's Mixture with per-depth alphas and NOT the claim "
-                "this architecture makes. 0.0 = purely input-driven. Undefined "
-                "at init, when both terms are zero. Read alongside "
-                "kaleido_turn_modes: a high static share is the honest "
-                "way for the model to say the dictionary needs no per-token "
-                "selection."
+                "Static share of the blend, on the axis that drives the softmax. 1.0 = "
+                "a learned constant per depth with the input ignored; 0.0 = purely "
+                "input-driven."
             ),
             "chart": {
                 "title": "Kaleidoscope Turn",
@@ -376,15 +404,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_turn_depth_specialization": {
             "description": (
-                "Between-depth variance of the static blend over its total "
-                "energy, the same statistic as arc_qkv_specialization. 0 means "
-                "every recurrent pass learned the same preference over mirrors "
-                "(and is also the zero-init value), so a single shared blend "
-                "would have done; rising means each pass prefers a different "
-                "region of the dictionary. Distinct from "
-                "kaleido_facet_depth_specialization, which asks whether each "
-                "pass GRINDS the mirrors differently rather than which ones it "
-                "reaches for."
+                "Between-depth variance of the static blend. 0 = every pass learned "
+                "the same preference over mirrors (also the init value); rising = they "
+                "diverge."
             ),
             "chart": {
                 "title": "Kaleidoscope Depth Specialization",
@@ -398,15 +420,8 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_mirror_utilization": {
             "description": (
-                "Fraction of mirrors whose |weight| clears half the mean "
-                "magnitude - smear_expert_utilization's estimator, on "
-                "magnitudes rather than on a simplex share, since these weights "
-                "are free and signed. 1/N is collapse onto one mirror. Read "
-                "WITH kaleido_turn_modes: this one counts how many mirrors "
-                "clear a threshold, that one gives the effective count "
-                "continuously. Together they say which way an N-sweep should "
-                "go - both near N argues for MORE mirrors, a falling pair says "
-                "the dictionary is already larger than the model can use."
+                "Fraction of mirrors whose |weight| clears half the mean magnitude. "
+                "1/N = collapse onto one; near N argues for a larger dictionary."
             ),
             "chart": {
                 "title": "Kaleidoscope Mirror Utilization",
@@ -416,15 +431,38 @@ class KaleidoscopeAttention(nn.Module):
                 "order": 15,
             },
         },
+        "kaleido_envelope_fight": {
+            "description": (
+                "Log-slope of |w_k| against log k, normalized by the dictionary's "
+                "1/k^alpha envelope: 0 = accepting it, 1.0 = cancelling it exactly. "
+                "Absent when alpha=0."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Envelope Fight",
+                "y_label": "d log|w| / d log k, over alpha",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 16,
+            },
+        },
+        "kaleido_lag_share": {
+            "description": (
+                "Share of blend magnitude on the lag-coordinate (log-warped) half of "
+                "the dictionary. 0.5 is parity; below it the warp is not paying for "
+                "itself."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Lag Share",
+                "y_label": "share of |w| on lag mirrors",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 17,
+            },
+        },
         "kaleido_gate_negative": {
             "description": (
-                "Fraction of SiLU output-gate values below zero. Exactly what "
-                "a sigmoid gate cannot produce: pinned at 0 means the single "
-                "head never needed to flip a feature's sign and a sigmoid "
-                "would have done as well; rising means the gate is using the "
-                "amplify/invert freedom Mega's Theorem 1 asks for - which is "
-                "the whole justification for running one head over a shared "
-                "dictionary instead of several."
+                "Fraction of SiLU gate values below zero - the sign flips a sigmoid "
+                "gate cannot make. Pinned at 0 = a sigmoid would have done as well."
             ),
             "chart": {
                 "title": "Kaleidoscope Gate",
@@ -438,10 +476,8 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_gate_magnitude": {
             "description": (
-                "Mean absolute SiLU gate value. Near 0 means the gate is "
-                "closing the attention branch off entirely and the block is "
-                "being routed around; read it against the negative fraction, "
-                "since a gate can be large and one-sided or small and mixed."
+                "Mean absolute SiLU gate value. Near 0 = the attention branch is "
+                "closed off; read it against the negative fraction."
             ),
             "chart": {
                 "title": "Kaleidoscope Gate",
@@ -455,18 +491,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_ghost_share": {
             "description": (
-                "Share of attention mass taken by ghostmax's always-visible "
-                "zero logit - the 'attend to nothing' escape - averaged over "
-                "query positions. Opens near 0.018 at 256 positions and 0.010 "
-                "at 512, and the value is LENGTH-DEPENDENT by construction: "
-                "position 0 has one key and gives the ghost ~0.50 whatever the "
-                "logits do, while the tip gives it ~0.003. So this line moves "
-                "with the sequence curriculum and a drop is not necessarily "
-                "the model learning to read. Compare like lengths. Where "
-                "ssog.py declined the ghost outright, a log-density field "
-                "hands it 0.505 at EVERY position; unit-scale mirrors do not. "
-                "A share near 1 is an attention branch that switched itself "
-                "off."
+                "Share of attention mass on ghostmax's zero logit, the 'attend to "
+                "nothing' escape. Length-dependent by construction, so compare like "
+                "lengths."
             ),
             "chart": {
                 "title": "Kaleidoscope Ghost Share",
@@ -478,14 +505,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_facet_depth_specialization": {
             "description": (
-                "Fraction of the per-depth facet deformation that is "
-                "depth-specific: 1 - ||mean_d||^2 / mean_d||.||^2. Zero means "
-                "every recurrent pass ground its mirrors the same way, so a "
-                "single shared facet would have done, and the depth axis is "
-                "not earning its parameters. Rising means each pass is "
-                "reshaping the dictionary differently. The direct analogue of "
-                "arc_qkv_specialization, and the reason the bias sits on the "
-                "mirrors rather than on the inputs."
+                "Fraction of the facet deformation that is depth-specific. 0 = every "
+                "pass ground its mirrors the same way; rising = each pass reshapes "
+                "differently."
             ),
             "chart": {
                 "title": "Kaleidoscope Depth Specialization",
@@ -499,12 +521,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_facet_strength": {
             "description": (
-                "Mean |deformation| as a fraction of its cap, so 1.0 means the "
-                "facets are pinned at FACET_SCALE and the frozen mirrors are "
-                "no longer foundational. Exactly 0 at init. A run that stays "
-                "near 0 is a FINDING and not a failure: it says the frozen "
-                "dictionary plus routing was sufficient and depth needed no "
-                "deformation at all."
+                "Mean |deformation| as a fraction of its cap. 1.0 = facets pinned at "
+                "FACET_SCALE. 0 at init, and staying near 0 is a finding, not a "
+                "failure."
             ),
             "chart": {
                 "title": "Kaleidoscope Facet Strength",
@@ -521,6 +540,8 @@ class KaleidoscopeAttention(nn.Module):
         config,
         num_mirrors: Optional[int] = None,
         resolution: Optional[int] = None,
+        alpha: Optional[float] = None,
+        coords: Optional[str] = None,
         dropoff: Optional[str] = None,
         dropoff_every: bool = False,
     ) -> None:
@@ -549,8 +570,17 @@ class KaleidoscopeAttention(nn.Module):
             self.dropoff_step = max(0, self.depths - layers)
 
         self.resolution = int(resolution or type(self).resolution)
+        self.alpha = float(type(self).alpha if alpha is None else alpha)
+        self.coords = str(coords or type(self).coords)
+        if self.coords not in ("ratio", "split"):
+            raise ValueError(f"unknown mirror coordinates: {self.coords!r}")
 
         N, H = self.num_mirrors, self.num_heads
+        # Contiguous groups, ratio first, so the resample can slice rather than
+        # gather. "split" gives the lag half the smaller share when N is odd:
+        # ratio is the coordinate system the block already worked in.
+        self.n_lag = N // 2 if self.coords == "split" else 0
+        self.n_ratio = N - self.n_lag
 
         # The dictionary. Shared across heads on purpose: one frozen basis that
         # every head reads differently is both cheaper (N * T^2 rather than
@@ -558,10 +588,30 @@ class KaleidoscopeAttention(nn.Module):
         # they turn, not by owning private geometry.
         gen = torch.Generator().manual_seed(MIRROR_SEED)
         R = self.resolution
+        # The envelope multiplies the dictionary itself, so it survives the
+        # resample and needs no separate bookkeeping in the forward. At
+        # alpha=0 this is exactly ones and the draw is bit-identical to the flat
+        # variant, which keeps a flat/pink A/B honest.
+        #
+        # The envelope ranks WITHIN a coordinate group, not across the whole
+        # dictionary. Ranking globally would hand the lag mirrors the tail of
+        # the ladder purely because they are stored second, so a pink run would
+        # suppress the new coordinate system by an accident of ordering and the
+        # warp would be measured at a handicap. Each group gets its own ladder;
+        # at coords="ratio" the group is everything and this is unchanged.
+        rank = torch.cat(
+            [
+                torch.arange(1, self.n_ratio + 1, dtype=torch.float32),
+                torch.arange(1, self.n_lag + 1, dtype=torch.float32),
+            ]
+        )
+        self.register_buffer("env_rank", rank, persistent=False)
+        env = rank.pow(-self.alpha)
+        self.register_buffer("envelope", env, persistent=False)
         mirrors = MIRROR_SCALE * torch.randn(
             N, R, R, generator=gen, dtype=torch.float32
         )
-        self.register_buffer("mirrors", mirrors, persistent=False)
+        self.register_buffer("mirrors", mirrors * env[:, None, None], persistent=False)
 
         # The turn, as base plus deviation. ``turn_static`` is the per-depth
         # free blend (the base, unbounded like HarmonicField.amplitudes);
@@ -614,28 +664,70 @@ class KaleidoscopeAttention(nn.Module):
         v = self.facet_v[d].unsqueeze(-2)  # [N, 1, R]
         return self.mirrors + FACET_SCALE * torch.tanh(u * v)
 
+    def _lag_grid(self, T: int, device, dtype) -> Tensor:
+        """Sampling grid for the lag half of the dictionary, ``[1, T, T, 2]``.
+
+        Rows stay the query fraction; columns become ``log1p(lag)``, normalized
+        so the longest representable lag lands on the canonical grid's far
+        edge. The log is what buys the acuity: lag 1 sits a fixed distance from
+        the diagonal in canonical cells at EVERY ``T``, where a uniform grid
+        lets it collapse onto lag 0 as ``T`` grows. Non-causal cells (``j > i``)
+        clamp to lag 0; they are masked before the softmax either way.
+        """
+        idx = torch.arange(T, device=device, dtype=dtype)
+        denom = float(max(T - 1, 1))
+        y = (2.0 * idx / denom - 1.0).view(T, 1).expand(T, T)
+        lag = (idx.view(T, 1) - idx.view(1, T)).clamp_min(0.0)
+        x = 2.0 * (torch.log1p(lag) / math.log1p(denom)) - 1.0
+        return torch.stack((x, y), dim=-1).unsqueeze(0)
+
+    def _resample(self, grid: Tensor, T: int) -> Tensor:
+        """A canonical ``[N, R, R]`` dictionary at ``[N, T, T]``.
+
+        Each mirror is read in its own coordinate system, so this is one
+        ``interpolate`` for the ratio half and one ``grid_sample`` for the lag
+        half. Differentiable through both, so the facets still learn.
+        """
+        parts = []
+        if self.n_ratio:
+            ratio = grid[: self.n_ratio]
+            if T != self.resolution:
+                ratio = F.interpolate(
+                    ratio.unsqueeze(0),
+                    size=(T, T),
+                    mode="bilinear",
+                    align_corners=True,
+                ).squeeze(0)
+            parts.append(ratio)
+        if self.n_lag:
+            # No T == resolution shortcut here: the warp is a different
+            # geometry at every length, including the canonical one.
+            g = self._lag_grid(T, grid.device, grid.dtype)
+            parts.append(
+                F.grid_sample(
+                    grid[self.n_ratio :].unsqueeze(0),
+                    g,
+                    mode="bilinear",
+                    padding_mode="border",
+                    align_corners=True,
+                ).squeeze(0)
+            )
+        return parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
+
     def _faceted_frozen(self, T: int) -> Tensor:
         """The undeformed dictionary at ``[N, T, T]`` - the facet-free control."""
-        if T == self.resolution:
-            return self.mirrors
-        return F.interpolate(
-            self.mirrors.unsqueeze(0), size=(T, T), mode="bilinear", align_corners=True
-        ).squeeze(0)
+        return self._resample(self.mirrors, T)
 
     def _faceted(self, depth: int, T: int) -> Tensor:
         """The dictionary as this depth sees it, resampled to ``[N, T, T]``.
 
-        ``align_corners=True`` pins the canonical grid's corners to the
-        sequence's, so the whole distribution stretches or shrinks to fit rather
-        than being cropped. Any ``T`` works, including the ``T = 1`` of a cached
-        decode step. Differentiable, so the facets learn through it.
+        Deformation happens in CANONICAL space, before the resample, so the
+        facets are length-free too. ``align_corners=True`` pins the canonical
+        grid's corners to the sequence's, so a ratio mirror stretches to fit
+        rather than being cropped. Any ``T`` works, including the ``T = 1`` of a
+        cached decode step. Differentiable, so the facets learn through it.
         """
-        grid = self._canonical(depth)
-        if T == self.resolution:
-            return grid
-        return F.interpolate(
-            grid.unsqueeze(0), size=(T, T), mode="bilinear", align_corners=True
-        ).squeeze(0)
+        return self._resample(self._canonical(depth), T)
 
     def _mirror_dropout(self, w: Tensor) -> Tensor:
         """Drop mirrors from the blend, per (example, token, head).
@@ -791,6 +883,37 @@ class KaleidoscopeAttention(nn.Module):
         self._metrics["kaleido_mirror_utilization"] = float(
             (mag > 0.5 * mag.mean(-1, keepdim=True)).float().mean().item()
         )
+
+        # Proposition (iii) made measurable: is the blend SPENDING amplitude
+        # against the envelope, or accepting it? Fit the log-slope of |w_k|
+        # against log k. Pure acceptance leaves |w_k| flat (slope 0) and the
+        # effective amplitude decays with the envelope, so the suppressed
+        # mirrors carry nothing and the prior has simply cost capacity. Full
+        # compensation is slope = alpha, which cancels the envelope exactly.
+        # Reported normalized, so 1.0 = fighting all the way, 0 = accepting,
+        # and >1 = over-compensating (the suppressed mirrors now dominate).
+        if self.alpha > 0.0:
+            mag = f.abs().reshape(-1, n).mean(0).clamp_min(1e-9)
+            # Against the rank the envelope actually used, which resets per
+            # coordinate group - not against 1..N, which would read the
+            # ratio/lag boundary as a jump in the ladder and bias the slope.
+            x = torch.log(self.env_rank.to(mag.device).float())
+            y = torch.log(mag)
+            xc, yc = x - x.mean(), y - y.mean()
+            slope = (xc * yc).sum() / xc.pow(2).sum().clamp_min(1e-12)
+            self._metrics["kaleido_envelope_fight"] = float((slope / self.alpha).item())
+
+        # Is the warped half of the dictionary earning its place? Share of
+        # blend magnitude sitting on the lag-coordinate mirrors. The split is
+        # even, so 0.5 is parity: below it the router prefers ratio geometry
+        # and the warp is not paying for itself; at 0 the lag mirrors are dead
+        # and this reduces to the ratio-only block. Absent when there are none.
+        if self.n_lag:
+            m = f.abs()
+            lag_mass = m[..., self.n_ratio :].sum(-1)
+            self._metrics["kaleido_lag_share"] = float(
+                (lag_mass / m.sum(-1).clamp_min(1e-9)).mean().item()
+            )
 
         # Which half of the blend does the work, on the axis that matters -
         # variance ACROSS mirrors, since a constant added to every mirror is not

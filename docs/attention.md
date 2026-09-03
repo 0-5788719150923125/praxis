@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (22 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (27 entries)
 
 ## `arc`, `arc_dropoff`, `arc_dropoff_always` - ArcAttention
 
@@ -29,7 +29,7 @@ Presets:
 ArcAttention with the compressive memory removed. See
 :class:`~praxis.attention.infini.NoCompressiveMemory`.
 
-Source: [praxis/attention/arc.py:165](../praxis/attention/arc.py#L165)
+Source: [praxis/attention/arc.py:161](../praxis/attention/arc.py#L161)
 
 ## `arc_single`, `arc_single_dropoff` - SingleHeadArcAttention
 
@@ -50,7 +50,7 @@ Presets:
 SingleHeadArcAttention with the compressive memory removed. See
 :class:`~praxis.attention.infini.NoCompressiveMemory`.
 
-Source: [praxis/attention/single.py:247](../praxis/attention/single.py#L247)
+Source: [praxis/attention/single.py:243](../praxis/attention/single.py#L243)
 
 Presets:
 - `arc_single_dropoff_always_nomem` - `dropoff='warp', dropoff_every=True`
@@ -87,16 +87,21 @@ attention output.
 
 Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
-## `kaleido`, `kaleido_dropoff`, `kaleido_dropoff_always` - KaleidoscopeAttention
+## `kaleido`, `kaleido_dropoff`, `kaleido_dropoff_always`, `kaleido_pink`, `kaleido_pink_dropoff_always`, `kaleido_pink_split_dropoff_always`, `kaleido_split`, `kaleido_split_dropoff_always` - KaleidoscopeAttention
 
 N frozen ``[T, T]`` mixing matrices, blended per token by a router.
 
-Source: [praxis/attention/kaleidoscope.py:254](../praxis/attention/kaleidoscope.py#L254)
+Source: [praxis/attention/kaleidoscope.py:310](../praxis/attention/kaleidoscope.py#L310)
 
 Presets:
 - `kaleido` - class defaults
 - `kaleido_dropoff` - `dropoff='warp'`
 - `kaleido_dropoff_always` - `dropoff='warp', dropoff_every=True`
+- `kaleido_pink` - `alpha=1.0`
+- `kaleido_pink_dropoff_always` - `alpha=1.0, dropoff='warp', dropoff_every=True`
+- `kaleido_pink_split_dropoff_always` - `alpha=1.0, coords='split', dropoff='warp', dropoff_every=True`
+- `kaleido_split` - `coords='split'`
+- `kaleido_split_dropoff_always` - `coords='split', dropoff='warp', dropoff_every=True`
 
 ## `modular` - ModularAttention
 

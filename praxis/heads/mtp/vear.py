@@ -90,10 +90,8 @@ class VearHarmonicMTPBank(nn.Module):
     metric_descriptions = {
         "mtp_field_freq_norm": {
             "description": (
-                "Mean L2 norm of each expert's per-feature primary frequency "
-                "(Serpent alpha) - the magnitude of the learned harmonic "
-                "spectrum in the MTP depth transforms. Stable near init = no "
-                "structure learned; growing = the field is shaping itself."
+                "Mean L2 norm of each expert's primary frequency (Serpent alpha). Flat "
+                "= no structure learned; growing = the spectrum is shaping itself."
             ),
             "chart": {
                 "title": "MTP Field Frequency Norm",
@@ -106,11 +104,8 @@ class VearHarmonicMTPBank(nn.Module):
         },
         "mtp_field_concentration": {
             "description": (
-                "Mean Hoyer sparsity of the experts' frequency spectrum in "
-                "[0, 1] (1 = all energy on one feature, 0 = uniform). The "
-                "Serpent analogue of the harmonic field's spectral "
-                "concentration - evidence the depth transforms commit to "
-                "specific harmonics. Same Hoyer definition as HarmonicField."
+                "Mean Hoyer sparsity of the experts' frequency spectrum: 1 = all "
+                "energy on one feature, 0 = uniform."
             ),
             "chart": {
                 "title": "MTP Field Concentration",
@@ -122,10 +117,8 @@ class VearHarmonicMTPBank(nn.Module):
         },
         "mtp_field_amp_depth": {
             "description": (
-                "Mean peak-to-trough of each expert's secondary amplitude "
-                "(Serpent gamma) - how much harmonic modulation the transform "
-                "carries. 0 = a flat (near-linear) transform; >0 = an "
-                "oscillatory field."
+                "Mean peak-to-trough of each expert's secondary amplitude (Serpent "
+                "gamma). 0 = a flat, near-linear transform."
             ),
             "chart": {
                 "title": "MTP Field Amplitude Depth",
@@ -137,11 +130,8 @@ class VearHarmonicMTPBank(nn.Module):
         },
         "mtp_field_distinctness": {
             "description": (
-                "1 - mean pairwise |cosine| of the experts' frequency spectra: "
-                "the readout of VEAR's repulsion goal. Near 0 = the pool "
-                "collapsed to one geometry (redundant experts); rising toward 1 "
-                "= the sliding-window experts specialized into distinct harmonic "
-                "geometries."
+                "1 - mean pairwise |cosine| of the experts' spectra - the readout of "
+                "VEAR's repulsion. Near 0 = the pool collapsed to one geometry."
             ),
             "chart": {
                 "title": "MTP Field Distinctness",

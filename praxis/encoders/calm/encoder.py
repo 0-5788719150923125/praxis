@@ -135,9 +135,8 @@ class CALMEncoder(BaseEncoder):
     metric_descriptions = {
         "calm_latent_norm_mean": {
             "description": (
-                "Mean L2 norm of posterior means ‖μ‖ across positions. Stable "
-                "training keeps this in a bounded range; runaway growth signals "
-                "latent-scale drift, persistent zero signals posterior collapse."
+                "Mean L2 norm of the posterior means. Runaway growth = latent-scale "
+                "drift; a persistent zero = posterior collapse."
             ),
             "chart": {
                 "title": "Latent Mean Norm",
@@ -150,9 +149,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_latent_std_mean": {
             "description": (
-                "Mean posterior σ = √exp(logvar) across positions and dims. "
-                "Collapse toward 0 = the encoder is becoming deterministic; "
-                "runaway growth = divergence."
+                "Mean posterior sigma. Collapse toward 0 = the encoder is becoming "
+                "deterministic; runaway growth = divergence."
             ),
             "chart": {
                 "title": "Latent Std",
@@ -164,9 +162,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_kl_active_frac": {
             "description": (
-                "Fraction of latent dims whose pre-clip per-dim KL exceeds the "
-                "free-bits floor (kl_clip). Posterior collapse drives this "
-                "toward 0; a healthy VAE keeps most dims active."
+                "Fraction of latent dims whose per-dim KL exceeds the free-bits floor "
+                "(kl_clip). Toward 0 = posterior collapse."
             ),
             "chart": {
                 "title": "Active Latent Dim Fraction",
@@ -178,9 +175,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_recon_kl_ratio": {
             "description": (
-                "recon_loss / (β·KL). Above 1: reconstruction dominates the "
-                "encoder objective; below 1: KL regularization dominates. Watch "
-                "the trend rather than the absolute value."
+                "recon_loss / (beta*KL). Above 1 reconstruction dominates, below 1 the "
+                "KL term does. Read the trend, not the level."
             ),
             "chart": {
                 "title": "Recon / (β·KL)",
@@ -193,8 +189,7 @@ class CALMEncoder(BaseEncoder):
         "calm_energy_loss": {
             "description": (
                 "Energy-score loss between proposed next latents and posterior "
-                "samples. Zero during the codec-only stage; should trend down "
-                "once active."
+                "samples. Zero during the codec-only stage."
             ),
             "chart": {
                 "title": "Energy Loss",
@@ -206,10 +201,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_energy_anchor": {
             "description": (
-                "MSE of the head's zero-noise prediction vs the next posterior "
-                "mean - the conditioning anchor that forces the conditional to "
-                "concentrate on the correct next latent. Should descend; if it "
-                "stays high the head isn't learning next-patch direction."
+                "MSE of the head's zero-noise prediction against the next posterior "
+                "mean. Staying high = the head isn't learning next-patch direction."
             ),
             "chart": {
                 "title": "Energy Conditioning Anchor (MSE)",
@@ -221,12 +214,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_prior_r2": {
             "description": (
-                "R² of the energy head's closed-form linear prior: the "
-                "fraction of next-latent variance the ridge solve explains "
-                "from the backbone state. High = the conditional structure "
-                "was mostly the linear map (now solved for free); ~0 = the "
-                "backbone does not linearize the sequence. The decisive "
-                "metric for the linear-solve hypothesis."
+                "R² of the energy head's closed-form linear prior - how much "
+                "next-latent variance a ridge solve explains from the backbone state."
             ),
             "chart": {
                 "title": "Linear Prior R²",
@@ -238,9 +227,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_prior_norm": {
             "description": (
-                "Frobenius norm of the prior's solved W. Grows during the "
-                "solve window, steps at each kept re-solve; 0 means the solve "
-                "has not run (or the prior is disabled)."
+                "Frobenius norm of the prior's solved W. Steps at each kept re-solve; "
+                "0 means the solve never ran."
             ),
             "chart": {
                 "title": "Linear Prior ‖W‖",
@@ -252,10 +240,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_prior_resolves": {
             "description": (
-                "Post-freeze prior re-solves kept: cond_gap milestones where "
-                "the damped ridge re-solve survived its energy-loss "
-                "verification window. The trunk maturing makes more of the "
-                "problem linearly solvable; each keep re-claims it."
+                "Post-freeze prior re-solves that survived their energy-loss "
+                "verification window."
             ),
             "chart": {
                 "title": "Prior Re-solves (kept)",
@@ -267,9 +253,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_prior_rejected": {
             "description": (
-                "Prior re-solves rolled back because the energy-loss EMA "
-                "worsened during verification - the guard against re-solves "
-                "that buy R² by dragging proposals toward repetition."
+                "Prior re-solves rolled back because the energy-loss EMA worsened "
+                "during verification."
             ),
             "chart": {
                 "title": "Prior Re-solves (rejected)",
@@ -281,11 +266,9 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_halo_angular": {
             "description": (
-                "Geometric mode: HALO distance-to-centroid CE of the head's "
-                "zero-noise prediction decoded through the frozen codec, vs "
-                "the true next-patch tokens. The torus-point term: which "
-                "centroid cell the prediction lands in. Should descend; the "
-                "per-token signal the energy score lacks."
+                "Geometric mode: HALO centroid CE of the zero-noise prediction decoded "
+                "through the frozen codec - the per-token signal the energy score "
+                "lacks."
             ),
             "chart": {
                 "title": "Geometric Angular (HALO CE)",
@@ -297,9 +280,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_radial": {
             "description": (
-                "Geometric mode: MSE between predicted and posterior latent "
-                "norms - the radial term of the trinary decomposition. Scale "
-                "calibration only; direction lives in the angular term."
+                "Geometric mode: MSE between predicted and posterior latent norms. "
+                "Scale calibration only; direction lives in the angular term."
             ),
             "chart": {
                 "title": "Geometric Radial (norm MSE)",
@@ -311,10 +293,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_energy_cond_gap": {
             "description": (
-                "Energy of context-mismatched targets minus matched targets. "
-                ">0 means the head USES the conditioning (next-patch prediction "
-                "beats marginal); ~0 means it's ignoring context and not learning "
-                "sequences. The decisive signal for whether CALM is modeling order."
+                "Energy of context-mismatched targets minus matched ones. >0 = the "
+                "head uses its conditioning; ~0 = it is ignoring context."
             ),
             "chart": {
                 "title": "Energy Conditioning Gap",
@@ -326,12 +306,9 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_head_token_acc": {
             "description": (
-                "Teacher-forced next-patch token accuracy of the head's "
-                "best-guess (zero-noise) prediction decoded through the frozen "
-                "codec. The live, head-agnostic, absolute version of the probe's "
-                "make-or-break signal: energy sat at ~0; watch flow climb off it. "
-                "Unlike the loss/cond_gap (head-specific units), this is "
-                "comparable across head kinds."
+                "Teacher-forced next-patch token accuracy of the zero-noise "
+                "prediction, decoded through the frozen codec. Comparable across head "
+                "kinds."
             ),
             "chart": {
                 "title": "Head Next-Patch Token Acc",
@@ -343,9 +320,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_ae_frozen": {
             "description": (
-                "1 once the codec is frozen and stage 2 (energy head only) "
-                "begins; 0 during the codec-training stage. Flat 0 means "
-                "two-stage training is off (legacy joint mode)."
+                "1 once the codec is frozen and the energy-head stage begins; 0 during "
+                "codec training. Flat 0 = two-stage training is off."
             ),
             "chart": {
                 "title": "Codec Frozen (Stage 2)",
@@ -357,9 +333,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_recon_ce": {
             "description": (
-                "Raw per-step codec reconstruction CE during AE pretraining. "
-                "Jittery under ae_dropout; the convergence detector watches the "
-                "smoothed (EMA) version, not this. Stops updating once frozen."
+                "Raw per-step codec reconstruction CE during AE pretraining. Stops "
+                "updating once the codec is frozen."
             ),
             "chart": {
                 "title": "Codec Recon CE (pretrain)",
@@ -371,9 +346,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_recon_ema": {
             "description": (
-                "EMA-smoothed codec recon CE - the signal the convergence "
-                "detector actually measures flatness on, so the ae_dropout "
-                "jitter in the raw curve can't fake a premature plateau."
+                "EMA-smoothed codec recon CE - the curve the convergence detector "
+                "measures flatness on."
             ),
             "chart": {
                 "title": "Codec Recon CE (smoothed)",
@@ -385,10 +359,8 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_recon_best": {
             "description": (
-                "Running best of the smoothed recon. While this keeps dropping "
-                "the codec is still finding lower ground and the freeze is "
-                "vetoed; the codec only freezes once the smoothed curve is flat "
-                "AND this has stopped improving."
+                "Running best of the smoothed recon. While this keeps dropping, the "
+                "freeze is vetoed."
             ),
             "chart": {
                 "title": "Codec Recon CE (best)",
@@ -400,13 +372,9 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_pretrain_flatness": {
             "description": (
-                "Codec convergence detector: the recon curve's linear trend "
-                "across the window in units of the window's own noise "
-                "(|slope*n| / std). Scale-free and bounded as recon CE -> 0. "
-                "Tracked from the first few samples; the latch waits for a full "
-                "window. The codec freezes once this holds below the flat "
-                "threshold (1.0 = trend smaller than one noise std - the trend "
-                "is lost in the noise) for a full patience window."
+                "Codec convergence detector: the recon trend across the window in "
+                "units of its own noise. Below threshold for a full patience window, "
+                "the codec freezes."
             ),
             "chart": {
                 "title": "Pretrain Convergence (trend/noise)",

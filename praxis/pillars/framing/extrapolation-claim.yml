@@ -20,14 +20,14 @@ body: >
   computation is \textit{event-driven} and \textit{sparsely activated} by
   construction: most positions are null work and compute falls on the
   deviations. That is the regime the conjecture below pushes to its limit, and
-  the reported \texttt{harmonic\_delta\_norm} concentration already tests it.
+  the concentration of the reported delta norm already tests it.
 
   The second is \textit{off the sampled interval}. A fitted signal has values
   where no sample was taken; a sequence of discrete tokens does not. If a state
   is genuinely an address into a fixed basis rather than a summary of the
   symbols it consumed, then reading it at positions it has not consumed should
   degrade \textit{gradually} with distance, and should not break at the patch
-  boundary - the boundary is an artifact of how the input was cut, not a
-  feature of the underlying signal. The falsifier is sharp: a read that is
-  accurate inside the consumed span and collapses at its edge is a model that
-  memorized a window, and the address language should be dropped.
+  boundary - the boundary is an artifact of how the input was cut, not a feature
+  of the underlying signal. The falsifier is sharp: a read that is accurate
+  inside the consumed span and collapses at its edge is a model that memorized a
+  window, and the address language should be dropped.

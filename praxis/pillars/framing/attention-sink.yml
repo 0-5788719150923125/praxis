@@ -1,10 +1,22 @@
-# Enables when the run uses a ghostmax-bearing attention (the CausalAttention
-# family: causal/infini/arc all prepend the zero ghost token). The off-by-one
-# softmax gives a head an escape valve, which dampens harmonic noise.
+# Enables when the run uses a ghostmax-bearing attention. The off-by-one softmax
+# gives a head an escape valve, which dampens harmonic noise.
+#
+# The patterns matter and were wrong: the list used to be the bare names
+# [causal, infini, arc], and fnmatch without a wildcard is an EXACT match - so
+# every abstractinator run, which uses `arc_single_dropoff_nomem`, rendered the
+# paper WITHOUT this section while using the mechanism it describes. Only
+# `beta.yml` (a bare `arc`) ever matched.
+#
+# Enumerated rather than globbed as `arc*`, because that would also catch
+# `arc_ssog*`, which deliberately has NO ghost - its logits are log-densities,
+# and a zero-logit ghost would take roughly half a Gaussian field's mass (see
+# praxis/attention/ssog.py). `kaleido*` DOES carry it: unit-scale mirror logits
+# give the ghost ~2% of the mass, so the objection does not transfer, and it is
+# applied as one sigmoid on the log-sum-exp rather than a materialized column.
 section: harmonic
 order: 25
 requires:
-  attention_type: [causal, infini, arc]
+  attention_type: [causal, infini, arc, arc_dropoff*, arc_single*, arc_nomem, kaleido*]
 proofs: [proof-ghostmax]
 body: >
   \subsection{A head that can attend to nothing}

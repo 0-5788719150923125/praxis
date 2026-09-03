@@ -104,10 +104,8 @@ class OuroborosBudget(BaseRegularizer):
     metric_descriptions = {
         "ouroboros_steps": {
             "description": (
-                "Mean expected activation-steps per feature. The budget is an "
-                "equality constraint holding this at TARGET_STEPS, so the "
-                "question the run asks is not how much the loop spends but "
-                "WHERE it spends it."
+                "Mean expected activation-steps per feature. The budget holds this at "
+                "TARGET_STEPS, so the question is where the loop spends, not how much."
             ),
             "chart": {
                 "title": "Ouroboros Step Budget",
@@ -120,8 +118,8 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_extra_frac": {
             "description": (
-                "Share of the step budget spent beyond the first step. Zero "
-                "means the recurrence is unused and the run is Serpent."
+                "Share of the step budget spent beyond the first step. Zero = the "
+                "recurrence is unused."
             ),
             "chart": {
                 "title": "Ouroboros Recurrence Use",
@@ -133,11 +131,8 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_steps_std": {
             "description": (
-                "Spread of expected step count ACROSS features. The mean cannot "
-                "distinguish 'every feature half-commits' from 'features have "
-                "split into deep and shallow groups' - this can. Zero means "
-                "uniform depth, i.e. the loop is behaving as one bigger "
-                "activation rather than specializing."
+                "Spread of expected step count across features. Zero = uniform depth, "
+                "i.e. the loop is one bigger activation rather than specializing."
             ),
             "chart": {
                 "title": "Ouroboros Depth Spread",
@@ -153,14 +148,8 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_token_std": {
             "description": (
-                "Spread of expected depth ACROSS TOKENS, the companion to "
-                "steps_std's spread across features. Depth can vary on either "
-                "axis and they mean different things: across features is the "
-                "per-feature specialization this run set out to test, across "
-                "tokens is adaptive compute per position. Read at ~2.0 steps, "
-                "only ~1.5% of the total depth variance was between features, "
-                "so this is where the rest has to be - either real per-token "
-                "allocation, or hard-concrete gate noise dressed up as one."
+                "Spread of expected depth across tokens - adaptive compute per "
+                "position, the companion to steps_std's spread across features."
             ),
             "chart": {
                 "title": "Ouroboros Depth Spread",
@@ -174,10 +163,8 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_lambda": {
             "description": (
-                "Signed Lagrange multiplier on the step budget. NEGATIVE while "
-                "the loop is under budget (pushing depth up), positive while "
-                "over. Sitting hard against its bound means the constraint has "
-                "stopped being informative and the target should move."
+                "Signed Lagrange multiplier on the step budget: negative under budget, "
+                "positive over. Pinned at its bound = the target should move."
             ),
             "chart": {
                 "title": "Ouroboros Budget Pressure",
@@ -190,9 +177,8 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_gain": {
             "description": (
-                "Mean output/input RMS ratio across features. The iterated map "
-                "drifts rather than converging, so this rises with depth by "
-                "construction - read it alongside the depth/gain correlation."
+                "Mean output/input RMS ratio across features. Rises with depth by "
+                "construction; read it alongside the depth/gain correlation."
             ),
             "chart": {
                 "title": "Ouroboros Output Gain",
@@ -204,16 +190,9 @@ class OuroborosBudget(BaseRegularizer):
         },
         "ouroboros_depth_gain_corr": {
             "description": (
-                "Correlation across features between depth and output gain. "
-                "THE control on this run: because deep features exit louder, a "
-                "rising steps_std could be pure volume rather than computation. "
-                "Calibration - a HAND-FORCED split that does no useful "
-                "computation at all (half the features opened to 3 steps) "
-                "already scores ~0.59, so that is the artifact baseline, not "
-                "zero. A learned split near 0.59 is indistinguishable from "
-                "volume; meaningfully below it means depth is varying for some "
-                "reason other than loudness. Exactly 0 at init, where every "
-                "feature has identical depth and the correlation is undefined."
+                "Correlation across features between depth and output gain - the "
+                "control on steps_std. A hand-forced split already scores ~0.59, so "
+                "that is the baseline, not 0."
             ),
             "chart": {
                 "title": "Ouroboros Depth/Gain Confound",

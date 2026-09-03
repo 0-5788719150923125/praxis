@@ -161,9 +161,8 @@ class HarmonicField(nn.Module):
     metric_descriptions = {
         "harmonic_amplitudes_norm": {
             "description": (
-                "L2 norm of the 2D amplitude grid. Stable near init = no "
-                "structure being learned; growing or rearranging = the field "
-                "is shaping itself."
+                "L2 norm of the amplitude grid. Flat = no structure learned; growing "
+                "or rearranging = the field is shaping itself."
             ),
             "chart": {
                 "title": "Harmonic Field Amplitudes",
@@ -176,9 +175,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_grad_ratio": {
             "description": (
-                "||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means "
-                "the model is routing learning past the field rather than "
-                "through it."
+                "||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing = learning is "
+                "routing past the field, not through it."
             ),
             "chart": {
                 "title": "Harmonic Gradient Ratio",
@@ -190,11 +188,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_concentration": {
             "description": (
-                "Hoyer sparsity of the amplitude grid in [0, 1]. 1 = all "
-                "energy in a single (f_t, f_d) cell, 0 = perfectly uniform. "
-                "Diagnostic only - no longer the loss target. Reading the "
-                "rise here is evidence the field is committing to specific "
-                "harmonics."
+                "Hoyer sparsity of the amplitude grid: 1 = all energy in one (f_t, "
+                "f_d) cell, 0 = uniform. Rising = committing to specific harmonics."
             ),
             "chart": {
                 "title": "Spectral Concentration",
@@ -206,11 +201,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_smoothness": {
             "description": (
-                "Forward-shift smoothness in [0, 1]. Closed-form expected "
-                "(b_t - b_{t+1})^2 for the field, normalized by amplitude "
-                "norm. Low = field varies predictably across positions; "
-                "high = field is dominated by fast temporal modes. Pushed "
-                "downward by the smoothness aux loss."
+                "Forward-shift smoothness in [0, 1]. Low = the field varies "
+                "predictably across positions; high = fast temporal modes dominate."
             ),
             "chart": {
                 "series_group": "harmonic_smooth_pair",
@@ -224,10 +216,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_env_depth": {
             "description": (
-                "Peak-to-trough of the f_t amplitude envelope. 0 = no "
-                "modulation (the flat grid); >0 = a wave over temporal "
-                "frequency. With learned modulation this moves as the "
-                "envelope adapts; static holds it fixed."
+                "Peak-to-trough of the f_t amplitude envelope. 0 = flat grid, no "
+                "modulation; >0 = a wave over temporal frequency."
             ),
             "chart": {
                 "title": "Amplitude Envelope Depth",
@@ -239,13 +229,9 @@ class HarmonicField(nn.Module):
         },
         "harmonic_smooth_lambda": {
             "description": (
-                "The smoothness prior's Lagrange multiplier. Starts at 0.01 - "
-                "the old fixed weight - and then moves on its own: it rises "
-                "while the field is rougher than the signal it multiplies and "
-                "relaxes once it is smoother. Reading it tells you whether the "
-                "prior is winning its fight with NLL, which a fixed weight "
-                "never could. Pinned at the 1.0 cap means the constraint is "
-                "unreachable and the target is wrong, not the multiplier."
+                "Lagrange multiplier on the smoothness prior. Rises while the field is "
+                "rougher than its target, relaxes once smoother. Pinned at 1.0 = "
+                "unreachable target."
             ),
             "chart": {
                 "title": "Smoothness Multiplier",
@@ -257,13 +243,9 @@ class HarmonicField(nn.Module):
         },
         "harmonic_smooth_target": {
             "description": (
-                "The measured smoothness target: the normalized second "
-                "spectral moment of the hidden states the field multiplies, "
-                "EMA-smoothed. Same statistic and same scale as "
-                "harmonic_smoothness, so the two are directly comparable - the "
-                "gap between them is the constraint violation driving the "
-                "multiplier. Near 1/3 means the signal still looks like noise; "
-                "falling means the trunk is developing temporal structure."
+                "Measured smoothness target: the hidden states' normalized second "
+                "spectral moment. Same scale as harmonic_smoothness; the gap drives "
+                "the multiplier."
             ),
             "chart": {
                 "title": "Smoothness vs Target",
@@ -277,13 +259,9 @@ class HarmonicField(nn.Module):
         },
         "harmonic_env_fd_share": {
             "description": (
-                "Share of envelope coefficient energy sitting on the FEATURE "
-                "axis (f_d) rather than the temporal axis (f_t). Exactly 0 at "
-                "init, because the f_d coefficients are zero-seeded and the "
-                "envelope starts as a pure f_t profile broadcast across "
-                "features. A value that stays at 0 means the model never used "
-                "the feature axis and the envelope is still effectively "
-                "row-wise - the direct falsifier for completing the basis."
+                "Share of envelope energy on the feature axis (f_d) rather than the "
+                "temporal axis (f_t). 0 at init; staying at 0 means the feature axis "
+                "is never used."
             ),
             "chart": {
                 "title": "Envelope Feature-Axis Share",
@@ -295,14 +273,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_env_modes": {
             "description": (
-                "Effective number of active envelope modes - the participation "
-                "ratio of the coefficient vector, so a value of 1 means one "
-                "mode carries everything and F_t+F_d means all are equally "
-                "used. 1.0 at init (a single mid-band hump). This counts the "
-                "degrees of freedom the variance axis is actually spending; "
-                "the interference-capacity proposition says configurations are "
-                "carried by spread, so a value pinned near 1 is a variance "
-                "axis with nothing to spend."
+                "Effective number of active envelope modes (participation ratio). 1 = "
+                "one mode carries everything; F_t+F_d = all used equally. 1.0 at init."
             ),
             "chart": {
                 "title": "Envelope Effective Modes",
@@ -314,10 +286,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_fast_norm": {
             "description": (
-                "L2 norm of the fast-weight overlay (EMA representative). The "
-                "secondary, context-written delta on the spectrum - should stay "
-                "small relative to the grid; growth means the model leans on "
-                "test-time modulation, a spike means it is swamping the foundation."
+                "L2 norm of the fast-weight overlay, the context-written delta on the "
+                "spectrum. Should stay small next to the grid."
             ),
             "chart": {
                 "title": "Fast-Weight Magnitude",
@@ -347,10 +317,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_capacity_variance": {
             "description": (
-                "Share of field energy doing variance work - the "
-                "input-conditional delta the envelope writes from each "
-                "position's causal prefix. "
-                "Zero until an input-modulated field has trained."
+                "Share of field energy doing variance work - the input-conditional "
+                "delta written from each position's prefix."
             ),
             "chart": {
                 "title": "Capacity Allocation",
@@ -364,9 +332,8 @@ class HarmonicField(nn.Module):
         },
         "harmonic_capacity_dormant": {
             "description": (
-                "Share of spectral capacity sitting dormant - headroom "
-                "relative to a saturated spectrum. This is the room left: a "
-                "concentrated field leaves most features unwritten."
+                "Share of spectral capacity sitting dormant - the headroom a "
+                "concentrated field leaves unwritten."
             ),
             "chart": {
                 "title": "Capacity Allocation",
@@ -380,20 +347,9 @@ class HarmonicField(nn.Module):
         },
         "harmonic_variance_share": {
             "description": (
-                "variance / (bias + variance) - the bias/variance split of the "
-                "field energy that is actually WRITTEN, with the dormant "
-                "headroom out of the denominator. The three "
-                "harmonic_capacity_* series answer a different question ('how "
-                "full is the spectrum'), and because dormant dominates a "
-                "concentrated field, reading capacity_variance as 'the "
-                "conditional delta's share' understates it by whatever factor "
-                "the field is concentrated - the two are not interchangeable. "
-                "This is the number to read when asking whether the "
-                "input-conditional delta is doing work: 0 = a pure static "
-                "field, 0.5 = the delta carries as much energy as the "
-                "spectrum it modulates. Exactly 0 at init by construction "
-                "(zero-init projection and zero-init fast overlay), so any "
-                "rise is learned."
+                "variance / (bias + variance) over the field energy actually written, "
+                "dormant headroom excluded. 0 = a purely static field, and 0 exactly "
+                "at init."
             ),
             "chart": {
                 "title": "Variance Share of Written Field",
@@ -407,9 +363,8 @@ class HarmonicField(nn.Module):
         # the snapshot hint routes it through the heatmap_2d renderer.
         "harmonic_spectrum": {
             "description": (
-                "Live snapshot of |amp[f_t, f_d]|. Concentration in specific "
-                "bands means corpus rhythms are being learned; uniform mass "
-                "means the field is still noise."
+                "Live snapshot of |amp[f_t, f_d]|. Banded concentration = corpus "
+                "rhythms learned; uniform mass = still noise."
             ),
             "snapshot": {
                 "title": "Harmonic Spectrum",
@@ -425,11 +380,9 @@ class HarmonicField(nn.Module):
         # so its shape fingerprints the model.
         "harmonic_spiral": {
             "description": (
-                "Top-2 PCA cross-section of the harmonic field unrolled along "
-                "the sequence axis into a 3D spiral. Ribbon width is the field "
-                "energy left outside the plane (what the flat view hides): a "
-                "tight spiral = low effective dimension (consensus), a wide "
-                "fuzzy ribbon = high dimension (interference)."
+                "Top-2 PCA of the field unrolled along position, as a 3D spiral. "
+                "Ribbon width is off-plane energy: tight = low effective dimension, "
+                "wide = interference."
             ),
             "snapshot": {
                 "title": "Harmonic Spiral",
@@ -442,12 +395,9 @@ class HarmonicField(nn.Module):
         # and drawn as a Fourier epicycle. A second lens on the same field.
         "harmonic_curve": {
             "description": (
-                "Top-2 PCA trajectory of the harmonic field across one period, "
-                "drawn as a Fourier epicycle: nested rotating vectors whose tip "
-                "traces the loop. The arms are generic Fourier scaffolding - the "
-                "real signal is the loop shape and how energy spreads across the "
-                "harmonics. A tight loop = low effective dimension, a "
-                "space-filling rosette = interference."
+                "Top-2 PCA trajectory over one period, drawn as a Fourier epicycle. "
+                "Read the loop: tight = low effective dimension, a space-filling "
+                "rosette = interference."
             ),
             "snapshot": {
                 "title": "Harmonic Epicycle",
@@ -460,11 +410,9 @@ class HarmonicField(nn.Module):
         # Complements the spectrum (frequency) and spiral/epicycle (PCA shape).
         "harmonic_traces": {
             "description": (
-                "Raw field b(t, d) over one period: each line is one feature's "
-                "value flowing timestep to timestep, sampled across evenly "
-                "spaced features. The overlay is the harmonics interfering - a "
-                "moiré of phase-shifted waves; the playhead reads the whole "
-                "feature column at one position."
+                "Raw field b(t, d) over one period, one line per sampled feature. The "
+                "overlay is the harmonics interfering; the playhead reads one "
+                "position's column."
             ),
             "snapshot": {
                 "title": "Harmonic Field Traces",
@@ -478,10 +426,8 @@ class HarmonicField(nn.Module):
         # successor to the fake terminal "CORRELATION" panel.
         "harmonic_correlation": {
             "description": (
-                "Cosine similarity between feature trajectories over one period "
-                "(amplitude removed). Red = rise/fall together, blue = "
-                "anti-correlated, white = unrelated. Blocks of warm cells are "
-                "feature groups locked into the same harmonic rhythm."
+                "Cosine similarity between feature trajectories over one period. Red = "
+                "rise and fall together, blue = anti-correlated, white = unrelated."
             ),
             "snapshot": {
                 "title": "Feature Correlation",
@@ -494,11 +440,9 @@ class HarmonicField(nn.Module):
         # of blocks, ranked by energy and placed by frozen Weyl phase.
         "harmonic_staircase": {
             "description": (
-                "Each block is one harmonic: stacked by energy (biggest at the "
-                "base, tapering into the sky), angled around the column by its "
-                "frozen Weyl phase, sized by amplitude. Where the spiral walks "
-                "position, this walks frequency - a tall narrow climb means a "
-                "few harmonics dominate; a broad scattered one means many do."
+                "One block per harmonic: stacked by energy, angled by its frozen Weyl "
+                "phase, sized by amplitude. A tall narrow climb = a few harmonics "
+                "dominate."
             ),
             "snapshot": {
                 "title": "Harmonic Staircase",
@@ -515,12 +459,9 @@ class HarmonicField(nn.Module):
         # the trained result.
         "harmonic_strands": {
             "description": (
-                "Bias and variance as a fan falling from flat into a corkscrew. "
-                "Particles are features: they leave the flat bias axis on top - "
-                "one line, placed by static-field energy - and fall to a ring "
-                "whose radius is that feature's input-conditional energy, at its "
-                "field phase. Shape and color say the same thing: blue and shut "
-                "is pure bias, red and open is structured variance learned."
+                "Features falling from the flat bias axis to a ring whose radius is "
+                "their input-conditional energy. Blue and shut = pure bias; red and "
+                "open = learned variance."
             ),
             "snapshot": {
                 "title": "Bias/Variance Strands",

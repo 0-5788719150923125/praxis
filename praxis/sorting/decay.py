@@ -66,11 +66,9 @@ class DecayBiasSort(NoSort):
     metric_descriptions = {
         "sorting/bias_norm": {
             "description": (
-                "L2 norm of the sorting slot's learnable positional bias "
-                "direction. Zero-init, so this is exactly how far the module "
-                "has moved from identity: flat at 0 means the positional bias "
-                "is inert. Compare against the decoder's hidden-state scale to "
-                "tell a nudge from a shove."
+                "L2 norm of the sorting slot's positional bias direction. Zero-init, "
+                "so this is how far the module has moved from identity; flat at 0 = "
+                "inert."
             ),
             "chart": {
                 "title": "Positional Bias Field",
@@ -81,11 +79,8 @@ class DecayBiasSort(NoSort):
         },
         "sorting/decay_tau": {
             "description": (
-                "Learned decay length (positions) of the additive positional "
-                "bias envelope exp(-t/tau): the horizon over which absolute "
-                "position still shapes the representation. Bounded to "
-                "[8, 8192]. Only moves once the bias norm is nonzero - its "
-                "gradient vanishes while the bias is still zero."
+                "Learned decay length (positions) of the bias envelope exp(-t/tau), "
+                "bounded to [8, 8192]. Only moves once the bias norm is nonzero."
             ),
             "chart": {
                 "title": "Positional Bias Decay Length",

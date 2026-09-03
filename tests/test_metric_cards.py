@@ -487,3 +487,91 @@ def test_raw_trace_is_excluded_from_legend_and_tooltip():
         "raw traces must be flagged, filtered from the legend, AND skipped by "
         "the hover interaction"
     )
+
+
+# ── Description length ──────────────────────────────────────────────────────
+# A card's description renders as the subtitle directly under its title, above
+# a chart a few hundred pixels tall. Descriptions kept growing - design notes,
+# falsifiers, and accounts of what the metric USED to measure - until several
+# were longer than the plots they introduced. Say what the number is and how to
+# read it; the reasoning belongs in a code comment or in next/.
+MAX_DESCRIPTION_CHARS = 180
+
+_DESC_HOLDERS = re.compile(
+    r"^(metric_descriptions|field_metric_descriptions|all_metric_descriptions"
+    r"|[A-Z_]*METRIC_DESCRIPTIONS|[A-Z_]*METRIC_REGISTRY|[A-Z_]*CHART_REGISTRY)$"
+)
+
+
+def _described_dicts(tree):
+    """Every dict literal that lives under a metric-description holder."""
+    import ast
+
+    out = []
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = [node.target.id]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = [node.name]
+        matched = [n for n in names if _DESC_HOLDERS.match(n)]
+        if matched:
+            # Registries nest their descriptions under a "description" key;
+            # metric_descriptions may instead map a metric name straight to
+            # its text, so every string value there is a description.
+            plain_form = not any(n.endswith("REGISTRY") for n in matched)
+            out.append((node, plain_form))
+    return out
+
+
+def _descriptions_in(node, plain_form):
+    """(lineno, text) for every description string under ``node``.
+
+    ``metric_descriptions`` accepts two shapes (see praxis/metrics/descriptions):
+    the rich ``{"description": ..., "chart": ...}`` dict and a bare string.
+    """
+    import ast
+
+    hint_keys = {"title", "y_label", "renderer", "type", "key_pattern"}
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Dict):
+            continue
+        literal = {k.value for k in sub.keys if isinstance(k, ast.Constant)}
+        # A chart/snapshot hint dict, not a mapping of metric name -> text.
+        bare = plain_form and "description" not in literal and not (literal & hint_keys)
+        for key, value in zip(sub.keys, sub.values):
+            if not isinstance(key, ast.Constant):
+                continue
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                continue
+            if key.value == "description" or (bare and key.value != "caller"):
+                yield value.lineno, value.value
+
+
+def metric_descriptions_on_disk():
+    """Every metric-card description declared anywhere under ``praxis/``."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "praxis"
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for holder, plain_form in _described_dicts(tree):
+            for lineno, text in _descriptions_in(holder, plain_form):
+                yield f"{path.relative_to(root.parent)}:{lineno}", text
+
+
+def test_no_metric_description_becomes_an_essay():
+    """Card subtitles stay readable at a glance, everywhere they are declared."""
+    found = list(metric_descriptions_on_disk())
+    assert len(found) > 100, "the description scan stopped finding declarations"
+
+    too_long = [
+        (where, len(text)) for where, text in found if len(text) > MAX_DESCRIPTION_CHARS
+    ]
+    assert not too_long, "metric descriptions over %d chars: %s" % (
+        MAX_DESCRIPTION_CHARS,
+        ", ".join(f"{w} ({n})" for w, n in too_long),
+    )

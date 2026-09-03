@@ -193,12 +193,9 @@ class AbstractinatorEncoder(ByteLatentEncoder):
     metric_descriptions = {
         "vq_gdn_anisotropy": {
             "description": (
-                "Coefficient of variation of the GDN compander's gamma matrix. "
-                "0 = the normalizer is still the isotropic sphere projection it "
-                "was initialized as (its init value, so a flat line at 0 means "
-                "the compander is inert and the run is a no-op); rising = it is "
-                "allocating quantizer resolution unevenly across harmonic "
-                "directions, which is the mechanism the run is testing."
+                "Coefficient of variation of the GDN compander's gamma. 0 = still the "
+                "isotropic init (inert); rising = resolution allocated unevenly across "
+                "directions."
             ),
             "chart": {
                 "title": "GDN Anisotropy",
@@ -211,10 +208,9 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         },
         "vq_perplexity": {
             "description": (
-                "Composed codebook perplexity (product across residual "
-                "stages): the effective number of distinct composed codes in "
-                "use, out of K^depth. Falling toward 1 = codebook collapse; "
-                "healthy training climbs and then holds."
+                "Composed codebook perplexity across residual stages - distinct "
+                "composed codes in use, out of K^depth. Falling toward 1 = codebook "
+                "collapse."
             ),
             "chart": {
                 "title": "VQ Perplexity (composed)",

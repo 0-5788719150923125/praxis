@@ -144,9 +144,8 @@ class CrystalClassifier(nn.Module):
     metric_descriptions = {
         "crystal_centers_norm_mean": {
             "description": (
-                "Mean L2 norm of vocabulary centers. Should plateau under "
-                "harmonic loss (the paper's headline claim) rather than grow "
-                "unboundedly the way standard CE weights do."
+                "Mean L2 norm of the vocabulary centers. Should plateau under harmonic "
+                "loss rather than grow the way standard CE weights do."
             ),
             "chart": {
                 "title": "Center Norm (Mean)",
@@ -159,9 +158,8 @@ class CrystalClassifier(nn.Module):
         },
         "crystal_centers_norm_std": {
             "description": (
-                "Std of per-center L2 norms. Falling = centers settling to a "
-                "common scale; rising = a few centers stretching far from the "
-                "rest, often a sign of over-confident outliers."
+                "Std of per-center L2 norms. Falling = centers settling to a common "
+                "scale; rising = a few stretching away from the rest."
             ),
             "chart": {
                 "title": "Center Norm (Std)",
@@ -173,8 +171,8 @@ class CrystalClassifier(nn.Module):
         },
         "crystal_centers_grad_norm": {
             "description": (
-                "L2 norm of the gradient on centers. Reads directly whether "
-                "the model is still moving centers (learning) or has stalled."
+                "L2 norm of the gradient on centers - whether the model is still "
+                "moving them or has stalled."
             ),
             "chart": {
                 "title": "Center Gradient Norm",
@@ -186,10 +184,9 @@ class CrystalClassifier(nn.Module):
         },
         "crystal_effective_dim": {
             "description": (
-                "Number of PCA components needed to explain 90% of center "
-                "variance. Low = centers form compact, low-dimensional "
-                "geometry (the 'crystal' the paper looks for). Approaching "
-                "feature_dim = no structure being learned."
+                "PCA components needed to explain 90% of center variance. Low = "
+                "compact, low-dimensional geometry; approaching feature_dim = no "
+                "structure."
             ),
             "chart": {
                 "title": "Center Effective Dimension",
@@ -201,11 +198,9 @@ class CrystalClassifier(nn.Module):
         },
         "crystal_centers_pca": {
             "description": (
-                "Top-2 PCA projection of the vocabulary centers, binned to "
-                "a density grid. The paper's 'crystal' view: as harmonic "
-                "loss pulls centers into class prototypes this should "
-                "develop structure (clusters, bands) rather than staying an "
-                "isotropic blob."
+                "Top-2 PCA projection of the vocabulary centers as a density grid. "
+                "Clusters and bands are the 'crystal'; an isotropic blob is no "
+                "structure."
             ),
             "snapshot": {
                 "title": "Center PCA Density",
@@ -858,9 +853,8 @@ class CrystalVearHead(BaseHead):
             }
         out["crystal_bank_distinctness"] = {
             "description": (
-                "Mean pairwise L2 distance between the bank's expert center-sets. "
-                "Rises as VEAR's repulsion drives the geometries apart; near 0 means "
-                "collapsed / redundant experts."
+                "Mean pairwise L2 distance between the bank's expert center-sets. Near "
+                "0 = collapsed, redundant experts."
             ),
             "chart": {
                 "title": "Crystal Bank Distinctness",

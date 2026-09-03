@@ -404,10 +404,8 @@ class ParallelHead(BaseHead):
         for i in range(len(self.branches)):
             out[f"gate_weight_{i}"] = {
                 "description": (
-                    "Mean per-token softmax weight the gate assigns to this "
-                    "parallel branch. The branches compete to explain each "
-                    "token; a weight pinned near 0 or 1 means the gate has "
-                    "specialized."
+                    "Mean per-token softmax weight the gate gives this branch. Pinned "
+                    "near 0 or 1 = the gate has specialized."
                 ),
                 "chart": {
                     "title": "Parallel Gate Weights",
@@ -422,9 +420,8 @@ class ParallelHead(BaseHead):
             }
         out["gate_entropy"] = {
             "description": (
-                "Entropy of the per-token branch gate (nats). High = branches "
-                "share the work evenly; low = the gate commits to one branch "
-                "(XOR-like specialization)."
+                "Entropy of the per-token branch gate (nats). High = the branches "
+                "share the work; low = the gate commits to one."
             ),
             "chart": {
                 "title": "Parallel Gate Entropy",
@@ -436,10 +433,9 @@ class ParallelHead(BaseHead):
         }
         out["gate_min_gap"] = {
             "description": (
-                "Smallest gap between any two mean branch weights. Near 0 means "
-                "two branches have become equally important (degenerate tiers) - "
-                "what the gate repulsion (prismatic3_repel) pushes apart. Larger = "
-                "cleanly ranked tiers (e.g. 70/20/10)."
+                "Smallest gap between any two mean branch weights. Near 0 = two "
+                "branches are equally important, which the gate repulsion pushes "
+                "apart."
             ),
             "chart": {
                 "title": "Parallel Gate Min Gap",

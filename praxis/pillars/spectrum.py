@@ -179,7 +179,7 @@ def figure_tex(paths, spectra):
         "rhythm crystallizing, while a grid that stays uniform is a field still "
         "indistinguishable from noise. " + measure + " quantifies it on the same "
         "$[0,1]$ scale the prose names ($1$ = a single cell, $0$ = uniform), "
-        "computed from this very tensor by \\texttt{concentration()} - the same "
+        "computed from this very tensor - the same "
         "value the dashboard logs live. The pink $1/f^{\\alpha}$ prior lives in "
         "the frozen basis, not in these amplitudes, so the grid shown is exactly "
         "what the head exposes."

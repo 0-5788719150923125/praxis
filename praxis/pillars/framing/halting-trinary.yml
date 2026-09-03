@@ -9,43 +9,44 @@ requires:
 proofs: [lemma-ternary-gate, lemma-three-plane]
 body: >
   The gear does not have to finish its turn. Praxis can halt the recurrent loop
-  early, and the way it decides is the part most readers miss. After each turn the
-  model compares the field to its previous state and asks one non-differentiable
-  question - has the shape stopped changing? - by measuring the KL divergence
-  between successive hidden states and stopping when that divergence collapses
-  below a threshold. It is a hard, gradientless gate, decided under \texttt{no\_grad}
-  and never trained by descent: a discrete decision riding on top of a continuous
-  field.
+  early, and the way it decides is the part most readers miss. After each turn
+  the model compares the field to its previous state and asks one
+  non-differentiable question - has the shape stopped changing? - by measuring
+  the KL divergence between successive hidden states and stopping when that
+  divergence collapses below a threshold. It is a hard, gradientless gate,
+  decided outside the gradient graph and never trained by descent: a discrete
+  decision riding on top of a continuous field.
 
   Read against the circle, that decision is ternary. One turn is unconditional -
   the loop always runs at least once, an always-true root that anchors the rest,
   the way XOR needs an always-on bias unit before two inputs can be separated at
   all. The remaining turns, all but the last of the \paperRecurrentSteps{} (the
-  final boundary is forced), are the decisions the gate actually makes: two-valued
-  comparisons over the interior of the circle that together approximate a parity -
-  keep turning, or the shape is already held. And the test is inverted from the
-  obvious one. The model does not confirm that an answer is right; it confirms that
-  another turn would change nothing, validating by establishing that further
-  computation would be wrong in exactly the expected way. Convergence is proven by
-  non-change.
+  final boundary is forced), are the decisions the gate actually makes:
+  two-valued comparisons over the interior of the circle that together
+  approximate a parity - keep turning, or the shape is already held. And the
+  test is inverted from the obvious one. The model does not confirm that an
+  answer is right; it confirms that another turn would change nothing,
+  validating by establishing that further computation would be wrong in exactly
+  the expected way. Convergence is proven by non-change.
 
   Why three, and not two? The reason is geometric. Two points fix only a line;
-  three non-collinear points fix a plane (Lemma~\ref{prf:lemma-three-plane}), and
-  a plane is the least structure on which a phase can turn - a circle, a rotation,
-  the standing wave the harmonic field is built from all live in two dimensions or
-  not at all. A binary distinction names one of two points on a line: it can carry
-  sign but never orientation. The third state lifts the representation off the line
-  into the plane, where phase, and therefore harmony, first become possible. So the
-  ternary gate is not a coarser version of a binary one; it is the minimal
-  resolution at which the geometry can hold an oriented shape and let it harmonize -
-  and here that resolution is read not off a hard bit but out of the continuous,
-  lagged latent space the experts vote over.
+  three non-collinear points fix a plane (Lemma~\ref{prf:lemma-three-plane}),
+  and a plane is the least structure on which a phase can turn - a circle, a
+  rotation, the standing wave the harmonic field is built from all live in two
+  dimensions or not at all. A binary distinction names one of two points on a
+  line: it can carry sign but never orientation. The third state lifts the
+  representation off the line into the plane, where phase, and therefore
+  harmony, first become possible. So the ternary gate is not a coarser version
+  of a binary one; it is the minimal resolution at which the geometry can hold
+  an oriented shape and let it harmonize - and here that resolution is read not
+  off a hard bit but out of the continuous, lagged latent space the experts vote
+  over.
 
   \paperHaltingFigure
 
   This is why the halting signature is diagnostic rather than cosmetic. A model
-  that has learned the geometry halts early, its mass sliding toward the low turns;
-  one that has not keeps turning to the maximum, the gate firing at every boundary
-  but never tripping. The pause is the model lifting itself out of the computation
-  mid-turn, checking whether the shape it holds is the shape it would hold a turn
-  later, and re-inserting itself only when the answer is no.
+  that has learned the geometry halts early, its mass sliding toward the low
+  turns; one that has not keeps turning to the maximum, the gate firing at every
+  boundary but never tripping. The pause is the model lifting itself out of the
+  computation mid-turn, checking whether the shape it holds is the shape it
+  would hold a turn later, and re-inserting itself only when the answer is no.

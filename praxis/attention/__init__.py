@@ -89,6 +89,44 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "kaleido_dropoff_always": partial(
         KaleidoscopeAttention, dropoff="warp", dropoff_every=True
     ),
+    # ... with a 1/k^alpha envelope over the dictionary, the same pink-noise
+    # prior HarmonicField puts on its frequency grid. The base variant's
+    # dictionary is FLAT, which is the alpha=0 corner of the paper's
+    # interference-capacity proposition; this is the corner where the prior
+    # costs capacity unless the blend spends amplitude against it, and
+    # `kaleido_envelope_fight` is that measurement. Same seed and same draw as
+    # the flat variant, so the A/B isolates the envelope.
+    "kaleido_pink": partial(KaleidoscopeAttention, alpha=1.0),
+    "kaleido_pink_dropoff_always": partial(
+        KaleidoscopeAttention, alpha=1.0, dropoff="warp", dropoff_every=True
+    ),
+    # ... with the dictionary SPLIT across two coordinate systems: half in
+    # (query fraction, key fraction) as above, half in (query fraction, LOG
+    # LAG). The ratio half spans "attend to the start" and "attend a third of
+    # the way back"; the lag half spans "attend one token back" and holds it at
+    # any length. Measured on a one-cell canonical feature: the lag half
+    # resolves lag 1 to WIDTH 1 at T=256 and T=512, where the ratio half smears
+    # the same feature across 16 positions at T=512.
+    #
+    # Both, rather than a warped dictionary, because warping all of it swaps
+    # the limitation instead of removing it - a lag mirror cannot express a
+    # ratio any more than a ratio mirror can express a lag. The router picks,
+    # which is the block's own argument one level up. `kaleido_lag_share` says
+    # whether the lag half earns its place: the split is even, so 0.5 is parity.
+    #
+    # These are the RECOMMENDED variants. `kaleido`/`kaleido_pink` above are
+    # kept ratio-only so the warp stays ablatable against -i and -j.
+    "kaleido_split": partial(KaleidoscopeAttention, coords="split"),
+    "kaleido_split_dropoff_always": partial(
+        KaleidoscopeAttention, coords="split", dropoff="warp", dropoff_every=True
+    ),
+    "kaleido_pink_split_dropoff_always": partial(
+        KaleidoscopeAttention,
+        alpha=1.0,
+        coords="split",
+        dropoff="warp",
+        dropoff_every=True,
+    ),
     # Query-steered Gaussian field over causal lag, no Q/K (Pisoni's SSOG,
     # ported to 1D). Position-addressed only; see praxis/attention/ssog.py.
     "ssog": SSOGAttention,

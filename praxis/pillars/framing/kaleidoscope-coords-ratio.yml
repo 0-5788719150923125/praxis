@@ -1,0 +1,32 @@
+# The same acuity discussion for the ratio-only dictionary, where the cost is
+# real and unpaid. Enumerated rather than globbed, because fnmatch has no
+# negation and `kaleido*` would swallow the split variants this contradicts.
+# Mutually exclusive with -split (order 28).
+section: harmonic
+order: 28
+requires:
+  attention_type:
+    [
+      kaleido,
+      kaleido_dropoff,
+      kaleido_dropoff_always,
+      kaleido_pink,
+      kaleido_pink_dropoff_always,
+    ]
+body: >
+  \paragraph{What the coordinate system costs.} A mirror here is a function of
+  (query fraction, key fraction), so it spans ratios exactly - the diagonal,
+  attending to the start, attending a fixed fraction back - and cannot hold a
+  fixed lag. Stretching a canonical grid of side $R$ onto a sequence of length
+  $T$ sends a one-cell feature to a band of width $T/R$: at $R = 64$ and
+  $T = 512$, a previous-token band spreads across sixteen positions. So this
+  dictionary cannot resolve ``one token back'' at any length worth training on,
+  and $R$ trades length-invariance against positional acuity.
+
+  This is a property of the \emph{uniform} stretch rather than of relative
+  indexing, and the distinction matters because only one of the two is fixable.
+  Sampling part of the dictionary on a logarithmic lag axis - fine near the
+  diagonal, compressed away from it - restores single-token acuity at any
+  length, and is the hum-at-the-head, chirp-at-the-tip profile
+  Section~\ref{sec:manifold} claims for the residual stream, read on the
+  attention axis. This run does not do it, so we report the cost as measured.

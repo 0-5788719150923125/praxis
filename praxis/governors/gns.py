@@ -189,11 +189,9 @@ _GOV_GROUP = "governor"
 GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     "gov_noise_scale": {
         "description": (
-            "Gradient noise scale B_noise = S/|G|^2 (rows), the measured "
-            "critical batch size: below it gradient noise dominates and "
-            "larger batches are near-free progress; above it the batch "
-            "wastes data. Expected to grow as loss falls - the governor's "
-            "effective batch should climb after it."
+            "Gradient noise scale B_noise = S/|G|^2, in rows - the critical batch "
+            "size. Below it larger batches are near-free; above it the batch wastes "
+            "data."
         ),
         "chart": {
             "title": "Batch Governor: Noise Scale vs Effective Batch",
@@ -207,10 +205,8 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_effective_batch": {
         "description": (
-            "Rows the optimizer actually stepped on (microbatch rows x "
-            "accumulation). Tracks the target except when a long-sequence "
-            "cycle's attention budget caps microbatch rows below it - the gap "
-            "between this and the target line is that effect."
+            "Rows the optimizer actually stepped on. Falls short of the target when a "
+            "long-sequence cycle's attention budget caps microbatch rows."
         ),
         # No title/axis: rides gov_noise_scale's chart via series_group.
         "chart": {
@@ -222,12 +218,9 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_target_batch": {
         "description": (
-            "Governed effective batch: the row count the controller is asking "
-            "for. Moves in doubling tiers, one tier per decision, with a "
-            "log2-deadband so estimator jitter can't flap it. Floor 2 rows "
-            "(the estimator's two-point minimum, one row each), ceiling "
-            "target_batch_size. Note this is NOT bounded below by batch_size - "
-            "that is a per-microbatch ceiling only."
+            "Governed effective batch - the row count the controller is asking for. "
+            "Moves one doubling tier per decision, floor 2 rows, ceiling "
+            "target_batch_size."
         ),
         # No title/axis: rides gov_noise_scale's chart via series_group.
         "chart": {
@@ -239,13 +232,9 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_micro_rows": {
         "description": (
-            "Rows in each microbatch - the governed effective batch divided by "
-            "the accumulation factor, then divided by multiplier^2 when the "
-            "sequence curriculum lengthens the batch (which holds attention "
-            "cost per microbatch constant). Bounded above by batch_size; it "
-            "sits AT that ceiling whenever the effective batch is large enough "
-            "to fill it, which is what keeps the GPU busy at large batches "
-            "without forbidding small ones."
+            "Rows per microbatch: the effective batch over the accumulation factor, "
+            "divided again by multiplier^2 under the sequence curriculum. Capped at "
+            "batch_size."
         ),
         "chart": {
             "title": "Batch Governor: Cycle Shape",
@@ -259,15 +248,8 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_accum": {
         "description": (
-            "Microbatches per optimizer step. Derived from the effective batch "
-            "and the batch_size ceiling alone - never from the sequence "
-            "multiplier, so it changes only when the governor moves a tier and "
-            "Lightning's step boundaries stay aligned. Normally the minimum "
-            "the ceiling requires, which is 1 once the whole effective batch "
-            "fits in one microbatch. It rises to 2 on the measuring windows "
-            "(1 in 4) where the two-point estimator needs a second point - "
-            "above the ceiling that split is forced anyway, so every step "
-            "measures there and this never drops below 2."
+            "Microbatches per optimizer step, derived from the effective batch and the "
+            "batch_size ceiling. Rises to 2 on the 1-in-4 measuring windows."
         ),
         # No title/axis: rides gov_micro_rows' chart via series_group.
         "chart": {
@@ -279,11 +261,8 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_seq_multiplier": {
         "description": (
-            "Sequence-length multiplier for the current accumulation cycle, "
-            "rolled once per cycle (not per microbatch) so every microbatch in "
-            "a step has the same shape - required for Lightning's uniform "
-            "1/accum loss scaling to average correctly, and for the "
-            "estimator's two points to be comparable."
+            "Sequence-length multiplier for the current accumulation cycle, rolled "
+            "once per cycle so every microbatch in a step has the same shape."
         ),
         # No title/axis: rides gov_micro_rows' chart via series_group.
         "chart": {
@@ -295,9 +274,8 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_signal_sq": {
         "description": (
-            "EMA of the unbiased |G|^2 estimate - squared norm of the true "
-            "gradient. Falls as training converges; its decline is what "
-            "drives the noise scale (and the batch) up."
+            "EMA of the unbiased |G|^2 estimate. Falls as training converges, which is "
+            "what drives the noise scale up."
         ),
         "chart": {
             "title": "Batch Governor: Estimator Internals",

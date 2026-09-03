@@ -97,12 +97,9 @@ class SingleHeadArcAttention(ArcAttention):
         **ArcAttention.metric_descriptions,
         "arc_gate_negative": {
             "description": (
-                "Fraction of SiLU gate values below zero on the most recent "
-                "forward. This is exactly what a sigmoid gate cannot produce: "
-                "pinned at 0 means the single head never needs to flip a "
-                "feature's sign and Arc's sigmoid gate would have done as "
-                "well; rising means the gate is using the amplify/invert "
-                "freedom Mega's Theorem 1 asks for."
+                "Fraction of SiLU gate values below zero - the sign flips a sigmoid "
+                "gate cannot make. Pinned at 0 = Arc's sigmoid gate would have done as "
+                "well."
             ),
             "chart": {
                 "title": "Arc Gate",
@@ -116,9 +113,8 @@ class SingleHeadArcAttention(ArcAttention):
         },
         "arc_gate_magnitude": {
             "description": (
-                "Mean absolute SiLU gate value. Near 0 = the gate is closing "
-                "the attention branch off entirely; near 1 = it is passing "
-                "the head through; well above 1 = it is amplifying."
+                "Mean absolute SiLU gate value. Near 0 = the attention branch is "
+                "closed off; near 1 = passed through; well above 1 = amplified."
             ),
             "chart": {
                 "title": "Arc Gate",

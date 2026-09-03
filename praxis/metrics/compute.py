@@ -646,12 +646,8 @@ class ComputeProfiler:
 COMPUTE_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     "compute_profile": {
         "description": (
-            "Where the training step's GPU time goes, attributed to the module "
-            "that caused it. Tile area is share of the step; the table ranks "
-            "individual modules. Sampled periodically and EMA-smoothed so it "
-            "settles. Read shares, not milliseconds - profiling inflates the "
-            "step. Eager covers every module; compiled covers the top-level "
-            "components, forward only."
+            "Where the step's GPU time goes, attributed to the module that caused it. "
+            "Tile area is share of the step. Read shares, not milliseconds."
         ),
         "snapshot": {
             "title": "Compute Time by Component",
@@ -662,9 +658,8 @@ COMPUTE_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "compute_top_share": {
         "description": (
-            "Share of attributed step time held by the single heaviest module "
-            "class. Rising means the run is becoming dominated by one "
-            "component; it is the number to watch after an architecture change."
+            "Share of attributed step time held by the heaviest module class. Rising = "
+            "the run is becoming dominated by one component."
         ),
         "chart": {
             "title": "Dominant Component Share",
@@ -675,10 +670,8 @@ COMPUTE_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "compute_coverage": {
         "description": (
-            "Fraction of measured device time the profiler could attribute to "
-            "a module. The remainder is genuinely outside the module tree "
-            "(loss function, optimizer, host-device syncs), not lost - a low "
-            "value means the step is dominated by work no layer owns."
+            "Fraction of measured device time the profiler could attribute to a "
+            "module. The rest is loss, optimizer and syncs - work no layer owns."
         ),
         "chart": {
             "title": "Attribution Coverage",
@@ -689,8 +682,8 @@ COMPUTE_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "compute_samples": {
         "description": (
-            "Number of profiled steps folded into the EMA so far. Early "
-            "readings move; after a handful of samples the card is stable."
+            "Profiled steps folded into the EMA so far. Early readings move; after a "
+            "few samples the card settles."
         ),
     },
 }

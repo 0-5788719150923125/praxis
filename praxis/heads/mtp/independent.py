@@ -143,10 +143,9 @@ class PerDepthMTPBank(nn.Module):
         out: dict = {
             "mtp_field_freq_norm": {
                 "description": (
-                    "Mean L2 norm of each depth transform's per-feature primary "
-                    "frequency (Serpent alpha) - the magnitude of the learned "
-                    "harmonic spectrum in the MTP depths. Stable near init = no "
-                    "structure learned; growing = the field is shaping itself."
+                    "Mean L2 norm of each depth transform's primary frequency (Serpent "
+                    "alpha). Flat = no structure learned; growing = the spectrum is "
+                    "shaping itself."
                 ),
                 "chart": {
                     "title": "MTP Field Frequency Norm",
@@ -159,11 +158,8 @@ class PerDepthMTPBank(nn.Module):
             },
             "mtp_field_concentration": {
                 "description": (
-                    "Mean Hoyer sparsity of the depth transforms' frequency "
-                    "spectrum in [0, 1] (1 = all energy on one feature, 0 = "
-                    "uniform) - evidence the transforms commit to specific "
-                    "harmonics. Same Hoyer definition as HarmonicField, "
-                    "comparable with vear and serpent_rnn runs."
+                    "Mean Hoyer sparsity of the depth transforms' frequency spectrum: "
+                    "1 = all energy on one feature, 0 = uniform."
                 ),
                 "chart": {
                     "title": "MTP Field Concentration",
@@ -175,10 +171,8 @@ class PerDepthMTPBank(nn.Module):
             },
             "mtp_field_amp_depth": {
                 "description": (
-                    "Mean peak-to-trough of each depth transform's secondary "
-                    "amplitude (Serpent gamma) - how much harmonic modulation "
-                    "the transform carries. 0 = a flat (near-linear) transform; "
-                    ">0 = an oscillatory field."
+                    "Mean peak-to-trough of each depth transform's secondary amplitude "
+                    "(Serpent gamma). 0 = a flat, near-linear transform."
                 ),
                 "chart": {
                     "title": "MTP Field Amplitude Depth",
@@ -190,13 +184,9 @@ class PerDepthMTPBank(nn.Module):
             },
             "mtp_field_distinctness": {
                 "description": (
-                    "1 - mean pairwise |cosine| of the depths' frequency "
-                    "spectra. Near 0 = every offset settled on the same harmonic "
-                    "geometry, which is the case where independent per-depth "
-                    "parameters bought nothing over a shared cell; rising toward "
-                    "1 = the depths specialized. Unlike vear there is no "
-                    "repulsion penalty holding this up - it is a measurement, "
-                    "not a target."
+                    "1 - mean pairwise |cosine| of the depths' spectra. Near 0 = every "
+                    "offset settled on the same geometry, so per-depth parameters "
+                    "bought nothing."
                 ),
                 "chart": {
                     "title": "MTP Field Distinctness",

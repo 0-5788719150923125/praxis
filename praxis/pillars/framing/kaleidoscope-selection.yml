@@ -1,0 +1,26 @@
+# The structural limit, which applies to every kaleido variant and survives any
+# coordinate warp. Split out from the acuity discussion (order 28) precisely
+# because that one is fixable and this one is not - merging them was the error
+# the first draft of this section made.
+section: harmonic
+order: 29
+requires:
+  attention_type: [kaleido*]
+body: >
+  \paragraph{What it cannot do, and we say so.} A per-token router emitting
+  smooth coefficients over a frozen dictionary produces a smooth attention
+  \emph{row}. However finely the geometry resolves position, this block
+  represents which token matters in continuous space rather than selecting one,
+  and the induction primitive is a discrete pointer. No sharpening of the
+  coordinates reaches that: acuity and selection fail differently, and only the
+  first of them is a resolution question. This is consistent with what the
+  frozen-attention literature reports - random static attention matches trained
+  attention on memorization and algorithmic tasks and fails on in-context
+  retrieval~\cite{randomattention2026}, a failure of selection rather than of
+  acuity - and it is the same bias/variance cut this paper draws elsewhere,
+  read on the attention axis: a frozen geometry is the corpus's average way of
+  looking backward, and content-addressed retrieval is the deviation it does
+  not carry. The head runs one attention head, on the argument that a learned
+  elementwise output gate spans what several heads spanned~\cite{ma2023mega};
+  the gate is \mbox{SiLU} rather than sigmoid precisely because that theorem
+  needs a gate able to amplify and invert, not only attenuate.

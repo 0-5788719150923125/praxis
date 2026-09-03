@@ -90,7 +90,7 @@ Floored mode-as-baseline: weight by deviation ABOVE the modal loss. The consensu
 is the baseline (floor-level gradient only); tokens above it get pressure proportional
 to their deviation. The fallback dual of :class:`ModeCrossEntropyLoss`.
 
-Source: [praxis/losses/batchmode.py:176](../praxis/losses/batchmode.py#L176)
+Source: [praxis/losses/batchmode.py:173](../praxis/losses/batchmode.py#L173)
 
 ## `mode_cross_entropy` - ModeCrossEntropyLoss
 

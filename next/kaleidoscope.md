@@ -305,16 +305,50 @@ than storing a `[T, D]` table. The absolute version was the odd one out.
 
 **The cost, measured rather than hand-waved.** Ratio structure survives exactly:
 "attend to the start", "attend a third of the way back", the diagonal itself.
-**Fixed-lag structure does not.** A canonical previous-token band (lag 1 at
-R=64) resamples to lag 2 with width 5 at T=128, and lag 5 with width 21 at
-T=512. So a dictionary of ratio mirrors cannot express "the token immediately
-before" at long lengths, and `R` is the knob trading length-invariance against
-positional acuity. There is a test asserting both halves of this.
+**Fixed-lag structure does not.** A one-cell canonical feature at column 1
+lands on lag 62 spanning 4 positions at T=128, and lag 248 spanning 16 at
+T=512. So a dictionary of ratio mirrors alone cannot express "the token
+immediately before" at long lengths, and `R` is the knob trading
+length-invariance against positional acuity.
 
-That limitation has a clean fix if it bites: a **Toeplitz mirror** built from a
-1D lag kernel is length-free in the *other* coordinate system and expresses
-fixed lags exactly. A dictionary mixing ratio mirrors and lag mirrors would span
-both. Not built.
+### That was the uniform grid, not relative indexing - fixed in `coords="split"`
+
+The paper first stated this as a property of relative indexing. It is not. It
+is a property of the **uniform** stretch: `F.interpolate` scales both axes
+evenly, so the tip smears exactly as hard as the head, and the block does *not*
+inherit the hum-at-head/chirp-at-tip profile the harmonic latent claims for the
+residual stream (`conjectures/information-density.yml`).
+
+`MIRROR_COORDS = "split"` reads half the dictionary in (query fraction, **log
+lag**), sampled at `log1p(i - j) / log1p(T - 1)`. The log is the whole device:
+at T=512, R=64 it puts lags 0/1/2/3 on canonical columns **0/7/11/14**, where
+the uniform grid puts them at 0/0.1/0.2/0.4 and cannot separate them. Measured,
+a one-cell feature in this coordinate resolves **lag 1 to width 1** at T=256
+and T=512.
+
+**Half, not all.** A lag mirror cannot express a ratio any more than a ratio
+mirror can express a lag - warping the whole dictionary swaps the limitation
+rather than removing it. The split spans both and lets the router choose, which
+is the block's own argument one level up. N=4 -> 2 ratio + 2 lag.
+
+**The envelope ranks within each group.** Global ranking would hand the lag
+mirrors k=3,4 for being stored second, so a pink run would suppress the new
+coordinate system by an accident of ordering. Both groups get `[1.0, 0.5]`, and
+`kaleido_envelope_fight` fits against `env_rank` rather than `1..N`. This is
+why the -j/-k comparison is meaningful at all - and why the *magnitude* of
+`envelope_fight` is not comparable across them, only its sign and movement.
+
+**`kaleido_lag_share`** is the read: share of blend magnitude on the lag half,
+even split so **0.5 is parity**. Near zero means acuity was not the binding
+constraint and the ratio-only dictionary was right.
+
+**One honesty note.** Normalizing by `log1p(T-1)` keeps the full lag range on
+the grid at every length, at the cost of a fixed lag drifting slowly across it
+(lag 1 at column 9 for T=128, column 7 for T=512). Logarithmic drift where the
+uniform grid's is linear: weaker than exact lag-invariance, much stronger than
+none.
+
+Runs: `-i`/`-j` ratio-only (the ablation), `-k` split (`--abstractinator-k`).
 
 Side benefit: the dictionary is now **65.5 KB** instead of 16.8 MB, the facets
 live in canonical space (`D*N*2R`, not `D*N*2T`), and the whole block is

@@ -26,8 +26,8 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
     metric_descriptions = {
         "contrastive_loss": {
             "description": (
-                "SimCTG isotropy regularizer on token representations. "
-                "Additive auxiliary loss; the main objective is untouched."
+                "SimCTG isotropy regularizer on token representations - an additive "
+                "auxiliary loss."
             ),
             "chart": {
                 "title": "Contrastive Isotropy Loss",
@@ -40,16 +40,9 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         },
         "repr_anisotropy": {
             "description": (
-                "Mean off-diagonal cosine of the reps the loss acts on - the "
-                "quantity SimCTG's margin is written against, so it is charted "
-                "as the loss's own gauge. READ IT WITH repr_dimensions: it is a "
-                "rank-1 statistic, equal (up to an affine map) to the squared "
-                "norm of the mean direction, so it is dominated by a shared "
-                "offset and is NOT a measure of collapse. A cloud that is only "
-                "TRANSLATED off the origin reads ~0.98 here while occupying its "
-                "space fully, and a genuine rank-3 collapse in 111 dimensions "
-                "reads ~0.00. High alone means 'the tokens share a direction', "
-                "which may be benign."
+                "Mean off-diagonal cosine of the reps the loss acts on. Dominated by a "
+                "shared offset, so it is not a collapse measure - read it with "
+                "repr_dimensions."
             ),
             "chart": {
                 "title": "Representation Anisotropy",
@@ -61,14 +54,9 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         },
         "repr_dimensions": {
             "description": (
-                "Participation ratio of the MEAN-CENTERED rep covariance, as a "
-                "fraction of the isotropic null (the null is below D at finite "
-                "T, so the ratio is normalized to sit at 1.0 for a spread cloud "
-                "at any T and D). This is the collapse detector repr_anisotropy "
-                "cannot be: 1.0 = variance spread over every direction, small = "
-                "the reps live in a low-dimensional subspace. Falling here while "
-                "repr_anisotropy is flat is real degeneration; the reverse is a "
-                "shared offset and costs nothing."
+                "Participation ratio of the mean-centered rep covariance, normalized "
+                "so a spread cloud sits at 1.0. Small = the reps live in a "
+                "low-dimensional subspace."
             ),
             "chart": {
                 "title": "Representation Dimensions Used",
@@ -80,12 +68,9 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         },
         "repr_nematic": {
             "description": (
-                "Axis alignment of the centered rep directions: 0 = no preferred "
-                "axis, 1 = every rep on one line. Sign-blind and debiased, so it "
-                "is exactly 0 in expectation for an isotropic cloud at any T and "
-                "D. Sees the structure the mean cosine is blind to - two "
-                "clusters pointing OPPOSITE ways read ~0.99 here and ~0.00 as "
-                "mean cosine, because their mean directions cancel."
+                "Axis alignment of the centered rep directions: 0 = no preferred axis, "
+                "1 = every rep on one line. Sign-blind, so opposite clusters still "
+                "read high."
             ),
             "chart": {
                 "title": "Representation Axis Order",
@@ -97,13 +82,9 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         },
         "contrastive_active_frac": {
             "description": (
-                "Fraction of token pairs above the margin, i.e. the share of the "
-                "Gram matrix the hinge is actually penalizing. At 1.0 relu() has "
-                "stopped being a hinge: every pair is clipped in, the term is a "
-                "plain linear penalty at constant maximum gradient, and the loss "
-                "has no headroom left to push harder with. Sustained 1.0 while "
-                "the geometry does not move means this regularizer is at full "
-                "authority and losing."
+                "Fraction of token pairs above the margin - the share of the Gram "
+                "matrix the hinge penalizes. Sustained 1.0 = the hinge is saturated "
+                "and out of headroom."
             ),
             "chart": {
                 "title": "Contrastive Hinge Active Fraction",

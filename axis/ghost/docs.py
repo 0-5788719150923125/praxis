@@ -811,14 +811,20 @@ def _render_vehicles_doc(base: Script) -> str:
     class header."""
     pairs = re.findall(
         r'"(\w+)":\s*"res://scripts/vehicles/(\w+)\.gd"',
-        re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S).group(1)
-        if re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S)
-        else "",
+        (
+            re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S).group(1)
+            if re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S)
+            else ""
+        ),
     )
     if not pairs:
         warn("could not parse Vehicle.REGISTRY")
-    labels = dict(re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "LABELS")))
-    blurbs = dict(re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "BLURBS")))
+    labels = dict(
+        re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "LABELS"))
+    )
+    blurbs = dict(
+        re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "BLURBS"))
+    )
     lines = [
         AUTOGEN_HEADER,
         "# Vehicles: what carries the show",
@@ -1336,9 +1342,7 @@ def main() -> int:
         DOCS / "masking.md",
         _render_masklab_doc(scripts["mask_session"], scripts["mask_editor"]),
     )
-    _write_if_changed(
-        DOCS / "vehicles.md", _render_vehicles_doc(scripts["vehicle"])
-    )
+    _write_if_changed(DOCS / "vehicles.md", _render_vehicles_doc(scripts["vehicle"]))
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))
     _write_if_changed(DOCS / "index.md", _render_index(scripts, scenes, pages))
 

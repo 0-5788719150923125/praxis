@@ -70,8 +70,8 @@ GEOMETRY: Dict[str, str] = {
     "muongeo": (
         "Muon orthogonalizes each matrix update through a Newton-Schulz "
         "iteration, which is steepest descent under the \\emph{spectral} norm: "
-        "the step is bounded in its largest singular direction. The "
-        "\\texttt{Geo} variant additionally eliminates weight decay, for the "
+        "the step is bounded in its largest singular direction. The Geo "
+        "variant additionally eliminates weight decay, for the "
         "reason Section~\\ref{sec:manifold} gives - a uniform shrink is the "
         "one-knob instrument this paper argues against, and norm control here "
         "is structural (the orthogonalized step is bounded, the harmonic "
@@ -92,9 +92,9 @@ GEOMETRY: Dict[str, str] = {
         "The model is therefore \\emph{learning which geometry to descend in}, "
         "per matrix, while it learns the weights - the same claim this paper "
         "makes about representations, applied one level down to the updates "
-        "that build them. Where the mixture lands is logged as "
-        "\\texttt{opt\\_geo\\_share}, so the choice is readable rather than "
-        "assumed. Weight decay is eliminated, as in MuonGeo and for the same "
+        "that build them. Where the mixture lands is reported, so the choice "
+        "is readable rather than assumed. Weight decay is eliminated, as in "
+        "MuonGeo and for the same "
         "reason."
     ),
     "mars": (
@@ -146,7 +146,7 @@ WRAPPERS = {
         "a slow set of weights follows the fast one at intervals, damping the "
         "trajectory without changing the update rule"
     ),
-    "ema": ("an exponential moving average of the weights is kept alongside them"),
+    "ema": ("a running average of the weights is kept alongside them"),
     "orthograd": (
         "the component of the gradient parallel to the weight is projected out, "
         "so the step changes direction rather than magnitude"
@@ -154,10 +154,22 @@ WRAPPERS = {
 }
 
 
-def _tt(name: str) -> str:
-    """A config identifier as \\texttt, with TeX-special characters escaped.
-    Registry keys are snake_case, so the underscore is the one that matters."""
-    return "\\texttt{" + str(name).replace("_", "\\_") + "}"
+# Prose names for registry keys, so the paper reads a method name rather than
+# a configuration identifier. A key absent here is title-cased from its slug.
+WRAPPER_NAMES = {
+    "schedule_free": "Schedule-Free",
+    "gated_schedule_free": "gated Schedule-Free",
+    "wave_schedule_free": "wave Schedule-Free",
+    "lookahead": "Lookahead",
+    "ema": "exponential moving averaging",
+    "orthograd": "OrthoGrad",
+}
+
+
+def _display(name: str) -> str:
+    """A registry key as prose. The paper names the method, never the key."""
+    key = str(name)
+    return WRAPPER_NAMES.get(key, key.replace("_", " ").title())
 
 
 def _fmt(value) -> str:
@@ -258,7 +270,7 @@ def section_tex(facts: Dict) -> str:
     def _cited(w: str) -> str:
         """The wrapper's name, followed by its source when it has one."""
         key = WRAPPER_CITES.get(w)
-        return _tt(w) + (f"~\\cite{{{key}}}" if key else "")
+        return _display(w) + (f"~\\cite{{{key}}}" if key else "")
 
     described = [f"{_cited(w)} ({d})" for w, d in named if d]
     bare = [_cited(w) for w, d in named if not d]

@@ -51,11 +51,9 @@ class AmplitudeFieldSort(DecayBiasSort):
         **DecayBiasSort.metric_descriptions,
         "sorting/mod_depth": {
             "description": (
-                "Mean |tanh(a_d)| over features: the typical depth of the "
-                "per-feature frequency modulation, i.e. the fraction by which "
-                "a feature's gain swings above/below 1 across the sequence. "
-                "Zero-init, so 0 means the multiplicative half is inert; 0.5 "
-                "means a typical feature ranges over a 3x gain span."
+                "Mean |tanh(a_d)| over features - how deep the per-feature gain "
+                "modulation swings across the sequence. Zero-init, so 0 means the "
+                "multiplicative half is inert."
             ),
             "chart": {
                 "title": "Frequency Modulation Depth",

@@ -1,0 +1,48 @@
+# The acuity half of the limits discussion, for runs whose dictionary is SPLIT
+# across two coordinate systems. Mutually exclusive with -ratio (order 28),
+# which states the same cost as unpaid. Every number here is measured in
+# tests/test_kaleidoscope.py rather than derived.
+section: harmonic
+order: 28
+requires:
+  attention_type: [kaleido*split*]
+body: >
+  \paragraph{Two coordinate systems, not one.} A mirror is a function on the
+  unit square, and what its axes \emph{mean} is a design choice the dictionary
+  does not have to make once. Read in (query fraction, key fraction), a mirror
+  spans ratios exactly - the diagonal, attending to the start, attending a
+  fixed fraction back - and cannot hold a fixed lag: stretching a canonical
+  grid of side $R$ to a sequence of length $T$ sends a one-cell feature to a
+  band of width $T/R$, so at $R = 64$ and $T = 512$ a previous-token band
+  spreads over sixteen positions. That is a property of the \emph{uniform}
+  stretch and not of relative indexing, which is worth separating because the
+  two invite different conclusions.
+
+  Half the dictionary is therefore read in (query fraction, $\log$ lag), the
+  lag axis sampled at $\log(1 + i - j) / \log T$. The logarithm is the whole
+  device: it gives every small lag its own canonical cell at every length,
+  placing lags $0, 1, 2, 3$ on canonical columns $0, 7, 11, 14$ at $T = 512$
+  where the uniform grid places them at $0, 0.1, 0.2, 0.4$ and cannot separate
+  them at all. Measured, a one-cell feature in this coordinate resolves lag one
+  to a band of width one at $T = 256$ and $T = 512$. It is fine near the
+  diagonal and compressed away from it, which is the hum-at-the-head,
+  chirp-at-the-tip profile Section~\ref{sec:manifold} claims for the residual
+  stream, appearing here on the attention axis instead - and appearing because
+  it was built in, not because it was inherited.
+
+  We keep both rather than warping the whole dictionary, because a lag mirror
+  cannot express a ratio any more than a ratio mirror can express a lag:
+  warping all of it swaps the limitation rather than removing it. Splitting it
+  lets the blend reach both and leaves the choice to the router, which is the
+  argument this section already makes for blending geometries at all, applied
+  one level up to the coordinate systems those geometries live in. The share of
+  blend magnitude falling on the warped half is reported; the split is even, so
+  parity is one half, and a share near zero says the acuity was not what the
+  model was short of.
+
+  One honesty note on the invariance. Normalizing the lag axis by $\log T$
+  keeps the full range of lags on the canonical grid at every length, at the
+  cost of letting a fixed lag drift slowly across it - lag one sits at column
+  nine at $T = 128$ and column seven at $T = 512$. The drift is logarithmic
+  where the uniform grid's is linear, so this is a weaker claim than exact
+  lag-invariance and a much stronger one than none.

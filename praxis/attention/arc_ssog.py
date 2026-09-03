@@ -311,20 +311,9 @@ class ArcSSOGAttention(SSOGAttention):
         ),
         "ssog_geometry": {
             "description": (
-                "The reference's figure, finally drawable. It plots learned "
-                "geometry per LAYER; a depth-shared field had no such axis and "
-                "the card had to show atoms instead. Here each band IS one "
-                "recurrent pass's mixture over lag - bottom band is pass 0, "
-                "top is the deepest - on a geometric lag axis from 0.5 to 512 "
-                "tokens, each normalised to its own peak. What the reference "
-                "reports across layers is early passes becoming convolutions "
-                "in disguise, middle passes turning into strip detectors, late "
-                "passes going global; that is a diagonal brightening from "
-                "bottom-left to top-right. Identical bands mean the depth axis "
-                "bought nothing. The axis runs past the sequence length on "
-                "purpose, so mass a pass has walked outside its own window "
-                "reads as such. Computed from the learned atoms, so the causal "
-                "truncation and per-query steering are not in it."
+                "One band per recurrent pass: its learned mixture over lag (geometric "
+                "axis, 0.5 to 512 tokens), normalized to its peak. Identical bands = "
+                "depth bought nothing."
             ),
             "snapshot": {
                 "title": "Attention Geometry (per depth)",
@@ -336,19 +325,9 @@ class ArcSSOGAttention(SSOGAttention):
         },
         "ssog_cascade": {
             "description": (
-                "Where information actually is after h passes, composing the "
-                "REAL per-depth kernels in order rather than self-convolving "
-                "one shared kernel h times. Gaussians are closed under "
-                "convolution and residuals keep every hop count live at once, "
-                "so band h is the h-fold composition k_0 * k_1 * ... * "
-                "k_(h-1), bottom band one pass, top the full depth, each "
-                "normalised to its own peak. The top band is the farthest this "
-                "block can see at all. Read it against the geometry card "
-                "above: if the per-depth fields separate, the cascade should "
-                "march outward FASTER than the sqrt(h) smearing of a shared "
-                "field, because a late sharp far atom beats six hops of a near "
-                "one. Ignores the causal window and whatever the residual "
-                "stream does between passes."
+                "Where mass sits after h passes: band h composes the real per-depth "
+                "kernels k_0..k_(h-1) in order. The top band is the farthest this "
+                "block can reach."
             ),
             "snapshot": {
                 "title": "Composed Reach by Depth",

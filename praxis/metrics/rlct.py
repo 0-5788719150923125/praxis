@@ -524,12 +524,9 @@ _RLCT_GROUP = "rlct"
 RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     "rlct_lambda": {
         "description": (
-            "Local Learning Coefficient (SGLD/WBIC estimate of the RLCT). "
-            "Low = a flat, degenerate basin (high bias); high = a sharp, "
-            "high-effective-dimension minimum (high variance). Read it "
-            "relatively: a sharp DROP marks a phase transition where the model "
-            "collapses onto a simpler solution. Best-effort - blank when the "
-            "SGLD chain can't produce a stable estimate."
+            "Local Learning Coefficient (SGLD/WBIC estimate of the RLCT). Low = a "
+            "flat, degenerate basin; high = a sharp minimum. A sharp drop marks a "
+            "phase transition."
         ),
         "chart": {
             "title": "Local Learning Coefficient (λ̂)",
@@ -542,8 +539,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "rlct_llc_mean": {
         "description": (
-            "Mean LLC over the loss-landscape slice - the corpus-average "
-            "geometry (the grey relief). Rises as the slice develops structure."
+            "Mean LLC over the loss-landscape slice - the corpus-average geometry (the "
+            "grey relief)."
         ),
         "chart": {
             "title": "Landscape LLC Distribution",
@@ -578,9 +575,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "rlct_llc_min": {
         "description": (
-            "Min LLC over the slice - the tightest minimum (the basin floor, "
-            "where the water pools). Identically 0 by construction (the floor is "
-            "its own reference), so it is absent from the log-scaled chart."
+            "Min LLC over the slice - the basin floor. Identically 0 by construction, "
+            "so it is absent from the log-scaled chart."
         ),
         "chart": {
             "title": "Landscape LLC Distribution",
@@ -594,8 +590,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "rlct_llc_std": {
         "description": (
-            "Std of LLC over the slice - landscape roughness. High = a jagged, "
-            "high-variance neighborhood; low = a smooth, degenerate basin."
+            "Std of LLC over the slice - landscape roughness. High = a jagged "
+            "neighborhood; low = a smooth, degenerate basin."
         ),
         "chart": {
             "title": "Landscape Roughness",
@@ -609,10 +605,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "rlct_manifold_var": {
         "description": (
-            "Fraction of the manifold weight's variance captured by its top-2 "
-            "PCA axes. High = the weight geometry is nearly planar (a flat, "
-            "anisotropic sheet the terrain shows faithfully); low = the geometry "
-            "is genuinely high-dimensional and the 2D projection is a shadow."
+            "Share of the manifold weight's variance in its top-2 PCA axes. High = "
+            "nearly planar, so the terrain is faithful; low = the 2D view is a shadow."
         ),
         "chart": {
             "title": "Manifold Planarity (top-2 PCA var)",
@@ -626,12 +620,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     # rlct_mesh renderer (hillshade relief + cyan basins + red ridges).
     "rlct_landscape": {
         "description": (
-            "Loss-landscape slice through the live weights along two fixed "
-            "filter-normalized directions. Height is loss; cyan pools mark "
-            "flat low-loss basins (high bias), red ridges mark high-curvature "
-            "walls (high variance), grey is the corpus-average relief between. "
-            "The terrain deepens and sharpens as training moves through this "
-            "fixed cross-section."
+            "Loss-landscape slice through the live weights along two fixed directions. "
+            "Height is loss: cyan pools are flat basins, red ridges high curvature."
         ),
         "snapshot": {
             "title": "RLCT Landscape",
@@ -644,12 +634,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     # the loss landscape is a smooth bowl, this shows the actual weight geometry.
     "param_manifold": {
         "description": (
-            "PCA projection of a structured weight tensor's rows into a terrain. "
-            "Each row is a point laid out along its two highest-variance axes, so "
-            "the terrain SHAPE is the weight geometry - a Gaussian hill for an "
-            "unstructured layer, rings or arms for a harmonic/crystal head. "
-            "Height = where parameters cluster (density), color = mean row "
-            "amplitude. The card names the weight it projected."
+            "PCA projection of a weight tensor's rows into a terrain, so the shape is "
+            "the weight geometry. Height = row density, color = mean amplitude."
         ),
         "snapshot": {
             "title": "Parameter Manifold",
@@ -662,13 +648,8 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     # one terrain. No layer choice, no hairy per-element noise.
     "param_field": {
         "description": (
-            "The ENTIRE model as one smooth terrain. Every parameter is "
-            "flattened, cut into fixed-length chunks, and PCA-projected to 2D; "
-            "height is the (blurred) density of chunks, color their mean "
-            "amplitude. The bulk of the near-Gaussian weights forms a central "
-            "mass; structured regions (harmonic/crystal heads) pull out as "
-            "distinct features as they train. A whole-model fingerprint, not a "
-            "single layer."
+            "The whole model as one terrain: every parameter chunked and PCA-projected "
+            "to 2D. Height = chunk density, color = mean amplitude."
         ),
         "snapshot": {
             "title": "Weight Geometry (whole model)",

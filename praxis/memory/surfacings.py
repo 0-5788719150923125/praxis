@@ -99,11 +99,8 @@ class MemorySurfacing(MemoryBase):
     metric_descriptions = {
         "memory_surprise": {
             "description": (
-                "Mean RAW reconstruction loss at the cold init weights, averaged "
-                "across memory layers. Pre-update novelty to the cold memory and "
-                "scale-sensitive (it can be dominated by the memory net's free "
-                "output scale); read Memory Surprise (norm) for the scale-free "
-                "quantity the update optimizes."
+                "Mean raw reconstruction loss at the cold init weights, across memory "
+                "layers. Scale-sensitive; read Memory Surprise (norm) instead."
             ),
             "chart": {
                 "title": "Memory Surprise (raw)",
@@ -116,12 +113,8 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_surprise_norm": {
             "description": (
-                "Surprise in RMS-normalized (directional) space, which is what "
-                "the readout's out_norm consumes - the scale-free quantity the "
-                "energy update actually optimizes. In the predictive arm this is "
-                "the next-latent (Huber) prediction error; falling = the memory "
-                "is learning to forecast the stream, i.e. storing belief-state "
-                "structure rather than echoing the current token."
+                "Surprise in RMS-normalized space - the scale-free quantity the update "
+                "optimizes. Falling = the memory is learning to forecast the stream."
             ),
             "chart": {
                 "title": "Memory Surprise (norm)",
@@ -133,9 +126,8 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_gain": {
             "description": (
-                "Memory output magnitude relative to the residual stream "
-                "(||retrieved|| / ||stream||), averaged across memory layers. "
-                "Decaying toward 0 means the model is routing around the memory."
+                "Memory output magnitude relative to the residual stream. Decaying "
+                "toward 0 = the model is routing around the memory."
             ),
             "chart": {
                 "title": "Memory Gain",
@@ -147,9 +139,8 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_write": {
             "description": (
-                "Relative size of the per-sequence test-time weight update "
-                "(||W_T - W0|| / ||W0||), averaged across memory layers. Near 0 "
-                "means the update is inert (the memory is not memorizing)."
+                "Relative size of the per-sequence test-time weight update. Near 0 = "
+                "the update is inert."
             ),
             "chart": {
                 "title": "Memory Write",
@@ -161,18 +152,9 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_adapt": {
             "description": (
-                "What the test-time update changed in the READOUT: "
-                "||read(W_T) - read(W0)|| / ||read(W0)||, the same write Memory "
-                "Write measures, in function space instead of weight space. Read "
-                "the two together. Memory Write divides by a ||W0|| that grows "
-                "as the trunk trains, so a step of unchanged size reads as a "
-                "falling ratio - scaling the memory net by k divides it by "
-                "exactly k, news about the weights and not about the memory. "
-                "This denominator instead sits behind out_norm's RMS "
-                "normalization and is pinned regardless of that scale, so what "
-                "moves here is the numerator: how far the trunk's view of the "
-                "memory actually shifted between the pre- and post-write "
-                "weights. 0 means the writes changed nothing the trunk can see."
+                "The write Memory Write measures, in function space: how far the "
+                "trunk's view of the memory shifted. 0 = the writes changed nothing it "
+                "can see."
             ),
             "chart": {
                 "title": "Memory Adaptation",
@@ -184,16 +166,9 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_gate": {
             "description": (
-                "Mean opening of the MAG gate: how much of the stream the model "
-                "replaces with the memory's readout, averaged over channels and "
-                "positions. This is the verdict line - the model's own answer to "
-                "whether it wants the memory, in one number. It starts near 0.05 "
-                "(bias -3) so the module eases in from a near-identity, and a "
-                "decay back toward 0 is the model routing around it, stated "
-                "plainly instead of hidden in a residual it has to cancel "
-                "downstream. Read against Memory Adaptation: a rising gate with "
-                "adaptation near 0 means the model wants the memory net as a "
-                "static function, not as a memory."
+                "Mean opening of the MAG gate - how much of the stream the model "
+                "replaces with the memory's readout. Starts near 0.05; decaying = "
+                "routing around it."
             ),
             "chart": {
                 "title": "Memory Gate",
@@ -205,14 +180,8 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_run_length": {
             "description": (
-                "Mean batch rows per stitched run. The packer splits long "
-                "documents across consecutive rows; with row linkage published "
-                "the memory threads its state along a run, so the WRITE SPAN is "
-                "this many rows' worth of latents while the trunk still only "
-                "sees one row. 1.0 means no stitching happened - either the "
-                "linkage was absent or every row started a fresh document. "
-                "Multiply by Memory Chunks to read the span the memory actually "
-                "wrote over."
+                "Mean batch rows per stitched run. 1.0 = no stitching happened. Times "
+                "Memory Chunks, this is the span the memory wrote over."
             ),
             "chart": {
                 "title": "Memory Run Length",
@@ -224,17 +193,8 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_chunks": {
             "description": (
-                "Chunks the store pass resolved the sequence into. This is the "
-                "ceiling on every other line in this group: retrieval reads "
-                "PRE-write weights, so a chunk's update is only ever visible to "
-                "the chunks after it and the number of writes the model can "
-                "actually feel is chunks - 1. At 1 the memory is a static "
-                "readout at the cold weights, the update is computed and "
-                "discarded, and Memory Adaptation is exactly 0 while Gain and "
-                "Write still look healthy - read this line before concluding "
-                "anything from those. Set by the sequence length against the "
-                "update grid (segment_block, or chunk_size when unsegmented), "
-                "so it moves with the sequence-length curriculum."
+                "Chunks the store pass resolved the sequence into. Only chunks - 1 "
+                "writes are ever visible, so at 1 the memory is a static cold readout."
             ),
             "chart": {
                 "title": "Memory Chunks",
@@ -248,11 +208,9 @@ class MemorySurfacing(MemoryBase):
         # series_group; the lowest-order member supplies the title/axis/subtitle.
         "memory_event_size": {
             "description": (
-                "Event lengths (tokens) from surprise-based segmentation (energy "
-                "mode), averaged across memory layers: mean, min and max across "
-                "the events in a store pass. Events split at surprise spikes and "
-                "are capped at chunk_size; mean below the cap means the memory is "
-                "finding boundaries."
+                "Event lengths (tokens) from surprise-based segmentation: mean, min "
+                "and max in a store pass. Below the chunk_size cap = boundaries are "
+                "being found."
             ),
             "chart": {
                 "title": "Memory Event Size",
@@ -577,12 +535,8 @@ class MemoryBandSmear(MemoryBase):
     metric_descriptions = {
         "memory_blend_b": {
             "description": (
-                "Reward-driven weight on the second core (B) vs the exponential "
-                "core A - a bandit over each core's forecast quality (surprise), "
-                "floored so neither collapses. 0.5 = the regimes balance (the "
-                "center); a slow rise means B is earning its granular keep; a fall "
-                "toward the floor (0.1) means it is not. Not gradient-trained - it "
-                "can't be starved by the loss."
+                "Bandit weight on core B against core A, driven by forecast quality "
+                "and floored at 0.1 so neither collapses. 0.5 = the regimes balance."
             ),
             "chart": {
                 "title": "Memory Blend (core B earned share)",
@@ -595,10 +549,9 @@ class MemoryBandSmear(MemoryBase):
         },
         "memory_blend_c": {
             "description": (
-                "Reward-driven weight on the third core (C, e.g. the geometric-KAN "
-                "multi-scale radial regime) - same floored surprise bandit as core "
-                "B. A rise means the third regime is winning forecast share; a fall "
-                "to the floor means the other two carry it."
+                "Bandit weight on core C (the geometric-KAN radial regime), same "
+                "floored surprise bandit as B. At the floor = the other cores carry "
+                "it."
             ),
             "chart": {
                 "title": "Memory Blend (core C earned share)",
@@ -611,11 +564,8 @@ class MemoryBandSmear(MemoryBase):
         },
         "memory_blend_d": {
             "description": (
-                "Reward-driven weight on the fourth core (D, e.g. the learned-"
-                "knot spline's adaptive-resolution regime) - same floored "
-                "surprise bandit as cores B/C. Read against memory_blend_c: "
-                "D earning share the fixed geometric grid loses is the direct "
-                "fixed-vs-learned-placement verdict."
+                "Bandit weight on core D (the learned-knot spline), same bandit as "
+                "B/C. Read against memory_blend_c for fixed vs learned knot placement."
             ),
             "chart": {
                 "title": "Memory Blend (core D earned share)",
@@ -628,11 +578,9 @@ class MemoryBandSmear(MemoryBase):
         },
         "memory_regime_river": {
             "description": (
-                "The memory regimes as a species-over-time river (after NEAT, "
-                "Figure 7): time runs down the EMA horizon, each row split by the "
-                "blend weights (band width = a regime's share), brightness = that "
-                "regime's forecast fitness. The floor shows as a width no band "
-                "falls below - protection made visible, extinction ruled out."
+                "The regimes as a river over time: band width = a regime's blend "
+                "share, brightness = its forecast fitness. No band falls below the "
+                "floor."
             ),
             "snapshot": {
                 "title": "Memory Regime River",
@@ -917,14 +865,9 @@ class MemoryDepthBank(MemoryBase):
     metric_descriptions = {
         "memory_depth_river": {
             "description": (
-                "The bank as a species-over-time river (after NEAT, Figure 7): "
-                "time runs down the recent-forwards horizon, each row split by "
-                "how many of that forward's passes each core actually ran (band "
-                "width = occupancy, NOT a blend weight - only one core runs per "
-                "pass). Brightness is that core's forecast quality against its "
-                "OWN recent range, since the cores read different depths and do "
-                "not share a scale. A late band narrowing to nothing is the "
-                "model exiting before it ever reaches that regime."
+                "The bank as a river over time: band width = how many of that "
+                "forward's passes ran the core, brightness = its forecast quality on "
+                "its own scale."
             ),
             "snapshot": {
                 "title": "Memory Depth Bank",

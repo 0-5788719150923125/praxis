@@ -355,8 +355,7 @@ class MultiTokenPrediction(nn.Module):
         }
         out["mtp_draft_acc"] = {
             "description": (
-                "Mean per-depth draft accuracy - the headline multi-token "
-                "inference eligibility number. Rising = the K drafts are getting "
+                "Mean per-depth draft accuracy. Rising = the K drafts are getting "
                 "predictable, so more bytes land per speculative step."
             ),
             "chart": {
@@ -378,18 +377,9 @@ class MultiTokenPrediction(nn.Module):
         out = dict(self._draft_acc_descriptions())
         out["mtp_accept_run"] = {
             "description": (
-                "EMA of the candidates that survived verification per "
-                "speculative step. Committed bytes per step run one higher "
-                "(the correcting or bonus byte), and a step now costs ONE "
-                "forward, so speculative speedup is roughly this + 1. The "
-                "REALIZED counterpart of the draft-accuracy ceiling: with "
-                "per-depth accept rate a the expectation is a + a^2 + ... - "
-                "geometric, so the run tracks the text's entropy spacing "
-                "(typically one word-fragment), not mtp_depth. Reads near 0 "
-                "under SAMPLING even when drafts are good: acceptance is an "
-                "equality test, which two independent draws pass only with "
-                "probability sum(p^2). Greedy is the number to judge drafting "
-                "by. Only updates while generation runs."
+                "EMA of candidates accepted per speculative step; committed bytes run "
+                "one higher. Near 0 under sampling by construction - judge drafting on "
+                "greedy."
             ),
             "chart": {
                 "title": "MTP Accepted Run (EMA)",
@@ -402,12 +392,8 @@ class MultiTokenPrediction(nn.Module):
         }
         out["mtp_draft_width"] = {
             "description": (
-                "Adaptive number of drafts attempted per speculative step: "
-                "ceil(accept EMA) + 1 probe, capped at mtp_depth and never "
-                "below 1. Sits at the fixed point width ~ mean run + 1, so "
-                "depths beyond it are trained but never drafted - the answer "
-                "to 'why does depth K print fewer than K bytes' is read "
-                "directly off this chart against mtp_accept_run."
+                "Drafts attempted per speculative step: ceil(accept EMA) + 1, capped "
+                "at mtp_depth. Depths beyond it are trained but never drafted."
             ),
             "chart": {
                 "title": "MTP Draft Width (adaptive)",
