@@ -524,6 +524,12 @@ func _start_render() -> void:
 	if seed_val != 0:
 		args.append("--seed")
 		args.append(str(seed_val))
+	# THE VEHICLE, passed explicitly rather than left to the render's own config read. The
+	# saved setting would usually agree - the render process loads the same user://ghost.cfg
+	# this one wrote - but `--vehicle` overrides that setting for one run, and a render
+	# started from such a session must reproduce THE SESSION, not the remembered default.
+	args.append("--vehicle")
+	args.append(Director.resolved_vehicle())
 	if Director.is_manual():
 		args.append("--storyboard")
 		args.append(Director.storyboard_source())   # the loadable name/path, NOT the display name

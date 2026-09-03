@@ -41,6 +41,7 @@ core. The commitments:
 - [Forces](forces.md) - the physics-primitive registry particles compose.
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
 - [Masking](masking.md) - the video chroma-key editor: model, effects, headless tools.
+- [Vehicles](vehicles.md) - the presentation registry - what the show is carried on.
 - [CLI flags](cli.md) - every ghost command-line flag.
 
 ## Directory layout
@@ -49,6 +50,7 @@ core. The commitments:
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](../docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalogue - one class per scene. See [docs/scenes.md](../docs/scenes.md).
+- `scripts/vehicles/` - The vehicle registry - what the show is carried ON (full frame, comic page). See [docs/vehicles.md](../docs/vehicles.md).
 - `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects).
 - `storyboards/` - Manual-mode scene scores (YAML; JSON accepted). [storyboards/README.md](../storyboards/README.md) is the data spec.
 - `masks/` - Saved Masking sessions, one directory per source video (runtime, git-ignored).
@@ -84,6 +86,9 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`console.gd`](../scripts/console.gd) **ConsoleView** - The in-app console - a live tail of Godot's own log file. print(), push_warning(), push_error() and engine SCRIPT ERRORs all land in user://logs/godot*.log via the engine's default file logging, but anyone launching ghost as a compiled app or from the Godot launcher never sees that stream - it used ...
 - [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.
 - [`director.gd`](../scripts/director.gd) **director** - 
+- [`settings.gd`](../scripts/settings.gd) **settings** - Settings - the one owner of `user://ghost.cfg` (autoload).
+- [`vehicle.gd`](../scripts/vehicle.gd) **Vehicle** - what the show is carried ON. The presentation axis.
+- [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).
 - [`dial_widget.gd`](../scripts/dial_widget.gd) **DialWidget** - the on-screen face of a `Dial` (see that class for what turning does).

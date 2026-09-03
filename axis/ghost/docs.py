@@ -40,6 +40,7 @@ from typing import Dict, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
 SCENES_DIR = SCRIPTS / "scenes"
+VEHICLES_DIR = SCRIPTS / "vehicles"
 DOCS = ROOT / "docs"
 
 WARNINGS: List[str] = []
@@ -88,6 +89,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "console.gd",
             "splash.gd",
             "director.gd",
+            "settings.gd",
+            "vehicle.gd",
+            "comic_page.gd",
             "workspace.gd",
             "dial.gd",
             "dial_widget.gd",
@@ -258,6 +262,14 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         False,
     ),
     (
+        "--vehicle",
+        "<name>",
+        "What the show is carried on for this run: `full` (one scene filling "
+        "the frame) or `comic` (a comic page). Overrides the remembered "
+        "setting; see [vehicles.md](vehicles.md).",
+        False,
+    ),
+    (
         "--storyboard",
         "<name>",
         "Manual mode: play `storyboards/<name>.yaml` (or `.json`).",
@@ -394,6 +406,11 @@ TOP_LEVEL: List[Tuple[str, str]] = [
         "scripts/scenes/",
         "The visualizer scene catalogue - one class per scene. See "
         "[docs/scenes.md](docs/scenes.md).",
+    ),
+    (
+        "scripts/vehicles/",
+        "The vehicle registry - what the show is carried ON (full frame, comic page). "
+        "See [docs/vehicles.md](docs/vehicles.md).",
     ),
     (
         "shaders/",
@@ -784,6 +801,69 @@ def _render_registry_page(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _render_vehicles_doc(base: Script) -> str:
+    """docs/vehicles.md, from Vehicle.REGISTRY and each vehicle script's own header.
+
+    Not _render_registry_page: that renderer expects a registry whose values are
+    INNER CLASSES of the registry script (Layer, Primitives, Cast all work that
+    way). A vehicle is a whole file, because it owns render targets and a draw -
+    so the values here are script paths and each entry's doc is that file's own
+    class header."""
+    pairs = re.findall(
+        r'"(\w+)":\s*"res://scripts/vehicles/(\w+)\.gd"',
+        re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S).group(1)
+        if re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S)
+        else "",
+    )
+    if not pairs:
+        warn("could not parse Vehicle.REGISTRY")
+    labels = dict(re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "LABELS")))
+    blurbs = dict(re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "BLURBS")))
+    lines = [
+        AUTOGEN_HEADER,
+        "# Vehicles: what carries the show",
+        "",
+        "The presentation axis - what the show is drawn ON, as opposed to what "
+        "drives it. Independent of the modes, so every mode gets every vehicle.",
+        "",
+        _full_doc(base.doc),
+        "",
+        f"Registry: `Vehicle.REGISTRY` in {_source_link(base.rel)} "
+        f"({len(pairs)} entries). Select with `--vehicle NAME`, or the Vehicle "
+        "picker in the Generative panel (persisted to `user://ghost.cfg`, "
+        "`[director] vehicle`).",
+        "",
+    ]
+    for key, stem in pairs:
+        path = VEHICLES_DIR / f"{stem}.gd"
+        if not path.exists():
+            warn(f"Vehicle.REGISTRY registers vehicles/{stem}.gd which does not exist")
+            continue
+        sc = Script(path)
+        lines.append(f"## `{key}` - {labels.get(key, key)}")
+        lines.append("")
+        if blurbs.get(key):
+            lines.extend([f"_{blurbs[key]}_", ""])
+        if sc.doc:
+            lines.extend([_full_doc(sc.doc), ""])
+        else:
+            warn(f"{sc.rel}: vehicle '{key}' has no doc comment")
+        lines.append(f"Source: {_source_link(sc.rel)}")
+        lines.append("")
+    for path in sorted(VEHICLES_DIR.glob("*.gd")):
+        if path.stem not in [stem for _k, stem in pairs]:
+            warn(
+                f"scripts/vehicles/{path.stem}.gd is not registered in "
+                "Vehicle.REGISTRY - it can never be selected"
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _const_block(text: str, name: str) -> str:
+    m = re.search(rf"const {name} :?= \{{(.*?)\n\}}", text, re.S)
+    return m.group(1) if m else ""
+
+
 def _render_stage_doc(cast: Script, actions: Script, track: Script) -> str:
     action_pairs = _parse_registry_dict(actions.text)
     cast_pairs = _parse_registry_dict(cast.text)
@@ -966,6 +1046,33 @@ def check_panel_controls() -> None:
             warn(
                 f"mask_editor.gd: {name} is written by _refresh_panel_inner but "
                 "never built - the panel will throw on every refresh"
+            )
+
+
+def check_settings_owner() -> None:
+    """Nothing but settings.gd may touch the config file directly.
+
+    Every remembered value in ghost used to be written by whichever script owned the
+    control, each doing its own `ConfigFile.load()` -> set -> `save()` on the SAME
+    file. Five writers with five debounces means a new control is persistent only if
+    someone remembers to add save code, two processes clobber each other (an export
+    renders in a second one), and a kill loses everything since the last pause. The
+    fix was one owner - `Settings` - and this is what stops a sixth writer appearing
+    the next time someone needs to remember something.
+
+    Mask sessions are exempt: those are per-video session files under masks/, not the
+    app's settings.
+    """
+    for path in sorted(SCRIPTS.rglob("*.gd")):
+        rel = path.relative_to(ROOT).as_posix()
+        if path.name in ("settings.gd",) or "mask" in path.name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "ConfigFile.new()" in text or '"user://ghost.cfg"' in text:
+            warn(
+                f"{rel}: writes user://ghost.cfg directly - settings belong to "
+                "Settings (scripts/settings.gd), which owns the file, the debounce "
+                "and the flushing"
             )
 
 
@@ -1166,6 +1273,7 @@ def main() -> int:
     scripts = {p.stem: Script(p) for p in sorted(SCRIPTS.glob("*.gd"))}
     scenes, groups = _collect_scenes()
     check_panel_controls()
+    check_settings_owner()
 
     layer = scripts["layer"]
     prims = scripts["primitives"]
@@ -1190,6 +1298,11 @@ def main() -> int:
             "masking",
             "Masking",
             "the video chroma-key editor: model, effects, headless tools.",
+        ),
+        (
+            "vehicles",
+            "Vehicles",
+            "the presentation registry - what the show is carried on.",
         ),
         ("cli", "CLI flags", "every ghost command-line flag."),
     ]
@@ -1222,6 +1335,9 @@ def main() -> int:
     _write_if_changed(
         DOCS / "masking.md",
         _render_masklab_doc(scripts["mask_session"], scripts["mask_editor"]),
+    )
+    _write_if_changed(
+        DOCS / "vehicles.md", _render_vehicles_doc(scripts["vehicle"])
     )
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))
     _write_if_changed(DOCS / "index.md", _render_index(scripts, scenes, pages))

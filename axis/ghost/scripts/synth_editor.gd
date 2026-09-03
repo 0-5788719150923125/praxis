@@ -26,7 +26,6 @@ class_name SynthEditor
 ## catches earn. Acceptance (hold time + rewards vs the belt average) weights
 ## parent selection; ancestors earn from their line. Everything autosaves.
 
-const CFG := "user://ghost.cfg"
 const AUTOSAVE_DELAY_MS := 800
 const BELT_MAX := 23                # the Collection ceiling; oldest falls off past this
 
@@ -2168,27 +2167,23 @@ func _persist() -> void:
 	if _autopilot:
 		return
 	_dirty = false
-	var cfg := ConfigFile.new()
-	cfg.load(CFG)
-	cfg.set_value("synth", "text", _text.text)
-	cfg.set_value("synth", "traits", _traits)
-	cfg.set_value("synth", "lineage", _lineage)
-	cfg.set_value("synth", "belt", _belt)
-	cfg.set_value("synth", "profile", _profile)
-	cfg.set_value("synth", "adreno", _working_genome)
-	cfg.set_value("synth", "loc", _working_loc)
-	cfg.set_value("synth", "reserve", _reserve)
-	cfg.save(CFG)
+	Settings.write("synth", "text", _text.text)
+	Settings.write("synth", "traits", _traits)
+	Settings.write("synth", "lineage", _lineage)
+	Settings.write("synth", "belt", _belt)
+	Settings.write("synth", "profile", _profile)
+	Settings.write("synth", "adreno", _working_genome)
+	Settings.write("synth", "loc", _working_loc)
+	Settings.write("synth", "reserve", _reserve)
 
 
 func _load_persisted() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG) == OK:
-		_text.text = cfg.get_value("synth", "text", "")
-		_traits = cfg.get_value("synth", "traits", {})
-		_lineage = cfg.get_value("synth", "lineage", [1])
-		_belt = cfg.get_value("synth", "belt", [])
-		_profile = str(cfg.get_value("synth", "profile", "anchor"))
+	if true:
+		_text.text = Settings.read("synth", "text", "")
+		_traits = Settings.read("synth", "traits", {})
+		_lineage = Settings.read("synth", "lineage", [1])
+		_belt = Settings.read("synth", "belt", [])
+		_profile = str(Settings.read("synth", "profile", "anchor"))
 		# older saves used the reward-flavour names; map them onto the modes
 		if _profile == "snap":
 			_profile = "anchor"
@@ -2196,9 +2191,9 @@ func _load_persisted() -> void:
 			_profile = "reel"
 		if not PROFILES.has(_profile):
 			_profile = "anchor"
-		_working_genome = cfg.get_value("synth", "adreno", {})
-		_working_loc = cfg.get_value("synth", "loc", {})
-		_reserve = float(cfg.get_value("synth", "reserve", 0.0))
+		_working_genome = Settings.read("synth", "adreno", {})
+		_working_loc = Settings.read("synth", "loc", {})
+		_reserve = float(Settings.read("synth", "reserve", 0.0))
 		_sync_switchboard()
 		for e in _belt:
 			if not e.has("m"):

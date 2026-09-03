@@ -2329,9 +2329,8 @@ func _apply_lane_reserved(count: int) -> void:
 	# its higher CanvasLayer, and it went on covering this one and eating the click.
 	var ch_i := _chrome()
 	if ch_i != null:
-		ch_i.bottom_inset = inset
-		if ch_i.exporter != null:
-			ch_i.exporter.suppressed = true
+		ch_i.claim_bottom(&"mask", inset)
+		ch_i.suppress_export(&"mask")
 
 
 func _delete_track(i: int) -> void:
@@ -6624,9 +6623,11 @@ func _exit_tree() -> void:
 	# leave every other mode without one - see _build_export_ui.
 	var ch_out := _chrome()
 	if ch_out != null:
-		if ch_out.exporter != null:
-			ch_out.exporter.suppressed = false
-		ch_out.bottom_inset = 0.0
+		# KEYED, so this can only ever drop Masking's own claims. It used to write
+		# `false` / 0.0 outright, which would have clobbered a claim made by whatever
+		# came next - see the ordering note on Chrome._bottom_claims.
+		ch_out.release_export(&"mask")
+		ch_out.release_bottom(&"mask")
 	_save_session()
 	# Reap every subprocess THIS instance spawned. A detached child keeps running -
 	# close the app mid-prep and the ffmpeg transcode carries on invisibly (no "godot"
@@ -8059,8 +8060,8 @@ func _build_export_ui() -> void:
 	# bake pipeline), and the shared one is on a higher CanvasLayer, so left alone
 	# it covers this one and swallows the click while greyed out.
 	var ch := _chrome()
-	if ch != null and ch.exporter != null:
-		ch.exporter.suppressed = true
+	if ch != null:
+		ch.suppress_export(&"mask")
 
 	_dialog = FileDialog.new()
 	_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE

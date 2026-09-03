@@ -28,6 +28,11 @@ driver/enable_input=true
 
 [autoload]
 
+; Settings is FIRST and must stay first: autoloads are readied in this order, and
+; Director reads its remembered values in _ready. Listed after Director it loaded the
+; file too late and every setting came back as its default - silently, because a
+; default is a perfectly valid value.
+Settings="*res://scripts/settings.gd"
 Boot="*res://scripts/boot.gd"
 Spectrum="*res://scripts/spectrum.gd"
 Director="*res://scripts/director.gd"

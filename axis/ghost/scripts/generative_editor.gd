@@ -31,9 +31,8 @@ var begin_stream: Callable     # begin_stream.call(fp, sample_rate, words) -> pl
 var end_stream: Callable
 
 const TAKE_DIR := "user://generative"
-# The same file SynthEditor persists to, under its own section: one save for
-# ghost, not one per mode. Debounce and exit-save mirror that editor exactly.
-const CFG := "user://ghost.cfg"
+# Persisted through [Settings], which owns the one file the whole app shares - one save
+# for ghost, not one per mode.
 const AUTOSAVE_DELAY_MS := 800
 const LOOKAHEAD := 2           # chunks in flight; 1 would stall at every seam
 # ...and a bound on how much finished audio may sit AHEAD of the playhead.
@@ -366,6 +365,7 @@ var _epoch := 0                # bumped on a pace change; stale replies are drop
 # under the pointer and dragging to "near the end" meant near the end of the first thirty
 # seconds. A timeline has to know how long the thing is before it plays it.
 var _repace_timer: Timer
+var _vehicle_pick: OptionButton
 var _scene_hold: HSlider
 var _flourish: HSlider
 var _intro: HSlider
@@ -819,6 +819,7 @@ func _build_panel() -> void:
 	# things is how someone ends up afraid to touch either.
 	var sep := HSeparator.new()
 	box.add_child(sep)
+	_vehicle_pick = _vehicle_option(box)
 	_scene_hold = _director_slider(box, "Scene hold", Director.PACING_MIN, Director.PACING_MAX, 0.05,
 		Director.pacing,
 		"How long each visual scene stays on screen before the show cuts to the next. 1 is the "
@@ -869,24 +870,20 @@ func _persist() -> void:
 	# is already in _slots. Capture before writing or the tab being edited saves
 	# whatever it held when it was last switched away from.
 	_capture_slot()
-	var cfg := ConfigFile.new()
-	cfg.load(CFG)                     # read-modify-write: never clobber [synth]
-	cfg.set_value("generative", "text", _text.text)
-	cfg.set_value("generative", "slots", _slots)
-	cfg.set_value("generative", "turn", _turn.value)
-	cfg.set_value("generative", "tab", _slot)
-	cfg.save(CFG)
+	Settings.write("generative", "text", _text.text)
+	Settings.write("generative", "slots", _slots)
+	Settings.write("generative", "turn", _turn.value)
+	Settings.write("generative", "tab", _slot)
 
 
 func _load_persisted() -> void:
-	var cfg := ConfigFile.new()
-	var have := cfg.load(CFG) == OK
+	var have := true
 	if have:
-		_text.text = str(cfg.get_value("generative", "text", ""))
+		_text.text = str(Settings.read("generative", "text", ""))
 		_syncing = true
-		_turn.value = clampf(float(cfg.get_value("generative", "turn", 1.0)), 0.0, MAX_TURN_SCALE)
+		_turn.value = clampf(float(Settings.read("generative", "turn", 1.0)), 0.0, MAX_TURN_SCALE)
 		_syncing = false
-		for row in cfg.get_value("generative", "slots", []):
+		for row in Settings.read("generative", "slots", []):
 			if row is Dictionary and _slots.size() < MAX_SLOTS:
 				_slots.append(_merge(row as Dictionary))
 	# MIGRATION, from the single-voice file. The old keys are read exactly once -
@@ -894,23 +891,23 @@ func _load_persisted() -> void:
 	# written again, so the two shapes cannot drift apart.
 	if _slots.is_empty() and have:
 		_slots.append(_merge({
-			"voice": str(cfg.get_value("generative", "voice", "")),
-			"speaker": int(cfg.get_value("generative", "speaker", 0)),
-			"tone": int(cfg.get_value("generative", "tone", 0)),
-			"pace": float(cfg.get_value("generative", "pace", 1.0)),
-			"pause": float(cfg.get_value("generative", "pause", 1.0)),
-			"dynamics": float(cfg.get_value("generative", "dynamics", 0.5)),
-			"arc": float(cfg.get_value("generative", "arc", 0.4)),
-			"effort": float(cfg.get_value("generative", "effort", 0.35)),
-			"echo": float(cfg.get_value("generative", "echo", 0.0)),
-			"room": float(cfg.get_value("generative", "room", 0.0)),
-			"resonance": float(cfg.get_value("generative", "resonance", 0.0)),
-			"presence": float(cfg.get_value("generative", "presence", 1.0)),
-			"ambience": float(cfg.get_value("generative", "ambience", 0.0)),
+			"voice": str(Settings.read("generative", "voice", "")),
+			"speaker": int(Settings.read("generative", "speaker", 0)),
+			"tone": int(Settings.read("generative", "tone", 0)),
+			"pace": float(Settings.read("generative", "pace", 1.0)),
+			"pause": float(Settings.read("generative", "pause", 1.0)),
+			"dynamics": float(Settings.read("generative", "dynamics", 0.5)),
+			"arc": float(Settings.read("generative", "arc", 0.4)),
+			"effort": float(Settings.read("generative", "effort", 0.35)),
+			"echo": float(Settings.read("generative", "echo", 0.0)),
+			"room": float(Settings.read("generative", "room", 0.0)),
+			"resonance": float(Settings.read("generative", "resonance", 0.0)),
+			"presence": float(Settings.read("generative", "presence", 1.0)),
+			"ambience": float(Settings.read("generative", "ambience", 0.0)),
 		}))
 	if _slots.is_empty():
 		_slots.append(SLOT_DEFAULTS.duplicate())
-	_slot = clampi(int(cfg.get_value("generative", "tab", 0)), 0, _slots.size() - 1)
+	_slot = clampi(int(Settings.read("generative", "tab", 0)), 0, _slots.size() - 1)
 	_rebuild_tabs()
 	_apply_slot(_slot)
 	# Last, and once: every dial the chain reads is now in the slot (the Tone preset
@@ -1154,6 +1151,42 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	row.add_child(sl)
 	_slider_readout(row, sl)
 	return sl
+
+
+## THE VEHICLE PICKER - what the show is carried on (see [Vehicle]). Built off the
+## registry rather than a written-out list, so a new presentation appears here by being
+## registered and nothing in this file has to know about it.
+##
+## It sits at the TOP of this section, above Scene hold, because it is the setting the
+## ones below are qualified by: how long a scene holds means something slightly different
+## when a "scene" is a panel on a page.
+func _vehicle_option(box: VBoxContainer) -> OptionButton:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	var l := Label.new()
+	l.text = "Vehicle"
+	l.custom_minimum_size = Vector2(72, 0)
+	l.add_theme_font_size_override("font_size", 12)
+	row.add_child(l)
+	var opt := OptionButton.new()
+	opt.focus_mode = Control.FOCUS_NONE
+	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var keys: Array = Vehicle.REGISTRY.keys()
+	var tip := "What the show is drawn ON, as opposed to what drives it - every mode gets " 		+ "every vehicle. Takes effect on the next reading, not the one already playing.\n"
+	for k in keys:
+		opt.add_item(String(Vehicle.LABELS.get(k, k)))
+		tip += "\n%s - %s" % [Vehicle.LABELS.get(k, k), Vehicle.BLURBS.get(k, "")]
+	opt.tooltip_text = tip
+	# The DIRECTOR is the truth for this one (it is a whole-app setting and the export
+	# render reads it), so the picker drives the setter rather than being bound directly -
+	# and the setter is what persists it, through Settings like every other one.
+	opt.select(maxi(0, keys.find(Director.vehicle)))
+	opt.item_selected.connect(func(i: int) -> void:
+		Director.set_vehicle(String(keys[i]))
+		_note("Vehicle: %s - takes effect on the next reading." % Vehicle.LABELS.get(keys[i], keys[i])))
+	row.add_child(opt)
+	return opt
 
 
 ## A voice/delivery slider. `tip` is not optional in practice: an unlabelled dial

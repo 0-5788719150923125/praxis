@@ -25,7 +25,6 @@ class_name DepsPanel
 ## pasting into a bug report - the fastest way to answer "what does your machine
 ## have on it".
 
-const CFG_PATH := "user://ghost.cfg"
 
 const COL_OK := Color(0.44, 0.84, 0.56)
 const COL_BAD := Color(1.0, 0.50, 0.42)
@@ -363,20 +362,14 @@ func _toggle_detail(key: String) -> void:
 	_detail.visible = true
 
 
-# --- collapse state (user://ghost.cfg, beside the remembered song and clip) ---
+# --- collapse state ([Settings] owns the file; see settings.gd) ---
 
 func _toggle_collapsed() -> void:
 	_collapsed = not _collapsed
 	_body.visible = not _collapsed
 	_refresh_title()
-	var cfg := ConfigFile.new()
-	cfg.load(CFG_PATH)
-	cfg.set_value("deps", "collapsed", _collapsed)
-	cfg.save(CFG_PATH)
+	Settings.write("deps", "collapsed", _collapsed)
 
 
 func _load_collapsed() -> bool:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG_PATH) != OK:
-		return false
-	return bool(cfg.get_value("deps", "collapsed", false))
+	return bool(Settings.read("deps", "collapsed", false))

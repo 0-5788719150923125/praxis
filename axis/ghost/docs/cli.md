@@ -7,6 +7,7 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | --- | --- | --- | --- |
 | `--audio` | `<path>` | Load this song (`.wav` / `.mp3` / `.ogg` / `.flac`; FLAC is transcoded via ffmpeg) and skip the splash. |  |
 | `--scene` | `<name\|N>` | Pin one scene for authoring (by script-name substring or registry index). |  |
+| `--vehicle` | `<name>` | What the show is carried on for this run: `full` (one scene filling the frame) or `comic` (a comic page). Overrides the remembered setting; see [vehicles.md](vehicles.md). |  |
 | `--storyboard` | `<name>` | Manual mode: play `storyboards/<name>.yaml` (or `.json`). |  |
 | `--no-splash` |  | Boot straight to auto mode, bundled/no audio. |  |
 | `--deps` |  | Print the environment report - every external program ghost uses, its version and resolved path, and a per-platform install hint for anything missing - then exit. Exits non-zero if a feature dependency is absent, so it can gate a setup script. Pairs with `--headless`; the same report is the home screen's bottom-right panel. |  |

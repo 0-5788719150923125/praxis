@@ -223,7 +223,7 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 ## keyframe clock: this knob only changes how long a scene stays on screen, never how it animates,
 ## and never how long a dissolve takes (transition_time / layer_time). Authored storyboard timings
 ## (`hold:` / `min_hold:` / `max_hold:`) stay literal - an author who wrote `hold: 16` means 16.
-## Set it through [method set_pacing]; persisted to `user://ghost.cfg`, `[director] pacing`.
+## Set it through [method set_pacing]; persisted by [Settings] as `[director] pacing`.
 var pacing: float = 1.0
 ## Bounds applied on every write to `pacing` (a quarter-speed to a quadruple-length show).
 ## How readily the show throws a FLOURISH - a burst of quick cuts, or a run of beat-synced
@@ -232,6 +232,16 @@ var pacing: float = 1.0
 ## holds, this is how often the show breaks that rhythm, and the reported problem was that raising
 ## one while the other ran hot cancelled it out.
 var flourish: float = 1.0
+## THE VEHICLE - what the show is carried on, a key from [constant Vehicle.REGISTRY]
+## (`full` = the original full-frame show, `comic` = a comic page). See [Vehicle].
+##
+## Held HERE rather than in main, for the same reason `pacing` is: it is a property of
+## the show, it must persist between sessions, and the export render is a separate
+## process that reads `user://ghost.cfg` on boot - so a setting that lives in this file
+## is inherited by a render with no flag to pass and nothing to keep in sync.
+## `--vehicle NAME` overrides it for one run (tests, and a render of a session that was
+## deliberately not the remembered setting).
+var vehicle := "full"
 const FLOURISH_MIN := 0.0
 const FLOURISH_MAX := 4.0
 const PACING_MIN := 0.25
@@ -244,6 +254,23 @@ const PACING_MAX := 4.0
 @export var layer_time: float = 6.0
 
 var _host: Node = null
+## THE VEHICLE - what the show is carried on (see [Vehicle]). Set by [method attach];
+## null is treated exactly as `full`, so nothing here needs a vehicle to exist.
+##
+## The Director must never learn what a comic page is. Everything a vehicle changes it
+## reaches through four small vetoes - where a scene is ADDED (_scene_host), the
+## transition STYLE (_choose_style), whether the outgoing scene may FADE (_tick_schedule),
+## and who applies the BOOKEND - and nothing else in this file knows the difference.
+var _vehicle: Vehicle = null
+## Extra entropy for ONE scene pick, so a caller can mint several scenes without the
+## Director's clock having advanced between them - which is what a comic page does when it
+## casts all of its panels at once (see [method mint_scene]).
+##
+## Folded in by XOR everywhere it is used, and 0 for the Director's own path, so at 0 every
+## expression is bit-identical to what it was before this existed. That is deliberate and it
+## is checked: the show is deterministic per song, and a new feature must not silently
+## re-roll every existing one. tests/scene_mix_check.gd replays a seed and compares.
+var _pick_salt := 0
 var _prev_time := -1.0       # last frame's MUSIC-CLOCK position (Spectrum.current.time); the per-frame
                              # time step is derived from this, NOT the drawn-frame delta, so scenes and
                              # the cut schedule stay locked to the song even when a heavy scene drops FPS
@@ -389,13 +416,11 @@ var _cursor_t := 0.0                 # the cursor's continuous schedule-time cla
 var dials: Array = []
 var _dial_demo := false              # --dial-demo: scripted turning, for headless renders/demos
 
-# --- pacing persistence (user://ghost.cfg, mirroring GenerativeEditor._persist/_load_persisted) ---
-# ONE cfg file serves the whole app (splash's remembered song, [synth], [generative], ...), so every
-# write is a read-modify-write of just the [director] section - never a fresh ConfigFile.save().
-const CFG := "user://ghost.cfg"
-const PACING_SAVE_DELAY_MS := 400    # debounce: a slider DRAG must not write the disk per frame
-var _pacing_dirty := false
-var _pacing_edit_ms := 0
+# --- picture settings ---------------------------------------------------------
+# [Settings] owns the file, the debounce and the flushing (see settings.gd). These setters
+# write straight through it; there is deliberately no dirty flag or save timer here any
+# more, because a second one is how the picture knobs and the panel they are drawn in ended
+# up saving by two different mechanisms.
 
 ## THE BOOKEND, in seconds - held silence before the first sound and after the last.
 ## Applied by [method main._begin_session] to [member Spectrum.lead_in] / [member
@@ -440,12 +465,11 @@ func set_pacing(v: float) -> void:
 	if is_equal_approx(p, pacing):
 		return
 	pacing = p
-	_pacing_dirty = true
-	_pacing_edit_ms = Time.get_ticks_msec()
+	_save_pacing()
 
 
 
-## The intro / outro holds, in seconds. Same debounced-save contract as set_pacing.
+## The intro / outro holds, in seconds.
 ##
 ## These take effect on the NEXT session rather than the running one, and that is not a
 ## limitation being worked around: the lead-in is a decision made when playback starts,
@@ -455,8 +479,7 @@ func set_intro_hold(v: float) -> void:
 	if is_equal_approx(s, intro_hold):
 		return
 	intro_hold = s
-	_pacing_edit_ms = Time.get_ticks_msec()
-	_pacing_dirty = true
+	_save_pacing()
 
 
 func set_outro_hold(v: float) -> void:
@@ -464,43 +487,67 @@ func set_outro_hold(v: float) -> void:
 	if is_equal_approx(s, outro_hold):
 		return
 	outro_hold = s
-	_pacing_edit_ms = Time.get_ticks_msec()
-	_pacing_dirty = true
+	_save_pacing()
 
 
-## The flourish knob. Same debounced-save contract as set_pacing, same file.
+## The flourish knob.
 func set_flourish(v: float) -> void:
 	var f := clampf(v, FLOURISH_MIN, FLOURISH_MAX)
 	if is_equal_approx(f, flourish):
 		return
 	flourish = f
-	_pacing_edit_ms = Time.get_ticks_msec()
-	_pacing_dirty = true
+	_save_pacing()
+
+
+## Choose the vehicle (see [member vehicle]). Persisted like every other picture setting.
+##
+## Takes effect on the NEXT session, not the running one - and unlike the intro hold,
+## that IS a limitation rather than a definition. Swapping presentation mid-show means
+## re-hosting the live scene into a different surface while it is drawing; the honest
+## version of that is a restart, so the surface says so rather than half-doing it.
+func set_vehicle(key: String) -> void:
+	if not Vehicle.REGISTRY.has(key) or key == vehicle:
+		return
+	vehicle = key
+	_save_pacing()
+
+
+## The vehicle this run actually uses: `--vehicle NAME` if given and known, else the
+## remembered setting. Read by [main] when it builds the stage.
+func resolved_vehicle() -> String:
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--vehicle")
+	if i >= 0 and i + 1 < args.size():
+		var k := String(args[i + 1])
+		if Vehicle.REGISTRY.has(k):
+			return k
+		push_warning("ghost: --vehicle %s is not a known vehicle - using %s" % [k, vehicle])
+	return vehicle
 
 
 func _load_pacing() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG) != OK:
-		return
-	pacing = clampf(float(cfg.get_value("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
-	flourish = clampf(float(cfg.get_value("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
-	intro_hold = clampf(float(cfg.get_value("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
-	outro_hold = clampf(float(cfg.get_value("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
+	pacing = clampf(float(Settings.read("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
+	flourish = clampf(float(Settings.read("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
+	intro_hold = clampf(float(Settings.read("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
+	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
+	var v := String(Settings.read("director", "vehicle", "full"))
+	vehicle = v if Vehicle.REGISTRY.has(v) else "full"
 
 
+## Hand the current values to [Settings], which owns the file and the flushing. There is no
+## debounce here any more and no dirty flag: writing an unchanged value is already a no-op,
+## and every remaining question about WHEN the disk is touched belongs to one place.
 func _save_pacing() -> void:
-	_pacing_dirty = false
-	var cfg := ConfigFile.new()
-	cfg.load(CFG)                     # read-modify-write: never clobber [synth] / [generative] / splash
-	cfg.set_value("director", "pacing", pacing)
-	cfg.set_value("director", "flourish", flourish)
-	cfg.set_value("director", "intro", intro_hold)
-	cfg.set_value("director", "outro", outro_hold)
-	cfg.save(CFG)
+	Settings.write("director", "pacing", pacing)
+	Settings.write("director", "flourish", flourish)
+	Settings.write("director", "intro", intro_hold)
+	Settings.write("director", "outro", outro_hold)
+	Settings.write("director", "vehicle", vehicle)
 
 
-func attach(host: Node) -> void:
+func attach(host: Node, vehicle: Vehicle = null) -> void:
 	_host = host
+	_vehicle = vehicle
 	# A fresh session hears fresh material: forget the last song's level, its reference, and any
 	# flurry state. attach() runs again on every new take in synthesis mode, so without this a quiet
 	# piece following a loud one would spend its opening judged against the loud one's level - and a
@@ -534,9 +581,55 @@ func attach(host: Node) -> void:
 	_dial_demo = OS.get_cmdline_user_args().has("--dial-demo")
 	_echo = Echo.new()
 	_heard_t = 0.0
-	_current = _make_scene()
-	_host.add_child(_current)
+	# AFTER _session_seed is resolved, BEFORE the first scene is made: the vehicle samples
+	# its own look from the session seed, and the very next line asks it for a host.
+	if _vehicle != null and is_instance_valid(_vehicle):
+		_vehicle.begin_session()
+	# A vehicle that owns its cast has just built the whole page; the show opens on
+	# whichever panel it says the reading starts at, already alive in its own viewport.
+	var opening := _handover(null)
+	if opening != null:
+		_current = opening
+	else:
+		_current = _make_scene()
+		_scene_host(_current).add_child(_current)
 	_arm()
+
+
+## Ask a cast-owning vehicle for the scene to move to, and adopt whatever it hands back.
+##
+## Null means "not that kind of vehicle, or it declined this change" and the caller falls
+## through to building a scene itself. Non-null means the scene is ALREADY built and
+## parented and the outgoing one is still on the page - so there is nothing to add, nothing
+## to free, and no fade to play: on a comic the change of scene IS the camera moving, and a
+## crossfade between two panels that are both permanently on the paper would be nonsense.
+func _handover(outgoing: GhostScene) -> GhostScene:
+	if _vehicle == null or not is_instance_valid(_vehicle) or not _vehicle.owns_cast():
+		return null
+	var sc := _vehicle.take_over(outgoing)
+	if sc == null or not is_instance_valid(sc):
+		return null
+	# The scene was minted with its own sensitivity already stamped on it; the hold bounds
+	# read _cur_sens, so re-derive it from the scene actually taking the stage rather than
+	# leaving it on whatever the last mint happened to set.
+	_cur_sens = clampf(sc.event_scale, 0.05, 20.0)
+	return sc
+
+
+## Where an ARRIVING scene is added. Without a vehicle this is the stage, which is what
+## every `_host.add_child` in this file used to say literally; with one it is whatever
+## surface that vehicle opens for the incoming scene (a comic page's next panel).
+##
+## Called at the MOMENT OF ARRIVAL and nowhere else, which is deliberate: a vehicle that
+## has to do something when the show advances (freeze the panel behind, open the next)
+## hangs it off this one call rather than needing a second signal that could get out of
+## step with it.
+func _scene_host(incoming: GhostScene) -> Node:
+	if _vehicle != null and is_instance_valid(_vehicle):
+		var h := _vehicle.host_for(incoming)
+		if h != null and is_instance_valid(h):
+			return h
+	return _host
 
 
 ## The seed every scene choice / shot / param roll derives from this session. Random
@@ -588,13 +681,23 @@ func _seed_source() -> String:
 ## later attach() starts cleanly. Called when a song ends and we return to the
 ## splash. Does not clear a storyboard loaded for the *next* session (load it after).
 func detach() -> void:
-	if _transitioning and is_instance_valid(_next):
+	# A cast-owning vehicle's scenes belong to its page, not to this session's current/next
+	# pair - they are still parented in their own panels and its release() lets them go.
+	# Freeing them here would leave the vehicle holding freed nodes.
+	var borrowed := _vehicle != null and is_instance_valid(_vehicle) and _vehicle.owns_cast()
+	if _transitioning and is_instance_valid(_next) and not borrowed:
 		_next.queue_free()
-	if is_instance_valid(_current):
+	if is_instance_valid(_current) and not borrowed:
 		_current.queue_free()
 	_current = null
 	_next = null
 	_host = null
+	# The vehicle is OWNED BY MAIN (it is mounted on main's stage and outlives a
+	# take's session churn in synthesis modes); detach only lets go of the reference
+	# and tells it to release whatever it was holding for THIS session.
+	if _vehicle != null and is_instance_valid(_vehicle):
+		_vehicle.release()
+	_vehicle = null
 	_transitioning = false
 	_trans_t = 0.0
 	_index = -1
@@ -857,10 +960,6 @@ var _time_debt := 0.0
 
 
 func _process(delta: float) -> void:
-	# Flush a pending pacing write FIRST, above the no-scene guard: the slider also lives in chrome,
-	# which is up on the splash and between songs, where there is no scene attached to the Director.
-	if _pacing_dirty and Time.get_ticks_msec() - _pacing_edit_ms >= PACING_SAVE_DELAY_MS:
-		_save_pacing()
 	if _current == null:
 		return
 
@@ -900,19 +999,35 @@ func _process(delta: float) -> void:
 	# smoothed. So duration tracks the song; the picture just eases rather than lurches under lag.
 	_tick_schedule(raw)
 	_tick_animation(anim)
+	if _vehicle != null and is_instance_valid(_vehicle):
+		# the ANIMATION step, capped - the vehicle's camera is picture, not schedule, and a
+		# lag spike must ease it rather than teleport it (same reason _tick_animation exists)
+		_vehicle.advance(Spectrum.current, anim, _bookend_fade())
 
 
 # The SCHEDULE, advanced by the REAL music-clock step: the hold clock, transition progress + alphas,
 # the smoothed audio level, the stinger, and arming the next cut. This decides WHEN things happen, so
 # it must track the music exactly (never the capped animation step) or scene durations drift long.
 func _tick_schedule(dt: float) -> void:
-	var bf := _bookend_fade()                       # 1, except fading from/to black at the video's ends
+	var bookend := _bookend_fade()                  # 1, except fading from/to black at the video's ends
+	# WHO APPLIES THE BOOKEND. Folding it into the scene's own alpha is right for a full
+	# frame, where the scene IS the picture - and wrong for any vehicle that draws more
+	# than the scene, because it would fade one comic panel and leave the paper lit. A
+	# vehicle that claims it applies the same number to its own root instead; the scene
+	# then just never sees it.
+	var bf := 1.0 if (_vehicle != null and is_instance_valid(_vehicle) and _vehicle.owns_bookend()) else bookend
 	if _transitioning:
 		var dur: float = layer_time if _style == Style.LAYER else transition_time
 		_trans_t += dt / maxf(0.01, dur)
 		var k := clampf(_trans_t, 0.0, 1.0)
 		# Alphas are sequenced so the picture is clean (a DIP never shows both scenes at once).
 		var a := _transition_alphas(k)
+		# HELD OUTGOING. A comic panel that is already inked on the paper cannot un-draw
+		# itself, so the vehicle pins the leaving scene at full and only the ARRIVING one
+		# fades - a panel developing in place. The full frame holds nothing and this is
+		# the identity.
+		if _vehicle != null and is_instance_valid(_vehicle) and _vehicle.hold_outgoing():
+			a.x = 1.0
 		_current.modulate.a = a.x * bf
 		_current.view.presence = a.x
 		_next.modulate.a = a.y * bf
@@ -1478,6 +1593,22 @@ func _begin_transition() -> void:
 	var burst_cut := _burst_left > 0      # leaving a burst scene -> a hard jump cut, no morph/blend
 	if _burst_left > 0:
 		_burst_left -= 1                  # consume this quick scene
+	# CAST-OWNING VEHICLE: the change is a handover, not a construction. Taken before the
+	# stinger reset below so the punch clears off the scene being left exactly as it would
+	# on any other change.
+	var handed := _handover(_current)
+	if handed != null:
+		if _current != null and is_instance_valid(_current):
+			_current.view.pulse_zoom = 1.0
+			_current.view.pulse_rot = 0.0
+			_current.view.pulse_skew = 0.0
+			_current.modulate = Color(1.0, 1.0, 1.0, _current.modulate.a)
+		_sting_left = 0
+		_sting_t = -1.0
+		_current = handed
+		_swaps += 1
+		_arm()
+		return
 	# Clear any rapid-fire modulation so the leaving scene doesn't freeze mid-contortion or tint.
 	_sting_left = 0
 	_sting_t = -1.0
@@ -1495,7 +1626,7 @@ func _begin_transition() -> void:
 	if not burst_cut and _current != null and not nxt.morph_in.is_empty() and nxt.morph_in == _current.morph_out:
 		print("ghost: morph %s -> %s (%s)" % [_current.scene_name, nxt.scene_name, nxt.morph_in])
 		var from := _current
-		_host.add_child(nxt)
+		_scene_host(nxt).add_child(nxt)
 		_current = nxt
 		_swaps += 1
 		nxt.begin_morph(from)         # hand over state BEFORE the source is freed
@@ -1511,7 +1642,7 @@ func _begin_transition() -> void:
 	if _style == Style.LAYER and not ATMOSPHERIC.has(nxt.get_script().resource_path):
 		_style = Style.DIP
 	if _style == Style.CUT:
-		_host.add_child(nxt)          # instant swap, no blend
+		_scene_host(nxt).add_child(nxt)   # instant swap, no blend
 		_current.queue_free()
 		_current = nxt
 		_swaps += 1
@@ -1535,7 +1666,7 @@ func _begin_transition() -> void:
 	nxt.view.presence = 0.0
 	nxt.view.reveal = 0.0             # arm the geometry ratchet: it grows in with the fade-up
 	_next = nxt
-	_host.add_child(_next)            # added last -> drawn over _current
+	_scene_host(_next).add_child(_next)   # added last -> drawn over _current
 	_transitioning = true
 	_trans_t = 0.0
 
@@ -1543,11 +1674,18 @@ func _begin_transition() -> void:
 # The transition style for leaving the current scene: its storyboard-set style
 # (cut/dip/fade), or the auto-mode weighted bag (mostly dip) when unspecified.
 func _choose_style() -> int:
+	var s: int = STYLE_BAG[_biased(STYLE_BAG.size())]
 	match (_current.transition_style if _current != null else ""):
-		"cut": return Style.CUT
-		"dip": return Style.DIP
-		"fade": return Style.FADE
-	return STYLE_BAG[_biased(STYLE_BAG.size())]
+		"cut": s = Style.CUT
+		"dip": s = Style.DIP
+		"fade": s = Style.FADE
+	# The vehicle has the last word, and only ever to REJECT: a comic page cannot play a
+	# LAYER (two scenes composited into one panel is mud). The draw off STYLE_BAG happens
+	# either way, above, so the seeded stream advances identically whatever the vehicle
+	# does with the answer - switching presentation must not re-roll the whole show.
+	if _vehicle != null and is_instance_valid(_vehicle):
+		s = _vehicle.style_for(s)
+	return s
 
 
 func _finish_transition() -> void:
@@ -1594,7 +1732,7 @@ func _pick_index() -> int:
 		var w := _novelty_weight(i)
 		if w <= 0.0:
 			continue
-		var h := hash([_session_seed, _swaps, _scene_key(i)])
+		var h := hash([_session_seed ^ (_pick_salt * 0x27D4EB2F), _swaps, _scene_key(i)])
 		var u := clampf(float(h & 0xFFFFFFFF) / 4294967296.0, 1e-9, 1.0)
 		var key := pow(u, 1.0 / w)
 		if key > best_key:
@@ -1666,7 +1804,8 @@ func _next_entry() -> Dictionary:
 		# structure - clockwork's gears, a terrain's shape - reproduces exactly. The live
 		# Spectrum.seed_bias() used to be XOR'd in for extra harmonic steering, but it samples the
 		# spectrum at the cut instant and is not frame-reproducible, which re-rolled the look each play.
-		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77)
+		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77) \
+			^ (_pick_salt * 0x165667B1)
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
 			"shot": "", "exit_spec": {}, "transition": "", "sensitivity": sensitivity}   # "" -> auto STYLE_BAG
 	# Manual: walk the sequence (wrap when looping; past the end of a non-looping board,
@@ -1744,6 +1883,29 @@ func _trigger_from_name(s: String) -> int:
 
 
 # Instantiate + seed the next scene with its behavior, shot, and exit rule.
+## Build ONE scene, the way a cut does, WITHOUT putting it on screen - for a vehicle that
+## owns its own cast ([method Vehicle.owns_cast]). [param salt] separates several mints
+## made at the same instant; pass a different one per panel.
+##
+## It goes through the same novelty scheduler as everything else rather than picking
+## scenes some other way, so a comic page is cast by the same rules that order a full-frame
+## show - and because `_next_entry` records each pick in `_kind_last` as it goes, the
+## panels of one page vary against each other for free.
+func mint_scene(salt := 0, quiet := false) -> GhostScene:
+	_pick_salt = salt
+	_quiet_mint = quiet
+	var sc := _make_scene()
+	_pick_salt = 0
+	_quiet_mint = false
+	return sc
+
+
+## Suppresses the per-cut [signal scene_cut] while casting a page. The signal means "a new
+## scene took the stage, re-measure it" (see main's stage governor), and casting six panels
+## in one frame is not six of those.
+var _quiet_mint := false
+
+
 func _make_scene() -> GhostScene:
 	var entry := _next_entry()
 	var script: Resource = entry["script"]
@@ -1763,7 +1925,8 @@ func _make_scene() -> GhostScene:
 	var _t := maxf(Spectrum.current.time, 0.0)
 	print("ghost: cut -> %s  at %d:%05.2f  harmonic bucket %d"
 		% [scene.scene_name, int(_t / 60.0), fmod(_t, 60.0), Spectrum.harmonic_bucket(12)])
-	scene_cut.emit()                  # the stage governor re-measures per scene
+	if not _quiet_mint:
+		scene_cut.emit()              # the stage governor re-measures per scene
 	# Narrative tempo: higher sensitivity shrinks the hold (and any explicit min/max bounds), so the
 	# scene is shorter; the scene paces its keyframes as fractions of that shrunken hold, so events
 	# still all land. _cur_sens also feeds the auto-mode pacing bounds (see _scaled_bound).
@@ -1819,8 +1982,6 @@ func _make_scene() -> GhostScene:
 
 
 func _exit_tree() -> void:
-	if _pacing_dirty:
-		_save_pacing()          # quitting mid-debounce must not lose the last slider position
 	# Free live scenes so they don't report as leaked when the app quits.
 	if is_instance_valid(_current):
 		_current.queue_free()

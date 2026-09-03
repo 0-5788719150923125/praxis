@@ -28,7 +28,6 @@ class_name Splash
 ## mode calls back into main (start_session / start_synth / start_mask), then
 ## frees the splash. Built in code (no .tscn).
 
-const CFG_PATH := "user://ghost.cfg"
 const VIDEO_EXTS := ["mp4", "mov", "mkv", "webm", "avi"]
 const AUDIO_EXTS := ["wav", "mp3", "ogg", "oga", "flac"]
 
@@ -51,6 +50,7 @@ var _audio_path := ""
 var _video_path := ""
 var _assistant_backend := ""
 var _file_dialog: FileDialog
+var _env: Control                       # the Environment panel (deps_panel.gd)
 var _source_edit: LineEdit
 var _uses_auto: Label     # per-mode source captions - see _refresh_sources
 var _uses_manual: Label
@@ -63,6 +63,50 @@ func _ready() -> void:
 	_load_last_video()
 	_assistant_backend = assistant_backend()
 	_build_ui()
+	# THE ⤓ EXPORT BUTTON HAS NO BUSINESS HERE. It is session furniture - it renders the
+	# running show to video - and the home screen is not a session: there is nothing on
+	# screen to render, so the button could only ever be the greyed "nothing to render
+	# yet" stub, sitting on top of the Environment panel and eating its clicks.
+	#
+	# This does NOT reopen the "never hide the export button" rule in exporter.gd. That
+	# rule is about never hiding it DURING a session on timing or eligibility grounds,
+	# which is what kept regressing; it says nothing about a screen where no session
+	# exists. The ` feedback console is absent here for exactly the same reason, and by
+	# the same means.
+	var ch := _chrome()
+	if ch != null:
+		ch.suppress_export(&"splash")
+
+
+## Hand back everything this screen claimed of the shared furniture.
+##
+## KEYED (see Chrome._bottom_claims), and here that is essential rather than careful:
+## the mode buttons call into main and only THEN queue_free this node, so by the time
+## this runs the incoming mode has already made its own claims. Releasing by writing 0 /
+## false would undo them.
+func _exit_tree() -> void:
+	var ch := _chrome()
+	if ch != null:
+		ch.release_export(&"splash")
+		ch.release_bottom(&"splash")
+
+
+func _chrome() -> Node:
+	if get_tree() == null:
+		return null
+	return get_tree().get_first_node_in_group("ghost_chrome")
+
+
+## Step the shared ⤓/💬/>_ toggle row up over the Environment panel. Called on every
+## resize of that panel, because its height is its own business and changes as rows open.
+func _claim_room() -> void:
+	var ch := _chrome()
+	if ch == null or _env == null or not is_instance_valid(_env):
+		return
+	# The panel is inset 18 px from the corner, so the room it needs is its height plus
+	# that inset plus a small gap - measured off the panel rather than written down, or
+	# the two drift apart the first time either number is touched.
+	ch.claim_bottom(&"splash", _env.size.y + 18.0 + 10.0)
 
 
 func _build_ui() -> void:
@@ -160,7 +204,10 @@ func _build_ui() -> void:
 	asst_option.tooltip_text = "Feedback left with ` gets handed to this, one-shot, the moment you submit it"
 	for name in ASSISTANT_BACKENDS:
 		asst_option.add_item(name)
-	asst_option.select(maxi(0, ASSISTANT_KEYS.find(_assistant_backend)))
+	# BOUND, so the choice is stored and restored by construction - see Settings.bind. The
+	# keys are passed so the setting holds the backend NAME, not a row number that a new
+	# backend would silently reassign.
+	Settings.bind(asst_option, "assistant", "backend", "", ASSISTANT_KEYS)
 	asst_option.item_selected.connect(_on_assistant_selected)
 	asst_row.add_child(asst_option)
 
@@ -174,7 +221,16 @@ func _build_ui() -> void:
 	# optional half is all subprocesses (ffmpeg, python, a JS runtime), and a
 	# missing one used to surface as a mode failing deep inside itself. Added
 	# LAST so it sits above the full-rect CenterContainer in pick order.
-	add_child(preload("res://scripts/deps_panel.gd").new())
+	_env = preload("res://scripts/deps_panel.gd").new()
+	add_child(_env)
+	# ...and the shared toggle row steps up over it. The panel is anchored to the same
+	# bottom-right corner the ⤓/💬/>_ toggles are, so left alone they draw ON it - and
+	# because the toggles sit on a higher CanvasLayer they also ate the clicks meant for
+	# the Environment rows underneath. Its height is not a constant (a row's detail pane
+	# opens, a rescan finds more, and it remembers being collapsed), so the claim tracks
+	# the panel's actual size rather than a number written down here.
+	_env.resized.connect(_claim_room)
+	_claim_room()
 
 	# Native file picker (falls back to Godot's built-in if no native dialog).
 	_file_dialog = FileDialog.new()
@@ -327,44 +383,28 @@ func _start_mask() -> void:
 # --- Remembered song / clip (user://ghost.cfg) ------------------------------
 
 func _load_last_song() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG_PATH) != OK:
-		return
-	var p := String(cfg.get_value("audio", "last", ""))
+	var p := String(Settings.read("audio", "last", ""))
 	if not p.is_empty() and FileAccess.file_exists(p):
 		_audio_path = p     # still on disk - pre-select it
 
 
 func _save_last_song(path: String) -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(CFG_PATH)      # keep any other keys; ignore "missing file"
-	cfg.set_value("audio", "last", path)
-	cfg.save(CFG_PATH)
+	Settings.write("audio", "last", path)
 
 
 func _load_last_video() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG_PATH) != OK:
-		return
-	var p := String(cfg.get_value("video", "last", ""))
+	var p := String(Settings.read("video", "last", ""))
 	# URLs are remembered too - "exists" only means anything for local files.
 	if not p.is_empty() and (p.begins_with("http") or FileAccess.file_exists(p)):
 		_video_path = p
 
 
 func _save_last_video(path: String) -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(CFG_PATH)
-	cfg.set_value("video", "last", path)
-	cfg.save(CFG_PATH)
+	Settings.write("video", "last", path)
 
 
 func _on_assistant_selected(idx: int) -> void:
 	_assistant_backend = ASSISTANT_KEYS[idx]
-	var cfg := ConfigFile.new()
-	cfg.load(CFG_PATH)
-	cfg.set_value("assistant", "backend", _assistant_backend)
-	cfg.save(CFG_PATH)
 
 
 ## The persisted assistant choice ("" = Off, "claude_cli" = Claude Code CLI) -
@@ -374,7 +414,8 @@ func _on_assistant_selected(idx: int) -> void:
 ## isn't even in the tree for a direct CLI --mask-edit launch - the setting
 ## still has to apply there, from whatever a PREVIOUS run last chose.
 static func assistant_backend() -> String:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG_PATH) != OK:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
 		return ""
-	return String(cfg.get_value("assistant", "backend", ""))
+	var st := tree.root.get_node_or_null("Settings")
+	return String(st.read("assistant", "backend", "")) if st != null else ""

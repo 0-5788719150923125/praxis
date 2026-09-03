@@ -16,7 +16,7 @@ recurrent pass. A kaleidoscope's mirrors never change - every pattern comes from
 turning the tube, and none of them is stored inside it.
 
 ```
-turn      w(x_i) = softmax(W_turn x_i + beta_d)      per token, per depth
+turn      w(x_i) = beta_d + m * tanh(W_turn x_i)      free, signed, per token
 facets    M_k^(d) = A_k + s * tanh(u_{d,k} (x) v_{d,k})
 scores    S[i, j] = sum_k w_k(x_i) * M_k^(d)[i, j]
 O         = ghostmax(mask(S)) @ dropoff(V)
@@ -134,12 +134,15 @@ The turn itself is a plain `nn.Linear` plus softmax. Nothing is imported from
 for the metric. So none of SMEAR's machinery is present - no expert dropout, no
 utilization balancing, no `smear_*` metrics.
 
-**It does take SMEAR's `base + deviations` form** (added 2026-09-02). `beta_d`
-is a per-depth learned blend - the static preference, "mirror 2 is generally
-useful at pass 3" - and `W_turn x` is the input-conditional deviation on top.
+**It does take SMEAR's `base + deviations` form.** `beta_d` is a per-depth
+learned blend - the static preference, "mirror 2 is generally useful at pass 3",
+free and unbounded like `amplitudes` - and `m * tanh(W_turn x)` is the bounded
+input-conditional deviation on top. Only the per-token half is capped, so it
+cannot run away with the effective logit scale while the slow blend stays
+foundational.
 The static term is not optional bookkeeping. Without it the only way to express
 a constant preference is through the input projection, which wastes it *and*
-contaminates `kaleido_turn_dependence`: a learned constant smuggled through
+contaminates `kaleido_turn_static_share`: a learned constant smuggled through
 `W_turn` reads as input dependence that is not there. Separating them is what
 makes the metric measure what it claims.
 
@@ -150,6 +153,20 @@ measured as variance *across mirrors* - a constant added to every mirror cancels
 in the softmax, so a raw norm would be the wrong quantity. A share at 1.0 is
 Synthesizer's Mixture with per-depth alphas, and is the honest way for the model
 to say the dictionary needs no per-token selection.
+
+**It also takes SMEAR's balancing.** Mirror dropout at 0.1 - SMEAR's own rate
+and mechanism, not an auxiliary balance loss - because the softmax cut proved
+that nothing otherwise stops one mirror monopolizing the blend. Dropping all `N`
+is safe for the same reason it is safe there: `w` becomes zero and the score
+falls back to uniform attention *exactly*, which is this module's identity
+state. No inverted-dropout rescaling - these are coefficients on frozen
+matrices, so scaling survivors up would change the softmax temperature rather
+than preserve an expectation.
+
+**Both halves zero-init, so the score matrix is exactly zero at step 0** and
+attention opens uniform over the causal prefix. That is a cleaner identity start
+than the softmax version gave, where a uniform blend still produced the
+dictionary mean - an arbitrary random matrix the model had to unlearn.
 
 The mechanism is SMEAR-*shaped* in the way that matters (merge N things by a
 softmax and apply the merged object once, rather than run N and average their
@@ -169,7 +186,7 @@ one - plus batch-mean merges on `facet_u`, `facet_v` and `turn_static`, all of
 which are already per-depth conditioned.
 
 The decisive objection is measurement, not cost. If SMEAR varies `turn.weight`
-per example, `kaleido_turn_dependence` reads variation caused by SMEAR's router
+per example, `kaleido_turn_modes` reads variation caused by SMEAR's router
 rather than by this one, and the first number the architecture is meant to be
 judged on stops measuring what it claims.
 
@@ -186,13 +203,43 @@ doing if the ablation ever matters, not worth doing mid-experiment.
 
 ## Three decisions that carry the design
 
-**1. Mix before the softmax.** Blending after it is a convex combination of
-distributions, so everything reachable lies inside the hull of the frozen
-patterns - pure interpolation. Blending logits is log-linear pooling:
-`softmax(aA + bB) ~ exp(A)^a exp(B)^b` is an *intersection*, and can put mass
-where two mirrors agree and nowhere else, which is a pattern neither mirror
-contains. That is the difference between blending geometry and synthesizing it.
-Synthesizer also mixes inside the softmax.
+**1. Mix before the softmax, and do not normalize the weights.** These are one
+decision, and getting the second half wrong made the first half worthless.
+
+Blending *after* the softmax is a convex combination of distributions, so
+everything reachable lies inside the hull of the frozen patterns - pure
+interpolation. Blending *logits* is log-linear pooling,
+`softmax(aA + bB) ~ exp(A)^a exp(B)^b`, a product of experts: it puts mass where
+mirrors *agree*, which is a pattern no single mirror contains. Verified both
+directions - a spread blend lands outside the hull, and a one-hot blend lands
+exactly *on* a mirror.
+
+That second fact is the trap. **Pre-softmax mixing only synthesizes anything
+while the weights are spread.** At one-hot the score IS one frozen random
+matrix, i.e. Synthesizer's Fixed Random evaluated per token - the variant
+measured to be worse than a trained one. The first cut of this block used
+softmax weights and did exactly that: blend entropy 0.31, which is ~90% on the
+top mirror, with utilization oscillating down to `1/N`. It was static attention
+wearing a router.
+
+Softmax is the wrong parameterization for two reasons. It confines the blend to
+the convex hull - an `(N-1)`-simplex - and its exponential actively *pressures*
+the weights toward the one-hot corner where the mechanism dies. This is the same
+failure `praxis/routers/smear.py` records for itself: "nothing stopped one
+deviation per target from monopolizing its coefficient, and on abstractinator-m
+every one of the twelve targets duly saturated to near one-hot," which is why
+sharpening is off by default there.
+
+**Free signed weights give the linear span instead** - dimension `N`, not
+`N-1` - and a negative weight *subtracts* a mirror, which no mixture of any
+weighting can reach (in the product-of-experts reading, a negative exponent:
+"attend where this mirror says *not* to"). It also hands the model its own
+attention temperature, since with unit-scale mirrors the score is
+`~N(0, ||w||^2)`.
+
+This is what the harmonic head already does. `HarmonicField.amplitudes` is a
+free real parameter over a frozen basis, not a distribution over it. A simplex
+here was the inconsistent choice.
 
 **2. Route per query position, not per sequence.** A pooled router makes the
 matrix constant *within* a sequence, which barely moves off Fixed Random. Per
@@ -220,14 +267,11 @@ asserting exactly this (`test_facet_deformation_does_not_factor_out_of_the_mixtu
 ## The cost, measured
 
 At `abstractinator-i` dimensions (hidden 272, 1 head, head_size 90, depth 6,
-N=4). `-i` inherits `max_position_embeddings: 4096`, which the `MIRROR_SPAN`
-default caps at 1024:
+N=4, R=64) - and independent of sequence length, which is the point:
 
-- **123,794** parameters in the whole block, single head, gate and static
-  blend included. No Q/K projections at all. The facets are `D*N*2*span`, so
-  the span shows up in the parameter count as well as in memory; the static
-  blend is 24 of them.
-- **16.8 MB** of frozen mirrors, non-persistent (regenerated deterministically
+- **77,714** parameters in the whole block, single head, gate and static blend
+  included. No Q/K projections at all.
+- **65.5 KB** of frozen mirrors, non-persistent (regenerated deterministically
   from a fixed seed, exactly as `HarmonicField` does its Weyl spectrum), so they
   never enter a checkpoint.
 - The score half costs `N*T^2` against `T^2*d`: a **0.015x** FLOP ratio, ~68x
@@ -236,49 +280,85 @@ default caps at 1024:
   bound below ~1000 positions, and this block materializes `[B, 1, T, T]`
   rather than using flex at all. Cheaper in FLOPs is not the same as faster.
 
-The span is the real constraint and it is inherent, not an oversight. Mirrors
-are indexed by **absolute** `(query, key)` position - that is what lets them
-express patterns a lag-indexed kernel cannot, like "attend to the start of the
-sequence" - and absolute indexing means a fixed span, `N*T^2` floats: 4 MB at
-512, 16 MB at 1024, 268 MB at 4096. Overrunning it raises rather than silently
-truncating. Synthesizer hit the same wall and answered it by truncating to the
-batch's length.
+**The mirrors are length-free**, and this replaced an absolute-position design
+that had a fixed span, sliced for short sequences and raised for long ones.
+
+A mirror is a function on the unit square in *relative* position, stored at a
+canonical `[R, R]` (R=64) and bilinearly resampled to the live `[T, T]` every
+forward. `align_corners=True` pins the canonical corners to the sequence's, so
+the whole distribution stretches or shrinks to fit rather than being cropped.
+Any `T` works, including the `T = 1` of a cached decode step. Verified at
+T = 1, 2, 7, 32, 64, 200, 4096.
+
+**Why it matters more than tidiness.** Under a sequence curriculum `T` changes
+every batch. An absolute-indexed dictionary hands the model a *different*
+geometry at each length - a different corner slice of one big random matrix,
+with no relationship between them - while a ratio-indexed one hands it the
+*same* geometry resampled. Measured: the value at relative position
+`(0.5, 0.25)` reads 0.866 / 0.819 / 0.797 / 0.788 at T = 128 / 256 / 512 / 1024,
+converging as the resample gets finer. Absolute indexing would have given four
+unrelated numbers.
+
+It also makes the module a **continuous frozen basis evaluated at the positions
+in use**, which is exactly what `HarmonicField` does with `_phase_table` rather
+than storing a `[T, D]` table. The absolute version was the odd one out.
+
+**The cost, measured rather than hand-waved.** Ratio structure survives exactly:
+"attend to the start", "attend a third of the way back", the diagonal itself.
+**Fixed-lag structure does not.** A canonical previous-token band (lag 1 at
+R=64) resamples to lag 2 with width 5 at T=128, and lag 5 with width 21 at
+T=512. So a dictionary of ratio mirrors cannot express "the token immediately
+before" at long lengths, and `R` is the knob trading length-invariance against
+positional acuity. There is a test asserting both halves of this.
+
+That limitation has a clean fix if it bites: a **Toeplitz mirror** built from a
+1D lag kernel is length-free in the *other* coordinate system and expresses
+fixed lags exactly. A dictionary mixing ratio mirrors and lag mirrors would span
+both. Not built.
+
+Side benefit: the dictionary is now **65.5 KB** instead of 16.8 MB, the facets
+live in canonical space (`D*N*2R`, not `D*N*2T`), and the whole block is
+**77,714** parameters against 123,794.
 
 ## What to watch, in order, before loss
 
-1. **`kaleido_turn_dependence`.** If it decays to zero the router is a constant,
-   the mixture is a fixed matrix, and this has silently become Fixed Random -
-   the known-worse variant. Still the first number to read.
+1. **`kaleido_turn_modes`** - effective mirrors in the blend, `1..N`. At 1 the
+   score is one frozen matrix and this is Synthesizer's Fixed Random per token,
+   the known-worse variant. **This is the failure the softmax cut actually
+   hit**, so it is not hypothetical. Collapse here is *not* SMEAR's
+   constant-router fixed point, which belongs to the batch reduction; this
+   routes per token.
+2. **`kaleido_turn_negative`** - fraction of weights below zero, the direct
+   falsifier for leaving the simplex. Pinned near 0 means the free
+   parameterization bought nothing a softmax could not have done.
+3. **`kaleido_mirror_utilization`** - how many mirrors clear half the mean
+   magnitude, `1/N` at collapse. Read with (1): together they say which way an
+   N-sweep should go.
+4. **`kaleido_turn_scale`** (`||w||`) - the effective softmax temperature, since
+   the score is `~N(0, ||w||^2)`. Runaway growth sharpens attention onto a
+   single key; that is why the per-token half is tanh-bounded.
+5. **`kaleido_turn_static_share`** - at 1.0 the blend is a learned constant per
+   depth and the input is ignored, which is Synthesizer's Mixture with per-depth
+   alphas rather than the claim this makes.
+6. **`kaleido_facet_depth_specialization`** - zero means every pass ground its
+   mirrors identically and the depth axis is not earning its parameters, which
+   would answer the weights-vs-inputs question in the negative.
+7. **`kaleido_facet_strength`** - staying near 0 is a *finding*: the dictionary
+   plus routing was enough and depth needed no deformation.
+8. **`kaleido_gate_negative`** - pinned at 0 means the single head never needed
+   to flip a sign and Arc's sigmoid gate would have served.
+9. **`kaleido_ghost_share`** - length-dependent by construction, see above. Near
+   1 is the attention branch switching itself off.
 
-   This is a risk to watch, **not** an inherited trap. SMEAR's constant-router
-   fixed point belongs to its **batch** reduction, where "the loss reaches the
-   routing only through `probs.mean(0)`, so every example receives the identical
-   routing gradient" - measured decaying to exactly 0 on `-m`. Kaleidoscope
-   routes **per token**, which has a distinct gradient per position and does not
-   have that fixed point. Ordinary router collapse is still possible, which is
-   why (2) is paired with it.
-2. **`kaleido_turn_entropy`** read *with* it. Falling entropy at zero dependence
-   is collapse onto one mirror. Falling entropy at rising dependence is genuine
-   per-token selection. The pair separates the two; neither number does alone.
-3. **`kaleido_facet_depth_specialization`.** Zero means every pass ground its
-   mirrors identically and the depth axis is not earning its parameters -
-   which would answer the weights-vs-inputs question in the negative.
-4. **`kaleido_facet_strength`.** Staying near 0 is a *finding*: the frozen
-   dictionary plus routing was enough and depth needed no deformation.
-5. **`kaleido_gate_negative`.** Pinned at 0 means the single head never needed
-   to flip a sign and Arc's sigmoid gate would have served equally.
-6. **`kaleido_mirror_utilization`.** Are the mirrors earning their keep - the
-   fraction carrying more than half their fair share of the blend, the same
-   estimator as `smear_expert_utilization`. `1/N` is total collapse onto one
-   mirror. This is what says which direction an N-sweep should go: 1.0 with
-   committed entropy argues for more mirrors, a falling value says the
-   dictionary is already larger than the model can use.
-7. **`kaleido_turn_static_share`.** At 1.0 the blend is a learned constant per
-   depth and the input is ignored - which is Synthesizer's Mixture, not the
-   claim this makes. Read with (1): they answer the same question from the two
-   sides of the sum.
-8. **`kaleido_ghost_share`.** Length-dependent, see above. Near 1 is the
-   attention branch switching itself off.
+Every turn metric is **absent at init**, where the blend is identically zero and
+the ratios are 0/0. Reporting them would read as collapse, which is the opposite
+of an untouched identity start.
+
+A gradient audit will flag the facets as dead at step 0. They are, twice over,
+and both are structural: `dS/d(facet_k) = w_k`, so no facet moves until the
+blend does, and within a facet `d/dv (u (x) v) = u` with `u` zero-init. The
+chain is blend -> `u` -> `v`, and the blend has gradient from step 0, so it
+unlocks immediately.
 
 ## Honest open questions
 
@@ -308,13 +388,13 @@ batch's length.
 `experiments/abstractinator-i.yml`, `--abstractinator-i`. Extends `-h` and
 changes `attention_type` alone, so any delta is the attention core.
 
-Read `kaleido_turn_dependence` first. If it is at zero the perplexity number
-means nothing, because the model being measured is not the model that was
-designed - and the fix would be a routing question, not an attention one.
+Read `kaleido_turn_modes` first. If it sits at 1 the score is a single frozen
+matrix, the perplexity number describes Synthesizer's Fixed Random rather than
+this design, and the fix is a routing question, not an attention one.
 
 The falsification table lives in the experiment file's header. The short
-version: `turn_dependence` at 0 is a result about SMEAR routers in this stack,
-not about kaleidoscope; **parity is the interesting outcome**, because the block
+version: `turn_modes` at 1 is a result about routing collapse, not about
+kaleidoscope; **parity is the interesting outcome**, because the block
 holds no Q/K parameters and is ~68x cheaper on its score half, and the follow-up
 would be an N-sweep since N=4 is inherited from the SMEAR expert count rather
 than calibrated.
