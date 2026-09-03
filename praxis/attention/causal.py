@@ -29,6 +29,7 @@ class CausalAttention(nn.Module):
         self,
         config,
         dropoff: str = None,
+        dropoff_every: bool = False,
     ) -> None:
         """
         Initialize CausalAttention module.
@@ -49,15 +50,44 @@ class CausalAttention(nn.Module):
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
-        # Dropoff ablation (next/dropoff.md): withhold the causal tip at one
-        # depth step so the model must lean on delayed context. ``dropoff``
-        # is the mode - None (off), "shift" (uniform K/V delay) or "warp"
-        # (feature-dependent value sink at the tip) - owned by
-        # ATTENTION_REGISTRY profiles (e.g. arc_dropoff), not config. The
-        # step is a heuristic, not an hparam: the first layer of the last
-        # recurrent pass (depth - num_layers), the latest beat that still
-        # leaves the remaining layers to recorrect.
+        # Dropoff ablation (next/dropoff.md): withhold the causal tip so the
+        # model must lean on delayed context. ``dropoff`` is the mode - None
+        # (off), "shift" (uniform K/V delay) or "warp" (feature-dependent value
+        # sink at the tip) - owned by ATTENTION_REGISTRY profiles (e.g.
+        # arc_dropoff), not config.
+        #
+        # ``dropoff_every`` is the SCHEDULE, orthogonal to the mode:
+        #
+        #   False (default) - fires only when ``current_depth`` reaches
+        #     ``depth - num_layers``. The stated mechanism (next/dropoff.md)
+        #     is that the surrounding beats recorrect for the sunk one.
+        #
+        #     THIS SCHEDULE IS VERY NEARLY INERT, and the comment here used to
+        #     claim otherwise. Under KL halting the TRAINING depth budget is
+        #     sampled, not fixed: ``KLHalting.get_depth`` returns
+        #     ``_sample_loop_count() * num_layers`` from a log-normal Poisson
+        #     while training. (``check`` is the inference-only half; reading
+        #     that one alone hides this.) At depth 6 / num_layers 1, so
+        #     max_loops 6 and r_bar 2.5, the loop count is 6 on 7.0% of steps
+        #     and only then is step 5 reached: 0.07 firings per step, 2.3% of
+        #     the passes that execute (E[loops] is 3.06, not 6). Whatever the
+        #     arc configs have been measuring, it is not this ablation.
+        #   True - every pass, like ghostmax. ~44x the exposure above, and the first schedule under which dropoff is
+        #     a real intervention rather than a rounding error. It also removes
+        #     the chosen step, which is worth something on its own: the default
+        #     is a hand-picked beat whose realized rate turns out to be set by
+        #     an unrelated sampling distribution.
+        #
+        # The cost of True, stated so a null result stays readable: the tip is
+        # then permanently absent from the value path at every depth - a recency
+        # PRIOR rather than an ablation - and the envelope is anchored to the
+        # current forward's T, so under a sequence curriculum its shape moves
+        # with the batch.
+        #
+        # Neither is measured, and given the exposure numbers above, dropoff has
+        # never really been measured at all.
         self.dropoff_mode = dropoff
+        self.dropoff_every = bool(dropoff_every)
         if dropoff is None:
             self.dropoff_step = None
         else:
@@ -295,10 +325,34 @@ class CausalAttention(nn.Module):
         return False
 
     def _maybe_dropoff(self, k: Tensor, v: Tensor, current_depth: int):
-        """Dropoff ablation (next/dropoff.md): at ``dropoff_step``, withhold the
-        causal tip for one recurrent beat so the model leans on delayed context;
-        the remaining steps recorrect. No-op unless ``dropoff_step`` matches the
-        current depth. Applied to real K/V before the zero ghost is prepended.
+        """Dropoff ablation (next/dropoff.md): withhold the causal tip so the
+        model leans on delayed context. Applied to real K/V before the zero
+        ghost is prepended. Fires at ``dropoff_step`` only, or at every pass
+        under ``dropoff_every``.
+
+        TRAINING ONLY, and that is a NECESSITY of this envelope rather than a
+        design position. The warp is anchored to the current forward's ``T``,
+        and a cached decode passes ``T = 1``: ``dist = [0]``, so
+        ``warp = 1 - exp(0) = 0`` and the token's value is multiplied by ZERO.
+        ``_adjust_kv`` runs before the cache write (see
+        ``InfiniAttention.forward``), so every V entering the cache would be
+        exactly zero and the attention branch would output zero at every decode
+        step. Not a distribution shift - a dead branch.
+
+        The train/inference asymmetry is real and uncorrected either way. Dropout
+        gets away with it by applying its expectation at test time; a
+        multiplicative envelope in [0, 1] has no analogous rescaling, so the two
+        coherent designs are (a) train-only, as here, or (b) on at both, which
+        needs the envelope re-anchored to ABSOLUTE sequence position so a
+        one-token forward knows where the tip is. Neither is measured. (b) also
+        means the model never reads the most recent token's value at generation,
+        which is a different model, not a consistency fix.
+
+        Before this gate, whether dropoff fired at inference depended on whether
+        KL halting stopped the loop before the last pass
+        (``praxis/halting/kl.py`` returns False while training, so halting is an
+        inference-only mechanism). Gated here rather than at each call site so
+        arc, single-head arc and kaleidoscope all inherit it.
 
         Two modes (``dropoff_mode``):
 
@@ -313,7 +367,9 @@ class CausalAttention(nn.Module):
           rides the value, not the attention weight (weights are per-head, not
           per-feature).
         """
-        if self.dropoff_step is None or current_depth != self.dropoff_step:
+        if self.dropoff_step is None or not self.training:
+            return k, v
+        if not self.dropoff_every and current_depth != self.dropoff_step:
             return k, v
         if self.dropoff_mode == "warp":
             return k, self._dropoff_warp_value(v)

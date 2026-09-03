@@ -10,6 +10,7 @@ from praxis.attention.modular import ModularAttention
 from praxis.attention.causal import CausalAttention
 from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
+from praxis.attention.kaleidoscope import KaleidoscopeAttention
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.single import (
     SingleHeadArcAttention,
@@ -28,11 +29,18 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "infini": InfiniAttention,
     "arc": ArcAttention,
     # Arc + the dropoff ablation (next/dropoff.md): withhold the causal tip
-    # via the "warp" value sink at the first layer of the last recurrent pass
-    # (heuristic: depth - num_layers; e.g. 2 layers x 4 loops -> step 6), so
-    # the model leans on delayed context for that beat and the remaining
-    # layers recorrect.
+    # via the "warp" value sink at step ``depth - num_layers``, so the model
+    # leans on delayed context for that beat and the remaining layers
+    # recorrect. NOTE this schedule is very nearly inert under KL halting,
+    # whose TRAINING depth budget is sampled: measured 0.07 firings per
+    # step at depth 6, against 3.06 for the _always sibling. Prefer the ``_always`` sibling for an arm that actually
+    # applies the ablation. See CausalAttention.__init__.
     "arc_dropoff": partial(ArcAttention, dropoff="warp"),
+    # The same sink at EVERY pass. Not a stylistic variant of the entry above:
+    # it is ~44x the exposure (3.06 firings per step against 0.07), and
+    # the first schedule under which dropoff is a real intervention rather than
+    # a rounding error.
+    "arc_dropoff_always": partial(ArcAttention, dropoff="warp", dropoff_every=True),
     # Arc with ONE head: shared Q/K representation, per-dimension affine
     # reads of it, and a SiLU output gate (Mega, arXiv:2209.10655) in place
     # of Arc's sigmoid. Overrides num_heads/num_queries to 1; head width is
@@ -58,6 +66,29 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "arc_nomem": ArcNoMemAttention,
     "arc_single_nomem": SingleHeadArcNoMemAttention,
     "arc_single_dropoff_nomem": partial(SingleHeadArcNoMemAttention, dropoff="warp"),
+    # The every-pass schedule on the profile the abstractinator line actually
+    # runs, so the schedule question is answerable there and not only on arc.
+    "arc_single_dropoff_always_nomem": partial(
+        SingleHeadArcNoMemAttention, dropoff="warp", dropoff_every=True
+    ),
+    # Kaleidoscope: N frozen [T, T] mixing matrices, blended per TOKEN by a
+    # router, with a per-depth rank-1 deformation on the mirrors themselves.
+    # No Q, no K - the matrix is the parameter, so there is nothing to project
+    # from. Synthesizer (arXiv:2005.00743) covered every neighbouring cell
+    # (one frozen matrix, one trained matrix, N mixed by STATIC learned
+    # scalars); an input-conditional blend is the one it left empty. See
+    # praxis/attention/kaleidoscope.py for why the mix is pre-softmax and why
+    # the per-depth bias goes on the mirrors rather than on the inputs.
+    "kaleido": KaleidoscopeAttention,
+    # ... plus the dropoff ablation, the same "warp" value sink at the first
+    # layer of the last recurrent pass that `arc_dropoff` runs. Only `warp`:
+    # the `shift` mode moves K as well as V and there is no K here to move.
+    "kaleido_dropoff": partial(KaleidoscopeAttention, dropoff="warp"),
+    # ... at every pass, like ghostmax. See CausalAttention.__init__ for the
+    # argument on both sides of the schedule.
+    "kaleido_dropoff_always": partial(
+        KaleidoscopeAttention, dropoff="warp", dropoff_every=True
+    ),
     # Query-steered Gaussian field over causal lag, no Q/K (Pisoni's SSOG,
     # ported to 1D). Position-addressed only; see praxis/attention/ssog.py.
     "ssog": SSOGAttention,

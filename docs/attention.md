@@ -3,9 +3,9 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (17 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (22 entries)
 
-## `arc`, `arc_dropoff` - ArcAttention
+## `arc`, `arc_dropoff`, `arc_dropoff_always` - ArcAttention
 
 InfiniAttention subclass that adds per-depth learned biases.
 
@@ -22,6 +22,7 @@ Source: [praxis/attention/arc.py:19](../praxis/attention/arc.py#L19)
 Presets:
 - `arc` - class defaults
 - `arc_dropoff` - `dropoff='warp'`
+- `arc_dropoff_always` - `dropoff='warp', dropoff_every=True`
 
 ## `arc_nomem` - ArcNoMemAttention
 
@@ -44,7 +45,7 @@ Presets:
 - `arc_single` - class defaults
 - `arc_single_dropoff` - `dropoff='warp'`
 
-## `arc_single_dropoff_nomem`, `arc_single_nomem` - SingleHeadArcNoMemAttention
+## `arc_single_dropoff_always_nomem`, `arc_single_dropoff_nomem`, `arc_single_nomem` - SingleHeadArcNoMemAttention
 
 SingleHeadArcAttention with the compressive memory removed. See
 :class:`~praxis.attention.infini.NoCompressiveMemory`.
@@ -52,6 +53,7 @@ SingleHeadArcAttention with the compressive memory removed. See
 Source: [praxis/attention/single.py:247](../praxis/attention/single.py#L247)
 
 Presets:
+- `arc_single_dropoff_always_nomem` - `dropoff='warp', dropoff_every=True`
 - `arc_single_dropoff_nomem` - `dropoff='warp'`
 - `arc_single_nomem` - class defaults
 
@@ -84,6 +86,17 @@ accumulates key-value context and a learned gate blends memory retrieval with lo
 attention output.
 
 Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
+
+## `kaleido`, `kaleido_dropoff`, `kaleido_dropoff_always` - KaleidoscopeAttention
+
+N frozen ``[T, T]`` mixing matrices, blended per token by a router.
+
+Source: [praxis/attention/kaleidoscope.py:193](../praxis/attention/kaleidoscope.py#L193)
+
+Presets:
+- `kaleido` - class defaults
+- `kaleido_dropoff` - `dropoff='warp'`
+- `kaleido_dropoff_always` - `dropoff='warp', dropoff_every=True`
 
 ## `modular` - ModularAttention
 

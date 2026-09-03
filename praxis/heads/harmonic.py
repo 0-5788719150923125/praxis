@@ -378,6 +378,31 @@ class HarmonicField(nn.Module):
                 "series_label": "dormant (headroom)",
             },
         },
+        "harmonic_variance_share": {
+            "description": (
+                "variance / (bias + variance) - the bias/variance split of the "
+                "field energy that is actually WRITTEN, with the dormant "
+                "headroom out of the denominator. The three "
+                "harmonic_capacity_* series answer a different question ('how "
+                "full is the spectrum'), and because dormant dominates a "
+                "concentrated field, reading capacity_variance as 'the "
+                "conditional delta's share' understates it by whatever factor "
+                "the field is concentrated - the two are not interchangeable. "
+                "This is the number to read when asking whether the "
+                "input-conditional delta is doing work: 0 = a pure static "
+                "field, 0.5 = the delta carries as much energy as the "
+                "spectrum it modulates. Exactly 0 at init by construction "
+                "(zero-init projection and zero-init fast overlay), so any "
+                "rise is learned."
+            ),
+            "chart": {
+                "title": "Variance Share of Written Field",
+                "y_label": "variance / (bias + variance)",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 50,
+            },
+        },
         # Spectrum is a bespoke heatmap snapshot, not a scalar chart -
         # the snapshot hint routes it through the heatmap_2d renderer.
         "harmonic_spectrum": {
@@ -1267,10 +1292,17 @@ class HarmonicField(nn.Module):
             bias, var = bias_e.sum(), var_e.sum()
             dormant = (ceiling - bias - var).clamp_min(0.0)
             total = (bias + var + dormant).clamp_min(1e-12)
+            # The bias/variance split of the WRITTEN field, dormant excluded.
+            # Reported separately because it answers a different question than
+            # the three shares above and is not recoverable from them without
+            # knowing how concentrated the field is - see the metric
+            # description for why conflating the two understates the delta.
+            written = (bias + var).clamp_min(1e-12)
             return {
                 "harmonic_capacity_bias": float((bias / total).item()),
                 "harmonic_capacity_variance": float((var / total).item()),
                 "harmonic_capacity_dormant": float((dormant / total).item()),
+                "harmonic_variance_share": float((var / written).item()),
             }
 
     def spiral(self, n_points: int = 720) -> dict:

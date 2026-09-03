@@ -614,3 +614,34 @@ def test_cached_decode_positions_past_one_period():
     f = HarmonicField(hidden_dim=16, max_positions=32, amp_modulation="learned")
     x = torch.randn(1, 50, 16)
     _chunked_equals_full(f, x, [30, 5, 15])
+
+
+def test_variance_share_excludes_dormant_headroom():
+    """The bias/variance split of the written field, dormant out of it.
+
+    ``harmonic_capacity_variance`` divides by a saturation ceiling, so on a
+    concentrated field it reads far below the actual delta share. This asserts
+    the two are genuinely different numbers and that the new one is the one
+    with the honest denominator.
+    """
+    f = _fast_field("input")
+    with torch.no_grad():
+        f.fast_u.weight.normal_(std=0.5)
+        f.amp_input.weight.normal_(std=0.5)
+    f(torch.randn(2, 80, 16))  # populate _last_input_coeffs and _fast_repr
+    c = f.capacity_split()
+
+    share = c["harmonic_variance_share"]
+    bias, var = c["harmonic_capacity_bias"], c["harmonic_capacity_variance"]
+    assert 0.0 <= share <= 1.0
+    # Same ratio, dormant removed from the denominator.
+    assert share == pytest.approx(var / (bias + var), rel=1e-5)
+    # Dormant is real headroom here, so the honest share is strictly larger.
+    assert c["harmonic_capacity_dormant"] > 0.0
+    assert share > var
+
+
+def test_variance_share_is_zero_for_a_static_field():
+    """No conditional path -> the field is pure bias, and the share says so."""
+    f = HarmonicField(hidden_dim=16, max_positions=128, amp_modulation="static")
+    assert f.capacity_split()["harmonic_variance_share"] == pytest.approx(0.0)
