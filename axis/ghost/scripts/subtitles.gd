@@ -3,9 +3,12 @@ class_name Subtitles
 
 ## Subtitles - the karaoke overlay, session-owned rather than editor-owned.
 ##
-## Draws the current sentence at the bottom in the SOURCE spelling (caps and
+## Draws the current sentence at the bottom in the SOURCE spelling (caps, quotes and
 ## punctuation intact - the phoneme normalization never reaches the reader's
 ## eyes), wrapping onto up to three lines before it ever shrinks the font.
+## EMPHASIS IS DRAWN AS EMPHASIS: markdown's `*italic*` and `**bold**` reach here as a
+## level on the word rather than as asterisks (see TextNorm's emphasis sentinels), and
+## the overlay synthesizes a slanted or emboldened face for it.
 ##
 ## The tracker is a **narrator's eye**, not a metronome: an eased cursor that
 ## chases the true playback position with momentum - it ramps up when the
@@ -235,6 +238,33 @@ class Overlay:
 	const SAT_SPAN := 0.17           # saturation band spatial frequency (a valley ~every 37 glyphs)
 	const SAT_DRIFT := 0.09          # the bands drift per second (their own rhythm)
 	const SAT_FLOOR := 0.14          # how far the grounded valleys desaturate (0 = grey)
+	# EMPHASIS IS DRAWN, NOT SPELLED. `*I will never hurt you*` reaches here as a level on
+	# the word (see TextNorm's emphasis sentinels), never as asterisks - printing the
+	# markers would be showing the reader the source code of the typography. Godot can
+	# synthesize both faces off the one theme font, so this needs no second font file:
+	# `variation_embolden` thickens the outline and `variation_transform` shears it.
+	const EMBOLDEN := 0.6
+	## The oblique shear, as FreeType's own matrix takes it: x' = x + SLANT * y, with y up
+	## in outline space, so a positive value leans the tops of the letters to the right.
+	## 0.22 is about 12 degrees, which is what a real italic face runs at.
+	const SLANT := 0.22
+	var _faces := {}                 # level -> Font
+
+	## The face for an emphasis level: 0 plain, 1 italic, 2 bold, 3 both.
+	func _face(base: Font, level: int) -> Font:
+		if level <= 0 or base == null:
+			return base
+		if _faces.has(level):
+			return _faces[level]
+		var fv := FontVariation.new()
+		fv.base_font = base
+		if level & 2:
+			fv.variation_embolden = EMBOLDEN
+		if level & 1:
+			fv.variation_transform = Transform2D(Vector2(1.0, SLANT), Vector2(0.0, 1.0),
+				Vector2.ZERO)
+		_faces[level] = fv
+		return fv
 
 	func _draw() -> void:
 		if owner_node == null or owner_node.words.is_empty():
@@ -305,17 +335,18 @@ class Overlay:
 			for item in row:
 				var text: String = item.word.text
 				var ci: int = int(item.cstart)   # this word's first char, sentence-local
+				var face := _face(font, int(item.word.get("emph", 0)))
 				for ch in text.length():
 					var glyph := text.substr(ch, 1)
-					var cw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+					var cw := face.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 					var pos := Vector2(x, y)
 					var col := _glyph_color(base_hue, ci + ch, ccur, now)
 					col.a *= vis
 					# the shadow, under every state - the edge that survives a
 					# bright frame bleeding past the plate
-					draw_string(font, pos + Vector2(1.5 * k, 1.5 * k), glyph,
+					draw_string(face, pos + Vector2(1.5 * k, 1.5 * k), glyph,
 						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85 * vis))
-					draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+					draw_string(face, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 					x += cw
 				x += gap
 			y += lh
@@ -392,8 +423,11 @@ class Overlay:
 		var row: Array = []
 		var used := -gap
 		for item in items:
-			item.w = font.get_string_size(item.word.text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			# MEASURED IN THE FACE IT WILL BE DRAWN IN. An emboldened word is wider than
+			# the plain one, and the plate is sized from these numbers - measure in the
+			# base font and every bold line hangs over the end of its own plate.
+			item.w = _face(font, int(item.word.get("emph", 0))).get_string_size(
+				item.word.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			if used + gap + item.w > max_w and not row.is_empty():
 				lines.append(row)
 				row = []

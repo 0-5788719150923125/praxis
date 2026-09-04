@@ -45,6 +45,36 @@ const FOLD := {
 	"°": " degrees ", "™": "", "®": "", "©": "",
 }
 
+# --- emphasis sentinels ------------------------------------------------------
+#
+# Markdown's emphasis markers are TYPOGRAPHY: the mouth must not speak them and
+# the page must not lose them. Dropping them outright satisfied only the first
+# half - the subtitle under `*I will never hurt you*` read as flat prose, with
+# nothing anywhere to say the line had been emphasised at all.
+#
+# So a matched pair does not vanish, it becomes a SENTINEL: a private-use
+# character that survives every pass below (it is in no fold table, it is not
+# whitespace, so it stays welded to its word through the split/join passes) and
+# is peeled off by [Phonemes.parse], which records the level on the word and
+# hands it to the subtitle renderer. They toggle, so a run spanning several
+# words needs only its two ends marked.
+#
+# NOTHING DOWNSTREAM OF THE PHONEMIZER EVER SEES ONE. [method normalize] - the
+# entry point for every caller that wants speakable text and nothing else -
+# strips them on the way out; only [method normalize_marked] keeps them, and it
+# has exactly one caller.
+const EMPH_ITALIC := "\uE001"
+const EMPH_BOLD := "\uE002"
+const EMPH_MARKS := EMPH_ITALIC + EMPH_BOLD
+## Level bits carried on a word: 1 italic, 2 bold, 3 both.
+const EMPH_I := 1
+const EMPH_B := 2
+
+# Markdown's own flanking rule, shared by every marker character.
+const OPEN_BEFORE := " \t\n([{\"'\u201c\u2018"
+const SPACE := " \t\n"
+const CLOSE_AFTER := " \t\n.,;:!?)]}\"'\u201d\u2019"
+
 # --- number words -----------------------------------------------------------
 const ONES := ["zero", "one", "two", "three", "four", "five", "six", "seven",
 	"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
@@ -137,7 +167,9 @@ const NAME_TAIL := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456
 ## Run the numeral expansion first and that evidence is gone, because by then the 5 has
 ## become the word "five" and nothing distinguishes the two cases at all.
 static func normalize(text: String) -> String:
-	return String(normalize_marked(text)["text"])
+	# The sentinels are for the ONE caller that carries emphasis onto the page.
+	# Everyone else asked for speakable words. See the note above [constant EMPH_ITALIC].
+	return strip_emphasis(String(normalize_marked(text)["text"]))
 
 
 ## The same normalization, plus WHAT EACH REWRITTEN RUN WAS WRITTEN AS.
@@ -178,7 +210,8 @@ static func normalize_marked(text: String) -> Dictionary:
 	return {"text": s, "spans": spans}
 
 
-## Remove Markdown's own punctuation, which is TYPOGRAPHY and must never be spoken.
+## Remove Markdown's own punctuation, which is TYPOGRAPHY and must never be spoken -
+## and, where it marks EMPHASIS, replace it with a sentinel rather than deleting it.
 ##
 ## Found by auditing a real manuscript: scripts arrive as `.md` files, and an emphasis
 ## marker is not silent to a phonemizer - it is a WORD. Measured, eSpeak returns
@@ -196,23 +229,37 @@ static func normalize_marked(text: String) -> Dictionary:
 ## SUBTITLE read `_no one_` with the markers on it, because `display` is taken from this
 ## text and there is no earlier copy of it to fall back to.
 ##
-## So the emphasis pair is dropped and everything else is left exactly as it was, by the
-## flanking rule markdown itself uses: an opener is preceded by whitespace or an opening
-## bracket and followed by a non-space, a closer is preceded by a non-space and followed
-## by whitespace or punctuation, and BOTH must be present on the same line before either
-## is touched. `snake_case` is untouched because neither underscore flanks anything;
-## `_private` alone is untouched because nothing closes it; and a RUN of underscores is
-## never emphasis here, which keeps `__init__` whole. That last exclusion costs `__bold__`
-## and is the right trade: prose writes bold as `**bold**`, and a dunder is unambiguous.
+## AND THEN THE OPPOSITE DEFECT, which is what the sentinels are for. Deleting the pair
+## fixed the reading and broke the page a second way: the subtitle under an emphasised
+## line read as flat prose, with no trace that the writing had leaned on those words at
+## all. A marker is not noise to be removed, it is a spelling of something the reader is
+## meant to see - the same argument `display` already makes about `2009`. So a MATCHED
+## pair becomes [constant EMPH_ITALIC] / [constant EMPH_BOLD], which [Phonemes.parse]
+## peels off into a level on the word, and the overlay draws in a slanted or emboldened
+## face. Everything unmatched is dropped exactly as before, so the spoken text is
+## unchanged in every case.
+##
+## The pairing is markdown's own flanking rule: an opener is preceded by whitespace or an
+## opening bracket and followed by a non-space, a closer is preceded by a non-space and
+## followed by whitespace or punctuation, and BOTH must be present, in the same
+## PARAGRAPH, before either is touched. `snake_case` is untouched because neither
+## underscore flanks anything; `_private` alone is untouched because nothing closes it;
+## `* item` is not emphasis because a space follows it; and a RUN of underscores is never
+## emphasis here, which keeps `__init__` whole. That last exclusion costs `__bold__` and
+## is the right trade: prose writes bold as `**bold**`, and a dunder is unambiguous.
 static func _strip_markdown(text: String) -> String:
-	var drop := _emphasis_underscores(text)
+	var marks := _emphasis_marks(text)
 	var out := ""
 	var at_line_start := true
 	var i := 0
 	while i < text.length():
 		var c := text[i]
-		if c == "_" and drop.has(i):
-			i += 1
+		# A MATCHED PAIR: the run is consumed and its sentinel takes its place.
+		if marks.has(i):
+			var m: Dictionary = marks[i]
+			out += String(m["put"])
+			i += int(m["len"])
+			at_line_start = false
 			continue
 		if c == "\n":
 			at_line_start = true
@@ -228,9 +275,10 @@ static func _strip_markdown(text: String) -> String:
 			continue
 		if c != " " and c != "\t":
 			at_line_start = false
-		# Emphasis, strikethrough and inline code. Dropped outright rather than folded to
-		# a break: they mark a span, they do not mark a pause, and turning them into
-		# commas would put rests where the writing has none.
+		# Unmatched emphasis, strikethrough and inline code. Dropped outright rather than
+		# folded to a break: they mark a span, they do not mark a pause, and turning them
+		# into commas would put rests where the writing has none. An underscore that
+		# paired nothing is left alone - see above, `snake_case`.
 		if c == "*" or c == "`" or c == "~":
 			i += 1
 			continue
@@ -239,60 +287,98 @@ static func _strip_markdown(text: String) -> String:
 	return out
 
 
-## Which underscores in `text` are emphasis markers, as a set of indices.
+## Strip every emphasis sentinel from `text`. For callers who want speakable words and
+## nothing else - which is everyone except [Phonemes.parse].
+static func strip_emphasis(text: String) -> String:
+	if not (text.contains(EMPH_ITALIC) or text.contains(EMPH_BOLD)):
+		return text
+	var out := ""
+	for i in text.length():
+		var c := text[i]
+		if c != EMPH_ITALIC and c != EMPH_BOLD:
+			out += c
+	return out
+
+
+## Which marker RUNS in `text` are a matched emphasis pair: `{start index -> {len, put}}`,
+## where `len` is the run's length in characters and `put` the sentinel(s) that replace it.
 ##
-## Separate from the strip itself because it needs to look FORWARD: an underscore is
-## only a marker if its partner exists, and that cannot be decided by a scanner that
-## has read one character. See [method _strip_markdown] for the rule and what it
-## deliberately leaves alone.
-static func _emphasis_underscores(text: String) -> Dictionary:
-	const OPEN_BEFORE := " \t\n([{\"'\u201c\u2018"
-	const SPACE := " \t\n"
-	const CLOSE_AFTER := " \t\n.,;:!?)]}\"'\u201d\u2019"
-	var drop := {}
+## Separate from the strip itself because it has to look FORWARD: a marker is only a
+## marker if its partner exists, and that cannot be decided by a scanner that has read one
+## character. The open runs are a STACK, so nesting works - `**bold with *italic* in
+## it**` closes the inner pair against the inner opener and the outer against the outer,
+## and the sentinels being toggles means the words between carry both levels.
+##
+## Same-paragraph only: an unmatched opener that could reach the end of a chapter would
+## take every marker after it with it, and emphasis does not span a blank line in
+## markdown either.
+static func _emphasis_marks(text: String) -> Dictionary:
+	var marks := {}
+	var open: Array = []                 # [{at, run, ch}], innermost last
 	var n := text.length()
 	var i := 0
 	while i < n:
-		if text[i] != "_":
+		var c := text[i]
+		if c != "*" and c != "_":
 			i += 1
 			continue
 		var run := i
-		while run < n and text[run] == "_":
+		while run < n and text[run] == c:
 			run += 1
-		if run - i != 1:
-			i = run                     # `__` and longer are never emphasis here
+		var width := run - i
+		# `__` and longer are never emphasis here (see the note above `_strip_markdown`),
+		# and `****` is not a level anyone writes.
+		if width > 3 or (c == "_" and width != 1):
+			i = run
 			continue
 		var before := text[i - 1] if i > 0 else " "
-		var after := text[i + 1] if i + 1 < n else " "
-		if not OPEN_BEFORE.contains(before) or SPACE.contains(after) or after == "_":
-			i += 1
-			continue
-		# ...and its partner, on this line only: emphasis does not span a paragraph,
-		# and an unmatched opener that reached the end of a chapter would take every
-		# underscore after it with it.
-		var k := i + 1
-		var close := -1
-		while k < n and text[k] != "\n":
-			if text[k] != "_":
-				k += 1
-				continue
-			var kr := k
-			while kr < n and text[kr] == "_":
-				kr += 1
-			if kr - k == 1:
-				var pb := text[k - 1]
-				var pa := text[k + 1] if k + 1 < n else " "
-				if not SPACE.contains(pb) and pb != "_" and CLOSE_AFTER.contains(pa):
-					close = k
+		var after := text[run] if run < n else " "
+		var can_open := OPEN_BEFORE.contains(before) and not SPACE.contains(after)
+		var can_close := not SPACE.contains(before) and CLOSE_AFTER.contains(after)
+		# A CLOSER WINS over opening a new run, and closes the innermost match - otherwise
+		# the second `*` of a pair reads as another opener whenever it is followed by a
+		# space, which is every closing marker at the end of a sentence.
+		if can_close:
+			var k := open.size() - 1
+			while k >= 0:
+				var o: Dictionary = open[k]
+				if String(o["ch"]) == c and int(o["run"]) == width \
+						and not _blank_line_between(text, int(o["at"]), i):
+					var put := _sentinels(width)
+					marks[int(o["at"])] = {"len": width, "put": put}
+					marks[i] = {"len": width, "put": put}
+					open.resize(k)
 					break
-			k = kr
-		if close < 0:
-			i += 1
-			continue
-		drop[i] = true
-		drop[close] = true
-		i = close + 1
-	return drop
+				k -= 1
+			if k >= 0:
+				i = run
+				continue
+		if can_open:
+			open.append({"at": i, "run": width, "ch": c})
+		i = run
+	return marks
+
+
+## The sentinels a run of `width` markers stands for: 1 italic, 2 bold, 3 both.
+static func _sentinels(width: int) -> String:
+	match width:
+		1: return EMPH_ITALIC
+		2: return EMPH_BOLD
+		_: return EMPH_ITALIC + EMPH_BOLD
+
+
+static func _blank_line_between(text: String, a: int, b: int) -> bool:
+	var seen := 0
+	for i in range(a, b):
+		var c := text[i]
+		if c == "\n":
+			seen += 1
+			if seen >= 2:
+				return true
+		elif c != " " and c != "\t" and c != "\r":
+			seen = 0
+	return false
+
 
 
 ## Every `${...}` in `text`, as [{at, end, name, has_default, value, broken}].
@@ -545,7 +631,7 @@ static func _expand_numbers(text: String, marks_in: Array = [],
 		# What a reader should see here: whatever the SOURCE said. An incoming
 		# mark means an earlier pass already replaced this token, so its `src` is
 		# the original and beats the token in hand, which is that pass's output.
-		var src := tok
+		var src := strip_emphasis(tok)     # shown to a reader; see _expand_abbrev
 		var span := done.length()
 		var rewritten := done != tok
 		while mi < marks_in.size() and int((marks_in[mi] as Dictionary)["at"]) < was:
@@ -567,7 +653,7 @@ static func _expand_numbers(text: String, marks_in: Array = [],
 		out += done
 		# The next token starts a sentence if this one ended one. Closing wrappers are
 		# stripped first so `it."` counts.
-		var tail := tok.rstrip("\"')]")
+		var tail := tok.rstrip("\"')]" + EMPH_MARKS)
 		starts = tail.length() > 0 and tail[tail.length() - 1] in ".!?"
 	return out
 
@@ -575,11 +661,11 @@ static func _expand_numbers(text: String, marks_in: Array = [],
 static func _expand_token(tok: String) -> String:
 	# hold trailing punctuation aside so it still reaches the tokenizer
 	var tail := ""
-	while tok.length() > 0 and tok[tok.length() - 1] in ".,!?;:\"')":
+	while tok.length() > 0 and tok[tok.length() - 1] in ".,!?;:\"')" + EMPH_MARKS:
 		tail = tok[tok.length() - 1] + tail
 		tok = tok.substr(0, tok.length() - 1)
 	var head := ""
-	while tok.length() > 0 and tok[0] in "\"'(":
+	while tok.length() > 0 and tok[0] in "\"'(" + EMPH_MARKS:
 		head += tok[0]
 		tok = tok.substr(1)
 	if tok.is_empty():
@@ -713,11 +799,13 @@ static func _expand_abbrev(text: String, marks: Array = []) -> String:
 		# the middle of `"Mr. Smith,"`. Strip the wrappers, match, put them back.
 		var head := ""
 		var body := tok
-		while body.length() > 0 and body[0] in "\"'(":
+		# The emphasis sentinels count as wrappers here for the same reason a quote does:
+		# `*Mr. Smith*` must still find `mr.` in the table.
+		while body.length() > 0 and body[0] in "\"'(" + EMPH_MARKS:
 			head += body[0]
 			body = body.substr(1)
 		var tail := ""
-		while body.length() > 0 and body[body.length() - 1] in "\"')":
+		while body.length() > 0 and body[body.length() - 1] in "\"')" + EMPH_MARKS:
 			tail = body[body.length() - 1] + tail
 			body = body.substr(0, body.length() - 1)
 		var lower := body.to_lower()
@@ -725,7 +813,9 @@ static func _expand_abbrev(text: String, marks: Array = []) -> String:
 		for key in ABBREV:
 			if lower == key + "." and _abbrev_fits(key, words, i):
 				var said := head + String(ABBREV[key]) + tail
-				marks.append({"at": at, "len": said.length(), "src": tok})
+				# `src` is what the READER is shown, so the sentinels come off it - they
+				# stay in `said`, which is the spoken text still carrying its emphasis.
+				marks.append({"at": at, "len": said.length(), "src": strip_emphasis(tok)})
 				out.append(said)
 				at += said.length() + 1        # the joining space
 				matched = true
@@ -757,7 +847,7 @@ static func _abbrev_fits(key: String, words: PackedStringArray, at: int) -> bool
 		return true
 	if at + 1 >= words.size():
 		return false                     # nothing follows: it ended a sentence, so it is the word
-	var nxt := String(words[at + 1]).lstrip("\"'(")
+	var nxt := String(words[at + 1]).lstrip("\"'(" + EMPH_MARKS)
 	if nxt.is_empty():
 		return false
 	if needs_number:

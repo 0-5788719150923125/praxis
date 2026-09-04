@@ -1319,6 +1319,9 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 					"amp": amp, "reduce": reduce,
 					"echo": clampf(0.55 * acts.echo, 0.0, 0.9),
 					"display": w.get("display", w.text),
+					# What the PAGE did, not what the mouth does: the emphasis level
+					# TextNorm found on this word, ridden through to the subtitle.
+					"emph": int(w.get("emph", 0)),
 					# Which rewritten SOURCE run this word belongs to, if any -
 					# `2009` is three spoken words and one thing on the page.
 					# See Phonemes.parse; -1 means the word is its own source.
@@ -2303,7 +2306,8 @@ static func _record_timing(state: Dictionary, seg: Dictionary, t0: float, t1: fl
 		var shown := String(seg.get("display", seg.text))
 		state.wopen[key] = state.words.size()
 		state.words.append({"text": shown if not shown.is_empty() else String(seg.text),
-			"t0": t0, "t1": t1, "sentence": seg.sentence})
+			"t0": t0, "t1": t1, "sentence": seg.sentence,
+			"emph": int(seg.get("emph", 0))})
 	if state.wopen.has(key):
 		state.words[state.wopen[key]].t1 = t1
 

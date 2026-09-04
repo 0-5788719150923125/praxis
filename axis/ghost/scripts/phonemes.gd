@@ -231,8 +231,30 @@ static func parse(text: String) -> Array:
 	var span_open := -1              # the span the previous word belonged to, if any
 	var tok_at := PackedInt32Array()
 	var toks := _tokenize(text, tok_at)
+	# The emphasis level currently in force. The sentinels TextNorm leaves behind are
+	# toggles welded to the word at each end of a run, so a run of any length needs only
+	# its two ends marked and this carries the level across everything between.
+	var emph_state := 0
 	for ti in toks.size():
 		var token: String = toks[ti]
+		# PEEL THE SENTINELS FIRST, before anything reads the token. They are typography:
+		# the dictionary must not see them, and `display` must not print them - what they
+		# leave behind is `emph`, which the subtitle draws as a slanted or bold face.
+		var emph := emph_state
+		if token.contains(TextNorm.EMPH_ITALIC) or token.contains(TextNorm.EMPH_BOLD):
+			var clean := ""
+			var seen := 0
+			for ci in token.length():
+				var ech := token[ci]
+				if ech == TextNorm.EMPH_ITALIC:
+					emph_state ^= TextNorm.EMPH_I
+				elif ech == TextNorm.EMPH_BOLD:
+					emph_state ^= TextNorm.EMPH_B
+				else:
+					seen |= emph_state
+					clean += ech
+			token = clean
+			emph = seen
 		# WHICH SOURCE RUN IS THIS TOKEN PART OF. A rewritten run covers one or
 		# more tokens ("two thousand nine"), and the reader is shown its source
 		# spelling ONCE, over the whole run - so the first token of a run carries
@@ -252,7 +274,9 @@ static func parse(text: String) -> Array:
 				span_src = String(sp["src"])
 			break
 		if token.begins_with("["):
-			words.append(_literal_word(token))
+			var lit := _literal_word(token)
+			lit["emph"] = emph
+			words.append(lit)
 			continue
 		var pause := "none"
 		var punct := ""
@@ -289,7 +313,8 @@ static func parse(text: String) -> Array:
 		# "um" - low, flat, reduced. Shows as an ellipsis in the karaoke.
 		if bare.begins_with("%"):
 			words.append({"text": "…", "display": "…", "phones": ["AH", "M"],
-				"stressed": false, "pause_after": pause, "punct": punct, "hesit": true})
+				"stressed": false, "pause_after": pause, "punct": punct, "hesit": true,
+				"emph": emph})
 			if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 				sentences.append(words)
 				words = []
@@ -359,6 +384,7 @@ static func parse(text: String) -> Array:
 					"stressed": not is_function_word(bare),
 					"pause_after": pause,
 					"punct": punct,
+					"emph": emph,
 				})
 		if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 			sentences.append(words)

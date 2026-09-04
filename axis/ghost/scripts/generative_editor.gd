@@ -1729,7 +1729,8 @@ func _cut(body: String, sentence_no: int) -> Dictionary:
 				# rather than an empty card.
 				var shown := String(w.get("display", w.text))
 				words.append({"text": shown if not shown.is_empty() else String(w.text),
-					"index": start, "end": start, "span": span, "sentence": sentence_no})
+					"index": start, "end": start, "span": span, "sentence": sentence_no,
+					"emph": int(w.get("emph", 0))})
 		sentence_no += 1
 		sentences += 1
 		if sentences >= CHUNK_SENTENCES:
@@ -2250,6 +2251,7 @@ func export_take() -> String:
 			if tail == null:
 				tail = span
 			rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
+				"emph": int(w.get("emph", 0)),
 				"t0": 0.0 if span == null else
 					float((span as Dictionary).get("t0", 0.0)) / ratio + elapsed,
 				"t1": 0.0 if tail == null else
@@ -2407,7 +2409,8 @@ static func _bridge_words(rows: Array, label: String) -> Array:
 	var out: Array = []
 	for r in rows:
 		var d: Dictionary = r
-		out.append({"text": d["text"], "sentence": d["sentence"], "t0": d["t0"], "t1": d["t1"]})
+		out.append({"text": d["text"], "sentence": d["sentence"], "t0": d["t0"], "t1": d["t1"],
+			"emph": int(d.get("emph", 0))})
 	return out
 
 
@@ -2433,6 +2436,7 @@ func _words_for(idx: int, spans: Array) -> Array:
 		if tail == null:
 			tail = span
 		rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
+			"emph": int(w.get("emph", 0)),
 			"t0": 0.0 if span == null else float((span as Dictionary).get("t0", 0.0)),
 			"t1": 0.0 if tail == null else float((tail as Dictionary).get("t1", 0.0)),
 			"ok": span != null})
