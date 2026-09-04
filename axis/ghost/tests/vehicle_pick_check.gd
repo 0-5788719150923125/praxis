@@ -66,6 +66,24 @@ func _run() -> void:
 		# chose it in.
 		Director.set_vehicle(was)
 		Director._save_pacing()
+	# THE FILM CONTROLS ARE BUILT AND SHOW THE STORED VALUE. They live in the same section
+	# and are reached the same way, so they fail the same way: a control that never got
+	# built is invisible rather than broken, and one whose initial value came from a
+	# default instead of the file looks exactly like a setting that reverted. Only reads
+	# here - the frequency dial is the user's, and a gate may not spend it.
+	if ed._film_freq == null:
+		print("vpick: FAILED - the film frequency slider was never built")
+		fails += 1
+	elif not is_equal_approx(float(ed._film_freq.value), Films.frequency()):
+		print("vpick: FAILED - the film slider shows %.2f, the library says %.2f"
+			% [ed._film_freq.value, Films.frequency()])
+		fails += 1
+	else:
+		print("vpick: film frequency %.2f, %d clip(s) in the library"
+			% [Films.frequency(), Films.clips().size()])
+	if ed._film_list == null or ed._film_list.get_child_count() == 0:
+		print("vpick: FAILED - the film list was never built (it shows a row either way)")
+		fails += 1
 	print("vpick: %s" % ("ALL OK" if fails == 0 else "%d FAILURE(S)" % fails))
 	for _i in 3:
 		await get_tree().process_frame

@@ -8259,6 +8259,21 @@ func _write_render_override(sz: Vector2i) -> void:
 	var win := Vector2i(_even(float(sz.x) * s), _even(float(sz.y) * s))
 	f.store_string("[display]\n\nwindow/size/viewport_width=%d\nwindow/size/viewport_height=%d\nwindow/size/window_width_override=%d\nwindow/size/window_height_override=%d\nwindow/stretch/mode=\"viewport\"\n"
 		% [sz.x, sz.y, win.x, win.y])
+	# AND THE INTERMEDIATE'S QUALITY, which is the difference between one lossy
+	# generation and two. Godot writes .avi as MJPEG in yuvj420p - lossy, and
+	# already chroma-subsampled before x264 ever sees the frame - at
+	# `video_quality` 0.75 by default. Measured on a real umbra frame against the
+	# source: one generation (source -> x264 crf18) reads PSNR 45.5 dB; through
+	# the 0.75 intermediate it reads 42.6; at 1.0 it reads 44.3. The default was
+	# nearly DOUBLING the error (MSE 1.85 -> 3.57) to save space in a scratch file
+	# that is deleted seconds later.
+	#
+	# 1.0 is not lossless - MJPEG cannot be - and the remaining ~1.2 dB is the
+	# price of the container. Godot's only lossless writer is the PNG SEQUENCE (a
+	# .png movie path writes out00000000.png... plus a .wav), which for a
+	# ten-minute 1080p render is tens of gigabytes of scratch rather than a few,
+	# so it is not the default.
+	f.store_string("\n[editor]\n\nmovie_writer/video_quality=1.0\n")
 	f.close()
 
 

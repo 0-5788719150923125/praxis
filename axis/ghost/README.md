@@ -170,7 +170,7 @@ Each scene is a small combination of shapes; behavior decides how it moves. The 
 
 <!-- AUTODOC:SCENES:BEGIN -->
 
-55 scenes in the auto rotation (58 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
+55 scenes in the auto rotation (59 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
 
 _Core catalogue_
 

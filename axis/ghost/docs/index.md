@@ -89,6 +89,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`settings.gd`](../scripts/settings.gd) **settings** - Settings - the one owner of `user://ghost.cfg` (autoload).
 - [`vehicle.gd`](../scripts/vehicle.gd) **Vehicle** - what the show is carried ON. The presentation axis.
 - [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
+- [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).
 - [`dial_widget.gd`](../scripts/dial_widget.gd) **DialWidget** - the on-screen face of a `Dial` (see that class for what turning does).
@@ -220,4 +221,4 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 - [`feedback.gd`](../scripts/feedback.gd) **FeedbackConsole** - the authoring feedback channel.
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
 
-Scene scripts (58) are catalogued separately in [scenes.md](scenes.md).
+Scene scripts (59) are catalogued separately in [scenes.md](scenes.md).

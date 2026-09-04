@@ -92,6 +92,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "settings.gd",
             "vehicle.gd",
             "comic_page.gd",
+            "films.gd",
             "workspace.gd",
             "dial.gd",
             "dial_widget.gd",
@@ -1060,6 +1061,24 @@ def check_panel_controls() -> None:
             )
 
 
+
+def check_films_pumped() -> None:
+    """`Films.pump()` must be called from main.gd's `_process`.
+
+    A window cut is an ffmpeg subprocess, and something with a frame has to notice it
+    exited and promote its output out of the `.part` name. That used to be polled by the
+    live film panel and by the Generative panel - which are exactly the two things usually
+    absent - so a finished cut stayed a `.part` forever and footage appeared on one page of
+    a session and never again. main's `_process` is the only one always running, and a test
+    probe replaces the main scene, so no gate can see this from inside a run.
+    """
+    main = (SCRIPTS / "main.gd").read_text(encoding="utf-8")
+    if "Films.pump()" not in main:
+        warn(
+            "main.gd never calls Films.pump() - a finished window cut will never be "
+            "promoted, and film will appear once per session at most"
+        )
+
 def check_settings_owner() -> None:
     """Nothing but settings.gd may touch the config file directly.
 
@@ -1285,6 +1304,7 @@ def main() -> int:
     scenes, groups = _collect_scenes()
     check_panel_controls()
     check_settings_owner()
+    check_films_pumped()
 
     layer = scripts["layer"]
     prims = scripts["primitives"]

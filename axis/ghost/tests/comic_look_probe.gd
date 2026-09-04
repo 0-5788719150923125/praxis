@@ -68,6 +68,16 @@ func _parse_args() -> void:
 				_shots = []
 				for s in String(args[i + 1]).split(","):
 					_shots.append(int(s))
+			# FOOTAGE ON THE PAGE. Pass a prepared .ogv and every page gives a panel to it,
+			# so "does a film panel read as part of the comic" is a question these pictures
+			# answer. It goes through Films' probe seam rather than the library, because
+			# the library is in Settings and a probe may not write that.
+			"--film":
+				var path := String(args[i + 1])
+				var dur := Films._probe_duration(path)
+				Films.use_for_test([{"source": path, "slug": Films._slug(path),
+					"name": path.get_file().get_basename(), "duration": maxf(dur, 1.0)}], 1.0)
+				print("comic_look_probe: film %s (%.1fs) on every page" % [path, dur])
 
 
 ## Shoots one session. The seed is the DIRECTOR'S - pass `--seed N` on the command line
@@ -113,12 +123,24 @@ func _shoot() -> void:
 	for cut in _cuts:
 		var comic := vehicle is ComicVehicle
 		var was_page: int = vehicle._page_i if comic else 0
+		# STAND IN FOR main._process. A probe scene REPLACES main, so the one place that
+		# promotes a finished window cut is not in the tree - without this the probe waits
+		# forever on `.part` files it started itself, a deadlock the app cannot have but
+		# every probe can.
+		Films.pump()
 		_cut(vehicle)
 		if comic:
 			var turned: bool = vehicle._page_i != was_page
-			print("    cut %d -> page %d, reading panel %d/%d, live %s %s" % [
+			# WHICH PANEL HOLDS FOOTAGE, on every line. "the video is only ever shown ONE
+			# time, on ONE page" was reported from watching, and could not be checked from
+			# this probe's output at all - the one number that would have shown it was the
+			# only one not printed.
+			var film := ""
+			if vehicle._film_at >= 0:
+				film = "[film p%d] " % (vehicle._film_at + 1)
+			print("    cut %d -> page %d, reading panel %d/%d, live %s %s%s" % [
 				cut, vehicle._page_i, vehicle._read + 1, vehicle._page.panels.size(),
-				vehicle._live,
+				vehicle._live, film,
 				("(page turned) " + _page_line(vehicle)) if turned else ""])
 		else:
 			print("    cut %d" % cut)

@@ -312,6 +312,14 @@ func _sync_stage_size() -> void:
 
 
 func _process(delta: float) -> void:
+	# WINDOW CUTS ARE NOTICED HERE, before anything else can return early. A film window is
+	# an ffmpeg subprocess, and somebody with a frame has to see it exit and promote its
+	# output - and this is the only `_process` that is always running. It used to be polled
+	# by the live film panel and the Generative panel instead, which are exactly the two
+	# things that are usually absent: a window finished cutting, was never promoted, and
+	# stayed a `.part` forever. The visible symptom was footage appearing on ONE page of a
+	# session and never again, with the dial at maximum.
+	Films.pump()
 	# The background render reports its progress (playback position / length) so the
 	# live app's exporter can show a percentage in the status notification.
 	if _export_mode:

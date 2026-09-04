@@ -366,6 +366,11 @@ var _epoch := 0                # bumped on a pace change; stale replies are drop
 # seconds. A timeline has to know how long the thing is before it plays it.
 var _repace_timer: Timer
 var _vehicle_pick: OptionButton
+var _film_list: VBoxContainer
+var _film_freq: HSlider
+var _film_status: Label
+var _film_cutting := -1     # windows being cut last frame, so the status line only changes on change
+var _film_dialog: FileDialog = null
 var _scene_hold: HSlider
 var _flourish: HSlider
 var _intro: HSlider
@@ -394,6 +399,9 @@ func _ready() -> void:
 ## this must never fall behind; it is a few array copies a frame.
 func _process(_delta: float) -> void:
 	_process_persist()
+	# BEFORE the playback guard: a window cut is not part of a reading, and one started
+	# with nothing playing would otherwise never be noticed to have finished.
+	_pump_films()
 	if _playback == null:
 		return
 
@@ -820,6 +828,7 @@ func _build_panel() -> void:
 	var sep := HSeparator.new()
 	box.add_child(sep)
 	_vehicle_pick = _vehicle_option(box)
+	_build_films(box)
 	_scene_hold = _director_slider(box, "Scene hold", Director.PACING_MIN, Director.PACING_MAX, 0.05,
 		Director.pacing,
 		"How long each visual scene stays on screen before the show cuts to the next. 1 is the "
@@ -1151,6 +1160,172 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	row.add_child(sl)
 	_slider_readout(row, sl)
 	return sl
+
+
+# --- films: real footage in a comic panel -------------------------------------
+#
+# THIS SITS UNDER THE VEHICLE PICKER because it only means anything to the comic, and a
+# setting is easiest to understand next to the thing it qualifies. It is not hidden when
+# another vehicle is picked: a viewer building a library before switching over should not
+# have to discover that the controls exist somewhere else first.
+
+## The film library block: the list, an import button, and the frequency dial.
+func _build_films(box: VBoxContainer) -> void:
+	var head := Label.new()
+	head.text = "Films"
+	head.add_theme_font_size_override("font_size", 12)
+	head.tooltip_text = ("Real footage, cut into the comic among the drawn panels. Adding one "
+		+ "is instant - nothing is converted up front. A clip is prepared in short windows, "
+		+ "cut from the original only where the show is about to look, so a two-hour film "
+		+ "costs the same as a two-minute one and a page that arrives before its window is "
+		+ "ready simply goes without footage.\n\n"
+		+ "KEEP THE ORIGINAL FILE where it is: windows are cut from it as they are needed, so "
+		+ "moving or deleting it drops the clip from the list.\n\n"
+		+ "A clip does NOT start from the beginning each time it appears. It plays from wherever "
+		+ "it would be if it had been looping since the show started, so it reads as one film "
+		+ "running behind the page that the comic occasionally cuts into.\n\n"
+		+ "Only one panel at a time ever holds footage - two showing the same clip would show "
+		+ "the same picture twice, because the position is decided by the clock alone.")
+	box.add_child(head)
+
+	_film_list = VBoxContainer.new()
+	_film_list.add_theme_constant_override("separation", 2)
+	box.add_child(_film_list)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	var add := Button.new()
+	add.text = "Import a clip…"
+	add.focus_mode = Control.FOCUS_NONE
+	add.tooltip_text = ("Pick a video file. It is added immediately - there is no transcode "
+		+ "to wait for. The parts the show actually reaches are converted in the background, "
+		+ "about a minute of film at a time, and the original is only ever read from.")
+	add.pressed.connect(_open_film_dialog)
+	row.add_child(add)
+	_film_status = Label.new()
+	_film_status.add_theme_font_size_override("font_size", 11)
+	_film_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
+	_film_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_film_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(_film_status)
+
+	_film_freq = _director_slider(box, "How often", Films.FREQ_MIN, Films.FREQ_MAX, 0.05,
+		Films.frequency(),
+		"How often a comic page gives one of its panels to footage. This is per PAGE, not per "
+		+ "panel, because only one panel may hold footage at a time - at 1 every page has one, "
+		+ "at 0 none ever do. With no clips imported it does nothing.\n\n"
+		+ "It is NOT competing with the scene types: a film is not one more entry drawn against "
+		+ "the seventy-odd others, it is a separate decision made when the page turns. Measured, "
+		+ "a page averages 3.3 panels, so 0.5 is film on about half the pages and one panel in "
+		+ "seven; 1 is every page and one panel in three, which is the ceiling one-at-a-time "
+		+ "allows.",
+		func(v: float) -> void: Films.set_frequency(v))
+	_refresh_films()
+
+
+## Rebuild the list of imported clips. Cheap and total - the library is a handful of rows,
+## and a diff would be more code than the thing it saves.
+func _refresh_films() -> void:
+	if _film_list == null or not is_instance_valid(_film_list):
+		return
+	for c in _film_list.get_children():
+		c.queue_free()
+	var list := Films.clips()
+	if list.is_empty():
+		var none := Label.new()
+		none.text = "  (none imported)"
+		none.add_theme_font_size_override("font_size", 11)
+		none.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75, 0.6))
+		_film_list.add_child(none)
+		return
+	for i in list.size():
+		var c: Dictionary = list[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		_film_list.add_child(row)
+		var l := Label.new()
+		var dur := float(c.get("duration", 0.0))
+		l.text = "  %s  ·  %d:%02d" % [String(c.get("name", "clip")), int(dur / 60.0),
+			int(fmod(dur, 60.0))]
+		l.add_theme_font_size_override("font_size", 11)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		l.tooltip_text = String(c.get("source", ""))
+		row.add_child(l)
+		var x := Button.new()
+		x.text = "×"
+		x.focus_mode = Control.FOCUS_NONE
+		x.tooltip_text = "Forget this clip and delete the windows cut from it. The original "\
+			+ "file is not touched."
+		var at := i
+		x.pressed.connect(func() -> void:
+			Films.remove(at)
+			_refresh_films())
+		row.add_child(x)
+
+
+func _open_film_dialog() -> void:
+	if _film_dialog != null and is_instance_valid(_film_dialog):
+		return
+	_film_dialog = FileDialog.new()
+	_film_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_film_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	# In-window, never native: the portal dialog shows nothing at all on a Linux box
+	# without xdg-desktop-portal, which is the "I pressed it and nothing happened" report
+	# Masking's own importer already carries this note for.
+	_film_dialog.use_native_dialog = false
+	_film_dialog.title = "Import a clip for the comic"
+	_film_dialog.filters = PackedStringArray(["*.mp4, *.mov, *.mkv, *.webm, *.avi, *.ogv ; Video"])
+	var downloads := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	if not downloads.is_empty():
+		_film_dialog.current_dir = downloads
+	_film_dialog.size = Vector2i(820, 560)
+	_film_dialog.file_selected.connect(_start_film_import)
+	_film_dialog.file_selected.connect(func(_p): _close_film_dialog())
+	_film_dialog.canceled.connect(_close_film_dialog)
+	add_child(_film_dialog)
+	_film_dialog.popup_centered()
+
+
+func _close_film_dialog() -> void:
+	if _film_dialog != null and is_instance_valid(_film_dialog):
+		_film_dialog.queue_free()
+	_film_dialog = null
+
+
+## ADDING A CLIP IS INSTANT. There is no transcode to wait for - a clip is prepared a
+## window at a time, when something wants to play it (see Films.WINDOW), so this reads a
+## duration and writes a row.
+func _start_film_import(source: String) -> void:
+	var err := Films.add(source)
+	if not err.is_empty():
+		_film_status.text = "⚠  " + err
+		return
+	_film_status.text = "✓  Added %s" % source.get_file().get_basename()
+	_refresh_films()
+
+
+## Polled from _process. A window cut is a subprocess, so something with a frame has to
+## notice it finished; this is that, for as long as the panel is open. [FilmScene] does
+## the same while a panel is live, which between them covers every moment one is awaited.
+func _pump_films() -> void:
+	Films.pump()
+	# The status line follows the cutting rather than a one-shot import, because "is it
+	# ready" is now a question with a running answer.
+	if _film_status == null or not is_instance_valid(_film_status):
+		return
+	var cutting := 0
+	for c in Films.clips():
+		if Films.busy(c):
+			cutting += 1
+	if cutting != _film_cutting:
+		_film_cutting = cutting
+		if cutting > 0:
+			_film_status.text = "⏳  Preparing %d window%s…" % [cutting,
+				"" if cutting == 1 else "s"]
+		elif not Films.clips().is_empty():
+			_film_status.text = "✓  Ready"
 
 
 ## THE VEHICLE PICKER - what the show is carried on (see [Vehicle]). Built off the

@@ -107,6 +107,27 @@ const EL_MAX_DEG := 72.0
 ## Camera roll about the view axis - the Dutch angle, on top of the page's own roll.
 const CAM_ROLL := 0.22
 
+## HOW FAR ONE SHOT MAY DEPART FROM THE PAGE'S SET-UP. This is the fix for "it just bounces
+## all over the place... a camera ping-ponging around at random angles".
+##
+## Every shot used to re-roll its azimuth over the whole circle, its elevation over the
+## whole range, its roll and its focal length - independently, at every reading advance. So
+## consecutive shots were unrelated positions, and the interpolation between them was a
+## camera swinging across the page for no reason. Smoothing it does not help: the problem
+## is not the transition, it is that there is nothing in common between where it was and
+## where it is going.
+##
+## So a page picks ONE set-up - a side, a height, a tilt, a lens - and a shot varies inside
+## it. That is coverage rather than chaos, and staying on one side of the subject is the
+## oldest rule in the grammar (the 180-degree line). Changing sides is now a PAGE turn,
+## which is the one moment where a new set-up reads as a new scene rather than as a mistake.
+const AZ_ARC := 0.42              # +/- radians of orbit around the page's side (~24 deg)
+const EL_VARY_DEG := 7.0          # +/- degrees of height off the page's own
+const ROLL_VARY := 0.05           # +/- radians of Dutch on top of the page's own
+## The lens, chosen once per page. Narrower than it was (it went to 64): a wide lens this
+## close to a panel bends its edges, which is the "unfocused, distorted" half of the report.
+const FOV := Vector2(38.0, 54.0)
+
 ## HOW TALL THE PANEL BEING READ IS, in frames. 1.0 spans the frame exactly top to bottom;
 ## above that it overflows and the screen crops into it. Never below 1: the shot this
 ## vehicle exists for is the one where the panel IS the picture, and the moment the panel
@@ -168,6 +189,18 @@ var _to_cast: Array = []          # panels still waiting to be cast, one per fra
 var _prev_page: ComicPage = null  # the outgoing page, alive only through a turn
 var _turn_t := -1.0               # seconds into a page turn, < 0 when none
 
+## WHICH PANEL OF THIS PAGE HOLDS FOOTAGE, or -1 for none, and the clip it holds.
+##
+## AT MOST ONE PER PAGE, which is the whole answer to a question that would otherwise need
+## a mechanism. A clip's position is a pure function of the show clock (see
+## [method Films.position_at]), so two panels sampling the same clip at the same instant
+## would show the same picture twice - and the page is what you see at once, so one per
+## page IS one at a time. During a turn the outgoing page's panels are already stopped,
+## so even then only one is playing.
+var _film_at := -1
+var _film_clip: Dictionary = {}
+var _film_prev := ""              # last page's clip path, so two pages running do not repeat
+
 var _lens := Lens3D.new()
 var _mod: ModBank = null
 var _bookend := 1.0
@@ -189,6 +222,13 @@ var _att_rate := Vector3.ZERO     # slow continuous drift, per second
 # also what makes travelling between panels a move PARALLEL TO THE PAGE, because the
 # direction is held and only the point it looks at changes.
 # Keys: aim (page coords), az, el, roll, fill, fov. See _station.
+## The page's SET-UP: the side the camera is on, its height, its tilt and its lens. Fixed
+## for the page; see AZ_ARC.
+var _az_base := 0.0
+var _el_base := 1.0
+var _roll_base := 0.0
+var _lens_fov := 46.0
+
 var _cam := {"aim": Vector2(0.5, 0.7), "az": 0.0, "el": 1.0, "roll": 0.0,
 	"fill": 1.1, "fov": 52.0}
 ## The move being travelled: {kind, a, b, dur, ease}. See MOVES.
@@ -260,6 +300,9 @@ func _reset_book() -> void:
 	_mv = {}
 	_mv_t = 0.0
 	_dip_t = -1.0
+	_film_at = -1
+	_film_clip = {}
+	_film_prev = ""
 	_turn_page(0)
 
 
@@ -380,9 +423,75 @@ func _turn_page(idx: int) -> void:
 	_to_cast = []
 	for i in range(1, _page.panels.size()):
 		_to_cast.append(i)
+	_choose_film()               # BEFORE the first cast: panel 0 may be the film one
 	_cast_panel(0)
 	_choose_page_look()
 	_choose_move()
+
+
+## DOES THIS PAGE GET A PIECE OF FOOTAGE, and if so which panel and which clip.
+##
+## Seeded off the page, like everything else here, so a session replays the same footage
+## in the same panels - the show is reproducible from one seed and this is not the place
+## to make it stop being. A frequency of 0, or a library with nothing in it, leaves
+## `_film_at` at -1 and the comic behaves exactly as it did before films existed.
+func _choose_film() -> void:
+	_film_at = -1
+	_film_clip = {}
+	if _page == null or Films.frequency() <= 0.0:
+		return
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([Director.session_seed(), "film-page", _page_i])
+	if r.randf() > Films.frequency():
+		return
+	var list := Films.clips()
+	if list.is_empty():
+		return
+	var at := r.randi() % list.size()
+	# NOT THE SAME CLIP TWICE RUNNING. With one film panel per page, a small library and
+	# an independent draw per page, the same clip lands on consecutive pages often enough
+	# to read as "that video again" rather than as a library.
+	if list.size() > 1 and String((list[at] as Dictionary).get("source", "")) == _film_prev:
+		at = (at + 1) % list.size()
+	_film_clip = list[at]
+	_film_at = _best_panel_for(_film_clip, r)
+	# IS THERE ANYTHING TO PLAY YET. A clip is prepared a window at a time, cut from the
+	# original when something wants it (see Films.WINDOW), so the window covering this
+	# moment may still be encoding. Asking starts that cut; not getting it back means this
+	# page simply goes without footage, and the panel is an ordinary scene rather than a
+	# blank rectangle waiting for a file. The whole feature self-throttles on this line -
+	# film appears as often as the machine can prepare it.
+	if not Films.warm(_film_clip, maxf(Spectrum.current.time, 0.0)):
+		_film_clip = {}
+		_film_at = -1
+		return
+	_film_prev = String(_film_clip.get("source", ""))
+
+
+## WHICH PANEL SUITS THIS CLIP'S SHAPE. Footage covers its panel, so whichever axis is
+## spare gets cropped off - a 16:9 clip in a 0.45-aspect panel loses three quarters of its
+## width, and there is no framing clever enough to make that not matter. A page offers
+## several shapes at once, so the answer is simply to put the film in the one closest to the
+## clip's own, where the crop is a trim rather than a demolition.
+##
+## Compared in LOG space, because aspect is a ratio: 2.0 and 0.5 are equally wrong for a
+## square clip, and subtracting them would call one of them nearly right.
+##
+## Falls back to a plain random panel when the clip's shape is unknown, which is the honest
+## answer rather than a guess - see Films.aspect_of.
+func _best_panel_for(clip: Dictionary, r: RandomNumberGenerator) -> int:
+	var n := _page.panels.size()
+	var want := Films.aspect_of(clip)
+	if want <= 0.0 or n <= 1:
+		return r.randi() % maxi(n, 1)
+	var best := 0
+	var best_err := INF
+	for i in n:
+		var err := absf(log(maxf(_page.panel_aspect(i), 0.01) / want))
+		if err < best_err:
+			best_err = err
+			best = i
+	return best
 
 
 ## One queued panel per frame. See _turn_page.
@@ -398,6 +507,18 @@ func _cast_panel(i: int) -> void:
 	if _cast[i] != null and is_instance_valid(_cast[i]):
 		return
 	var vp := _open_slot(i)
+	# FOOTAGE, where the page called for it. Cast directly rather than through the
+	# Director: a film is not in the catalogue (see FilmScene), because a scene that only
+	# exists when the viewer has imported something would make the running order depend on
+	# the library.
+	if i == _film_at and not _film_clip.is_empty():
+		var film := FilmScene.new()
+		film.set_clip(_film_clip, maxf(Spectrum.current.time, 0.0))
+		film.init_with_seed(hash([_page_i, i, "film"]), "static")
+		film.scene_name = "film"
+		vp.add_child(film)
+		_cast[i] = film
+		return
 	# The salt is the panel index, so the page's panels are separate draws off the novelty
 	# scheduler rather than the same one repeated - the Director's clock has not moved
 	# between them (see Director.mint_scene). Quiet for every panel but the one being read:
@@ -485,7 +606,11 @@ func _update_liveness() -> void:
 		# On this frame at all, and if so, is it this one's turn? The read panel's turn is
 		# every frame; the others are phased against each other by index so two of them
 		# never land on the same frame.
-		var on: bool = keep.has(i) and (i == _read or (_frame + i) % OFF_FOCAL_PERIOD == 0)
+		# The film panel is exempt from the off-focal phasing: half the samples looks
+		# like a scene running at the right speed with a coarser clock, and looks like
+		# BROKEN PLAYBACK on footage, which the eye reads at a much finer grain.
+		var on: bool = keep.has(i) and (i == _read or i == _film_at
+			or (_frame + i) % OFF_FOCAL_PERIOD == 0)
 		if on:
 			_resume(vp)
 		else:
@@ -503,12 +628,14 @@ func _tick_cast(features, delta: float) -> void:
 		var sc = _cast[i]
 		if sc == null or not is_instance_valid(sc) or sc == focal:
 			continue
-		if (_frame + i) % OFF_FOCAL_PERIOD != 0:
+		# The film panel runs every frame (period 1) - see _update_liveness.
+		var period := 1 if i == _film_at else OFF_FOCAL_PERIOD
+		if (_frame + i) % period != 0:
 			continue                      # not this panel's frame - see OFF_FOCAL_PERIOD
 		# ...and when it IS its frame, it is handed the whole period's worth of time, so it
 		# runs at the right speed rather than at 1/period of it.
-		sc.update(features, dt * OFF_FOCAL_PERIOD)
-		sc.view.commit(dt * OFF_FOCAL_PERIOD)
+		sc.update(features, dt * period)
+		sc.view.commit(dt * period)
 
 
 # --- camera ------------------------------------------------------------------
@@ -526,23 +653,31 @@ func _tick_cast(features, delta: float) -> void:
 ##   ease  linear (a dolly, constant speed) / smooth / out (fast then settle) / snap (a cut)
 ##   hard  true = the move BEGINS somewhere else entirely, so it starts on a jump cut
 ##         rather than continuing from where the camera was
+## THE BAG IS MOSTLY GENTLE, and that is a correction. It was first weighted the other way,
+## in answer to "a constant shot of a single frame should be an event, not the rule" - and
+## it overshot: 41% of the weight began somewhere else entirely, so two shots in five opened
+## on a jump. Read back as "it just bounces all over the place... not cinematic at all".
+##
+## Punctuation is now about one shot in six. The rule the two reports agree on, once both
+## are taken seriously, is that a camera should be MOVING most of the time and JUMPING
+## rarely - which is neither "sit on each panel" nor "cut constantly".
 const MOVES := {
 	# --- travelling: the camera is moving for the whole shot ---------------------
-	"drift":   {"w": 3.0, "dur": [7.0, 13.0], "ease": "smooth", "hard": false},
-	"track":   {"w": 3.0, "dur": [8.0, 15.0], "ease": "linear", "hard": false},
-	"sweep_h": {"w": 2.0, "dur": [9.0, 16.0], "ease": "linear", "hard": true},
-	"sweep_v": {"w": 1.5, "dur": [9.0, 16.0], "ease": "linear", "hard": true},
-	"push":    {"w": 2.0, "dur": [6.0, 12.0], "ease": "smooth", "hard": false},
-	"pull":    {"w": 1.5, "dur": [6.0, 12.0], "ease": "smooth", "hard": true},
-	"orbit":   {"w": 2.0, "dur": [8.0, 14.0], "ease": "smooth", "hard": false},
-	# --- arrivals: a gesture that lands, then holds ------------------------------
-	"swoop":   {"w": 1.5, "dur": [2.6, 5.0],  "ease": "out",    "hard": true},
-	"whip":    {"w": 1.2, "dur": [0.45, 0.9], "ease": "out",    "hard": false},
-	# --- discontinuities ---------------------------------------------------------
-	"cut":     {"w": 1.5, "dur": [3.0, 7.0],  "ease": "snap",   "hard": true},
-	"dip":     {"w": 1.0, "dur": [3.0, 7.0],  "ease": "snap",   "hard": true},
+	"drift":   {"w": 4.0, "dur": [8.0, 15.0], "ease": "smooth", "hard": false},
+	"push":    {"w": 3.5, "dur": [7.0, 13.0], "ease": "smooth", "hard": false},
+	"track":   {"w": 2.5, "dur": [9.0, 16.0], "ease": "linear", "hard": false},
+	"orbit":   {"w": 2.0, "dur": [9.0, 15.0], "ease": "smooth", "hard": false},
+	"sweep_h": {"w": 1.5, "dur": [9.0, 16.0], "ease": "linear", "hard": false},
+	"sweep_v": {"w": 1.0, "dur": [9.0, 16.0], "ease": "linear", "hard": false},
+	"pull":    {"w": 1.5, "dur": [7.0, 13.0], "ease": "smooth", "hard": false},
 	# --- and the one that just looks at a panel ----------------------------------
-	"hold":    {"w": 0.7, "dur": [4.0, 9.0],  "ease": "smooth", "hard": false},
+	"hold":    {"w": 2.0, "dur": [5.0, 10.0], "ease": "smooth", "hard": false},
+	# --- arrivals: a gesture that lands, then holds ------------------------------
+	"swoop":   {"w": 0.6, "dur": [2.6, 5.0],  "ease": "out",    "hard": true},
+	"whip":    {"w": 0.4, "dur": [0.45, 0.9], "ease": "out",    "hard": false},
+	# --- discontinuities: punctuation, not grammar -------------------------------
+	"cut":     {"w": 0.8, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
+	"dip":     {"w": 0.4, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
 }
 
 ## How far past the subject a `track` keeps going, in page widths. The camera does not stop
@@ -591,6 +726,14 @@ func _choose_page_look() -> void:
 		r.randf_range(-DRIFT, DRIFT),
 		r.randf_range(-DRIFT, DRIFT),
 		r.randf_range(-DRIFT, DRIFT) * 0.5)
+	# THE SET-UP FOR THIS PAGE - decided ONCE, and then everything below only varies within
+	# it. See the note above AZ_ARC: re-rolling these per shot is what made the camera
+	# ping-pong, and no amount of smooth interpolation between two unrelated positions
+	# rescues it, because the problem is that they are unrelated.
+	_az_base = r.randf_range(0.0, TAU)
+	_el_base = deg_to_rad(r.randf_range(EL_MIN_DEG, EL_MAX_DEG))
+	_roll_base = r.randf_range(-CAM_ROLL, CAM_ROLL)
+	_lens_fov = r.randf_range(FOV.x, FOV.y)
 
 
 ## A camera station: where it aims on the page, and from what angle and how close.
@@ -598,14 +741,48 @@ func _station(r: RandomNumberGenerator, panel: int) -> Dictionary:
 	var i := clampi(panel, 0, maxi(0, _page.panels.size() - 1))
 	return {
 		"aim": _page.panel_center(i).lerp(Vector2(0.5, _page.aspect * 0.5), AIM_PULL),
-		"az": r.randf_range(0.0, TAU),
+		# WITHIN THE PAGE'S SET-UP, never re-rolled from scratch. See AZ_ARC.
+		"az": _az_base + r.randf_range(-AZ_ARC, AZ_ARC),
 		# Elevation off the PAPER, never square-on: at 90 degrees the perspective camera and
 		# the page agree exactly and the panel is a flat rectangle again.
-		"el": deg_to_rad(r.randf_range(EL_MIN_DEG, EL_MAX_DEG)),
-		"roll": r.randf_range(-CAM_ROLL, CAM_ROLL),
+		"el": clampf(_el_base + deg_to_rad(r.randf_range(-EL_VARY_DEG, EL_VARY_DEG)),
+			deg_to_rad(EL_MIN_DEG), deg_to_rad(EL_MAX_DEG)),
+		"roll": _roll_base + r.randf_range(-ROLL_VARY, ROLL_VARY),
 		"fill": r.randf_range(FILL.x, FILL.y),
-		"fov": r.randf_range(46.0, 64.0),
+		# ONE LENS PER PAGE. A production picks a lens and covers the scene with it; changing
+		# focal length every shot is a thing that reads as a mistake even to someone who
+		# could not name what changed.
+		"fov": _lens_fov,
 	}
+
+
+## THE PANELS A SWEEP MAY TRAVEL BETWEEN: the leftmost and rightmost panel centres that
+## share a row with `panel`, so a horizontal pan starts on content and ends on content.
+## Falls back to the panel itself when it is alone on its row - a sweep with nowhere to go
+## becomes a shot that sits, which is better than one that pans across the margin.
+func _row_span(panel: int) -> Vector2:
+	var c := _page.panel_center(panel)
+	var lo := c.x
+	var hi := c.x
+	for i in _page.panels.size():
+		var o := _page.panel_center(i)
+		if absf(o.y - c.y) < _page.aspect * 0.12:
+			lo = minf(lo, o.x)
+			hi = maxf(hi, o.x)
+	return Vector2(lo, hi) if hi - lo > 0.02 else Vector2(c.x, c.x)
+
+
+## The same down a column.
+func _col_span(panel: int) -> Vector2:
+	var c := _page.panel_center(panel)
+	var lo := c.y
+	var hi := c.y
+	for i in _page.panels.size():
+		var o := _page.panel_center(i)
+		if absf(o.x - c.x) < 0.12:
+			lo = minf(lo, o.y)
+			hi = maxf(hi, o.y)
+	return Vector2(lo, hi) if hi - lo > 0.02 else Vector2(c.y, c.y)
 
 
 ## Pick and plan the next move. Called on every reading advance and on every page turn.
@@ -635,13 +812,19 @@ func _choose_move() -> void:
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
 		"sweep_h":
-			a["aim"] = Vector2(-0.10, row)
-			b["aim"] = Vector2(1.10, row)
+			# ACROSS THE ROW, PANEL TO PANEL - not across the SHEET. It used to run from
+			# -0.10 to 1.10 in page coordinates, which is a pan that begins and ends on the
+			# desk and spends much of its length over margin and gutter: "tracking along
+			# unfocused edges". A sweep is a pan over CONTENT or it is nothing.
+			var span_h := _row_span(_read)
+			a["aim"] = Vector2(span_h.x, row)
+			b["aim"] = Vector2(span_h.y, row)
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
 		"sweep_v":
-			a["aim"] = Vector2(col, -0.10)
-			b["aim"] = Vector2(col, _page.aspect + 0.10)
+			var span_v := _col_span(_read)
+			a["aim"] = Vector2(col, span_v.x)
+			b["aim"] = Vector2(col, span_v.y)
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
 		"push":
