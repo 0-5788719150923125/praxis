@@ -373,6 +373,7 @@ var _film_cutting := -1     # windows being cut last frame, so the status line o
 var _film_dialog: FileDialog = null
 var _scene_hold: HSlider
 var _flourish: HSlider
+var _camera: HSlider
 var _intro: HSlider
 var _lead_in := 0.0        # the intro seeded into _pending by _plan, in seconds
 var _outro: HSlider
@@ -842,6 +843,14 @@ func _build_panel() -> void:
 		+ "beat-synced punches on the current scene. 0 turns them off entirely, 1 is the default. "
 		+ "Set this to 0 first if the cutting feels busy: it separates 'too often' from 'too fast'.",
 		func(v: float) -> void: Director.set_flourish(v))
+	_camera = _director_slider(box, "Camera", Director.CAMERA_MIN, Director.CAMERA_MAX, 0.05,
+		Director.camera,
+		"How severe the camera is on the Comic book vehicle - one knob over the whole "
+		+ "behaviour. 0 is a slow gentle drift that barely turns and never cuts; 1 is the "
+		+ "default; 2 is fast, restless and cinematic, with real jump cuts. It scales how far "
+		+ "a shot may swing, how many shots that swing is spread over, how long a move lasts "
+		+ "and how deep a push goes. The full-frame show has no camera and ignores it.",
+		func(v: float) -> void: Director.set_camera(v))
 	_intro = _director_slider(box, "Intro", Director.INTRO_MIN, Director.INTRO_MAX, 0.5,
 		Director.intro_hold,
 		"Seconds of held opening before the narration starts, so the video fades up onto "

@@ -89,6 +89,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`settings.gd`](../scripts/settings.gd) **settings** - Settings - the one owner of `user://ghost.cfg` (autoload).
 - [`vehicle.gd`](../scripts/vehicle.gd) **Vehicle** - what the show is carried ON. The presentation axis.
 - [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
+- [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicVehicle` flies over.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).

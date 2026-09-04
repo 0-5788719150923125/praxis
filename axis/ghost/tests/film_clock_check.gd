@@ -147,7 +147,7 @@ func _check_windows() -> void:
 ## axes are covered, and then exactly one axis has anything to spare.
 func _check_fit() -> void:
 	var src := Vector2(640.0, 360.0)
-	for panel in [Vector2(162, 360), Vector2(360, 360), Vector2(864, 360),
+	for panel: Vector2 in [Vector2(162, 360), Vector2(360, 360), Vector2(864, 360),
 			Vector2(640, 360)]:
 		var k := maxf(panel.x / src.x, panel.y / src.y)
 		var dst := src * k
@@ -276,7 +276,7 @@ func _check_boundary() -> void:
 ## seed is a gate people learn to ignore.
 ##
 ## THE ONE-AT-A-TIME INVARIANT rides along here, since this is the only place that walks
-## hundreds of pages: `_film_at` is a single index, so a page cannot carry two - and this
+## hundreds of spreads: `_film_at` is a single index, so a spread cannot carry two - and this
 ## says so out of the running code rather than out of the type declaration.
 func _check_rate() -> void:
 	var stage := SubViewport.new()
@@ -288,33 +288,34 @@ func _check_rate() -> void:
 	Director.attach(stage, v)
 	Director.hold(true)          # the probe turns the pages; nothing else may
 	var comic: ComicVehicle = v
-	var pages := 400
+	var spreads := 400
 	for freq in [0.0, 0.5, 1.0]:
 		Films.use_for_test([_clip], float(freq))
 		var with := 0
 		var panels := 0
-		for p in pages:
-			comic._page_i = p
-			comic._page = ComicPage.new(hash([Director.session_seed(), "comic-page", p]))
+		for p in spreads:
+			comic._spread_i = p
+			comic._spread = ComicSpread.new(
+				hash([Director.session_seed(), "comic-spread", p]))
 			comic._choose_film()
-			panels += comic._page.panels.size()
+			panels += comic._spread.panels.size()
 			if comic._film_at >= 0:
 				with += 1
-				if comic._film_at >= comic._page.panels.size():
-					_fails.append("freq %.2f page %d: film panel %d is off the page"
+				if comic._film_at >= comic._spread.panels.size():
+					_fails.append("freq %.2f spread %d: film panel %d is off the spread"
 						% [freq, p, comic._film_at])
-		print("  freq %.2f -> %d/%d pages carry film (%.0f%%), %d/%d panels (%.1f%%)"
-			% [freq, with, pages, 100.0 * with / pages, with, panels,
+		print("  freq %.2f -> %d/%d spreads carry film (%.0f%%), %d/%d panels (%.1f%%)"
+			% [freq, with, spreads, 100.0 * with / spreads, with, panels,
 				100.0 * float(with) / float(panels)])
 		if freq <= 0.0 and with != 0:
-			_fails.append("frequency 0 still put film on %d pages - the dial cannot "
+			_fails.append("frequency 0 still put film on %d spreads - the dial cannot "
 				% with + "turn the feature off")
-		if freq >= 1.0 and with != pages:
-			_fails.append("frequency 1 put film on only %d of %d pages" % [with, pages])
+		if freq >= 1.0 and with != spreads:
+			_fails.append("frequency 1 put film on only %d of %d spreads" % [with, spreads])
 	# ...and with nothing imported, nothing changes at all.
 	Films.use_for_test([], 1.0)
-	comic._page_i = 7
-	comic._page = ComicPage.new(hash([Director.session_seed(), "comic-page", 7]))
+	comic._spread_i = 7
+	comic._spread = ComicSpread.new(hash([Director.session_seed(), "comic-spread", 7]))
 	comic._choose_film()
 	if comic._film_at >= 0:
 		_fails.append("an empty library still produced a film panel")

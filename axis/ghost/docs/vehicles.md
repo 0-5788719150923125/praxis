@@ -5,7 +5,7 @@ The presentation axis - what the show is drawn ON, as opposed to what drives it.
 
 Vehicle - what the show is carried ON. The presentation axis.
 
-ghost has always had exactly one presentation and never had to name it: the `Director` paints ONE scene, full-bleed, edge to edge, and cuts to the next. A vehicle is that choice made addressable. `FullVehicle` is that behaviour, unchanged and default; `ComicVehicle` renders the same scenes into the panels of a comic page and flies a real perspective camera over it.
+ghost has always had exactly one presentation and never had to name it: the `Director` paints ONE scene, full-bleed, edge to edge, and cuts to the next. A vehicle is that choice made addressable. `FullVehicle` is that behaviour, unchanged and default; `ComicVehicle` renders the same scenes into the panels of an open comic book - two facing pages across a spine - and flies a real perspective camera over it.
 
 NOT A MODE, and the distinction is the whole point. A mode decides what DRIVES the show - a song (Auto), a storyboard (Manual), a written script (Synthesis / Generative). A vehicle decides what the show is PRESENTED AS. They are independent axes, so every mode gets every vehicle for free, exactly as every scene gets every behavior and every render kind. Putting the comic in as a fifth mode would have meant a comic that only works over a song, and a second copy of the Director's scheduling to drive it.
 
@@ -29,18 +29,20 @@ It draws nothing at all. Scenes are added straight to the stage SubViewport and 
 
 Source: [scripts/vehicles/full.gd](../scripts/vehicles/full.gd)
 
-## `comic` - Comic page
+## `comic` - Comic book
 
-_The same scenes drawn into the panels of a comic page, with a real perspective camera flying over it. Each cut fills the next panel; a full page turns._
+_The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine._
 
-ComicVehicle - the show as a comic page, flown over by a real perspective camera.
+ComicVehicle - the show as an open comic book, flown over by a real perspective camera.
 
-The same scenes, the same Director, the same cutting. What changes is where a scene LANDS: instead of replacing the picture, each cut fills the next PANEL of a page, and when the page is full the next cut turns it. So `Scene hold` and `Flourishes` keep their exact meanings - a burst of quick cuts becomes a run of small panels filling in fast, which is what a comic does with a fight.
+The same scenes, the same Director, the same cutting. What changes is where a scene LANDS: instead of replacing the picture, each cut fills the next PANEL of the spread, and when the spread is full the next cut turns the leaf. So `Scene hold` and `Flourishes` keep their exact meanings - a burst of quick cuts becomes a run of small panels filling in fast, which is what a comic does with a fight.
+
+TWO PAGES AT ONCE, because that is what a comic is. The first cut of this drew ONE portrait page and it cost three things at the same time. A portrait sheet inside a landscape frame cannot cover it, so there was always a wedge of desk in shot unless the camera pushed in until the page stopped reading as a page. A pan had one page's width of content to travel before it ran onto the trim edge. And a page turn had no hinge that meant anything, because a leaf hinges on a SPINE and one page does not have one. See `ComicSpread`: the spread is 2 pages wide by ~1.5 tall, which is 1.33 against the frame's 1.78, so the sheet can cover the whole frame at a shot that still shows several panels.
 
 ONE LIVE PANEL, THE REST HELD. The Director runs exactly one scene (two across a transition) and this keeps that: the newest panel is live in its own SubViewport, and every panel behind it is a STOPPED render target - update mode DISABLED, its scene freed, its last frame still sitting in VRAM. Measured in tests/vehicle_probe.gd: the texture survives both the stop and the free, bit-exact, so a held panel costs nothing at all. That is the only reason this can ship. Six live scenes is not a thing that runs - the stage governor already spends its budget on one - and the alternative, capturing each panel with get_image(), is the synchronous readback stall that cost Masking its frame rate.
 
 It is also simply correct. A comic panel IS a held moment; the page is a sequence of them. The frame is never static anyway, because the camera and the page are always moving.
 
-THE PAGE IS REALLY IN 3D. Not a sheared 2D plane faking depth - a quad placed in a world and projected through a `Lens3D`, free to rotate on X, Y and Z at once. Panels are drawn as SUBDIVIDED grids of textured triangles whose vertices are each projected individually, because a two-triangle quad is affinely textured and warps: measured at a hard yaw, the seam of a two-tone test texture landed 28.5 px away from where perspective puts it, on a 512 px frame.
+THE SPREAD IS REALLY IN 3D. Not a sheared 2D plane faking depth - two quads placed in a world and projected through a `Lens3D`, free to rotate on X, Y and Z at once. Panels are drawn as SUBDIVIDED grids of textured triangles whose vertices are each projected individually, because a two-triangle quad is affinely textured and warps: measured at a hard yaw, the seam of a two-tone test texture landed 28.5 px away from where perspective puts it, on a 512 px frame.
 
 Source: [scripts/vehicles/comic.gd](../scripts/vehicles/comic.gd)

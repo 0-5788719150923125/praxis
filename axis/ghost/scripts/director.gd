@@ -232,6 +232,18 @@ var pacing: float = 1.0
 ## holds, this is how often the show breaks that rhythm, and the reported problem was that raising
 ## one while the other ran hot cancelled it out.
 var flourish: float = 1.0
+## HOW SEVERE THE CAMERA IS, for a vehicle that flies one (see [ComicVehicle]). 0 is a slow,
+## gentle drift that barely turns; 1 is the tuned default; the top of the range is fast,
+## restless and cinematic, with real jump cuts in it.
+##
+## ONE KNOB OVER A WHOLE BEHAVIOUR, not a new setting per symptom. It scales the angular
+## excursion a shot may take, how quickly that excursion is spent, how long a move lasts, how
+## much of the bag is discontinuous, how deep a push goes and how fast the sheet drifts - so
+## it moves the whole camera along one axis from "slow" to "chaotic" instead of asking anyone
+## to balance six numbers. The full-frame vehicle has no camera and ignores it.
+##
+## Set it through [method set_camera]; persisted by [Settings] as `[director] camera`.
+var camera: float = 1.0
 ## THE VEHICLE - what the show is carried on, a key from [constant Vehicle.REGISTRY]
 ## (`full` = the original full-frame show, `comic` = a comic page). See [Vehicle].
 ##
@@ -244,6 +256,10 @@ var flourish: float = 1.0
 var vehicle := "full"
 const FLOURISH_MIN := 0.0
 const FLOURISH_MAX := 4.0
+## Bounds on the camera severity. 0 really is "as gentle as it goes" - a camera that drifts
+## and never cuts - and 2 is the far end rather than a doubling of anything in particular.
+const CAMERA_MIN := 0.0
+const CAMERA_MAX := 2.0
 const PACING_MIN := 0.25
 const PACING_MAX := 4.0
 ## Seconds a dip/blend takes end to end (cuts are instant). A DIP spends the middle
@@ -499,6 +515,17 @@ func set_flourish(v: float) -> void:
 	_save_pacing()
 
 
+## The camera severity knob. Takes effect on the NEXT move the vehicle plans, which is at
+## most one shot away - the same "reach for the slider and hear the difference" the pacing
+## slider gives, without re-planning a move that is already travelling.
+func set_camera(v: float) -> void:
+	var c := clampf(v, CAMERA_MIN, CAMERA_MAX)
+	if is_equal_approx(c, camera):
+		return
+	camera = c
+	_save_pacing()
+
+
 ## Choose the vehicle (see [member vehicle]). Persisted like every other picture setting.
 ##
 ## Takes effect on the NEXT session, not the running one - and unlike the intro hold,
@@ -528,6 +555,7 @@ func resolved_vehicle() -> String:
 func _load_pacing() -> void:
 	pacing = clampf(float(Settings.read("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
 	flourish = clampf(float(Settings.read("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
+	camera = clampf(float(Settings.read("director", "camera", 1.0)), CAMERA_MIN, CAMERA_MAX)
 	intro_hold = clampf(float(Settings.read("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
 	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
 	var v := String(Settings.read("director", "vehicle", "full"))
@@ -540,6 +568,7 @@ func _load_pacing() -> void:
 func _save_pacing() -> void:
 	Settings.write("director", "pacing", pacing)
 	Settings.write("director", "flourish", flourish)
+	Settings.write("director", "camera", camera)
 	Settings.write("director", "intro", intro_hold)
 	Settings.write("director", "outro", outro_hold)
 	Settings.write("director", "vehicle", vehicle)

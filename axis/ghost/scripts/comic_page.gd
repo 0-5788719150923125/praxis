@@ -37,9 +37,26 @@ const MARGIN := Vector2(0.045, 0.085)
 ## Corner radius, in units of the panel's shorter side. 0 for a page that wants hard
 ## corners - which most classic pages do, so the low end is weighted.
 const RADIUS := Vector2(0.0, 0.055)
-## How far a canted panel is rotated off square, in radians. A couple of degrees; this is
-## a page with a tilted panel on it, not a scrapbook.
+## How far a canted panel is rotated off square, in radians, and HOW OFTEN one is canted.
+##
+## THE RATE IS ZERO, and that is a decision rather than a disabled feature. A tilted panel is
+## a flat-page gesture: on printed paper, square-on, 2.5 degrees off the grid reads as a
+## deliberate scrapbook panel. This vehicle draws the page in real 3D through a perspective
+## lens, and there every vertical edge on the sheet converges toward ONE vanishing point -
+## which is what the eye reads as depth. A canted panel's edges converge toward a DIFFERENT
+## point, so the gutter beside it opens into a wedge, and the eye reads that local
+## inconsistency as a printing misregistration rather than as a tilt.
+##
+## Measured before removing it: 69% of spreads carried a canted panel, and in every one of
+## those the canted panel sat beside a square one in the same row - so two thirds of all
+## pages had a pair of adjacent panels further apart at one end than the other. Reported as
+## "they were further apart at the top from each other than they were at the bottom. The
+## frame alignment was off."
+##
+## The plumbing stays (panel_point, panel_uv and corners all still apply a cant, at the cost
+## of one is_zero_approx), so a page that wants to tilt again is one number away.
 const CANT := 0.045
+const CANT_RATE := 0.0
 ## The widest and narrowest a panel may be allowed to get. Outside this a subject sized
 ## to the panel's shorter side is cropped through, so the roll is retried.
 const PANEL_ASPECT := Vector2(0.42, 2.6)
@@ -59,15 +76,22 @@ var panels: Array = []
 ## Roll a page. [param key] is folded into every draw, so the same session seed and page
 ## index always produce the same page - and two different pages of one session are
 ## independent rolls rather than a walk of one stream.
-func _init(key: int) -> void:
+##
+## [param style] OVERRIDES the print style - the page proportion, the gutter, the margin and
+## the corner radius - leaving only the panel GRID to be rolled here. That is how
+## [ComicSpread] makes two facing pages read as one printed sheet: those four numbers belong
+## to the edition, not to the page, and sampling them per page put square corners opposite
+## rounded ones across the spine. An empty dictionary keeps the old behaviour exactly, so a
+## page rolled on its own is unchanged.
+func _init(key: int, style: Dictionary = {}) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = key
-	aspect = rng.randf_range(ASPECT.x, ASPECT.y)
-	gutter = rng.randf_range(GUTTER.x, GUTTER.y)
-	margin = maxf(gutter, rng.randf_range(MARGIN.x, MARGIN.y))
+	aspect = float(style.get("aspect", rng.randf_range(ASPECT.x, ASPECT.y)))
+	gutter = float(style.get("gutter", rng.randf_range(GUTTER.x, GUTTER.y)))
+	margin = float(style.get("margin", maxf(gutter, rng.randf_range(MARGIN.x, MARGIN.y))))
 	# Hard corners are the classic look, so weight toward zero rather than sampling flat:
 	# a squared roll pulls the mass down and leaves the rounded pages as the minority.
-	radius = RADIUS.y * pow(rng.randf(), 2.2)
+	radius = float(style.get("radius", RADIUS.y * pow(rng.randf(), 2.2)))
 	_roll_grid(rng)
 
 
@@ -85,9 +109,19 @@ func _roll_grid(rng: RandomNumberGenerator) -> void:
 
 func _try_grid(rng: RandomNumberGenerator) -> Array:
 	var want := rng.randi_range(MIN_PANELS, MAX_PANELS)
-	# Split `want` panels into rows. Prefer 2-3 rows; a 4-row page of singles is a strip,
-	# not a page.
-	var rows := clampi(int(round(sqrt(float(want)))), 2, 3)
+	# Split `want` panels into rows. Two or three; a 4-row page of singles is a strip, not a
+	# page, and one row is a strip on its side.
+	#
+	# SAMPLED, because the arithmetic that used to pick it could only ever say 2. It was
+	# `clampi(int(round(sqrt(want))), 2, 3)`, and sqrt(6) is 2.449, which rounds to 2 - so
+	# for every panel count this page can roll, the three-row branch was unreachable and the
+	# tall-thin classic layouts simply never appeared. Constrained to what the row can hold:
+	# at least one panel per row, at most three.
+	var lo_rows := maxi(2, int(ceil(float(want) / 3.0)))
+	var hi_rows := mini(3, want)
+	if hi_rows < lo_rows:
+		return []
+	var rows := rng.randi_range(lo_rows, hi_rows)
 	var per_row: Array = []
 	var left := want
 	for r in rows:
@@ -135,7 +169,7 @@ func _lay_out(per_row: Array, rng: RandomNumberGenerator) -> Array:
 				return []
 			# a cant is rare and small - about one panel in seven, and only when the page
 			# has room for it (a panel on the trim edge would rotate off the paper)
-			var canted := rng.randf() < 0.14 \
+			var canted := rng.randf() < CANT_RATE \
 				and x > margin * 0.6 and y > margin * 0.6 \
 				and x + w < 1.0 - margin * 0.6 and y + h < aspect - margin * 0.6
 			out.append({

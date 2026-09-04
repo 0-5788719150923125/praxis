@@ -34,6 +34,22 @@ var _shots: Array = []          # cut indices to photograph; default = every thi
 var _wrote := 0
 var _flat := 0
 var _thin := 0                    # frames where the page did not cover the frame
+var _static := 0                  # shots where the camera had stopped moving
+## How many frames to let the camera travel before photographing. The default covers the
+## slowest pan in the vocabulary; a LONG settle is the interesting one, because the defect
+## this probe exists to catch is what the camera does AFTER its move has run out - see
+## _static below.
+var _settle := 90
+## Spread-coordinate units per second of AIM travel, under which the camera counts as
+## STOPPED. One unit is one page width, so this is a hundredth of a page a second - a
+## framing that is not going anywhere.
+##
+## THE AIM, NOT THE EYE, and that distinction is the whole measurement. The sheet's attitude
+## drifts forever (ComicVehicle.DRIFT), and the eye is placed relative to the sheet, so the
+## eye keeps moving at 0.05 world units a second even when the framing has been locked on
+## one corner for twenty seconds. Measuring the eye says the camera is alive; measuring what
+## it is LOOKING AT says it is not. The second one is what the report was about.
+const STILL := 0.010
 var _vehicle: Vehicle = null
 var _live: GhostScene = null      # the scene in the open panel; this probe drives it
 
@@ -50,6 +66,8 @@ func _run() -> void:
 		print("comic_look_probe: %d frame(s) were UNIFORM - the page did not draw." % _flat)
 	if _thin > 0:
 		print("comic_look_probe: %d frame(s) showed DESK - the page did not cover." % _thin)
+	if _static > 0:
+		print("comic_look_probe: %d shot(s) had a STOPPED camera - the move ran out and nothing replaced it." % _static)
 	for _i in 6:
 		await get_tree().process_frame
 	get_tree().quit(1 if _flat > 0 else 0)
@@ -64,6 +82,7 @@ func _parse_args() -> void:
 			"--out": _out = args[i + 1]
 			"--vehicle": _vehicle_key = args[i + 1]
 			"--cuts": _cuts = int(args[i + 1])
+			"--settle": _settle = int(args[i + 1])
 			"--shots":
 				_shots = []
 				for s in String(args[i + 1]).split(","):
@@ -122,7 +141,7 @@ func _shoot() -> void:
 	var t := 0.0
 	for cut in _cuts:
 		var comic := vehicle is ComicVehicle
-		var was_page: int = vehicle._page_i if comic else 0
+		var was_spread: int = vehicle._spread_i if comic else 0
 		# STAND IN FOR main._process. A probe scene REPLACES main, so the one place that
 		# promotes a finished window cut is not in the tree - without this the probe waits
 		# forever on `.part` files it started itself, a deadlock the app cannot have but
@@ -130,7 +149,7 @@ func _shoot() -> void:
 		Films.pump()
 		_cut(vehicle)
 		if comic:
-			var turned: bool = vehicle._page_i != was_page
+			var turned: bool = vehicle._spread_i != was_spread
 			# WHICH PANEL HOLDS FOOTAGE, on every line. "the video is only ever shown ONE
 			# time, on ONE page" was reported from watching, and could not be checked from
 			# this probe's output at all - the one number that would have shown it was the
@@ -138,10 +157,11 @@ func _shoot() -> void:
 			var film := ""
 			if vehicle._film_at >= 0:
 				film = "[film p%d] " % (vehicle._film_at + 1)
-			print("    cut %d -> page %d, reading panel %d/%d, live %s %s%s" % [
-				cut, vehicle._page_i, vehicle._read + 1, vehicle._page.panels.size(),
-				vehicle._live, film,
-				("(page turned) " + _page_line(vehicle)) if turned else ""])
+			print("    cut %d -> spread %d, reading panel %d of %d, plan %s, live %s %s%s" % [
+				cut, vehicle._spread_i, vehicle._read + 1, vehicle._spread.panels.size(),
+				vehicle._plan, vehicle._live, film,
+				("(leaf turned) " + _page_line(vehicle)) if turned else ""])
+
 		else:
 			print("    cut %d" % cut)
 		# Let the panel's scene build and the camera ease toward the new framing.
@@ -156,17 +176,28 @@ func _shoot() -> void:
 		# 26-frame settle photographed the camera halfway there and every frame came out
 		# looser than the shot actually is - which reads exactly like a framing bug and is
 		# not one. Three seconds covers the slowest pan in the vocabulary.
-		for _i in 90:
+		# CAMERA TRAVEL, measured over the LAST SECOND of the settle. A move has a duration
+		# and the Director's hold is longer than most of them, so the interesting question is
+		# not where the camera goes but whether it is still going anywhere when it arrives.
+		var was_aim := Vector2.ZERO
+		var travel := 0.0
+		for i in _settle:
 			# The FOCAL scene only - a cast-owning vehicle drives its other live panels
 			# itself in advance(), exactly as the Director drives only its current one.
 			if _live != null and is_instance_valid(_live):
 				_live.update(Spectrum.current, DT)
 				_live.view.commit(DT)
 			vehicle.advance(Spectrum.current, DT, 1.0)
+			if comic:
+				var aim: Vector2 = vehicle._cam["aim"]
+				if i >= _settle - 30:
+					if i > _settle - 30:
+						travel += was_aim.distance_to(aim)
+					was_aim = aim
 			t += DT
 			await get_tree().process_frame
 		if _shots.is_empty() or _shots.has(cut):
-			await _capture(stage, cut)
+			await _capture(stage, cut, travel)
 	_live = null
 	Director.hold(false)
 	Director.detach()
@@ -208,7 +239,9 @@ func _cut(vehicle: Vehicle) -> void:
 		prev.queue_free()
 
 
-func _capture(stage: SubViewport, cut: int) -> void:
+## [param travel] is how far the eye moved over the last second of the settle, in world
+## units - see the loop in _shoot.
+func _capture(stage: SubViewport, cut: int, travel := -1.0) -> void:
 	var img := stage.get_texture().get_image()
 	var path := "%s_cut%02d.png" % [_out, cut]
 	img.save_png(path)
@@ -221,28 +254,61 @@ func _capture(stage: SubViewport, cut: int) -> void:
 	# looking. A number makes it checkable: below 1.0 the sheet does not reach both frame
 	# edges and the surface it lies on is in shot.
 	var cov := 1.0
+	var still := false
 	if _vehicle_key == "comic":
 		cov = float(_vehicle.page_coverage())
 		# A hair under 1 is a pixel of rounding at the frame edge, not desk in shot.
 		if cov < 0.995:
 			_thin += 1
-	print("    %s  (luma %.3f, spread %.3f, page covers %.2f)%s%s" % [
-		path, _luma(img), spread, cov,
+		still = travel >= 0.0 and travel < STILL
+		if still:
+			_static += 1
+	if _vehicle_key == "comic":
+		print("      panels: %s" % _panel_line(_vehicle))
+	print("    %s  (luma %.3f, spread %.3f, page covers %.2f, aim moved %.4f/s)%s%s%s" % [
+		path, _luma(img), spread, cov, maxf(travel, 0.0),
 		"  <-- UNIFORM" if spread < 0.02 else "",
-		"  <-- DESK IN SHOT" if cov < 0.995 else ""])
+		"  <-- DESK IN SHOT" if cov < 0.995 else "",
+		"  <-- CAMERA STOPPED" if still else ""])
 
 
 func _page_line(vehicle: Vehicle) -> String:
 	if not (vehicle is ComicVehicle):
-		return "(no page - %s draws the scene straight onto the stage)" % vehicle.key
-	var pg: ComicPage = vehicle._page
-	if pg == null:
-		return "(no page yet)"
+		return "(no spread - %s draws the scene straight onto the stage)" % vehicle.key
+	var sp: ComicSpread = vehicle._spread
+	if sp == null:
+		return "(no spread yet)"
 	var aspects := ""
-	for i in pg.panels.size():
-		aspects += "%.2f " % pg.panel_aspect(i)
-	return "%d panels, aspect %.2f, gutter %.3f, radius %.4f, panel aspects [ %s]" % [
-		pg.panels.size(), pg.aspect, pg.gutter, pg.radius, aspects]
+	for i in sp.panels.size():
+		aspects += "%.2f%s " % [sp.panel_aspect(i), "|" if sp.side_of(i) == 0 else ""]
+	var left: int = sp.pages[0].panels.size()
+	var right: int = sp.pages[1].panels.size()
+	return "%d+%d panels, aspect %.2f, gutter %.3f, radius %.4f, panel aspects [ %s]" % [
+		left, right, sp.aspect, sp.gutter, sp.radius, aspects]
+
+
+## EVERY PANEL'S STATE, per cut. "4 of the 6 frames are pure black, and empty" is a report
+## about panels this probe was drawing but never describing - the picture showed the symptom
+## and nothing in the log said whether the panel had a scene, whether its viewport was
+## running, or how big its render target was.
+##
+## `c` = a live GhostScene is parented in it. `L` = its viewport is running this frame.
+## Then the render target size. A panel that is black with no `c` was never cast; one that is
+## black at 64x64 is a slot that was shrunk and never grown back; one that is black with a `c`
+## at full size is a scene drawing black, which is the scene's business and not the page's.
+func _panel_line(vehicle: ComicVehicle) -> String:
+	var out := ""
+	for i in vehicle._spread.panels.size():
+		var vp: SubViewport = vehicle._slots[vehicle._pool * ComicVehicle.POOL + i]
+		var cast_ok: bool = i < vehicle._cast.size() and vehicle._cast[i] != null \
+			and is_instance_valid(vehicle._cast[i])
+		var warm: int = int(vehicle._warm[i]) if i < vehicle._warm.size() else 0
+		# `w` = the panel has rendered enough frames to have a picture worth freezing. A
+		# COLD panel that is frozen is the "pure black, and empty" defect.
+		out += "%d[%s%s%s %d] " % [i + 1, "c" if cast_ok else "-",
+			"L" if vehicle._live.has(i) else " ",
+			"w" if warm >= ComicVehicle.WARM_FRAMES else "-", warm]
+	return out
 
 
 func _luma(img: Image) -> float:

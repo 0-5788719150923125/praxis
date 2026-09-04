@@ -32,7 +32,7 @@ func _run() -> void:
 	# the thing under test - and it still puts back everything it touches.
 	Settings.allow_writes_for_test()
 	# Everything this touches is put back at the end - it is the user's real config.
-	for k in ["pacing", "flourish", "vehicle"]:
+	for k in ["pacing", "flourish", "camera", "vehicle"]:
 		_restore[k] = Settings.read("director", k, null)
 
 	# 1. read-back before any disk write
@@ -67,6 +67,10 @@ func _run() -> void:
 	Settings.flush()
 	if not is_equal_approx(_on_disk("pacing", 0.0), 2.25):
 		_fail("Director.set_pacing did not persist")
+	Director.set_camera(1.75)
+	Settings.flush()
+	if not is_equal_approx(_on_disk("camera", 0.0), 1.75):
+		_fail("Director.set_camera did not persist")
 
 	# 5. nothing but Settings owns the file
 	var writers := _writers()

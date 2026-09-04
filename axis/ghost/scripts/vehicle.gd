@@ -7,7 +7,8 @@ class_name Vehicle
 ## [Director] paints ONE scene, full-bleed, edge to edge, and cuts to the next. A
 ## vehicle is that choice made addressable. [FullVehicle] is that behaviour,
 ## unchanged and default; [ComicVehicle] renders the same scenes into the panels of
-## a comic page and flies a real perspective camera over it.
+## an open comic book - two facing pages across a spine - and flies a real perspective
+## camera over it.
 ##
 ## NOT A MODE, and the distinction is the whole point. A mode decides what DRIVES the
 ## show - a song (Auto), a storyboard (Manual), a written script (Synthesis /
@@ -45,7 +46,7 @@ const REGISTRY := {
 ## Display names for the registry keys, in registry order - for the settings surface.
 const LABELS := {
 	"full": "Full frame",
-	"comic": "Comic page",
+	"comic": "Comic book",
 }
 
 ## One line each, for the toggle's tooltip and docs/vehicles.md. Deliberately ONE string
@@ -53,7 +54,7 @@ const LABELS := {
 ## continuation silently truncates the blurb at the first line.
 const BLURBS := {
 	"full": "One scene at a time, filling the frame. The original show.",
-	"comic": "The same scenes drawn into the panels of a comic page, with a real perspective camera flying over it. Each cut fills the next panel; a full page turns.",
+	"comic": "The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine.",
 }
 
 
