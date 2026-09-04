@@ -57,6 +57,8 @@ func _ready() -> void:
 	_text = RichTextLabel.new()
 	_text.selection_enabled = true
 	_text.scroll_following = true   # pinned to the newest lines, like a real terminal
+	# Ctrl+C on a selection, which is the whole point of being able to make one.
+	_text.shortcut_keys_enabled = true
 	_text.add_theme_font_size_override("normal_font_size", 12)
 	_text.custom_minimum_size = Vector2(620, 360)
 	_panel.add_child(_text)
@@ -75,10 +77,27 @@ func _process(dt: float) -> void:
 	if _accum < _REFRESH_EVERY:
 		return
 	_accum = 0.0
+	# A SELECTION IS A CONVERSATION IN PROGRESS. Rewriting the label's text drops
+	# it, and this refreshes twice a second, so a busy log made it impossible to
+	# highlight anything for long enough to copy it - reported exactly that way,
+	# while the log was the only place the answer to a bug lived. While something
+	# is selected the view holds; the moment it is cleared the backlog lands.
+	if not _text.get_selected_text().is_empty():
+		return
 	var tail := _read_tail()
-	if tail != _last_shown:
-		_last_shown = tail
+	if tail == _last_shown:
+		return
+	# APPEND WHAT IS NEW rather than replacing the lot. Besides keeping a
+	# selection alive between refreshes, this stops the scroll position jumping
+	# on every tick. The window slides as the file grows, so the new tail is not
+	# always an extension of the old one - when it is not (a rotation, a seek
+	# past the window, the first read) the whole thing is redrawn, which is the
+	# only case that legitimately loses the view.
+	if not _last_shown.is_empty() and tail.begins_with(_last_shown):
+		_text.add_text(tail.substr(_last_shown.length()))
+	else:
 		_text.text = tail
+	_last_shown = tail
 
 
 ## The CURRENT session's log. The engine always writes to the CONFIGURED path

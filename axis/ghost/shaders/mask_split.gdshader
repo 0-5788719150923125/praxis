@@ -1191,15 +1191,16 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		return vec4(mix(col.rgb, painted16, amt16), col.a);
 	}
 	if (effect == 17) {
-		// UMBRA - a ghost inside the subject's own cast shadow. Every question
-		// of WHERE was settled upstream: the editor's detector finds the shadow
-		// she is linked to and the field sim (umbra_field.gdshader) grows the
-		// mass inside it and lets essence rise off the top. This branch only
-		// has to turn that field into light lost.
+		// UMBRA - the ghost that moves her. Every question of WHERE was settled
+		// upstream: the pose track gives her silhouette and her skeleton, the
+		// editor throws that silhouette as a cast shadow beside her (reading the
+		// clip AHEAD of the playhead), and the field sim (umbra_field.gdshader)
+		// grows the mass inside the result and lets essence rise off its top.
+		// This branch only has to turn that field into light lost.
 		vec2 asp17 = vec2(u_aspect, 1.0);
-		// No pan here. Scale and Pan are applied to the SILHOUETTE ITSELF
-		// inside the field sim, so the whole body moves and grows together and
-		// the guard is carved out of it afterwards. Panning the sampling here
+		// No pan here. Scale and Pan are applied to the THROW itself inside the
+		// field sim, so the whole body moves and grows together and her own
+		// outline is carved out of it afterwards. Panning the sampling here
 		// instead just slid the mass under a fixed stencil - Pan appeared to
 		// move nothing but a few stray wisps, which is exactly what it was
 		// doing.
@@ -1238,15 +1239,24 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float d17 = core17 * (0.70 + 0.30 * wave17) + edge17 * 0.55 * con17 * rim17;
 		float body17 = clamp(d17, 0.0, 1.0);
 		float trail17 = smoothstep(0.04, 0.28, fld.g) * allow17;
-		// EYES - cut as HOLLOWS, not as darker patches. The mass is already
-		// near-black, so anything darker is invisible inside it; letting the
-		// lit wall show back through is the only value that reads, and it is
-		// the classic hollow-socket look besides.
-		float eye17 = clamp(fld.b, 0.0, 1.0);
+		// EYES. The socket is DEEPENED and the iris BURNS inside it - the two
+		// halves are separable in the field (b holds the iris, and its own
+		// broader falloff is what the socket is built from) because hollowing
+		// alone reveals whatever wall lies behind, and where the ghost's head
+		// sits that wall is already near-black: measured on the version before
+		// this one, the sockets came back at luminance 33 against a body at 31,
+		// real structure that was simply invisible.
+		// Gated by `allow17` like everything else here. The eyes used to be safe
+		// from landing on her only because the field's own deposit was cut at her
+		// outline; the mass grows under her now (so a gesture leaves no lagging
+		// hole), which makes this multiply the thing standing between her face
+		// and a pair of burning sockets.
+		float eye17 = clamp(fld.b, 0.0, 1.0) * allow17;
+		float socket17 = smoothstep(0.02, 0.55, eye17);
 		float depth17 = 0.55 + 0.45 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
 		float amt17 = shade_amount(
-			clamp((body17 + trail17 * 0.55) * depth17 * w17, 0.0, 1.0), uv);
-		amt17 *= 1.0 - 0.92 * eye17;
+			clamp((body17 + trail17 * 0.55) * depth17 * w17
+				* (1.0 + 0.45 * socket17), 0.0, 1.0), uv);
 		if (amt17 <= 0.003) {
 			return col;
 		}
@@ -1271,7 +1281,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// reveal on its own, so Gaze keeps meaning the same thing across the
 		// whole Depth range instead of dying at one end of it.
 		vec3 iris17 = hsv2rgb(vec3(fract(u_l_accent[i] + u_l_tint[i]), 0.88, 1.0));
-		dark17 += iris17 * eye17 * w17 * (0.30 + 0.55 * depth17);
+		// Squared, so the iris is a small hot core inside a wide dark socket
+		// rather than a soft disc the size of the whole eye - two even glows on
+		// a black head read as headlights, and a point in a pit reads as an eye.
+		dark17 += iris17 * eye17 * eye17 * w17 * (0.55 + 0.85 * depth17);
 		return vec4(dark17, col.a);
 	}
 	if (effect == 7) {

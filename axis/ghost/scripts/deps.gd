@@ -233,14 +233,16 @@ const MANAGED := [
 	},
 	{
 		"key": "face_venv",
-		"name": "Face-tracking environment",
+		"name": "Body/face-tracking environment",
 		"kind": KIND_MANAGED,
 		"path": "user://face_venv",
 		"marker": "python",
 		"size": "~250 MB",
-		"used_for": "MediaPipe, for the Masking clown effect's 478-point face landmarks. "
-			+ "Created the first time a clown layer plays; a session that never uses the "
-			+ "clown installs none of it.",
+		"used_for": "MediaPipe, for the Masking clown effect's 478-point face landmarks "
+			+ "and the umbra effect's person silhouette and 33 body landmarks. ONE venv "
+			+ "for both - it is the same package and only the model file differs. "
+			+ "Created the first time a clown or umbra layer plays; a session that uses "
+			+ "neither installs none of it.",
 	},
 ]
 

@@ -43,7 +43,8 @@ fi
 
 # Every gate that needs a real renderer. Keep in step with CLAUDE.md's gate list.
 ALL=(clown_drip_check clown_anchor_check clown_controls_check clown_scale_check
-	clown_coat_check clown_coverage_check repaint_check rain_check)
+	clown_coat_check clown_coverage_check repaint_check rain_check
+	umbra_shader_check umbra_sim_check)
 
 if [ "${1:-}" = "--all" ]; then
 	set -- "${ALL[@]}"

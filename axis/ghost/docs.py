@@ -372,13 +372,18 @@ ENGINE_FLAGS = {
     "--throttled-rate",
     "--concurrent-fragments",
     "--js-runtimes",
-    # face_host/face_track.py's own interface (mask_editor spawns it for the
-    # clown's landmark pre-pass) - arguments to a subprocess, not ghost flags.
+    # face_host/face_track.py's and pose_track.py's own interfaces (mask_editor
+    # spawns them for the clown's landmark pre-pass and the umbra's body pre-pass)
+    # - arguments to a subprocess, not ghost flags.
     "--video",
     "--out",
     "--model",
     "--rate",
     "--progress",
+    "--mask-w",
+    "--mask-h",
+    "--start",
+    "--duration",
     # setpriv's interface (subprocess.gd binds every child's lifetime to ghost's with it),
     # an argument to a subprocess, not a ghost flag.
     "--pdeathsig",

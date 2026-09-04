@@ -106,6 +106,13 @@ var _mat_main := ShaderMaterial.new()
 var _mat_inset := ShaderMaterial.new()
 var _playing := false
 var _audio_holding := false   # main audio paused-in-place, waiting for video to catch up (see _process)
+var _av_debug_ms := 0         # GHOST_AV_DEBUG throttle
+var _av_reported := false     # the once-per-run audio path summary has been printed
+var _audio_hold_ms := 0       # when that hold engaged - it is not allowed to last forever
+## The longest the audio may be held waiting for the video. A readback stall is
+## tens of milliseconds; anything past this is not a stall but a machine that is
+## not keeping up, and continuing to wait is just silence.
+const _AUDIO_HOLD_LIMIT_MS := 1200
 var _cursor_idle_t := 0.0
 const _CURSOR_HIDE_DELAY := 1.5   # seconds of stillness during playback before the mouse cursor hides
 
@@ -352,77 +359,165 @@ var _clown_bleed := 0.0    # its Bleed / Settle / Hollow knobs, fed to the paint
 var _clown_settle := 0.35
 var _clown_hollow := 0.0
 
-# --- UMBRA: the ghost in the subject's own cast shadow (see
-# _update_umbra_model and shaders/umbra_field.gdshader). The detector works on
-# a coarse grid - a cast shadow is a REGION, and regions survive downsampling
-# in a way the clown's eye sockets never did.
-const _UMB_W := 96
-const _UMB_H := 54
-const _UMBRA_INTERVAL := 0.15   # same cadence as the face model, same reasoning
+# --- THE POSE TRACK: her silhouette and her skeleton, read by time, A WINDOW AT A TIME -
+# What the umbra's whole shape comes from. See face_host/pose_track.py for the
+# pre-pass and the file format; this half bootstraps it, runs it, and reads it.
+#
+# It shares the CLOWN'S VENV rather than building a second one: mediapipe is the
+# same package and it is 100 MB. Only the model file differs, so a session that has
+# already tracked a face pays nothing but the 9 MB pose bundle.
+#
+# The look-ahead is the reason this is offline and not a live detector. A ghost that
+# moves a beat BEFORE she does reads as a puppeteer; one that follows reads as a
+# shadow. No live tracker can supply the first, at any amount of smoothing, because
+# the frame it would need has not been decoded yet.
+#
+# WHY IT IS CHUNKED. The pre-pass runs at about real time, so reading a ten-minute
+# clip up front is ten minutes of an effect that draws nothing - which is what the
+# author saw, and it is the wrong shape for a tool you place a marker in and expect
+# to see. The clip is cut into POSE_CHUNK_SECS windows on ONE GLOBAL SAMPLE GRID
+# (pose_track.py writes each chunk's starting index into its header, so two chunks
+# written by two runs butt together exactly), the editor asks only for the window
+# the playhead is in and the one after it, and it evicts windows it has walked
+# away from. So an umbra layer starts drawing about twenty seconds after it is
+# placed, wherever in the clip that is, and scrubbing somewhere new costs the same
+# twenty seconds rather than a re-read of everything before it.
+const POSE_TRACK_DIR := "user://pose_tracks"
+## Google's published pose bundle - `full` rather than `heavy`: on the reference
+## footage `full` found a pose in 7451 of 7451 sampled frames, so the heavier model
+## has nothing left to win and would cost the window's latency.
+const POSE_MODEL_URL := "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
+const POSE_TRACK_RATE := 12.0    # samples/sec - must match what pose_track.py wrote
+const POSE_TRACK_POINTS := 33
+## 4 magic + u32 version + f32 rate + u32 count + u32 points + u32 mask_w + u32 mask_h
+## + u32 start + f32 dir_x + f32 dir_y + f32 conf. The face track's own header was
+## read four bytes short once and every sample after it returned plausible, entirely
+## wrong numbers - hence tests/pose_track_check.gd, which reads a hand-built file
+## through this reader.
+const POSE_TRACK_HEADER := 44
+## How much clip one window covers. TWENTY SECONDS IS THE CAST DIRECTION'S FLOOR,
+## not a guess at a pleasant latency: the throw is measured from how the background
+## VARIES as she moves, and measured on the reference clip that reads conf 0.97 over
+## the whole ten minutes, 0.45 over twenty seconds and 0.06 over six - which is
+## below the floor at which the editor will believe it at all. A shorter window
+## would start faster and know nothing about the light.
+const POSE_CHUNK_SECS := 20.0
+## How many windows stay in memory. Each is ~1.3 MB at 96x54, and the reason to
+## bound it at all is a long clip scrubbed end to end: without eviction every window
+## ever visited stays resident.
+const POSE_CHUNK_KEEP := 4
+
+## The landmark indices this effect uses, by name rather than by number at the call
+## site - MediaPipe's pose order is not guessable and a transposed pair here is a
+## ghost whose eyes are in its shoulders.
+const PT_NOSE := 0
+const PT_EYE_L := 2
+const PT_EYE_R := 5
+const PT_EAR_L := 7
+const PT_EAR_R := 8
+const PT_SH_L := 11
+const PT_SH_R := 12
+
+## The bootstrap's state, which is about the VENV AND THE MODEL and not about any
+## one window: none | venv | pip | model | ready | failed. "ready" here means the
+## tracker can be run, not that any particular window has been read.
+var _pt_state := "none"
+var _pt_pid := -1          # the bootstrap's child (venv / pip / model download)
+var _pt_log := ""
+var _pt_rate := POSE_TRACK_RATE
+var _pt_points := POSE_TRACK_POINTS
+var _pt_mw := 96
+var _pt_mh := 54
+## THE CAST DIRECTION, accumulated over every window ever loaded this session and
+## weighted by each one's own confidence. One window measures it poorly and a dozen
+## measure it well, so this improves as the author works rather than being fixed by
+## whichever window happened to load first - and a window that measured nothing
+## contributes nothing rather than dragging the answer toward its noise.
+var _pt_dir := Vector2(1.0, 0.0)
+var _pt_dir_acc := Vector2.ZERO
+var _pt_dir_w := 0.0
+var _pt_conf := 0.0
+## Loaded windows, keyed by index: {count, found, xy, vis, mask}. Sample numbering is
+## GLOBAL - window k holds samples [k * _pt_chunk_n, ...) - so a sample index means
+## the same thing whichever window produced it.
+var _pt_chunks := {}
+var _pt_chunk_n := int(POSE_CHUNK_SECS * POSE_TRACK_RATE)
+## The window being read right now, and the ones already known to be missing so the
+## per-frame pump does not stat the same absent file every frame.
+var _pt_job := -1          # chunk index, or -1
+var _pt_job_pid := -1
+var _pt_progress_ms := 0
+var _pt_missing := {}
+## How many windows the clip has at all - so the pump never asks for one past the
+## end and then waits forever for a file that cannot exist.
+var _pt_chunk_total := 0
+## The silhouette handed to the field sim, kept as one image + texture and rewritten
+## in place per sample rather than reallocated - this runs every frame an umbra layer
+## is live, and Image.create_from_data on every one of them is heap churn for nothing.
+var _pt_slot := -1
+var _pt_guard_slot := -1
+var _pt_img: Image = null
+var _pt_tex: ImageTexture = null
+var _pt_bytes := PackedByteArray()
+
+# --- UMBRA: the ghost that moves her (see _umb_solve_cast and
+# shaders/umbra_field.gdshader).
+#
+# WHAT IT IS. Her own silhouette, thrown as a cast shadow that is larger than
+# she is, stands beside her, and reads the clip AHEAD of the playhead - so it
+# turns its head before she turns hers, and the picture reads as the ghost
+# moving her rather than the other way round.
+#
+# WHERE THE SHAPE COMES FROM. The pose track (_pt_*), which is MediaPipe's
+# person segmentation plus 33 body landmarks, fitted offline over the whole
+# clip. What it replaces was a chroma-direction detector that hunted the
+# footage's own cast shadow: it needed the room to have one big soft shadow on
+# a chromatically uniform wall, a colour hypothesis scored per surface, two
+# flood fills, and a confidence gate that drew nothing when they disagreed. A
+# person mask is the same answer with none of the conditions - and it also
+# gives the ghost a SKELETON, which is what lets its head and its eyes be
+# placed rather than guessed at from the middle of a blob.
+## The silhouette grid. 160x90 rather than 96x54: a cell is 12 px of a 1080p
+## frame instead of 20, which is what lets the shader's grid-dissolving jitter
+## come down from +-34 px (a visibly crawling outline) to +-10. It costs 2.8x the
+## cache - 3.5 MB a twenty-second window - and the grid is in the window
+## FILENAME, so raising it does not read stale coarse windows, it asks for finer
+## ones and the old files are simply never opened again.
+const _UMB_W := 160
+const _UMB_H := 90
 var _umbra_active := false
-var _umb_slot := -1
-# The wall the shadow falls on, as a chroma DIRECTION plus its lit level. A
-# near-static property of the scene, so it is EMA'd hard and the (more
-# expensive) multi-hypothesis re-pick only runs occasionally - see
-# _umb_repick_in.
-var _umb_ref_dir := Vector3(0.0, 0.0, 0.0)
-var _umb_ref_mag := 0.05
-var _umb_ref_lit := 0.6
-var _umb_ref_valid := false
-var _umb_ref_cov := 0.0     # scene-coherence of the winning hypothesis (the confidence gate)
-var _umb_repick_in := 0
-# The cast direction (her centroid -> the shadow's), aspect-corrected unit.
-# The light does not move, so this is smoothed almost to a constant: measured
-# over 15s of the reference clip it holds to +-3.6 degrees, and letting it
-# wander per-frame is exactly how the clown earned its uniform twitch.
-var _umb_dir_ema := Vector2(1.0, 0.0)
-var _umb_subj_c := Vector2(0.5, 0.55)
-var _umb_shad_c := Vector2(0.75, 0.40)
-var _umb_pivot := Vector2(0.75, 0.62)   # the silhouette's base - Scale rears UP from here
+# THE CAST TRANSFORM, solved per frame from the pose sample at `t + Lead` and
+# handed to the field sim as its inverse. It is a SIMILARITY pinned by two
+# point pairs - her shoulder line to the ghost's, her eye line to the ghost's -
+# so the ghost's head lands exactly where it was placed at any size. The
+# effect this replaces magnified about a pivot and hoped, which meant growing
+# it walked its head off the top of the frame and every fix traded the looming
+# against the eyes.
+var _umb_inv0 := Vector2(1.0, 0.0)   # inverse basis, column 0 (aspect-corrected space)
+var _umb_inv1 := Vector2(0.0, 1.0)   # ...column 1
+var _umb_anchor := Vector2(0.5, 0.5) # where her shoulder line lands, aspect-corrected
+var _umb_src := Vector2(0.5, 0.5)    # her own shoulder line, aspect-corrected
+var _umb_eye_src := Vector2(0.5, 0.3)# her own eye line, aspect-corrected (the bust's centre)
+var _umb_unit := 0.3                 # her eye-to-shoulder distance - the unit for everything
+var _umb_bust0 := 1.2                # bust falloff, in her own units, from her eye line
+var _umb_bust1 := 2.6
+# The cast direction, measured over the WHOLE clip by the pose pre-pass (her
+# shadow is the part of the background that moves when she does). Furniture,
+# not a per-frame measurement.
+var _umb_dir := Vector2(1.0, 0.0)
 var _umb_pan := Vector2.ZERO
-var _umb_reach := 0.24   # Reach  (threshold) - how close the mass comes to her
-var _umb_lead := 0.19    # Lead   (feather)   - seconds the ghost moves AHEAD of her
-# THE GHOST'S EYES. Her own eyes, carried across the cast offset into the
-# shadow and through the silhouette transform, then LED by a velocity estimate
-# so the ghost turns fractionally before she does - the puppeteering read.
+var _umb_stand := 1.05   # Stand  (threshold)   - how far to the side the ghost stands
+var _umb_lead := 0.19    # Lead   (feather)     - seconds the ghost moves AHEAD of her
+var _umb_lean := 0.45    # Lean   (swap)        - how far it leans along the throw, and rises
+var _umb_narrow := 0.35  # Narrow (intensity_b) - how much taller-than-wide it is drawn
+# THE GHOST'S EYES: her own eye landmarks pushed through the cast transform, so
+# they are on the ghost's head by construction at every size.
 var _umb_eye_l := Vector2(0.5, 0.4)
 var _umb_eye_r := Vector2(0.6, 0.4)
 var _umb_eye_rad := 0.05
 var _umb_eyes_ok := false
-# The look-ahead eye track (see _umb_ensure_track): her eyes for the WHOLE
-# clip, fitted up front, so playback can read the frame she has not reached.
-var _umb_track := PackedVector3Array()   # (eye_mid.x, eye_mid.y, separation); z<=0 = no face
-var _umb_track_rest := Vector2(0.5, 0.35)
-var _umb_track_state := "none"           # none | decoding | fitting | ready | failed
-var _umb_track_raw := ""
-var _umb_track_pid := -1
-var _umb_track_thread: Thread = null
-# The clip's aspect, snapshotted for the worker thread (_umb_fit_eyes runs off the
-# main thread and must not touch live state). Every anatomical measure in the fit is
-# in aspect-corrected space; leaving it at a fixed 1.7778 made the face prior and the
-# eye-separation constraint wrong by the ratio between the clip's shape and 16:9 -
-# on a portrait clip that is a factor of three, which is enough to reject every fit.
-var _umb_fit_asp := 1.7778
 var _umb_eye_amt := 0.0   # Gaze (sat_floor) - how strongly the eyes read
 var _umb_have := false
-var _umb_region_img: Image = null        # RGBA8 _UMB_W x _UMB_H: R=linked shadow,
-var _umb_region_tex: ImageTexture = null #   G=shadowness, B=subject mask
-# Scratch buffers, allocated once - this runs at ~7Hz and must not churn the heap.
-var _umb_lum := PackedFloat32Array()
-var _umb_cr := PackedFloat32Array()
-var _umb_cg := PackedFloat32Array()
-var _umb_cb := PackedFloat32Array()
-var _umb_cmag := PackedFloat32Array()
-var _umb_match := PackedFloat32Array()
-var _umb_shadow := PackedFloat32Array()
-var _umb_tmp := PackedFloat32Array()
-var _umb_tmp2 := PackedFloat32Array()
-var _umb_wmass := PackedFloat32Array()
-var _umb_wlum := PackedFloat32Array()
-var _umb_subj := PackedByteArray()
-var _umb_shad := PackedByteArray()
-var _umb_queue := PackedInt32Array()
-var _umb_bytes := PackedByteArray()
 # The umbra field simulation (ping-pong SubViewport pair, same discipline as
 # the clown's paint sim: stepped on PLAYBACK deltas so pause freezes it and
 # export traces the identical currents).
@@ -431,7 +526,6 @@ var _umb_rects: Array = []
 var _umb_ping := 0
 var _umb_reset := true
 var _umb_last_pos := 0.0
-var _umb_hue := -1.0     # the live layer's key hue (biases the wall pick); <0 = none
 var _umb_loom := 0.45    # Coverage, with the audio swell already folded in
 var _umb_rise := 1.0     # Velocity
 var _umb_roil := 0.5     # Contrast
@@ -475,9 +569,11 @@ var _hollow: HSlider  # clown's Hollow  - its view onto fx_stick
 var _wisp: HSlider        # umbra's Wisp  - its view onto fx_smooth
 var _cling: HSlider       # umbra's Cling - its view onto fx_lag
 var _umbra_depth: HSlider # umbra's Depth - its view onto fx_stick
-var _umbra_reach: HSlider # umbra's Reach - its view onto threshold (umbra never keys)
-var _umbra_lead: HSlider  # umbra's Lead  - its view onto feather
-var _umbra_gaze: HSlider  # umbra's Gaze  - its view onto sat_floor
+var _umbra_stand: HSlider # umbra's Stand  - its view onto threshold (umbra never keys)
+var _umbra_lead: HSlider  # umbra's Lead   - its view onto feather
+var _umbra_gaze: HSlider  # umbra's Gaze   - its view onto sat_floor
+var _umbra_lean: HSlider  # umbra's Lean   - its view onto swap
+var _umbra_narrow: HSlider# umbra's Narrow - its view onto intensity_b
 var _color_eye: ColorPickerButton   # umbra's eye colour - hue_b, pushed as u_l_accent
 ## repaint's replacement colour. Unlike every other picker here this one is a
 ## WHOLE colour, not a hue: it writes hue_b/fx_stick/fx_tint (h/s/v), so black
@@ -1654,27 +1750,30 @@ func _step_umbra_sim() -> void:
 	dtp = clampf(dtp, 0.0, 0.1)
 	if dtp <= 0.0 and not reset:
 		return
-	if not _umb_have or _umb_region_tex == null:
-		return   # no verdict yet - leave the field alone rather than deposit noise
+	if not _umb_have or _pt_tex == null:
+		return   # no pose there - leave the field alone rather than deposit noise
 	var mat: ShaderMaterial = _umb_rects[_umb_ping].material
 	mat.set_shader_parameter("u_prev", _umb_vps[1 - _umb_ping].get_texture())
-	mat.set_shader_parameter("u_region", _umb_region_tex)
+	mat.set_shader_parameter("u_region", _pt_tex)
 	mat.set_shader_parameter("u_dt", dtp)
 	mat.set_shader_parameter("u_reset", 1 if reset else 0)
 	mat.set_shader_parameter("u_time", pos)
-	var vt := _player.get_video_texture()
-	if vt != null and vt.get_height() > 0:
-		mat.set_shader_parameter("u_aspect", float(vt.get_width()) / float(vt.get_height()))
-	mat.set_shader_parameter("u_dir", _umb_dir_ema)
+	mat.set_shader_parameter("u_aspect", _source_aspect())
+	mat.set_shader_parameter("u_dir", _umb_dir)
 	mat.set_shader_parameter("u_loom", _umb_loom)
 	mat.set_shader_parameter("u_rise", _umb_rise)
 	mat.set_shader_parameter("u_roil", _umb_roil)
 	mat.set_shader_parameter("u_cling", _umb_cling)
 	mat.set_shader_parameter("u_wisp", _umb_wisp)
-	# The silhouette transform - see umbra_field.gdshader's to_region().
-	mat.set_shader_parameter("u_pivot", _umb_pivot)
-	mat.set_shader_parameter("u_sil_scale", _umb_scale)
-	mat.set_shader_parameter("u_pan", _umb_pan)
+	# The cast transform - see umbra_field.gdshader's to_source().
+	mat.set_shader_parameter("u_inv0", _umb_inv0)
+	mat.set_shader_parameter("u_inv1", _umb_inv1)
+	mat.set_shader_parameter("u_anchor", _umb_anchor)
+	mat.set_shader_parameter("u_src", _umb_src)
+	mat.set_shader_parameter("u_eye_src", _umb_eye_src)
+	mat.set_shader_parameter("u_unit", _umb_unit)
+	mat.set_shader_parameter("u_bust0", _umb_bust0)
+	mat.set_shader_parameter("u_bust1", _umb_bust1)
 	mat.set_shader_parameter("u_eye_l", _umb_eye_l)
 	mat.set_shader_parameter("u_eye_r", _umb_eye_r)
 	mat.set_shader_parameter("u_eye_rad", _umb_eye_rad)
@@ -1686,26 +1785,18 @@ func _step_umbra_sim() -> void:
 	_umb_reset = false
 
 
-## The umbra model's own capture tick. Same discipline as _maybe_capture_face:
-## only during playback (or once when a scrub settles), never mid-drag - the
-## readback is a synchronous GPU stall.
-func _maybe_capture_umbra() -> void:
+## The umbra's per-frame tick. NO READBACK, which is the difference between this
+## and _maybe_capture_face: the shape comes from the cached track, so there is no
+## get_image() stall, no capture cadence to pick, and nothing that behaves
+## differently while the author is scrubbing than it does during playback.
+func _tick_umbra() -> void:
 	if not _umbra_active or _player == null or session == null:
 		return
-	var pos := _player.stream_position
-	if not _playing and absf(pos - _prev_pos) >= 0.0005:
+	_pt_ensure()
+	if _pt_state != "ready":
+		_umb_have = false
 		return
-	var slot := int(pos / _UMBRA_INTERVAL)
-	if slot == _umb_slot:
-		return
-	var tex := _player.get_video_texture()
-	if tex == null:
-		return
-	var img := tex.get_image()
-	if img == null or img.is_empty():
-		return
-	_umb_slot = slot
-	_update_umbra_model(img)
+	_umb_solve_cast()
 
 
 ## The audio envelope at clip-time `t` (0 when unavailable), lightly smoothed so
@@ -3253,17 +3344,28 @@ func _build_panel() -> void:
 		"How much light the mass swallows - some of the wall always survives " +
 		"inside it, so it deepens the shadow rather than cutting a hole")
 	_register_option(_umbra_depth)
-	_umbra_reach = _slider(_grp_options, "Reach", 0.0, 1.0, func(v): _edit("threshold", v),
-		"How close the mass comes to the body casting it - raise it to close " +
-		"the band of untouched wall between them, lower it to keep well clear")
-	_register_option(_umbra_reach)
+	_umbra_stand = _slider(_grp_options, "Stand", 0.0, 1.0, func(v): _edit("threshold", v),
+		"How far to the side of her the ghost stands. At the bottom it is " +
+		"almost behind her (and mostly hidden by her); wound up it steps clear " +
+		"onto the wall beside her")
+	_register_option(_umbra_stand)
 	_umbra_lead = _slider(_grp_options, "Lead", 0.0, 0.5, func(v): _edit("feather", v),
-		"How far AHEAD of her the ghost moves - it turns before she does, so " +
-		"it reads as the thing making her move rather than following her")
+		"How far AHEAD of her the ghost moves, in seconds. It reads the clip " +
+		"before the playhead does, so it turns its head before she turns hers " +
+		"- which is what makes it look like the thing moving her")
 	_register_option(_umbra_lead)
+	_umbra_lean = _slider(_grp_options, "Lean", 0.0, 1.0, func(v): _edit("swap", v),
+		"How far the ghost leans out along the light - upright over her at 0, " +
+		"and rearing across her as it rises at 1")
+	_register_option(_umbra_lean)
+	_umbra_narrow = _slider(_grp_options, "Narrow", 0.0, 0.75, func(v): _edit("intensity_b", v),
+		"How much taller-than-wide the ghost is drawn. Her outline squeezed " +
+		"across its own spine - a long thin thing rather than a broad one")
+	_register_option(_umbra_narrow)
 	_umbra_gaze = _slider(_grp_options, "Gaze", 0.0, 1.0, func(v): _edit("sat_floor", v),
-		"Hollow eyes in the mass, tracking hers across the cast offset - " +
-		"0 is a faceless shadow")
+		"How hard the ghost's eyes burn. They sit on her own eyes, carried " +
+		"through the same throw as the rest of it, so they are always on its " +
+		"head - 0 is a faceless shadow")
 	_register_option(_umbra_gaze)
 	# The eye colour needed a control of its own. hue_b was wired through to the
 	# shader but nothing could edit it, so the eyes were stuck on whatever the
@@ -5529,813 +5631,725 @@ func _clown_model_now() -> Dictionary:
 	}
 
 
-# --- umbra: the cast-shadow detector -----------------------------------------
-
-## Separable box blur over the grid, via a RUNNING SUM - O(cells), not
-## O(cells x radius). The radii this detector wants are wide (a shadow is
-## big), and the naive form is what would make a ~7Hz GDScript pass expensive.
-## Edges CLAMP rather than wrap: wrapping folds the door on the left into the
-## wall on the right, which is precisely the contamination the whole detector
-## is built to avoid.
-func _umb_blur(src: PackedFloat32Array, dst: PackedFloat32Array, rx: int, ry: int) -> void:
-	var tmp := _umb_tmp2
-	if tmp.size() != src.size():
-		tmp.resize(src.size())
-		_umb_tmp2 = tmp
-	var wx := float(rx * 2 + 1)
-	for y in _UMB_H:
-		var row := y * _UMB_W
-		var acc := 0.0
-		for k in range(-rx, rx + 1):
-			acc += src[row + clampi(k, 0, _UMB_W - 1)]
-		for x in _UMB_W:
-			tmp[row + x] = acc / wx
-			acc -= src[row + clampi(x - rx, 0, _UMB_W - 1)]
-			acc += src[row + clampi(x + rx + 1, 0, _UMB_W - 1)]
-	var wy := float(ry * 2 + 1)
-	for x in _UMB_W:
-		var acc2 := 0.0
-		for k in range(-ry, ry + 1):
-			acc2 += tmp[clampi(k, 0, _UMB_H - 1) * _UMB_W + x]
-		for y in _UMB_H:
-			dst[y * _UMB_W + x] = acc2 / wy
-			acc2 -= tmp[clampi(y - ry, 0, _UMB_H - 1) * _UMB_W + x]
-			acc2 += tmp[clampi(y + ry + 1, 0, _UMB_H - 1) * _UMB_W + x]
+# --- the pose track: bootstrap, then one window at a time --------------------
+# Two independent state machines, deliberately separated. `_pt_state` is about the
+# VENV AND THE MODEL - a one-off install that either works or does not - and it
+# runs the `_ft_*` half's shape because it is the same problem. The WINDOWS are a
+# pump: the playhead names which ones are wanted, and one child at a time reads
+# them, so nothing here is ever "waiting for the clip to finish".
 
 
-## Cell membership for ONE surface hypothesis: how much each cell looks like
-## `dir`-coloured material, and how much of that material is in shadow.
-##
-## MATCH THE SURFACE FIRST. A cast shadow is the same wall under less light,
-## so it keeps the wall's chroma DIRECTION and loses luminance. On the
-## reference clip the shadow aligns with the lit wall at dot=+0.99 while skin
-## (-0.96), hair (-0.96), a black shirt (-0.90), the mic (-0.80) and a cream
-## door (-0.75) all sit far away - and her hair is at the SAME luminance as
-## the shadow, so nothing luminance-based could have separated them. Leading
-## with darkness (and treating chroma as a bonus) was the first design, and it
-## simultaneously kept her whole face and threw away the shadow's own core.
-func _umb_analyse(dir: Vector3, mag: float, lit: float) -> void:
-	var n := _UMB_W * _UMB_H
-	# Is this surface coloured enough for a direction test to mean anything?
-	var chromatic := smoothstep(0.015, 0.040, mag)
-	for i in n:
-		var cmag := _umb_cmag[i]
-		var align := 0.0
-		if cmag > 1e-5:
-			align = (_umb_cr[i] * dir.x + _umb_cg[i] * dir.y + _umb_cb[i] * dir.z) / cmag
-		# Same material under less light also means proportionally LESS chroma,
-		# so a cell far off the expected magnitude is some other material that
-		# merely happens to point the same way.
-		var expect := mag * clampf(_umb_lum[i] / maxf(lit, 1e-3), 0.05, 1.5)
-		var rel := cmag / (expect + 1e-6)
-		var magfit := smoothstep(0.20, 0.70, rel) * (1.0 - smoothstep(1.9, 3.8, rel))
-		var chroma_match := smoothstep(0.35, 0.85, align) * magfit
-		# A COLOURLESS wall cannot be matched by direction at all (grey rooms,
-		# monochrome grades - the footage class that broke the clown's first
-		# cut). There the only honest statement is "a shadow on grey is also
-		# grey", so fall back to matching colourlessness itself.
-		var neutral := 1.0 - smoothstep(0.020, 0.055, cmag)
-		_umb_match[i] = neutral + chromatic * (chroma_match - neutral)
-	# The local lit level, estimated ONLY from cells that matched this surface.
-	# Estimating it from the neighbourhood at large is contaminated by whatever
-	# object is sitting there (her own bright face raising the bar right where
-	# the shadow is), which is what made the first cut classify her cheek as
-	# shadowed wall.
-	if _umb_wmass.size() != n:
-		_umb_wmass.resize(n)
-		_umb_wlum.resize(n)
-	for i in n:
-		_umb_tmp[i] = 1.0 if _umb_match[i] > 0.5 else 0.0
-	_umb_blur(_umb_tmp, _umb_wmass, 14, 9)
-	for i in n:
-		_umb_tmp[i] = _umb_lum[i] * (1.0 if _umb_match[i] > 0.5 else 0.0)
-	_umb_blur(_umb_tmp, _umb_wlum, 14, 9)
-	var floor_lit := lit * 0.55
-	for i in n:
-		var llit := lit
-		if _umb_wmass[i] > 0.02:
-			llit = _umb_wlum[i] / _umb_wmass[i]
-		# A neighbourhood that is MOSTLY shadow would drag its own reference
-		# down and declare itself lit; the floor is what stops a large shadow
-		# from erasing its own middle.
-		llit = maxf(llit, floor_lit)
-		var ratio := _umb_lum[i] / maxf(llit, 1e-3)
-		# GENEROUS on purpose. A real cast shadow is mostly PENUMBRA, and a
-		# tight window (0.60..0.88) kept only the dark core - about 7% of the
-		# frame where the visible shadow covers nearer 15%, so the effect had
-		# nothing like the whole shadow to animate. The chroma match is what
-		# keeps this honest; darkness only has to say "dimmer than this wall
-		# is elsewhere", not "very dark".
-		var dark := 1.0 - smoothstep(0.85, 1.02, ratio)
-		_umb_shadow[i] = _umb_match[i] * dark
+func _pt_model_path() -> String:
+	return ProjectSettings.globalize_path(FACE_VENV_DIR).path_join("pose_landmarker_full.task")
 
 
-## Flood fill over the grid from `seeds`, through cells where `pass_fn` holds.
-## Returns how many cells were claimed. Iterative with a preallocated queue -
-## recursion depth on a 96x54 grid is not something to hand to GDScript.
-func _umb_flood(out: PackedByteArray, seeds: PackedInt32Array, field: PackedFloat32Array,
-		thr: float, blocked: PackedByteArray, limit: int) -> int:
-	var n := _UMB_W * _UMB_H
-	for i in n:
-		out[i] = 0
-	if _umb_queue.size() < n:
-		_umb_queue.resize(n)
-	var head := 0
-	var tail := 0
-	for s in seeds:
-		if out[s] == 0 and field[s] > thr and (blocked.is_empty() or blocked[s] == 0):
-			out[s] = 1
-			_umb_queue[tail] = s
-			tail += 1
-	var claimed := 0
-	while head < tail and claimed < limit:
-		var idx := _umb_queue[head]
-		head += 1
-		claimed += 1
-		var x := idx % _UMB_W
-		var y := idx / _UMB_W
-		for d in 4:
-			var nx := x + (1 if d == 0 else (-1 if d == 1 else 0))
-			var ny := y + (1 if d == 2 else (-1 if d == 3 else 0))
-			if nx < 0 or nx >= _UMB_W or ny < 0 or ny >= _UMB_H:
-				continue
-			var ni := ny * _UMB_W + nx
-			if out[ni] != 0 or field[ni] <= thr:
-				continue
-			if not blocked.is_empty() and blocked[ni] != 0:
-				continue
-			out[ni] = 1
-			if tail < n:
-				_umb_queue[tail] = ni
-				tail += 1
-	return claimed
+func _pt_dir_path() -> String:
+	return ProjectSettings.globalize_path(POSE_TRACK_DIR)
 
 
-## Run both floods for the CURRENT contents of _umb_match/_umb_shadow, and
-## score how coherent the resulting scene is. Returns {score, subj_n, shad_n}.
-##
-## LINKAGE IS STRUCTURAL. The subject flood grows from the most not-this-wall
-## cell near frame centre; the shadow flood may only start from cells TOUCHING
-## the subject and may never enter it. So every cell the shadow flood reaches
-## is contiguous with her - "the shadow is linked to the human" is not a
-## similarity score here, it is the shape of the search.
-func _umb_solve(aspect: float) -> Dictionary:
-	var n := _UMB_W * _UMB_H
-	# foreign = not this surface. Reuse _umb_tmp as the flood's field.
-	var best := -1.0
-	var seed := 0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var foreign := 1.0 - _umb_match[i]
-			_umb_tmp[i] = foreign
-			var px := (float(x) + 0.5) / float(_UMB_W)
-			var py := (float(y) + 0.5) / float(_UMB_H)
-			# the ASMR framing prior the face model leans on too
-			var dx := (px - 0.5) * aspect
-			var dy := py - 0.55
-			var prior: float = exp(-(dx * dx / 0.30 + dy * dy / 0.45))
-			var sc := foreign * prior
-			if sc > best:
-				best = sc
-				seed = i
-	var seeds := PackedInt32Array([seed])
-	var subj_n := _umb_flood(_umb_subj, seeds, _umb_tmp, 0.5, PackedByteArray(), n)
-	# Seed the shadow from the subject's own boundary.
-	var edge := PackedInt32Array()
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			if _umb_subj[i] != 0:
-				continue
-			var touch := false
-			for d in 4:
-				var nx := x + (1 if d == 0 else (-1 if d == 1 else 0))
-				var ny := y + (1 if d == 2 else (-1 if d == 3 else 0))
-				if nx >= 0 and nx < _UMB_W and ny >= 0 and ny < _UMB_H \
-						and _umb_subj[ny * _UMB_W + nx] != 0:
-					touch = true
-					break
-			if touch:
-				edge.append(i)
-	var shad_n := _umb_flood(_umb_shad, edge, _umb_shadow, 0.30, _umb_subj, int(n * 0.55))
-	# Scene coherence. Under the RIGHT surface the subject flood covers the
-	# middle of the frame; under the wrong one (her warm skin voting the cream
-	# door in as "the wall") the "subject" comes out as the far wall instead,
-	# which covers almost none of the prior. That mismatch IS the test.
-	# NOT penalised for claiming a large area: under the right hypothesis the
-	# subject legitimately absorbs every other non-wall surface (the door, the
-	# mic), which is harmless - it only ever means "no ghost there". Penalising
-	# it was what handed three of eight test frames to the door.
-	var cov := 0.0
-	var pw := 0.0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var px2 := (float(x) + 0.5) / float(_UMB_W)
-			var py2 := (float(y) + 0.5) / float(_UMB_H)
-			var dx2 := (px2 - 0.5) * aspect
-			var dy2 := py2 - 0.55
-			var pr: float = exp(-(dx2 * dx2 / 0.30 + dy2 * dy2 / 0.45))
-			pw += pr
-			if _umb_subj[i] != 0:
-				cov += pr
-	cov = cov / maxf(pw, 1e-5)
-	var frac := float(subj_n) / float(n)
-	var sane := cov * (1.0 - smoothstep(0.93, 0.99, frac))
-	var score := sane * (0.35 + 0.65 * smoothstep(10.0, 220.0, float(shad_n)))
-	return {"score": score, "subj_n": subj_n, "shad_n": shad_n, "cov": cov}
+## Where window `k` of THIS clip lives. Keyed by the clip and by the sample grid,
+## so changing the rate or the grid cannot silently read windows written under the
+## old one.
+func _pt_chunk_path(k: int) -> String:
+	return _pt_dir_path().path_join("%d_%dx%d_%02d.bin"
+		% [hash(session.video_path), _UMB_W, _UMB_H, k])
 
 
-## THE UMBRA MODEL, fitted per capture tick. Finds the surface the subject's
-## shadow falls on, the shadow region linked to her, and the direction the
-## light throws it - then packs the verdict into a small texture the field
-## simulation deposits into. See MaskSession's "umbra" doc for the whole idea.
-func _update_umbra_model(src: Image) -> void:
-	var n := _UMB_W * _UMB_H
-	if _umb_lum.size() != n:
-		_umb_lum.resize(n); _umb_cr.resize(n); _umb_cg.resize(n); _umb_cb.resize(n)
-		_umb_cmag.resize(n); _umb_match.resize(n); _umb_shadow.resize(n)
-		_umb_tmp.resize(n); _umb_subj.resize(n); _umb_shad.resize(n)
-	var aspect := 1.7778
-	if src.get_height() > 0:
-		aspect = float(src.get_width()) / float(src.get_height())
-	var img: Image = src.duplicate()
-	img.resize(_UMB_W, _UMB_H, Image.INTERPOLATE_BILINEAR)
-	if img.get_format() != Image.FORMAT_RGBA8:
-		img.convert(Image.FORMAT_RGBA8)
-	var data := img.get_data()
-	for i in n:
-		var b := i * 4
-		var r := float(data[b]) / 255.0
-		var g := float(data[b + 1]) / 255.0
-		var bl := float(data[b + 2]) / 255.0
-		var l := 0.299 * r + 0.587 * g + 0.114 * bl
-		_umb_lum[i] = l
-		var cr := r - l
-		var cg := g - l
-		var cb := bl - l
-		_umb_cr[i] = cr; _umb_cg[i] = cg; _umb_cb[i] = cb
-		_umb_cmag[i] = sqrt(cr * cr + cg * cg + cb * cb)
-	# --- which surface is the shadow on?
-	# The re-pick is the only expensive part (it runs the whole solve once per
-	# candidate), and the answer is a property of the ROOM, not of the frame -
-	# so it runs on the first tick and occasionally after, and the rest of the
-	# time the stored reference is simply reused.
-	_umb_repick_in -= 1
-	if not _umb_ref_valid or _umb_repick_in <= 0:
-		_umb_repick_in = 40   # ~6s at the 0.15s capture cadence
-		_umb_pick_reference(aspect)
-	if not _umb_ref_valid:
-		_umb_have = false
+## Called every frame while an umbra layer is live. Bootstraps once, then pumps
+## the window the playhead needs. Every branch is a cheap no-op in the steady
+## state.
+func _pt_ensure() -> void:
+	if _pt_state in ["venv", "pip", "model"]:
+		_pt_poll()
 		return
-	_umb_analyse(_umb_ref_dir, _umb_ref_mag, _umb_ref_lit)
-	var res := _umb_solve(aspect)
-	if int(res.shad_n) < 8 or int(res.subj_n) < 8:
-		_umb_have = false
+	if _pt_state == "failed" or session == null or session.video_path.is_empty():
 		return
-	# HARD CONFIDENCE GATE - draw NOTHING rather than something wrong.
-	# `cov` is how much of the centred prior the subject flood claims. When the
-	# scene is read correctly she is in the middle of frame and this sits near
-	# 0.8; when it is read inside out (the wall taken for the subject) it falls
-	# to ~0.5. Below the floor the model is not describing this scene at all,
-	# and the guard built from it would be protecting the wrong thing - which
-	# is exactly how the effect ended up painted across her face.
-	if float(res.cov) < 0.60:
-		_umb_have = false
-		if OS.has_environment("GHOST_UMBRA_DEBUG"):
-			print("UMBDBG t=%.2f REJECTED cov=%.2f (scene read incoherent - drawing nothing)"
-				% [_player.stream_position, float(res.cov)])
+	if _pt_state != "ready":
+		if not FileAccess.file_exists(_ft_bin("python")):
+			_pt_make_venv()
+		elif not FileAccess.file_exists(_pt_model_path()):
+			_pt_fetch_model()
+		else:
+			DirAccess.make_dir_recursive_absolute(_pt_dir_path())
+			_pt_log = _pt_dir_path().path_join("last_run.log")
+			_pt_chunk_n = int(POSE_CHUNK_SECS * POSE_TRACK_RATE)
+			_pt_chunk_total = maxi(1, int(ceil(session.duration / POSE_CHUNK_SECS)))
+			_pt_state = "ready"
+	_pt_pump()
+
+
+func _pt_make_venv() -> void:
+	var py := _python()
+	if py.is_empty():
+		_pt_fail("Python 3 is not installed - the umbra can't build its pose tracker.  "
+			+ Deps.hint("python"))
 		return
-	# --- centroids and the cast direction
-	var sacc := Vector2.ZERO
-	var hacc := Vector2.ZERO
-	var sw := 0.0
-	var hw := 0.0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var p := Vector2((float(x) + 0.5) / float(_UMB_W), (float(y) + 0.5) / float(_UMB_H))
-			if _umb_subj[i] != 0:
-				sacc += p; sw += 1.0
-			if _umb_shad[i] != 0:
-				hacc += p; hw += 1.0
-	var subj_c := sacc / maxf(sw, 1.0)
-	var shad_c := hacc / maxf(hw, 1.0)
-	_umb_subj_c = subj_c
-	_umb_shad_c = shad_c
-	# THE PIVOT the silhouette magnifies about. It must sit where the shadow is
-	# SOLID, because magnification is also a WINDOW: at scale S the screen can
-	# only show a 1/S-sized neighbourhood of the pivot. Anchoring at the
-	# silhouette's base (the obvious choice for "rears upward") put that window
-	# on the strip where the shadow borders her and dissolves into void, so
-	# scaling UP made the mass shrink - measured, coverage fell 19% -> 4% going
-	# from scale 1.0 to 3.5.
-	# The centroid keeps the window on the body; biasing it a little toward the
-	# base still throws the head off the top first, which is the look wanted.
-	var ylow := shad_c.y
-	for y2 in _UMB_H:
-		for x2 in _UMB_W:
-			if _umb_shad[y2 * _UMB_W + x2] != 0:
-				ylow = maxf(ylow, (float(y2) + 0.5) / float(_UMB_H))
-	var pivot := Vector2(shad_c.x, lerpf(shad_c.y, ylow, 0.35))
-	_umb_pivot = _umb_pivot.lerp(pivot, 0.12) if _umb_have else pivot
-	var d := (shad_c - subj_c) * Vector2(aspect, 1.0)
-	if d.length() > 1e-4:
-		# Deliberately glacial. The light is furniture: it does not move, and a
-		# per-frame direction is a per-frame twitch in everything downstream.
-		_umb_dir_ema = (_umb_dir_ema.lerp(d.normalized(), 0.06)).normalized()
-	# --- pack the verdict for the field sim
-	# SOFTEN BOTH MASKS BEFORE UPLOAD. The floods are binary and the grid is
-	# coarse, so handing them over as-is drew the detector's own cell staircase
-	# straight into the picture (plainly visible in the first render). Blurred,
-	# they become ramps the field can feather across.
-	# Note the asymmetry: blurring the SUBJECT mask makes its exclusion start
-	# EARLIER (the guard ramps up before the hard edge), which is the safe
-	# direction - the one property this effect may not trade away is staying
-	# off her.
-	for i in n:
-		_umb_tmp[i] = 1.0 if _umb_shad[i] != 0 else 0.0
-	_umb_blur(_umb_tmp, _umb_wlum, 2, 2)
-	for i in n:
-		_umb_tmp[i] = 1.0 if _umb_subj[i] != 0 else 0.0
-	_umb_blur(_umb_tmp, _umb_wmass, 2, 2)
-	# REACH closes the gap between the mass and the woman casting it. Right at
-	# her outline the pixels are a BLEND of her and the wall, so they read as
-	# neither cleanly - they fall to the subject flood and the shadow stops
-	# short, leaving the visible band of ungraded wall between the two.
-	# Two moves, one knob: shrink the subject mask's safety dilation, and grow
-	# the shadow mask. At 0 this is exactly the old conservative behaviour.
-	var reach := clampf(_umb_reach, 0.0, 1.0)
-	var sub_gain := lerpf(1.35, 0.55, reach)
-	var shad_gain := lerpf(1.0, 1.9, reach)
-	# Straight into a byte buffer: 5184 set_pixel() calls at ~7Hz is real cost
-	# for no reason when create_from_data takes the whole thing at once.
-	if _umb_bytes.size() != n * 4:
-		_umb_bytes.resize(n * 4)
-	for i in n:
-		var b4 := i * 4
-		_umb_bytes[b4] = int(clampf(_umb_wlum[i] * shad_gain, 0.0, 1.0) * 255.0)
-		_umb_bytes[b4 + 1] = int(clampf(_umb_shadow[i], 0.0, 1.0) * 255.0)
-		_umb_bytes[b4 + 2] = int(clampf(_umb_wmass[i] * sub_gain, 0.0, 1.0) * 255.0)
-		_umb_bytes[b4 + 3] = 255
-	_umb_region_img = Image.create_from_data(_UMB_W, _UMB_H, false, Image.FORMAT_RGBA8, _umb_bytes)
-	if _umb_region_tex == null:
-		_umb_region_tex = ImageTexture.create_from_image(_umb_region_img)
+	print("ghost pose: bootstrapping venv at ", ProjectSettings.globalize_path(FACE_VENV_DIR))
+	_pt_pid = Subprocess.start(py, PackedStringArray(
+		["-m", "venv", ProjectSettings.globalize_path(FACE_VENV_DIR)]))
+	_pt_state = "venv" if _pt_pid > 0 else "failed"
+	_set_status("⏳  Setting up the pose tracker (one-time)…" if _pt_pid > 0
+		else "⚠  Could not start python3")
+
+
+func _pt_pip_install() -> void:
+	var req := ProjectSettings.globalize_path("res://face_host/requirements.txt")
+	var args := PackedStringArray(["install", "-q"])
+	if FileAccess.file_exists(req):
+		args.append_array(PackedStringArray(["-r", req]))
 	else:
-		_umb_region_tex.update(_umb_region_img)
-	_umb_solve_eyes(subj_c, shad_c)
-	_umb_have = true
-	if OS.has_environment("GHOST_UMBRA_DEBUG"):
-		print("UMBDBG t=%.2f ref=(%.2f,%.2f,%.2f) mag=%.3f lit=%.2f subj=%d shad=%d " % [
-			_player.stream_position, _umb_ref_dir.x, _umb_ref_dir.y, _umb_ref_dir.z,
-			_umb_ref_mag, _umb_ref_lit, int(res.subj_n), int(res.shad_n)]
-			+ "dir=(%.2f,%.2f) subjc=(%.2f,%.2f) shadc=(%.2f,%.2f) score=%.2f" % [
-			_umb_dir_ema.x, _umb_dir_ema.y, subj_c.x, subj_c.y, shad_c.x, shad_c.y,
-			float(res.score)]
-			+ " eyeL=(%.2f,%.2f) eyeR=(%.2f,%.2f) rad=%.3f ok=%s herEye=(%.2f,%.2f)" % [
-			_umb_eye_l.x, _umb_eye_l.y, _umb_eye_r.x, _umb_eye_r.y, _umb_eye_rad,
-			str(_umb_eyes_ok), _face_eye_l_ema.x, _face_eye_l_ema.y])
+		args.append("mediapipe")
+	print("ghost pose: pip ", " ".join(args))
+	_pt_pid = _pt_spawn_logged(_ft_bin("pip"), args)
+	_pt_state = "pip" if _pt_pid > 0 else "failed"
+	_set_status("⏳  Installing the pose tracker (one-time, ~100 MB)…" if _pt_pid > 0
+		else "⚠  Could not start pip")
 
 
-## --- THE EYE TRACK: a real look-ahead, not a prediction ---------------------
+func _pt_fetch_model() -> void:
+	var code := "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])"
+	_pt_pid = _pt_spawn_logged(_ft_bin("python"),
+		PackedStringArray(["-c", code, POSE_MODEL_URL, _pt_model_path()]))
+	_pt_state = "model" if _pt_pid > 0 else "failed"
+	_set_status("⏳  Fetching the pose model (one-time, 9 MB)…" if _pt_pid > 0
+		else "⚠  Could not fetch the pose model")
+
+
+func _pt_poll() -> void:
+	if _pt_pid <= 0 or Subprocess.alive(_pt_pid):
+		return
+	_pt_pid = -1
+	match _pt_state:
+		"venv":
+			_pt_pip_install()
+		"pip":
+			if FileAccess.file_exists(_ft_bin("python")):
+				_pt_fetch_model()
+			else:
+				_pt_fail("the pose tracker's venv did not install (see the log)")
+		"model":
+			if FileAccess.file_exists(_pt_model_path()):
+				_pt_state = "none"   # re-enter _pt_ensure's ready branch next frame
+			else:
+				_pt_fail("the pose model did not download (see the log)")
+
+
+func _pt_fail(why: String) -> void:
+	_pt_state = "failed"
+	push_warning("ghost pose: " + why)
+	# SAY SO rather than drawing nothing and letting the author wonder. The umbra
+	# has no fallback at all - its whole shape is the track - so silence here is
+	# indistinguishable from the effect being switched off.
+	_set_status("⚠  The umbra can't see the body - " + why)
+
+
+## `background` runs the child at the lowest priority the OS will hand out, and
+## the pose tracker is ALWAYS run that way.
 ##
-## Velocity extrapolation cannot anticipate a word or a flick of the head; it
-## can only continue whatever just happened, which on real footage is mostly
-## detection jitter. To move BEFORE she does, the future has to be known, so
-## the whole clip is analysed up front: ffmpeg decodes it once at grid
-## resolution and one sample per _UMBRA_INTERVAL, a worker thread fits her eyes
-## in every frame, and playback then simply reads the track at `t + Lead`.
-##
-## Deterministic by construction (a pure function of the clip), so the live
-## preview and the export relaunch lead by exactly the same amount, and the
-## per-frame cost at playback is one array lookup.
-func _umb_ensure_track() -> void:
-	if _umb_track_state != "none" or session == null or session.video_path.is_empty():
-		return
-	var src := ProjectSettings.globalize_path(session.video_path)
-	if not FileAccess.file_exists(src):
-		return
-	# user:// deliberately: a raw dump inside res://masks would be scanned by
-	# the editor's importer, which is the same class of trouble the truncated
-	# audio.wav caused (see _promote_part).
-	var dir := OS.get_user_data_dir() + "/umbra_tracks"
-	DirAccess.make_dir_recursive_absolute(dir)
-	_umb_track_raw = dir + "/" + str(hash(session.video_path)) + ".raw"
-	var args := PackedStringArray([
-		"-y", "-loglevel", "error", "-i", src,
-		"-vf", "scale=%d:%d,fps=%f" % [_UMB_W, _UMB_H, 1.0 / _UMBRA_INTERVAL],
-		"-f", "rawvideo", "-pix_fmt", "rgb24", _umb_track_raw + ".part"])
-	_umb_track_pid = Subprocess.start("ffmpeg", args, "umbra track")
-	if _umb_track_pid <= 0:
-		_umb_track_state = "failed"
-		return
-	_umb_track_state = "decoding"
-	_set_status("⏳  Reading ahead for the umbra…")
+## WHY, and it is not tidiness: mediapipe saturates every core it is given, and
+## ghost's video decode and the editor's own frame both run on this machine's
+## other ones. Starve the decode and `_player.stream_position` stops advancing;
+## the A/V rule in `_process` then sees audio ahead of video, HOLDS the audio
+## (see the long note there), and the hold cannot release while the starvation
+## continues. Reported as "the sound no longer works in masking mode... it's
+## breaking the audio at launch" - and nothing had touched the audio at all. A
+## background job that can stall the foreground is a background job in name only.
+func _pt_spawn_logged(exe: String, args: PackedStringArray, background := false) -> int:
+	var quoted := PackedStringArray()
+	if background:
+		# `nice` is coreutils, present wherever `setpriv` (which Subprocess already
+		# depends on) is. If it is missing the shell reports it and the child never
+		# starts, which surfaces as a failed window rather than as a silent
+		# full-speed run - the honest failure of the two.
+		quoted.append("nice")
+		quoted.append("-n")
+		quoted.append("19")
+	for a in [exe] + Array(args):
+		quoted.append('"' + String(a).replace('"', '\\"') + '"')
+	return Subprocess.start("/bin/bash", PackedStringArray(
+		["-c", " ".join(quoted) + ' >"' + _pt_log + '" 2>&1']))
 
 
-## Poll the decode, then hand the raw dump to a worker thread. Called per frame
-## while an umbra layer is live; both halves are cheap no-ops once done.
-func _umb_poll_track() -> void:
-	if _umb_track_state == "decoding":
-		if Subprocess.alive(_umb_track_pid):
+## THE PUMP. Which windows are wanted is a pure function of the playhead: the one
+## it is in, and the one after it (playback walks forward, and Lead already reads
+## past the current frame). Anything already on disk is loaded; the nearest thing
+## missing is read; everything far away is dropped.
+func _pt_pump() -> void:
+	if _player == null:
+		return
+	var t := _player.stream_position + clampf(_umb_lead, 0.0, 2.0)
+	var here := clampi(int(floor(t / POSE_CHUNK_SECS)), 0, maxi(0, _pt_chunk_total - 1))
+	var want: Array[int] = [here]
+	# The guard reads the playhead itself, which is a different window from the
+	# lead's whenever the playhead sits within Lead of a boundary.
+	var guard_k := clampi(int(floor(_player.stream_position / POSE_CHUNK_SECS)),
+		0, maxi(0, _pt_chunk_total - 1))
+	if guard_k != here:
+		want.append(guard_k)
+	if here + 1 < _pt_chunk_total:
+		want.append(here + 1)
+
+	_pt_poll_job(here)
+
+	for k in want:
+		if _pt_chunks.has(k):
+			continue
+		var path := _pt_chunk_path(k)
+		if FileAccess.file_exists(path):
+			_pt_load_chunk(k, path)
+		elif _pt_job < 0 and not _pt_missing.has(k):
+			_pt_start_chunk(k)
+			break   # one child at a time: two of these compete for the same cores
+
+	# EVICT WHAT WE HAVE WALKED AWAY FROM. Each window is ~1.3 MB and a long clip
+	# scrubbed end to end would otherwise keep every one ever visited.
+	if _pt_chunks.size() > POSE_CHUNK_KEEP:
+		var far := -1
+		var far_d := -1
+		for k in _pt_chunks:
+			var d: int = absi(int(k) - here)
+			if d > far_d:
+				far_d = d
+				far = int(k)
+		if far >= 0 and far_d > 1:
+			_pt_chunks.erase(far)
+
+
+## Progress for the window being read, reported as the window's own progress -
+## "34% of the whole clip" was the old message and it was true and useless, because
+## the thing the author is waiting for is twenty seconds of it.
+func _pt_poll_job(here: int) -> void:
+	if _pt_job < 0:
+		return
+	if Subprocess.alive(_pt_job_pid):
+		# Four times a second, not sixty. The child writes this once a second, so a
+		# read per frame is fifteen file opens for every value that changes - on
+		# the main thread, in a loop this file has already had to make quiet once.
+		var now := Time.get_ticks_msec()
+		if now - _pt_progress_ms < 250:
 			return
-		if not FileAccess.file_exists(_umb_track_raw + ".part"):
-			_umb_track_state = "failed"
-			return
-		DirAccess.rename_absolute(_umb_track_raw + ".part", _umb_track_raw)
-		_umb_fit_asp = _source_aspect()   # snapshot before the worker reads it
-		_umb_track_thread = Thread.new()
-		_umb_track_thread.start(_umb_fit_track_threaded.bind(_umb_track_raw))
-		_umb_track_state = "fitting"
-		_set_status("⏳  Reading ahead for the umbra…")
+		_pt_progress_ms = now
+		var pf := _pt_dir_path().path_join("progress")
+		var frac := 0.0
+		if FileAccess.file_exists(pf):
+			var f := FileAccess.open(pf, FileAccess.READ)
+			if f != null:
+				frac = f.get_as_text().strip_edges().to_float()
+		_set_status("⏳  Reading the body around %s…  %d%%"
+			% [_clock(float(_pt_job) * POSE_CHUNK_SECS), int(clampf(frac, 0.0, 1.0) * 100.0)])
 		return
-	if _umb_track_state == "fitting":
-		if _umb_track_thread == null or _umb_track_thread.is_alive():
-			return
-		var got: Variant = _umb_track_thread.wait_to_finish()
-		_umb_track_thread = null
-		_umb_track = got if got is PackedVector3Array else PackedVector3Array()
-		# HER RESTING PLACE, from the whole clip at once rather than an EMA
-		# chasing it. Deviations are measured from this, so the ghost's gaze is
-		# steady when she is and swings only when she actually moves.
-		var acc := Vector2.ZERO
-		var n := 0
-		for s in _umb_track:
-			if s.z > 0.0:
-				acc += Vector2(s.x, s.y)
-				n += 1
-		_umb_track_rest = acc / maxf(float(n), 1.0) if n > 0 else Vector2(0.5, 0.35)
-		_umb_track_state = "ready" if n > 4 else "failed"
-		if OS.has_environment("GHOST_UMBRA_DEBUG"):
-			print("UMBDBG track %s: %d samples, %d with a face, rest=(%.3f,%.3f)"
-				% [_umb_track_state, _umb_track.size(), n, _umb_track_rest.x, _umb_track_rest.y])
+	_pt_job_pid = -1
+	var done := _pt_job
+	_pt_job = -1
+	var path := _pt_chunk_path(done)
+	if FileAccess.file_exists(path):
+		# NOT if it is already resident. The pump's own "is it on disk yet" branch
+		# can reach the file in the same frame the child finishes, and loading it
+		# twice DOUBLE-COUNTS its confidence into the accumulated cast direction -
+		# measured, window 0 alone took the weight from 0.90 to 1.80, which would
+		# have quietly outvoted every window read after it.
+		if not _pt_chunks.has(done):
+			_pt_load_chunk(done, path)
+		_set_status("✓  The umbra can see her here")
+	else:
+		# REMEMBER THE FAILURE, or the pump re-runs the same doomed child every
+		# frame for the rest of the session. A window with no pose in it at all
+		# (a title card, a cutaway) is a legitimate outcome and lands here too.
+		_pt_missing[done] = true
+		if done == here:
+			_set_status("⚠  No body found around " + _clock(float(done) * POSE_CHUNK_SECS))
 
 
-## Worker: fit her eyes in every sampled frame of the raw dump.
-## Returns PackedVector3Array of (eye_mid.x, eye_mid.y, eye_separation); z <= 0
-## marks a frame where no face was found, so lookups can skip it.
-func _umb_fit_track_threaded(path: String) -> PackedVector3Array:
-	var out := PackedVector3Array()
+func _pt_start_chunk(k: int) -> void:
+	var script := ProjectSettings.globalize_path("res://face_host/pose_track.py")
+	if not FileAccess.file_exists(script):
+		_pt_fail("face_host/pose_track.py is missing")
+		return
+	# The ORIGINAL source where we still have it, for the same reason the face
+	# track prefers it: the prepared .ogv is theora q6 and its chroma blocks are
+	# exactly what a segmentation model has to see past.
+	var src := session.source_path
+	if src.is_empty() or not FileAccess.file_exists(src):
+		src = ProjectSettings.globalize_path(session.video_path)
+	_pt_job_pid = _pt_spawn_logged(_ft_bin("python"), PackedStringArray([
+		script, "--video", src, "--out", _pt_chunk_path(k), "--model", _pt_model_path(),
+		"--rate", str(POSE_TRACK_RATE), "--mask-w", str(_UMB_W), "--mask-h", str(_UMB_H),
+		"--start", str(float(k) * POSE_CHUNK_SECS), "--duration", str(POSE_CHUNK_SECS),
+		"--progress", _pt_dir_path().path_join("progress")]), true)
+	if _pt_job_pid <= 0:
+		_pt_missing[k] = true
+		_pt_fail("could not start the pose tracker")
+		return
+	_pt_job = k
+	print("ghost pose: reading window %d (%s)" % [k, _clock(float(k) * POSE_CHUNK_SECS)])
+
+
+func _clock(secs: float) -> String:
+	return "%d:%02d" % [int(secs) / 60, int(secs) % 60]
+
+
+## Read one window. Rejects and DELETES anything that is not exactly the file this
+## reader expects, so a stale grid or a half-written chunk is rebuilt rather than
+## read as plausible nonsense.
+func _pt_load_chunk(k: int, path: String) -> void:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
-		return out
-	var stride := _UMB_W * _UMB_H * 3
-	var total := int(f.get_length() / stride)
-	for k in total:
-		out.append(_umb_fit_eyes(f.get_buffer(stride)))
+		_pt_missing[k] = true
+		return
+	if f.get_buffer(4).get_string_from_ascii() != "GST2":
+		f.close()
+		DirAccess.remove_absolute(path)
+		return
+	var _version := f.get_32()
+	var rate := f.get_float()
+	var count := f.get_32()
+	var points := f.get_32()
+	var mw := f.get_32()
+	var mh := f.get_32()
+	var start := f.get_32()
+	var dx := f.get_float()
+	var dy := f.get_float()
+	var conf := f.get_float()
+	var cells := mw * mh
+	var stride := 1 + points * 8 + points * 4 + cells
+	if count <= 0 or points <= 0 or cells <= 0 \
+			or f.get_length() != POSE_TRACK_HEADER + count * stride:
+		f.close()
+		DirAccess.remove_absolute(path)
+		_pt_missing[k] = true
+		push_warning("ghost pose: window %d was truncated - it will be read again" % k)
+		return
+	# THE HEADER'S OWN START INDEX IS THE AUTHORITY, not the filename. A window
+	# whose samples do not sit where this reader thinks they do would put the ghost
+	# on the wrong frame, silently, which is the whole failure class the format
+	# check exists for.
+	if start != k * int(rate * POSE_CHUNK_SECS):
+		f.close()
+		DirAccess.remove_absolute(path)
+		_pt_missing[k] = true
+		push_warning("ghost pose: window %d starts at sample %d, expected %d - discarded"
+			% [k, start, k * int(rate * POSE_CHUNK_SECS)])
+		return
+	_pt_rate = rate
+	_pt_points = points
+	_pt_mw = mw
+	_pt_mh = mh
+	_pt_chunk_n = int(rate * POSE_CHUNK_SECS)
+	var found := PackedByteArray()
+	var xy := PackedFloat32Array()
+	var vis := PackedFloat32Array()
+	var mask := PackedByteArray()
+	found.resize(count)
+	# APPENDED IN WHOLE BUFFERS, never cell by cell. A window is 240 samples of
+	# 5184 mask cells, and a GDScript loop that copies one byte at a time is over a
+	# million interpreted iterations per window - a visible hitch on a file that
+	# reads off the disk in a fraction of one.
+	var found_n := 0
+	for i in count:
+		found[i] = f.get_8()
+		found_n += found[i]
+		xy.append_array(f.get_buffer(points * 8).to_float32_array())
+		vis.append_array(f.get_buffer(points * 4).to_float32_array())
+		mask.append_array(f.get_buffer(cells))
 	f.close()
-	return out
+	_pt_chunks[k] = {"count": count, "found": found, "xy": xy, "vis": vis, "mask": mask}
+	_pt_slot = -1
+	# The throw, accumulated. One window measures it poorly (measured on the
+	# reference clip: conf 0.97 over ten minutes, 0.45 over twenty seconds, 0.06
+	# over six); weighting by each window's own confidence means a dozen of them
+	# converge on the right answer while a window that measured nothing adds
+	# nothing rather than dragging it toward its noise.
+	var d := Vector2(dx, dy)
+	if conf > 0.0 and d.length() > 1e-4:
+		_pt_dir_acc += d.normalized() * conf
+		_pt_dir_w += conf
+	_pt_conf = _pt_dir_w
+	_pt_dir = _pt_dir_acc.normalized() if _pt_dir_w > 0.12 else Vector2(1.0, 0.0)
+	print("ghost pose: window %d ready - %d samples, body in %d, cast (%.2f, %.2f) w %.2f"
+		% [k, count, found_n, _pt_dir.x, _pt_dir.y, _pt_dir_w])
 
 
-## One frame's eye fit, on a raw rgb24 grid buffer. Deliberately the same
-## school as the clown's face model: an EYE is a DARK spot in a SKIN
-## neighbourhood, so candidates are weighted by the BLURRED face mass - dark
-## weighted by its own mass finds nothing (an eye carries no skin colour), and
-## dark weighted by a flat floor lets the hair either side of the face win,
-## which blows the pair apart.
-func _umb_fit_eyes(buf: PackedByteArray) -> Vector3:
-	var n := _UMB_W * _UMB_H
-	if buf.size() < n * 3:
-		return Vector3(0.5, 0.35, -1.0)
-	var lum := PackedFloat32Array(); lum.resize(n)
-	var mass := PackedFloat32Array(); mass.resize(n)
-	var mean_l := 0.0
-	for i in n:
-		var b := i * 3
-		var r := float(buf[b]) / 255.0
-		var g := float(buf[b + 1]) / 255.0
-		var bl := float(buf[b + 2]) / 255.0
-		lum[i] = 0.299 * r + 0.587 * g + 0.114 * bl
-		mean_l += lum[i]
-	mean_l /= float(n)
-	var acc := Vector2.ZERO
-	var wsum := 0.0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var b := i * 3
-			var r := float(buf[b]) / 255.0
-			var g := float(buf[b + 1]) / 255.0
-			var bl := float(buf[b + 2]) / 255.0
-			var l := lum[i]
-			var cr := r - l
-			var cb := bl - l
-			var skin := 0.0
-			if cr > 0.01 and l > 0.15 and cr > cb:
-				skin = clampf(cr * 6.0, 0.0, 1.0) * clampf((cr - cb) * 4.0, 0.0, 1.0)
-			# the brightness cue that carries near-monochrome grades
-			var bright: float = smoothstep(mean_l + 0.06, mean_l + 0.30, l)
-			var px := (float(x) + 0.5) / float(_UMB_W)
-			var py := (float(y) + 0.5) / float(_UMB_H)
-			var prior: float = exp(-(pow((px - 0.5) * _umb_fit_asp, 2.0) + pow(py - 0.45, 2.0)) / 0.18)
-			var wt := maxf(skin * 0.9, bright * 0.85) * prior
-			mass[i] = wt
-			acc += Vector2(px, py) * wt
-			wsum += wt
-	if wsum <= 0.5:
-		return Vector3(0.5, 0.35, -1.0)
-	var c := acc / wsum
-	# The face's own half-width, aspect-corrected - the yardstick every
-	# constraint below is expressed in. Without it the eye search has no sense
-	# of scale and happily returns the hair on either side of the head as a
-	# "pair", which is what made the sockets enormous and far too far apart.
-	# Measured over the EYE BAND only. Taken across the whole mass it is her
-	# shoulders and arms as much as her head, which inflated it to the point
-	# that the separation constraint below permitted almost anything.
-	var vxx := 0.0
-	var vw := 0.0
-	for y in _UMB_H:
-		var pyb := (float(y) + 0.5) / float(_UMB_H)
-		if pyb > c.y + 0.02 or pyb < c.y - 0.22:
-			continue
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var dxp := ((float(x) + 0.5) / float(_UMB_W) - c.x) * _umb_fit_asp
-			vxx += dxp * dxp * mass[i]
-			vw += mass[i]
-	var half_w: float = clampf(sqrt(maxf(1e-5, vxx / maxf(vw, 1e-5))) * 1.35, 0.04, 0.26)
-	# separable box blur of the mass, radius 3 - the "skin neighbourhood"
-	var mb := PackedFloat32Array(); mb.resize(n)
-	var tmp := PackedFloat32Array(); tmp.resize(n)
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var s := 0.0
-			for k in range(-3, 4):
-				s += mass[y * _UMB_W + clampi(x + k, 0, _UMB_W - 1)]
-			tmp[y * _UMB_W + x] = s / 7.0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var s2 := 0.0
-			for k in range(-3, 4):
-				s2 += tmp[clampi(y + k, 0, _UMB_H - 1) * _UMB_W + x]
-			mb[y * _UMB_W + x] = s2 / 7.0
-	# two darkest clusters in the upper face band, split left/right of centre
-	var la := Vector2.ZERO
-	var lw := 0.0
-	var ra := Vector2.ZERO
-	var rw := 0.0
-	for y in _UMB_H:
-		for x in _UMB_W:
-			var i := y * _UMB_W + x
-			var px2 := (float(x) + 0.5) / float(_UMB_W)
-			var py2 := (float(y) + 0.5) / float(_UMB_H)
-			if py2 > c.y + 0.02 or py2 < c.y - 0.22:
-				continue
-			# Inside the FACE, not merely above its centroid: an eye sits well
-			# within the head's half-width, and letting candidates range to the
-			# frame edge is how hair wins both clusters.
-			if absf((px2 - c.x) * _umb_fit_asp) > half_w * 0.85:
-				continue
-			var dark := maxf(0.0, mean_l - lum[i])
-			var wv := dark * mb[i]
-			wv *= wv
-			if wv <= 0.0:
-				continue
-			if px2 < c.x:
-				la += Vector2(px2, py2) * wv; lw += wv
-			else:
-				ra += Vector2(px2, py2) * wv; rw += wv
-	if lw <= 1e-6 or rw <= 1e-6:
-		return Vector3(c.x, c.y - 0.08, -1.0)
-	var el := la / lw
-	var er := ra / rw
-	# SEPARATION COMES FROM THE HEAD'S WIDTH, not from the fitted pair.
-	# The darkest-cluster fit locates the MIDPOINT reliably - two dark regions
-	# either side of the face centre average to about the right place even when
-	# one of them is really an eyebrow or a strand of hair - but their spacing
-	# is exactly the quantity that degrades, and it was coming back at 0.37
-	# where a face that size supports about 0.12. Human eye separation is
-	# close to half the head's width, which is a far steadier thing to measure.
-	var sep_fit := absf(er.x - el.x) * _umb_fit_asp
-	if sep_fit < half_w * 0.30 or sep_fit > half_w * 2.2:
-		return Vector3(c.x, c.y - 0.08, -1.0)   # the fit disagrees with the anatomy
-	# 0.45, calibrated against her actual face on the reference clip rather than
-	# from the textbook "eyes are half a head apart": the mass-derived half_w
-	# still runs wide because the eye band catches hair and neck, and at 0.90
-	# the ghost's eyes came out twice her spacing.
-	return Vector3((el.x + er.x) * 0.5, (el.y + er.y) * 0.5, half_w * 0.45)
+## Is there a usable sample at clip time `t`, and which one? GLOBAL sample index,
+## or -1. Deliberately the NEAREST sample and not an interpolation: the silhouette
+## is a bitmap and cross-fading two of them makes a ghost with two outlines.
+## Position smoothness comes from the field sim, which advects at frame rate over
+## whatever the deposit does at 12 Hz.
+func _pt_slot_at(t: float) -> int:
+	if _pt_state != "ready" or _pt_chunk_n <= 0:
+		return -1
+	var i := maxi(0, int(round(t * _pt_rate)))
+	if _pt_found_at(i):
+		return i
+	# Hold the nearest real sample rather than dropping the ghost for one frame -
+	# a body that blinks out on a missed detection is a worse artifact than a body
+	# a twelfth of a second stale. Bounded to within this window, because reaching
+	# into one that is not loaded is how a hold becomes a jump across a gap.
+	for k in range(1, 8):
+		if i - k >= 0 and _pt_found_at(i - k):
+			return i - k
+		if _pt_found_at(i + k):
+			return i + k
+	return -1
 
 
-## The track sampled at clip time `t`, already carrying the Lead. Returns
-## z <= 0 when no usable sample exists there.
-func _umb_track_at(t: float) -> Vector3:
-	if _umb_track.is_empty():
-		return Vector3(0.5, 0.35, -1.0)
-	var fpos := t / _UMBRA_INTERVAL
-	var i := clampi(int(floor(fpos)), 0, _umb_track.size() - 1)
-	var j := clampi(i + 1, 0, _umb_track.size() - 1)
-	var a := _umb_track[i]
-	var b := _umb_track[j]
-	if a.z <= 0.0:
-		return b
-	if b.z <= 0.0:
-		return a
-	return a.lerp(b, clampf(fpos - float(i), 0.0, 1.0))
+## Global sample index -> the window holding it, or an empty Dictionary.
+func _pt_chunk_of(i: int) -> Dictionary:
+	if _pt_chunk_n <= 0:
+		return {}
+	var k := i / _pt_chunk_n
+	var c = _pt_chunks.get(k, null)
+	if c == null:
+		return {}
+	if i - k * _pt_chunk_n >= int(c["count"]):
+		return {}
+	return c
 
 
-## Where the GHOST's eyes sit, in screen space.
+func _pt_found_at(i: int) -> bool:
+	if i < 0:
+		return false
+	var c := _pt_chunk_of(i)
+	if c.is_empty():
+		return false
+	return c["found"][i - (i / _pt_chunk_n) * _pt_chunk_n] != 0
+
+
+## Landmark `idx` of global sample `i`, in frame UV.
+func _pt_point(i: int, idx: int) -> Vector2:
+	var c := _pt_chunk_of(i)
+	if c.is_empty():
+		return Vector2(0.5, 0.5)
+	var b := ((i - (i / _pt_chunk_n) * _pt_chunk_n) * _pt_points + idx) * 2
+	var xy: PackedFloat32Array = c["xy"]
+	return Vector2(xy[b], xy[b + 1])
+
+
+## ...and how much the model believes it. MediaPipe reports a landmark it cannot
+## see - one off the bottom of a half-body framing, or an ear behind a turned
+## head - with a plausible EXTRAPOLATED position and a visibility near zero, so
+## the coordinate alone never says "no". Measured on the reference clip: the hips
+## come back at y = 1.37 (below the picture) on every sample, at visibility 0.00.
+func _pt_vis_at(i: int, idx: int) -> float:
+	var c := _pt_chunk_of(i)
+	if c.is_empty():
+		return 0.0
+	var vis: PackedFloat32Array = c["vis"]
+	return vis[(i - (i / _pt_chunk_n) * _pt_chunk_n) * _pt_points + idx]
+
+
+## Upload global sample `i`'s silhouette as the field sim's source texture.
 ##
-## Her eyes are known in screen space (the face model). The shadow is her,
-## displaced - so carrying her eyes across the CAST OFFSET (shadow centroid
-## minus subject centroid) lands them at the corresponding point of the
-## silhouette. That result then rides the same magnify-about-pivot-and-pan
-## transform the rest of the body does, so the eyes stay put in the ghost no
-## matter how it is scaled or moved.
+## R and B are the SAME mask at two dilations, and that is the whole channel
+## design: R is the body the throw magnifies, B is the guard read at plain screen
+## uv, and the guard is grown a cell so its exclusion starts BEFORE her outline
+## rather than at it. Erring outward is the safe direction - the one property this
+## effect may never trade away is staying off her.
+## THE TWO CHANNELS COME FROM TWO DIFFERENT MOMENTS, and that is the whole point.
+## The BODY is her silhouette at `t + Lead` - the ghost is ahead of her, which is
+## the effect. The GUARD is her silhouette NOW, because the guard's job is to keep
+## the ghost off the woman who is on screen, and she is on screen at `t`.
 ##
-## THE LEAD is what sells the puppeteering: the ghost has to arrive before she
-## does. This extrapolates along a smoothed velocity rather than the raw
-## frame-to-frame delta, because the raw delta is mostly detection jitter and
-## multiplying jitter by a lead time is just amplified twitch.
-func _umb_solve_eyes(subj_c: Vector2, shad_c: Vector2) -> void:
-	if _umb_track_state != "ready" or _player == null:
-		_umb_eyes_ok = false
+## Uploading one sample for both is what produced the reported artifact: with Lead
+## wound up, a moving hand cut a hand-shaped hole in the ghost a third of a second
+## AHEAD of the hand, and left the real hand uncovered - a hard-edged gap sliding
+## through the mass with nothing where it had been.
+func _pt_upload_mask(i: int, guard_i: int) -> void:
+	var c := _pt_chunk_of(i)
+	if c.is_empty():
 		return
-	# THE LEAD IS A LOOK-AHEAD. The track holds her eyes for the WHOLE clip, so
-	# this reads the frame she has not reached yet and the ghost genuinely
-	# moves first - it anticipates a word or a turn of the head, which no
-	# amount of extrapolating the last two samples ever could.
-	var t_ahead := _player.stream_position + clampf(_umb_lead, 0.0, 2.0)
-	var s := _umb_track_at(t_ahead)
-	if s.z <= 0.0:
-		_umb_eyes_ok = false
-		return
-	var her := Vector2(s.x, s.y)
-	var unit := maxf(0.02, s.z)
-	var dev := her - _umb_track_rest
-
-	# THE EYES ARE ANCHORED TO THE VISIBLE MASS, NOT TO ANATOMY.
-	# Carrying her eyes across the cast offset and then through the silhouette
-	# magnification is geometrically correct and useless: at Scale 2.2 it put
-	# them at y = -0.45, off the top of the frame, because a ghost twice her
-	# size genuinely has its head above the picture. Eyes and looming would be
-	# mutually exclusive. So the sockets sit in the upper body of the mass
-	# WHEREVER that lands on screen, and her movement drives their DEVIATION
-	# from that rest position - amplified, so a small turn of her head throws
-	# the ghost's gaze further than her own.
-	var head := (shad_c - _umb_pivot) * _umb_scale + _umb_pivot + _umb_pan
-	# Modest, and NOT multiplied by the scale: the transform has already moved
-	# this point: adding a scale-multiplied lift on top drove the sockets into
-	# the top edge clamp at y=0.05 and pinned them there.
-	# Barely any lift at all. The transformed centroid IS the middle of the
-	# visible mass - which is where there is something to cut sockets OUT of.
-	# Lifting off it put them in the thin upper fringe, where hollowing 92% of
-	# very little left the sockets no brighter than the body around them.
-	head.y -= 0.02
-	head += dev * 1.9
-	# A small nudge outward, clear of her outline - at the raw shadow centroid
-	# the inner socket lands on the guarded band and has no mass to be cut from.
-	# Deliberately fixed rather than proportional to the fitted separation:
-	# scaling it by `unit` compounded a bad fit into a mass-wide displacement,
-	# which is how the pair ended up straddling the mass edge with one socket
-	# out on bare wall.
-	head += _umb_dir_ema * 0.045
-	head.x = clampf(head.x, 0.06, 0.94)
-	# Floor well clear of the frame edge: jammed at 0.08 the sockets sat in the
-	# top strip where the wall itself is darkest, so hollowing them revealed
-	# almost nothing to see.
-	head.y = clampf(head.y, 0.10, 0.80)
-	var sc := clampf(_umb_scale, 0.6, 2.4)
-	# Bounded, and horizontal: the fitted separation is itself a clamped
-	# estimate, and multiplying its high end by the silhouette scale put the
-	# two sockets a sixth of the frame apart, reading as unrelated holes.
-	var asp := 1.7778
-	var vt2 := _player.get_video_texture()
-	if vt2 != null and vt2.get_height() > 0:
-		asp = float(vt2.get_width()) / float(vt2.get_height())
-	# HER separation, carried into the ghost and grown WITH the umbra. The
-	# ceiling is high enough that Scale genuinely moves it instead of pinning
-	# it at a clamp (both the spacing and the radius used to sit on their
-	# limits, which is why the eyes never changed size with the mass).
-	# DAMPED growth rather than a hard ceiling. Scaling the spacing linearly and
-	# then clamping it meant the clamp bound from about Scale 1.5 upward, so
-	# the eyes stopped responding to Scale entirely - the "they do not adjust
-	# with scale" report. A sub-linear exponent lets them keep growing with the
-	# umbra all the way up without ever reaching the width that read as two
-	# unrelated holes. At Scale 1 they match HER spacing exactly.
-	var esc: float = pow(sc, 0.6)
-	var half := Vector2(clampf(unit / asp * 0.5 * esc, 0.010, 0.14), 0.0)
-	_umb_eye_l = head - half
-	_umb_eye_r = head + half
-	# Sized FROM the spacing, so a socket is always a plausible fraction of the
-	# gap between the pair rather than an independent number that can swell
-	# until the two overlap.
-	_umb_eye_rad = clampf(half.x * 0.62, 0.008, 0.075)
-	_umb_eyes_ok = true
-
-
-## Choose the wall. Buckets cells by their chroma vector's own angle (a surface
-## is a material is one direction), takes the largest few by area, and runs the
-## whole solve for each - the winner is the hypothesis that produces a coherent
-## scene, not the one that looks best locally. Every LOCAL statistic is
-## contaminated by the fact that her skin, hair and shirt are warm exactly like
-## the cream door, which is what defeated area-based and luminance-spread-based
-## picks on the reference clip.
-##
-## The key colour biases this hard: point the picker at the wall and that
-## surface wins outright. Left alone, the automatic choice stands.
-func _umb_pick_reference(aspect: float) -> void:
-	var n := _UMB_W * _UMB_H
-	const NB := 12
-	var cnt := PackedInt32Array(); cnt.resize(NB)
-	var sx := PackedFloat32Array(); sx.resize(NB)
-	var sy := PackedFloat32Array(); sy.resize(NB)
-	var sz := PackedFloat32Array(); sz.resize(NB)
-	var lums: Array = []
-	for b in NB:
-		cnt[b] = 0; sx[b] = 0.0; sy[b] = 0.0; sz[b] = 0.0
-		lums.append(PackedFloat32Array())
-	for i in n:
-		var cmag := _umb_cmag[i]
-		if cmag <= 0.015:
-			continue
-		var dx := _umb_cr[i] / cmag
-		var dy := _umb_cg[i] / cmag
-		var dz := _umb_cb[i] / cmag
-		var ang: float = atan2(dz - dy, dx - dy)
-		var b := int((ang + PI) / TAU * float(NB)) % NB
-		if b < 0:
-			b += NB
-		cnt[b] += 1
-		sx[b] += _umb_cr[i]; sy[b] += _umb_cg[i]; sz[b] += _umb_cb[i]
-		lums[b].append(_umb_lum[i])
-	# rank buckets by area, keep the top few as hypotheses
-	var order: Array = []
-	for b in NB:
-		if cnt[b] >= 40:
-			order.append(b)
-	order.sort_custom(func(a, c): return cnt[a] > cnt[c])
-	if order.is_empty():
-		_umb_ref_valid = false
-		return
-	# The picked key colour's own chroma direction - what the user means by
-	# "this is the wall".
-	var want := Vector3.ZERO
-	if _umb_hue >= 0.0:
-		var kc := Color.from_hsv(_umb_hue, 1.0, 1.0)
-		var kl := 0.299 * kc.r + 0.587 * kc.g + 0.114 * kc.b
-		want = Vector3(kc.r - kl, kc.g - kl, kc.b - kl).normalized()
-	# PASS 1 - score every candidate on scene coherence ALONE, with no
-	# reference to the picked colour whatsoever.
-	var cands: Array = []
-	var top_base := 0.0
-	for k in mini(3, order.size()):
-		var b: int = order[k]
-		var mean := Vector3(sx[b], sy[b], sz[b]) / float(cnt[b])
-		var mag := mean.length()
-		if mag <= 1e-5:
-			continue
-		var dir := mean / mag
-		var ls: PackedFloat32Array = lums[b]
-		var sorted := Array(ls)
-		sorted.sort()
-		var lit: float = sorted[clampi(int(float(sorted.size()) * 0.88), 0, sorted.size() - 1)]
-		_umb_analyse(dir, mag, lit)
-		var r := _umb_solve(aspect)
-		var base := float(r.score)
-		if int(r.shad_n) < 8:
-			base *= 0.2
-		cands.append({"dir": dir, "mag": mag, "lit": lit, "base": base, "cov": float(r.cov)})
-		top_base = maxf(top_base, base)
-	if cands.is_empty():
-		_umb_ref_valid = false
-		return
-	# PASS 2 - the picked colour BREAKS TIES between plausible surfaces; it may
-	# never force an implausible one.
-	#
-	# This used to be an unconditional x(1 + 1.6 * affinity), up to x2.4, while
-	# coherence only separates the right answer from the wrong one by about
-	# x1.66. The stored default hue is 0.02 - reddish - which aligns with her
-	# skin and the cream door, so a freshly placed marker actively drove the
-	# detector to call HER the wall. It then read the scene inside out: the
-	# teal wall became the "subject", she became the "shadow", and because the
-	# guard is built from the subject mask the effect drew straight over her.
-	# Every earlier test hardcoded a teal pick and so never saw it.
-	var plausible := top_base * 0.75
-	var best: Dictionary = cands[0]
-	var best_score := -1.0
-	for c in cands:
-		var score: float = c.base
-		if _umb_hue >= 0.0 and score >= plausible:
-			score *= 1.0 + 0.45 * maxf(0.0, (c.dir as Vector3).dot(want))
-		if score > best_score:
-			best_score = score
-			best = c
-	var best_dir: Vector3 = best.dir
-	var best_mag: float = best.mag
-	var best_lit: float = best.lit
-	_umb_ref_cov = float(best.cov)
-	if _umb_ref_valid and best_dir.dot(_umb_ref_dir) > 0.5:
-		# same surface as before - glide, so bucket quantization can't make the
-		# reference (and with it every threshold) jitter between ticks
-		_umb_ref_dir = _umb_ref_dir.lerp(best_dir, 0.25).normalized()
-		_umb_ref_mag = lerpf(_umb_ref_mag, best_mag, 0.25)
-		_umb_ref_lit = lerpf(_umb_ref_lit, best_lit, 0.25)
+	var gc := _pt_chunk_of(guard_i)
+	if gc.is_empty():
+		gc = c            # no sample for now: a stale guard beats no guard
+		guard_i = i
+	var cells := _pt_mw * _pt_mh
+	if _pt_bytes.size() != cells * 4:
+		_pt_bytes.resize(cells * 4)
+	var src: PackedByteArray = c["mask"]
+	var gsrc: PackedByteArray = gc["mask"]
+	# A CENTRED THREE-TAP OVER TIME, and centred is the point. The segmentation
+	# wobbles a cell or two per sample and the track runs at 12 Hz, so the raw
+	# outline both shimmers and STEPS - which is most of "the edges are very
+	# jittery and unstable". An EMA would fix the shimmer and buy it with lag,
+	# which on this effect is the one thing that must not be spent: the Lead is
+	# the whole point. Because the track is fitted OFFLINE the future is already
+	# on disk, so the neighbour on each side can be weighted equally - zero phase,
+	# the mask arrives no later than it did, and the wobble is gone. Same argument
+	# as the face track's `_ft_point` smoothing, one dimension up.
+	# Offsets of the two neighbours INSIDE THIS WINDOW's own array. A neighbour on
+	# the far side of a window boundary is simply absent (-1) rather than reached
+	# for: the next window may not be resident, and a half-loaded blend is worse
+	# than none.
+	var local := i - (i / _pt_chunk_n) * _pt_chunk_n
+	var last := int(c["count"]) - 1
+	var prev_b := (local - 1) * cells if local > 0 else -1
+	var next_b := (local + 1) * cells if local < last else -1
+	var gbase := (guard_i - (guard_i / _pt_chunk_n) * _pt_chunk_n) * cells
+	var base := (i - (i / _pt_chunk_n) * _pt_chunk_n) * cells
+	for y in _pt_mh:
+		for x in _pt_mw:
+			var k := y * _pt_mw + x
+			var v := src[base + k]
+			# A REAL ONE-CELL MAX DILATION, not a gain on the same value. Scaling
+			# the coverage up only widens the guard across the mask's own soft
+			# rim, which is a cell at most and nothing at all where the rim is
+			# hard - and "hard" is exactly the case (a crisp shoulder against a
+			# plain wall) where the ghost would otherwise be allowed to touch her.
+			# A cell of this grid is ~20 px of a 1080p frame, so this costs a
+			# hairline of unpainted wall around her and buys the one property the
+			# effect may never trade away.
+			var g := int(gsrc[gbase + k])
+			if x > 0:
+				g = maxi(g, gsrc[gbase + k - 1])
+			if x < _pt_mw - 1:
+				g = maxi(g, gsrc[gbase + k + 1])
+			if y > 0:
+				g = maxi(g, gsrc[gbase + k - _pt_mw])
+			if y < _pt_mh - 1:
+				g = maxi(g, gsrc[gbase + k + _pt_mw])
+			var b4 := k * 4
+			# 0.25 / 0.50 / 0.25. A missing neighbour (the window's own ends) falls
+			# back to this sample rather than to zero, which would pull the whole
+			# outline inward for two samples either side of every window boundary.
+			var sm := int(v)
+			if prev_b >= 0 or next_b >= 0:
+				var a := int(src[prev_b + k]) if prev_b >= 0 else int(v)
+				var bnx := int(src[next_b + k]) if next_b >= 0 else int(v)
+				sm = (a + int(v) * 2 + bnx) / 4
+			_pt_bytes[b4] = sm
+			_pt_bytes[b4 + 1] = 0
+			_pt_bytes[b4 + 2] = g
+			_pt_bytes[b4 + 3] = 255
+	if _pt_img == null or _pt_img.get_width() != _pt_mw or _pt_img.get_height() != _pt_mh:
+		_pt_img = Image.create_from_data(_pt_mw, _pt_mh, false, Image.FORMAT_RGBA8, _pt_bytes)
+		_pt_tex = ImageTexture.create_from_image(_pt_img)
 	else:
-		_umb_ref_dir = best_dir
-		_umb_ref_mag = best_mag
-		_umb_ref_lit = best_lit
-	_umb_ref_valid = true
+		_pt_img.set_data(_pt_mw, _pt_mh, false, Image.FORMAT_RGBA8, _pt_bytes)
+		_pt_tex.update(_pt_img)
+
+
+# --- umbra: throwing her shadow ----------------------------------------------
+
+
+## ONE PLACE where the umbra's knobs are read off a layer, because there were two
+## and they drifted: `tests/umbra_look_probe.gd` carried its own copy of these
+## mappings, and after Stand's low end was widened the probe went on rendering the
+## old range - so the picture it produced to check a change was a picture of the
+## code before it. A probe that reproduces the resolve is a probe that can lie.
+func _umb_read_layer(l: Dictionary, env: float) -> void:
+	# Scale is a real size relative to HER - at 1.0 the ghost is exactly her own
+	# size and stands beside her; past that it looms. Its head cannot be pushed off
+	# the frame at any setting (see _umb_solve_cast), so this is bounded only by
+	# what still reads as a body.
+	_umb_scale = clampf(float(l.get("fx_scale", 1.0)), 0.4, 3.2)
+	_umb_pan = Vector2(float(l.get("fx_x", 0.0)), float(l.get("fx_y", 0.0))) * 0.25
+	# Resonance folds in here exactly as it does for the shader's density array -
+	# the loom breathes with the audio, so on a talking clip the ghost surges when
+	# the subject speaks.
+	var ures := float(l.get("resonance", 0.0))
+	_umb_loom = clampf(float(l.get("fx_density", 0.45)) + 0.5 * ures * (env - 0.35), 0.0, 1.0)
+	_umb_roil = clampf(float(l.get("fx_contrast", 0.5)), 0.0, 1.0)
+	_umb_rise = maxf(0.05, float(l.get("fx_speed", 1.0)))
+	_umb_wisp = clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
+	_umb_cling = clampf(float(l.get("fx_lag", 0.35)), 0.0, 1.0)
+	# Umbra-only views onto fields other effects own for their own purposes (umbra
+	# never keys, and `swap`/`intensity_b` are the two fields the two-channel era
+	# left behind - the clown reads the same pair under its own names).
+	#
+	# STAND'S LOW END REACHES BEHIND HER (0.55 -> 0.15). It was floored at a
+	# clearance of half the two skulls because the guard used to gate the DEPOSIT,
+	# so a ghost tucked in close was a ghost eaten by its own exclusion. The mass
+	# grows under her now and is only masked at render, so overlapping her is free
+	# - it hides behind her and emerges at her edges, which is what "hug the model
+	# closer" asks for.
+	_umb_stand = 0.15 + clampf(float(l.get("threshold", 0.24)), 0.0, 1.0) * 1.85
+	_umb_lead = clampf(float(l.get("feather", 0.12)), 0.0, 0.5) * 1.6
+	_umb_eye_amt = clampf(float(l.get("sat_floor", 0.18)), 0.0, 1.0)
+	_umb_lean = clampf(float(l.get("swap", 0.45)), 0.0, 1.0)
+	_umb_narrow = clampf(float(l.get("intensity_b", 0.35)), 0.0, 0.75)
+
+
+
+
+## THE CAST TRANSFORM, solved for the current playhead.
+##
+## Everything here happens in ASPECT-CORRECTED space (x multiplied by the frame
+## aspect), because every quantity is a distance between two points on a body and
+## raw UV is not a unit - "0.145 of the frame's width" is 0.258 frame-heights on
+## 16:9 and 0.082 on a phone clip, which is the trap that put the clown's lips
+## under its nose.
+##
+## The construction, and why each part is what it is:
+##
+##  THE ANCHOR IS THE EYE LINE, not the head's centroid and not the mass's. The
+##  eyes are the feature a viewer looks at, so they are the one that must land
+##  where it was placed; anchoring anywhere else means the eyes arrive wherever
+##  the rest of the geometry leaves them, which is how the effect this replaces
+##  ended up with one socket out on bare wall.
+##
+##  THE GHOST'S HEAD MUST CLEAR HERS. The separation is the two skulls' own
+##  half-widths added together, not a tuned constant - so it holds on a close-up
+##  and on a wide shot without either being tuned for. Standing it on top of her
+##  is what makes the guard eat the ghost: her silhouette is most of a close-up
+##  frame, and a ghost behind her is then a thin rind around her outline.
+##
+##  IT STANDS ON THE SIDE THERE IS ROOM FOR. The measured throw picks the side;
+##  if the ghost's head does not fit there, the other side is the honest answer.
+##  A head jammed against the frame edge is half a head with one eye.
+##
+##  THE SIZE IS FREE, AND THE SHAPE IS A BUST. Her silhouette is ~45% of a
+##  close-up frame; drawn whole at any magnification it is a wall of black with
+##  nothing in it to read. The mass is her HEAD AND SHOULDERS - a radial falloff
+##  about her eye line, applied in HER OWN units so it rides the transform with
+##  everything else - and below that it dissolves into the field's own smoke.
+##  Measured on the reference clip: drawn whole at Scale 2.8 the mass covered 63%
+##  of the frame and read as a dimmed room; as a bust it reads as a figure.
+func _umb_solve_cast() -> void:
+	_umb_have = false
+	_umb_eyes_ok = false
+	if _player == null or _pt_state != "ready":
+		return
+	# THE LOOK-AHEAD, and the entire reason the track is offline. Reading the clip
+	# at `t + Lead` means the ghost turns its head on the frame she has not reached
+	# yet, which is what makes the picture read as the ghost moving HER. A velocity
+	# extrapolation cannot do this - it can only continue what just happened, which
+	# on real footage is mostly detection noise multiplied by the lead time.
+	var t := _player.stream_position + clampf(_umb_lead, 0.0, 2.0)
+	var i := _pt_slot_at(t)
+	if i < 0:
+		return
+	if not _umb_cast_from(i, _source_aspect()):
+		return
+	# The guard's own sample: HER, now, not the frame the ghost is drawn from.
+	var gi := _pt_slot_at(_player.stream_position)
+	if gi < 0:
+		gi = i
+	if _pt_slot != i or _pt_guard_slot != gi:
+		_pt_slot = i
+		_pt_guard_slot = gi
+		_pt_upload_mask(i, gi)
+	_umb_have = _pt_tex != null
+	if OS.has_environment("GHOST_UMBRA_DEBUG"):
+		print("UMBDBG t=%.2f (+%.2f) sample=%d unit=%.3f scale=%.2f throw=(%.2f,%.2f) "
+			% [_player.stream_position, _umb_lead, i, _umb_unit, _umb_scale,
+				_umb_dir.x, _umb_dir.y]
+			+ "anchor=(%.3f,%.3f) eyeL=(%.3f,%.3f) eyeR=(%.3f,%.3f) rad=%.3f"
+			% [_umb_anchor.x / maxf(_source_aspect(), 1e-3), _umb_anchor.y,
+				_umb_eye_l.x, _umb_eye_l.y, _umb_eye_r.x, _umb_eye_r.y, _umb_eye_rad])
+
+
+## The geometry itself, split out from the playhead so it can be asserted without
+## a clip, a player or a renderer (tests/umbra_cast_check.gd). Reads the live knob
+## state, writes every _umb_* transform field, and returns false when this sample
+## cannot support a throw at all.
+func _umb_cast_from(i: int, asp: float) -> bool:
+	# THE FOUR LANDMARKS THE THROW IS BUILT FROM HAVE TO BE SEEN. A shoulder the
+	# model placed by inference rather than by looking still returns a plausible
+	# point, so without this the ghost's whole body axis can be built out of a
+	# guess and nothing about the result looks wrong until it swings. The ears
+	# are excluded on purpose - one of them is genuinely hidden whenever a head
+	# turns, and half_w falls back on its own floor there.
+	for k in [PT_SH_L, PT_SH_R, PT_EYE_L, PT_EYE_R]:
+		if _pt_vis_at(i, k) < 0.30:
+			return false
+	var av := Vector2(asp, 1.0)
+	var sh := (_pt_point(i, PT_SH_L) + _pt_point(i, PT_SH_R)) * 0.5 * av
+	var eye_l := _pt_point(i, PT_EYE_L) * av
+	var eye_r := _pt_point(i, PT_EYE_R) * av
+	var eye := (eye_l + eye_r) * 0.5
+	var half_w := maxf(absf(_pt_point(i, PT_EAR_L).x - _pt_point(i, PT_EAR_R).x) * asp * 0.5, 0.02)
+	var axis := eye - sh
+	var unit := axis.length()
+	if unit < 1e-3:
+		return false
+	axis /= unit
+	var scale := clampf(_umb_scale, 0.4, 3.2)
+	var lean := clampf(_umb_lean, 0.0, 1.0)
+	var narrow := clampf(_umb_narrow, 0.0, 0.75)
+	# The throw, biased upward: a shadow thrown level reads as a stain on the wall,
+	# and the thing being built is a presence that RISES. This is the only place the
+	# measured direction is editorialised, and it is deliberate.
+	var throw := (_pt_dir + Vector2(0.0, -0.35)).normalized()
+	var ghost_hw := half_w * scale * (1.0 - narrow)
+	var gap := (half_w + ghost_hw) * clampf(_umb_stand, 0.4, 2.4)
+	var lim := ghost_hw + 0.04
+	var side := 1.0 if throw.x >= 0.0 else -1.0
+	var gx := eye.x + side * gap
+	if minf(gx - lim, asp - lim - gx) < 0.0:
+		var other := eye.x - side * gap
+		if minf(other - lim, asp - lim - other) > minf(gx - lim, asp - lim - gx):
+			gx = other
+	gx = clampf(gx, lim, maxf(lim, asp - lim))
+	# HOW FAR IT RISES IS A FRACTION OF THE HEADROOM THERE IS, not a multiple of
+	# her own height. Written the obvious way - eye.y minus some number of her
+	# units - it is pinned against the top clamp on any close-up, because her eyes
+	# are already near the top of such a frame: measured, a whole sweep of Lean
+	# produced eye heights of 0.1559, 0.1559, 0.1559 and 0.1559, i.e. a control
+	# that did nothing. Against the ceiling it always moves, and on a wide shot
+	# the same setting reads as a much bigger rise, which is right.
+	#
+	# THE CEILING IS WHERE ITS SOCKETS STILL FIT, not where its skull does. A
+	# ghost this size has a crown taller than the headroom of a close-up, and
+	# demanding the whole head stay in frame is the same pin one step further out:
+	# it leaves nothing to rise into. A shadow whose crown leaves the top of the
+	# picture is a shadow that is bigger than the picture, which is the point.
+	var ceil_y := clampf(ghost_hw * 0.34 / asp * 2.5 + 0.03, 0.04, 0.6)
+	var gy := lerpf(eye.y, minf(ceil_y, eye.y), 0.25 + 0.75 * lean)
+	var head := Vector2(gx, gy) + Vector2(_umb_pan.x * asp, _umb_pan.y)
+	# Its own body axis leans toward the throw too, but only half as far: a figure
+	# whose head leans and whose spine does not reads as a head balanced on a post.
+	var gaxis := (axis * (1.0 - lean * 0.5) + throw * (lean * 0.5)).normalized()
+	var anchor := head - gaxis * (unit * scale)
+	# The similarity, as a 2x2: her frame (axis, its perpendicular) into the ghost's,
+	# with the across-axis component scaled down by Narrow. Built as basis-into-basis
+	# rather than as an angle, because her axis is already a unit vector and the
+	# inverse of an orthonormal 2x2 is its transpose - no trigonometry, no wrap.
+	var h1 := axis
+	var h2 := Vector2(-axis.y, axis.x)
+	var e1 := gaxis * scale
+	var e2 := Vector2(-gaxis.y, gaxis.x) * (scale * (1.0 - narrow))
+	# fwd = [e1 e2] * [h1 h2]^-1, and [h1 h2] is orthonormal so its inverse is its
+	# TRANSPOSE - which is exactly where a transposed pair of columns hides in
+	# plain sight, because the wrong one is still a rotation and still draws
+	# something plausible. Column k of fwd is e1*h1[k] + e2*h2[k]; the check that
+	# catches it is that fwd*h1 must come back as e1 exactly, which is what
+	# tests/umbra_cast_check.gd asserts.
+	var f0 := e1 * h1.x + e2 * h2.x     # column 0
+	var f1 := e1 * h1.y + e2 * h2.y     # column 1
+	var det := f0.x * f1.y - f1.x * f0.y
+	if absf(det) < 1e-8:
+		return false
+	_umb_inv0 = Vector2(f1.y, -f0.y) / det
+	_umb_inv1 = Vector2(-f1.x, f0.x) / det
+	_umb_anchor = anchor
+	_umb_src = sh
+	_umb_eye_src = eye
+	_umb_unit = unit
+	# The bust's extent, in her own units from her eye line. Loom opens it from a
+	# head and a collar out to a head, shoulders and chest.
+	var loom := clampf(_umb_loom, 0.0, 1.0)
+	_umb_bust0 = 0.70 + 2.00 * loom
+	_umb_bust1 = 1.60 + 3.40 * loom
+	_umb_dir = throw
+	# THE EYES, through the same map - so they are on the ghost's head by
+	# construction at every Scale, which is the property the previous version could
+	# not have (it anchored them to the visible mass's centroid and amplified her
+	# motion as a deviation, because carrying them geometrically put them off the
+	# top of the frame).
+	_umb_eye_l = anchor + Vector2(
+		f0.x * (eye_l.x - sh.x) + f1.x * (eye_l.y - sh.y),
+		f0.y * (eye_l.x - sh.x) + f1.y * (eye_l.y - sh.y))
+	_umb_eye_r = anchor + Vector2(
+		f0.x * (eye_r.x - sh.x) + f1.x * (eye_r.y - sh.y),
+		f0.y * (eye_r.x - sh.x) + f1.y * (eye_r.y - sh.y))
+	# Back to plain UV for the shader, which samples in screen space.
+	_umb_eye_l.x /= asp
+	_umb_eye_r.x /= asp
+	# Sized from the ghost's own skull, not from the fitted separation: the pair's
+	# spacing is the quantity that degrades when a head turns away, and a socket
+	# that swells with it reads as two unrelated holes.
+	_umb_eye_rad = clampf(ghost_hw * 0.34 / asp, 0.006, 0.09)
+	_umb_eyes_ok = true
+	return true
 
 
 # --- undo/redo ---------------------------------------------------------------
@@ -6645,7 +6659,7 @@ func _exit_tree() -> void:
 	# what frees video.ogv for the next session.
 	for pid in [_prep_video_pid, _prep_audio_pid, _import_pid, _waveform_pid,
 			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid,
-			_umb_track_pid]:
+			_ft_pid, _pt_pid]:
 		Subprocess.stop(int(pid))
 	for job in _track_audio_jobs:
 		Subprocess.stop(int(job.get("pid", -1)))
@@ -6654,9 +6668,6 @@ func _exit_tree() -> void:
 	if _audio_thread != null and _audio_thread.is_started():
 		_audio_thread.wait_to_finish()
 		_audio_thread = null
-	if _umb_track_thread != null and _umb_track_thread.is_started():
-		_umb_track_thread.wait_to_finish()
-		_umb_track_thread = null
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
@@ -6785,9 +6796,11 @@ func _refresh_panel_inner() -> void:
 	_wisp.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_cling.set_value_no_signal(float(m.get("fx_lag", 0.35)))
 	_umbra_depth.set_value_no_signal(float(m.get("fx_stick", 0.0)))
-	_umbra_reach.set_value_no_signal(float(m.get("threshold", 0.24)))
+	_umbra_stand.set_value_no_signal(float(m.get("threshold", 0.24)))
 	_umbra_lead.set_value_no_signal(float(m.get("feather", 0.12)))
 	_umbra_gaze.set_value_no_signal(float(m.get("sat_floor", 0.18)))
+	_umbra_lean.set_value_no_signal(float(m.get("swap", 0.45)))
+	_umbra_narrow.set_value_no_signal(float(m.get("intensity_b", 0.35)))
 	_paint_reach.set_value_no_signal(float(m.get("fx_contrast", 0.5)))
 	_paint_smooth.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_region_on.set_pressed_no_signal(MaskSession.has_region(m))
@@ -6807,26 +6820,21 @@ func _update_effect_controls(effect_id: int) -> void:
 	# picks its foreground/background split automatically - it has no target
 	# color either. arealight lights the whole frame, not a keyed color.
 	# meta mirrors the whole workspace - it keys on nothing, so no colour picker.
+	# umbra joins them: it used to name the WALL its detector matched against, and
+	# there is no wall hypothesis any more - the ghost is her own silhouette, so
+	# the picker had nothing left to say. Its own Eye color picker stays.
 	var has_color := effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
 		and effect_id != MaskSession.EFFECT_SERPENT and effect_id != MaskSession.EFFECT_AREALIGHT \
 		and effect_id != MaskSession.EFFECT_META and effect_id != MaskSession.EFFECT_RAIN \
-		and effect_id != MaskSession.EFFECT_AUDIO
+		and effect_id != MaskSession.EFFECT_AUDIO and effect_id != MaskSession.EFFECT_UMBRA
 	_grp_color.visible = has_color
 	# Morph shows only where there's a palette to rotate (the fixed-palette
 	# emissives + crystal's glass + fur's key-tinted coat + clown's paint).
 	var has_morph: bool = effect_id in [1, 2, 5, MaskSession.EFFECT_RAIN, MaskSession.EFFECT_CRYSTAL,
 		MaskSession.EFFECT_SNOW, MaskSession.EFFECT_FUR, MaskSession.EFFECT_SERPENT,
 		MaskSession.EFFECT_CLOWN, MaskSession.EFFECT_UMBRA]
-	# Umbra's picker is not a key at all - it names the SURFACE the shadow
-	# falls on, which is the one piece of scene knowledge the detector cannot
-	# always infer alone. Saying so on the label is the difference between a
-	# working effect and a confusing one.
 	if _key_color_label != null:
-		if effect_id == MaskSession.EFFECT_UMBRA:
-			_key_color_label.text = "Wall color"
-			_key_color_label.tooltip_text = "The surface the shadow falls on - " + \
-				"pick it off the wall behind her. Leave it and the detector chooses on its own"
-		elif effect_id == MaskSession.EFFECT_REPAINT:
+		if effect_id == MaskSession.EFFECT_REPAINT:
 			# Repaint has two colour pickers and they are easy to confuse - name
 			# both ends of the swap rather than leaving one called "Key color".
 			_key_color_label.text = "Color to replace"
@@ -6884,8 +6892,10 @@ func _update_effect_controls(effect_id: int) -> void:
 	_show_field(_wisp, groups.has("umbra"))
 	_show_field(_cling, groups.has("umbra"))
 	_show_field(_umbra_depth, groups.has("umbra"))
-	_show_field(_umbra_reach, groups.has("umbra"))
+	_show_field(_umbra_stand, groups.has("umbra"))
 	_show_field(_umbra_lead, groups.has("umbra"))
+	_show_field(_umbra_lean, groups.has("umbra"))
+	_show_field(_umbra_narrow, groups.has("umbra"))
 	_show_field(_umbra_gaze, groups.has("umbra"))
 	_show_field(_color_eye, groups.has("umbra"))
 	_show_field(_color_paint, groups.has("repaint"))
@@ -6963,8 +6973,10 @@ func _update_effect_controls(effect_id: int) -> void:
 			"the coat covers the outline it was given, and wear that perforates a mask " + \
 			"just reads as the mask being broken"
 	elif is_umbra:
-		_fx_density_label.tooltip_text = "How far the mass grows outward along the cast " + \
-			"direction, away from her - the looming"
+		_fx_density_label.tooltip_text = "How much of the ghost is drawn - a head and a " + \
+			"collar at 0, a head, shoulders and chest at 1. Below that it dissolves into " + \
+			"the dark, because her whole outline magnified is a wall of black with " + \
+			"nothing in it to read"
 	else:
 		_fx_density_label.tooltip_text = "How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured"
 	_fx_density.tooltip_text = _fx_density_label.tooltip_text
@@ -7474,26 +7486,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			_chimera_active = true
 		if le == MaskSession.EFFECT_UMBRA:
 			_umbra_active = true
-			_umb_hue = float(l.get("hue_a", 0.0))
-			# Scale is a real geometric scale of the silhouette now, so it gets
-			# room to actually loom - at 1.0 the ghost is exactly her own
-			# shadow, and past ~1.5 its head leaves the top of the frame.
-			_umb_scale = clampf(float(l.get("fx_scale", 1.0)), 0.4, 5.0)
-			_umb_pan = Vector2(float(l.get("fx_x", 0.0)), float(l.get("fx_y", 0.0))) * 0.25
-			# Resonance folds in here exactly as it does for the shader's
-			# density array below - the loom breathes with the audio, so on a
-			# talking clip the ghost surges when the subject speaks.
-			var ures := float(l.get("resonance", 0.0))
-			_umb_loom = clampf(float(l.get("fx_density", 0.45)) + 0.5 * ures * (env - 0.35), 0.0, 1.0)
-			_umb_roil = clampf(float(l.get("fx_contrast", 0.5)), 0.0, 1.0)
-			_umb_rise = maxf(0.05, float(l.get("fx_speed", 1.0)))
-			_umb_wisp = clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
-			_umb_cling = clampf(float(l.get("fx_lag", 0.35)), 0.0, 1.0)
-			# Three umbra-only views onto fields the keying group owns for
-			# other effects (umbra never keys, so they are free here).
-			_umb_reach = clampf(float(l.get("threshold", 0.24)), 0.0, 1.0)
-			_umb_lead = clampf(float(l.get("feather", 0.12)), 0.0, 0.5) * 1.6
-			_umb_eye_amt = clampf(float(l.get("sat_floor", 0.18)), 0.0, 1.0)
+			_umb_read_layer(l, env)
 		if le == MaskSession.EFFECT_CLOWN:
 			_clown_active = true
 			_clown_fs = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
@@ -7888,7 +7881,7 @@ func _process(_dt: float) -> void:
 		_pip_view.texture = _player.get_video_texture()
 	_maybe_capture_echo()
 	_maybe_capture_face()
-	_maybe_capture_umbra()
+	_tick_umbra()
 	# META: while a meta layer is live, capture the editor's own frame for the mirror
 	# and (in export) lerp the editor chrome into view. Both are gated on _meta_amount
 	# so the expensive readback only ever runs during an actual meta section.
@@ -7898,9 +7891,6 @@ func _process(_dt: float) -> void:
 		_apply_meta_chrome(_meta_amount)
 	_push_anchor()
 	_step_paint_sim()
-	if _umbra_active:
-		_umb_ensure_track()
-		_umb_poll_track()
 	_step_umbra_sim()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never
@@ -7923,11 +7913,81 @@ func _process(_dt: float) -> void:
 	# on .playing meant a hold could engage but never release - audio stayed
 	# silent, permanently, until a manual pause/play cycle called _play()'s own
 	# "if not _audio.playing: _audio.play(...)" restart (feedback/0027).
+	# ...AND THE HOLD IS BOUNDED. Everything above assumes the video catches up in
+	# a moment, which is true of a readback stall and false of anything that
+	# starves the decode for as long as it runs - a heavy background job, a busy
+	# machine. There the hold engages, never releases, and the editor is simply
+	# SILENT with no error and nothing on screen to say why (reported exactly that
+	# way, of a pose pre-pass eating every core). Past the limit the audio is
+	# seeked back to the video instead: that replays a fraction of a second of
+	# sound, which is the artifact this design has always refused - and it is
+	# still the better of the two, because the alternative it was refusing in
+	# favour of has turned out to be indefinite silence.
+	# GHOST_AV_DEBUG=1 prints both clocks once a second. The audio and the video
+	# are two independent streams corrected against each other here, and every
+	# report about this ("the sound stopped", "the audio is ahead") has been
+	# diagnosed by guessing until this existed - the two positions and the drift
+	# say immediately whether audio is being held, has run out, or was never
+	# started.
+	# ONE LINE, EVERY RUN, once playback has actually started - not behind a flag.
+	# "the sound no longer works" arrived with no way to tell a stopped transport
+	# from a muted bus from a track that is simply very quiet, and answering it
+	# cost a whole round trip to add exactly this and another to read it back.
+	# It is four numbers and it is printed once, so it costs nothing to leave on.
+	if not _av_reported and _playing and _audio != null and _audio.playing 			and _audio.get_playback_position() > 1.0:
+		_av_reported = true
+		var mb := AudioServer.get_bus_index(MASK_BUS)
+		var ms := AudioServer.get_bus_index("Master")
+		print("ghost mask: audio path - stream=%s len=%.1fs vol=%.1fdB bus=%s(%.1fdB mute=%s) "
+			% [_audio.stream.get_class() if _audio.stream != null else "<null>",
+				_audio.stream.get_length() if _audio.stream != null else 0.0,
+				_audio.volume_db, _audio.bus,
+				AudioServer.get_bus_volume_db(mb) if mb >= 0 else 99.0,
+				str(AudioServer.is_bus_mute(mb)) if mb >= 0 else "?"]
+			+ "master=%.1fdB mute=%s peak=%.1fdB device=%s"
+			% [AudioServer.get_bus_volume_db(ms) if ms >= 0 else 99.0,
+				str(AudioServer.is_bus_mute(ms)) if ms >= 0 else "?",
+				AudioServer.get_bus_peak_volume_left_db(ms, 0) if ms >= 0 else 99.0,
+				AudioServer.get_output_device()])
+	if OS.has_environment("GHOST_AV_DEBUG") and _player != null and _audio != null:
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _av_debug_ms > 1000:
+			_av_debug_ms = now_ms
+			# EVERY GAIN STAGE BETWEEN THE FILE AND THE SPEAKER, in one line. The
+			# transport half of this (positions, drift, hold) proved healthy while
+			# the author heard nothing, which means the interesting question is not
+			# "is it playing" but "at what level, through what" - and that is four
+			# separate places any one of which silences the lot.
+			var mbus := AudioServer.get_bus_index(MASK_BUS)
+			var mst := AudioServer.get_bus_index("Master")
+			var slen := 0.0
+			var sname := "<null>"
+			if _audio.stream != null:
+				sname = _audio.stream.get_class()
+				slen = _audio.stream.get_length()
+			print("AVDBG video=%.2f audio=%.2f drift=%+.3f playing=%s apl=%s paused=%s hold=%s"
+				% [_player.stream_position, _audio.get_playback_position(),
+					_player.stream_position - _audio.get_playback_position(),
+					str(_playing), str(_audio.playing), str(_audio.stream_paused),
+					str(_audio_holding)]
+				+ "  vol=%.1fdB stream=%s len=%.1f bus=%s(%.1fdB mute=%s) master=%.1fdB mute=%s"
+				% [_audio.volume_db, sname, slen, _audio.bus,
+					AudioServer.get_bus_volume_db(mbus) if mbus >= 0 else 99.0,
+					str(AudioServer.is_bus_mute(mbus)) if mbus >= 0 else "?",
+					AudioServer.get_bus_volume_db(mst) if mst >= 0 else 99.0,
+					str(AudioServer.is_bus_mute(mst)) if mst >= 0 else "?"]
+				+ "  peak=%.1fdB out=%s"
+				% [AudioServer.get_bus_peak_volume_left_db(mst, 0) if mst >= 0 else 99.0,
+					AudioServer.get_output_device()])
 	if _playing and _audio_holding:
 		var hold_drift := _player.stream_position - _audio.get_playback_position()
 		if hold_drift >= -0.02:
 			_audio.stream_paused = false
 			_audio_holding = false
+		elif Time.get_ticks_msec() - _audio_hold_ms > _AUDIO_HOLD_LIMIT_MS:
+			_audio.stream_paused = false
+			_audio_holding = false
+			_audio.seek(_player.stream_position)
 	elif _playing and _audio.playing and not _audio.stream_paused:
 		var av_drift := _player.stream_position - _audio.get_playback_position()
 		if av_drift > 0.15:
@@ -7935,6 +7995,7 @@ func _process(_dt: float) -> void:
 		elif av_drift < -0.15:
 			_audio.stream_paused = true
 			_audio_holding = true
+			_audio_hold_ms = Time.get_ticks_msec()
 	_sync_tracks()
 	# A trimmed clip's OUT point is a hard wall for playback (both live preview
 	# and the export relaunch - export additionally needs a QUIT, not just a

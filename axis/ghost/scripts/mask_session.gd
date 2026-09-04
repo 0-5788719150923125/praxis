@@ -335,73 +335,64 @@ const MAX_LAYERS := 6
 ## rather than over it - a radial hole in the eye and lip paint, gated on
 ## brightness so it opens over a visible eyeball or teeth and closes again
 ## on a blink or a shut mouth.
-## "umbra" - a ghost that lives in the subject's OWN cast shadow. Not drawn
-## over her and never on her: the editor finds the shadow she throws onto the
-## wall behind her and grows an amorphous, fluctuating black mass inside it,
-## looming outward and away, with essence trailing upward off its top like
-## smoke. See MaskEditor._update_umbra_model for the detector and
+## "umbra" - the ghost that moves her. HER OWN SILHOUETTE, thrown as a cast
+## shadow that is larger than she is, standing beside her, reading the clip
+## AHEAD of the playhead so it turns its head before she turns hers. Never
+## drawn on her: she is carved out of it, the way a body occludes its own
+## shadow. See MaskEditor._umb_solve_cast for the throw and
 ## shaders/umbra_field.gdshader for the mass itself.
-## THE DETECTOR, in one line: match the SURFACE first, then ask whether it is
-## dimmed. A cast shadow is the same wall under less light, so it keeps the
-## wall's chroma DIRECTION while losing luminance - measured on real footage
-## the shadow matches the lit wall to dot=+0.99 while skin, hair, a black
-## shirt and a cream door all sit at -0.75..-0.96. Luminance alone cannot do
-## this (her hair and the shadow are the same brightness); chroma direction
-## separates them with an enormous margin. So: pick the wall's chroma
-## direction, score every cell's alignment with it, and only then ask which of
-## those wall cells are darker than the wall's own local lit level.
-## LINKAGE is structural, not a similarity score. Two flood fills on the grid:
-## the SUBJECT grows from the most not-the-wall cell near frame centre, and
-## the SHADOW grows only from cells touching the subject and may never enter
-## it - so anything it reaches is contiguous with her by construction, which
-## is exactly what "the shadow is linked to the human" means.
-## The KEY COLOUR names the wall the shadow falls on. Leave it and the editor
-## picks the surface automatically (chroma-direction buckets, scored by whether
-## the resulting subject flood actually covers the middle of the frame - the
-## test that stops her warm skin from voting the cream door in as the wall);
-## setting it deliberately biases the choice hard toward the picked hue.
-## THE SHADOW IS AN OBJECT, not a stencil. Scale magnifies the whole detected
-## silhouette about its own centroid and Pan translates it, both applied to the
-## SOURCE region inside the field sim - so the entire body grows and moves
-## together, and her own silhouette is carved out of the result afterwards.
-## Past about 1.5 the head leaves the top of the frame and it reads as
-## something much taller than she is. (Treating the region as a fixed
-## permission mask instead - the first cut - meant Pan slid the mass around
-## underneath an unmoving stencil, so nothing but a few stray wisps appeared to
-## move, and Scale changed only a noise frequency. Note also that magnification
-## is a WINDOW: at scale S the screen shows a 1/S neighbourhood of the pivot,
-## which is why the pivot sits where the shadow is solid rather than at its
-## base, where it borders her and dissolves into void.)
-## Coverage is relabeled Loom (how far it
-## grows outward along the cast direction - the looming), Contrast is
-## relabeled Roil (turbulence in the currents and the fluctuation of the
-## silhouette), Velocity is how fast the essence climbs, and Resonance swells
-## the loom with the audio - on a talking clip the ghost surges when she
-## THE GHOST'S EYES (Gaze) are hollow sockets cut into the mass, tracking hers.
-## They are anchored to the VISIBLE mass, not to anatomy: carrying her eyes
-## across the cast offset and then through the silhouette magnification is
-## geometrically correct and useless, because a ghost twice her size genuinely
-## has its head above the frame - eyes and looming would be mutually exclusive.
-## So the sockets sit in the upper body of the mass wherever that lands, and
-## her movement drives their DEVIATION from that rest position, amplified. The
-## socket also carries a faint cold ember scaled BY Depth, because hollowing
-## works by letting the wall show back through and at full Depth there is
-## nothing left to reveal.
-## LEAD extrapolates her motion along a smoothed velocity so the ghost turns
-## fractionally BEFORE she does - the puppeteering read. It is a PREDICTION,
-## not a look-ahead: honest for a few tenths of a second and capped, because
-## past that it overshoots on every direction reversal. A true look-ahead
-## needs a pre-pass over the clip.
-## REACH closes the band of untouched wall between the mass and the woman
-## casting it - right at her outline the pixels are a blend of her and the wall
-## and read as cleanly neither, so the shadow stops short of her.
-## speaks. Its own "umbra" group adds three (existing stored fields reused the
-## way fur/snow/clown reuse them, no schema growth): Wisp (fx_smooth) is how
-## readily essence detaches and rises, Cling (fx_lag) is how long the mass
-## persists, Depth (fx_stick) is how dark it gets. Morph cools or warms the
-## core. The mass DARKENS rather than paints black - a shadow keeps the
-## surface's hue, so it multiplies, and shade_amount's ceiling keeps the
-## wall's own texture alive inside it (a flat black fill reads as a decal).
+## WHERE THE SHAPE COMES FROM: face_host/pose_track.py, a MediaPipe pose
+## pre-pass run once over the clip - a person segmentation mask per sample plus
+## 33 body landmarks - cached in user://pose_tracks and read by time. What it
+## replaced hunted the footage's own cast shadow with a chroma-direction
+## detector: it needed the room to have one big soft shadow on a chromatically
+## uniform wall, a colour hypothesis scored per surface, two flood fills, and a
+## confidence gate that drew nothing when they disagreed. A person mask is the
+## same answer with none of those conditions, and it also hands over a
+## SKELETON, which is what lets the ghost's head and eyes be placed instead of
+## guessed at from the middle of a blob.
+## THE THROW IS A SIMILARITY PINNED BY TWO POINT PAIRS - her shoulder line to
+## the ghost's anchor, her eye line to the ghost's head - so the ghost's head
+## lands exactly where it was placed at any Scale. That is the property the
+## previous construction could not have: it magnified the region about a pivot,
+## and magnification is also a WINDOW, so growing it walked the head off the top
+## of the frame and every fix traded the looming against the eyes.
+## THE GHOST'S HEAD CLEARS HERS BY CONSTRUCTION. The separation is the two
+## skulls' own half-widths added together (Stand scales it), so it holds on a
+## close-up and on a wide shot without either being tuned for; and it stands on
+## whichever side has room, because a head jammed against the frame edge is half
+## a head with one eye. Standing it on top of her is what makes her own
+## exclusion eat the ghost - her silhouette is most of a close-up frame.
+## IT IS A BUST, NOT A BODY (Loom). Her outline is ~45% of a close-up frame and
+## thrown whole at any magnification it is a wall of black with nothing in it to
+## read - measured, 63% of the frame at Scale 2.8, and it looked like a dimmed
+## room. So the mass is a radial falloff about her eye line, in HER OWN units so
+## it rides the throw unchanged, and below that it dissolves into the field's
+## own smoke.
+## LEAD IS A REAL LOOK-AHEAD, in seconds, and it is the whole effect. The track
+## exists before playback, so the ghost is drawn from the frame she has not
+## reached: it turns first, and the picture reads as the ghost moving her rather
+## than following her. No live tracker can supply this at any amount of
+## smoothing, and a velocity extrapolation cannot either - it can only continue
+## what just happened, which on real footage is mostly detection noise
+## multiplied by the lead time.
+## THE EYES (Gaze) are her own eye landmarks pushed through the same throw, so
+## they are on the ghost's head by construction at every size, lit in hue_b (red
+## by default) inside a darkened socket. The version before this one had to
+## anchor them to the visible mass's centroid and amplify her motion as a
+## deviation, precisely because carrying them geometrically put them off frame.
+## Its own knobs: Stand (threshold) is how far to the side it stands, Lead
+## (feather) the look-ahead, Lean (swap) how far it leans out along the light as
+## it rises, Narrow (intensity_b) how much taller-than-wide it is drawn, Gaze
+## (sat_floor) how hard the eyes burn, Wisp (fx_smooth) how readily essence
+## tears off the top and rises, Cling (fx_lag) how long the mass holds its
+## shape, Depth (fx_stick) how much light it swallows. Coverage is relabeled
+## Loom, Contrast is Roil (turbulence), Velocity is the essence's climb, and
+## Resonance swells the loom with the audio - on a talking clip the ghost surges
+## when she speaks. Morph cools or warms the core. The mass DARKENS rather than
+## paints black: a shadow keeps the surface's hue, so it multiplies, and
+## shade_amount's ceiling keeps the wall's own texture alive inside it (a flat
+## black fill reads as a decal).
 const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown", "umbra", "repaint", "rain", "audio"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
@@ -463,7 +454,7 @@ const EFFECT_CONTROLS := {
 	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
 	16: ["pattern", "clown"],     # clown (pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow)
-	17: ["pattern", "umbra"],     # umbra (colour picker names the wall; coverage=Loom, contrast=Roil, + its own Wisp/Cling/Depth)
+	17: ["pattern", "umbra"],     # umbra (keyless - the ghost IS her silhouette; coverage=Loom, contrast=Roil, + its own Stand/Lead/Lean/Narrow/Gaze/Wisp/Cling/Depth)
 	18: ["repaint"],              # repaint (projection-based like erase/crystal: no keying gates, no pattern - just the paint colour + its reach and edge smoothing)
 	19: ["pattern", "rain"],      # rain (keyless: coverage=Amount, velocity=fall speed, scale=streak length, pan=wind, contrast=Depth - where near rain gives way to far - plus its own Squall)
 	20: ["audio"],                # audio (draws nothing: lag=Echo time, smooth=Echo mix, density=Ambience, scale=Room, contrast=Resonance, stick=Bass)

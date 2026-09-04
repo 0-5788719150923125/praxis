@@ -64,7 +64,7 @@ Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 | 14 | `arealight` | `pattern` | keyless; pattern group exists only to expose the single Envelope/contrast dial |
 | 15 | `meta` | - | mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter |
 | 16 | `clown` | `pattern`, `clown` | pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow |
-| 17 | `umbra` | `pattern`, `umbra` | colour picker names the wall; coverage=Loom, contrast=Roil, + its own Wisp/Cling/Depth |
+| 17 | `umbra` | `pattern`, `umbra` | keyless - the ghost IS her silhouette; coverage=Loom, contrast=Roil, + its own Stand/Lead/Lean/Narrow/Gaze/Wisp/Cling/Depth |
 | 18 | `repaint` | `repaint` | projection-based like erase/crystal: no keying gates, no pattern - just the paint colour + its reach and edge smoothing |
 | 19 | `rain` | `pattern`, `rain` | keyless: coverage=Amount, velocity=fall speed, scale=streak length, pan=wind, contrast=Depth - where near rain gives way to far - plus its own Squall |
 | 20 | `audio` | `audio` | draws nothing: lag=Echo time, smooth=Echo mix, density=Ambience, scale=Room, contrast=Resonance, stick=Bass |

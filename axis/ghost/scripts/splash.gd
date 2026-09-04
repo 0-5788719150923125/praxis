@@ -164,6 +164,7 @@ func _build_ui() -> void:
 	# editing clears the mark.
 	_source_edit.text_changed.connect(func(_t: String) -> void:
 		_source_edit.remove_theme_color_override("font_color"))
+	_source_edit.text = _remembered_source()
 	src_row.add_child(_source_edit)
 
 	col.add_child(_spacer(12))
@@ -390,6 +391,7 @@ func _load_last_song() -> void:
 
 func _save_last_song(path: String) -> void:
 	Settings.write("audio", "last", path)
+	Settings.write("ui", "kind", "audio")
 
 
 func _load_last_video() -> void:
@@ -401,6 +403,31 @@ func _load_last_video() -> void:
 
 func _save_last_video(path: String) -> void:
 	Settings.write("video", "last", path)
+	Settings.write("ui", "kind", "video")
+
+
+## THE FIELD HAS TO SHOW WHAT WAS REMEMBERED, or the remembering may as well not
+## have happened. Reported as "the selected file at the home screen is lost on
+## every restart" - and nothing was lost: both paths came back from the config
+## and both mode rows captioned them correctly, but the source field, which is
+## the widget that LOOKS like the selection, was only ever written when something
+## was imported. Same class as the mask panel's "settings revert" report, and the
+## same rule: when a setting appears not to persist, check whether the UI ever
+## reads it back before assuming the write failed.
+##
+## Which of the two it shows is the kind that was imported LAST. `ui/kind` was
+## left in the config by an earlier design that hid the modes not matching it;
+## nothing had written or read it since, and this is what it was always for.
+func _remembered_source() -> String:
+	var kind := String(Settings.read("ui", "kind", ""))
+	if kind == "audio" and not _audio_path.is_empty():
+		return _audio_path
+	if kind == "video" and not _video_path.is_empty():
+		return _video_path
+	# No stored kind (a config written before this existed): prefer whichever slot
+	# is filled, and the clip when both are - it is the one whose path is long
+	# enough that retyping it is a real cost.
+	return _video_path if not _video_path.is_empty() else _audio_path
 
 
 func _on_assistant_selected(idx: int) -> void:
