@@ -95,7 +95,7 @@ const PAGE_W := 2.0
 ## plus the neighbours crowding the frame edges at the reading distance. NOT raised for the
 ## spread even though a wider shot puts more panels in frame - the shot is wider, so each
 ## panel is smaller, and the budget is about scene cost rather than about screen area.
-const LIVE_MAX := 3
+const LIVE_MAX := POOL
 
 ## ...AND THE BUDGET DOES NOT APPLY TO AN EXPORT. Every panel runs.
 ##
@@ -125,6 +125,14 @@ const LIVE_ALL_ON_EXPORT := true
 ## panels cost about 1.8x one, not 3x - the rest of the gap is the stage governor's to
 ## absorb, which is what it is for.
 const OFF_FOCAL_PERIOD := 2
+## How many render-target pixels a panel gets per pixel it covers on screen. Above 1 so a panel
+## the camera is drifting toward is already sharp before it is the subject, and so the paper's
+## own perspective foreshortening does not read as a soft panel.
+const PANEL_OVERSAMPLE := 1.35
+## How much bigger a panel has to want to be before its target is re-opened, as a ratio. A
+## target that chases the shot pixel for pixel reallocates every frame; this makes it a handful
+## of steps across a whole push-in.
+const REOPEN_STEP := 1.5
 
 ## HOW MANY FRAMES A PANEL MUST ACTUALLY RENDER before it is allowed to be frozen.
 ##
@@ -492,16 +500,31 @@ var _roll_walk := 0.0
 
 var _cam := {"aim": Vector2(1.0, 0.7), "az": 0.0, "el": 1.0, "roll": 0.0,
 	"fill": 1.1, "fov": 52.0}
-## The move being travelled: {kind, a, b, dur, ease}. See MOVES.
-var _mv := {}
-var _mv_t := 0.0
-## How many moves have been CHAINED since the last cut - see [method _chain_move]. It is
-## part of the seed, so a chain is reproducible without being a repeat of the move it
-## followed.
-var _chain := 0
-## The panel the CHAIN is heading for, or -1 when it has not chosen yet. Decided ONCE per cut
-## and then held - see _chain_move.
-var _chain_to := -1
+## WHERE THE CAMERA IS GOING. `_cam` follows this, every frame, and nothing else moves the
+## camera - see the note at the head of the camera section.
+var _tgt := {}
+## The shot in progress: {panel, kind, rate, arrived, heading}. A shot is a SUBJECT and a way
+## of looking at it, not a path; where the camera is on the way there is the follower's
+## business.
+var _shot := {}
+var _shot_t := 0.0
+## Seconds since the shot arrived, and the aim it arrived at - the origin the held shot creeps
+## from. Measuring the creep from the ARRIVAL rather than from the last frame is what bounds
+## it however long the hold runs.
+var _hold_t := 0.0
+var _hold_from := Vector2.ZERO
+## Shots begun this session, part of the seed so each is reproducible without repeating.
+var _shot_n := 0
+## Which way the framing is currently going: +1 tightening, -1 opening, 0 neither. Cleared
+## when a shot ARRIVES, which is what makes "no reversal without a hold between" expressible.
+var _zoom_dir := 0
+## Set by a declared discontinuity, and the only thing that lets the placed rake and distance
+## skip their followers. See _cut_to.
+var _snap := true
+## The followed halves of _place_eye: the rake pulled toward square-on, and the eye distance.
+## Both are derived from quantities that STEP - see RATE_FLAT.
+var _flat_s := 0.0
+var _dist_s := -1.0
 var _dip_t := -1.0                # seconds into a dip to black, < 0 when none
 var _roll := 0.0                  # the roll actually in force (field-flattened)
 var _eye := Vector3(0, 0, 3.0)
@@ -568,10 +591,13 @@ func _reset_book() -> void:
 	_read = 0
 	_prev = null
 	_turn_t = -1.0
-	_mv = {}
-	_mv_t = 0.0
-	_chain = 0
-	_chain_to = -1
+	_tgt = {}
+	_shot = {}
+	_shot_t = 0.0
+	_hold_t = 0.0
+	_zoom_dir = 0
+	_snap = true
+	_dist_s = -1.0
 	_dip_t = -1.0
 	_film_at = -1
 	_film_clip = {}
@@ -628,7 +654,7 @@ func take_over(_outgoing: GhostScene) -> GhostScene:
 	elif _spread_i >= 0:
 		_step += 1
 		_read = int(_plan[_step])
-		_choose_move()
+		_begin_shot(_read)
 	# CAST ON DEMAND. The rest of the spread is cast one panel per frame to keep the turn
 	# from hitching, and a fast cut can reach a panel before its turn in that queue comes
 	# up - which handed the Director a null and left the reading stuck on the panel behind.
@@ -723,7 +749,8 @@ func _turn_spread(idx: int) -> void:
 			_to_cast.append(i)
 	_cast_panel(_read)
 	_choose_spread_look()
-	_choose_move()
+	_snap = true                  # a new sheet is a new shot, not a place to ease toward
+	_begin_shot(_read, true)
 
 
 ## WHICH PANELS THIS SPREAD WILL SETTLE ON, in reading order. See FOCUS.
@@ -904,7 +931,7 @@ func _cast_panel(i: int) -> void:
 		return
 	if _cast[i] != null and is_instance_valid(_cast[i]):
 		return
-	var vp := _open_slot(i)
+	var vp := _open_slot(i, _panel_px_for(i))
 	# FOOTAGE, where the spread called for it. Cast directly rather than through the
 	# Director: a film is not in the catalogue (see FilmScene), because a scene that only
 	# exists when the viewer has imported something would make the running order depend on
@@ -933,15 +960,55 @@ func _cast_panel(i: int) -> void:
 ## from its aspect. The obvious alternative - constant AREA - overshoots badly at the tall
 ## end, where it makes a 0.44-aspect panel half again taller than the screen it will be
 ## drawn on, for no visible gain and 2.3x the pixels.
-func _open_slot(i: int) -> SubViewport:
+## EVERY PANEL IS SIZED BY HOW BIG IT IS ON SCREEN, not by how big a panel can ever be.
+##
+## This is what pays for every scene playing at once. The budget used to be three live panels
+## out of nine or twelve, and the rest were frozen render targets holding their last drawn
+## frame - which is a page of stills with three moving windows in it, and a panel frozen before
+## its scene had drawn anything is simply black. "You're optimizing for real-time, but we are
+## cutting videos. So we can just play every scene, and we should. Freezing them looks
+## terrible."
+##
+## Sizing every panel at `_panel_px` is what made that unaffordable: twelve 512-pixel targets
+## redrawn every frame, when eleven of them occupy a few hundred pixels of the picture. The
+## cost that matters is TOTAL PIXELS, not panel count, so a panel gets the resolution its place
+## in the shot actually asks for and is re-opened larger when the camera comes to it.
+func _open_slot(i: int, px := -1) -> SubViewport:
 	var vp: SubViewport = _slots[_pool * POOL + i]
 	var a := _spread.panel_aspect(i)
-	var h := _panel_px
-	var w := int(round(float(_panel_px) * a))
-	vp.size = Vector2i(maxi(64, w), maxi(64, h))
+	var h := px if px > 0 else _panel_px
+	var w := int(round(float(h) * a))
+	var want := Vector2i(maxi(SLOT_IDLE, w), maxi(SLOT_IDLE, h))
+	# ONLY EVER GROW WITHIN A SPREAD. Shrinking a live target throws away the picture in it and
+	# the panel flashes; the pool is reset to SLOT_IDLE when the spread turns (see advance),
+	# which is the one moment nothing is reading from it.
+	if want.x > vp.size.x or want.y > vp.size.y:
+		vp.size = Vector2i(maxi(want.x, vp.size.x), maxi(want.y, vp.size.y))
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	vp.process_mode = Node.PROCESS_MODE_INHERIT
 	return vp
+
+
+## The resolution panel [param i] earns in the shot on screen now: its drawn height in pixels,
+## with a floor so a panel in the far distance is still a picture and a ceiling at the full
+## target so the one being read is as sharp as the vehicle can make it.
+##
+## THIS IS ALSO THE PIXELATION ANSWER. A panel rasterises into its target and is then textured
+## onto the paper, so a shot tighter than the target is magnifying a bitmap - "some of the
+## in-frame scenes looked a bit pixelated". Re-opening the focal panel at the resolution the
+## camera is actually asking for is what removes that, and it costs nothing on the panels that
+## are not being looked at.
+func _panel_px_for(i: int) -> int:
+	var r := _panel_rect(i)
+	var on_screen := maxf(r.size.y, r.size.x / maxf(_spread.panel_aspect(i), 0.01))
+	# THE PANEL BEING READ MAY EXCEED `_panel_px`, up to the hard ceiling. That constant is the
+	# budget for a whole spread of targets, and applying it to the ONE panel filling the frame
+	# is what left a tight shot magnifying its own bitmap - measured at 1.21x on a push-in, and
+	# reported as "some of the in-frame scenes looked a bit pixelated... we should be able to
+	# just scale and skew the live scene, and compute pixels precisely". A live scene can
+	# indeed be drawn at any resolution; it just has to be ASKED for one.
+	var ceiling := PANEL_MAX if (i == _read or i == _film_at) else _panel_px
+	return clampi(int(round(on_screen * PANEL_OVERSAMPLE)), SLOT_IDLE, ceiling)
 
 
 ## Stop a viewport WITHOUT clearing it: the render target keeps its last frame. The ORDER
@@ -1056,6 +1123,13 @@ func _update_liveness() -> void:
 			or int(_warm[i]) < WARM_FRAMES or (_frame + i) % OFF_FOCAL_PERIOD == 0)
 		if on:
 			_warm[i] = int(_warm[i]) + 1
+			# GROW INTO THE SHOT. A panel cast while it was small on screen keeps that target
+			# until the camera comes to it; re-opening in REOPEN_STEP jumps rather than every
+			# frame keeps a push-in to a handful of reallocations instead of hundreds.
+			var px := _panel_px_for(i)
+			if px > vp.size.y and (i == _read or i == _film_at
+					or float(px) > float(vp.size.y) * REOPEN_STEP):
+				_open_slot(i, px)
 			_resume(vp)
 		else:
 			_freeze(vp)
@@ -1127,32 +1201,38 @@ func _tick_cast(features, delta: float) -> void:
 ## Punctuation is now about one shot in six. The rule the two reports agree on, once both
 ## are taken seriously, is that a camera should be MOVING most of the time and JUMPING
 ## rarely - which is neither "sit on each panel" nor "cut constantly".
-const MOVES := {
-	# --- travelling: the camera is moving for the whole shot ---------------------
-	"drift":   {"w": 4.0, "dur": [8.0, 15.0], "ease": "smooth", "hard": false, "chain": true},
-	"push":    {"w": 3.0, "dur": [7.0, 13.0], "ease": "smooth", "hard": false, "chain": true},
-	"track":   {"w": 2.0, "dur": [9.0, 16.0], "ease": "linear", "hard": false, "chain": true, "open": true},
-	"orbit":   {"w": 2.0, "dur": [9.0, 15.0], "ease": "smooth", "hard": false, "chain": true},
-	# THE SPREAD'S OWN MOVE, and the reason the spread earns its complexity: a lateral pan
-	# from a panel on one page, across the spine, onto a panel on the other. It is the
-	# longest continuous run of content the vehicle has ever had - a single page had no
-	# path longer than one page's width, and half of that was margin.
-	"spine":   {"w": 2.0, "dur": [12.0, 20.0], "ease": "linear", "hard": false, "chain": true, "open": true},
-	"sweep_h": {"w": 1.5, "dur": [9.0, 16.0], "ease": "linear", "hard": false, "chain": true, "open": true},
-	"sweep_v": {"w": 1.0, "dur": [9.0, 16.0], "ease": "linear", "hard": false, "chain": true, "open": true},
-	"pull":    {"w": 1.5, "dur": [7.0, 13.0], "ease": "smooth", "hard": false, "chain": true},
-	# --- and the one that just looks at a panel ----------------------------------
-	"hold":    {"w": 1.5, "dur": [5.0, 10.0], "ease": "smooth", "hard": false, "chain": true},
-	# --- arrivals: a gesture that lands, then holds ------------------------------
-	"swoop":   {"w": 0.6, "dur": [2.6, 5.0],  "ease": "out",    "hard": true},
-	"whip":    {"w": 0.4, "dur": [0.45, 0.9], "ease": "out",    "hard": false},
-	# --- and the one that ARRIVES AND STAYS ARRIVED ------------------------------
-	# Weight 0: never drawn from the bag, only named by _chain_move when the cut is close.
-	# See ARRIVE.
-	"settle":  {"w": 0.0, "dur": [3.0, 6.0],  "ease": "smooth", "hard": false},
-	# --- discontinuities: punctuation, not grammar -------------------------------
-	"cut":     {"w": 0.8, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
-	"dip":     {"w": 0.4, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
+const SHOTS := {
+	# WHAT EACH ENTRY MEANS. `fill` is a band MULTIPLYING the panel's natural framing, so a
+	# shot is expressed as "how much tighter or wider than this panel reads at" rather than as
+	# an absolute the panel's size can invalidate. `aim` is how far the station sits off the
+	# panel's centre, in page widths. `az` is how far round it swings, in radians. `rate` is
+	# how fast the follower closes on it, multiplying the severity rate. `hard` means the shot
+	# begins with a cut - see _cut_to, the only place in this file that assigns the camera.
+	#
+	# EVERY ONE OF THESE IS A DISTANCE OR A SPEED. That is the whole change: the old table gave
+	# each move a DURATION and an EASE CURVE and let thirteen branches hand-roll their own
+	# interpolation between two poses, which is why continuity was a convention rather than a
+	# property, and why four rounds of guards never converged.
+	"settle":  {"w": 4.0, "fill": [0.92, 1.12], "aim": 0.04, "az": 0.00, "rate": 1.00},
+	"push":    {"w": 2.5, "fill": [1.35, 2.30], "aim": 0.03, "az": 0.00, "rate": 0.75},
+	"pull":    {"w": 1.5, "fill": [0.55, 0.80], "aim": 0.03, "az": 0.00, "rate": 0.75},
+	"pan":     {"w": 3.0, "fill": [0.90, 1.20], "aim": 0.30, "az": 0.10, "rate": 0.70},
+	"orbit":   {"w": 1.5, "fill": [0.90, 1.20], "aim": 0.05, "az": 0.55, "rate": 0.55},
+	# THE ONE THAT SHOWS THE PAGE. Nothing else in this table frames more than its own panel -
+	# the widest, `pull`, still leaves the subject filling most of the picture - so the camera
+	# had no way to say "here is the sheet you are reading": "it never pulls-back, to reveal the
+	# greater page and multiple frames; it's just a constant bouncing around between individual
+	# frames, close-up". `page` aims at the middle of the panel's own page and frames wide
+	# enough that its neighbours and the gutters between them are the composition.
+	"page":    {"w": 2.0, "fill": [0.26, 0.46], "aim": 0.10, "az": 0.15, "rate": 0.55,
+		"wide": true},
+	# The quick one. Same grammar, four times the rate - a whip is a fast move, not a jump,
+	# and expressing it as a rate is what keeps it continuous however short it is.
+	"whip":    {"w": 0.5, "fill": [0.85, 1.30], "aim": 0.20, "az": 0.25, "rate": 3.20},
+	# ...and the one discontinuity. It must change the SUBJECT to be allowed at all, which is
+	# checked in _worth_cutting rather than hoped for here.
+	"cut":     {"w": 0.9, "fill": [0.80, 1.60], "aim": 0.08, "az": 0.80, "rate": 0.90,
+		"hard": true},
 }
 
 ## How far past the subject a `track` keeps going, in page widths. The camera does not stop
@@ -1216,41 +1296,28 @@ const SETTLE_ROOM := 5.0
 const SETTLE_DRIFT := 0.22
 
 
-## THE CAMERA SEVERITY KNOB, applied. See [member Director.camera] for what it is.
-##
-## Every constant below that describes how MUCH the camera does is read through one of these,
-## so the slider moves the whole behaviour along a single axis instead of asking anyone to
-## balance six numbers. Written as multipliers around 1.0 at the default setting, so a session
-## that never touches the slider gets exactly the tuned camera.
-##
-## What it scales, and why each one belongs to "severity" rather than to taste:
-##   the angular arc a shot may reach          - how far the camera can swing at all
-##   how much of that arc one shot spends      - how gently it gets there
-##   how far a page turn moves the set-up      - the one big change in the grammar
-##   move duration                             - a short move is a fast move
-##   the weight of the discontinuous moves     - at 0 the camera never jump-cuts
-##   how deep a push goes, and the orbit arc   - the two most violent gestures
-##   the sheet's own drift rate                - the scenery, which reads as camera motion
-## Duration is EXPONENTIAL in the setting (pow, not lerp) so that 1.0 is exactly the tuned
-## value and the two halves of the range are symmetric: 0 makes a move 1.8x longer by the same
-## factor 2 makes it 0.55x shorter. A lerp between the endpoints does not pass through 1.
-const DUR_SEVERITY := 0.55
-## How far a page turn may move the camera's side of the sheet, in radians at severity 1. It
-## used to re-roll over the whole circle; that is the single largest move the camera makes,
-## and on a spread it now happens only every six to twelve cuts, so it is worth having but
-## not worth having unconditionally.
+## How far a page turn may move the camera's side of the sheet, in radians at camera 1. A page
+## turn is the single largest change of angle the grammar allows, and re-rolling over the whole
+## circle - which is what this replaced - is a walk round the table rather than a lean.
 const TURN_AZ := 1.2
-## The discontinuous moves scale by severity SQUARED - they vanish faster than everything else
-## going down and arrive faster going up, because "does it ever jump cut" is the single thing
-## that most decides whether a camera reads as gentle or as chaotic.
-const HARD_SEVERITY := 2.0
 
 
-## The severity in force, 0..2. Asked of the Director rather than held here so the slider
-## takes effect on the next planned move without anything having to be pushed at the vehicle.
-func _sev() -> float:
-	return clampf(Director.camera, Director.CAMERA_MIN, Director.CAMERA_MAX)
-
+## THE CAMERA KNOB, applied. See [member Director.camera] for what it is - the slider is
+## labelled "Camera"; `severity` is only this file's word for it.
+##
+## Every constant that describes how MUCH the camera does is read through _sev(), so the slider
+## moves the whole behaviour along one axis. What it scales, and why each belongs to it:
+##   how far a shot travels and how wide its framing band is - see REACH_CALM
+##   how fast the follower closes                            - see RATE_CALM
+##   the angular arc a shot may reach, and the walk step      - how far it can swing at all
+##   how far a page turn moves the set-up                     - the one big change in grammar
+##   the weight of the one discontinuous shot                 - at 0 it never jump-cuts
+##   the sheet's own drift rate                               - scenery reads as camera motion
+##
+## REACH IS THE ONE THAT MATTERS FOR HOLDING, and the previous design had only speed. Scaling
+## speed alone means a gentle camera makes the same journeys more slowly, so it spends MORE of
+## the hold travelling: measured at 71% held at camera 0 against 86% at camera 1, an inversion
+## that is exactly why turning the slider down never helped.
 
 ## HOW MUCH GENTLER A FIELD SCENE IS RAKED, 0..1 toward square-on.
 ##
@@ -1326,40 +1393,6 @@ func _choose_spread_look() -> void:
 	# discontinuity in the angles and everything between turns is continuous.
 	# The sheet's own drift is part of how busy the picture is, so it scales too.
 	_att_rate *= sev
-
-
-## A camera station: where it aims on the spread, and from what angle and how close.
-func _station(r: RandomNumberGenerator, panel: int) -> Dictionary:
-	var i := clampi(panel, 0, maxi(0, _spread.panels.size() - 1))
-	var sev := _sev()
-	# WITHIN THE SPREAD'S SET-UP, and reached a STEP AT A TIME. See AZ_ARC for the arc and
-	# ANG_STEP for why a shot may only spend a fraction of it.
-	_az_walk = _walk(_az_walk, AZ_ARC * sev, r)
-	_el_walk = _walk(_el_walk, deg_to_rad(EL_VARY_DEG) * sev, r)
-	_roll_walk = _walk(_roll_walk, ROLL_VARY * sev, r)
-	# A gentler camera also frames more evenly - the widest and tightest shots in the range
-	# are part of how restless it reads, not a separate taste.
-	var mid := (FILL.x + FILL.y) * 0.5
-	var half := (FILL.y - FILL.x) * 0.5 * sev
-	return {
-		# DEAD CENTRE ON A FILM PANEL. The pull toward the page's middle exists to keep the
-		# trim edge out of shot on an outer panel, and on a contained film panel there is
-		# nothing to keep out - the whole panel is in frame with paper all round it - while
-		# the pull would put the subject off centre for no gain.
-		"aim": _spread.panel_center(i) if i == _film_at \
-			else _spread.panel_center(i).lerp(_page_center(i), AIM_PULL),
-		"az": _az_base + _az_walk,
-		# Elevation off the PAPER, never square-on: at 90 degrees the perspective camera and
-		# the page agree exactly and the panel is a flat rectangle again.
-		"el": clampf(_el_base + _el_walk,
-			deg_to_rad(EL_MIN_DEG), deg_to_rad(EL_MAX_DEG)),
-		"roll": _roll_base + _roll_walk,
-		"fill": r.randf_range(mid - half, mid + half),
-		# ONE LENS PER SPREAD. A production picks a lens and covers the scene with it;
-		# changing focal length every shot is a thing that reads as a mistake even to
-		# someone who could not name what changed.
-		"fov": _lens_fov,
-	}
 
 
 ## WHERE THE READING IS GOING, in spread coordinates: from the panel being read to the next
@@ -1509,352 +1542,422 @@ func _panel_on_side(side: int, y: float) -> int:
 	return best
 
 
-## Pick and plan the next move. Called on every reading advance and on every page turn.
-func _choose_move() -> void:
-	# HAS THE CHAIN ALREADY BROUGHT US HERE? Between cuts the chain travels ahead to the panel
-	# the next cut will land on (see _chain_move), so by the time that cut arrives the camera is
-	# often already looking at it. Planning a fresh shot then can draw a HARD move out of the
-	# bag and jump-cut from the panel to the same panel, a few degrees round - "the camera
-	# jump-cuts unexpectedly... to the exact same frame of the exact same page, from a slightly
-	# different angle. That should never happen." Quite so: there is nothing to cut TO. Treating
-	# it as a chain keeps the move gentle and keeps the framing it already had.
-	var arrived := _chain_to == _read
-	_chain = 0
-	_chain_to = -1
-	_plan_move(hash([Director.session_seed(), "comic-move", _spread_i, _read]), _read,
-		"chain" if arrived else "")
+# --- the camera: one target, one follower ------------------------------------
+#
+# THE CAMERA STATE IS NEVER ASSIGNED, ONLY INTEGRATED. That sentence is the whole design, and
+# everything below exists to keep it true. `_cam` follows `_tgt` exponentially, every frame,
+# forever; the single exception is _cut_to, which is the only function in this file that
+# writes `_cam` outright and is therefore the only place a discontinuity can come from.
+#
+# WHAT THIS REPLACES AND WHY. A move used to be a pair of poses, a duration and an ease curve,
+# with `_ease` interpolating between them. That made continuity a CONVENTION that thirteen
+# branches were each expected to honour - and at least two of them did not, while the comment
+# above them asserted that none did. It also meant "is the camera holding" was a question about
+# which of thirteen names was active, so every fix had to be restated for each. Four rounds of
+# guards were spent on defects that were all one defect: nothing owned how much the picture may
+# change in a frame.
+#
+# THE OTHER HALF OF THE SAME BUG WAS BELOW THE MOVE LAYER. _place_eye derives the rake from the
+# panel being READ, the scale from whichever panel the aim is inside, and the distance from a
+# solve that changes branch at the film panel's edge. Those are step functions no move-layer
+# guard can reach - measured at up to 21.7 degrees of elevation in a single frame - so `flat`
+# and the eye distance are follower channels here too.
+#
+# AND SPEED IS A RATE, NOT A DURATION. The old `_budget` sampled a duration and then capped it
+# at a share of the Director's hold, so on a long hold the SAMPLE was the binding constraint
+# and the slider stopped mattering: at scene hold 4.0 a "gentle" drift ran 27 s and chained
+# another. There is no duration here. A shot has a target and a closing rate, it arrives when
+# it arrives, and a cut that interrupts it is graceful because the follower simply retargets.
 
 
-## THE MOVE RAN OUT AND THE DIRECTOR HAS NOT CUT YET.
+## WHAT SHARE OF THE HOLD A SHOT SPENDS ARRIVING, at camera 0 and at camera 2.
 ##
-## This is the other half of the report - "then just freeze there for a long time" - and it
-## was not a tuning problem, it was a missing state. _ease clamps its progress at 1, so once
-## a move's duration elapsed the camera sat at exactly the pose the move ended in, and it
-## sat there until the next cut. The arithmetic is stark: the Director holds a scene between
-## its minimum and its maximum (7 s and 28 s at the calm reference, scaled by the pacing),
-## and the longest move in the bag is 20 s while the most common is 8 to 15. A drift that
-## rolled 8 s against a 28 s hold is TWENTY SECONDS of a completely motionless picture.
+## THE RATE IS DERIVED FROM THIS, NOT SET DIRECTLY, and that is the second time this file has
+## had to learn the same lesson. A fixed rate makes a calm camera CLOSE SLOWLY - but the
+## distance it has to close is the gap between two panels, which the reading plan sets and the
+## slider does not touch. So a slow rate means a long journey between panels and a short hold
+## at the end of it: measured with cuts running, 53% held at camera 0 against 82% at camera 2,
+## the calm end holding LEAST. That is the same inversion as the old `_budget`, arriving by a
+## different road, and the cure is the same: express the intent (how much of the scene is
+## spent looking rather than travelling) and let the rate fall out of it.
 ##
-## So a finished move now plans its successor from wherever it actually ended, and the
-## camera never arrives at all. The successor is always a GENTLE one (see the `chain` flag):
-## a jump is something a cut does, and a camera that jumps with no cut behind it reads as a
-## glitch rather than as an edit.
+## THE RATE ACCOUNTS FOR HOW FAR THE SHOT HAS TO GO. An exponential follower closes a gap of G
+## down to the arrival threshold in ln(G)/rate seconds, so the rate that arrives in a chosen
+## time is ln(G) / t - NOT the 3/t that "three time constants" suggests, which silently assumes
+## every shot starts the same distance out. A shot crossing the spread starts an order of
+## magnitude further out than one nudging within a panel, and with a fixed 3/t the far ones
+## simply took longer: measured 12.2 s mean arrival against a 9 s ceiling.
+const ARRIVE_SHARE_CALM := 0.22
+const ARRIVE_SHARE_BUSY := 0.55
+## ...BOUNDED AT BOTH ENDS, in seconds of approach. Both bounds are load-bearing and the
+## missing one was a real defect: with the hold slider at 4.0 the room in front of a shot is
+## enormous, so `share` of it is enormous, so the derived rate went to nearly zero and the
+## follower crawled - measured, NO SHOT EVER ARRIVED in a 60 s run, and the hold phase
+## therefore never began at all. That is the old `_budget` inversion for the third time, hiding
+## inside a rate instead of a duration: any quantity derived from the Director's hold has to be
+## clamped, because the hold is a user setting with no upper bound.
 ##
-## WHERE IT GOES is the reading's business, not the roll's. If the camera has drifted off
-## the panels it goes back to the one being read - that is a recovery and it is the common
-## case after an `open` move. Otherwise it moves to a NEIGHBOUR in reading order, preferring
-## the one ahead, so the camera is already travelling toward the panel the next cut will
-## land on and the cut arrives as a correction rather than as a leap.
-func _chain_move() -> void:
-	if _spread == null:
+## The floor keeps an arrival from being a snap on a very short hold; the shot simply runs past
+## the cut, which costs nothing because a cut is a new target rather than an interruption.
+## Over what fraction of the journey the approach eases out. Above it the camera travels at a
+## constant rate; below it, it lands. Small, because the taper is a landing, not the shot.
+const ARRIVE_TAPER := 0.28
+const ARRIVE_FLOOR := 1.8
+## 10, not 17. A pan may be unhurried and still has to LAND: at 17 a shot spent fourteen
+## seconds of a twenty-second scene travelling and held for 3% of it. The variety comes from
+## PAN_SPEED sampling inside this bound, not from the bound itself being generous.
+const ARRIVE_CEIL := 10.0
+## HOW FAST THE CAMERA CROSSES THE PAPER, in page widths per second, sampled per shot.
+##
+## A PAN HAS A SPEED, NOT A DURATION, and that distinction is the whole of "the transitions all
+## seem rather fast... I would expect more gentle, drifting camera pans". Sizing every arrival
+## as a share of the hold gives a long journey and a short nudge the SAME eight seconds - so
+## the long ones, which are the ones that should read as unhurried drifts across the spread,
+## are the fastest thing on screen. Dividing the distance by a speed inverts that correctly:
+## crossing the spine takes longer than easing across a gutter, because it is further.
+##
+## The range is wide on purpose. Some transitions should be quick; the complaint was that they
+## ALL were, and a single tuned number cannot express "mostly gentle, occasionally not".
+const PAN_SPEED := Vector2(0.028, 0.115)
+## The angles follow slower than the aim. A pan that changes the rake at the same speed as the
+## framing reads as the whole page swinging; letting the rake lag makes it read as a camera
+## craning while it travels, which is the same motion done by something with mass.
+const RATE_ANGLE := 0.62
+## HOW BIG A SHOT'S JOURNEY IS, at camera 0 and camera 2, multiplying the `aim` and `az`
+## distances in SHOTS and the width of its `fill` band.
+##
+## THIS IS WHAT MAKES THE SLIDER MONOTONE IN HOLDING, and the old design had it backwards.
+## Scaling only the SPEED means a gentle camera makes the same journeys more slowly, so it
+## spends MORE of the hold travelling and less of it arrived - measured on the previous build
+## at 71% held at camera 0 against 86% at camera 1, which is why turning the slider down never
+## helped. A gentle camera makes SMALL journeys: it arrives early and looks for a long time.
+const REACH_CALM := 0.35
+const REACH_BUSY := 1.35
+## THE SHOT HAS ARRIVED when its remaining gap is under this, measured in the mixed units of
+## _pose_gap: page widths of aim, log-ratio of framing, radians of swing. One is the threshold
+## because _pose_gap divides each channel by its own tolerance first.
+const ARRIVED := 1.0
+## The tolerances _pose_gap normalises by: aim in page widths, framing as a log ratio (0.06 is
+## about 6%), swing in radians.
+const GAP_AIM := 0.035
+const GAP_FILL := 0.06
+const GAP_ANG := 0.035
+## A shot that cannot converge - because the Director is holding it against a target it will
+## not reach, or because a constraint is fighting it - is treated as arrived after this long,
+## so the hold can begin. Without it a pathological shot never holds and never says why.
+## The safety net for a shot that cannot converge - a target it will not reach, or a constraint
+## fighting it. It must sit ABOVE any legitimate arrival or it stops being a net and starts
+## being the schedule; see the note on the taper floor in _follow.
+const ARRIVE_CAP := 22.0
+## HOW LONG THE CAMERA MUST HAVE HELD before it may reverse the framing.
+##
+## Clearing the direction the instant a shot ARRIVES is not enough: a shot can arrive and be
+## cut a moment later, and the next shot is then free to reverse with nothing in between -
+## measured at 3 to 6 reversals per run with no hold separating them. The report asked for a
+## hold, not for a touch: "no reversing direction allowed, without first HOLDING at that
+## position first."
+const ZOOM_FREE := 1.6
+## THE HELD SHOT STILL BREATHES. How far the target creeps during a hold, in page widths, and
+## how long it takes to creep the whole way. One heading, chosen when the shot arrives.
+##
+## A held shot that is perfectly static reads as a photograph of a page rather than a camera
+## looking at one, and the original report on this vehicle was a camera that froze. A heading
+## rather than a walk: an unbiased random walk against the panel edge parks AT the edge and
+## jitters there, which is a defect this file has shipped once already.
+const HOLD_CREEP := 0.05
+const HOLD_CREEP_TIME := 22.0
+## WHAT MAKES A JUMP CUT WORTH MAKING: it must land on a DIFFERENT panel, and move the aim at
+## least this far. A cut is a change of SUBJECT; scale is how it is photographed, not what it
+## is of. Measured on the build this replaced, four of every five discontinuities landed on the
+## panel the camera was already framing - "the camera jumps to correct its position... landing
+## on the exact same frame."
+const CUT_MIN_AIM := 0.28
+## How fast `flat` and the eye distance follow their targets, per second. These are the two
+## quantities in _place_eye that STEP - see the note at the top of this section.
+const RATE_FLAT := 1.3
+const RATE_DIST := 2.4
+
+
+## The severity in force, 0..2. Asked of the Director rather than held here so the slider takes
+## effect on the next frame without anything having to be pushed at the vehicle.
+func _sev() -> float:
+	return clampf(Director.camera, Director.CAMERA_MIN, Director.CAMERA_MAX)
+
+
+## How far a shot travels, and how fast, at the current setting. See REACH_CALM and RATE_CALM.
+func _reach() -> float:
+	return lerpf(REACH_CALM, REACH_BUSY, clampf(_sev(), 0.0, 2.0) * 0.5)
+
+
+## The rate that arrives inside this camera's share of the hold in front of it. See
+## ARRIVE_SHARE_CALM.
+## How long this shot should take to arrive: the distance it has to cross, at a speed sampled
+## for this shot. See PAN_SPEED. The Director's hold is a CEILING on that, not the source of
+## it - a shot may not spend more than its share of the scene travelling, but within that it
+## goes at its own pace.
+func _arrive_time(r: RandomNumberGenerator, travel: float, kind: String) -> float:
+	# BIASED TOWARD THE SLOW END, and the bias has to be applied to the SPEED to come out right
+	# in the duration. Time is distance over speed, so sampling speed uniformly produces mostly
+	# SHORT transitions - the fast half of the speed range covers a narrow band of durations
+	# while the slow half spreads over a wide one. Squaring the draw pushes the sample toward
+	# the gentle end, which is the shape asked for: "it's okay if some of them are fast... but I
+	# wouldn't expect them all to be that way."
+	var u := r.randf()
+	var speed := lerpf(PAN_SPEED.x, PAN_SPEED.y, u * u)
+	# THE TABLE'S `rate` MULTIPLIES THE SPEED. It used to DIVIDE the follower rate, which made
+	# every entry mean its opposite: `whip` at 3.2 was the slowest thing in the bag and `orbit`
+	# at 0.55 the quickest.
+	speed *= float(SHOTS[kind].get("rate", 1.0)) * lerpf(0.7, 1.7, clampf(_sev(), 0.0, 2.0) * 0.5)
+	var want := travel / maxf(speed, 0.001)
+	var share := lerpf(ARRIVE_SHARE_CALM, ARRIVE_SHARE_BUSY, clampf(_sev(), 0.0, 2.0) * 0.5)
+	var room := Director.hold_remaining() * share
+	return clampf(minf(want, maxf(room, ARRIVE_FLOOR)), ARRIVE_FLOOR, ARRIVE_CEIL)
+
+
+## BEGIN A SHOT ON [param panel]. This is the only entry point for "look at something else":
+## the Director's cut calls it, and so does a page turn.
+func _begin_shot(panel: int, turned := false) -> void:
+	if _spread == null or _spread.panels.is_empty():
 		return
-	_chain += 1
-	var key := hash([Director.session_seed(), "comic-chain", _spread_i, _read, _chain])
+	panel = clampi(panel, 0, _spread.panels.size() - 1)
 	var r := RandomNumberGenerator.new()
-	r.seed = key
-	# THE TARGET IS CHOSEN ONCE PER CUT AND THEN HELD.
-	#
-	# It used to be re-decided on every chain, from where the camera HAPPENED TO BE: on content
-	# it looked ahead to the next panel, off content it "recovered" to the one being read. Those
-	# two branches fight. The camera sets off for the panel ahead, crosses a gutter on the way,
-	# the content score dips under the threshold, and the next chain reads that as being lost
-	# and sends it back - whereupon it is on content again and the chain sends it forward.
-	# Reported as the camera "bouncing between two diagonal corners... clearly because of some
-	# kind of repulsion mechanism", and the diagnosis that came with it is the right one: "the
-	# camera should have never selected the top-right frame again, in the first place." There is
-	# no repulsion here and never was; there was a destination being recomputed from a position
-	# that the journey itself was changing.
-	var ahead := int(_plan[_step + 1]) if _step + 1 < _plan.size() else -1
-	if _chain_to < 0:
-		_chain_to = _read
-	if _chain_to == _read and ahead >= 0 and _content_at(_clamp_aim(_cam.aim)) >= 0.35:
-		# FORWARD ONLY, and only ever this one step: from the panel being read to the panel the
-		# next cut will land on. Monotone, so an oscillation is not merely unlikely, it cannot
-		# be expressed - which is the property that matters, because the last version was also
-		# not MEANT to oscillate.
-		#
-		# The alternative - freezing the target outright at the first chain - does stop the
-		# bouncing, and it also stops the camera: committing to the panel it is already on
-		# leaves nothing to travel to, and the aim measured 0.0096 page widths a second, which
-		# is a picture that has stopped. A comic is read once through, so forward is the only
-		# direction there is; the fix is to take it, not to stand still.
-		_chain_to = ahead
-	# NOT ENOUGH TIME TO GO ANYWHERE. Arrive properly instead - see SETTLE_ROOM.
-	if Director.hold_remaining() < SETTLE_ROOM:
-		_plan_move(key, _chain_to, "chain", "settle")
-		return
-	_plan_move(key, _chain_to, "chain")
-
-
-## Plan a move to [param panel], seeded from [param key]. [param tag] is empty for a cut's
-## move and "chain" for a continuation, which is both the log line and the filter on the
-## bag - see the `chain` flag in MOVES.
-func _plan_move(key: int, panel: int, tag: String, force := "") -> void:
-	if _spread == null:
-		return
-	var r := RandomNumberGenerator.new()
-	r.seed = key
-	var kind := force if MOVES.has(force) else _pick_move(r, tag == "chain")
-	var spec: Dictionary = MOVES[kind]
-	var b := _station(r, panel)
-	# CONTINUITY BY DEFAULT: a move starts from wherever the camera actually is, so the
-	# picture never jumps unless the move is one whose whole point is that it jumps.
-	#
-	# AND NOTHING BELOW MAY OVERWRITE a["aim"] EXCEPT A DECLARED-HARD MOVE. Four of them did:
-	# sweep_h and sweep_v snapped the aim to the end of a row or column, and orbit and pull
-	# snapped it onto the target panel, all while declaring hard: false. Since _mv_t restarts
-	# at zero, the first frame of such a move teleports the picture - measured at a mean of
-	# 0.48 to 0.62 page widths, on 100% of orbits and pulls, taking the real jump-cut rate to
-	# 38.7% of shots against the "about one shot in six" this table claims. They now aim
-	# their DESTINATION instead, which keeps every gesture and starts all of them from the
-	# picture that is already on screen.
-	var a: Dictionary = b.duplicate() if bool(spec.get("hard", false)) else _cam.duplicate()
-	var row: float = _spread.panel_center(panel).y
-	var col: float = _spread.panel_center(panel).x
-
-	match kind:
-		"track":
-			# A constant station passing THROUGH the subject and out the other side - the
-			# shot that follows a car down a road. The direction is where the camera has
-			# been travelling from, so the reading keeps its momentum.
-			# ALONG THE READING where there is one, so the overrun carries on toward the next
-			# panel instead of past the subject in some unrelated direction.
-			var away: Vector2 = _reading_dir()
-			if away.length() < 0.05:
-				away = (b.aim - a.aim)
-			if away.length() < 0.05:
-				away = Vector2(1.0, 0.0).rotated(r.randf_range(-0.5, 0.5))
-			b["aim"] = b.aim + away.normalized() * TRACK_OVERRUN
-			for k in ["az", "el", "roll", "fill", "fov"]:
-				b[k] = a[k]
-		"spine":
-			# ACROSS THE SPINE. A panel on one page to a panel on the other at the same
-			# height, station held, so it is a pure lateral pan over the longest run of
-			# uninterrupted content the sheet has. Which way it goes follows which page the
-			# aim is on, so the pan moves AWAY from where the camera already is.
-			# ONLY WHEN THE READING IS ACTUALLY CROSSING. A traverse over the spine is the
-			# spread's best move and its worst one: taken when the next panel is on the far
-			# page it IS the turn of the eye from one page to the other, and taken at any
-			# other moment it is the camera leaving the story behind and coming back.
-			var far_side := 1 if float(a.aim.x) < ComicSpread.SPINE else 0
-			var nxt := int(_plan[_step + 1]) if _step + 1 < _plan.size() else -1
-			var to_i := nxt if nxt >= 0 and _spread.side_of(nxt) == far_side \
-				else _panel_on_side(far_side, row)
-			if to_i >= 0 and (nxt < 0 or _spread.side_of(nxt) == far_side):
-				b["aim"] = _spread.panel_center(to_i)
-			for k in ["az", "el", "roll", "fill", "fov"]:
-				b[k] = a[k]
-		"sweep_h":
-			# ACROSS THE ROW, PANEL TO PANEL - not across the SHEET. It used to run from
-			# -0.10 to 1.10 in page coordinates, which is a pan that begins and ends on the
-			# desk and spends much of its length over margin and gutter: "tracking along
-			# unfocused edges". A sweep is a pan over CONTENT or it is nothing.
-			# THE END THE READING IS HEADED FOR - see _reading_dir. Only when the reading has
-			# nowhere left to go does it fall back to the farther end.
-			var span_h := _row_span(panel)
-			var go_x := _reading_dir().x
-			var end_x: float = span_h.y if go_x > 0.0 else span_h.x
-			if is_zero_approx(go_x):
-				end_x = span_h.y if absf(span_h.y - float(a.aim.x)) \
-					>= absf(span_h.x - float(a.aim.x)) else span_h.x
-			b["aim"] = Vector2(end_x, row)
-			for k in ["az", "el", "roll", "fill", "fov"]:
-				b[k] = a[k]
-		"sweep_v":
-			var span_v := _col_span(panel)
-			var go_y := _reading_dir().y
-			var end_y: float = span_v.y if go_y > 0.0 else span_v.x
-			if is_zero_approx(go_y):
-				end_y = span_v.y if absf(span_v.y - float(a.aim.y)) \
-					>= absf(span_v.x - float(a.aim.y)) else span_v.x
-			b["aim"] = Vector2(col, end_y)
-			for k in ["az", "el", "roll", "fill", "fov"]:
-				b[k] = a[k]
-		"push":
-			# IT ENDS ON THE PANEL. It used to end at a.aim.lerp(b.aim, 0.5) - the MIDPOINT
-			# between wherever the camera happened to be and the panel it was going to -
-			# while pushing in to between 2.2 and 3.8 frames of panel height. A midpoint
-			# between two panels is a gutter, and a gutter at 3.8 fill is the reported
-			# defect exactly: "in the corner of a frame and fully zoomed-in... shows almost
-			# nothing". A push-in ends ON its subject. That is what a push-in is.
-			# ...and the other one. A push to 3.8 frames of panel height is the tightest the
-			# camera ever gets; at a gentle setting it barely pushes past the panel at all.
-			b["fill"] = lerpf(1.0, r.randf_range(PUSH_FILL.x, PUSH_FILL.y), _sev() * 0.5)
-			for k in ["az", "el", "roll"]:
-				b[k] = a[k]
-		"pull":
-			# OUT FROM WHERE THE CAMERA ALREADY IS. It used to set a["fill"] to a deep push
-			# value - and `a` is the move's FIRST frame, so on a move declared hard:false that
-			# teleported the zoom in and then eased back out. "The camera quickly zooms and
-			# resets, which is a problem I thought we had fixed": the chained-move fix stopped
-			# the zoom being RE-ROLLED, and this is the other way it moved without being asked.
-			b["fill"] = maxf(FILL.x * 0.6, float(a["fill"]) * PULL_OUT)
-			for k in ["az", "el", "roll"]:
-				b[k] = a[k]
-		"orbit":
-			# The widest gesture in the bag - up to 149 degrees at the default - so it is one
-			# of the two the severity knob pulls in hardest.
-			b["az"] = a.az + r.randf_range(ORBIT_ARC.x, ORBIT_ARC.y) * _sev() \
-				* (1.0 if r.randf() < 0.5 else -1.0)
-			for k in ["el", "roll", "fill", "fov"]:
-				b[k] = a[k]
-		"swoop":
-			# In off the FAR SIDE of the spread, low and wide, arriving on the subject.
-			a["az"] = b.az + PI
-			a["el"] = deg_to_rad(r.randf_range(SWOOP_EL_DEG.x, SWOOP_EL_DEG.y))
-			a["fill"] = SWOOP_FILL
-			var mid := _page_center(panel)
-			a["aim"] = b.aim + (b.aim - mid).normalized() * 0.5 \
-				if b.aim.distance_to(mid) > 0.02 else b.aim
-
-	if kind == "settle":
-		# STAY WHERE THE LAST MOVE LANDED. Only the framing eases the last of the way in, so
-		# the shot resolves instead of being abandoned mid-convergence.
-		b["aim"] = a.aim.lerp(b.aim, SETTLE_DRIFT)
-		# FILL INCLUDED, and leaving it out was a bug you could see. A settle exists to hold
-		# the shot still while the cut arrives; copying every part of the camera EXCEPT the
-		# zoom meant it held the angle and then eased to a freshly sampled distance, so the
-		# picture crept in or out by a few percent for no reason at all.
-		for k in ["az", "el", "roll", "fov", "fill"]:
-			b[k] = a[k]
-
-	# A CHAIN DOES NOT RE-ROLL THE ZOOM. Every move takes its target framing from a fresh
-	# _station, which samples `fill` - fine at a CUT, where a new shot is the point, and wrong
-	# between cuts, where the chain is meant to be the same shot continuing. Two chains in a
-	# row on one panel therefore nudged the distance one way and then the other: "it zoomed-in
-	# then immediately zoomed-out again, but barely... it would have been better to just remain
-	# stable, or to zoom and keep zooming". The two moves whose whole gesture IS the zoom keep
-	# theirs; everything else inherits what the camera already had.
-	if tag == "chain" and kind != "push" and kind != "pull":
-		b["fill"] = a["fill"]
-
-	# THE SETTLE GUARD, and it is a guard rather than a rule so that it survives whatever
-	# gets added to the bag next. Any move that is allowed to STOP must stop somewhere worth
-	# looking at; the ones marked `open` are exempt because running past the subject is
-	# their whole gesture, and _chain_move is what makes that safe.
-	if not bool(spec.get("open", false)):
-		b["aim"] = _settle_aim(_clamp_aim(b.aim))
-	else:
-		# An open move keeps its overrun, but the overrun lands inside the printed area rather
-		# than out on the trim - see _printed_bounds. Clamping it HERE as well as at placement
-		# matters: the move interpolates toward `b`, so an unclamped `b` drags the whole
-		# journey toward the margin even though the placement clamp hides the last of it.
-		b["aim"] = _clamp_aim(b.aim)
-
-	_mv = {
+	r.seed = hash([Director.session_seed(), "comic-shot", _spread_i, panel, _shot_n])
+	_shot_n += 1
+	var kind := _pick_shot(r)
+	# A ZOOM MAY BE CONTINUED BUT NEVER REVERSED WITHOUT A HOLD BETWEEN. `_zoom_dir` is cleared
+	# when a shot arrives, so this asks exactly the question the report asked: has the camera
+	# held since it last changed the framing? "No reversing direction allowed, without first
+	# holding at that position first."
+	if (kind == "pull" and _zoom_dir > 0) or (kind == "push" and _zoom_dir < 0):
+		kind = "pan"
+	var tgt := _target_for(r, panel, kind)
+	var hard := bool(SHOTS[kind].get("hard", false)) and _worth_cutting(tgt)
+	# THE HEADING THE HOLD WILL CREEP ALONG, drawn once here rather than re-drawn per breath.
+	var hd := Vector2(r.randf_range(-1.0, 1.0), r.randf_range(-1.0, 1.0))
+	_shot = {
+		"panel": panel,
 		"kind": kind,
-		"a": a,
-		"b": b,
-		# SEVERITY SETS THE SPEED, and the DEADLINE sets the ceiling. See DUR_SEVERITY for the
-		# first and ARRIVE for the second.
-		"dur": _budget(r.randf_range(float(spec["dur"][0]), float(spec["dur"][1]))
-			* pow(DUR_SEVERITY, _sev() - 1.0), kind, panel),
-		"ease": String(spec["ease"]),
+		# `secs` and `gap0` are filled in below, once the target exists to measure against.
+		"arrived": false,
+		"heading": hd.normalized() if hd.length() > 0.001 else Vector2.RIGHT,
 	}
-	_mv_t = 0.0
-	if bool(spec.get("hard", false)):
-		_cam = a.duplicate()          # the jump itself
-	_dip_t = 0.0 if kind == "dip" else -1.0
+	_shot_t = 0.0
+	_hold_t = 0.0
+	_tgt = tgt
+	# THE RATE IS SIZED TO THE JOURNEY, and can only be measured once the target is set: how far
+	# this shot has to go, at the speed it drew, converted to the follower rate that gets there.
+	var travel: float = (_cam.aim as Vector2).distance_to(tgt.aim) \
+		+ absf(log(maxf(float(tgt.fill), 0.01) / maxf(float(_cam.fill), 0.01))) * 0.25
+	_shot["secs"] = _arrive_time(r, travel, kind)
+	_shot["gap0"] = maxf(_pose_gap(), 0.001)
+	if hard:
+		_cut_to(tgt)
+	if kind == "push":
+		_zoom_dir = 1
+	elif kind == "pull":
+		_zoom_dir = -1
 	if _spread_i >= 0:
 		print("ghost: comic %s%s -> panel %d of spread %d" % [
-			kind, (" (chained)" if tag == "chain" else ""), panel + 1, _spread_i])
+			kind, (" (cut)" if hard else ""), panel + 1, _spread_i])
 
 
-## Fit [param want] seconds of move into the time the Director expects to have left. See
-## ARRIVE. A `settle` is the exception: it is not travelling anywhere, so it is sized to FILL
-## the remaining hold rather than to finish inside a fraction of it.
-func _budget(want: float, kind: String, panel := -1) -> float:
-	var room := Director.hold_remaining()
-	if kind == "settle":
-		# A SETTLE FILLS THE HOLD rather than finishing inside a fraction of it, and it is
-		# EXTENDED rather than re-planned when it runs out (see _ease), so this is a starting
-		# length and not a promise.
-		return clampf(room, float(MOVES["settle"]["dur"][0]), float(MOVES["settle"]["dur"][1]))
-	var frac := FILM_ARRIVE if (panel >= 0 and panel == _film_at) else ARRIVE
-	return maxf(0.05, minf(want, maxf(ARRIVE_MIN, room * frac)))
+## THE ONLY PLACE THIS FILE ASSIGNS THE CAMERA. Everything else integrates toward a target, so
+## the number of discontinuities in a session is exactly the number of calls to this - which is
+## a property, not a hope, and is what tests/comic_motion_check.gd counts.
+func _cut_to(pose: Dictionary) -> void:
+	_cam = pose.duplicate()
+	_snap = true                  # the placed rake and distance jump with it, or it tears
+	_dip_t = 0.0 if _shot.get("kind", "") == "dip" else -1.0
 
 
-func _pick_move(r: RandomNumberGenerator, chain_only: bool) -> String:
+## Is this jump a different SHOT? See CUT_MIN_AIM.
+func _worth_cutting(tgt: Dictionary) -> bool:
+	if (tgt.aim as Vector2).distance_to(_cam.aim) < CUT_MIN_AIM:
+		return false
+	return _framing_panel(_clamp_aim(_cam.aim)) != _framing_panel(_clamp_aim(tgt.aim))
+
+
+## Draw a shot kind, weighted, with the discontinuity scaled by severity squared so that at
+## camera 0 the camera never jump-cuts at all.
+func _pick_shot(r: RandomNumberGenerator) -> String:
 	var total := 0.0
-	for k in MOVES:
-		if chain_only and not bool(MOVES[k].get("chain", false)):
-			continue
-		total += _weight_of(String(k))
+	for k in SHOTS:
+		total += _shot_weight(String(k))
 	if total <= 0.0:
-		return "drift"
+		return "settle"
 	var pick := r.randf() * total
-	for k in MOVES:
-		if chain_only and not bool(MOVES[k].get("chain", false)):
-			continue
-		pick -= _weight_of(String(k))
+	for k in SHOTS:
+		pick -= _shot_weight(String(k))
 		if pick <= 0.0:
 			return String(k)
-	return "drift"
+	return "settle"
 
 
-## A move's weight in the bag AT THE CURRENT SEVERITY. The gentle ones keep the weight the
-## table gives them; the ones that begin somewhere else entirely scale by severity squared,
-## so at 0 the camera never jump-cuts at all and at the top of the range punctuation is four
-## times as common. See HARD_SEVERITY.
-func _weight_of(kind: String) -> float:
-	var spec: Dictionary = MOVES[kind]
-	var w := float(spec["w"])
-	if bool(spec.get("hard", false)) or kind == "whip":
-		return w * pow(_sev(), HARD_SEVERITY)
+func _shot_weight(kind: String) -> float:
+	var w := float(SHOTS[kind]["w"])
+	if bool(SHOTS[kind].get("hard", false)):
+		return w * pow(clampf(_sev(), 0.0, 2.0), 2.0)
 	return w
 
 
+## WHERE A SHOT OF [param kind] ON [param panel] LOOKS FROM.
+##
+## Built as an OFFSET from the panel's own natural framing, so every entry in SHOTS is a
+## distance rather than an absolute, and severity scales the distances (see REACH_CALM).
+func _target_for(r: RandomNumberGenerator, panel: int, kind: String) -> Dictionary:
+	var spec: Dictionary = SHOTS[kind]
+	var reach := _reach()
+	var base := _spread.panel_center(panel)
+	# THE FILM PANEL IS FRAMED DEAD CENTRE AND WHOLE - see CONTAIN_FILL. Everywhere else the
+	# aim leans toward the middle of its own page, which keeps the outer trim out of shot...
+	if panel != _film_at:
+		base = base.lerp(_page_center(panel), AIM_PULL)
+	# ...and a WIDE shot leans most of the way there, because its subject is the page rather
+	# than the panel. Not all the way: the panel the reading is on should still be the part of
+	# the sheet the composition is built around.
+	if bool(spec.get("wide", false)):
+		base = _spread.panel_center(panel).lerp(_page_center(panel), 0.75)
+	var span: Array = spec["fill"]
+	# THE BAND BARELY NARROWS AS THE CAMERA CALMS, and it used to collapse. This was
+	# `lerp(1.0, sampled, reach)` with reach floored at 0.35, which dragged EVERY framing 65% of
+	# the way back to 1.04 at camera 0 - one close-up value for the whole vocabulary, which is
+	# the whole of "it never pulls back... it's just a constant bouncing around between
+	# individual frames, close-up". What a gentle camera should do less of is TRAVELLING; how
+	# varied its framing is belongs to composition, not to restlessness.
+	var fill := lerpf(1.0, r.randf_range(float(span[0]), float(span[1])),
+		clampf(0.6 + reach * 0.4, 0.0, 1.0))
+	var off := Vector2(r.randf_range(-1.0, 1.0), r.randf_range(-1.0, 1.0))
+	off = off.normalized() if off.length() > 0.001 else Vector2.RIGHT
+	var aim := base + off * float(spec["aim"]) * reach
+	# THE ANGLES WALK, they are not re-drawn. A shot may spend a fraction of the spread's arc,
+	# so a big change of angle is spread over several shots rather than happening at one.
+	_az_walk = _walk(_az_walk, AZ_ARC * _sev(), r)
+	_el_walk = _walk(_el_walk, deg_to_rad(EL_VARY_DEG) * _sev(), r)
+	_roll_walk = _walk(_roll_walk, ROLL_VARY * _sev(), r)
+	# THE SWING SCALES BY THE SLIDER, NOT BY REACH. `reach` floors at REACH_CALM so that a calm
+	# camera still travels between panels - a camera that cannot move is not the gentle end of
+	# the range, it is a photograph - but the contract at camera 0 is that the camera never
+	# TURNS, exactly, and a floor of 0.35 on the angular term left 3.3 degrees a shot. Distance
+	# and angle are different promises and they scale by different things.
+	var az := _az_base + _az_walk \
+		+ float(spec["az"]) * _sev() * (1.0 if r.randf() < 0.5 else -1.0)
+	# A WIDE SHOT IS EXEMPT FROM _settle_aim. That guard walks an aim toward its panel until
+	# enough panel is under it, which is right for a shot OF a panel and destroys a shot of the
+	# page - the composition it is reaching for has gutters and neighbours in it by design.
+	return {
+		"aim": _clamp_aim(aim) if bool(spec.get("wide", false)) \
+			else _settle_aim(_clamp_aim(aim)),
+		"az": az,
+		"el": clampf(_el_base + _el_walk, deg_to_rad(EL_MIN_DEG), deg_to_rad(EL_MAX_DEG)),
+		"roll": _roll_base + _roll_walk,
+		"fill": clampf(_panel_fill(panel) * fill, FILL.x * 0.6, PUSH_FILL.y),
+		"fov": _lens_fov,
+	}
+
+
+## The framing a panel READS at - the middle of FILL, so `fill` in SHOTS is a multiplier of
+## "this panel, filling the frame the way a panel should" rather than of an arbitrary number.
+func _panel_fill(_panel: int) -> float:
+	return (FILL.x + FILL.y) * 0.5
+
+
+## HOW FAR THIS SHOT STILL HAS TO GO, normalised so that 1.0 is "arrived" on every channel.
+func _pose_gap() -> float:
+	var g: float = (_cam.aim as Vector2).distance_to(_tgt.aim) / GAP_AIM
+	var fa := maxf(float(_cam.fill), 0.01)
+	var fb := maxf(float(_tgt.fill), 0.01)
+	g = maxf(g, absf(log(fb / fa)) / GAP_FILL)
+	g = maxf(g, absf(angle_difference(float(_cam.az), float(_tgt.az))) / GAP_ANG)
+	return g
+
+
+## ONE FRAME OF CAMERA. Advance the shot, then follow.
 func _ease(delta: float) -> void:
-	# The spread turns under the camera, slowly and forever - independent of the move,
-	# because the sheet is scenery and the camera is the performance.
+	# The spread turns under the camera, slowly and forever - independent of the shot, because
+	# the sheet is scenery and the camera is the performance. The rig is page-local, so this
+	# rotates the camera and the sheet by the same matrix and the projection is invariant to
+	# it: it shows as the page living, not as the shot moving.
 	_att_target += _att_rate * delta
 	var sway := Vector3(
 		_mod.value("tilt") * 0.09,
 		_mod.value("sway") * 0.12,
 		_mod.value("roll") * 0.05) if _mod != null else Vector3.ZERO
 	_att = _att.lerp(_att_target + sway, 1.0 - exp(-PAGE_EASE * delta))
-	# ONCE PER FRAME, for every point that will be placed on the paper. See _att_basis.
 	_att_basis = Basis.from_euler(_att)
 	if _dip_t >= 0.0:
 		_dip_t += delta
-	if _mv.is_empty():
+	if _spread == null or _tgt.is_empty():
 		return
-	_mv_t += delta
-	# THE MOVE IS OVER AND NOTHING HAS CUT. Chain, do not stop - see _chain_move. The new
-	# move starts at _mv_t 0, so this is a continuation and not a reset of the picture.
-	#
-	# EXCEPT A SETTLE, WHICH JUST KEEPS SETTLING. A settle exists to hold the shot still until
-	# the cut arrives; planning a fresh one when it expires re-eases the aim toward the panel
-	# centre all over again, and a run of them is a camera visibly re-correcting onto a frame it
-	# is already on. Extending it is what "held" actually means.
-	if _mv_t >= float(_mv.dur):
-		if String(_mv.get("kind", "")) == "settle":
-			_mv["dur"] = float(_mv.dur) + float(MOVES["settle"]["dur"][0])
-		else:
-			_chain_move()
-	var k := clampf(_mv_t / float(_mv.dur), 0.0, 1.0)
-	_cam = _lerp_state(_mv.a, _mv.b, _curve(String(_mv.ease), k))
-	_place_eye()
+	_shot_t += delta
+	# ARRIVAL IS A MEASUREMENT, NOT A CLOCK. The shot is over when the picture has got there.
+	if not bool(_shot.get("arrived", false)) \
+			and (_pose_gap() < ARRIVED or _shot_t > ARRIVE_CAP):
+		_shot["arrived"] = true
+		_hold_t = 0.0
+		_hold_from = _tgt.aim
+	if bool(_shot.get("arrived", false)):
+		_hold_t += delta
+		# THE HOLD IS WHAT EARNS A REVERSAL - and it has to be a hold. See ZOOM_FREE.
+		if _hold_t >= ZOOM_FREE:
+			_zoom_dir = 0
+		# ...AND A HELD SHOT STILL BREATHES, along the heading this shot was given. Measured
+		# from where it ARRIVED, so the excursion is bounded however long the hold runs.
+		# IT DOES NOT SATURATE. Clamping the creep at 1 made the held shot stop dead after
+		# HOLD_CREEP_TIME, which is a freeze on any hold longer than that - the same defect an
+		# earlier version shipped and a frame-by-frame reading of the export measured at 33.8
+		# seconds of literally identical picture. It keeps creeping; what bounds it is
+		# _settle_aim, which walks the aim back when it nears the panel's edge, so the drift is
+		# limited by the geometry rather than by a clock.
+		var creep := _hold_t / HOLD_CREEP_TIME
+		# NOT SCALED BY REACH. A held shot is held at every setting - what the slider changes is
+		# how far the camera TRAVELS between subjects, not how still it can be once it has
+		# arrived. Scaling the creep by reach made a busy camera drift through its own holds
+		# fast enough that they stopped reading as holds at all (12% of frames still, against
+		# 44% at the calm end).
+		_tgt["aim"] = _settle_aim(_clamp_aim(_hold_from
+			+ (_shot["heading"] as Vector2) * HOLD_CREEP * creep))
+	_follow(delta)
+	_place_eye(delta)
 
 
-func _curve(name: String, k: float) -> float:
-	match name:
-		"linear": return k
-		"out": return 1.0 - pow(1.0 - k, 3.0)
-		"snap": return 1.0
-	return smoothstep(0.0, 1.0, k)
-
-
-func _lerp_state(a: Dictionary, b: Dictionary, k: float) -> Dictionary:
-	return {
-		"aim": (a.aim as Vector2).lerp(b.aim, k),
-		# the short way round, or a wrap past TAU sends the camera the long way about
-		"az": float(a.az) + wrapf(float(b.az) - float(a.az), -PI, PI) * k,
-		"el": lerpf(a.el, b.el, k),
-		"roll": lerpf(a.roll, b.roll, k),
-		"fill": lerpf(a.fill, b.fill, k),
-		"fov": lerpf(a.fov, b.fov, k),
-	}
+## THE FOLLOWER, AND IT IS SPEED-LIMITED RATHER THAN EXPONENTIAL.
+##
+## A pure exponential covers 63% of its distance in ONE time constant and then crawls through
+## the remainder, so a shot given ten seconds does nearly all of its visible movement in the
+## first second or two and spends the rest converging invisibly. That is a fast transition
+## followed by nothing, however long the arithmetic says the shot lasts: "when the camera
+## shifts its focus from one frame to another, it does it in about 1 second. It's fast, every
+## single time." The measurement agreed with the arithmetic and not with the picture, because
+## it timestamped the end of the CRAWL rather than the end of the MOVEMENT.
+##
+## So the journey advances at a constant fraction per second - the camera covers the same
+## ground in the ninth second as in the first - and eases only over the last of it, which is
+## what makes a pan read as a pan rather than as a snap with a tail. It remains an integration:
+## `_cam` is never assigned, a cut mid-journey is simply a new target, and nothing here can
+## teleport the picture.
+func _follow(delta: float) -> void:
+	var secs := maxf(float(_shot.get("secs", 6.0)), 0.1)
+	# How much of the ORIGINAL journey to cover this frame...
+	var step := delta / secs
+	# ...eased out over the last of it, so the shot lands rather than stopping dead. Above the
+	# taper the speed is flat, which is the constant-rate pan.
+	var left := _pose_gap() / maxf(float(_shot.get("gap0", 1.0)), 0.001)
+	if left < ARRIVE_TAPER:
+		# FLOORED WELL ABOVE ZERO. A taper that trails off to nothing means the shot never
+		# actually converges: the last of the journey stretches past the whole budget and
+		# ARRIVE_CAP - the safety net - becomes the thing that ends every shot, at exactly its
+		# value. Measured, every arrival reported 14.0s, which is that constant and not a
+		# camera. This lands the shot; it does not dissolve it.
+		step *= maxf(smoothstep(0.0, ARRIVE_TAPER, left), 0.45)
+	var kp := clampf(step / maxf(left, 0.001), 0.0, 1.0)
+	var ka := clampf(kp * RATE_ANGLE, 0.0, 1.0)
+	_cam["aim"] = (_cam.aim as Vector2).lerp(_tgt.aim, kp)
+	_cam["fill"] = lerpf(float(_cam.fill), float(_tgt.fill), kp)
+	_cam["az"] = float(_cam.az) \
+		+ angle_difference(float(_cam.az), float(_tgt.az)) * ka
+	_cam["el"] = lerpf(float(_cam.el), float(_tgt.el), ka)
+	_cam["roll"] = lerpf(float(_cam.roll), float(_tgt.roll), ka)
+	_cam["fov"] = lerpf(float(_cam.fov), float(_tgt.fov), ka)
 
 
 ## The whole-frame alpha a `dip` is currently at: out through black, then back.
@@ -1875,7 +1978,7 @@ func _dip_alpha() -> float:
 ## camera ACROSS the spread at a constant angle, which is the move a copy-stand shot makes
 ## and the one the eye reads as flying over a comic. Building it in world space instead
 ## would swing the angle around every time the sheet moved.
-func _place_eye() -> void:
+func _place_eye(delta := 0.0) -> void:
 	if _spread == null:
 		return
 	var aim: Vector2 = _clamp_aim(_cam.aim)
@@ -1887,6 +1990,15 @@ func _place_eye() -> void:
 	# page and does not get to decide the framing.
 	var contain: bool = fp >= 0 and fp == _film_at
 	var flat := maxf(_flatten(), FILM_FLATTEN if contain else 0.0)
+	# FOLLOWED, NOT ADOPTED. `_flatten()` reads the panel being READ, so it steps the instant
+	# the Director cuts between a field scene and a subject one - up to 21.7 degrees of
+	# elevation in a single frame - and `contain` steps as the aim crosses the film panel's
+	# edge. Neither is a shot, and nothing in the shot vocabulary can see either.
+	if _snap or _dist_s < 0.0 or delta <= 0.0:
+		_flat_s = flat
+	else:
+		_flat_s += (flat - _flat_s) * (1.0 - exp(-RATE_FLAT * delta))
+	flat = _flat_s
 	var el: float = lerpf(float(_cam.el), PI * 0.5, flat)
 	var roll: float = float(_cam.roll) * (1.0 - flat * 0.7)
 	_roll = roll
@@ -1918,20 +2030,35 @@ func _place_eye() -> void:
 	# has to give. Letting the cover win crops a speaking face out of frame to keep a strip of
 	# desk off it, and between those two the answer is not close: "you really don't want to
 	# focus the camera on her door to the side." FILM_FLATTEN is what keeps the price small.
-	var d := 0.0
+	var cov := _cover(_spread_world(), c, dir)
 	if contain:
-		d = minf(_fit(pw, c, eff, dir, true),
-			_cover(_spread_world(), c, dir) * CONTAIN_DESK)
-	else:
-		d = minf(_fit(pw, c, eff, dir), _cover(_spread_world(), c, dir))
+		cov *= CONTAIN_DESK
+	var d := minf(_fit(pw, c, eff, dir, contain), cov)
 	# ...and never nearer than this, whatever the two constraints ask for. Pushing in until
 	# the paper covers the frame is right; pushing in until the camera is INSIDE one panel's
 	# artwork is a shot of a texture, with no page, no gutter and no comic in it.
 	# The near floor never applies to a contained panel: its whole point is that the camera
 	# stops where the picture fits, and a floor that pushes past that would crop it again.
+	var near := 0.0
 	if not contain:
-		d = maxf(d, _fit(pw, c, CROP_MAX, dir))
-	_eye = c + dir * d
+		near = _fit(pw, c, CROP_MAX, dir)
+		d = maxf(d, near)
+	# ...AND SO IS THE DISTANCE. `pw` changes panel as the aim crosses a gutter and the solve
+	# changes branch at the film panel's edge; this file's own measurements record 3.03 against
+	# 2.13 and 7.76 against 4.62 world units for the same shot either side of that branch.
+	if _snap or _dist_s < 0.0 or delta <= 0.0:
+		_dist_s = d
+		_snap = false
+	else:
+		_dist_s += (d - _dist_s) * (1.0 - exp(-RATE_DIST * delta))
+	# THE FOLLOWER MAY LAG, BUT IT MAY NOT BREAK THE TWO CONSTRAINTS. `cov` is the farthest the
+	# eye may sit and still have paper across the whole frame, `near` the closest it may sit
+	# without being inside one panel's artwork. Easing is for the INTERIOR of the feasible
+	# range; its edges are not negotiable, and a follower left to drift outside them shows desk.
+	_dist_s = minf(_dist_s, cov)
+	if near > 0.0:
+		_dist_s = maxf(_dist_s, near)
+	_eye = c + dir * _dist_s
 	_look = c
 
 
