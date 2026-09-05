@@ -97,6 +97,21 @@ const PAGE_W := 2.0
 ## panel is smaller, and the budget is about scene cost rather than about screen area.
 const LIVE_MAX := 3
 
+## ...AND THE BUDGET DOES NOT APPLY TO AN EXPORT. Every panel runs.
+##
+## LIVE_MAX is a REAL-TIME concession: the show has sixteen milliseconds to draw a frame, and a
+## dozen simultaneous scenes do not fit in them. An export has no such deadline - it renders
+## offline, one frame at a time, and a frame that takes a second costs a second of somebody's
+## afternoon rather than a stutter. Spending the budget there buys nothing and costs the thing
+## the vehicle is for: "you're optimizing for real-time, but we are cutting videos. So we can
+## just play every scene, and we should. Freezing them looks terrible."
+##
+## Quite right, and it is also why the frozen panels read so much worse than they used to. On a
+## single page of three to six the held ones were mostly off shot; a spread of nine to twelve
+## seen wide puts most of the page in frame at once, so the budget's leftovers are no longer at
+## the edges - they are the picture.
+const LIVE_ALL_ON_EXPORT := true
+
 ## How often a live panel that is NOT the one being read repaints, in frames.
 ##
 ## Everything visible moves - but the panel being READ is the one anyone is looking at, and
@@ -133,6 +148,23 @@ const OFF_FOCAL_PERIOD := 2
 ## video window to hand over its first decoded frame.
 const WARM_FRAMES := 24
 
+## HOW MANY FRAMES A PANEL MUST HAVE RENDERED BEFORE ITS TEXTURE MAY BE DRAWN.
+##
+## A SubViewport's render target is allocated by _open_slot and is not cleared - it holds
+## whatever was in that piece of VRAM. Sampling it before the viewport has produced a frame
+## therefore draws garbage, and the garbage on a freshly booted machine is the last thing the
+## compositor had there: the application's own interface. Reported as "at first load, every
+## single frame starts by showing the UI itself: all of the toggles, all of the options",
+## replaced a moment later by the real scene - which is exactly what "one frame early" looks
+## like.
+##
+## TWO, not one. _update_liveness raises the warm count in the same frame it resumes the
+## viewport, and the viewport renders at the END of that frame, so a count of one means "asked
+## to draw", not "has drawn". A panel below this is drawn as an empty ruled frame - which is
+## already what the page does for a panel the story has not reached, so it costs nothing and
+## looks like nothing.
+const FIRST_DRAW := 2
+
 ## HOW MANY PANELS OF A SPREAD THE CAMERA ACTUALLY STOPS ON, before the leaf turns.
 ##
 ## NOT ALL OF THEM, and that is the correction. The reading used to walk every panel in order
@@ -149,6 +181,99 @@ const WARM_FRAMES := 24
 ## when the plan is done. A denser spread gets a slightly longer plan, but never one per panel.
 const FOCUS := Vector2i(3, 5)
 
+## HOW A SPREAD GETS READ. Weighted, and the weights are the whole statement: mostly the way a
+## page is read, sometimes not.
+##
+##   read  top-left, across, down and back, across, then the other page. The default, and it
+##         should be, because it is what the eye does with a page it is actually reading.
+##   grab  something catches the eye FIRST - the film panel if there is one, else the biggest
+##         panel on the sheet - and the reading resumes in order afterwards. "There are times
+##         when you would turn a page, and something on the RIGHT would catch your attention
+##         first."
+##   skim  left, right, left - a glance across the spread rather than a read of it. "There are
+##         times when you may not read the pages at all."
+##
+## A HARD RULE WOULD BE WRONG, which is why this is a bag and not an if. Strict reading order
+## every time is a machine indexing a page; the deviations are what make it read as someone
+## looking at a comic. But they are deviations - six to one against - because the report was
+## that the ping-ponging is the exception that had become the rule.
+const PLAN_STYLES := {"read": 6.0, "grab": 2.0, "skim": 1.0}
+
+## HOW STRONGLY A PIECE OF FOOTAGE PULLS THE EYE FIRST, as a probability that it opens the
+## spread whatever style was rolled.
+##
+## "For most humans, an 'actual' human in a video is the first thing they want to look at,
+## every time." That is right, and it is the one place this vehicle should not be even-handed:
+## every other panel is an abstract field, and a face is not. Not 1.0 only because a spread
+## that ALWAYS opens on the film is a rule the eye learns in two pages.
+const FILM_FIRST := 0.72
+## HOW MUCH SOONER A SHOT ON THE FILM PANEL ARRIVES, as a fraction of the deadline the rest of
+## the vocabulary gets (see ARRIVE).
+##
+## "The camera never holds long enough to look at anything. I feel like we would want a bias to
+## at least hold the camera to look at her for a few seconds." The settle mechanism is what
+## does the holding, and the deadline is what decides when it starts - so the way to hold
+## longer on a face is not to slow the move down, it is to ARRIVE EARLIER and spend the
+## remainder settled. At 0.35 of the expected hold the travel is over in about a third of the
+## scene and the other two thirds are a shot of her, still.
+const FILM_ARRIVE := 0.35
+
+## HOW MUCH OF THE FRAME A CONTAINED PANEL MAY FILL, on its LONGER axis.
+##
+## Every other panel is framed on HEIGHT alone and allowed to overflow the sides - that is the
+## whole difference between a comic read close and a slideshow of pages, and it is right for an
+## abstract field, where any part of it is as good as any other part.
+##
+## A PIECE OF FOOTAGE IS NOT AN ABSTRACT FIELD. "It can look very strange to zoom in to a
+## specific corner of the embedded video, where nothing is happening in it... a video with a
+## girl speaking in it, you really don't want to focus the camera on her door to the side."
+## Exactly so: a 1.9-aspect film panel framed to span the frame's height is nearly twice as
+## wide as the screen, so what is on show is a third of the picture and the subject is as
+## likely to be off it as on it. A contained panel is fitted on BOTH axes, so the whole video
+## is in shot, whole, every time it is the one being read.
+##
+## JUST UNDER 1, not comfortably under it. Every notch of margin here is bought by pulling the
+## camera further off the sheet, and past the covering distance that is paid for in desk: at
+## 0.88 the video was whole with a pleasant border and the page covered only 0.63 of the frame,
+## which is a wedge of nothing across a third of the picture. At 0.98 the video still arrives
+## whole - it simply reaches the edges of the shot instead of floating inside them.
+const CONTAIN_FILL := 0.98
+## ...and however much the video wants revealing, the camera stops this far past the distance
+## at which the sheet still covers the frame. A face cropped out of shot is worse than a sliver
+## of desk; a face floating in a sea of desk is worse than both, and without a bound that is
+## where an extreme panel aspect would put it.
+##
+## A SLIVER, and the first value was not one. At 1.22 the camera could sit 22% past the
+## covering distance, and measured on a real session that produced page coverage of 0.67 -
+## a third of the picture was the surface the book is lying on, which is the defect the whole
+## spread exists to remove, arriving through the one door left open for it. Six percent is
+## enough to rescue the ordinary conflict and not enough to be seen; past that the panel is
+## simply framed as tightly as covering allows and takes the crop.
+## ONE, and the argument for anything above it was wrong. Going past the covering distance is
+## the ONLY way desk enters a shot, and measured on a real spread six percent past cost ten
+## percent of the coverage - the relationship is far steeper than it looks. Worse, it did not
+## even buy the thing it was spent on: containing that panel wanted 7.76 world units against a
+## cover of 4.62, so a cap of 4.89 left the video cropped AND put desk in the corner, which is
+## both prices for neither benefit. The camera now stops where covering stops, and the video is
+## contained as far as that allows - see FILM_FLATTEN, which is what makes that far enough.
+const CONTAIN_DESK := 1.0
+## HOW FAR TOWARD SQUARE-ON A CONTAINED PANEL PULLS THE SHEET, 0..1. Harder than
+## FIELD_FLATTEN, and for a stronger version of the same reason: a rake foreshortens the sheet,
+## so a raked page needs the camera NEARER to keep paper across the frame - which is exactly
+## the constraint that fights containing a wide panel. Measured on a rolled spread at a
+## moderate rake: containing the widest panel wanted 3.03 world units while the sheet stopped
+## covering the frame past 2.13. Flattening buys most of that back, and it is also just the
+## right shot: a face is the most recognisable thing this vehicle ever puts on the page, and a
+## hard angle across a face reads as damage rather than as depth.
+## LOWERED FROM 0.78, and the first value had the sign of its own effect backwards. Flattening
+## turns the sheet square-on, which presents the panel at its FULL area - so the harder it
+## flattens, the further the camera must retreat to fit the whole panel in, and containment
+## becomes unaffordable inside the covering budget (measured: a fit of 7.76 against a cover of
+## 4.62 at 83 degrees). A gentler flatten leaves the panel foreshortened, which is smaller,
+## which fits nearer. The face is still turned toward the camera - that was the point - it is
+## simply not pressed flat against the glass.
+const FILM_FLATTEN := 0.40
+
 ## SPREAD ATTITUDE, in radians - the rest pose the book is rolled into, on all three axes.
 ## Generous on purpose: the point of putting the paper in a real 3D world is that it can be
 ## TURNED, and at the reading distance a raked page is what reveals it has depth at all. A
@@ -156,8 +281,14 @@ const FOCUS := Vector2i(3, 5)
 ##
 ## YAW IS TIGHTER THAN IT WAS (it went to 0.85). A spread is twice as wide as the page these
 ## were tuned on, so the same yaw that raked one page pleasantly foreshortens the far page of
-## a spread into a sliver and throws its far corners behind the eye. Pitch and roll do not
-## have that problem - the sheet did not get taller - so only the axis that grew is pulled in.
+## a spread into a sliver and throws its far corners behind the eye.
+##
+## THE SHEET'S ATTITUDE DOES NOT COST COVERAGE, which is worth writing down because it looks
+## as though it should. Swept one axis at a time against page_coverage() on a real spread:
+## pitch, yaw and roll each held 1.00 across their WHOLE range, while camera elevation ran
+## 0.34 / 0.84 / 1.00 / 1.00 / 1.00 / 1.00 from 30 to 80 degrees. Rake the paper as hard as you
+## like; it is how low the CAMERA sits that decides whether the picture is all paper. See
+## EL_MIN_DEG.
 const PITCH := 0.55
 const YAW := 0.44
 const ROLL := 0.40
@@ -168,7 +299,19 @@ const DRIFT := 0.035
 ## CAMERA ELEVATION off the paper, in degrees. Never square-on (at 90 the perspective
 ## camera and the page agree and the panel is a flat rectangle again) and never grazing
 ## (the panel foreshortens into a line).
-const EL_MIN_DEG := 32.0
+##
+## THE FLOOR CAME UP, from 32, and this is the one number that decides whether there is desk
+## in the picture. Measured by sweeping each axis alone against page_coverage() on a real
+## spread: the sheet's own pitch, yaw and roll each held 1.00 across their entire range, and
+## elevation ran 0.34 at 30 degrees, 0.84 at 40, and 1.00 from 50 up. The reason is simply
+## foreshortening - a low camera sees the sheet edge-on and it shrinks along one axis faster
+## than any distance can compensate for, so no framing solve can put paper across the frame.
+##
+## Everything else was tried first and did nothing, because everything else was the wrong
+## axis. A spread at 0.90 coverage for every shot it had was reported as a wedge of desk, and
+## the page's roll was reduced on the assumption that a rotated rectangle was cutting the
+## corners. It changed the number not at all.
+const EL_MIN_DEG := 46.0
 const EL_MAX_DEG := 72.0
 ## Camera roll about the view axis - the Dutch angle, on top of the page's own roll.
 const CAM_ROLL := 0.22
@@ -356,6 +499,9 @@ var _mv_t := 0.0
 ## part of the seed, so a chain is reproducible without being a repeat of the move it
 ## followed.
 var _chain := 0
+## The panel the CHAIN is heading for, or -1 when it has not chosen yet. Decided ONCE per cut
+## and then held - see _chain_move.
+var _chain_to := -1
 var _dip_t := -1.0                # seconds into a dip to black, < 0 when none
 var _roll := 0.0                  # the roll actually in force (field-flattened)
 var _eye := Vector3(0, 0, 3.0)
@@ -425,6 +571,7 @@ func _reset_book() -> void:
 	_mv = {}
 	_mv_t = 0.0
 	_chain = 0
+	_chain_to = -1
 	_dip_t = -1.0
 	_film_at = -1
 	_film_clip = {}
@@ -601,17 +748,83 @@ func _roll_plan() -> void:
 	var r := RandomNumberGenerator.new()
 	r.seed = hash([Director.session_seed(), "comic-plan", _spread_i])
 	var want := clampi(r.randi_range(FOCUS.x, FOCUS.y), 1, n)
-	var picked := {}
-	for k in want:
-		var lo := int(floor(float(k) * float(n) / float(want)))
-		var hi := int(floor(float(k + 1) * float(n) / float(want))) - 1
-		var at := clampi(r.randi_range(lo, maxi(lo, hi)), 0, n - 1)
-		picked[at] = true
-	if _film_at >= 0:
-		picked[_film_at] = true
-	for i in n:                       # reading order, and each panel at most once
-		if picked.has(i):
-			_plan.append(i)
+	var style := _pick_style(r)
+	var picked: Array = []
+	if style == "skim":
+		# LEFT, RIGHT, LEFT - alternating pages, and the order is NOT sorted afterwards
+		# because the alternation IS the gesture. Sorting it would turn a glance back into a
+		# read, which is the one thing this style exists not to be.
+		var side := 0 if r.randf() < 0.5 else 1
+		for _k in want:
+			var best := -1
+			for i in n:
+				if picked.has(i) or _spread.side_of(i) != side:
+					continue
+				if best < 0 or r.randf() < 0.4:
+					best = i
+			if best >= 0:
+				picked.append(best)
+			side = 1 - side
+	else:
+		# ONE PER SLICE of the reading order, so the plan walks the spread instead of
+		# clustering - a free draw of four from nine will happily take 5, 6, 7 and 8 and leave
+		# the whole left page unvisited, which reads as the camera stuck in a corner.
+		var seen := {}
+		for k in want:
+			var lo := int(floor(float(k) * float(n) / float(want)))
+			var hi := int(floor(float(k + 1) * float(n) / float(want))) - 1
+			var at := clampi(r.randi_range(lo, maxi(lo, hi)), 0, n - 1)
+			seen[at] = true
+		if _film_at >= 0:
+			seen[_film_at] = true
+		for i in n:                       # READING ORDER, and each panel at most once
+			if seen.has(i):
+				picked.append(i)
+	if picked.is_empty():
+		picked.append(0)
+	# WHAT CATCHES THE EYE FIRST. The film panel by preference (see FILM_FIRST), otherwise the
+	# biggest panel on the sheet, which is the one a page designer sized to be looked at.
+	var grab := -1
+	if _film_at >= 0 and r.randf() < FILM_FIRST:
+		grab = _film_at
+	elif style == "grab":
+		grab = _largest_panel()
+	if grab >= 0:
+		# ERASE THEN PUSH, and erase FIRST so a grabber that was already in the plan moves to
+		# the front instead of appearing twice. When it was not in the plan this adds one, so
+		# the result is trimmed back to the sampled size below - a spread that rolled "three
+		# panels" and then got a fourth for free is not the plan it rolled.
+		picked.erase(grab)
+		picked.push_front(grab)
+	while picked.size() > want:
+		picked.remove_at(picked.size() - 1)
+	_plan = picked
+
+
+func _pick_style(r: RandomNumberGenerator) -> String:
+	var total := 0.0
+	for k in PLAN_STYLES:
+		total += float(PLAN_STYLES[k])
+	var pick := r.randf() * total
+	for k in PLAN_STYLES:
+		pick -= float(PLAN_STYLES[k])
+		if pick <= 0.0:
+			return String(k)
+	return "read"
+
+
+## The panel with the most area on the sheet - what a page designer made big because it is the
+## one to look at, and therefore the fallback grabber when there is no footage.
+func _largest_panel() -> int:
+	var best := 0
+	var best_a := -1.0
+	for i in _spread.panels.size():
+		var rr: Rect2 = _spread.panels[i]["rect"]
+		var a := rr.size.x * rr.size.y
+		if a > best_a:
+			best_a = a
+			best = i
+	return best
 
 
 ## DOES THIS SPREAD GET A PIECE OF FOOTAGE, and if so which panel and which clip.
@@ -770,6 +983,7 @@ func _update_liveness() -> void:
 	if _spread == null:
 		return
 	var frame := Rect2(Vector2.ZERO, _stage_size).grow(_stage_size.x * 0.06)
+	var mid := _stage_size * 0.5
 	var want: Array = []
 	for i in _cast.size():
 		if _cast[i] == null or not is_instance_valid(_cast[i]):
@@ -778,18 +992,49 @@ func _update_liveness() -> void:
 		# no picture yet, so leaving it out is what makes it black - and the camera reaches
 		# most of the sheet eventually, so "off screen right now" is not "never seen".
 		var cold: bool = int(_warm[i]) < WARM_FRAMES
-		if i != _read and not cold and not _panel_rect(i).intersects(frame):
+		var rect := _panel_rect(i)
+		if i != _read and not cold and not rect.intersects(frame):
 			continue
-		want.append({"i": i, "d": absi(i - _read), "cold": 0 if cold else 1})
+		# DISTANCE ON THE SCREEN, not distance in the panel array.
+		#
+		# It used to be `absi(i - _read)`, and a spread's panel array is two CONTIGUOUS BLOCKS
+		# - the left page's panels and then the right's. So ranking by index distance ranks by
+		# PAGE: read a panel on the left and the three live slots all go to the left page, and
+		# the entire right page is a set of frozen stills however much of it is in shot.
+		# Reported as "I keep seeing instances where an entire page is disabled, while we are
+		# viewing the other side of that spread." Screen distance has no idea which page a
+		# panel is on; it keeps alive whatever is nearest the middle of the picture, which is
+		# the only thing the eye is actually asking about.
+		var d := rect.get_center().distance_to(mid) if i != _read else -1.0
+		want.append({"i": i, "d": d, "cold": 0 if cold else 1})
 	# NEED FIRST, DISTANCE SECOND. Until every panel has drawn its moment the budget goes to
-	# the ones that have not; after that it follows the reading exactly as it did.
+	# the ones that have not; after that it follows what is in the middle of the shot.
 	want.sort_custom(func(a, b):
-		return int(a.cold) < int(b.cold) if int(a.cold) != int(b.cold) else int(a.d) < int(b.d))
+		return int(a.cold) < int(b.cold) if int(a.cold) != int(b.cold) else float(a.d) < float(b.d))
+	var budget := _live_budget()
+	# THE PANEL BEING READ IS ALWAYS LIVE, AND SO IS THE FILM. Reserved BEFORE the budget is
+	# spent, not merely sorted to the front of it.
+	#
+	# This is the frozen picture. The sort puts every panel still below its warm-up ahead of
+	# every warm one - which is right, a panel with no picture needs frames more than a panel
+	# that has one - but LIVE_MAX is three, and a page turn casts a whole spread at once. Three
+	# cold panels therefore filled the entire budget and froze the panel the camera was looking
+	# at: the Director's own current scene, stopped, for as long as the newcomers took to warm.
+	# Reported as "the scene in that comic book frame becomes stuck, frozen, and stops moving at
+	# all" and "takes a long time to start again" - and confirmed off the export, where two
+	# frames a full second apart have the scene's eyes in identical positions.
 	var keep: Array = []
+	if _read >= 0 and _read < _cast.size() and _cast[_read] != null \
+			and is_instance_valid(_cast[_read]):
+		keep.append(_read)
+	if _film_at >= 0 and _film_at != _read and _film_at < _cast.size() \
+			and _cast[_film_at] != null and is_instance_valid(_cast[_film_at]):
+		keep.append(_film_at)
 	for e in want:
-		if keep.size() >= LIVE_MAX:
+		if keep.size() >= budget:
 			break
-		keep.append(int(e.i))
+		if not keep.has(int(e.i)):
+			keep.append(int(e.i))
 	_frame += 1
 	for i in _cast.size():
 		if _cast[i] == null or not is_instance_valid(_cast[i]):
@@ -803,7 +1048,11 @@ func _update_liveness() -> void:
 		# BROKEN PLAYBACK on footage, which the eye reads at a much finer grain.
 		# A COLD PANEL RUNS EVERY FRAME IT IS KEPT, phasing included: half the samples is
 		# fine for a moment that is already on the paper and wrong for one still drawing it.
-		var on: bool = keep.has(i) and (i == _read or i == _film_at
+		# ...and the off-focal PHASING is the same concession at a finer grain, so it lifts on
+		# an export too: half the samples is a scene running on a coarser clock, which is
+		# cheaper and very slightly worse, and there is nothing to buy with it here.
+		var every := budget >= POOL
+		var on: bool = keep.has(i) and (every or i == _read or i == _film_at
 			or int(_warm[i]) < WARM_FRAMES or (_frame + i) % OFF_FOCAL_PERIOD == 0)
 		if on:
 			_warm[i] = int(_warm[i]) + 1
@@ -811,6 +1060,18 @@ func _update_liveness() -> void:
 		else:
 			_freeze(vp)
 	_live = keep
+
+
+## HOW MANY PANELS MAY RUN THIS FRAME. See LIVE_ALL_ON_EXPORT: the real-time budget, or no
+## budget at all when there is no frame deadline to spend it against.
+##
+## Asked of the command line rather than of main, because a vehicle is built before main has
+## finished deciding anything and must not reach up into it - the same reason the Director is
+## asked for the session seed instead of being handed one.
+func _live_budget() -> int:
+	if LIVE_ALL_ON_EXPORT and OS.get_cmdline_user_args().has("--export"):
+		return POOL
+	return LIVE_MAX
 
 
 ## Drive every live panel EXCEPT the one being read - the Director drives that one, as its
@@ -824,7 +1085,8 @@ func _tick_cast(features, delta: float) -> void:
 		if sc == null or not is_instance_valid(sc) or sc == focal:
 			continue
 		# The film panel runs every frame (period 1) - see _update_liveness.
-		var period := 1 if (i == _film_at or int(_warm[i]) < WARM_FRAMES) else OFF_FOCAL_PERIOD
+		var period := 1 if (_live_budget() >= POOL or i == _film_at
+			or int(_warm[i]) < WARM_FRAMES) else OFF_FOCAL_PERIOD
 		if (_frame + i) % period != 0:
 			continue                      # not this panel's frame - see OFF_FOCAL_PERIOD
 		# ...and when it IS its frame, it is handed the whole period's worth of time, so it
@@ -884,6 +1146,10 @@ const MOVES := {
 	# --- arrivals: a gesture that lands, then holds ------------------------------
 	"swoop":   {"w": 0.6, "dur": [2.6, 5.0],  "ease": "out",    "hard": true},
 	"whip":    {"w": 0.4, "dur": [0.45, 0.9], "ease": "out",    "hard": false},
+	# --- and the one that ARRIVES AND STAYS ARRIVED ------------------------------
+	# Weight 0: never drawn from the bag, only named by _chain_move when the cut is close.
+	# See ARRIVE.
+	"settle":  {"w": 0.0, "dur": [3.0, 6.0],  "ease": "smooth", "hard": false},
 	# --- discontinuities: punctuation, not grammar -------------------------------
 	"cut":     {"w": 0.8, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
 	"dip":     {"w": 0.4, "dur": [4.0, 9.0],  "ease": "snap",   "hard": true},
@@ -899,6 +1165,10 @@ const TRACK_OVERRUN := 0.45
 ## and tracks deliberately run to and past the edges, so they are clamped here rather than
 ## being written not to.
 const AIM_MARGIN := 0.06
+## How far a `pull` opens out, as a fraction of the framing it started from. A pull is a
+## widening, so it is expressed relative to where the camera IS rather than as an absolute -
+## that is what keeps it from being a jump.
+const PULL_OUT := 0.55
 ## How deep a `push` gets, in frames of panel height.
 const PUSH_FILL := Vector2(2.2, 3.8)
 ## The far station a `swoop` starts from: elevation in degrees, and how far off.
@@ -917,6 +1187,34 @@ const ORBIT_ARC := Vector2(0.45, 1.15)
 ## A `dip` goes out over the first of these and back over the second, in seconds.
 const DIP_OUT := 0.16
 const DIP_IN := 0.34
+
+## HOW MUCH OF THE TIME BEFORE THE NEXT CUT A MOVE MAY SPEND TRAVELLING.
+##
+## A move used to sample its duration from the vocabulary and nothing else, while the cut that
+## ends it comes from the Director's hold - which shrinks with the music's drive. Seven to
+## twenty seconds of move against a median cut at five and a half on a driving passage means
+## the camera is still converging when the shot ends, every time. Reported as "you can see it
+## converging, then BOOM."
+##
+## So a move now ARRIVES ON A DEADLINE: it is given at most this fraction of the time the
+## Director expects to have left (see [method Director.hold_remaining]), and the rest of the
+## hold is the camera being somewhere rather than going somewhere. The character of a move
+## survives - a whip is still quick, a drift still slow - because this is a CEILING on the
+## sampled duration, not a replacement for it.
+const ARRIVE := 0.62
+## ...but never compressed below this, in seconds. A move squeezed into a fraction of a second
+## is not an arrival, it is the jump cut this exists to prevent - so when the cut is already
+## imminent the move simply runs long and the chain picks it up.
+const ARRIVE_MIN := 1.6
+## With less than this long to go, a finished move does not go anywhere new - it SETTLES.
+## Chaining a fresh traverse with three seconds left is how the camera ends up permanently in
+## transit, which is the same defect from the other end.
+const SETTLE_ROOM := 5.0
+## How far a settle is allowed to drift, as a fraction of the way to its panel's centre. Not
+## zero: a dead-still camera on a page that is itself drifting reads as the page sliding out
+## from under a locked-off shot. This is a breath, not a move.
+const SETTLE_DRIFT := 0.22
+
 
 ## THE CAMERA SEVERITY KNOB, applied. See [member Director.camera] for what it is.
 ##
@@ -1044,7 +1342,12 @@ func _station(r: RandomNumberGenerator, panel: int) -> Dictionary:
 	var mid := (FILL.x + FILL.y) * 0.5
 	var half := (FILL.y - FILL.x) * 0.5 * sev
 	return {
-		"aim": _spread.panel_center(i).lerp(_page_center(i), AIM_PULL),
+		# DEAD CENTRE ON A FILM PANEL. The pull toward the page's middle exists to keep the
+		# trim edge out of shot on an outer panel, and on a contained film panel there is
+		# nothing to keep out - the whole panel is in frame with paper all round it - while
+		# the pull would put the subject off centre for no gain.
+		"aim": _spread.panel_center(i) if i == _film_at \
+			else _spread.panel_center(i).lerp(_page_center(i), AIM_PULL),
 		"az": _az_base + _az_walk,
 		# Elevation off the PAPER, never square-on: at 90 degrees the perspective camera and
 		# the page agree exactly and the panel is a flat rectangle again.
@@ -1057,6 +1360,23 @@ func _station(r: RandomNumberGenerator, panel: int) -> Dictionary:
 		# someone who could not name what changed.
 		"fov": _lens_fov,
 	}
+
+
+## WHERE THE READING IS GOING, in spread coordinates: from the panel being read to the next
+## one in the plan. Zero when the plan is finished and the leaf is about to turn.
+##
+## THIS IS WHAT STOPS THE PING-PONG. The plan has always been in reading order - top-left,
+## across, down and back, then the other page - but the MOVES were not. A sweep took whichever
+## end of the row was FARTHER from the camera, to maximise travel; a spine traverse crossed to
+## the other page whenever it was drawn. So the reading advanced rightward while the shot that
+## carried it ran left, and the next cut pulled it back. Reported as "the camera can bounce up
+## and down and up and down, or left to right and left to right... like ping-pong all over the
+## book". Orienting the open moves along this vector costs them nothing - they still run past
+## their subject, they just run past it in the direction the eye is already going.
+func _reading_dir() -> Vector2:
+	if _spread == null or _step + 1 >= _plan.size() or _read >= _spread.panels.size():
+		return Vector2.ZERO
+	return _spread.panel_center(int(_plan[_step + 1])) - _spread.panel_center(_read)
 
 
 ## The middle of the page panel [param i] is printed on - what an aim is pulled toward, and
@@ -1191,8 +1511,18 @@ func _panel_on_side(side: int, y: float) -> int:
 
 ## Pick and plan the next move. Called on every reading advance and on every page turn.
 func _choose_move() -> void:
+	# HAS THE CHAIN ALREADY BROUGHT US HERE? Between cuts the chain travels ahead to the panel
+	# the next cut will land on (see _chain_move), so by the time that cut arrives the camera is
+	# often already looking at it. Planning a fresh shot then can draw a HARD move out of the
+	# bag and jump-cut from the panel to the same panel, a few degrees round - "the camera
+	# jump-cuts unexpectedly... to the exact same frame of the exact same page, from a slightly
+	# different angle. That should never happen." Quite so: there is nothing to cut TO. Treating
+	# it as a chain keeps the move gentle and keeps the framing it already had.
+	var arrived := _chain_to == _read
 	_chain = 0
-	_plan_move(hash([Director.session_seed(), "comic-move", _spread_i, _read]), _read, "")
+	_chain_to = -1
+	_plan_move(hash([Director.session_seed(), "comic-move", _spread_i, _read]), _read,
+		"chain" if arrived else "")
 
 
 ## THE MOVE RAN OUT AND THE DIRECTOR HAS NOT CUT YET.
@@ -1222,31 +1552,49 @@ func _chain_move() -> void:
 	var key := hash([Director.session_seed(), "comic-chain", _spread_i, _read, _chain])
 	var r := RandomNumberGenerator.new()
 	r.seed = key
-	var to := _read
-	if _content_at(_clamp_aim(_cam.aim)) >= 0.35:
-		# On content already, so this is not a recovery. Look AHEAD - to the panel the next
-		# cut will land on - and never back.
+	# THE TARGET IS CHOSEN ONCE PER CUT AND THEN HELD.
+	#
+	# It used to be re-decided on every chain, from where the camera HAPPENED TO BE: on content
+	# it looked ahead to the next panel, off content it "recovered" to the one being read. Those
+	# two branches fight. The camera sets off for the panel ahead, crosses a gutter on the way,
+	# the content score dips under the threshold, and the next chain reads that as being lost
+	# and sends it back - whereupon it is on content again and the chain sends it forward.
+	# Reported as the camera "bouncing between two diagonal corners... clearly because of some
+	# kind of repulsion mechanism", and the diagnosis that came with it is the right one: "the
+	# camera should have never selected the top-right frame again, in the first place." There is
+	# no repulsion here and never was; there was a destination being recomputed from a position
+	# that the journey itself was changing.
+	var ahead := int(_plan[_step + 1]) if _step + 1 < _plan.size() else -1
+	if _chain_to < 0:
+		_chain_to = _read
+	if _chain_to == _read and ahead >= 0 and _content_at(_clamp_aim(_cam.aim)) >= 0.35:
+		# FORWARD ONLY, and only ever this one step: from the panel being read to the panel the
+		# next cut will land on. Monotone, so an oscillation is not merely unlikely, it cannot
+		# be expressed - which is the property that matters, because the last version was also
+		# not MEANT to oscillate.
 		#
-		# IT USED TO GO BACKWARD 30% OF THE TIME, and that is the whole of "it seems like the
-		# camera is able to REVISIT the same frame multiple times - panning away, then
-		# returning back to a frame it has already focused on". A comic is read once through;
-		# a camera that returns to a panel it has already rested on is not re-reading it, it
-		# has simply run out of ideas. Passing OVER an old panel on the way somewhere is fine
-		# and happens constantly - that is a pan, not a visit.
-		if _step + 1 < _plan.size():
-			to = int(_plan[_step + 1])
-	_plan_move(key, to, "chain")
+		# The alternative - freezing the target outright at the first chain - does stop the
+		# bouncing, and it also stops the camera: committing to the panel it is already on
+		# leaves nothing to travel to, and the aim measured 0.0096 page widths a second, which
+		# is a picture that has stopped. A comic is read once through, so forward is the only
+		# direction there is; the fix is to take it, not to stand still.
+		_chain_to = ahead
+	# NOT ENOUGH TIME TO GO ANYWHERE. Arrive properly instead - see SETTLE_ROOM.
+	if Director.hold_remaining() < SETTLE_ROOM:
+		_plan_move(key, _chain_to, "chain", "settle")
+		return
+	_plan_move(key, _chain_to, "chain")
 
 
 ## Plan a move to [param panel], seeded from [param key]. [param tag] is empty for a cut's
 ## move and "chain" for a continuation, which is both the log line and the filter on the
 ## bag - see the `chain` flag in MOVES.
-func _plan_move(key: int, panel: int, tag: String) -> void:
+func _plan_move(key: int, panel: int, tag: String, force := "") -> void:
 	if _spread == null:
 		return
 	var r := RandomNumberGenerator.new()
 	r.seed = key
-	var kind := _pick_move(r, tag == "chain")
+	var kind := force if MOVES.has(force) else _pick_move(r, tag == "chain")
 	var spec: Dictionary = MOVES[kind]
 	var b := _station(r, panel)
 	# CONTINUITY BY DEFAULT: a move starts from wherever the camera actually is, so the
@@ -1269,7 +1617,11 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 			# A constant station passing THROUGH the subject and out the other side - the
 			# shot that follows a car down a road. The direction is where the camera has
 			# been travelling from, so the reading keeps its momentum.
-			var away: Vector2 = (b.aim - a.aim)
+			# ALONG THE READING where there is one, so the overrun carries on toward the next
+			# panel instead of past the subject in some unrelated direction.
+			var away: Vector2 = _reading_dir()
+			if away.length() < 0.05:
+				away = (b.aim - a.aim)
 			if away.length() < 0.05:
 				away = Vector2(1.0, 0.0).rotated(r.randf_range(-0.5, 0.5))
 			b["aim"] = b.aim + away.normalized() * TRACK_OVERRUN
@@ -1280,9 +1632,15 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 			# height, station held, so it is a pure lateral pan over the longest run of
 			# uninterrupted content the sheet has. Which way it goes follows which page the
 			# aim is on, so the pan moves AWAY from where the camera already is.
+			# ONLY WHEN THE READING IS ACTUALLY CROSSING. A traverse over the spine is the
+			# spread's best move and its worst one: taken when the next panel is on the far
+			# page it IS the turn of the eye from one page to the other, and taken at any
+			# other moment it is the camera leaving the story behind and coming back.
 			var far_side := 1 if float(a.aim.x) < ComicSpread.SPINE else 0
-			var to_i := _panel_on_side(far_side, row)
-			if to_i >= 0:
+			var nxt := int(_plan[_step + 1]) if _step + 1 < _plan.size() else -1
+			var to_i := nxt if nxt >= 0 and _spread.side_of(nxt) == far_side \
+				else _panel_on_side(far_side, row)
+			if to_i >= 0 and (nxt < 0 or _spread.side_of(nxt) == far_side):
 				b["aim"] = _spread.panel_center(to_i)
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
@@ -1291,15 +1649,25 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 			# -0.10 to 1.10 in page coordinates, which is a pan that begins and ends on the
 			# desk and spends much of its length over margin and gutter: "tracking along
 			# unfocused edges". A sweep is a pan over CONTENT or it is nothing.
+			# THE END THE READING IS HEADED FOR - see _reading_dir. Only when the reading has
+			# nowhere left to go does it fall back to the farther end.
 			var span_h := _row_span(panel)
-			b["aim"] = Vector2(span_h.y if absf(span_h.y - float(a.aim.x))
-				>= absf(span_h.x - float(a.aim.x)) else span_h.x, row)
+			var go_x := _reading_dir().x
+			var end_x: float = span_h.y if go_x > 0.0 else span_h.x
+			if is_zero_approx(go_x):
+				end_x = span_h.y if absf(span_h.y - float(a.aim.x)) \
+					>= absf(span_h.x - float(a.aim.x)) else span_h.x
+			b["aim"] = Vector2(end_x, row)
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
 		"sweep_v":
 			var span_v := _col_span(panel)
-			b["aim"] = Vector2(col, span_v.y if absf(span_v.y - float(a.aim.y))
-				>= absf(span_v.x - float(a.aim.y)) else span_v.x)
+			var go_y := _reading_dir().y
+			var end_y: float = span_v.y if go_y > 0.0 else span_v.x
+			if is_zero_approx(go_y):
+				end_y = span_v.y if absf(span_v.y - float(a.aim.y)) \
+					>= absf(span_v.x - float(a.aim.y)) else span_v.x
+			b["aim"] = Vector2(col, end_y)
 			for k in ["az", "el", "roll", "fill", "fov"]:
 				b[k] = a[k]
 		"push":
@@ -1315,7 +1683,14 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 			for k in ["az", "el", "roll"]:
 				b[k] = a[k]
 		"pull":
-			a["fill"] = lerpf(1.0, r.randf_range(PUSH_FILL.x, PUSH_FILL.y), _sev() * 0.5)
+			# OUT FROM WHERE THE CAMERA ALREADY IS. It used to set a["fill"] to a deep push
+			# value - and `a` is the move's FIRST frame, so on a move declared hard:false that
+			# teleported the zoom in and then eased back out. "The camera quickly zooms and
+			# resets, which is a problem I thought we had fixed": the chained-move fix stopped
+			# the zoom being RE-ROLLED, and this is the other way it moved without being asked.
+			b["fill"] = maxf(FILL.x * 0.6, float(a["fill"]) * PULL_OUT)
+			for k in ["az", "el", "roll"]:
+				b[k] = a[k]
 		"orbit":
 			# The widest gesture in the bag - up to 149 degrees at the default - so it is one
 			# of the two the severity knob pulls in hardest.
@@ -1332,21 +1707,48 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 			a["aim"] = b.aim + (b.aim - mid).normalized() * 0.5 \
 				if b.aim.distance_to(mid) > 0.02 else b.aim
 
+	if kind == "settle":
+		# STAY WHERE THE LAST MOVE LANDED. Only the framing eases the last of the way in, so
+		# the shot resolves instead of being abandoned mid-convergence.
+		b["aim"] = a.aim.lerp(b.aim, SETTLE_DRIFT)
+		# FILL INCLUDED, and leaving it out was a bug you could see. A settle exists to hold
+		# the shot still while the cut arrives; copying every part of the camera EXCEPT the
+		# zoom meant it held the angle and then eased to a freshly sampled distance, so the
+		# picture crept in or out by a few percent for no reason at all.
+		for k in ["az", "el", "roll", "fov", "fill"]:
+			b[k] = a[k]
+
+	# A CHAIN DOES NOT RE-ROLL THE ZOOM. Every move takes its target framing from a fresh
+	# _station, which samples `fill` - fine at a CUT, where a new shot is the point, and wrong
+	# between cuts, where the chain is meant to be the same shot continuing. Two chains in a
+	# row on one panel therefore nudged the distance one way and then the other: "it zoomed-in
+	# then immediately zoomed-out again, but barely... it would have been better to just remain
+	# stable, or to zoom and keep zooming". The two moves whose whole gesture IS the zoom keep
+	# theirs; everything else inherits what the camera already had.
+	if tag == "chain" and kind != "push" and kind != "pull":
+		b["fill"] = a["fill"]
+
 	# THE SETTLE GUARD, and it is a guard rather than a rule so that it survives whatever
 	# gets added to the bag next. Any move that is allowed to STOP must stop somewhere worth
 	# looking at; the ones marked `open` are exempt because running past the subject is
 	# their whole gesture, and _chain_move is what makes that safe.
 	if not bool(spec.get("open", false)):
 		b["aim"] = _settle_aim(_clamp_aim(b.aim))
+	else:
+		# An open move keeps its overrun, but the overrun lands inside the printed area rather
+		# than out on the trim - see _printed_bounds. Clamping it HERE as well as at placement
+		# matters: the move interpolates toward `b`, so an unclamped `b` drags the whole
+		# journey toward the margin even though the placement clamp hides the last of it.
+		b["aim"] = _clamp_aim(b.aim)
 
 	_mv = {
 		"kind": kind,
 		"a": a,
 		"b": b,
-		# SEVERITY SETS THE SPEED. A short move is a fast move, so scaling the duration is
-		# most of what "gentle" and "cinematic" mean. Exponential about 1.0 - see DUR_SEVERITY.
-		"dur": maxf(0.05, r.randf_range(float(spec["dur"][0]), float(spec["dur"][1]))
-			* pow(DUR_SEVERITY, _sev() - 1.0)),
+		# SEVERITY SETS THE SPEED, and the DEADLINE sets the ceiling. See DUR_SEVERITY for the
+		# first and ARRIVE for the second.
+		"dur": _budget(r.randf_range(float(spec["dur"][0]), float(spec["dur"][1]))
+			* pow(DUR_SEVERITY, _sev() - 1.0), kind, panel),
 		"ease": String(spec["ease"]),
 	}
 	_mv_t = 0.0
@@ -1356,6 +1758,20 @@ func _plan_move(key: int, panel: int, tag: String) -> void:
 	if _spread_i >= 0:
 		print("ghost: comic %s%s -> panel %d of spread %d" % [
 			kind, (" (chained)" if tag == "chain" else ""), panel + 1, _spread_i])
+
+
+## Fit [param want] seconds of move into the time the Director expects to have left. See
+## ARRIVE. A `settle` is the exception: it is not travelling anywhere, so it is sized to FILL
+## the remaining hold rather than to finish inside a fraction of it.
+func _budget(want: float, kind: String, panel := -1) -> float:
+	var room := Director.hold_remaining()
+	if kind == "settle":
+		# A SETTLE FILLS THE HOLD rather than finishing inside a fraction of it, and it is
+		# EXTENDED rather than re-planned when it runs out (see _ease), so this is a starting
+		# length and not a promise.
+		return clampf(room, float(MOVES["settle"]["dur"][0]), float(MOVES["settle"]["dur"][1]))
+	var frac := FILM_ARRIVE if (panel >= 0 and panel == _film_at) else ARRIVE
+	return maxf(0.05, minf(want, maxf(ARRIVE_MIN, room * frac)))
 
 
 func _pick_move(r: RandomNumberGenerator, chain_only: bool) -> String:
@@ -1406,8 +1822,16 @@ func _ease(delta: float) -> void:
 	_mv_t += delta
 	# THE MOVE IS OVER AND NOTHING HAS CUT. Chain, do not stop - see _chain_move. The new
 	# move starts at _mv_t 0, so this is a continuation and not a reset of the picture.
+	#
+	# EXCEPT A SETTLE, WHICH JUST KEEPS SETTLING. A settle exists to hold the shot still until
+	# the cut arrives; planning a fresh one when it expires re-eases the aim toward the panel
+	# centre all over again, and a run of them is a camera visibly re-correcting onto a frame it
+	# is already on. Extending it is what "held" actually means.
 	if _mv_t >= float(_mv.dur):
-		_chain_move()
+		if String(_mv.get("kind", "")) == "settle":
+			_mv["dur"] = float(_mv.dur) + float(MOVES["settle"]["dur"][0])
+		else:
+			_chain_move()
 	var k := clampf(_mv_t / float(_mv.dur), 0.0, 1.0)
 	_cam = _lerp_state(_mv.a, _mv.b, _curve(String(_mv.ease), k))
 	_place_eye()
@@ -1457,8 +1881,14 @@ func _place_eye() -> void:
 	var aim: Vector2 = _clamp_aim(_cam.aim)
 	var c := _world(aim, _att_basis)
 	# A FIELD scene is raked gently, a subject hard - see FIELD_FLATTEN.
-	var el: float = lerpf(float(_cam.el), PI * 0.5, _flatten())
-	var roll: float = float(_cam.roll) * (1.0 - _flatten() * 0.7)
+	var fp := _framing_panel(aim)
+	# THE FILM PANEL IS SHOWN WHOLE - see CONTAIN_FILL. Only while it is the panel the shot is
+	# actually built around; a film at the edge of a wide shot is just another picture on the
+	# page and does not get to decide the framing.
+	var contain: bool = fp >= 0 and fp == _film_at
+	var flat := maxf(_flatten(), FILM_FLATTEN if contain else 0.0)
+	var el: float = lerpf(float(_cam.el), PI * 0.5, flat)
+	var roll: float = float(_cam.roll) * (1.0 - flat * 0.7)
 	_roll = roll
 	_fov = float(_cam.fov)
 	var dir := _att_basis * Vector3(cos(_cam.az) * cos(el), sin(_cam.az) * cos(el), sin(el))
@@ -1466,12 +1896,14 @@ func _place_eye() -> void:
 	# the one being read: a travelling move spends most of its time between panels, and
 	# framing those seconds against a panel that is off screen puts the scale somewhere
 	# arbitrary. See _framing_panel.
-	var pw := _panel_world(_framing_panel(aim))
+	var pw := _panel_world(fp)
 	_cam["aim"] = aim
 	# ZOOM IS COUPLED TO CONTENT - see CONTENT_CORE. Off a panel the requested fill is
 	# ignored and the shot opens to OFF_FILL, so the camera physically cannot be tight on a
 	# gutter or a corner however a move was planned or wherever a chain left it.
 	var eff := lerpf(OFF_FILL, float(_cam.fill), _content_at(aim))
+	if contain:
+		eff = minf(eff, CONTAIN_FILL)
 	# TWO CONSTRAINTS, and the nearer wins.
 	#
 	# The first frames the PANEL: near enough that it spans `eff` frames top to bottom. The
@@ -1480,11 +1912,25 @@ func _place_eye() -> void:
 	# stopped reading as a page, which is why the first cut of this only ever checked the
 	# width; a spread is 1.33 wide against a 1.78 frame, so covering the width covers the
 	# height with room to spare and the check can finally be honest.
-	var d := minf(_fit(pw, c, eff, dir), _cover(_spread_world(), c, dir))
+	# THE WHOLE VIDEO WINS OVER THE COVERING SOLVE, and that is a deliberate ordering rather
+	# than an oversight. The two constraints genuinely conflict on a wide panel at a rake -
+	# measured, containing it wanted 3.03 units and covering allowed only 2.13 - so one of them
+	# has to give. Letting the cover win crops a speaking face out of frame to keep a strip of
+	# desk off it, and between those two the answer is not close: "you really don't want to
+	# focus the camera on her door to the side." FILM_FLATTEN is what keeps the price small.
+	var d := 0.0
+	if contain:
+		d = minf(_fit(pw, c, eff, dir, true),
+			_cover(_spread_world(), c, dir) * CONTAIN_DESK)
+	else:
+		d = minf(_fit(pw, c, eff, dir), _cover(_spread_world(), c, dir))
 	# ...and never nearer than this, whatever the two constraints ask for. Pushing in until
 	# the paper covers the frame is right; pushing in until the camera is INSIDE one panel's
 	# artwork is a shot of a texture, with no page, no gutter and no comic in it.
-	d = maxf(d, _fit(pw, c, CROP_MAX, dir))
+	# The near floor never applies to a contained panel: its whole point is that the camera
+	# stops where the picture fits, and a floor that pushes past that would crop it again.
+	if not contain:
+		d = maxf(d, _fit(pw, c, CROP_MAX, dir))
 	_eye = c + dir * d
 	_look = c
 
@@ -1498,9 +1944,29 @@ func _flatten() -> float:
 
 ## Keep an aim on the paper - see AIM_MARGIN. Spread coordinates, so x runs to 2.
 func _clamp_aim(p: Vector2) -> Vector2:
-	return Vector2(
-		clampf(p.x, AIM_MARGIN, 2.0 - AIM_MARGIN),
-		clampf(p.y, AIM_MARGIN, _spread.aspect - AIM_MARGIN))
+	var b := _printed_bounds()
+	return Vector2(clampf(p.x, b.position.x, b.end.x), clampf(p.y, b.position.y, b.end.y))
+
+
+## THE PRINTED AREA: the box that contains every panel on the spread, grown by AIM_MARGIN.
+##
+## The aim used to be clamped to the SHEET, so a move that ran past its subject - a track
+## overruns by nearly half a page width by design - came to rest out on the trim margin, in a
+## corner of the paper with no picture anywhere near it. The chain then took the camera back
+## toward the reading, which is the "drifts into a corner then bounces back from it again"
+## exactly: out to the corner because the move said so, back again because the reading did.
+##
+## Clamping to the PRINTED area instead means an overrun still leaves its panel - that is the
+## gesture, and it still passes over the gutter and out to the edge of the outermost panel -
+## but it cannot reach the blank margin, so there is no corner to be retrieved from. The
+## outset by AIM_MARGIN is what keeps "past the last panel" from meaning "exactly on its edge".
+func _printed_bounds() -> Rect2:
+	if _spread == null or _spread.panels.is_empty():
+		return Rect2(AIM_MARGIN, AIM_MARGIN, 2.0 - AIM_MARGIN * 2.0, 1.0)
+	var r: Rect2 = _spread.panels[0]["rect"]
+	for i in _spread.panels.size():
+		r = r.merge(_spread.panels[i]["rect"])
+	return r.grow(AIM_MARGIN)
 
 
 ## HOW MUCH OF THE FRAME THE SHEET COVERS. 1.0 when there is paper under all four corners
@@ -1600,6 +2066,67 @@ func _quad_clearance(q: PackedVector2Array, hx: float, hy: float) -> float:
 	return 0.0 if worst == INF else worst
 
 
+## HOW MUCH OF THE FRAME THE PANEL BEING READ TAKES UP, on its worst axis. 1.0 means it
+## exactly spans the picture; above 1 the screen is cropping into it, which is the intended
+## shot for an abstract field and the wrong one for a piece of footage - see CONTAIN_FILL.
+## Read by tests/comic_look_probe.gd, so "is the whole video on screen" is a number.
+func read_panel_fit() -> float:
+	if _spread == null or _read < 0 or _read >= _spread.panels.size():
+		return 0.0
+	var u := minf(_stage_size.x, _stage_size.y)
+	var hx := (_stage_size.x * 0.5) / maxf(u, 1.0)
+	var hy := (_stage_size.y * 0.5) / maxf(u, 1.0)
+	var lo := Vector2(1e9, 1e9)
+	var hi := Vector2(-1e9, -1e9)
+	for w in _panel_world(_read):
+		var pr := _lens.project(w)
+		if pr.z <= _lens.near:
+			return 99.0                # wrapping the eye: as cropped as it gets
+		lo = lo.min(Vector2(pr.x, pr.y))
+		hi = hi.max(Vector2(pr.x, pr.y))
+	return maxf((hi.x - lo.x) / (2.0 * maxf(hx, 1e-4)),
+		(hi.y - lo.y) / (2.0 * maxf(hy, 1e-4)))
+
+
+## HOW MANY SCREEN PIXELS THE READ PANEL COVERS PER TEXEL OF ITS RENDER TARGET. 1 is 1:1;
+## above 1 the panel's bitmap is being magnified and will look soft or blocky.
+##
+## A panel is not drawn as live geometry - it is rasterized into its own SubViewport at a fixed
+## size and then mapped onto a quad as a TEXTURE. That is what makes a held panel free (the
+## frozen target keeps its picture for nothing) and it is also why a tight shot can pixelate:
+## the shot is resampling a bitmap, exactly as it would a video.
+func read_panel_magnification() -> float:
+	if _spread == null or _read < 0 or _read >= _spread.panels.size():
+		return 0.0
+	var vp: SubViewport = _slots[_pool * POOL + _read]
+	var th := maxf(float(vp.size.y), 1.0)
+	return read_panel_fit() * _stage_size.y / th
+
+
+## WHY THE CURRENT SHOT IS FRAMED WHERE IT IS - the numbers that decide it, for the probe.
+## Not a pretty string for its own sake: "there is desk in this frame" has now had two fixes
+## aimed at it that measured as no change at all, because both were aimed at a cause guessed
+## from the outside instead of read off the shot that was failing.
+func shot_debug() -> String:
+	if _spread == null:
+		return ""
+	var aim: Vector2 = _clamp_aim(_cam.aim)
+	var c := _world(aim, _att_basis)
+	var fp := _framing_panel(aim)
+	var contain: bool = fp >= 0 and fp == _film_at
+	var flat := maxf(_flatten(), FILM_FLATTEN if contain else 0.0)
+	var el: float = lerpf(float(_cam.el), PI * 0.5, flat)
+	var dir := _att_basis * Vector3(cos(_cam.az) * cos(el), sin(_cam.az) * cos(el), sin(el))
+	var eff := lerpf(OFF_FILL, float(_cam.fill), _content_at(aim))
+	if contain:
+		eff = minf(eff, CONTAIN_FILL)
+	var cov_d := _cover(_spread_world(), c, dir)
+	return "el %.0fdeg flat %.2f contain %s fit %.2f cover %.2f eye %.2f att(%.2f %.2f %.2f)" % [
+		rad_to_deg(el), flat, "Y" if contain else "n",
+		_fit(_panel_world(fp), c, eff, dir, contain), cov_d,
+		(_eye - c).length(), _att.x, _att.y, _att.z]
+
+
 ## Which panel the camera is over. Nearest centre in spread coordinates - the fallback for
 ## [method _framing_panel] when the aim is inside nothing at all.
 func _nearest_panel(aim: Vector2) -> int:
@@ -1649,11 +2176,14 @@ func _prepare_lens() -> void:
 ## the caller multiplies by unit() = the SHORTER SCREEN AXIS - so the visible vertical range
 ## is +/- (H/2)/min(W,H) = +/- 0.5. Reading it as 1 puts the camera at half the distance it
 ## needs, which is what the first cut of this did.
-func _fit(pts: Array, c: Vector3, fill: float, dir: Vector3) -> float:
+## [param contain] fits the points on BOTH axes instead of on height alone, so nothing
+## overflows the frame. See CONTAIN_FILL - it is what puts a whole video on screen.
+func _fit(pts: Array, c: Vector3, fill: float, dir: Vector3, contain := false) -> float:
 	var u := minf(_stage_size.x, _stage_size.y)
 	# fill is how many FRAMES tall the panel should be, so a bigger fill is a nearer
 	# camera: the allowed half-extent grows and the bisection settles closer in.
 	var hy := (_stage_size.y * 0.5) / maxf(u, 1.0) * fill
+	var hx := (_stage_size.x * 0.5) / maxf(u, 1.0) * fill
 	var probe := _fit_lens
 	probe.fov = _fov
 	probe.look = c
@@ -1667,7 +2197,8 @@ func _fit(pts: Array, c: Vector3, fill: float, dir: Vector3) -> float:
 		var fits := true
 		for pt in pts:
 			var pr := probe.project(pt)
-			if pr.z <= probe.near or absf(pr.y) > hy:
+			if pr.z <= probe.near or absf(pr.y) > hy \
+					or (contain and absf(pr.x) > hx):
 				fits = false
 				break
 		if fits:
@@ -1699,6 +2230,8 @@ func _cover(pts: Array, c: Vector3, dir: Vector3) -> float:
 	probe.up = _lens.up
 	var lo := 0.15
 	var hi := 24.0
+	var best_d := 0.15
+	var best_clear := -1e9
 	for _iter in SOLVE_STEPS:
 		var mid := (lo + hi) * 0.5
 		probe.eye = c + dir * mid
@@ -1711,10 +2244,35 @@ func _cover(pts: Array, c: Vector3, dir: Vector3) -> float:
 		# Covers when every CORNER OF THE FRAME has paper under it - the same test
 		# page_coverage() reports, so the solve and the measurement can never disagree about
 		# what "covered" means. See _quad_clearance for why a bounding box is not enough.
-		if q.size() < 3 or _quad_clearance(q, hx, hy) >= 0.0:
+		var clear := 1e9 if q.size() < 3 else _quad_clearance(q, hx, hy)
+		# Remember the BEST distance seen, for the case where none of them cover - see below.
+		if clear > best_clear:
+			best_clear = clear
+			best_d = mid
+		if clear >= 0.0:
 			lo = mid
 		else:
 			hi = mid
+	# DID ANYTHING COVER AT ALL? The bisection assumes covering is true near and false far and
+	# returns the boundary. When the sheet cannot cover the frame at ANY distance - a hard rake
+	# and a rolled page can leave a corner of the picture off the paper however close the camera
+	# gets - `lo` never moved, and returning it hands the caller 0.15 world units as a NEAR
+	# bound, pinning the eye inside a panel's artwork.
+	#
+	# RETURNING A HUGE NUMBER INSTEAD WAS WORSE, and it is what "the camera's anchor jerks and
+	# then flies to some other position... as if the camera were pulling on some rubber band,
+	# which broke" actually was. This value is a CONSTRAINT the caller takes the minimum with,
+	# so switching it between about two world units and 1e9 in one frame - which is what
+	# happens the instant a drifting page crosses from just-coverable to not - releases that
+	# constraint completely, and the camera leaves at whatever speed the framing solve alone
+	# asks for. A binding constraint that vanishes is a snapped rubber band; that is not a
+	# metaphor, it is the mechanism.
+	#
+	# So when nothing covers, return the distance that came CLOSEST to covering. Approaching the
+	# boundary from the uncoverable side, that distance approaches the boundary itself, so the
+	# value is continuous across the transition and there is nothing to snap.
+	if best_clear < 0.0:
+		return best_d
 	return lo
 
 
@@ -1825,7 +2383,8 @@ func _draw() -> void:
 
 ## Has panel [param i] of the CURRENT spread been cast yet? (See _turn_spread's queue.)
 func _is_cast(i: int) -> bool:
-	return i < _cast.size() and _cast[i] != null and is_instance_valid(_cast[i])
+	return i < _cast.size() and _cast[i] != null and is_instance_valid(_cast[i]) \
+		and i < _warm.size() and int(_warm[i]) >= FIRST_DRAW
 
 
 ## Every panel of the spread turning away carries a picture - it was fully cast before the

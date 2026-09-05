@@ -1381,6 +1381,58 @@ func _should_change() -> bool:
 	return _cue_taken(lo_h, hi)
 
 
+## HOW LONG THE CURRENT SCENE IS LIKELY TO HAVE LEFT, in seconds from now.
+##
+## For a vehicle that flies a camera, this is the difference between a shot and an
+## interruption. [ComicVehicle] samples a move's duration from its own vocabulary - seven to
+## twenty seconds - while the cut that ends it is decided here, from bounds that shrink with
+## the music's drive: on a driving passage the median cut lands about five and a half seconds
+## in. So the camera was routinely still converging on a panel when the next cut arrived, and
+## the shot never resolved. Reported as "you can see it converging, then BOOM. The camera cuts
+## to something else... we never gave the camera enough time to slow down, and settle
+## somewhere, before the transition."
+##
+## THE MEDIAN, not the maximum, because the maximum is a backstop that usually does not
+## happen. Between `lo` and `hi` the cue hazard is cubic (see [method _cue_taken]), so the
+## survival curve is exp(-CUE_TOTAL * u^3) and half the scenes are gone by
+## u = cbrt(ln2 / CUE_TOTAL) - about 56% of the way through the window. Sizing a move to the
+## backstop would make every shot too slow; sizing it to the minimum would make every shot
+## rushed. The median is the honest answer to "how long have I probably got".
+##
+## Returns a deliberately large number when the cutting is frozen (the feedback console, a
+## probe) or when nothing is playing: a caller should then use its own natural timing rather
+## than compress a move to fit a deadline that is not coming.
+func hold_remaining() -> float:
+	if _held or _current == null or not is_instance_valid(_current):
+		return 1e9
+	var ex: Dictionary = _current.exit_spec
+	if ex.has("hold"):
+		return maxf(0.0, float(ex["hold"]) - _elapsed)
+	var hi: float = _burst_max if _burst_left > 0 else _scaled_bound(ex, "max", max_hold)
+	var lo: float = _burst_min if _burst_left > 0 else _scaled_bound(ex, "min", min_hold)
+	var u := pow(log(2.0) / CUE_TOTAL, 1.0 / 3.0)
+	var med := lo + (hi - lo) * u
+	if _elapsed < med:
+		return med - _elapsed
+	# PAST THE MEDIAN THE SCENE IS STILL RUNNING, so the answer is not zero.
+	#
+	# It used to be `maxf(0.0, med - _elapsed)`, which reports ZERO for the whole tail of any
+	# hold that outlives its median - and the median is only 56% of the way through the window,
+	# so that is most of the second half of every scene. A caller asking "how long have I got"
+	# was told "none" over and over while the scene ran on, and [ComicVehicle] answered it the
+	# way it should: by settling, again, every few seconds. Measured in an export log, 19 of 42
+	# camera moves were settles, in runs of up to seven, each re-easing the shot a fifth of the
+	# way toward the same panel it was already on. Reported as "the camera corrects and jumps to
+	# focus on the exact same frame it's already on" and "it never holds long enough to look at
+	# anything".
+	#
+	# Beyond the median the honest remaining time is the distance to the BACKSTOP, which is the
+	# one moment the cut is certain. It shrinks to zero as that arrives, so a caller pacing
+	# itself against this still tightens as the scene ends - it simply is not told the scene is
+	# over half a minute before it is.
+	return maxf(0.0, hi - _elapsed)
+
+
 ## Take this cue, or let it pass? A ramp, not a gate.
 ##
 ## THE BUG THIS FIXES. `min_hold` was a hard gate: once the scene had held that long, the next

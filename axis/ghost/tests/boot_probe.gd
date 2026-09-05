@@ -35,6 +35,7 @@ var _wrote := 0
 var _flat := 0
 var _thin := 0                    # frames where the page did not cover the frame
 var _static := 0                  # shots where the camera had stopped moving
+var _cropped := 0                 # shots where a FILM panel was cropped by the frame
 ## How many frames to let the camera travel before photographing. The default covers the
 ## slowest pan in the vocabulary; a LONG settle is the interesting one, because the defect
 ## this probe exists to catch is what the camera does AFTER its move has run out - see
@@ -68,6 +69,8 @@ func _run() -> void:
 		print("comic_look_probe: %d frame(s) showed DESK - the page did not cover." % _thin)
 	if _static > 0:
 		print("comic_look_probe: %d shot(s) had a STOPPED camera - the move ran out and nothing replaced it." % _static)
+	if _cropped > 0:
+		print("comic_look_probe: %d shot(s) CROPPED THE FILM - the whole video was not on screen." % _cropped)
 	for _i in 6:
 		await get_tree().process_frame
 	get_tree().quit(1 if _flat > 0 else 0)
@@ -161,7 +164,7 @@ func _shoot() -> void:
 				cut, vehicle._spread_i, vehicle._read + 1, vehicle._spread.panels.size(),
 				vehicle._plan, vehicle._live, film,
 				("(leaf turned) " + _page_line(vehicle)) if turned else ""])
-			print("      panels: %s" % _panel_line(vehicle))
+
 		else:
 			print("    cut %d" % cut)
 		# Let the panel's scene build and the camera ease toward the new framing.
@@ -255,6 +258,7 @@ func _capture(stage: SubViewport, cut: int, travel := -1.0) -> void:
 	# edges and the surface it lies on is in shot.
 	var cov := 1.0
 	var still := false
+	var fit := -1.0
 	if _vehicle_key == "comic":
 		cov = float(_vehicle.page_coverage())
 		# A hair under 1 is a pixel of rounding at the frame edge, not desk in shot.
@@ -263,8 +267,18 @@ func _capture(stage: SubViewport, cut: int, travel := -1.0) -> void:
 		still = travel >= 0.0 and travel < STILL
 		if still:
 			_static += 1
-	print("    %s  (luma %.3f, spread %.3f, page covers %.2f, aim moved %.4f/s)%s%s%s" % [
-		path, _luma(img), spread, cov, maxf(travel, 0.0),
+		# THE READ PANEL'S SHARE OF THE FRAME, on its worst axis. Over 1 the panel overflows
+		# the picture and is being cropped by the screen - which is correct and wanted for an
+		# abstract field, and wrong for a piece of footage: "you really don't want to focus the
+		# camera on her door to the side". A film panel that is the one being read must come
+		# out at or under 1.
+		fit = float(_vehicle.read_panel_fit())
+		if _vehicle._read == _vehicle._film_at and fit > 1.02:
+			_cropped += 1
+	if _vehicle_key == "comic":
+		print("      panels: %s" % _panel_line(_vehicle))
+	print("    %s  (luma %.3f, spread %.3f, page covers %.2f, aim moved %.4f/s, read panel %.2f of frame)%s%s%s" % [
+		path, _luma(img), spread, cov, maxf(travel, 0.0), maxf(fit, 0.0),
 		"  <-- UNIFORM" if spread < 0.02 else "",
 		"  <-- DESK IN SHOT" if cov < 0.995 else "",
 		"  <-- CAMERA STOPPED" if still else ""])
@@ -300,8 +314,12 @@ func _panel_line(vehicle: ComicVehicle) -> String:
 		var vp: SubViewport = vehicle._slots[vehicle._pool * ComicVehicle.POOL + i]
 		var cast_ok: bool = i < vehicle._cast.size() and vehicle._cast[i] != null \
 			and is_instance_valid(vehicle._cast[i])
-		out += "%d[%s%s %dx%d] " % [i + 1, "c" if cast_ok else "-",
-			"L" if vehicle._live.has(i) else " ", vp.size.x, vp.size.y]
+		var warm: int = int(vehicle._warm[i]) if i < vehicle._warm.size() else 0
+		# `w` = the panel has rendered enough frames to have a picture worth freezing. A
+		# COLD panel that is frozen is the "pure black, and empty" defect.
+		out += "%d[%s%s%s %d] " % [i + 1, "c" if cast_ok else "-",
+			"L" if vehicle._live.has(i) else " ",
+			"w" if warm >= ComicVehicle.WARM_FRAMES else "-", warm]
 	return out
 
 
