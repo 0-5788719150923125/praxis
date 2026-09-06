@@ -3,7 +3,7 @@
 
 LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 
-Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (17 entries)
+Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (18 entries)
 
 ## `conv` - ConvMTPModule
 
@@ -65,7 +65,7 @@ Source: [praxis/heads/harmonic.py:1496](../praxis/heads/harmonic.py#L1496)
 
 Gate-combined parallel branches; a SequentialHead stage or top head.
 
-Source: [praxis/heads/parallel.py:52](../praxis/heads/parallel.py#L52)
+Source: [praxis/heads/parallel.py:128](../praxis/heads/parallel.py#L128)
 
 Presets:
 - `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=False)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=False), <class 'praxis.heads.crystal.CrystalHead'>])]`
@@ -77,6 +77,23 @@ Presets:
 - `prismatic6_vear` - `branches=[functools.partial(<class 'praxis.heads.crystal.CrystalVearHead'>, sharpen=None), <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 - `prismatic7` - `branches=[<class 'praxis.heads.crystal.CrystalSmearHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 - `prismatic8` - `branches=[<class 'praxis.heads.crystal.CrystalHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
+
+## `prismatic9` - SurgicalParallelHead
+
+ParallelHead whose arms train on their own objectives, combined by PCGrad.
+
+Identical to ParallelHead in the forward pass and at inference: the same mixture of
+softmaxes over the same arms, so nothing about how predictions are made changes. What
+changes is training, and only training.
+
+The honest cost, stated up front: solo cross-entropy on every arm removes the DIVISION
+OF LABOUR. Under the mixture, arms specialize - each covers what it explains best and
+the gate routes accordingly. Trained ...
+
+Source: [praxis/heads/parallel.py:915](../praxis/heads/parallel.py#L915)
+
+Presets:
+- `prismatic9` - `branches=[<class 'praxis.heads.crystal.CrystalHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 
 ## `tied` - TiedWeights
 

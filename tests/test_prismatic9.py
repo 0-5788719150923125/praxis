@@ -413,3 +413,42 @@ def test_equalization_preserves_the_step_magnitude():
 def test_equalization_is_on_for_prismatic9_and_absent_elsewhere():
     assert build("prismatic9").equalize_rows is True
     assert not hasattr(build("prismatic8"), "equalize_rows")
+
+
+def test_no_grad_forward_while_training_is_a_no_op():
+    """Lazy-module init calls `model.train()` then runs a `torch.no_grad()`
+    dummy pass (praxis/utils/system.py). Building an arm loss there gives a
+    tensor with no grad_fn, and autograd.grad on it raises "element 0 of
+    tensors does not require grad" - which is exactly how -o died at startup."""
+    head = build().train()
+    x, y = batch()
+    crit = HALOLoss(vocab_size=32)
+    with torch.no_grad():
+        assert head.arm_objectives(x, y, crit) == {}
+        assert head.arm_conflict(x, y, crit) == {}
+    # And grad-enabled behaviour is untouched.
+    assert head.arm_objectives(x, y, crit)
+    assert head.arm_conflict(x, y, crit)
+
+
+def test_full_model_survives_the_lazy_init_pass():
+    """End-to-end reproduction of the -o startup crash: train() + no_grad."""
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    cfg = PraxisConfig(
+        vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
+        max_length=128, decoder_type="sequential", encoder_type=None,
+        head_type="prismatic9", loss_func="halo",
+    )
+    torch.manual_seed(0)
+    m = PraxisForCausalLM(cfg)
+    m.train()
+    ids = torch.ones((2, 16), dtype=torch.long)
+    with torch.no_grad():
+        out = m(input_ids=ids, labels=ids[..., 1:].contiguous())
+    assert out.loss is not None
+    # The real training step still works afterwards.
+    out = m(input_ids=ids, labels=ids[..., 1:].contiguous())
+    out.loss.backward()
+    assert any(p.grad is not None for p in m.parameters())

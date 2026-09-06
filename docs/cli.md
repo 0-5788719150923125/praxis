@@ -64,7 +64,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7, prismatic8) |
+| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7, prismatic8, prismatic9) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |

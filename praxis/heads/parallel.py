@@ -424,6 +424,14 @@ class ParallelHead(BaseHead):
         """
         if self.gate is None or labels is None or not self.training:
             return {}
+        # A forward under `torch.no_grad()` with `training=True` is a real
+        # configuration, not a contradiction: lazy-module initialization does
+        # exactly that (praxis/utils/system.py - `model.train()` then a
+        # `no_grad` dummy pass). Nothing downstream will call backward, so
+        # measuring is pointless, and a dummy all-ones batch would poison the
+        # first reading anyway.
+        if not torch.is_grad_enabled():
+            return dict(self._arm_metrics)
         if torch.compiler.is_compiling():
             return dict(self._arm_metrics)
         step = getattr(self, "_arm_step", 0)
@@ -531,6 +539,12 @@ class ParallelHead(BaseHead):
         if not self.arm_surgery or self.gate is None or labels is None:
             return {}
         if not self.training or torch.compiler.is_compiling():
+            return {}
+        # See arm_conflict: `training=True` under `no_grad` is the lazy-init
+        # pass. Building an arm loss there yields a tensor with no grad_fn, and
+        # handing that to autograd.grad raises "element 0 of tensors does not
+        # require grad". No backward is coming, so there is nothing to arbitrate.
+        if not torch.is_grad_enabled():
             return {}
         self._arm_gap = False
         z, losses, grads, index = self._arm_grads(hidden_states, labels, criterion)
