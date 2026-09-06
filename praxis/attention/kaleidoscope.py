@@ -298,6 +298,76 @@ FACET_V_STD: float = 0.02
 # logit scale - ``S ~ N(0, ||w||^2)`` at unit mirrors, so ||w|| IS the softmax
 # temperature and an unbounded one would sharpen attention to a single key.
 TURN_MOD: float = 0.5
+
+# Per-mirror spatial zoom. A mirror at zoom z is read over a grid folded z
+# times across the sequence, so its features are z times finer in POSITION while
+# the canonical dictionary is untouched. This is granularity, not amplitude: a
+# zoomed mirror is a different function, so no router can absorb it, where a
+# per-mirror SCALE is absorbed by the unbounded `turn_static` (and already
+# exists as the pink envelope, which -j measured inert). It is also the
+# multi-scale dictionary the log warp was reaching for WITHOUT giving up
+# scale-equivariance: a zoomed ratio mirror is still a ratio mirror, so a
+# periodic feature stays periodic at every length rather than becoming a chirp
+# whose rate depends on T.
+#
+# The ladder is derived, not chosen. It steps outward from the identity through
+# the harmonic series and its SUB-harmonics: ... 1/3, 1/2, 1, 2, 3 ... so the
+# group spans periods 3T, 2T, T, T/2, T/3. That is the same spacing
+# HarmonicField uses on its frequency grid rather than an arbitrary octave
+# ladder, and it ties granularity to N, so a wider dictionary buys finer AND
+# coarser rungs instead of more draws from one distribution. Which matters,
+# because the measured problem is redundancy: `kaleido_turn_modes` settles near
+# 2.4 of 4 and FALLS as sequences lengthen, and N iid draws from one
+# distribution stay redundant however many you take.
+#
+# BOTH DIRECTIONS, because zooming in is only half the axis. At T=257 against
+# R=64 the ratio mirror is already UPSAMPLED 4x, so the identity is a fairly
+# smooth function of position and z > 1 only ever sharpens it. z < 1 reads a
+# sub-region of the canonical square stretched across the sequence, which is
+# genuinely coarser - measured at T=129, mean adjacent delta along a row falls
+# 0.474 -> 0.222 -> 0.095 for z = 1 -> 1/2 -> 1/4. A coarse mirror carries broad
+# shape ("the first third"); a fine one carries local structure. The router
+# should be able to buy either.
+#
+# NEGATIVE FACTORS ARE NOT THE COARSE DIRECTION, and are rejected. The triangle
+# fold is odd, so `fold(-z) == -fold(z) == reverse(fold(z))` exactly: a negative
+# factor gives the SAME mirror at the SAME granularity, read backwards. Under
+# the causal mask that is a different function, but it is a reflected draw from
+# the same distribution - which is the redundancy this ladder exists to escape.
+# Coarser means |z| < 1, not z < 0.
+#
+# ZERO IS ALSO NOT A UNIFORM MIRROR. At z = 0 every coordinate reads one
+# canonical point, so the mirror is constant across the row - and softmax is
+# invariant to adding a constant to every logit. Such a mirror cannot touch the
+# attention distribution at all; it would only shift `keep = sigmoid(lse)` in
+# the ghostmax. It is a gate on the ghost, not a granularity, so it is excluded.
+#
+# The folding is a reflection (triangle wave), not a wrap, so the tiling is
+# continuous and the facets still see a smooth grid to learn through.
+#
+# ALIASING, stated rather than solved: at zoom z a canonical cell spans
+# T / (z * R) positions, so anything below 1 is being downsampled. At R=64 and
+# T=257 that binds from z=4 up. The block already runs downsampled at every tier
+# below T=64, so this is the regime it has always been in, not a new one - but
+# the finest rungs do carry less than the ladder implies at short sequences.
+
+
+def zoom_ladder(n: int) -> Tuple[float, ...]:
+    """Zoom factors for ``n`` mirrors, stepping outward from the identity.
+
+    Alternates harmonic and sub-harmonic - ``1, 2, 1/2, 3, 1/3 ...`` - then
+    returns them in ascending order, so the group is centred on ``z = 1`` (the
+    plain ratio mirror this block has always used) and reaches equally into
+    coarser and finer geometry. ``n=5`` gives ``1/3, 1/2, 1, 2, 3``.
+    """
+    out = [1.0]
+    k = 2
+    while len(out) < max(0, n):
+        out.append(float(k))
+        if len(out) < n:
+            out.append(1.0 / k)
+        k += 1
+    return tuple(sorted(out[:max(0, n)]))
 # Probability of dropping a mirror from a blend during training. SMEAR's own
 # load-balancing mechanism at SMEAR's own rate; see praxis/routers/smear.py,
 # where its absence let "every one of the twelve targets duly saturate to near
@@ -459,6 +529,20 @@ class KaleidoscopeAttention(nn.Module):
                 "order": 17,
             },
         },
+        "kaleido_zoom_mean": {
+            "description": (
+                "Blend-magnitude-weighted position on the zoom ladder, in log space. "
+                "0 = all mass on the coarsest mirror, 1 = all on the finest. "
+                "Comparable across dictionary sizes."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Zoom",
+                "y_label": "mean octaves above coarsest",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 18,
+            },
+        },
         "kaleido_gate_negative": {
             "description": (
                 "Fraction of SiLU gate values below zero - the sign flips a sigmoid "
@@ -544,6 +628,8 @@ class KaleidoscopeAttention(nn.Module):
         coords: Optional[str] = None,
         dropoff: Optional[str] = None,
         dropoff_every: bool = False,
+        mix_norm: bool = False,
+        zoom=None,
     ) -> None:
         super().__init__()
         self.patch_config(config)
@@ -569,11 +655,33 @@ class KaleidoscopeAttention(nn.Module):
             layers = max(1, int(getattr(config, "num_layers", 1) or 1))
             self.dropoff_step = max(0, self.depths - layers)
 
+        # 1/sqrt(N) on the mix, the same reason attention divides q.k by
+        # sqrt(d): `scores` sums N mirror terms, so at equal per-mirror router
+        # magnitude the logit variance grows with N and a wider dictionary opens
+        # SHARPER rather than merely richer. Measured at T=257 over 12 seeds,
+        # effective attention support falls 181 -> 65 -> 25 positions going
+        # N = 4 -> 12 -> 24. `static` is unbounded so the router can compensate,
+        # which makes this a bias on the optimization path rather than a limit -
+        # but it is exactly the bias that would confound an ablation on N.
+        #
+        # OFF by default: it is not free. A global constant is absorbed by
+        # `turn_static` but NOT by the tanh-bounded conditional half, so it also
+        # divides the per-token modulation ceiling by sqrt(N). Turn it on for
+        # both arms of an N sweep or neither.
+        self.mix_norm = bool(mix_norm)
+        self.mix_scale = self.num_mirrors ** -0.5 if self.mix_norm else 1.0
+
         self.resolution = int(resolution or type(self).resolution)
         self.alpha = float(type(self).alpha if alpha is None else alpha)
         self.coords = str(coords or type(self).coords)
         if self.coords not in ("ratio", "split"):
             raise ValueError(f"unknown mirror coordinates: {self.coords!r}")
+
+        # Per-mirror zoom over the RATIO group. `True` derives the harmonic
+        # ladder from the group size; an explicit sequence is used verbatim (and
+        # cycled if short), which is what an ablation on the spacing would pass.
+        # None/False is off and leaves the fast `interpolate` path untouched.
+        self.zoom_spec = zoom
 
         N, H = self.num_mirrors, self.num_heads
         # Contiguous groups, ratio first, so the resample can slice rather than
@@ -581,6 +689,32 @@ class KaleidoscopeAttention(nn.Module):
         # ratio is the coordinate system the block already worked in.
         self.n_lag = N // 2 if self.coords == "split" else 0
         self.n_ratio = N - self.n_lag
+
+        # One factor per ratio mirror. The derived ladder spans the group; an
+        # explicit one cycles, so a short spec still spreads across it evenly.
+        if self.zoom_spec is True:
+            spec = zoom_ladder(self.n_ratio)
+        elif self.zoom_spec:
+            spec = tuple(float(z) for z in self.zoom_spec)
+        else:
+            spec = ()
+        if any(z <= 0 for z in spec):
+            # Not an arbitrary restriction: the fold is odd, so a negative
+            # factor is the same mirror reversed at the same granularity, and
+            # zero is constant across the row and therefore invisible to
+            # softmax. Coarser is |z| < 1. See `zoom_ladder`.
+            raise ValueError(
+                f"zoom factors must be positive; use z < 1 for coarser, "
+                f"not z <= 0: {spec!r}"
+            )
+        self.zoom = spec
+        if spec:
+            factors = [spec[k % len(spec)] for k in range(self.n_ratio)]
+        else:
+            factors = [1.0] * self.n_ratio
+        self.register_buffer(
+            "zoom_factor", torch.tensor(factors, dtype=torch.float32), persistent=False
+        )
 
         # The dictionary. Shared across heads on purpose: one frozen basis that
         # every head reads differently is both cheaper (N * T^2 rather than
@@ -681,6 +815,25 @@ class KaleidoscopeAttention(nn.Module):
         x = 2.0 * (torch.log1p(lag) / math.log1p(denom)) - 1.0
         return torch.stack((x, y), dim=-1).unsqueeze(0)
 
+    def _zoom_grid(self, T: int, device, dtype) -> Tensor:
+        """Folded sampling grids for the ratio group, ``[n_ratio, T, T, 2]``.
+
+        Coordinates are the ordinary ratio grid multiplied by each mirror's zoom
+        factor and folded back into ``[-1, 1]`` by a triangle wave, so a mirror
+        at zoom ``z`` repeats ``z`` times across the sequence with no seam. Both
+        axes zoom together: the pattern gets finer in query AND key position,
+        which is what makes it a granularity knob rather than a window.
+        """
+        idx = torch.arange(T, device=device, dtype=dtype)
+        t = 2.0 * idx / float(max(T - 1, 1)) - 1.0  # [-1, 1]
+        z = self.zoom_factor.to(device=device, dtype=dtype).view(-1, 1)
+        # Triangle fold of period 4 on [-1, 1]: exact identity at z == 1.
+        a = ((z * t + 1.0) * 0.5) % 2.0
+        folded = 2.0 * (1.0 - (a - 1.0).abs()) - 1.0  # [n_ratio, T]
+        x = folded.view(-1, 1, T).expand(-1, T, T)
+        y = folded.view(-1, T, 1).expand(-1, T, T)
+        return torch.stack((x, y), dim=-1)
+
     def _resample(self, grid: Tensor, T: int) -> Tensor:
         """A canonical ``[N, R, R]`` dictionary at ``[N, T, T]``.
 
@@ -691,7 +844,18 @@ class KaleidoscopeAttention(nn.Module):
         parts = []
         if self.n_ratio:
             ratio = grid[: self.n_ratio]
-            if T != self.resolution:
+            if self.zoom:
+                # No T == resolution shortcut: a folded grid is a different
+                # geometry at every length, exactly as on the lag path.
+                g = self._zoom_grid(T, ratio.device, ratio.dtype)
+                ratio = F.grid_sample(
+                    ratio.unsqueeze(1),
+                    g,
+                    mode="bilinear",
+                    padding_mode="border",
+                    align_corners=True,
+                ).squeeze(1)
+            elif T != self.resolution:
                 ratio = F.interpolate(
                     ratio.unsqueeze(0),
                     size=(T, T),
@@ -780,7 +944,8 @@ class KaleidoscopeAttention(nn.Module):
         input-conditional rather than merely learned. Costs ``N * T^2`` per
         (batch, head) against ``T^2 * d`` for a QK product.
         """
-        return torch.einsum("bihk,kij->bhij", w, mirrors)
+        out = torch.einsum("bihk,kij->bhij", w, mirrors)
+        return out * self.mix_scale if self.mix_norm else out
 
     def forward(
         self,
@@ -913,6 +1078,25 @@ class KaleidoscopeAttention(nn.Module):
             lag_mass = m[..., self.n_ratio :].sum(-1)
             self._metrics["kaleido_lag_share"] = float(
                 (lag_mass / m.sum(-1).clamp_min(1e-9)).mean().item()
+            )
+
+        # Which granularity the router actually buys. Weighted by |w| over the
+        # ratio group only - the lag mirrors have no zoom.
+        if self.zoom and self.n_ratio > 1:
+            m = w.detach().abs().float()[..., : self.n_ratio]
+            z = self.zoom_factor.to(m.device, m.dtype)
+            # Position on the ladder rather than the raw factor, so the number
+            # means the same thing when N changes: 0 = all mass on the coarsest
+            # mirror, 1 = all on the finest, 0.5 = no preference.
+            # In LOG space: the ladder is geometric, so a linear position would
+            # put the identity nowhere near the middle. This way 0.5 is the
+            # plain ratio mirror on a symmetric ladder.
+            lz = torch.log(z)
+            lo, hi = float(lz.min()), float(lz.max())
+            pos = (lz - lo) / max(hi - lo, 1e-9)
+            mass = m.sum(-1).clamp_min(1e-9)
+            self._metrics["kaleido_zoom_mean"] = float(
+                ((m * pos).sum(-1) / mass).mean().item()
             )
 
         # Which half of the blend does the work, on the axis that matters -

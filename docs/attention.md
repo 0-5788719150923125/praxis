@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (27 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (34 entries)
 
 ## `arc`, `arc_dropoff`, `arc_dropoff_always` - ArcAttention
 
@@ -87,21 +87,28 @@ attention output.
 
 Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
-## `kaleido`, `kaleido_dropoff`, `kaleido_dropoff_always`, `kaleido_pink`, `kaleido_pink_dropoff_always`, `kaleido_pink_split_dropoff_always`, `kaleido_split`, `kaleido_split_dropoff_always` - KaleidoscopeAttention
+## `kaleido`, `kaleido_12_dropoff_always`, `kaleido_12_norm_dropoff_always`, `kaleido_12_zoom_dropoff_always`, `kaleido_24_dropoff_always`, `kaleido_24_norm_dropoff_always`, `kaleido_dropoff`, `kaleido_dropoff_always`, `kaleido_norm_dropoff_always`, `kaleido_pink`, `kaleido_pink_dropoff_always`, `kaleido_pink_split_dropoff_always`, `kaleido_split`, `kaleido_split_dropoff_always`, `kaleido_zoom_dropoff_always` - KaleidoscopeAttention
 
 N frozen ``[T, T]`` mixing matrices, blended per token by a router.
 
-Source: [praxis/attention/kaleidoscope.py:310](../praxis/attention/kaleidoscope.py#L310)
+Source: [praxis/attention/kaleidoscope.py:380](../praxis/attention/kaleidoscope.py#L380)
 
 Presets:
 - `kaleido` - class defaults
+- `kaleido_12_dropoff_always` - `dropoff='warp', dropoff_every=True, num_mirrors=12`
+- `kaleido_12_norm_dropoff_always` - `dropoff='warp', dropoff_every=True, mix_norm=True, num_mirrors=12`
+- `kaleido_12_zoom_dropoff_always` - `dropoff='warp', dropoff_every=True, num_mirrors=12, zoom=True`
+- `kaleido_24_dropoff_always` - `dropoff='warp', dropoff_every=True, num_mirrors=24`
+- `kaleido_24_norm_dropoff_always` - `dropoff='warp', dropoff_every=True, mix_norm=True, num_mirrors=24`
 - `kaleido_dropoff` - `dropoff='warp'`
 - `kaleido_dropoff_always` - `dropoff='warp', dropoff_every=True`
+- `kaleido_norm_dropoff_always` - `dropoff='warp', dropoff_every=True, mix_norm=True`
 - `kaleido_pink` - `alpha=1.0`
 - `kaleido_pink_dropoff_always` - `alpha=1.0, dropoff='warp', dropoff_every=True`
 - `kaleido_pink_split_dropoff_always` - `alpha=1.0, coords='split', dropoff='warp', dropoff_every=True`
 - `kaleido_split` - `coords='split'`
 - `kaleido_split_dropoff_always` - `coords='split', dropoff='warp', dropoff_every=True`
+- `kaleido_zoom_dropoff_always` - `dropoff='warp', dropoff_every=True, zoom=True`
 
 ## `modular` - ModularAttention
 
