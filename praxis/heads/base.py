@@ -145,6 +145,32 @@ class BaseHead(nn.Module, ABC):
         """The classifier module used downstream (e.g., by cut-CE)."""
         pass
 
+    def arm_loss(
+        self, inp: Tensor, labels: Tensor, criterion: Optional[nn.Module] = None
+    ) -> Optional[Tensor]:
+        """This head's OWN objective, when it is one arm among several.
+
+        A parallel head that trains its arms independently needs one row per
+        arm in its Jacobian, and a row is any objective's gradient with respect
+        to the shared representation - it does NOT have to be a cross-entropy.
+        The default is CE because for most heads that IS the objective; a head
+        trained by something else (HaloHead, under HALOLoss's geometry)
+        overrides this and returns its real one.
+
+        Returning None drops the arm from the Jacobian, which the caller must
+        treat as a gap rather than as a zero: an objective that reaches the
+        shared representation but sits outside the arbitration is worse than
+        no arbitration at all.
+        """
+        logits = self(inp)
+        if logits.shape[-2] != labels.shape[-1]:
+            logits = logits[..., :-1, :]
+        return torch.nn.functional.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]).float(),
+            labels.reshape(-1),
+            ignore_index=-100,
+        )
+
     def aux_losses(self) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.
 

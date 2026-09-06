@@ -215,6 +215,11 @@ class HALOLoss(nn.Module):
         )
         if not is_halo_head:
             return halo_loss
+        if not self.composite_geometry:
+            # A head owns the arm objectives and has already taken this term as
+            # the HALO arm's Jacobian row. Emit CE only; adding the geometry
+            # here would double it and give it an uncorrected path to the trunk.
+            halo_loss = halo_loss.detach() * 0.0
 
         # Honest-mode composite: standard CE on the model's emitted logits.
         # This is the gate's and the non-HALO arms' training signal. Whether it
@@ -238,6 +243,64 @@ class HALOLoss(nn.Module):
             ce_per_token, labels=flat_labels, loss_weights=ce_weights
         )
         return ce_loss + halo_loss
+
+    # When a head owns the per-arm objectives (SurgicalParallelHead), the
+    # geometric term is that arm's Jacobian ROW and the head applies it through
+    # the surgery. Leaving it here as well would double-count it AND route it
+    # around the very arbitration it is supposed to be subject to, which is
+    # what made an earlier prismatic9 incoherent. PraxisForCausalLM flips this
+    # off at build time when it sees such a head.
+    composite_geometry: bool = True
+
+    def geometry_only(
+        self,
+        embeddings: Tensor,
+        labels: Tensor,
+        classifier: nn.Module,
+        loss_weights: Optional[Tensor] = None,
+    ) -> Optional[Tensor]:
+        """The HALO objective alone, with no cross-entropy attached.
+
+        The HALO arm's row in a head's arm Jacobian. A Jacobian row is any
+        objective's gradient with respect to the shared representation - it
+        does NOT have to be a cross-entropy, and inventing one for this arm
+        both fights its real objective and reads on a different scale (~25 nats
+        against the other arms' ~7, because distance scores are not calibrated
+        as CE logits).
+
+        Honest mode only: the classifier must own the geometry (``is_halo``),
+        which is the case this exists for. Returns None otherwise, and the
+        caller drops the row rather than substituting something wrong.
+        """
+        if not bool(getattr(classifier, "is_halo", False)):
+            return None
+        # ``forward`` is handed embeddings the caller already sliced to [:-1];
+        # an arm hands over its raw input, so align here instead of requiring
+        # every caller to know the convention.
+        if embeddings.shape[-2] != labels.shape[-1]:
+            embeddings = embeddings[..., :-1, :]
+        emb_dims = embeddings.shape[-1]
+        self._D = float(emb_dims)
+        flat_emb = embeddings.contiguous().view(-1, emb_dims)
+        flat_labels = labels.reshape(-1)
+        pos = flat_emb.to(torch.float32)
+        pos = pos * torch.rsqrt(pos.pow(2).mean(dim=-1, keepdim=True).clamp_min(1e-6))
+        valid = flat_labels != -100
+        if not valid.any():
+            return None
+        pos = pos[valid]
+        target = flat_labels[valid]
+        weights = None
+        if loss_weights is not None:
+            weights = loss_weights.reshape(-1)[valid]
+        return self._halo_terms(
+            pos,
+            target,
+            classifier.centroids(),
+            classifier.gamma_value(),
+            float(classifier.abstain_bias),
+            weights,
+        )
 
     def _halo_terms(
         self,

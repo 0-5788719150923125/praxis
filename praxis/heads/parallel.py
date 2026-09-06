@@ -38,15 +38,91 @@ class as their caller, so they render independently on the dashboard.
 """
 
 import copy
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
 
 HeadSpec = Union[BaseHead, Callable[..., BaseHead]]
+
+
+
+# ── Per-arm objectives and gradient surgery ─────────────────────────────────
+#
+# WHAT THIS IS FOR. A gated mixture combines PREDICTIONS well - it is a mixture
+# of softmaxes, the standard construction - but it also decides, as a side
+# effect, how much each arm gets TRAINED. Cross-entropy on the mixture reaches
+# arm i scaled by its posterior responsibility
+# ``w_i p_i(y) / sum_j w_j p_j(y)``, so an arm the gate has stopped trusting
+# stops receiving gradient and cannot recover. Measured on abstractinator-n:
+# gate shares 0.972 / 6.3e-08 / 0.028, entropy collapsed 1.058 -> 0.0015. The
+# second arm is not merely losing, it is numerically unreachable.
+#
+# The fix is not a different blend. A mixture of softmaxes is the standard way
+# to combine finished predictions and there is nothing wrong with it. The fix
+# is to stop letting the blend own the TRAINING signal: give every arm its own
+# cross-entropy against the labels, so each trains as a standalone classifier.
+#
+# THAT TURNS THE HEAD INTO A GENUINE MULTI-TASK PROBLEM, which is where the
+# Jacobian comes in: N objectives over one shared trunk, stacked one row per
+# arm and combined by something other than a plain sum.
+#
+# WHY IT IS CHEAP, contrary to the obvious cost model. It needs no extra trunk
+# forward and no extra trunk backward. The arms branch at ONE point, and
+# surgery is only needed where parameters are SHARED, so the per-arm gradients
+# are taken with respect to that ACTIVATION - N backwards through N small
+# classifiers, never through the trunk. The corrected gradient reaches the
+# trunk once, through the surrogate in ``arm_objectives``.
+
+# Steps between arm-conflict measurements. Sampled for the reason
+# ObjectiveConflict samples: each costs a few small backwards. Baked.
+ARM_CONFLICT_INTERVAL: int = 100
+
+
+def _pcgrad(grads: List[Tensor]) -> Tensor:
+    """PCGrad (Yu et al. 2020): drop each task's conflicting component, then sum.
+
+    For every ordered pair, if ``g_i . g_j < 0`` the two objectives disagree
+    about the shared representation, and ``g_i`` loses its projection onto
+    ``g_j``::
+
+        g_i <- g_i - (g_i . g_j / ||g_j||^2) g_j
+
+    Non-conflicting pairs are left exactly alone, so with no conflict anywhere
+    the result is bit-identical to the plain sum. That is what makes it safe as
+    a default rather than a bet: it can only act where there is something to
+    act on. It is also the only rule in its family with no hyperparameter,
+    which is why it is the one here.
+
+    ONE DELIBERATE DEVIATION FROM THE PAPER. Yu et al. project sequentially -
+    each removal feeds the next test - which makes the result depend on the
+    order tasks are visited, and they randomize that order every step to
+    unbias it. Here every projection is measured against the ORIGINAL ``g_j``,
+    so the result is order-independent and no RNG enters the training path.
+    That matters in this codebase: a diagnostic drawing from the global RNG has
+    already once perturbed the stream of the run it was watching.
+
+    The cost of the deviation is honest and small: with three or more mutually
+    conflicting rows the result is not exactly the projection onto the
+    intersection of the half-spaces, only onto each one measured independently.
+    With two rows the two agree exactly.
+    """
+    flat = [g.flatten() for g in grads]
+    out = []
+    for i, gi in enumerate(flat):
+        proj = gi.clone()
+        for j, gj in enumerate(flat):
+            if i == j:
+                continue
+            dot = torch.dot(gi, gj)
+            if dot < 0:
+                proj = proj - (dot / gj.dot(gj).clamp_min(1e-12)) * gj
+        out.append(proj)
+    return torch.stack(out).sum(0).view_as(grads[0])
 
 
 class ParallelHead(BaseHead):
@@ -59,6 +135,12 @@ class ParallelHead(BaseHead):
     # Floors the log-gap so an exact tie is a bounded (not infinite) penalty and
     # the gradient stays finite. Fixed, model-agnostic.
     _REPULSION_EPS = 1e-2
+
+    # Per-arm solo objectives + PCGrad on the shared trunk. Measurement
+    # (``arm_conflict``) is universal so every prismatic profile reports its own
+    # arm Jacobian; the INTERVENTION is opt-in and only SurgicalParallelHead
+    # turns it on, so prismatic2-8 train exactly as they did.
+    arm_surgery: bool = False
 
     @property
     def causal_readout(self) -> bool:
@@ -115,6 +197,12 @@ class ParallelHead(BaseHead):
         self._gate_entropy: Optional[float] = None
         self._gate_min_gap: Optional[float] = None
         self._gate_repulsion: Optional[Tensor] = None
+        self._arm_metrics: dict = {}
+        self._arm_step = 0
+        self._arm_surgery_norm: Optional[float] = None
+        # Set when an arm declined to supply its own objective, which makes the
+        # Jacobian incomplete and disables the surgery outright.
+        self._arm_gap = False
         # Level-repulsion strength on the gate weights (0 = off), bound by the
         # head-registry profile (e.g. prismatic3_repel), not a config flag.
         # Drives the mean per-branch weights to DISTINCT tiers (e.g. 70/20/10),
@@ -122,6 +210,9 @@ class ParallelHead(BaseHead):
         # 2 branches the only tie is 50/50, so repulsion there reduces to
         # winner-take-all; it's meant for 3+ branches.
         self._repulsion_lambda = float(gate_repulsion or 0.0)
+        # See SurgicalParallelHead. False everywhere else, so prismatic2-8 are
+        # bit-for-bit unchanged.
+        self.detach_gate_input = getattr(type(self), "detach_gate_input", False)
 
         # Size the gate to the feature dim the branches transform (encoder
         # layout in encoder mode, else config hidden size). When the encoder
@@ -142,6 +233,13 @@ class ParallelHead(BaseHead):
 
     def __repr__(self) -> str:
         return self.compose_repr()
+
+    def _gate_in(self, hidden_states: Tensor) -> Tensor:
+        """What the gate projects. Detached under a surgical head so the gate's
+        loss cannot bypass the arm arbitration on its way to the trunk."""
+        if self.detach_gate_input and self.training:
+            return hidden_states.detach()
+        return hidden_states
 
     def _gate_weights(self, gate_logits: Tensor) -> Tensor:
         """Per-token softmax gate weights, plus the cached diagnostics and the
@@ -246,7 +344,7 @@ class ParallelHead(BaseHead):
             b.transform(self._branch_input(b, stemmed, hidden_states))
             for b in self.branches
         ]
-        return self._gate_combine(outs, self.gate(hidden_states))
+        return self._gate_combine(outs, self.gate(self._gate_in(hidden_states)))
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         """Standalone (terminal): gate-combine the branches' classifier outputs
@@ -271,7 +369,368 @@ class ParallelHead(BaseHead):
             )
             for b in self.branches
         ]
-        return self._gate_combine_logits(outs, self.gate(hidden_states))
+        return self._gate_combine_logits(outs, self.gate(self._gate_in(hidden_states)))
+
+    # ── Arm-level Jacobian: measurement, then optionally the intervention ──
+
+    def _arm_grads(self, hidden_states: Tensor, labels: Tensor, criterion=None):
+        """``(z, losses, grads)``: each arm's solo CE and its gradient at the
+        branch point where the arms diverge.
+
+        The arms run on a DETACHED copy of their input, so ``autograd.grad``
+        stops at that leaf and never enters the trunk - which is the whole
+        reason this is affordable. Each backward crosses one small classifier.
+
+        A ``reads_trunk`` arm (HALO) branches above the stem, so its gradient
+        lands on the trunk tensor rather than the stem output. Both are the
+        same shape (the stem is dim-preserving) and the trunk is the surface
+        actually shared, so the rows stay comparable and belong to one Jacobian.
+        """
+        z = self._stem_out(hidden_states)
+        z_d = z.detach().requires_grad_(True)
+        trunk_d = hidden_states.detach().requires_grad_(True)
+        losses, grads, index = [], [], []
+        for i, b in enumerate(self.branches):
+            inp = trunk_d if getattr(b, "reads_trunk", False) else z_d
+            # Each arm's OWN objective, not an invented cross-entropy. For most
+            # arms those coincide; for the HALO arm they do not, and using CE
+            # there would add a second objective fighting its real one.
+            loss = b.arm_loss(inp, labels, criterion)
+            if loss is None:
+                self._arm_gap = True
+                continue
+            (g,) = torch.autograd.grad(loss, inp, retain_graph=True, allow_unused=True)
+            if g is None:
+                continue
+            losses.append(loss)
+            grads.append(g)
+            index.append(i)
+        return z, losses, grads, index
+
+    def arm_conflict(
+        self, hidden_states: Tensor, labels: Tensor, criterion=None
+    ) -> Dict[str, float]:
+        """Pairwise cosines and relative magnitudes of the arms' solo gradients.
+
+        The measurement ObjectiveConflict structurally cannot make. That one
+        compares LOSS TERMS, and the arms are not loss terms - one
+        cross-entropy reaches all of them through a mixture, weighted by
+        posterior responsibility. This is the head's own Jacobian, one row per
+        arm, and it is the gate on whether surgery is worth turning on.
+
+        ``arm_grad_share_i`` rides alongside because a cosine is
+        scale-invariant: two arms can read perfectly orthogonal while one of
+        them is contributing nothing, and those are different diagnoses.
+        """
+        if self.gate is None or labels is None or not self.training:
+            return {}
+        if torch.compiler.is_compiling():
+            return dict(self._arm_metrics)
+        step = getattr(self, "_arm_step", 0)
+        self._arm_step = step + 1
+        if step % ARM_CONFLICT_INTERVAL != 0:
+            return dict(self._arm_metrics)
+        self._arm_gap = False
+        with torch.enable_grad():
+            _, losses, grads, index = self._arm_grads(hidden_states, labels, criterion)
+        if len(grads) < 2:
+            return dict(self._arm_metrics)
+        flat = [g.detach().float().flatten() for g in grads]
+        norms = [float(g.norm()) for g in flat]
+        ref = max(norms) or 1.0
+        out: Dict[str, float] = {}
+        worst = 1.0
+        for a in range(len(flat)):
+            i = index[a]
+            out[f"arm_grad_share_{i}"] = norms[a] / ref
+            out[f"arm_solo_loss_{i}"] = float(losses[a].detach())
+            for b_ in range(a + 1, len(flat)):
+                if norms[a] < 1e-12 or norms[b_] < 1e-12:
+                    continue
+                c = float(
+                    (flat[a] @ flat[b_] / (norms[a] * norms[b_])).clamp(-1.0, 1.0)
+                )
+                out[f"arm_cos_{i}{index[b_]}"] = c
+                worst = min(worst, c)
+        out["arm_cos_min"] = worst
+        out.update(self._override_shares(flat, norms, index))
+        self._arm_metrics = out
+        return out
+
+    @staticmethod
+    def _override_shares(flat, norms, index) -> Dict[str, float]:
+        """How much of each arm's pull the combined update REVERSES.
+
+        This is the question a magnitude ratio only gestures at. Under a
+        sign-based optimizer (LionGeo's sign and spectral arms both discard
+        magnitude; only its Frobenius arm does not) a larger row does not take
+        larger steps. What it does is win the SIGN wherever rows disagree, so a
+        row 20x its neighbour casts twenty votes to their one on contested
+        coordinates and dictates the direction there.
+
+        So: take the combined update the trunk will actually receive, and for
+        each arm report the fraction of ITS OWN gradient mass sitting on
+        coordinates where the combined sign is opposite to what that arm wanted.
+        Mass-weighted rather than counted, because a flipped coordinate the arm
+        barely cared about is not an override.
+
+        0 = this arm is never contradicted. Toward 1 = the arm is being
+        systematically overruled, and its own objective cannot act.
+
+        Deliberately computed on the PLAIN SUM, not on the PCGrad result, so it
+        measures the problem rather than the fix. Under prismatic9 compare it
+        against ``arm_override_pcg_*`` for the same arms: the gap between them
+        IS what the surgery bought, in the units that matter.
+        """
+        out: Dict[str, float] = {}
+        if not flat:
+            return out
+        plain = torch.stack(flat).sum(0)
+        unit = [g / g.norm().clamp_min(1e-12) for g in flat]
+        for tag, combined in (
+            ("", plain),
+            ("pcg_", _pcgrad(flat)),
+            ("eq_", _pcgrad(unit)),
+        ):
+            csign = torch.sign(combined)
+            for a, g in enumerate(flat):
+                if norms[a] < 1e-12:
+                    continue
+                mass = g.abs()
+                flipped = (torch.sign(g) * csign) < 0
+                out[f"arm_override_{tag}{index[a]}"] = float(
+                    (mass[flipped].sum() / mass.sum()).item()
+                )
+        return out
+
+    def arm_objectives(
+        self, hidden_states: Tensor, labels: Tensor, criterion=None
+    ) -> Dict[str, Tensor]:
+        """Losses that replace the mixture as the arms' training signal.
+
+        Empty unless the profile sets ``arm_surgery`` (prismatic9), so every
+        other profile is untouched.
+
+        Two kinds, and the split IS the design:
+
+        * ``arm{i}_ce`` - arm i's own cross-entropy on the detached branch
+          input. Trains arm i's parameters as a standalone classifier and
+          reaches the trunk not at all. This is what lets the crystal arm train
+          the way a bare crystal head does, which is the condition its PCA
+          geometry was ever observed under.
+        * ``arm_surgery`` - the surrogate ``(z * g_hat).sum()``, whose gradient
+          with respect to ``z`` is exactly ``g_hat``, the PCGrad-combined
+          per-arm gradient. This is the ONLY gradient the trunk receives from
+          the arms, and it is the entire Jacobian intervention.
+
+        The mixture cross-entropy remains the main loss and keeps training the
+        gate, which is why SurgicalParallelHead detaches every arm in the
+        blend: the blend is a judgement about finished predictions, not a
+        training path.
+        """
+        if not self.arm_surgery or self.gate is None or labels is None:
+            return {}
+        if not self.training or torch.compiler.is_compiling():
+            return {}
+        self._arm_gap = False
+        z, losses, grads, index = self._arm_grads(hidden_states, labels, criterion)
+        if not grads or self._arm_gap:
+            # A row that reaches the shared representation but sits OUTSIDE the
+            # arbitration is worse than no arbitration: it routes around the
+            # very thing the surgery exists to do. Refuse rather than ship a
+            # partial Jacobian. _arm_gap is set when an arm declined to give
+            # its objective (e.g. HaloHead without HALOLoss as the criterion).
+            return {}
+        out: Dict[str, Tensor] = {
+            f"arm{index[a]}_loss": l for a, l in enumerate(losses)
+        }
+        rows = [g.detach() for g in grads]
+        if self.equalize_rows:
+            scale = torch.stack(rows).sum(0).norm()
+            rows = [g / g.norm().clamp_min(1e-12) for g in rows]
+            combined = _pcgrad(rows)
+            # Restore the step magnitude the trunk would have received, so this
+            # changes the update's DIRECTION and not the effective learning rate.
+            combined = combined * (scale / combined.norm().clamp_min(1e-12))
+        else:
+            combined = _pcgrad(rows)
+        surrogate = (z * combined.to(z.dtype)).sum()
+        # Value-neutral: subtracting its own detached value makes the term
+        # exactly 0.0 in the reported loss while leaving its gradient
+        # untouched. Without this the surrogate's arbitrary magnitude lands in
+        # the loss curve, which is a number people read.
+        out["arm_surgery"] = surrogate - surrogate.detach()
+        self._arm_surgery_norm = float(combined.norm())
+        return out
+
+    def _arm_descriptions(self) -> dict:
+        """Cards for the arm Jacobian. Built from the live arm count, since a
+        profile's arm count is a property of the profile."""
+        live = list(range(len(self.branches)))
+        _G = "arm_jacobian"
+        out: dict = {
+            "arm_cos_min": {
+                "description": (
+                    "The most opposed pair of arms: the minimum pairwise cosine "
+                    "between the arms' SOLO cross-entropy gradients at the point "
+                    "they branch. This is the head's own multi-task Jacobian, one "
+                    "row per arm - the measurement the loss-term conflict cards "
+                    "structurally cannot make, since one cross-entropy reaches "
+                    "every arm through the gate's mixture rather than as separate "
+                    "terms. Persistently negative is the case for PCGrad "
+                    "(head_type: prismatic9); near zero at comparable "
+                    "arm_grad_share says the arms want independent things and a "
+                    "plain sum is already right."
+                ),
+                "chart": {
+                    "title": "Arm Gradient Conflict",
+                    "y_label": "cosine between arms",
+                    "y_scale": "linear",
+                    "group": _G,
+                    "group_order": 460,
+                    "order": 10,
+                    "series_group": "arm_cos",
+                    "series_label": "worst pair",
+                },
+                "caller": type(self).__name__,
+            },
+            "arm_surgery_norm": {
+                "description": (
+                    "Norm of the PCGrad-combined gradient handed to the trunk. "
+                    "Only present under prismatic9. Compare against the plain "
+                    "sum it replaces: equal means PCGrad found nothing to "
+                    "project and is a no-op, which is its designed behaviour "
+                    "when the arms do not conflict."
+                ),
+                "chart": {
+                    "title": "Surgical Trunk Gradient",
+                    "y_label": "||g_hat||",
+                    "y_scale": "logarithmic",
+                    "group": _G,
+                    "order": 40,
+                },
+                "caller": type(self).__name__,
+            },
+        }
+        for pos, i in enumerate(live):
+            out[f"arm_override_{i}"] = {
+                "description": (
+                    f"Fraction of arm {i}'s own gradient MASS that the plain "
+                    "summed update points the wrong way on. This is the "
+                    "question a magnitude ratio only gestures at: under a "
+                    "sign-based optimizer a larger row does not take larger "
+                    "steps, it wins the SIGN where rows disagree. 0 means this "
+                    "arm is never contradicted; toward 1 means it is "
+                    "systematically overruled and its objective cannot act. "
+                    "Read against arm_override_pcg_ - the gap between them is "
+                    "what PCGrad bought, in the units that decide the update."
+                ),
+                "chart": {
+                    "group": _G,
+                    "order": 50 + pos,
+                    "series_group": "arm_override",
+                    "series_label": f"arm {i} (plain sum)",
+                    "title": "Arm Override" if pos == 0 else None,
+                    "y_label": "overruled gradient mass" if pos == 0 else None,
+                },
+                "caller": type(self).__name__,
+            }
+            out[f"arm_override_eq_{i}"] = {
+                "description": (
+                    f"Arm {i}'s overruled mass after PCGrad on ROW-EQUALIZED "
+                    "gradients - every objective given an equal vote in the "
+                    "update's direction, then rescaled back to the plain sum's "
+                    "magnitude so the step size is unchanged. This is what "
+                    "prismatic9 actually applies (`equalize_rows`). Not "
+                    "GradNorm: no learned weights, no alpha, no assumption that "
+                    "the objectives should converge at the same rate."
+                ),
+                "chart": {
+                    "group": _G,
+                    "order": 70 + pos,
+                    "series_group": "arm_override",
+                    "series_label": f"arm {i} (equalized)",
+                },
+                "caller": type(self).__name__,
+            }
+            out[f"arm_override_pcg_{i}"] = {
+                "description": (
+                    f"Arm {i}'s overruled mass AFTER PCGrad. Equal to the plain "
+                    "figure means the projection found nothing to correct, "
+                    "which is its designed no-op; lower means it stopped a "
+                    "louder row from reversing this one."
+                ),
+                "chart": {
+                    "group": _G,
+                    "order": 60 + pos,
+                    "series_group": "arm_override",
+                    "series_label": f"arm {i} (PCGrad)",
+                },
+                "caller": type(self).__name__,
+            }
+            out[f"arm_grad_share_{i}"] = {
+                "description": (
+                    f"Norm of arm {i}'s solo gradient, relative to the largest "
+                    "arm's. The half a cosine cannot supply: two arms can read "
+                    "perfectly orthogonal while one contributes nothing, and "
+                    "those are different diagnoses. Unlike the gate share, this "
+                    "is measured from each arm's OWN objective, so it does not "
+                    "fall to zero just because the gate stopped trusting the arm."
+                ),
+                "chart": {
+                    "group": _G,
+                    "order": 20 + pos,
+                    "series_group": "arm_share",
+                    "series_label": f"arm {i}",
+                    "title": "Arm Gradient Share" if pos == 0 else None,
+                    "y_label": "||g_i|| / max ||g||" if pos == 0 else None,
+                },
+                "caller": type(self).__name__,
+            }
+            out[f"arm_solo_loss_{i}"] = {
+                "description": (
+                    f"Arm {i}'s OWN objective scored alone - cross-entropy for "
+                    "most arms, HALO's geometric loss for the HALO arm, which "
+                    "is why these are not on a common scale and should be read "
+                    "per-series rather than against each other. Under "
+                    "prismatic2-8 it is a counterfactual the arm never trains "
+                    "on; under prismatic9 it IS the arm's objective. Either way "
+                    "it separates 'this arm is bad' from 'the gate stopped "
+                    "feeding this arm'."
+                ),
+                "chart": {
+                    "group": _G,
+                    "order": 30 + pos,
+                    "series_group": "arm_solo",
+                    "series_label": f"arm {i}",
+                    "title": "Arm Solo Objective" if pos == 0 else None,
+                    "y_label": "loss (per-arm scale)" if pos == 0 else None,
+                },
+                "caller": type(self).__name__,
+            }
+            for j in live[pos + 1 :]:
+                out[f"arm_cos_{i}{j}"] = {
+                    "description": (
+                        f"Cosine between arm {i}'s and arm {j}'s solo gradients "
+                        "at the branch point. Negative means they want the shared "
+                        "representation moved in opposing directions and one is "
+                        "cancelling the other."
+                    ),
+                    "chart": {
+                        "group": _G,
+                        "order": 11,
+                        "series_group": "arm_cos",
+                        "series_label": f"{i}-{j}",
+                    },
+                    "caller": type(self).__name__,
+                }
+        # Only the first series in a series_group carries title/axis; the rest
+        # ride it. Drop the None placeholders rather than shipping them.
+        for entry in out.values():
+            entry["chart"] = {
+                k: v for k, v in entry["chart"].items() if v is not None
+            }
+        return out
 
     @property
     def classifier(self) -> Optional[nn.Module]:
@@ -336,6 +795,10 @@ class ParallelHead(BaseHead):
         if self.stem is not None:
             for k, v in self.stem.training_metrics().items():
                 out[f"stem_{k}"] = v
+        if self._arm_metrics:
+            out.update(self._arm_metrics)
+        if self._arm_surgery_norm is not None:
+            out["arm_surgery_norm"] = self._arm_surgery_norm
         if self._gate_mean is not None:
             for i in range(len(self.branches)):
                 out[f"gate_weight_{i}"] = float(self._gate_mean[i].item())
@@ -371,6 +834,7 @@ class ParallelHead(BaseHead):
                     v, "stem", "(shared)", callers.get(k)
                 )
         out.update(self._gate_descriptions())
+        out.update(self._arm_descriptions())
         return out
 
     def _namespace_entry(
@@ -446,3 +910,70 @@ class ParallelHead(BaseHead):
             "caller": "ParallelHead",
         }
         return out
+
+
+class SurgicalParallelHead(ParallelHead):
+    """ParallelHead whose arms train on their own objectives, combined by PCGrad.
+
+    Identical to ParallelHead in the forward pass and at inference: the same
+    mixture of softmaxes over the same arms, so nothing about how predictions
+    are made changes. What changes is training, and only training.
+
+    The honest cost, stated up front: solo cross-entropy on every arm removes
+    the DIVISION OF LABOUR. Under the mixture, arms specialize - each covers
+    what it explains best and the gate routes accordingly. Trained alone, all
+    arms learn the whole task and the head becomes an ensemble of near-
+    redundant predictors rather than a set of complementary ones. That is the
+    trade, it is deliberate, and val NLL is where it would show up.
+    """
+
+    arm_surgery = True
+
+    # Give every objective an EQUAL VOTE in the DIRECTION of the trunk update.
+    #
+    # Not GradNorm. GradNorm equalizes training RATES via learned loss weights
+    # and an `alpha` restoring exponent - a hyperparameter, and an assumption
+    # (that all objectives should converge together) that is wrong for a
+    # geometric constraint which has already reached its target. This is far
+    # smaller: normalize each Jacobian row to unit norm before combining, then
+    # rescale the result to the norm the plain sum would have had. Nothing to
+    # tune, and the effective step size is unchanged.
+    #
+    # WHY IT IS NEEDED, measured. PCGrad only acts where rows CONFLICT. When a
+    # row is 20-65x its neighbours and merely ORTHOGONAL to them, there is
+    # nothing to project and the small rows are not opposed - they are drowned.
+    # `arm_override_*` on a smoke model read 0.465 / 0.506 / 0.000 before and
+    # 0.467 / 0.493 / 0.001 after PCGrad: the projection bought nothing,
+    # because the problem was never conflict.
+    #
+    # And 0.5 IS THE NULL for an orthogonal row against a dominant one - the
+    # small row's sign agrees with the sum by coin-flip. So those numbers do
+    # not say the crystal arm is being fought. They say it has no vote.
+    #
+    # This is also the combination most consistent with the rest of the system:
+    # LionGeo's sign and spectral arms discard gradient magnitude anyway, and
+    # research/body.tex argues magnitude is the wrong readout for significance
+    # (a boundary flip is silent in norm). Equalizing rows says the DIRECTION
+    # of the update is an unweighted consensus of the objectives, and leaves
+    # magnitude out of a decision it was never a good instrument for.
+    equalize_rows = True
+
+    # The gate reads a DETACHED trunk. Its cross-entropy would otherwise be a
+    # fourth gradient into the trunk that never passed through the surgery -
+    # the same defect as an excluded arm, just quieter. The gate's job is to
+    # judge finished predictions, which needs the trunk as INPUT and not as
+    # something it gets to reshape.
+    detach_gate_input = True
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Detach every arm in the blend so the mixture CE trains the GATE and
+        # nothing else. Without this each arm would receive BOTH its solo
+        # gradient and the mixture's responsibility-weighted one, and the
+        # starvation this head exists to remove would come straight back in
+        # through the second path.
+        for b in self.branches:
+            b.detach_in_blend = True
+
+    def compose_repr(self) -> str:
+        return "Surgical" + super().compose_repr()

@@ -325,6 +325,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # this is the measurement and not the gradient-surgery method itself.
         self._conflict = ObjectiveConflict()
         self._conflict_metrics: Dict[str, float] = {}
+        # Per-arm Jacobian diagnostics, stashed by _collect_aux_losses.
+        self._arm_metrics: Dict[str, float] = {}
+        # A head that owns its arms' objectives takes the HALO geometric term
+        # as that arm's Jacobian row, so the criterion must stop also adding it
+        # - otherwise it is double-counted AND reaches the trunk uncorrected,
+        # bypassing the arbitration it is supposed to be subject to.
+        if getattr(self.head, "arm_surgery", False) and hasattr(
+            self.criterion, "composite_geometry"
+        ):
+            self.criterion.composite_geometry = False
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -977,6 +987,21 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # smoothness loss, CrystalHead's centers-RMS regularizer).
         if self.head is not None:
             for name, value in self.head.aux_losses().items():
+                outputs.losses.add_loss(name, value)
+
+        # Multi-arm heads get the labels here rather than in forward, because
+        # this is the first place both the labels and the head's own input
+        # exist. `hidden_states` is exactly what the head classified.
+        #   arm_conflict()   - diagnostic, sampled, on every ParallelHead
+        #   arm_objectives() - per-arm CE + the PCGrad trunk gradient, empty
+        #                      unless the profile opts in (prismatic9)
+        if self.head is not None and hasattr(self.head, "arm_objectives"):
+            self._arm_metrics = self.head.arm_conflict(
+                hidden_states, labels, self.criterion
+            )
+            for name, value in self.head.arm_objectives(
+                hidden_states, labels, self.criterion
+            ).items():
                 outputs.losses.add_loss(name, value)
 
         # Router aux losses (e.g. VEAR's parameter-only repulsion), collected once

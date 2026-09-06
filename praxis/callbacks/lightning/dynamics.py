@@ -131,6 +131,9 @@ class DynamicsLoggerCallback(Callback):
             # Do the several objectives agree about the shared trunk?
             dynamics.update(self._extract_conflict_dynamics(model))
 
+            # Do the head's several ARMS agree about the shared trunk?
+            dynamics.update(self._extract_arm_dynamics(model))
+
             # Per-module compute-time attribution (coverage, dominant share),
             # stashed by ComputeProfilerCallback on its sampling cadence.
             dynamics.update(self._extract_compute_dynamics(model))
@@ -419,6 +422,20 @@ class DynamicsLoggerCallback(Callback):
         """
         core = getattr(model, "_orig_mod", model)
         metrics = getattr(core, "_conflict_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+
+    def _extract_arm_dynamics(self, model) -> dict:
+        """Drain the per-arm Jacobian diagnostics stashed by the model.
+
+        ObjectiveConflict compares loss TERMS; this compares the head's arms,
+        which are not loss terms - one cross-entropy reaches all of them
+        through the gate's mixture. Sampled on the head's own interval and held
+        between samples, like the other stashes. Empty under torch.compile.
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_arm_metrics", None)
         if not isinstance(metrics, dict):
             return {}
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}

@@ -11,7 +11,7 @@ from praxis.heads.forward import ForwardHead
 from praxis.heads.halo import HaloClassifier, HaloHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
 from praxis.heads.mtp import MTP_REGISTRY, MultiTokenPrediction
-from praxis.heads.parallel import ParallelHead
+from praxis.heads.parallel import ParallelHead, SurgicalParallelHead
 from praxis.heads.stacked import SequentialHead
 from praxis.heads.tied import TiedWeights
 
@@ -288,6 +288,17 @@ HEAD_REGISTRY = dict(
     # retired the bank.
     prismatic8=partial(
         ParallelHead,
+        stem=_field("input", fast_weights=True),
+        branches=_prismatic8_branches(),
+    ),
+    # prismatic9: prismatic8's exact three arms, trained differently. Each arm
+    # gets its OWN cross-entropy instead of the mixture's residual, and the
+    # trunk receives one PCGrad-combined gradient over those three objectives
+    # rather than their plain sum. The blend is unchanged and still makes every
+    # prediction; it just stops deciding how much each arm gets trained. See
+    # SurgicalParallelHead and the notes above _pcgrad in praxis/heads/parallel.py.
+    prismatic9=partial(
+        SurgicalParallelHead,
         stem=_field("input", fast_weights=True),
         branches=_prismatic8_branches(),
     ),

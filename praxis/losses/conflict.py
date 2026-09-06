@@ -15,6 +15,23 @@ Nash-MTL - is a rule for combining those rows by something other than a plain
 sum, and each is motivated by rows that point in opposing directions so one
 objective silently cancels another.
 
+WHAT A COSINE ALONE CANNOT SEE, AND WHY EACH SERIES HAS A TWIN. Cosine is
+scale-invariant, so a term contributing nothing and a term contributing a lot
+in an independent direction read identically. "No conflict" and "not
+participating" are the same number. Every ``conflict_<name>`` therefore ships
+with ``conflict_mag_<name>``, the ratio ``||g_term|| / ||g_main||`` at the same
+tensor: a cosine near 0 at a ratio near 0 says the term is inert, while a
+cosine near 0 at a ratio near 1 says two comparable forces are genuinely
+shaping independent directions. Only the second reading is evidence that
+summing them is fine.
+
+AND WHAT NEITHER SEES. These are LOSS TERMS. A head whose several arms are
+trained by ONE cross-entropy through a mixture has a multi-task problem that
+never appears here at all, because the arms are not separate terms - the
+mixture's posterior responsibility silently weights them instead. That
+measurement lives with the head that owns the arms
+(``ParallelHead.arm_conflict``), not here.
+
 THIS MODULE IS THE MEASUREMENT, NOT THE METHOD. Adopting any of those rules
 costs compute on every step and, in most cases, a hyperparameter. The question
 of whether it would buy anything is answered by one number per pair: the cosine
@@ -120,6 +137,9 @@ class ObjectiveConflict:
         if anchor_grad is None:
             return self.metrics
         anchor_grad = anchor_grad.detach().float()
+        anchor_norm = float(anchor_grad.norm())
+        if anchor_norm < MIN_NORM:
+            return self.metrics
 
         out: Dict[str, float] = {}
         for name, term in loss_dict.items():
@@ -137,12 +157,17 @@ class ObjectiveConflict:
                 # Parameter-only term: no path to the shared representation, so
                 # it cannot conflict over it. Emitting nothing is the answer.
                 continue
-            cos = self._cosine(g.detach().float(), anchor_grad)
-            if cos is not None:
-                out[f"conflict_{name}"] = cos
+            g = g.detach().float()
+            cos = self._cosine(g, anchor_grad)
+            if cos is None:
+                continue
+            out[f"conflict_{name}"] = cos
+            # The twin the cosine cannot supply: is this term even pulling?
+            out[f"conflict_mag_{name}"] = float(g.norm()) / anchor_norm
 
-        if out:
-            out["conflict_min"] = min(out.values())
+        cosines = [v for k, v in out.items() if not k.startswith("conflict_mag_")]
+        if cosines:
+            out["conflict_min"] = min(cosines)
             self.metrics = out
         return self.metrics
 
@@ -175,8 +200,28 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
             },
         }
     }
+    for key in sorted(k for k in keys if k.startswith("conflict_mag_")):
+        name = key[len("conflict_mag_") :]
+        out[key] = {
+            "description": (
+                f"||grad of '{name}'|| / ||grad of the main loss||, at the trunk "
+                "output. The half of the reading the cosine cannot give: near 0 "
+                f"means '{name}' is inert whatever its cosine says, so its "
+                "orthogonality is not evidence that summing is fine. Near 1 means "
+                "it is a comparable force and the cosine is worth believing."
+            ),
+            "chart": {
+                "title": "Objective Magnitude vs Main Loss",
+                "y_label": "||g_term|| / ||g_main||",
+                "y_scale": "logarithmic",
+                "group": _GROUP,
+                "order": 20,
+                "series_group": "conflict_mag",
+                "series_label": name,
+            },
+        }
     for key in sorted(k for k in keys if k.startswith("conflict_")):
-        if key == "conflict_min":
+        if key == "conflict_min" or key.startswith("conflict_mag_"):
             continue
         name = key[len("conflict_") :]
         out[key] = {

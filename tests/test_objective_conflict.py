@@ -68,7 +68,25 @@ def test_constant_and_non_tensor_terms_are_skipped():
         },
         h,
     )
-    assert set(out) == {"conflict_real", "conflict_min"}
+    assert set(out) == {"conflict_real", "conflict_mag_real", "conflict_min"}
+
+
+def test_magnitude_separates_inert_from_merely_orthogonal():
+    """A cosine is scale-invariant, so a term contributing nothing and a term
+    contributing a lot in an independent direction read identically. Only the
+    magnitude twin tells them apart, and without it "no conflict" is not
+    evidence that summing is fine."""
+    c, h = make()
+    main = h[:, :3].pow(2).sum()  # disjoint coordinates from both terms below
+    out = c.measure(
+        {ANCHOR: main, "loud": h[:, 3:].pow(2).sum(), "inert": 1e-6 * h[:, 3:].sum()},
+        h,
+    )
+    assert out["conflict_loud"] == pytest.approx(0.0, abs=1e-6)
+    assert out["conflict_inert"] == pytest.approx(0.0, abs=1e-6)
+    # Identical cosines, wildly different participation.
+    assert out["conflict_mag_loud"] > 1e-2
+    assert out["conflict_mag_inert"] < 1e-4
 
 
 def test_min_is_the_worst_of_the_terms():
@@ -76,6 +94,8 @@ def test_min_is_the_worst_of_the_terms():
     main = h.pow(2).sum()
     out = c.measure({ANCHOR: main, "a": 0.5 * main, "b": -main}, h)
     assert out["conflict_min"] == pytest.approx(min(out["conflict_a"], out["conflict_b"]))
+    # Magnitude series must never be mistaken for a cosine when taking the min.
+    assert out["conflict_min"] >= -1.0
 
 
 def test_sampling_holds_its_value_between_measurements():
