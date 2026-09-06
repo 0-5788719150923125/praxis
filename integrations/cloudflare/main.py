@@ -53,6 +53,14 @@ CARD_THEMES = ("light", "dark")
 # snapshot, so the pre-rendered card must match, or its chrome-colored crop
 # would clash against the rest of the (orange-tinted) page.
 CARD_HUE = "16"
+# Downloadable print files, mirroring the live Download menu: 1-up ("cards")
+# and the 10-up Avery sheet ("sheets"). Each zip already holds BOTH sides, so
+# only the theme varies. Rendering all four is ~19s of matplotlib, and the
+# output is fully determined by (seed, hue, theme, identity) - none of which
+# change within a run - so they are rendered once and reused on every
+# subsequent publish cycle.
+CARD_ZIPS = ("cards", "sheets")
+_CARD_ZIP_CACHE: Dict[str, bytes] = {}
 
 OFFLINE_MESSAGE = (
     "You are viewing an offline snapshot of the Praxis dashboard. "
@@ -179,7 +187,7 @@ def export_snapshot(
     _export_index(client, out)
     _export_endpoints(client, data)
     _export_spec(client, data, app)
-    _export_cards(client, data, out)
+    _export_cards(client, data, out, app.config.get("truncated_hash"))
     _export_kb(client, data)
     _export_paper(client, out)
     _export_metrics_live(data, live_metrics)
@@ -297,7 +305,7 @@ def _rewrite_spec_localhost(payload: bytes) -> bytes:
     return json.dumps(parsed).encode("utf-8")
 
 
-def _export_cards(client: Any, data: Path, out: Path) -> None:
+def _export_cards(client: Any, data: Path, out: Path, run_hash: Optional[str]) -> None:
     default_svg = None
     for side in CARD_SIDES:
         for theme in CARD_THEMES:
@@ -324,6 +332,39 @@ def _export_cards(client: Any, data: Path, out: Path) -> None:
         card_path = out / "api" / "card"
         card_path.mkdir(parents=True, exist_ok=True)
         (card_path / "preview.svg").write_bytes(default_svg)
+
+    _export_card_zips(client, data, run_hash)
+
+
+def _export_card_zips(client: Any, data: Path, run_hash: Optional[str]) -> None:
+    """Dump the print-ready zips the live Download menu serves.
+
+    The zips are what makes the orange accent reachable at all: the card hue
+    comes from the page's ``--accent-hue``, and only this snapshot renders the
+    site in orange, so a card printed from the live (green) server can never
+    carry it.
+    """
+    for kind in CARD_ZIPS:
+        for theme in CARD_THEMES:
+            name = f"card_{kind}_{theme}.zip"
+            key = f"{run_hash}/{name}"
+            body = _CARD_ZIP_CACHE.get(key)
+            if body is None:
+                path = (
+                    f"/api/card/{kind}.zip?seed={CARD_SEED}"
+                    f"&theme={theme}&hue={CARD_HUE}"
+                )
+                try:
+                    resp = client.get(path)
+                    if resp.status_code != 200:
+                        _log(f"warning: card zip {name} -> HTTP {resp.status_code}")
+                        continue
+                    body = resp.get_data()
+                except Exception as exc:
+                    _log(f"warning: card zip {name} dump failed: {exc}")
+                    continue
+                _CARD_ZIP_CACHE[key] = body
+            (data / name).write_bytes(body)
 
 
 def _export_kb(client: Any, data: Path) -> None:

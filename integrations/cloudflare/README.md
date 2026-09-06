@@ -50,7 +50,10 @@ Scope (v1, deliberately small):
   resolves to the single current-run dump.
 - **KB = docs + code.** Crawled pages and external links are excluded; search
   runs client-side over the dumped feed.
-- **Static business-card seed** (42), pre-rendered front/back x light/dark.
+- **Static business-card seed** (42), pre-rendered front/back x light/dark,
+  with the print-ready `cards.zip` / `sheets.zip` downloads dumped per theme.
+  Draw is greyed (needs a live render); Download stays live - the accent hue
+  comes from the page, and this snapshot is the only place the site is orange.
 
 ## Setup
 

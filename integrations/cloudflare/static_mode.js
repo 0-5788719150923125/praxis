@@ -184,6 +184,10 @@
       return origFetch(DATA + 'card_' + side + '_' + theme + '.svg');
     }
 
+    // Print-ready card zips (each holds both sides, so only theme varies).
+    var zipFile = cardZipFile(url);
+    if (zipFile) return origFetch(zipFile);
+
     // Swarm batch poll: no live training -> null batch keeps the arena in
     // heartbeat mode instead of erroring.
     if (p === '/api/swarm/batch') {
@@ -199,6 +203,20 @@
 
     return origFetch(input, init);
   };
+
+  // Maps a card-zip request onto its dumped file, or null if it isn't one.
+  // The live Download menu picks 1-up vs 10-up; both zips already carry front
+  // AND back, so the only query param that selects a file is the theme.
+  var CARD_ZIP_PATHS = {
+    '/api/card/cards.zip': 'card_cards_',
+    '/api/card/sheets.zip': 'card_sheets_',
+  };
+
+  function cardZipFile(url) {
+    var base = CARD_ZIP_PATHS[url.pathname];
+    if (!base) return null;
+    return DATA + base + (url.searchParams.get('theme') || 'light') + '.zip';
+  }
 
   // --- 3. rewrite non-fetch /api/* references (img src, anchor href) ------
   // The card preview is an <img src> and the config download is an <a href>
@@ -227,15 +245,46 @@
     a.setAttribute('href', DATA + 'config.yaml');
   }
 
+  function rewriteCardZipLink(a) {
+    var h = a.getAttribute('href') || '';
+    if (h.indexOf('/api/card/') !== 0) return;
+    try {
+      var target = cardZipFile(new URL(h, location.origin));
+      if (target) a.setAttribute('href', target);
+    } catch (e) {}
+  }
+
+  // The Download buttons build an <a download>, append it, and click it in one
+  // synchronous burst - the MutationObserver below runs a microtask too late to
+  // catch that. A capture-phase click listener fires during dispatch, before
+  // the anchor's default navigation reads its href, so rewrite it here.
+  document.addEventListener(
+    'click',
+    function (e) {
+      var t = e.target;
+      var a = t && t.closest ? t.closest('a[href]') : null;
+      if (!a) return;
+      rewriteCardZipLink(a);
+      rewriteConfigLink(a);
+    },
+    true
+  );
+
   function rewriteEl(n) {
     if (n.tagName === 'IMG') rewriteCardImg(n);
-    else if (n.tagName === 'A') rewriteConfigLink(n);
+    else if (n.tagName === 'A') {
+      rewriteConfigLink(n);
+      rewriteCardZipLink(n);
+    }
   }
 
   function rewriteTree(root) {
     if (!root.querySelectorAll) return;
     root.querySelectorAll('img').forEach(rewriteCardImg);
-    root.querySelectorAll('a').forEach(rewriteConfigLink);
+    root.querySelectorAll('a').forEach(function (a) {
+      rewriteConfigLink(a);
+      rewriteCardZipLink(a);
+    });
   }
 
   function startRewriteObserver() {
@@ -270,13 +319,13 @@
       '.tool-toggle[data-tool="print"],' +
       '.tool-toggle[data-tool="loop"],' +
       '.contract-agree-btn,' +
-      '.biz-btn[data-dl],' +
       // Draw re-fetches /api/card/preview.svg with a fresh seed; the static
       // export pins one pre-rendered SVG per side/theme, so redrawing is a
       // server-only feature. (#arena-draw stays live: the arena reseeds a
-      // client-side sim.)
-      '#biz-card-draw,' +
-      '#biz-card-download {' +
+      // client-side sim. Download stays live too: the print zips are dumped
+      // for both themes, which is the only way to get the orange accent onto
+      // a printed card.)
+      '#biz-card-draw {' +
       'opacity:.4 !important;pointer-events:none !important;cursor:not-allowed !important;}';
     var style = document.createElement('style');
     style.setAttribute('data-static-mode', '');
