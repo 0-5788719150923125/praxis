@@ -3,7 +3,7 @@
 
 LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 
-Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (16 entries)
+Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (17 entries)
 
 ## `conv` - ConvMTPModule
 
@@ -23,7 +23,7 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 (so the distance computation lives in the encoder's feature space) and replaces the
 encoder's dot-product projection at the loss boundary.
 
-Source: [praxis/heads/crystal.py:301](../praxis/heads/crystal.py#L301)
+Source: [praxis/heads/crystal.py:309](../praxis/heads/crystal.py#L309)
 
 ## `crystal_harmonic`, `crystal_harmonic_static` - SequentialHead
 
@@ -61,7 +61,7 @@ identical in standalone and encoder modes.
 
 Source: [praxis/heads/harmonic.py:1496](../praxis/heads/harmonic.py#L1496)
 
-## `prismatic`, `prismatic3`, `prismatic3_repel`, `prismatic4`, `prismatic5`, `prismatic6`, `prismatic6_vear`, `prismatic7` - ParallelHead
+## `prismatic`, `prismatic3`, `prismatic3_repel`, `prismatic4`, `prismatic5`, `prismatic6`, `prismatic6_vear`, `prismatic7`, `prismatic8` - ParallelHead
 
 Gate-combined parallel branches; a SequentialHead stage or top head.
 
@@ -76,6 +76,7 @@ Presets:
 - `prismatic6` - `branches=[functools.partial(<class 'praxis.heads.crystal.CrystalVearHead'>, sharpen=1.0), <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 - `prismatic6_vear` - `branches=[functools.partial(<class 'praxis.heads.crystal.CrystalVearHead'>, sharpen=None), <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 - `prismatic7` - `branches=[<class 'praxis.heads.crystal.CrystalSmearHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
+- `prismatic8` - `branches=[<class 'praxis.heads.crystal.CrystalHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
 
 ## `tied` - TiedWeights
 

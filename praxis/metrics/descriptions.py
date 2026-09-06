@@ -243,6 +243,19 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
             entry = out.get(key)
             if entry is not None and "caller" not in entry:
                 entry["caller"] = "ComputeProfiler"
+    # Same pattern for objective conflict, with one difference: the series are
+    # named after whichever loss terms this config actually carries, so the
+    # cards are built from the live stash's keys rather than a fixed dict.
+    _conflict = getattr(_core, "_conflict_metrics", None)
+    if _conflict:
+        from praxis.losses.conflict import conflict_metric_descriptions
+
+        descs = conflict_metric_descriptions(_conflict.keys())
+        out.update(_collect_from(descs))
+        for key in descs:
+            entry = out.get(key)
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = "ObjectiveConflict"
     # Same pattern for the probe-attribution sequence curriculum.
     if getattr(_core, "_seq_probe_metrics", None) is not None:
         from praxis.data.seq_probe import SEQ_PROBE_METRIC_DESCRIPTIONS

@@ -128,6 +128,9 @@ class DynamicsLoggerCallback(Callback):
             # stashed by GNSBatchGovernor on its decision cadence.
             dynamics.update(self._extract_governor_dynamics(model))
 
+            # Do the several objectives agree about the shared trunk?
+            dynamics.update(self._extract_conflict_dynamics(model))
+
             # Per-module compute-time attribution (coverage, dominant share),
             # stashed by ComputeProfilerCallback on its sampling cadence.
             dynamics.update(self._extract_compute_dynamics(model))
@@ -401,6 +404,21 @@ class DynamicsLoggerCallback(Callback):
         """
         core = getattr(model, "_orig_mod", model)
         metrics = getattr(core, "_compute_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+
+    def _extract_conflict_dynamics(self, model) -> dict:
+        """Drain the objective-conflict cosines stashed by the model.
+
+        The sampler measures one step in its own interval and holds the
+        standing value in between, so re-logging it each dynamics tick draws a
+        step curve rather than a sparse one. Empty until the first sampled step
+        lands, and always under torch.compile (Dynamo cannot trace the
+        per-objective autograd.grad, so the sampler installs nothing there).
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_conflict_metrics", None)
         if not isinstance(metrics, dict):
             return {}
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}

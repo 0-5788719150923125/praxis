@@ -138,6 +138,31 @@ def _pca_density_grid(
     }
 
 
+@torch.no_grad()
+def _effective_dim(centers: Tensor, threshold: float = 0.9) -> int:
+    """PCs needed to capture ``threshold`` of a ``[V, D]`` table's variance.
+
+    Works via the D x D covariance matrix's eigenvalues rather than a full SVD
+    of the V x D table - same answer, much cheaper when V >> D (typical for LM
+    vocabularies). Takes the tensor rather than a module so a bank that stores
+    its geometries as base-plus-deviation can measure the sets it actually
+    merges, not just the module it happens to keep.
+    """
+    c = centers.detach()
+    centered = c - c.mean(dim=0, keepdim=True)
+    denom = max(centered.shape[0] - 1, 1)
+    cov = (centered.t() @ centered) / denom
+    eigvals = torch.linalg.eigvalsh(cov.float()).flip(0).clamp_min(0.0)
+    total = eigvals.sum()
+    if float(total) <= 0:
+        return int(eigvals.numel())
+    cumvar = torch.cumsum(eigvals, dim=0) / total
+    hits = (cumvar >= threshold).nonzero(as_tuple=False)
+    if hits.numel() == 0:
+        return int(eigvals.numel())
+    return int(hits[0].item()) + 1
+
+
 class CrystalClassifier(nn.Module):
     """Distance-based classifier emitting pseudo-logits for CE."""
 
@@ -277,25 +302,8 @@ class CrystalClassifier(nn.Module):
 
     @torch.no_grad()
     def effective_dim(self, threshold: float = 0.9) -> int:
-        """PCs needed to capture `threshold` of center variance.
-
-        We work via the D x D covariance matrix's eigenvalues rather
-        than a full SVD of the V x D center matrix - same answer, much
-        cheaper when V >> D (typical for LM vocabularies).
-        """
-        c = self.centers.detach()
-        centered = c - c.mean(dim=0, keepdim=True)
-        denom = max(centered.shape[0] - 1, 1)
-        cov = (centered.t() @ centered) / denom
-        eigvals = torch.linalg.eigvalsh(cov.float()).flip(0).clamp_min(0.0)
-        total = eigvals.sum()
-        if float(total) <= 0:
-            return int(eigvals.numel())
-        cumvar = torch.cumsum(eigvals, dim=0) / total
-        hits = (cumvar >= threshold).nonzero(as_tuple=False)
-        if hits.numel() == 0:
-            return int(eigvals.numel())
-        return int(hits[0].item()) + 1
+        """PCs needed to capture `threshold` of center variance."""
+        return _effective_dim(self.centers, threshold)
 
 
 class CrystalHead(BaseHead):
@@ -784,17 +792,24 @@ class CrystalVearHead(BaseHead):
         d = torch.cdist(flat, flat)  # [N, N], diagonal 0
         return float(d.sum().item() / (n * (n - 1)))
 
+    @torch.no_grad()
     def training_metrics(self) -> dict:
-        experts = self.bank.experts
+        # Read the geometries through _expert_centers(), the same accessor the
+        # PCA cards and _bank_distinctness use. Looping bank.experts instead
+        # was correct only while the bank held N independent modules:
+        # CrystalSmearHead truncates that ModuleList to the single shared base
+        # and carries the rest as LoRA deviations, so the module loop silently
+        # reported the BASE ALONE - a table the merge never uses on its own.
+        # Measured on abstractinator-m at step 17343 the gap was not cosmetic:
+        # base effective_dim 23 against 13 / 4 / 9 / 21 for the four sets the
+        # router actually merges.
+        centers = self._expert_centers()  # [N, V, D]
+        norms = centers.norm(dim=-1)  # [N, V]
         return {
-            "crystal_centers_norm_mean": float(
-                torch.stack([e.centers_norm_mean() for e in experts]).mean().item()
-            ),
-            "crystal_centers_norm_std": float(
-                torch.stack([e.centers_norm_std() for e in experts]).mean().item()
-            ),
+            "crystal_centers_norm_mean": float(norms.mean().item()),
+            "crystal_centers_norm_std": float(norms.std(dim=-1).mean().item()),
             "crystal_effective_dim": int(
-                round(sum(e.effective_dim() for e in experts) / len(experts))
+                round(sum(_effective_dim(c) for c in centers) / centers.shape[0])
             ),
             # The direct readout of VEAR's goal: are the geometries actually unique?
             "crystal_bank_distinctness": self._bank_distinctness(),

@@ -8,7 +8,7 @@ themselves from the `PraxisConfig` by looking implementations up in the registri
 
 import functools
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -24,6 +24,7 @@ from praxis.attention.cache import PraxisCache
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
+from praxis.losses.conflict import ObjectiveConflict
 from praxis.losses.regularizers import build_regularizers
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
@@ -319,6 +320,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # The strategy for combining multiple losses into a single scalar objective.
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+        # Do the model's several objectives agree about the shared trunk? One
+        # sampled cosine per loss term; see praxis/losses/conflict.py for why
+        # this is the measurement and not the gradient-surgery method itself.
+        self._conflict = ObjectiveConflict()
+        self._conflict_metrics: Dict[str, float] = {}
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -1022,6 +1028,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             outputs.losses.add_loss(
                 reg.name, reg(hidden_states, input_ids, classifier=classifier)
             )
+
+        # Last, so the sampler sees every objective this step actually carries.
+        # Stashed rather than returned: the dynamics callback drains it on its
+        # own cadence, the same contract the governor and compute profiler use.
+        self._conflict_metrics = self._conflict.measure(
+            outputs.losses.loss_dict, hidden_states
+        )
 
     def _finalize_loss(
         self, loss, losses: LossContainer, labels: Optional[torch.Tensor]

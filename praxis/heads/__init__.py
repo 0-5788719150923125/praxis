@@ -161,6 +161,45 @@ def _prismatic7_branches() -> list:
     ]
 
 
+def _prismatic8_branches() -> list:
+    """prismatic7's arms with the crystal bank replaced by ONE crystal.
+
+    No bank, no router, no experts on the geometric arm - a plain
+    ``CrystalHead`` reading the shared stem, exactly as prismatic2/3 had it.
+
+    THE ARGUMENT IS ABOUT WHERE DECISIONS BELONG. By the time features reach
+    the classifier they have already been routed at every level the trunk
+    offers: depth, residual, attention, memory. A classifier that also picks
+    its own output geometry per example makes the last stage of the model the
+    least predictable one, and predictability is the whole reason to put a
+    distance classifier there. The three arms already give the head its
+    choice; the arms themselves should be fixed functions.
+
+    THE MEASUREMENT THAT SUPPORTS IT (abstractinator-m, step 17343). The
+    routed bank did not perturb one geometry, it grew four unequal and
+    partly degenerate ones: LoRA deviations at 0.36x / 2.61x / 1.27x / 0.85x
+    the base's Frobenius norm, and per-expert effective_dim (90% variance) of
+    13 / 4 / 9 / 21 against the base's 23. Expert 1 had collapsed to four
+    dimensions with 84% of its variance in the top two PCs. That is not the
+    crystal geometry the harmonic-loss result is about, and averaging four of
+    them per example is not a way back to it.
+
+    Two things follow for free. ``causal_readout`` returns to True on this arm
+    (the bank pooled the sequence to route, which forced the speculative
+    decoder to re-encode a row per candidate), and the arm's PCA card is a
+    single panel fitting its own frame again - the pre-bank view, rather than
+    four panels sharing a frame that the largest deviation stretches.
+
+    The other two arms are byte-identical to prismatic7, so a prismatic7 ->
+    prismatic8 comparison attributes any delta to the bank and nothing else.
+    """
+    return [
+        CrystalHead,
+        ForwardHead,
+        partial(HaloHead, detach_in_blend=False),
+    ]
+
+
 HEAD_REGISTRY = dict(
     forward=ForwardHead,
     tied=TiedWeights,
@@ -240,5 +279,16 @@ HEAD_REGISTRY = dict(
         ParallelHead,
         stem=_field("input", fast_weights=True),
         branches=_prismatic7_branches(),
+    ),
+    # prismatic8: prismatic7 with the crystal bank collapsed to a single
+    # CrystalClassifier. The head keeps its three-way choice between geometric,
+    # direct and hyperspherical readouts; each arm is now a fixed function of
+    # the stem rather than one that re-picks its own geometry per example. See
+    # _prismatic8_branches for the argument and for the measurement that
+    # retired the bank.
+    prismatic8=partial(
+        ParallelHead,
+        stem=_field("input", fast_weights=True),
+        branches=_prismatic8_branches(),
     ),
 )
