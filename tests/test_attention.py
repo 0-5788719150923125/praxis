@@ -167,3 +167,95 @@ def test_forward_pass(module_setup):
 
     # Verify output shape
     assert output.shape == (batch_size, seq_len, attention_config.hidden_size)
+
+
+def _packed_block_ids(batch_size: int, seq_len: int) -> torch.Tensor:
+    """Two documents per row, split at different points per row."""
+    split = seq_len // 2
+    rows = []
+    for b in range(batch_size):
+        cut = split + (b % 3) - 1
+        rows.append([1] * cut + [2] * (seq_len - cut))
+    return torch.tensor(rows, dtype=torch.long)
+
+
+def test_causal_attention_honours_block_ids():
+    """A packed document must not be able to read the one before it.
+
+    `block_ids` reached CausalAttention for a long time without being used,
+    so packed documents attended across each other. Perturbing document 1
+    must leave document 2's outputs untouched.
+    """
+    config = PraxisConfig(
+        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
+    )
+    config.causal = True
+    module = CausalAttention(config).eval()
+
+    batch_size, seq_len = 4, 16
+    block_ids = _packed_block_ids(batch_size, seq_len)
+    x = torch.randn(batch_size, seq_len, config.hidden_size)
+
+    perturbed = x.clone()
+    for b in range(batch_size):
+        first_doc = block_ids[b] == 1
+        perturbed[b, first_doc] += 5.0
+
+    with torch.no_grad():
+        base, _, _ = module(x, block_ids=block_ids)
+        moved, _, _ = module(perturbed, block_ids=block_ids)
+        no_ids_base, _, _ = module(x, block_ids=None)
+        no_ids_moved, _, _ = module(perturbed, block_ids=None)
+
+    second_doc = block_ids == 2
+    leak = (base[second_doc] - moved[second_doc]).abs().max()
+    control = (no_ids_base[second_doc] - no_ids_moved[second_doc]).abs().max()
+
+    assert leak < 1e-6, f"document 2 saw document 1 (delta {leak})"
+    assert control > 1e-3, "control is not a real signal; the test proves nothing"
+
+
+def test_causal_attention_block_mask_cache_is_batch_independent():
+    """The (q_len, kv_len, device) cache must not serve a document mask.
+
+    Document masks depend on batch contents, so they are rebuilt every
+    forward; only the batch-independent causal mask may be cached.
+    """
+    config = PraxisConfig(
+        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
+    )
+    config.causal = True
+    module = CausalAttention(config).eval()
+
+    if module.create_block_mask is None:
+        pytest.skip("FlexAttention unavailable")
+
+    batch_size, seq_len = 4, 16
+    device = torch.device("cpu")
+    block_ids = _packed_block_ids(batch_size, seq_len)
+
+    module._create_causal_mask(seq_len, seq_len + 1, device, block_ids=block_ids)
+    assert len(module.block_mask_cache) == 0
+
+    module._create_causal_mask(seq_len, seq_len + 1, device)
+    module._create_causal_mask(seq_len, seq_len + 1, device)
+    assert len(module.block_mask_cache) == 1
+
+
+def test_causal_attention_ignores_mismatched_block_ids():
+    """Wrong-shaped block_ids are declined, not masked with."""
+    config = PraxisConfig(
+        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
+    )
+    config.causal = True
+    module = CausalAttention(config).eval()
+
+    batch_size, seq_len = 4, 16
+    x = torch.randn(batch_size, seq_len, config.hidden_size)
+    too_short = torch.ones(batch_size, seq_len // 2, dtype=torch.long)
+
+    with torch.no_grad():
+        out, _, _ = module(x, block_ids=too_short)
+        expected, _, _ = module(x, block_ids=None)
+
+    assert torch.equal(out, expected)

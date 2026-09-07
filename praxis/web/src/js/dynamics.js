@@ -63,6 +63,22 @@ export function toggleDynamicsRunSelector() {
     if (dropdown) {
         dropdown.style.display = state.dynamics.runSelectorOpen ? 'block' : 'none';
     }
+    // The header is only rebuilt when the card set changes, so the step counts
+    // in these rows would otherwise sit at whatever they were on first render.
+    // Re-fetch on open and repaint the rows in place.
+    if (state.dynamics.runSelectorOpen) {
+        loadAvailableDynamicsRuns().then(refreshDynamicsRunList).catch(() => {});
+    }
+}
+
+/**
+ * Repaint the dynamics run rows from state.dynamics.availableRuns without
+ * rebuilding the header.
+ */
+function refreshDynamicsRunList() {
+    const list = document.querySelector('#dynamics-run-selector-dropdown .run-selector-list');
+    if (!list) return;
+    list.innerHTML = renderDynamicsRunItems();
 }
 
 /**
@@ -96,6 +112,9 @@ async function loadDynamicsInner(force) {
 
     try {
         await loadAvailableDynamicsRuns();
+        // A poll that finds no structural change leaves the header standing,
+        // so push the fresh step counts into the existing rows.
+        refreshDynamicsRunList();
         const runQuery = state.dynamics.selectedRun
             ? `&runs=${encodeURIComponent(state.dynamics.selectedRun)}`
             : '';
@@ -137,6 +156,29 @@ async function loadDynamicsInner(force) {
 }
 
 /**
+ * One row per run with dynamics data: hash, badge, step count, relative time.
+ */
+function renderDynamicsRunItems() {
+    const runs = state.dynamics.availableRuns || [];
+    const selected = state.dynamics.selectedRun;
+    const activeRun = runs.find(r => r.hash === selected)
+        || runs.find(r => r.is_current)
+        || runs[0];
+    return runs.map(run => {
+        const isActive = run.hash === (activeRun ? activeRun.hash : null);
+        const time = formatRelativeTime(run.metrics_updated);
+        const badge = run.is_current ? ' <span style="opacity: 0.6; font-size: 0.8em;">(active)</span>' : '';
+        return `
+            <label class="run-selector-item">
+                <input type="radio" name="dynamics-run" ${isActive ? 'checked' : ''} data-dynamics-run-hash="${run.hash}">
+                <span class="run-label">${run.hash}${badge}</span>
+                <span class="run-steps">${run.num_steps} steps &middot; ${time}</span>
+            </label>
+        `;
+    }).join('');
+}
+
+/**
  * Build the single-select runs dropdown (HTML string). Uses the same
  * .run-selector-* CSS as the Research tab, scoped via a #dynamics- prefix
  * so events can target the dynamics picker specifically.
@@ -163,18 +205,7 @@ function renderDynamicsRunSelector() {
             <div class="run-selector-dropdown" id="dynamics-run-selector-dropdown" style="display: none;">
                 <div class="run-selector-header">Select Run</div>
                 <div class="run-selector-list">
-                    ${runs.map(run => {
-                        const isActive = run.hash === (activeRun ? activeRun.hash : null);
-                        const time = formatRelativeTime(run.metrics_updated);
-                        const badge = run.is_current ? ' <span style="opacity: 0.6; font-size: 0.8em;">(active)</span>' : '';
-                        return `
-                            <label class="run-selector-item">
-                                <input type="radio" name="dynamics-run" ${isActive ? 'checked' : ''} data-dynamics-run-hash="${run.hash}">
-                                <span class="run-label">${run.hash}${badge}</span>
-                                <span class="run-steps">${run.num_steps} steps &middot; ${time}</span>
-                            </label>
-                        `;
-                    }).join('')}
+                    ${renderDynamicsRunItems()}
                 </div>
             </div>
         </div>

@@ -720,6 +720,24 @@ export function toggleRunSelector() {
     if (dropdown) {
         dropdown.style.display = state.research.runSelectorOpen ? 'block' : 'none';
     }
+    // The header (and with it the run list) is built once per tab load, so the
+    // step counts inside it would otherwise be frozen at whatever they were
+    // when the tab first rendered. Re-fetch on open and repaint the rows in
+    // place - the dropdown is already visible, the numbers land a beat later.
+    if (state.research.runSelectorOpen) {
+        loadAvailableRuns().then(refreshRunSelectorList).catch(() => {});
+    }
+}
+
+/**
+ * Repaint the run-selector rows from state.research.historicalRuns without
+ * rebuilding the header (which would drop the charts area).
+ */
+function refreshRunSelectorList() {
+    const list = document.querySelector('#run-selector-dropdown .run-selector-list');
+    if (!list) return;
+    list.innerHTML = renderRunSelectorItems();
+    updateRunSelectorCount();
 }
 
 /**
@@ -1223,6 +1241,9 @@ function renderMetricsCharts(data, container) {
         renderMetricsHeader(container, runs);
     } else {
         updateMetricsMetadata(runs);
+        // Background polls already refreshed the run list; push the new step
+        // counts into the (once-rendered) header rows.
+        refreshRunSelectorList();
     }
 
     let chartsArea = document.getElementById('metrics-charts-area');
@@ -2502,6 +2523,41 @@ function onDeckKeydown(e) {
 }
 
 /**
+ * One row per known run: swatch, hash + badges, step count and relative time.
+ * Split out of the header so the list can be repainted on its own when the
+ * counts move (see refreshRunSelectorList).
+ */
+function renderRunSelectorItems() {
+    return state.research.historicalRuns.map((run) => {
+        const isSelected = state.research.selectedHistoricalRuns.includes(run.hash);
+        const slot = runColorIndex(run);
+        // Unselected rows draw no line, so they get no hue - the swatch is the
+        // legend for the chart, not decoration.
+        const colorVars = slot >= 0 ? chartLineColorVars(slot) : '';
+        const idleClass = slot >= 0 ? '' : ' run-color-indicator--idle';
+        const timeLabel = formatRelativeTime(run.metrics_updated);
+        const badges = [];
+        if (run.is_current) badges.push('active');
+        if (run.agentName) badges.push(run.agentName);
+        if (run.source === 'remote') badges.push('remote');
+        const badgeHTML = badges.length > 0
+            ? ` <span style="opacity: 0.6; font-size: 0.8em;">(${badges.join(', ')})</span>`
+            : '';
+        const stepsLabel = run.source === 'remote'
+            ? timeLabel
+            : `${run.num_steps} steps &middot; ${timeLabel}`;
+        return `
+            <label class="run-selector-item">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} data-run-hash="${run.hash}">
+                <span class="run-color-indicator${idleClass}" style="${colorVars}"></span>
+                <span class="run-label">${run.hash}${badgeHTML}</span>
+                <span class="run-steps">${stepsLabel}</span>
+            </label>
+        `;
+    }).join('');
+}
+
+/**
  * Render the metrics header (title, selectors, refresh button) once
  */
 function renderMetricsHeader(container, runs) {
@@ -2525,33 +2581,7 @@ function renderMetricsHeader(container, runs) {
                 <div class="run-selector-dropdown" id="run-selector-dropdown" style="display: none;">
                     <div class="run-selector-header">Compare Runs</div>
                     <div class="run-selector-list">
-                        ${state.research.historicalRuns.map((run, idx) => {
-                            const isSelected = state.research.selectedHistoricalRuns.includes(run.hash);
-                            const slot = runColorIndex(run);
-                            // Unselected rows draw no line, so they get no hue -
-                            // the swatch is the legend for the chart, not decoration.
-                            const colorVars = slot >= 0 ? chartLineColorVars(slot) : '';
-                            const idleClass = slot >= 0 ? '' : ' run-color-indicator--idle';
-                            const timeLabel = formatRelativeTime(run.metrics_updated);
-                            const badges = [];
-                            if (run.is_current) badges.push('active');
-                            if (run.agentName) badges.push(run.agentName);
-                            if (run.source === 'remote') badges.push('remote');
-                            const badgeHTML = badges.length > 0
-                                ? ` <span style="opacity: 0.6; font-size: 0.8em;">(${badges.join(', ')})</span>`
-                                : '';
-                            const stepsLabel = run.source === 'remote'
-                                ? timeLabel
-                                : `${run.num_steps} steps &middot; ${timeLabel}`;
-                            return `
-                                <label class="run-selector-item">
-                                    <input type="checkbox" ${isSelected ? 'checked' : ''} data-run-hash="${run.hash}">
-                                    <span class="run-color-indicator${idleClass}" style="${colorVars}"></span>
-                                    <span class="run-label">${run.hash}${badgeHTML}</span>
-                                    <span class="run-steps">${stepsLabel}</span>
-                                </label>
-                            `;
-                        }).join('')}
+                        ${renderRunSelectorItems()}
                     </div>
                 </div>
             </div>

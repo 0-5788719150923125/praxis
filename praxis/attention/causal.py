@@ -245,11 +245,17 @@ class CausalAttention(nn.Module):
             self.create_block_mask = None
             self.and_masks = None
 
-    def _build_mask_mod(self):
+    def _build_mask_mod(self, block_ids: Optional[Tensor] = None):
         """Build a mask_mod closure following the FlexAttention pattern.
 
         Captures primitive values (not self) so the resulting function is
-        compatible with torch.compile tracing inside create_block_mask.
+        compatible with torch.compile tracing inside create_block_mask. The
+        one exception is ``block_ids``, which is captured as a tensor - the
+        same pattern FlexAttention's own document-masking example uses.
+
+        Args:
+            block_ids: Optional ``[B, T]`` 1-based document index per token.
+                When given, a token may only attend within its own document.
         """
         window_size = self.window_size  # capture as plain int or None
 
@@ -258,49 +264,92 @@ class CausalAttention(nn.Module):
             # Actual tokens: kv_idx=1 is position 0, so q_idx + 1 >= kv_idx.
             return (kv_idx == 0) | (q_idx + 1 >= kv_idx)
 
-        if window_size is None:
-            return ghost_causal_mask
+        mods = [ghost_causal_mask] if self.causal else []
 
-        def ghost_sliding_window_mask(b, h, q_idx, kv_idx):
-            # Ghost token must also pass here, otherwise and_masks kills it.
-            # Actual tokens: limit to window_size positions (ghost-shifted).
-            return (kv_idx == 0) | (q_idx - (kv_idx - 1) <= window_size)
+        if window_size is not None:
 
-        return self.and_masks(ghost_causal_mask, ghost_sliding_window_mask)
+            def ghost_sliding_window_mask(b, h, q_idx, kv_idx):
+                # Ghost token must also pass here, otherwise and_masks kills it.
+                # Actual tokens: limit to window_size positions (ghost-shifted).
+                return (kv_idx == 0) | (q_idx - (kv_idx - 1) <= window_size)
+
+            mods.append(ghost_sliding_window_mask)
+
+        if block_ids is not None:
+            bid = block_ids
+
+            def ghost_document_mask(b, h, q_idx, kv_idx):
+                # Ghost token passes; real keys must share the query's document.
+                # kv_idx is ghost-shifted, and clamping keeps the gather in
+                # range for kv_idx=0 (whose result the `or` discards anyway).
+                kv_pos = torch.clamp(kv_idx - 1, min=0)
+                return (kv_idx == 0) | (bid[b, q_idx] == bid[b, kv_pos])
+
+            mods.append(ghost_document_mask)
+
+        if not mods:
+            return None
+        if len(mods) == 1:
+            return mods[0]
+        return self.and_masks(*mods)
 
     def _create_causal_mask(
-        self, q_len: int, kv_len: int, device: torch.device
-    ) -> torch.Tensor:
+        self,
+        q_len: int,
+        kv_len: int,
+        device: torch.device,
+        block_ids: Optional[Tensor] = None,
+    ) -> Optional[torch.Tensor]:
         """
-        Create a block mask with ghostmax support, optional sliding window.
+        Create a block mask with ghostmax support, optional sliding window,
+        and optional document (``block_ids``) gating.
 
-        Uses composable mask_mod functions per the FlexAttention API:
-        causal and sliding window constraints are composed via and_masks.
+        Uses composable mask_mod functions per the FlexAttention API: causal,
+        sliding window and document constraints are composed via and_masks.
+
+        The ``(q_len, kv_len, device)`` cache only applies to the batch-
+        independent case. A document mask depends on the batch's contents, so
+        it is rebuilt every forward and ``B`` becomes the real batch size.
 
         Args:
             q_len: Query sequence length (number of actual positions)
             kv_len: Key/Value sequence length (should be q_len + 1 for ghost)
             device: Device to create mask on
+            block_ids: Optional ``[B, T]`` document index per token
 
         Returns:
-            Block mask for attention with ghostmax
+            Block mask for attention with ghostmax, or None if nothing masks.
         """
-        cache_key = (q_len, kv_len, str(device))
+        if block_ids is None:
+            cache_key = (q_len, kv_len, str(device))
 
-        if cache_key in self.block_mask_cache:
-            return self.block_mask_cache[cache_key]
+            if cache_key in self.block_mask_cache:
+                return self.block_mask_cache[cache_key]
 
-        block_mask = self.create_block_mask(
-            self._build_mask_mod(),
-            B=None,
+            mask_mod = self._build_mask_mod()
+            if mask_mod is None:
+                return None
+
+            block_mask = self.create_block_mask(
+                mask_mod,
+                B=None,
+                H=None,
+                Q_LEN=q_len,
+                KV_LEN=kv_len,
+                device=device,
+            )
+
+            self.block_mask_cache[cache_key] = block_mask
+            return block_mask
+
+        return self.create_block_mask(
+            self._build_mask_mod(block_ids),
+            B=block_ids.size(0),
             H=None,
             Q_LEN=q_len,
             KV_LEN=kv_len,
             device=device,
         )
-
-        self.block_mask_cache[cache_key] = block_mask
-        return block_mask
 
     def _use_cpu_fallback(self, device: torch.device) -> bool:
         """
@@ -398,6 +447,7 @@ class CausalAttention(nn.Module):
         v_ghost: Tensor,
         seq_len: int,
         is_gqa: bool,
+        block_ids: Optional[Tensor] = None,
     ) -> Tensor:
         """Manual masked attention preserving the ghost column.
 
@@ -415,6 +465,8 @@ class CausalAttention(nn.Module):
             v_ghost: Value tensor including ghost at index 0.
             seq_len: Number of real (non-ghost) positions.
             is_gqa: Whether to expand K/V across query-head groups.
+            block_ids: Optional ``[B, T]`` document index per token. Must stay
+                numerically identical to the flex path's document mask.
         """
         device = q.device
         batch_size, _, _, head_dim = q.shape
@@ -449,9 +501,22 @@ class CausalAttention(nn.Module):
                 q_pos.unsqueeze(-1) - kv_pos_real.unsqueeze(0)
             ) <= self.window_size
             allowed = allowed & within_window
-        # Ghost column always passes.
-        allowed[:, 0] = True
-        scores = scores.masked_fill(~allowed.view(1, 1, seq_len, seq_len + 1), -1e9)
+
+        if block_ids is None:
+            # Ghost column always passes.
+            allowed[:, 0] = True
+            allowed = allowed.view(1, 1, seq_len, seq_len + 1)
+        else:
+            # A token may only read keys from its own packed document. Same
+            # ghost shift as the flex path: kv index k>0 is real position k-1.
+            kv_blocks = F.pad(block_ids[:, :seq_len], (1, 0), value=0)
+            same_block = block_ids[:, :seq_len].unsqueeze(-1) == kv_blocks.unsqueeze(-2)
+            allowed = allowed.unsqueeze(0) & same_block
+            # Ghost column always passes.
+            allowed[:, :, 0] = True
+            allowed = allowed.unsqueeze(1)
+
+        scores = scores.masked_fill(~allowed, -1e9)
 
         weights = F.softmax(scores, dim=-1)
         if self.training and self.dropout_p > 0:
@@ -474,7 +539,8 @@ class CausalAttention(nn.Module):
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional mask tensor (currently ignored - use causal masking)
             past_key_values: Optional cache for key/value pairs (not currently supported)
-            block_ids: Optional tensor indicating block structure
+            block_ids: Optional [B, T] 1-based document index per token. Gates
+                attention so one packed document cannot read another.
             current_depth: Current depth in the network (for caching)
 
         Returns:
@@ -486,8 +552,19 @@ class CausalAttention(nn.Module):
         batch_size, seq_len, _ = inputs.shape
 
         # Note: attention_mask is currently not used with FlexAttention.
-        # Causal masking is handled by block_mask.
+        # Causal and document masking are handled by block_mask.
         # Padding masks could be implemented via score_mod if needed.
+
+        # A document mask is only meaningful when block_ids line up with the
+        # positions this layer actually sees. The byte-latent encoder pools
+        # them to patch granularity before the trunk; anything else is a
+        # mismatch we decline rather than mask wrongly.
+        if block_ids is not None and (
+            block_ids.dim() != 2
+            or block_ids.size(0) != batch_size
+            or block_ids.size(1) < seq_len
+        ):
+            block_ids = None
 
         # Calculate QKV
         qkv = self.qkv(inputs)
@@ -557,14 +634,15 @@ class CausalAttention(nn.Module):
             # Manual masked attention that preserves the ghost column so
             # softmax1/ghostmax behavior matches the flex_attention path.
             attn_output = self._ghost_aware_attention(
-                q, k, v, seq_len=seq_len, is_gqa=is_gqa
+                q, k, v, seq_len=seq_len, is_gqa=is_gqa, block_ids=block_ids
             )
         else:
             # Use FlexAttention (GPU only)
-            # Handle masking: use causal block_mask with ghost token support
-            if self.causal:
-                # Create causal block_mask that allows ghost access
-                block_mask = self._create_causal_mask(seq_len, kv_len, inputs.device)
+            # Handle masking: causal + document block_mask with ghost access
+            if self.causal or block_ids is not None:
+                block_mask = self._create_causal_mask(
+                    seq_len, kv_len, inputs.device, block_ids=block_ids
+                )
             else:
                 block_mask = None
 
