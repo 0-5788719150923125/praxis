@@ -148,6 +148,19 @@ framework built for exactly this kind of one-variable arm.
 
 ## Where it would go
 
+### The decision rule
+
+**Ghost expansion pays off exactly where the tied tensor is large.** The saving
+is `(d-1)/d` of a weight you would otherwise have to buy. Where there is a big
+projection, that is real money. Where the site is a small combine of tensors
+that are *already computed*, there is no weight to tie, nothing is saved, and a
+plain learned mixing matrix is both cheaper and strictly more general than any
+fixed algebra.
+
+That rule answers "do we apply it blindly everywhere" with a principle instead
+of a list: **big projections yes, combine sites no.** It also predicts which
+of the sites below are worth building.
+
 ### Rejected: blanket application
 
 Every linear layer ghost-expanded. The mixer is `d·C x C` per site and at
@@ -186,6 +199,63 @@ by 4 without touching it. Retrieval cost is sqrt-cheap because
 `num_keys = sqrt(num_experts)`. If any version of this idea is worth building,
 it is probably this one - but it is also the most entangled, so it should follow
 the GLU arm rather than lead.
+
+### The abstractinator combine sites, and why the rule says no
+
+Two places in the encoder sum same-shaped tensors, and both look like natural
+algebra sites. They are worth writing down because the reasoning generalizes,
+and because the conclusion is the opposite of the first impression.
+
+**`d=2`, the CALM arm.** `calm.py:194` is `z = z_q + z_c`: the quantized latent
+and the continuous posterior sample, same shape, collapsed by addition. Treating
+the pair as `z_q + i·z_c` and multiplying by a per-channel complex weight gives
+
+```
+Re = z_q·w0 - z_c·w1
+Im = z_q·w1 + z_c·w0
+```
+
+and `w = (1, -1)` with Re taken alone reproduces today's code exactly. So the
+complex form **contains the current behavior as its init**, in the house style
+of [[project_prismatic3_pure_arm]], with `Im` entering behind a per-channel gain
+starting at zero. Cost ~3D = 816 parameters at `D=272`, and `calm_arm_ratio`
+already exists as the companion diagnostic.
+
+The semantic case is genuinely stronger here than anywhere else in this note:
+`z_q` and `z_c` are *distinct kinds of object* (discrete code, continuous
+posterior), not adjacent channels that happen to sit next to each other. That is
+the "meaningful grouping" criterion actually satisfied, rather than asserted.
+
+**`d=4`, the RVQ stage sum.** Better still, and it exists in every abstractinator
+arm rather than only where the CALM arm is on. The composed latent is a sum over
+four residual stages (`calm.py:320`, `vector_quantizer.py:427`), coarse to fine.
+Quaternion mixing with `w = (1, -1, -1, -1)` gives `Re = x0+x1+x2+x3`, the plain
+sum, identity at init, and three ghost slots that are the remaining sign
+patterns:
+
+```
+Re    = +x0 +x1 +x2 +x3      (today's composed code)
+Im_1  = -x0 +x1 -x2 +x3
+Im_2  = -x0 +x1 +x2 -x3
+Im_3  = -x0 -x1 +x2 +x3
+```
+
+Four independent sign-weighted views of the stage decomposition where today only
+the all-plus one survives. Elegant, and the observation behind it is right: we
+sum `d` things and discard `d-1` dimensions.
+
+**But the decision rule says do not build it.** Both sites combine tensors that
+are already computed, so there is no large weight being tied and nothing is
+saved. Worse, the quaternion table is just one particular `4x4` sign matrix, and
+a *learned* `4x4` over the stage axis costs 16 parameters shared (or `16·D` =
+4,352 per-channel) and strictly contains it. When the general version is that
+cheap, a fixed algebra has to beat it rather than merely work, and there is no
+reason on offer for why the quaternion signs would be the right `4x4`.
+
+**Keep the sites, drop the algebra.** "Learn the stage mixing instead of hard-
+coding a sum" is a good idea on its own and is one line; it just is not this
+idea. Filed here so it is not lost, and so the reasoning is re-readable the next
+time an algebra looks like it fits a combine site.
 
 ### Paper-faithful: one site at the front
 
@@ -235,6 +305,15 @@ coincidence. `272 = 2 x 136`.
 Worth running `d=2` on harmonic-paired channels as a fourth arm, or possibly as
 the *first* one.
 
+A third `d=2` pairing was raised and sent elsewhere: **forward vs reverse depth
+schedule**, degaussing-style. Better motivated than either of the above, because
+the two components are different computations of the same object rather than
+adjacent channels, and because `current_depth` indexes genuinely learned
+per-depth parameters in at least six modules - reversing it is not a no-op even
+at `num_layers: 1`. Not ghost features though: nothing tied, nothing saved.
+Written up in [magnetism.md](magnetism.md) with two free gates on it, both
+answerable from an existing checkpoint.
+
 ## What to watch
 
 - **`val_byte_nll_bits`** as arbiter, per the standing rule that it is the
@@ -277,6 +356,73 @@ being informative either way. That case is strong on its own, and naming
 coincidences would only make it easier to knock over. Same discipline as
 [grounding.md](grounding.md), applied to a small thing before it becomes a large
 one.
+
+## The other ghost paper, and whether it applies
+
+**Sonoda, S., Ishikawa, I. & Ikeda, M. (2026). "Ghosts in Neural Networks:
+Existence, Structure and Role of Infinite-Dimensional Null Space."
+arXiv:2106.04770v2 (cs.LG).**
+
+This is the paper the thread opened on, and the two are worth keeping side by
+side because **they are exact opposites wearing the same word.**
+
+- Sonoda's ghosts are parameter directions that produce **no** function change.
+  `ker S` for the continuous-width synthesis operator
+  `S[γ](x) = ∫ γ(a,b) σ(a·x - b) da db`. Redundancy to be avoided. Their
+  Theorem 21 gives `ker S ≅ L²(ℝᵐ) ⊗̂ ker L_σ`, so the invisible part is as big
+  as function space itself. It is a proof that **parameter count overstates
+  function count**, sometimes infinitely.
+- Vieira Neto's ghosts are derived output channels that **do** change the
+  function, at no new parameter cost. Capacity to be harvested.
+
+The name is not shared by lineage. Sonoda's follows Louis & Törnig (1981) on the
+Radon transform null space (§1.1); Vieira Neto's follows GhostNet's ghost
+feature maps (Han et al. 2020), which the paper cites directly in §3.
+
+### Does the null-space theory extend to the hypercomplex domain?
+
+Probably, and it would not help.
+
+The same three authors published a unified Fourier slice method
+(**arXiv:2402.15984**) deriving ridgelet transforms for depth-2 networks on
+finite fields, group convolutional networks on abstract Hilbert space,
+fully-connected networks on noncompact symmetric spaces, and pooling layers.
+The machinery clearly travels. **Hypercomplex-valued networks are not among the
+cases done**, so an extension is an open, plausible piece of work, not an
+existing result to cite.
+
+But the infinite-dimensional part is a **continuous-width** phenomenon and does
+not survive discretization, which is their own §10.1: for a fixed list of
+distinct neurons the coefficient map "can be injective," and what remains at
+finite width is only approximate null sequences (`O(N^{-1/2})`) plus exact
+relations from **activation symmetry** (Prop. 25: `½(δ_θ + δ_ι(θ)) ∈ ker S` for
+odd σ, and ReLU's affine ambiguity). A hypercomplex version would inherit that
+limitation, so it would describe a structure we cannot reach at 6M parameters.
+
+### Where the two papers genuinely touch
+
+One point, and it is the useful one:
+
+**Ghost features succeed exactly to the degree that their `d` blocks avoid the
+null space.** The blocks are fixed signed permutations of one weight tensor, so
+"do the ghosts carry independent function" is precisely a finite-width
+degeneracy question, which is Prop. 25's subject. That makes the two papers meet
+at a single measurable quantity, and it is one the design already calls for:
+**effective rank of the expanded pre-mixer activations.** If `d·C'` ghost
+channels carry the effective dimension of `C'`, the ghosts are Sonoda-ghosts and
+the mixer will discard them.
+
+One live caveat from that same proposition. Prop. 25's exact relation is for
+**odd** activations, and this stack runs periodic ones (Servant, and `sin` is
+odd). The `P_k` are signed permutations, so ghost blocks differ by sign
+patterns, and an odd activation commutes with a global sign flip. Two blocks
+related by a global negative would therefore collapse to a sign flip after the
+activation and cost a full degree of freedom. **Checked for quaternions: no two
+of `P_0..P_3` applied to the same `w` are global negatives**, so there is no
+trivial collapse, and the same holds for `d=2`. But this must be re-checked for
+any other algebra before using it, and it is the reason to prefer an odd-safe
+check over trusting the multiplication table to be non-degenerate in the
+`P_k`-nonsingular sense the paper requires (§2.1), which is a weaker condition.
 
 ## Verdict on phantom neurons
 

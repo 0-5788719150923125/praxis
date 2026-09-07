@@ -209,6 +209,69 @@ Narrower than the pitch, and none of it is called magnetism.
   to test as an embedding prior. Confusability structure is real in that basis:
   `'O'`/`'0'` cosine 0.973, `'E'`/`'F'` 0.890, `'E'`/`'w'` 0.467.
 
+## Reverse-direction passes, and the two free gates on them
+
+Raised 2026-09-07 out of [ghost_features.md](ghost_features.md): could a `d=2`
+algebraic pairing be carried by passes run in *different directions* through the
+decoder stack, degaussing-style, rather than by two slices of a channel axis?
+
+**Do not mistake this for a no-op.** It is tempting to say that with
+`num_layers: 1` and `depth: 6` the block sequence is `[B, B, B, B, B, B]`, so
+reversing it changes nothing. That is true only of reversing *which weights*
+run, and that is not the proposal. `current_depth` indexes **learned per-depth
+parameters** in at least six places:
+
+| what | where |
+| --- | --- |
+| per-depth QKV + output bias | `praxis/attention/single.py:203,216` |
+| per-depth RoPE theta | `praxis/encoding/rope.py:85,97` |
+| per-depth residual softmax | `praxis/residuals/smear.py:77,83` |
+| width arch + precessing helix window | `praxis/width/sparse.py:152,157,163` |
+| depth-proportional position warp | `praxis/encoding/archope.py:59` |
+| per-depth null logits | `praxis/attention/arc_ssog.py:411,419` |
+
+So `f(·; m_0) ∘ ... ∘ f(·; m_5)` and `f(·; m_5) ∘ ... ∘ f(·; m_0)` are genuinely
+different compositions. The reversible object is the **schedule**, not the
+weights, and the schedule is real and learned.
+
+That is a better-motivated `d=2` than anything in
+[ghost_features.md](ghost_features.md), because the two components are genuinely
+different computations of the same object rather than adjacent channels that
+happen to be neighbours, and the pairing is an involution by construction. It is
+**not ghost features**: nothing is tied and no weight is saved, so it belongs
+here, as a variant of rung 6, judged as bidirectional depth rather than as
+parameter efficiency.
+
+**Note the cost is 2x only for the paired version**, where both directions run
+and are combined. Asking whether direction matters at all costs nothing extra -
+see gate 2 below.
+
+**The metaphor's one mechanical prediction.** Degaussing is an *alternating*
+field of *decaying* amplitude. Taken literally that specifies alternating the
+schedule direction across passes with a decaying coefficient - which is a fixed
+per-depth profile, and this note already disqualifies those as "a tuned schedule
+in a lab coat" unless the coefficient is learned. So the metaphor survives only
+in the learned form, which is rung 7.
+
+**Two gates, both free, both on an existing checkpoint.** Neither needs a
+training run, and either can close the direction on its own.
+
+1. **Read the learned per-depth parameters.** The *mechanism* for
+   depth-dependence exists by construction, but if the model has *learned*
+   near-identical values across depths then reversal is nearly a no-op in
+   practice regardless. Measure the spread of the RoPE thetas
+   (`rope.py:85`), the `depth_bias` rows (`single.py:203`) and the SMEAR logits
+   (`smear.py:77`) in a checkpoint. Collapsed values close it. Pure tensor
+   inspection, no forward pass.
+2. **Run one pass with the depth indices reversed and measure output
+   divergence.** Same weights, same compute, one line at the call site. This is
+   the direct question: how much does the schedule actually carry? A small
+   divergence closes it; a large one makes the pairing worth pricing.
+
+Rung 3's per-depth order parameter is still worth having, but it is the weaker
+gate here - it reads the representation profile rather than the schedule's
+authority over it. **Run gate 2 first.** It is the cheapest and the most direct.
+
 ## Sequencing
 
 Rungs 1-2 are shipped or free. Nothing below rung 3 should be built before the
