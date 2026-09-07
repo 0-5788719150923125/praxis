@@ -1530,8 +1530,9 @@ function renderFieldTraces(canvas, data) {
 
 /**
  * Diverging correlation-matrix renderer. Grid values are cosine similarities
- * in [-1, 1]: red = positive, blue = negative, white = zero. Static; only
- * re-renders on resize or theme change.
+ * in [-1, 1]: blue = positive, red = negative, white = zero. Blue reads as
+ * "together" and red as "opposed", which is the way round people expect a
+ * correlation matrix. Static; only re-renders on resize or theme change.
  */
 function renderCorrMatrix(canvas, data) {
     if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
@@ -1544,11 +1545,11 @@ function renderCorrMatrix(canvas, data) {
     const ctx = canvas.getContext('2d');
     let lastW = 0, lastH = 0, lastTheme = null;
 
-    // White-centered diverging map: -1 blue, 0 white, +1 red.
+    // White-centered diverging map: -1 red, 0 white, +1 blue.
     const diverge = (v) => {
         const a = Math.min(1, Math.abs(v)) * 0.75;
         const lo = Math.round(255 * (1 - a));
-        return v >= 0 ? [255, lo, lo] : [lo, lo, 255];
+        return v >= 0 ? [lo, lo, 255] : [255, lo, lo];
     };
 
     const render = (w, h) => {

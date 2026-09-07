@@ -426,8 +426,8 @@ class HarmonicField(nn.Module):
         # successor to the fake terminal "CORRELATION" panel.
         "harmonic_correlation": {
             "description": (
-                "Cosine similarity between feature trajectories over one period. Red = "
-                "rise and fall together, blue = anti-correlated, white = unrelated."
+                "Cosine similarity between feature trajectories over one period. Blue = "
+                "rise and fall together, red = anti-correlated, white = unrelated."
             ),
             "snapshot": {
                 "title": "Feature Correlation",
