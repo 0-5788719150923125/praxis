@@ -13,11 +13,16 @@ class NetworkingGroup:
         """Add networking arguments to the parser."""
         group = parser.add_argument_group(cls.name)
 
+        # Where a run is *served* is infrastructure, not architecture. These
+        # stay out of the hash or a run that rolled to a free port (see the
+        # launcher's allocate_ports) would get a different identity - and a
+        # different checkpoint directory - than the same run on the default port.
         group.add_argument(
             "--host-name",
             type=str,
             default="localhost",
             help="Serve the local API at this CNAME",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -25,6 +30,7 @@ class NetworkingGroup:
             type=int,
             default=2100,
             help="Serve the local API at this port",
+            exclude_hash=True,
         )
 
         group.add_argument(

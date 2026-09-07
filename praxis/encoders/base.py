@@ -30,6 +30,45 @@ class BaseEncoder(nn.Module, ABC):
     # instance, to unify vocab_size onto the real representational width.
     owns_embeddings: bool = False
 
+    # Decoding paths this encoder can DRIVE through custom_generate. Empty
+    # means it drives none and generation falls through to the model's own
+    # loop. An encoder with exactly one mode (CALM, which only ever decodes by
+    # vote) declares it here and the user never has to name it in a config.
+    generation_modes: Tuple[str, ...] = ()
+
+    # Which of those to use when the run does not ask for one. None falls back
+    # to the first entry.
+    default_generation_mode: Optional[str] = None
+
+    # Resolved once by the model at build time. "standard" (or None) means this
+    # encoder is not driving generation.
+    generation_mode: Optional[str] = None
+
+    def resolve_generation_mode(self, requested: Optional[str] = None) -> Optional[str]:
+        """Settle the run's decoding path against what this encoder offers.
+
+        Inference-only, so it is deliberately NOT part of the model hash: both
+        paths are trained by the same objectives, and making the choice
+        architectural would force a separate training run just to compare
+        decoders on one checkpoint.
+        """
+        modes = tuple(self.generation_modes)
+        if not modes:
+            if requested and requested != "standard":
+                raise ValueError(
+                    f"{type(self).__name__} cannot drive generation_mode="
+                    f"{requested!r}; it has no custom generation path."
+                )
+            return "standard"
+        if requested is None:
+            return self.default_generation_mode or modes[0]
+        if requested not in modes:
+            raise ValueError(
+                f"{type(self).__name__} supports generation_mode "
+                f"{modes}, got {requested!r}."
+            )
+        return requested
+
     @abstractmethod
     def encode(
         self, input_ids: torch.Tensor, block_ids: Optional[torch.LongTensor] = None
@@ -133,7 +172,17 @@ class BaseEncoder(nn.Module, ABC):
         **kwargs,
     ):
         """Encoder-owned generation loop. Return None to defer to the standard
-        HF generate path. ``base_forward(input_ids)`` runs the global
-        transformer and returns an output exposing ``last_hidden_state``.
+        HF generate path.
+
+        ``base_forward(input_ids)`` runs the global transformer from tokens and
+        returns an output exposing ``last_hidden_state`` (plus ``patch_embeds``,
+        ``h_encoder``, ``patch_lengths`` and ``local_decoder_tokens`` for
+        encoders that patch).
+
+        ``latent_forward(patch_embeds, positions=None)`` arrives in ``kwargs``
+        and runs the trunk directly on a latent sequence, returning its hidden
+        states. An encoder that autoregresses over PATCHES needs it: the patch
+        it just predicted has no bytes behind it, so ``base_forward`` cannot
+        reach it.
         """
         return None

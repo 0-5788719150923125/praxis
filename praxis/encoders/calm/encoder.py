@@ -123,6 +123,12 @@ class CALMEncoder(BaseEncoder):
     # vocab_size should report that width, not the hash-bucket count.
     owns_embeddings = True
 
+    # CALM has exactly one decoding path: it autoregresses over latents and
+    # resolves each step by the count-based vote. There is no byte-level loop
+    # to fall back to, so the run never has to name this.
+    generation_modes = ("vote",)
+    default_generation_mode = "vote"
+
     """CALM autoencoder + energy head, plugged into the encoder slot.
 
     The encoder owns its loss bookkeeping; see ``handles_loss``.

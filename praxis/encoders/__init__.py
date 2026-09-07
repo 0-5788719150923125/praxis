@@ -206,28 +206,44 @@ AbstractinatorHarmonicGDNVocabBankStatic = partial(
     patch_size=8,
 )
 
-# abstractinator-p: the profile above, with a continuous CALM arm added beside
-# the discrete one. The two changes that matter are in the class, not here (see
-# praxis/encoders/abstractinator/calm.py):
+# abstractinator-p: the profile above, run BESIDE a second codec - CALM's
+# autoencoder - into the same trunk. Two encoders side by side, each with its
+# own objective and therefore independently optimizable:
 #
-#   1. a Gaussian posterior on the SAME patch features the quantizer sees, added
-#      residually to the quantized latent - the continuous channel CALM
-#      autoregresses over, carrying what quantization discarded;
-#   2. an energy head over the trunk output, trained by CALM's energy score, and
-#      a DENSE cross-entropy predicting the next patch's RVQ code from the same
-#      conditioning hidden the head reads.
+#   patch features h
+#     |
+#     +-- analysis -> HarmonicResidualVQ -> synthesis --> z_q   discrete codec
+#     |
+#     +-- PatchVAE.encode -> (mu, logvar) -> z_c                continuous codec
+#     |     +-- PatchVAE.decode -> h_hat, relative recon error
+#     |     +-- free-bits KL
+#     v
+#   z = z_q + gate * z_c  ->  trunk
+#     |
+#     +-- EnergyHead: predict the next VAE LATENT (CALM's energy score)
+#     +-- code CE:    predict the next RVQ code (the dense signal that pays)
 #
-# (2) is the whole bet. CALM's energy score is a weak, high-variance signal that
-# needs far more tokens than this line can afford; a code CE is dense,
-# low-variance and MODE-seeking, where the existing ENERGY_ANCHOR_WEIGHT MSE is
-# mean-seeking - the blur CALM's score exists to avoid. Both arms are already in
-# the same standing-wave basis, so nothing has to be translated between them.
+# THIS IS ONLY WELL-POSED BECAUSE THE PATCHING IS STATIC. Both codecs emit
+# exactly one latent per patch at `patch_size=8`, so `z_q + z_c` is an alignable
+# merge. Two encoders with different chunking would emit different numbers of
+# latents in different units, and no amount of care would reconcile them into
+# the one sequence the trunk consumes.
 #
-# Near-silent at step 0, not bit-identical: the posterior's weight is zeroed and
-# its log-variance bias sits at the clamp floor, so z_c is ~2% of ||z_q|| rather
-# than exactly 0 (a fully zeroed layer would give logvar 0, sigma 1, and add a
-# standard normal to every patch - measured at ratio 1.24 before the fix).
-# Close enough that the comparison is honest; `calm_arm_ratio` is the receipt.
+# WHY A REAL VAE AND NOT THE `nn.Linear(D, 2*D)` THIS REPLACES. CALM's VAE does
+# three jobs and the original port checked only one. It compresses K tokens into
+# one vector - which the Abstractinator's local encoder genuinely already did,
+# so that part really was redundant. It also supplies a continuous,
+# KL-regularized, unit-scale, STATIONARY latent space, and a per-patch POSTERIOR
+# for the energy score's target draws. Neither is redundant with an RVQ, and
+# both were dropped along with the compression, then re-derived badly one crisis
+# at a time: as a scale runaway patched with an RMS map at the loss, and as a
+# linear layer with no reconstruction pressure of its own, capped to 0.25%
+# because it destabilized everything it touched.
+#
+# Near-silent at step 0, not bit-identical: `arm_gate` starts at sigmoid(-6), so
+# z_c enters at ~0.25% of ||z_q||. `calm_arm_ratio` is the receipt, and unlike
+# before the gate rising now means something - there is a real objective behind
+# the arm for the first time.
 AbstractinatorHarmonicGDNVocabBankStaticCALM = partial(
     AbstractinatorCALM,
     bottleneck="harmonic_gdn",

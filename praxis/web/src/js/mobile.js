@@ -18,6 +18,7 @@ document.addEventListener('click', (e) => {
 
 import { state } from './state.js';
 import { executeAction } from './actions.js';
+import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
 
 // renderTabs lays the tab set out this many times on mobile. Native momentum
 // scroll is smooth but can't reposition mid-fling on every platform, so we keep
@@ -284,4 +285,103 @@ export function setupTabSwipe() {
         const dir = dx < 0 ? 1 : -1;
         executeAction('SWITCH_TAB', tabs[next].id, { dir }).then(snapActiveTabIntoView);
     }, { passive: true, capture: true });
+}
+
+/**
+ * Drive the LOGS panel's inner scroll from JS (mobile).
+ *
+ * The panel is REVEALED rather than always present - switchDashCard un-hides it -
+ * and the browser picks a gesture's scroll target when the finger lands, off a
+ * hit-test tree that hasn't caught up with the fresh scroller. That cost the
+ * first swipe after opening LOGS: it moved the whole page, and only afterwards
+ * did the log take over. There is no way to talk native pan out of that, so the
+ * log refuses native vertical pan (touch-action in responsive.css) and moves
+ * here instead - ours from the first pixel of the first gesture.
+ *
+ * Overflow chains by hand: travel the log can't absorb goes to the enclosing
+ * terminal-container, so a swipe past the last line keeps scrolling the page
+ * rather than dead-ending, and the release coast lands on whichever of the two
+ * still has room.
+ *
+ * Bound once on the document (capture, passive - touch-action already told the
+ * browser to keep its hands off, so nothing here needs preventDefault): the
+ * dashboard is rebuilt on every poll, so nothing holds an element reference.
+ */
+export function setupLogTouchScroll() {
+    let g = null;      // active gesture
+    let raf = 0;       // in-flight release coast
+
+    const maxOf = (el) => Math.max(0, el.scrollHeight - el.clientHeight);
+    const clampTo = (el, top) => Math.max(0, Math.min(maxOf(el), top));
+    const roomIn = (el, dir) => !el ? 0
+        : (dir > 0 ? maxOf(el) - el.scrollTop : el.scrollTop);
+
+    const stopCoast = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+
+    // Exponential-friction coast on ONE scroller, using the deck/wheel constants
+    // so a flick in the log decays with the same feel as everywhere else.
+    const coast = (el, vel) => {
+        let last = 0;
+        const tick = (t) => {
+            if (!last) last = t;
+            const dt = Math.min(50, t - last); last = t;
+            const before = el.scrollTop;
+            el.scrollTop = clampTo(el, before + vel * dt);
+            vel *= Math.exp(-dt / SCROLL_TAU);
+            // Stop at an edge as well as at rest - grinding against a clamped
+            // scrollTop just burns frames.
+            raf = (Math.abs(vel) > SCROLL_MIN_VEL && el.scrollTop !== before)
+                ? requestAnimationFrame(tick) : 0;
+        };
+        raf = requestAnimationFrame(tick);
+    };
+
+    document.addEventListener('touchstart', (e) => {
+        g = null;
+        stopCoast();
+        if (window.innerWidth > 768 || e.touches.length !== 1) return;
+        const el = e.target.closest && e.target.closest('.ld-log-content');
+        if (!el) return;
+        const page = el.closest('.terminal-container');
+        g = {
+            el, page,
+            y: e.touches[0].clientY,
+            top: el.scrollTop,
+            pageTop: page ? page.scrollTop : 0,
+            t: e.timeStamp, vel: 0, lastY: e.touches[0].clientY,
+        };
+    }, { passive: true, capture: true });
+
+    document.addEventListener('touchmove', (e) => {
+        if (!g || e.touches.length !== 1) return;
+        const y = e.touches[0].clientY;
+        // Position from NET displacement since touchstart, not per-move deltas:
+        // a reversal mid-swipe then tracks the finger exactly instead of
+        // accumulating rounding drift against the clamped edges.
+        const want = g.top - (y - g.y);
+        const got = clampTo(g.el, want);
+        g.el.scrollTop = got;
+        // Whatever the log couldn't absorb spills into the page scroller.
+        if (g.page) g.page.scrollTop = clampTo(g.page, g.pageTop + (want - got));
+        const dt = e.timeStamp - g.t;
+        if (dt > 0) g.vel = -(y - g.lastY) / dt;   // px/ms, scroll-space sign
+        g.t = e.timeStamp;
+        g.lastY = y;
+    }, { passive: true, capture: true });
+
+    document.addEventListener('touchend', (e) => {
+        if (!g) return;
+        const { el, page, vel } = g;
+        const idle = e.timeStamp - g.t;
+        g = null;
+        // A finger parked before lifting means "stop here", not a flick - the
+        // last measured velocity is stale, so don't throw on it.
+        if (idle > 80 || Math.abs(vel) < SCROLL_MIN_VEL) return;
+        const dir = Math.sign(vel);
+        // Coast whichever scroller still has somewhere to go in that direction:
+        // a flick that ran the log out keeps travelling on the page.
+        const target = roomIn(el, dir) > 0 ? el : (roomIn(page, dir) > 0 ? page : null);
+        if (target) coast(target, vel);
+    }, { passive: true, capture: true });
+    document.addEventListener('touchcancel', () => { g = null; }, { passive: true, capture: true });
 }

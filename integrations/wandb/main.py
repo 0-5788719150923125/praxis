@@ -28,6 +28,7 @@ def add_cli_args(parser):
         action="store_true",
         default=False,
         help="Log metrics to Weights and Biases (https://wandb.ai)",
+        exclude_hash=True,
     )
     logging_group.add_argument(
         "--wandb-run-name",

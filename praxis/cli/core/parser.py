@@ -1,6 +1,71 @@
-"""Parser creation and custom help formatting."""
+"""Parser creation, argument registration metadata, and custom help formatting."""
 
 import argparse
+
+from .hasher import register_hash_exclusion
+
+
+class _HashAwareContainer:
+    """Mixin that teaches ``add_argument`` about Praxis registration metadata.
+
+    ``exclude_hash=True`` is why this exists. A run's identity is a hash over
+    argv, and it names the run's checkpoint directory - so a flag that changes
+    nothing about the model (where it is served, how loud it logs, which decoder
+    it uses at inference) must be kept out of it, or toggling it forks a new
+    empty run. That used to be a hand-kept list of flag strings in hasher.py,
+    sitting a long way from the arguments it named and free to drift from them.
+    Declared here, the fact lives on the argument itself and cannot go stale.
+
+    Anything else that wants to be said about an argument at its definition site
+    belongs here too - add a keyword, consume it, pass the rest through.
+    """
+
+    def add_argument(self, *args, exclude_hash=False, **kwargs):
+        action = super().add_argument(*args, **kwargs)
+        if exclude_hash:
+            if not action.option_strings:
+                # The hasher keys positionals by index (_pos_N), not by name,
+                # so there is no flag string to exclude. Fail loudly rather
+                # than accept a declaration that would quietly do nothing.
+                raise ValueError(
+                    f"exclude_hash is only meaningful for optional arguments; "
+                    f"{action.dest!r} is positional."
+                )
+            register_hash_exclusion(*action.option_strings)
+        return action
+
+    # Nested containers have to stay hash-aware, or an argument added through
+    # one silently loses the keyword. Integrations reach the groups by walking
+    # parser._action_groups, so these are the objects they end up calling.
+    def add_argument_group(self, *args, **kwargs):
+        group = PraxisArgumentGroup(self, *args, **kwargs)
+        self._action_groups.append(group)
+        return group
+
+    def add_mutually_exclusive_group(self, **kwargs):
+        group = PraxisMutuallyExclusiveGroup(self, **kwargs)
+        self._mutually_exclusive_groups.append(group)
+        return group
+
+
+class PraxisArgumentGroup(_HashAwareContainer, argparse._ArgumentGroup):
+    """An argument group whose ``add_argument`` accepts ``exclude_hash``."""
+
+
+class PraxisMutuallyExclusiveGroup(
+    _HashAwareContainer, argparse._MutuallyExclusiveGroup
+):
+    """A mutually-exclusive group whose ``add_argument`` accepts ``exclude_hash``."""
+
+
+class PraxisArgumentParser(_HashAwareContainer, argparse.ArgumentParser):
+    """The Praxis parser: argparse plus per-argument registration metadata.
+
+    Every group handed out by this parser is a :class:`PraxisArgumentGroup`,
+    including the ones argparse builds for itself, so ``exclude_hash`` works
+    whether an argument is added to the parser, to a group a CLI group class
+    created, or to a group an integration found by title.
+    """
 
 
 def wrap_green(text):
@@ -70,7 +135,7 @@ class CustomHelpFormatter(argparse.HelpFormatter):
 
 def create_base_parser(description="Praxis CLI"):
     """Create the base argument parser with custom formatting."""
-    return argparse.ArgumentParser(
+    return PraxisArgumentParser(
         description=description,
         formatter_class=CustomHelpFormatter,
     )

@@ -70,6 +70,12 @@ class PraxisConfig(PretrainedConfig):
         head_type: str = "forward",
         halting_type: Optional[str] = None,
         width_type: Optional[str] = None,
+        # INFERENCE-ONLY, and excluded from the run hash on purpose. Both
+        # decoding paths are trained by the same objectives, so which one a run
+        # generates with is not part of the model's identity - making it a
+        # registry profile would force a whole separate training run just to
+        # compare decoders. None lets the encoder pick its own default.
+        generation_mode: Optional[str] = None,
         mtp_type: Optional[str] = None,
         mtp_depth: int = 1,
         mono_type: Optional[str] = None,

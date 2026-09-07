@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime
 
-from .hasher import DEFAULT_EXCLUDE_FROM_HASH, compute_args_hash
+from .hasher import compute_args_hash
 
 
 def log_command(exclude_from_hash=None, custom_command=None, custom_hash=None):
@@ -13,17 +13,14 @@ def log_command(exclude_from_hash=None, custom_command=None, custom_hash=None):
     New commands are added to the top of the file.
 
     Args:
-        exclude_from_hash: List of argument names to exclude from hashing
+        exclude_from_hash: Extra argument names to exclude from hashing, on
+            top of the flags declared with ``exclude_hash=True``
         custom_command: Optional custom command string to log
         custom_hash: Optional pre-computed hash to use
 
     Returns:
         tuple: (full_command, args_hash, truncated_hash)
     """
-    # Use default exclude list if None provided
-    if exclude_from_hash is None:
-        exclude_from_hash = DEFAULT_EXCLUDE_FROM_HASH
-
     # Construct the command
     if custom_command:
         full_command = custom_command

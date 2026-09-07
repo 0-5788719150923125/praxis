@@ -4,10 +4,11 @@ import sys
 
 from .config import RunConfig
 from .core import (
-    DEFAULT_EXCLUDE_FROM_HASH,
     CustomHelpFormatter,
+    PraxisArgumentParser,
     compute_args_hash,
     create_base_parser,
+    declared_hash_exclusions,
     log_command,
 )
 from .groups import OtherGroup, add_all_argument_groups, process_all_arguments
@@ -218,10 +219,10 @@ __all__ = [
     "get_loader_flag_attrs",
     "log_command",
     "compute_args_hash",
+    "declared_hash_exclusions",
+    "PraxisArgumentParser",
     # Global state (for backward compatibility)
     "parser",
     "args",
     "integration_loader",
-    # Constants
-    "DEFAULT_EXCLUDE_FROM_HASH",
 ]

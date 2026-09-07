@@ -115,11 +115,7 @@ class ArgumentProcessor:
         Returns:
             tuple: (args, computed_hash)
         """
-        from praxis.cli.core import (
-            DEFAULT_EXCLUDE_FROM_HASH,
-            compute_args_hash,
-            log_command,
-        )
+        from praxis.cli.core import compute_args_hash, log_command
         from praxis.environments import EnvironmentFeatures
 
         # Store original command for logging
@@ -222,7 +218,6 @@ class ArgumentProcessor:
 
         # Log with computed hash
         log_command(
-            exclude_from_hash=DEFAULT_EXCLUDE_FROM_HASH,
             custom_command=displayed_command,
             custom_hash=effective_hash,
         )

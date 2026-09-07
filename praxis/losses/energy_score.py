@@ -29,9 +29,18 @@ def _pairwise_distance(
     ``eps`` floors the squared distance so that ``d/dx sqrt(x)`` stays
     bounded when samples nearly coincide. With ``eps=1e-4`` the worst-case
     grad is ~50 instead of ~5e3 at ``eps=1e-8``.
+
+    Computed by expansion (``|a|^2 - 2 a.b + |b|^2``) rather than by
+    differencing. The obvious ``a.unsqueeze(-2) - b.unsqueeze(-3)`` allocates
+    ``[..., N, M, D]``, which for a batch of patch positions at N=8, M=100,
+    D=272 is several GB for one term - and it is the M axis that pays, so it
+    was silently capping how many target draws the score could afford. The
+    expansion never leaves ``[..., N, M]``.
     """
-    diff = a.unsqueeze(-2) - b.unsqueeze(-3)
-    return torch.sqrt(diff.pow(2).sum(dim=-1).clamp_min(eps))
+    a2 = a.pow(2).sum(dim=-1).unsqueeze(-1)  # [..., N, 1]
+    b2 = b.pow(2).sum(dim=-1).unsqueeze(-2)  # [..., 1, M]
+    ab = torch.matmul(a, b.transpose(-1, -2))  # [..., N, M]
+    return torch.sqrt((a2 - 2.0 * ab + b2).clamp_min(eps))
 
 
 def energy_score_loss(

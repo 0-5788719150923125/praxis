@@ -326,12 +326,24 @@ export function renderLiveDashboard(m) {
         const logCount = existing.querySelector('.ld-log-count');
         if (logCount) logCount.textContent = `${(m.log_lines || []).length} lines`;
 
-        // Log content - auto-scroll only if already at bottom
+        // Log content - auto-scroll only if already at bottom.
         const logContent = existing.querySelector('.ld-log-content');
         if (logContent && logPanelOpen) {
-            const wasAtBottom = isScrolledToBottom(logContent);
-            logContent.innerHTML = (m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('');
-            if (wasAtBottom) logContent.scrollTop = logContent.scrollHeight;
+            const html = (m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('');
+            // Only touch the DOM when the lines actually changed. Every rewrite
+            // empties the box, so the browser clamps scrollTop to 0 - a reader
+            // scrolled partway up would be thrown to the top on each poll, even
+            // for an idle log that produced nothing new.
+            if (logContent.innerHTML !== html) {
+                const wasAtBottom = isScrolledToBottom(logContent);
+                const prevTop = logContent.scrollTop;
+                logContent.innerHTML = html;
+                // Anchor from the top: while the buffer is still filling this
+                // holds the same lines in view, and once it rolls (fixed window,
+                // one line off the top per line appended) the height is constant
+                // so top- and bottom-anchoring agree anyway.
+                logContent.scrollTop = wasAtBottom ? logContent.scrollHeight : prevTop;
+            }
         }
 
         // Footer

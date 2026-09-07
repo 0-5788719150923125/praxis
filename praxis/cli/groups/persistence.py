@@ -23,6 +23,7 @@ class PersistenceGroup:
             action="store_true",
             default=False,
             help="Disable periodic checkpointing",
+            exclude_hash=True,
         )
 
         group.add_argument(

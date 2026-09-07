@@ -10,7 +10,7 @@ import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, print
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
-import { setupTabCarousel, setupTabSwipe, setupTerminalPullRelease } from './mobile.js';
+import { setupTabCarousel, setupTabSwipe, setupTerminalPullRelease, setupLogTouchScroll } from './mobile.js';
 import { storage, FORM_FIELDS, applyFormValues, updateRangeDisplay } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
@@ -133,6 +133,10 @@ function init() {
     // Release the Terminal scroller's overscroll containment at its top edge, so
     // the browser's own pull-to-refresh works there like it does everywhere else
     setupTerminalPullRelease();
+
+    // Drive the LOGS panel's inner scroll ourselves - the panel is revealed, not
+    // always present, so native pan hands the first swipe to the page
+    setupLogTouchScroll();
 
     // Setup KB sliding-window prefetch (scroll-driven precache/postcache)
     setupKbPrefetch();

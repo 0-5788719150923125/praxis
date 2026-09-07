@@ -235,8 +235,7 @@
        lands on it and would be captured instead of scrolling the dashboard, so
        make the inner scrollers transparent to touch - the gesture falls through
        to the terminal-container. JS still auto-scrolls them to their latest line. */
-    .ld-status-text,
-    .ld-log-content {
+    .ld-status-text {
         pointer-events: none;
     }
 
@@ -248,6 +247,24 @@
         pointer-events: auto;
         touch-action: pan-y;
         -webkit-overflow-scrolling: touch;
+    }
+
+    /* The LOGS panel is a reading surface too, but it can't use the native
+       scroller the context boxes get. It is REVEALED (un-hidden) rather than
+       always present, and the browser picks a gesture's scroll target when the
+       finger lands - off a hit-test tree that hasn't caught up with the fresh
+       scroller yet. So the first swipe after opening LOGS moved the page and
+       only later ones found the log. Same answer as the chart deck: refuse
+       native vertical pan and drive scrollTop from JS (setupLogTouchScroll in
+       mobile.js), which owns the gesture from the first pixel, every time.
+       pan-x + pinch-zoom keeps browser zoom working over the log. */
+    .ld-log-content {
+        pointer-events: auto;
+        touch-action: pan-x pinch-zoom;
+        /* 200px of an 0.6875rem log is a keyhole on a phone. A viewport-relative
+           window makes scrolling back through the tail worth doing, still bounded
+           so the panel never pushes the cards off-screen. */
+        max-height: min(45vh, 22rem);
     }
 
     /* Context cards and the sparkline keep their own bounded height so text/chart

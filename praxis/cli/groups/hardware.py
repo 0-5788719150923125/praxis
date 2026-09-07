@@ -58,6 +58,7 @@ class HardwareGroup:
             type=int,
             default=1,
             help="Number of nodes for distributed training (default: 1)",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -65,6 +66,7 @@ class HardwareGroup:
             type=int,
             default=None,
             help="Rank of this node among all nodes (overrides NODE_RANK env var)",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -72,6 +74,7 @@ class HardwareGroup:
             type=str,
             default=None,
             help="Hostname or IP of the rank-0 node (overrides MASTER_ADDR env var)",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -79,4 +82,5 @@ class HardwareGroup:
             type=int,
             default=None,
             help="Port for distributed rendezvous on the rank-0 node (overrides MASTER_PORT env var)",
+            exclude_hash=True,
         )

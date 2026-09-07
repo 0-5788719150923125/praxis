@@ -795,13 +795,6 @@ class Integration(BaseIntegration):
         self._thread = None
         self._stop = threading.Event()
 
-    # Publishing is a runtime/infra concern - these flags must never change a
-    # run's identity, so they're excluded from the args hash.
-    _PUBLISH_FLAGS = ["--publish-snapshot", "--publish-project", "--publish-interval"]
-
-    def hash_exclusions(self) -> List[str]:
-        return list(self._PUBLISH_FLAGS)
-
     def add_cli_args(self, parser) -> None:
         group = None
         for g in parser._action_groups:
@@ -810,23 +803,28 @@ class Integration(BaseIntegration):
                 break
         if group is None:
             group = parser.add_argument_group("networking")
+        # Publishing is a runtime/infra concern - these flags must never change
+        # a run's identity, so each declares itself out of the args hash.
         group.add_argument(
             "--publish-snapshot",
             action="store_true",
             default=False,
             help="Periodically publish a static dashboard snapshot to Cloudflare Pages",
+            exclude_hash=True,
         )
         group.add_argument(
             "--publish-project",
             type=str,
             default="praxis",
             help="Cloudflare Pages project name to deploy to (default: praxis)",
+            exclude_hash=True,
         )
         group.add_argument(
             "--publish-interval",
             type=int,
             default=30,
             help="Minutes between snapshot publishes (default: 30)",
+            exclude_hash=True,
         )
 
     def on_api_server_start(self, app: Any, args: Any) -> None:

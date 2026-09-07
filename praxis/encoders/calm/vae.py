@@ -241,3 +241,133 @@ class CALMVAE(nn.Module):
         if per_dim_clip and per_dim_clip > 0.0:
             per_dim = per_dim.clamp(min=per_dim_clip)
         return per_dim.sum(dim=-1)  # [B, N]
+
+
+class PatchVAE(nn.Module):
+    """CALM's autoencoder, over patch FEATURES instead of token chunks.
+
+    WHY THIS EXISTS SEPARATELY FROM ``CALMVAE``. ``CALMVAE`` encodes token ids
+    and decodes to K per-token features, because in the reference the VAE is
+    what performs the compression. In the Abstractinator that job is already
+    done - the local encoder has produced one feature vector per patch before
+    the bottleneck is reached - so a second token-chunk VAE would genuinely be
+    redundant. What is NOT redundant is everything else the VAE provides, and
+    dropping it along with the compression is what broke abstractinator-p:
+
+      1. A CONTINUOUS, KL-REGULARIZED, UNIT-SCALE, STATIONARY latent space. The
+         RVQ gives a discrete codebook lookup whose geometry moves every step,
+         which made the energy score - a DISTANCE - scale with a target the
+         same gradient step was reshaping.
+      2. A PER-PATCH POSTERIOR. The energy score's target draws come from it.
+         Without one the target is a point and the score degenerates into the
+         mean-seeking regression the whole construction exists to avoid.
+      3. ITS OWN RECONSTRUCTION OBJECTIVE, which is what makes the latent
+         informative in the first place. The stand-in this replaces was a bare
+         ``nn.Linear(D, 2*D)`` with no reconstruction pressure of its own: the
+         only forces on it were a KL pulling it to the prior and a distant byte
+         CE, so nothing ever required its latent to mean anything.
+
+    So this is the same autoencoder at the level this architecture actually
+    needs it: ``h -> (mu, logvar) -> z -> h_hat``, trained on its own relative
+    reconstruction error and its own free-bits KL. It shares ``ResidualMLPBlock``
+    with ``CALMVAE`` (the reference's ``AELayer`` shape) and the same
+    ``normalize_latent`` contract, so the two codecs stay one family.
+
+    Running this beside the RVQ is two encoders side by side, sharing one trunk:
+    two independently-optimizable paths onto the same patch features, which is
+    only well-posed because the patching is STATIC - both emit exactly one
+    latent per patch, so ``z_q + z_c`` is an alignable merge rather than two
+    sequences that cannot be reconciled.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        latent_dim: int,
+        hidden_dim: int,
+        depth: int = 2,
+        latent_norm: bool = True,
+        dropout: float = 0.0,
+        activation: str = "silu",
+    ) -> None:
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.latent_dim = latent_dim
+        self.latent_norm = bool(latent_norm)
+        self.dropout_p = float(dropout)
+
+        def _drop():
+            return nn.Dropout(dropout)
+
+        self.enc_in = nn.Linear(feature_dim, hidden_dim)
+        self.enc_blocks = nn.ModuleList(
+            [ResidualMLPBlock(hidden_dim, _drop(), activation) for _ in range(depth)]
+        )
+        self.params_norm = nn.RMSNorm(hidden_dim)
+        self.to_params = nn.Linear(hidden_dim, 2 * latent_dim)
+
+        self.dec_in = nn.Linear(latent_dim, hidden_dim)
+        self.dec_blocks = nn.ModuleList(
+            [ResidualMLPBlock(hidden_dim, _drop(), activation) for _ in range(depth)]
+        )
+        self.dec_out = nn.Linear(hidden_dim, feature_dim)
+        self.out_norm = nn.RMSNorm(hidden_dim)
+
+    def encode(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """``[..., feature_dim]`` -> ``(mean, logvar)``, each ``[..., latent_dim]``."""
+        x = self.enc_in(h)
+        for blk in self.enc_blocks:
+            x = blk(x)
+        mean, logvar = self.to_params(self.params_norm(x)).chunk(2, dim=-1)
+        return mean, logvar.clamp(min=-10.0, max=10.0)
+
+    def reparameterize(self, mean: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        return mean + (0.5 * logvar).exp() * torch.randn_like(mean)
+
+    def normalize_latent(self, x: torch.Tensor) -> torch.Tensor:
+        """Unit per-dim RMS. Same contract as ``CALMVAE.normalize_latent``: one
+        source of truth for "the decoder consumes a normalized latent", so the
+        geometry the energy head predicts into is stationary by construction
+        rather than by a correction applied at the loss."""
+        if not self.latent_norm:
+            return x
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-5)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """``[..., latent_dim]`` -> ``[..., feature_dim]`` reconstruction."""
+        z = self.normalize_latent(z)
+        z = F.dropout(z, p=self.dropout_p, training=self.training)
+        x = self.dec_in(z)
+        for blk in self.dec_blocks:
+            x = blk(x)
+        return self.dec_out(self.out_norm(x))
+
+    def reconstruction_loss(
+        self, h_hat: torch.Tensor, h: torch.Tensor
+    ) -> torch.Tensor:
+        """RELATIVE squared error: 1.0 is the trivial predict-zero solution.
+
+        Dimensionless on purpose. A raw MSE would carry the scale of whatever
+        the local encoder happens to emit, which is the same accident the
+        ln(K) code-CE normalization and the per-dimension KL removed - and the
+        learned loss balance cannot balance objectives whose units are set by
+        unrelated parts of the model.
+        """
+        return (h_hat - h).pow(2).mean() / h.detach().pow(2).mean().clamp_min(1e-6)
+
+    @staticmethod
+    def kl_divergence(
+        mean: torch.Tensor, logvar: torch.Tensor, per_dim_clip: float = 0.0
+    ) -> torch.Tensor:
+        """Per-DIMENSION mean KL against N(0, I), free-bits clipped.
+
+        A mean rather than ``CALMVAE``'s sum: the reference sums over
+        latent_size and then applies ``kl_weight=1e-3``, scaling it back down
+        by roughly 1/D anyway. Summing without that weight makes the term grow
+        with model width - at logvar -8 over D=272 that was 952 nats at step 0,
+        which is exactly how abstractinator-p's loss reached 16760.
+        """
+        per_dim = 0.5 * (mean.pow(2) + logvar.exp() - 1.0 - logvar)
+        if per_dim_clip and per_dim_clip > 0.0:
+            per_dim = per_dim.clamp(min=per_dim_clip)
+        return per_dim.mean()

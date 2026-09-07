@@ -960,3 +960,32 @@ def test_narrow_width_still_matches_byte_by_byte_greedy(deep_spec_config):
         greedy = greedy[0, prompt.size(1) :]
 
     assert spec.tolist() == greedy.tolist()
+
+
+def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
+    """`_speculative_generate` verifies ONE growing prefix - its batch axis
+    carries the n truncated prefixes, not n sequences - so `generated[0]` and
+    `seq[0]` are hard-coded. Handed a real batch it died on a `.item()` over a
+    per-row tensor ("a Tensor with B elements cannot be converted to Scalar"),
+    which is what broke BrierLMCallback: that callback generates two
+    continuations for each of a batch of prompts. Not byte-latent or CALM
+    specific - any MTP model generating with B > 1."""
+    import torch
+    from transformers import GenerationConfig
+
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    cfg = PraxisConfig(
+        vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
+        max_length=512, decoder_type="sequential", head_type="forward",
+        encoder_type="abstractinator_harmonic_gdn_vocab_bank_static",
+        tokenizer_type="byte_level", codebook_size=256,
+        mtp_depth=3, mtp_type="per_depth",
+    )
+    torch.manual_seed(0)
+    m = PraxisForCausalLM(cfg).eval()
+    gc = GenerationConfig(max_new_tokens=16, temperature=1.0, do_sample=True)
+    for b in (1, 2, 5):
+        out = m.generate(torch.randint(0, 256, (b, 32)), generation_config=gc)
+        assert out.shape[0] == b, (b, out.shape)

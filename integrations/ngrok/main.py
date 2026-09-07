@@ -355,6 +355,7 @@ class Integration(BaseIntegration):
             action="store_true",
             default=False,
             help="Expose the API server via ngrok tunnel",
+            exclude_hash=True,
         )
         networking_group.add_argument(
             "--ngrok-auth-token",

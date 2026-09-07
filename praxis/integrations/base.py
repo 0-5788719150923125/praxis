@@ -130,6 +130,13 @@ class BaseIntegration(ABC):
     def add_cli_args(self, parser) -> None:
         """Add CLI arguments for this integration.
 
+        The parser (and every group reachable from ``parser._action_groups``)
+        is a Praxis parser, so ``add_argument`` takes ``exclude_hash=True`` on
+        top of the usual argparse keywords. Pass it for every runtime/infra
+        switch you add - where to publish, tunnel tokens, cadence - or toggling
+        that flag changes the run hash, which names the run's checkpoint
+        directory, and the run forks into an empty one.
+
         Args:
             parser: ArgumentParser to add arguments to
 
@@ -261,20 +268,6 @@ class BaseIntegration(ABC):
         """
         return {}
 
-    def hash_exclusions(self) -> List[str]:
-        """CLI argument flags this integration adds that must NOT contribute to
-        the run hash - runtime/infra switches (where to publish, tunnel tokens,
-        cadence) that don't change the model, so toggling them must not spawn a
-        new run identity.
-
-        Return the flag strings exactly as registered, e.g.
-        ``["--publish-snapshot", "--publish-project"]``. The CLI merges these
-        into the hash exclusion list whenever this integration is loaded.
-
-        Note: Override this method if your integration adds such CLI args.
-        """
-        return []
-
     def on_decoder_init(self, decoder: Any, config: Any) -> None:
         """Hook called when a decoder is initialized.
 
@@ -397,7 +390,6 @@ class IntegrationFactory:
             "on_api_server_start",
             "request_middleware",
             "on_decoder_init",
-            "hash_exclusions",
         }
 
         # Get all callable attributes from the module

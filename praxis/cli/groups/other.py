@@ -30,6 +30,21 @@ class OtherGroup:
         )
 
         group.add_argument(
+            "--generation-mode",
+            type=str,
+            choices=["standard", "vote"],
+            default=None,
+            help=(
+                "How to decode at inference. 'standard' is the model's own "
+                "loop (byte-level, MTP speculative decode where it applies); "
+                "'vote' is CALM's count-based patch vote. Inference-only and "
+                "excluded from the run hash, so both can be compared on one "
+                "checkpoint. Omit to let the encoder choose."
+            ),
+            exclude_hash=True,
+        )
+
+        group.add_argument(
             "--eval-every",
             type=int,
             default=None,
@@ -48,6 +63,7 @@ class OtherGroup:
             action="store_true",
             default=False,
             help="Reset the checkpoint",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -60,6 +76,7 @@ class OtherGroup:
                 "keeps failing to start). Use in respawning remote/systemd setups "
                 "so a wedged checkpoint self-heals. 0 (default) disables it."
             ),
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -67,6 +84,7 @@ class OtherGroup:
             action="store_true",
             default=False,
             help="Mark this run as preserved (protected from --reset)",
+            exclude_hash=True,
         )
 
         group.add_argument(
@@ -74,6 +92,7 @@ class OtherGroup:
             action="store_true",
             default=False,
             help="List all available runs and exit",
+            exclude_hash=True,
         )
 
         group.add_argument(

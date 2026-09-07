@@ -67,6 +67,13 @@ class PraxisModel(PreTrainedModel):
         self.embeds = None
         if config.encoder_type is not None:
             self.encoder = ENCODER_REGISTRY.get(config.encoder_type)(config)
+            # Settle the decoding path once, here, so nothing downstream has to
+            # re-derive it. Encoders that offer only one mode pick it
+            # themselves; a run that names a mode its encoder cannot drive
+            # fails loudly at build rather than silently decoding the other way.
+            self.encoder.generation_mode = self.encoder.resolve_generation_mode(
+                getattr(config, "generation_mode", None)
+            )
             # Encoders that name an embedding profile get their input
             # embeddings built from the registry and injected, mirroring how
             # heads classify encoder-declared output dims. Encoders that own
@@ -1109,6 +1116,29 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             result = self.encoder.custom_generate(
                 inputs,
                 base_forward=lambda ids: PraxisModel.forward(self, input_ids=ids),
+                # Latent-level trunk pass. An encoder that autoregresses over
+                # PATCHES (CALM's vote) has to run the trunk on a latent
+                # sequence it constructed - one it just predicted, which by
+                # definition has no bytes behind it yet - and `base_forward`
+                # always encodes from bytes, so there was no seam for that.
+                # The closure is handed over rather than stored, so no encoder
+                # ends up holding a back-reference to the trunk.
+                latent_forward=lambda pe, positions=None: self.decoder(
+                    pe,
+                    None,
+                    None,
+                    None,
+                    None,
+                    LossContainer(),
+                    None,
+                    positions,
+                )[0],
+                # The head belongs to the MODEL, not the encoder - the
+                # Abstractinator deliberately holds no reference to it. An
+                # encoder driving its own loop still has to turn decoder
+                # embeddings into byte logits, so it gets a closure for that
+                # too rather than a stored back-reference.
+                decode_logits=lambda embeds: self.head(embeds),
                 generation_config=generation_config,
                 **kwargs,
             )
@@ -1124,11 +1154,23 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # explicitly, so they exercised a path production never took. `or 1`
         # reads unset/0 as single-beam, which is what both mean here.
         num_beams = getattr(generation_config, "num_beams", None) or 1
+        # BATCH SIZE 1 ONLY. The speculative loop verifies ONE growing prefix:
+        # `_verify_prefixes_batched` builds its rows from `generated[0]` and
+        # `candidates[0]`, and the stop-string check reads `seq[0]`, so the
+        # batch axis there carries the n truncated PREFIXES, not n sequences.
+        # Handed a real batch it reached a `.item()` on a per-row tensor and
+        # died with "a Tensor with B elements cannot be converted to Scalar" -
+        # which is what broke BrierLMCallback, whose whole job is to generate
+        # two continuations for each of a batch of prompts. Nothing about this
+        # is byte-latent or CALM specific; any MTP model generating with B > 1
+        # hit it. Defer to the standard loop instead, which batches correctly.
+        batch_ok = inputs is None or inputs.dim() < 2 or inputs.size(0) == 1
         spec_ok = (
             self.mtp is not None
             and not self.training
             and generation_config is not None
             and num_beams == 1
+            and batch_ok
             and (not self.encoder or getattr(self.mtp, "byte_level", False))
         )
         if spec_ok:
