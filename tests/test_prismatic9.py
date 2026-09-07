@@ -452,3 +452,133 @@ def test_full_model_survives_the_lazy_init_pass():
     out = m(input_ids=ids, labels=ids[..., 1:].contiguous())
     out.loss.backward()
     assert any(p.grad is not None for p in m.parameters())
+
+
+def test_validation_loss_stays_comparable_to_prismatic8():
+    """prismatic9 flips `composite_geometry` off so HALO's geometric term is
+    not double-counted (the head owns it as a Jacobian row). That suppression
+    must be TRAINING-ONLY: at eval nothing replaces the term, so zeroing it
+    there just deletes a component of val_loss and makes the -n -> -o
+    comparison meaningless. Caught in the wild - -o's first validation point
+    landed several nats below its predecessor."""
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    def val_loss(head):
+        c = PraxisConfig(
+            vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
+            max_length=128, decoder_type="sequential", encoder_type=None,
+            head_type=head, loss_func="halo",
+        )
+        torch.manual_seed(0)
+        m = PraxisForCausalLM(c).eval()
+        ids = torch.arange(16).remainder(900).unsqueeze(0).repeat(2, 1)
+        with torch.no_grad():
+            out = m(input_ids=ids, labels=ids[:, 1:].contiguous())
+        return float(out.loss), m
+
+    eight, m8 = val_loss("prismatic8")
+    nine, m9 = val_loss("prismatic9")
+    # The criterion is configured differently...
+    assert m8.criterion.composite_geometry is True
+    assert m9.criterion.composite_geometry is False
+    # ...but at EVAL both must score the same composite objective.
+    assert nine == pytest.approx(eight, rel=1e-4), (
+        f"val loss diverged: prismatic8 {eight}, prismatic9 {nine}"
+    )
+
+
+def test_geometry_is_still_suppressed_during_training():
+    """The other half: the double-count the flag exists to prevent."""
+    from praxis.losses.halo import HALOLoss
+    from praxis.heads.halo import HaloHead
+    from tests.test_prismatic8 import Cfg, Enc
+
+    torch.manual_seed(0)
+    arm = HaloHead(Cfg(), encoder=Enc())
+    crit = HALOLoss(vocab_size=32)
+    x = torch.randn(2, 5, 48)
+    y = torch.randint(0, 32, (2, 4))
+    kw = dict(
+        logits=arm(x)[..., :-1, :].contiguous(),
+        labels=y,
+        embeddings=x[..., :-1, :].contiguous(),
+        classifier=arm.classifier,
+    )
+    crit.train()
+    full = float(crit(**kw))
+    crit.composite_geometry = False
+    ce_only = float(crit(**kw))
+    assert ce_only < full, "training-mode suppression stopped working"
+    crit.eval()
+    assert float(crit(**kw)) == pytest.approx(full, rel=1e-4)
+
+
+def test_mtp_still_trains_under_a_surgical_head():
+    """Detaching every arm in the blend severs the path from the head's OUTPUT
+    back to its INPUT - and MTP classifies its draft states with that same head,
+    so its loss reached nothing at all: not the arms, not the trunk, not even
+    MTP's own bank. Caught in the wild from mtp_field_* series sitting frozen at
+    their initialization with slope exactly 0."""
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    def run(head):
+        cfg = PraxisConfig(
+            vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
+            max_length=128, decoder_type="sequential", encoder_type=None,
+            head_type=head, loss_func="halo", mtp_depth=3, mtp_type="per_depth",
+        )
+        torch.manual_seed(0)
+        m = PraxisForCausalLM(cfg).train()
+        ids = torch.randint(0, 1000, (2, 16))
+        m(input_ids=ids, labels=ids[:, 1:].contiguous()).loss.backward()
+        live = [
+            n for n, p in m.mtp.named_parameters()
+            if p.grad is not None and p.grad.abs().sum() > 0
+        ]
+        return m, live, sum(1 for _ in m.mtp.named_parameters())
+
+    _, live8, total = run("prismatic8")
+    m9, live9, _ = run("prismatic9")
+    assert len(live8) == total, "baseline broke; the comparison is meaningless"
+    assert len(live9) == total, f"MTP starved under prismatic9: {len(live9)}/{total}"
+
+    # And the fallback path, for a head that has no undetached() at all. This
+    # branch was a latent NameError (contextlib was never imported in
+    # modeling.py) and no existing test reached it.
+    m, live, total = run("forward")
+    assert not hasattr(m.head, "undetached")
+    assert len(live) == total
+
+
+def test_undetached_is_scoped_and_restores_the_surgery():
+    """The context manager must not leave the head permanently undetached -
+    that would hand the arms back the mixture's responsibility-weighted
+    gradient and undo the whole intervention."""
+    head = build().train()
+    assert all(b.detach_in_blend for b in head.branches)
+    assert head.detach_gate_input is True
+
+    with head.undetached():
+        assert not any(b.detach_in_blend for b in head.branches)
+        assert head.detach_gate_input is False
+
+    assert all(b.detach_in_blend for b in head.branches)
+    assert head.detach_gate_input is True
+
+    # And it restores even when the body raises.
+    with pytest.raises(RuntimeError):
+        with head.undetached():
+            raise RuntimeError("boom")
+    assert all(b.detach_in_blend for b in head.branches)
+    assert head.detach_gate_input is True
+
+
+def test_the_main_loss_still_reaches_only_the_gate():
+    """The property the detaching exists for, re-asserted after the MTP fix:
+    outside `undetached()`, the blended logits carry no gradient to the trunk."""
+    head = build().train()
+    x, _ = batch()
+    g = torch.autograd.grad(head(x).sum(), x, allow_unused=True)[0]
+    assert g is None or g.abs().sum() == 0

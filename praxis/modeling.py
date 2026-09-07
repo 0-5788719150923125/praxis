@@ -6,6 +6,7 @@ and is what `AutoModelForCausalLM.from_pretrained(...)` returns). Both assemble
 themselves from the `PraxisConfig` by looking implementations up in the registries.
 """
 
+import contextlib
 import functools
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
@@ -391,15 +392,20 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         from praxis.losses.layer_wise import compute_layer_wise_loss
 
         del layer_idx  # reserved for future use
-        return compute_layer_wise_loss(
-            hidden_states=hidden_states,
-            labels=labels,
-            head=self.head,
-            criterion=self.criterion,
-            strategy=self.strategy,
-            aux_losses=aux_losses,
-            input_ids=input_ids,
-        )
+        # Like MTP, this classifies with the SHARED head and needs its ordinary
+        # gradient path; a surgical head's blend detaching would otherwise leave
+        # the loss unable to reach anything. See ParallelHead.undetached.
+        undetach = getattr(self.head, "undetached", None)
+        with undetach() if undetach else contextlib.nullcontext():
+            return compute_layer_wise_loss(
+                hidden_states=hidden_states,
+                labels=labels,
+                head=self.head,
+                criterion=self.criterion,
+                strategy=self.strategy,
+                aux_losses=aux_losses,
+                input_ids=input_ids,
+            )
 
     def _build_loss_weights(
         self,
@@ -1034,16 +1040,26 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if getattr(self.config, "no_mask_prompts", False)
                 else assistant_mask
             )
-            mtp_inputs = self.mtp.prepare_inputs(
-                hidden_states=hidden_states,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                embed_fn=mtp_embed_fn,
-                head=self.head,
-                patch_embeds=outputs.patch_embeds if self.encoder else None,
-                loss_weights=mtp_weights,
-            )
-            outputs.losses.add_loss_container(self.mtp(mtp_inputs))
+            # MTP classifies its draft states with the SHARED head, so it needs
+            # that head's ordinary gradient path. A surgical head (prismatic9)
+            # detaches every arm in the blend so the main CE trains only the
+            # gate - and detaching an arm's output severs the route back to the
+            # head's input, which is where MTP's draft states enter. Left alone,
+            # MTP's loss reaches nothing: 0 of 9 MTP parameters received a
+            # gradient under prismatic9 against 9 of 9 under prismatic8, and
+            # every mtp_field_* series sat frozen at its initialization.
+            undetach = getattr(self.head, "undetached", None)
+            with undetach() if undetach else contextlib.nullcontext():
+                mtp_inputs = self.mtp.prepare_inputs(
+                    hidden_states=hidden_states,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    embed_fn=mtp_embed_fn,
+                    head=self.head,
+                    patch_embeds=outputs.patch_embeds if self.encoder else None,
+                    loss_weights=mtp_weights,
+                )
+                outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
         # Additive representation-shaping regularizers (REGULARIZER_REGISTRY).
         # `classifier` is passed as optional context, not stored: a regularizer

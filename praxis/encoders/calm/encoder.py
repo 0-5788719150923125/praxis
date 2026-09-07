@@ -1295,7 +1295,7 @@ class CALMEncoder(BaseEncoder):
         working codec regardless of whether the LM can generate. The trainer
         surfaces it as ``val_codec_bpb``; trust ``val_brierlm`` for the
         generative path. An energy-based head has no closed-form per-byte
-        likelihood, so CALM intentionally does not report ``val_bits_per_byte``.
+        likelihood, so CALM intentionally does not report a bits-per-byte.
         """
         return getattr(self, "_last_recon_loss", None)
 

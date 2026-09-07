@@ -182,11 +182,9 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
     out: Dict[str, dict] = {
         "conflict_min": {
             "description": (
-                "The most opposed objective this step: the minimum over every "
-                "conflict_* cosine. Sitting persistently below zero is the case "
-                "for gradient surgery (PCGrad and relatives); hovering near zero "
-                "says the objectives shape orthogonal directions and summing "
-                "them is already the right combination."
+                "Minimum over every conflict_* cosine - the most opposed "
+                "objective this step. Persistently below zero is the case for "
+                "gradient surgery; near zero says summing is already right."
             ),
             "chart": {
                 "title": "Objective Conflict",
@@ -204,11 +202,9 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
         name = key[len("conflict_mag_") :]
         out[key] = {
             "description": (
-                f"||grad of '{name}'|| / ||grad of the main loss||, at the trunk "
-                "output. The half of the reading the cosine cannot give: near 0 "
-                f"means '{name}' is inert whatever its cosine says, so its "
-                "orthogonality is not evidence that summing is fine. Near 1 means "
-                "it is a comparable force and the cosine is worth believing."
+                f"||g_{name}|| / ||g_main|| at the trunk output - the half "
+                "a cosine cannot give. Near 0 means inert whatever the cosine "
+                "reads; near 1 means the cosine is worth believing."
             ),
             "chart": {
                 "title": "Objective Magnitude vs Main Loss",
@@ -226,15 +222,9 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
         name = key[len("conflict_") :]
         out[key] = {
             "description": (
-                f"Cosine between the '{name}' gradient and the main loss's, both "
-                "taken at the trunk output the head classifies. Negative means "
-                f"'{name}' is pulling the shared representation against the main "
-                "objective; near zero means the two are shaping independent "
-                "directions; positive means it is largely a reweighting of the "
-                "main loss. Sampled one step in "
-                f"{CONFLICT_INTERVAL}. Parameter-only terms (centers_rms, the "
-                "gate and router repulsions) never appear here - they have no "
-                "path to the shared representation to conflict over."
+                f"Cosine between the '{name}' gradient and the main loss's "
+                "at the trunk output. Negative = pulling against it; ~0 = "
+                "independent; positive = a reweighting."
             ),
             # No title/axis: rides conflict_min's chart via series_group.
             "chart": {

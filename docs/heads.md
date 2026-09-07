@@ -65,7 +65,7 @@ Source: [praxis/heads/harmonic.py:1496](../praxis/heads/harmonic.py#L1496)
 
 Gate-combined parallel branches; a SequentialHead stage or top head.
 
-Source: [praxis/heads/parallel.py:128](../praxis/heads/parallel.py#L128)
+Source: [praxis/heads/parallel.py:129](../praxis/heads/parallel.py#L129)
 
 Presets:
 - `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=False)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=False), <class 'praxis.heads.crystal.CrystalHead'>])]`
@@ -90,7 +90,7 @@ The honest cost, stated up front: solo cross-entropy on every arm removes the DI
 OF LABOUR. Under the mixture, arms specialize - each covers what it explains best and
 the gate routes accordingly. Trained ...
 
-Source: [praxis/heads/parallel.py:915](../praxis/heads/parallel.py#L915)
+Source: [praxis/heads/parallel.py:933](../praxis/heads/parallel.py#L933)
 
 Presets:
 - `prismatic9` - `branches=[<class 'praxis.heads.crystal.CrystalHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`

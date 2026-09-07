@@ -215,10 +215,22 @@ class HALOLoss(nn.Module):
         )
         if not is_halo_head:
             return halo_loss
-        if not self.composite_geometry:
+        if not self.composite_geometry and self.training:
             # A head owns the arm objectives and has already taken this term as
             # the HALO arm's Jacobian row. Emit CE only; adding the geometry
             # here would double it and give it an uncorrected path to the trunk.
+            #
+            # TRAINING ONLY, and the gate is the whole point. At eval the head's
+            # arm_objectives returns {} (they are training-only) and
+            # _finalize_loss drops aux losses anyway, so there is nothing to
+            # double-count - suppressing the term there does not prevent a
+            # double, it silently REMOVES a component of ``val_loss``. Without
+            # this gate a prismatic9 run reads several nats below its
+            # prismatic8 predecessor for a reason that has nothing to do with
+            # the model. (``val_byte_nll_bits`` is unweighted CE on the emitted
+            # logits and was never affected either way - which is precisely why
+            # it, rather than a rescaling of the objective, is the reported
+            # bits-per-byte.)
             halo_loss = halo_loss.detach() * 0.0
 
         # Honest-mode composite: standard CE on the model's emitted logits.

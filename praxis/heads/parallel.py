@@ -37,6 +37,7 @@ prefix; per-branch cards get a ``#i`` title suffix and keep the producing leaf
 class as their caller, so they render independently on the dashboard.
 """
 
+import contextlib
 import copy
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -233,6 +234,38 @@ class ParallelHead(BaseHead):
 
     def __repr__(self) -> str:
         return self.compose_repr()
+
+    @contextlib.contextmanager
+    def undetached(self):
+        """Restore the ordinary gradient path through this head, temporarily.
+
+        A surgical head detaches every arm in the blend and detaches the gate's
+        input, so the mixture cross-entropy trains ONLY the gate - the arms have
+        their own objectives instead. That is right for the main loss and wrong
+        for every other consumer of the same head, because detaching an arm's
+        OUTPUT severs the path back to the head's INPUT.
+
+        MTP is that other consumer. It transforms the trunk's hidden states into
+        draft states and classifies them with this head, so under the detached
+        blend its loss reaches nothing at all - not the arms, not the trunk, and
+        not even MTP's own bank. Measured: prismatic9 left 0 of 9 MTP parameters
+        with a gradient where prismatic8 had 9 of 9, which is why every
+        ``mtp_field_*`` series sat frozen at its initialization.
+
+        Callers that own their own objective and want the whole head trained by
+        it wrap their use of the head in this.
+        """
+        saved = [getattr(b, "detach_in_blend", False) for b in self.branches]
+        saved_gate = self.detach_gate_input
+        for b in self.branches:
+            b.detach_in_blend = False
+        self.detach_gate_input = False
+        try:
+            yield
+        finally:
+            for b, was in zip(self.branches, saved):
+                b.detach_in_blend = was
+            self.detach_gate_input = saved_gate
 
     def _gate_in(self, hidden_states: Tensor) -> Tensor:
         """What the gate projects. Detached under a surgical head so the gate's
@@ -585,16 +618,9 @@ class ParallelHead(BaseHead):
         out: dict = {
             "arm_cos_min": {
                 "description": (
-                    "The most opposed pair of arms: the minimum pairwise cosine "
-                    "between the arms' SOLO cross-entropy gradients at the point "
-                    "they branch. This is the head's own multi-task Jacobian, one "
-                    "row per arm - the measurement the loss-term conflict cards "
-                    "structurally cannot make, since one cross-entropy reaches "
-                    "every arm through the gate's mixture rather than as separate "
-                    "terms. Persistently negative is the case for PCGrad "
-                    "(head_type: prismatic9); near zero at comparable "
-                    "arm_grad_share says the arms want independent things and a "
-                    "plain sum is already right."
+                    "Minimum pairwise cosine between the arms' own-objective "
+                    "gradients where they branch - the head's Jacobian. "
+                    "Persistently negative is the case for PCGrad."
                 ),
                 "chart": {
                     "title": "Arm Gradient Conflict",
@@ -610,11 +636,9 @@ class ParallelHead(BaseHead):
             },
             "arm_surgery_norm": {
                 "description": (
-                    "Norm of the PCGrad-combined gradient handed to the trunk. "
-                    "Only present under prismatic9. Compare against the plain "
-                    "sum it replaces: equal means PCGrad found nothing to "
-                    "project and is a no-op, which is its designed behaviour "
-                    "when the arms do not conflict."
+                    "Norm of the combined gradient handed to the trunk "
+                    "(prismatic9 only). Equal to the plain sum it replaces "
+                    "means PCGrad found nothing to project."
                 ),
                 "chart": {
                     "title": "Surgical Trunk Gradient",
@@ -629,15 +653,9 @@ class ParallelHead(BaseHead):
         for pos, i in enumerate(live):
             out[f"arm_override_{i}"] = {
                 "description": (
-                    f"Fraction of arm {i}'s own gradient MASS that the plain "
-                    "summed update points the wrong way on. This is the "
-                    "question a magnitude ratio only gestures at: under a "
-                    "sign-based optimizer a larger row does not take larger "
-                    "steps, it wins the SIGN where rows disagree. 0 means this "
-                    "arm is never contradicted; toward 1 means it is "
-                    "systematically overruled and its objective cannot act. "
-                    "Read against arm_override_pcg_ - the gap between them is "
-                    "what PCGrad bought, in the units that decide the update."
+                    f"Fraction of arm {i}'s gradient MASS the plain sum "
+                    "points the wrong way on. 0.5 is the null (no vote, not "
+                    "opposition); 0 = never contradicted."
                 ),
                 "chart": {
                     "group": _G,
@@ -652,12 +670,8 @@ class ParallelHead(BaseHead):
             out[f"arm_override_eq_{i}"] = {
                 "description": (
                     f"Arm {i}'s overruled mass after PCGrad on ROW-EQUALIZED "
-                    "gradients - every objective given an equal vote in the "
-                    "update's direction, then rescaled back to the plain sum's "
-                    "magnitude so the step size is unchanged. This is what "
-                    "prismatic9 actually applies (`equalize_rows`). Not "
-                    "GradNorm: no learned weights, no alpha, no assumption that "
-                    "the objectives should converge at the same rate."
+                    "gradients - what prismatic9 applies. Not GradNorm: no "
+                    "alpha, and step size is preserved."
                 ),
                 "chart": {
                     "group": _G,
@@ -669,10 +683,9 @@ class ParallelHead(BaseHead):
             }
             out[f"arm_override_pcg_{i}"] = {
                 "description": (
-                    f"Arm {i}'s overruled mass AFTER PCGrad. Equal to the plain "
-                    "figure means the projection found nothing to correct, "
-                    "which is its designed no-op; lower means it stopped a "
-                    "louder row from reversing this one."
+                    f"Arm {i}'s overruled mass after PCGrad. Equal to the "
+                    "plain figure means nothing conflicted (its no-op); lower "
+                    "means it stopped a louder row reversing this one."
                 ),
                 "chart": {
                     "group": _G,
@@ -684,12 +697,9 @@ class ParallelHead(BaseHead):
             }
             out[f"arm_grad_share_{i}"] = {
                 "description": (
-                    f"Norm of arm {i}'s solo gradient, relative to the largest "
-                    "arm's. The half a cosine cannot supply: two arms can read "
-                    "perfectly orthogonal while one contributes nothing, and "
-                    "those are different diagnoses. Unlike the gate share, this "
-                    "is measured from each arm's OWN objective, so it does not "
-                    "fall to zero just because the gate stopped trusting the arm."
+                    f"Arm {i}'s solo gradient norm relative to the largest "
+                    "arm's - the half a cosine cannot supply. From the arm's "
+                    "OWN objective, so it survives gate collapse."
                 ),
                 "chart": {
                     "group": _G,
@@ -703,14 +713,9 @@ class ParallelHead(BaseHead):
             }
             out[f"arm_solo_loss_{i}"] = {
                 "description": (
-                    f"Arm {i}'s OWN objective scored alone - cross-entropy for "
-                    "most arms, HALO's geometric loss for the HALO arm, which "
-                    "is why these are not on a common scale and should be read "
-                    "per-series rather than against each other. Under "
-                    "prismatic2-8 it is a counterfactual the arm never trains "
-                    "on; under prismatic9 it IS the arm's objective. Either way "
-                    "it separates 'this arm is bad' from 'the gate stopped "
-                    "feeding this arm'."
+                    f"Arm {i}'s OWN objective scored alone - CE for most "
+                    "arms, HALO's geometry for that one, so read per-series. "
+                    "Separates a bad arm from a starved one."
                 ),
                 "chart": {
                     "group": _G,
@@ -725,9 +730,8 @@ class ParallelHead(BaseHead):
             for j in live[pos + 1 :]:
                 out[f"arm_cos_{i}{j}"] = {
                     "description": (
-                        f"Cosine between arm {i}'s and arm {j}'s solo gradients "
-                        "at the branch point. Negative means they want the shared "
-                        "representation moved in opposing directions and one is "
+                        f"Cosine between arm {i}'s and arm {j}'s own-objective "
+                        "gradients at the branch point. Negative means one is "
                         "cancelling the other."
                     ),
                     "chart": {

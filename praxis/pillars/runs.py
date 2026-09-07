@@ -9,7 +9,7 @@ Reads the newest experiments under ``build/runs/`` and emits, into
   ``\\paperValPlots`` body (the ``\\addplot`` lines + legend).
 
 The y-metric is chosen per family, since validation metrics are not comparable
-across families: byte-latent runs report ``val_bits_per_byte``, codec/CALM runs
+across families: byte-latent runs report ``val_byte_nll_bits``, codec/CALM runs
 report ``val_brierlm`` (they emit no loss/bpb), token runs report ``val_loss``.
 ``metric="auto"`` picks the first of those the current run actually populates.
 
@@ -27,12 +27,21 @@ import os
 import sqlite3
 import sys
 
-# Comparable generation metrics, in tie-break priority order. bpb is byte-latent
-# only (so it is family-consistent by construction) and preferred; brierlm is the
-# CALM generation metric; val_loss is the token-vocab fallback. val_codec_bpb is
-# deliberately excluded from auto - it measures codec fidelity, not generation
-# ("judge with val_brierlm, not this") - and is reachable only via --metric.
-METRIC_PRIORITY = ["val_bits_per_byte", "val_brierlm", "val_loss"]
+# Comparable generation metrics, in tie-break priority order. Byte NLL is
+# byte-latent only (so it is family-consistent by construction) and preferred;
+# brierlm is the CALM generation metric; val_loss is the token-vocab fallback.
+# val_codec_bpb is deliberately excluded from auto - it measures codec fidelity,
+# not generation ("judge with val_brierlm, not this") - and is reachable only
+# via --metric.
+#
+# This used to lead with ``val_bits_per_byte``, which was exactly
+# ``val_loss / ln(2)`` - a unit conversion of the fallback, not a measurement.
+# Worse, it inherited whatever the training objective was, so under a composite
+# loss (HALOLoss honest mode = CE + a geometry penalty) it reported a "bits per
+# byte" with no entropy floor: runs opened above 16 against a hard chance
+# ceiling of 8. ``val_byte_nll_bits`` is unweighted CE on the emitted logits and
+# is the number every byte-level scaling law is written in.
+METRIC_PRIORITY = ["val_byte_nll_bits", "val_brierlm", "val_loss"]
 # Auto never picks codec fidelity, but it is a last-resort fallback so the
 # current experiment can always plot *something*, and is reachable via --metric.
 ALL_METRICS = METRIC_PRIORITY + ["val_codec_bpb"]
@@ -40,7 +49,7 @@ ALL_METRICS = METRIC_PRIORITY + ["val_codec_bpb"]
 # Display labels (kept local so the tool runs without importing praxis/torch).
 METRIC_LABELS = {
     "val_loss": ("Validation Loss", "Validation loss"),
-    "val_bits_per_byte": ("Bits per Byte", "Validation bits/byte"),
+    "val_byte_nll_bits": ("Bits per Byte", "Validation bits/byte"),
     "val_brierlm": ("BrierLM", "BrierLM score"),
     "val_codec_bpb": ("Codec Recon", "Codec bits/byte"),
 }

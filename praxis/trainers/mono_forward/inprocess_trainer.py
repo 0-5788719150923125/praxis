@@ -908,13 +908,16 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
         val_loss = sum(losses) / len(losses)
         extra_val: Dict[str, Any] = {}
-        if self.byte_level:
-            extra_val["val_bits_per_byte"] = val_loss / math.log(2.0)
-        else:
+        if not self.byte_level:
             try:
                 extra_val["val_perplexity"] = math.exp(val_loss)
             except OverflowError:
                 extra_val["val_perplexity"] = float("inf")
+        # Byte-level runs emit no bits-per-byte here. The old series was
+        # `val_loss / ln(2)`, a unit conversion of a number already logged, and
+        # the real per-byte NLL needs the emitted logits - which this loop never
+        # sees, since the workers return scalar losses only. A missing series is
+        # honest; a rescaled one pretending to be a likelihood is not.
 
         elapsed = time.monotonic() - val_start
         self._log(

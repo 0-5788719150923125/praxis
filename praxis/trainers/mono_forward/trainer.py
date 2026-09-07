@@ -130,7 +130,7 @@ class MonoForwardTrainer:
     - ``num_tokens`` (billions, same unit convention as backprop)
     - ``avg_step_time`` (EMA-smoothed, same alpha as backprop)
     - ``softmax_collapse`` (final-layer actor computes from projected logits)
-    - ``val_loss`` / ``val_perplexity`` / ``val_bits_per_byte``
+    - ``val_loss`` / ``val_perplexity``
       (periodic validation sweep at ``val_check_interval`` batches)
     - per-layer gradient dynamics (``layer_{i}_grad_norm`` etc.,
       written to dynamics.db at ``dynamics_log_freq`` cadence)
@@ -1301,7 +1301,7 @@ class MonoForwardTrainer:
         :meth:`LayerActor.val_batch` (no-grad, no backward, no
         optimizer step), aggregates the last-layer loss into
         ``val_loss``, computes ``val_perplexity = exp(val_loss)``
-        (or ``val_bits_per_byte`` when the trainer was constructed
+        (or ``val_perplexity`` when the trainer was constructed
         with ``byte_level=True``), and writes both to metrics.db
         at ``current_step``.
 
@@ -1424,13 +1424,16 @@ class MonoForwardTrainer:
         # case we emit bits_per_byte instead (matching
         # BackpropagationTrainer.validation_step).
         extra_val: Dict[str, Any] = {}
-        if self.byte_level:
-            extra_val["val_bits_per_byte"] = val_loss / math.log(2.0)
-        else:
+        if not self.byte_level:
             try:
                 extra_val["val_perplexity"] = math.exp(val_loss)
             except OverflowError:
                 extra_val["val_perplexity"] = float("inf")
+        # Byte-level runs emit no bits-per-byte here. The old series was
+        # `val_loss / ln(2)`, a unit conversion of a number already logged, and
+        # the real per-byte NLL needs the emitted logits - which this loop never
+        # sees, since the workers return scalar losses only. A missing series is
+        # honest; a rescaled one pretending to be a likelihood is not.
 
         elapsed = time.monotonic() - val_start
         self._log(

@@ -1,6 +1,9 @@
 from functools import partial
 
-from praxis.encoders.abstractinator import AbstractinatorEncoder
+from praxis.encoders.abstractinator import (
+    AbstractinatorCALM,
+    AbstractinatorEncoder,
+)
 from praxis.encoders.byte_latent import ByteLatentEncoder
 from praxis.encoders.calm import CALMEncoder
 
@@ -197,6 +200,36 @@ AbstractinatorHarmonicGDNVocabBank = partial(
 # Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
 AbstractinatorHarmonicGDNVocabBankStatic = partial(
     AbstractinatorHarmonic,
+    bottleneck="harmonic_gdn",
+    vq_codebook_size=None,
+    patching_mode="static",
+    patch_size=8,
+)
+
+# abstractinator-p: the profile above, with a continuous CALM arm added beside
+# the discrete one. The two changes that matter are in the class, not here (see
+# praxis/encoders/abstractinator/calm.py):
+#
+#   1. a Gaussian posterior on the SAME patch features the quantizer sees, added
+#      residually to the quantized latent - the continuous channel CALM
+#      autoregresses over, carrying what quantization discarded;
+#   2. an energy head over the trunk output, trained by CALM's energy score, and
+#      a DENSE cross-entropy predicting the next patch's RVQ code from the same
+#      conditioning hidden the head reads.
+#
+# (2) is the whole bet. CALM's energy score is a weak, high-variance signal that
+# needs far more tokens than this line can afford; a code CE is dense,
+# low-variance and MODE-seeking, where the existing ENERGY_ANCHOR_WEIGHT MSE is
+# mean-seeking - the blur CALM's score exists to avoid. Both arms are already in
+# the same standing-wave basis, so nothing has to be translated between them.
+#
+# Near-silent at step 0, not bit-identical: the posterior's weight is zeroed and
+# its log-variance bias sits at the clamp floor, so z_c is ~2% of ||z_q|| rather
+# than exactly 0 (a fully zeroed layer would give logvar 0, sigma 1, and add a
+# standard normal to every patch - measured at ratio 1.24 before the fix).
+# Close enough that the comparison is honest; `calm_arm_ratio` is the receipt.
+AbstractinatorHarmonicGDNVocabBankStaticCALM = partial(
+    AbstractinatorCALM,
     bottleneck="harmonic_gdn",
     vq_codebook_size=None,
     patching_mode="static",
@@ -452,6 +485,12 @@ ENCODER_REGISTRY = dict(
     abstractinator_harmonic_gdn_vocab_bank=AbstractinatorHarmonicGDNVocabBank,
     # Same, on a uniform patch lattice (see the profile's note).
     abstractinator_harmonic_gdn_vocab_bank_static=AbstractinatorHarmonicGDNVocabBankStatic,
+    # ...plus a continuous CALM arm beside the discrete one (abstractinator-p).
+    # Identical to the profile above at initialization - the posterior is
+    # zero-initialized, so z_c starts at exactly 0 - which makes the swap an A/B
+    # rather than a reroll. See praxis/encoders/abstractinator/calm.py for why
+    # the discrete arm is what pays for the continuous one's conditional.
+    abstractinator_harmonic_gdn_vocab_bank_static_calm=AbstractinatorHarmonicGDNVocabBankStaticCALM,
     # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
     # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
     # calm_small is the smoke-test profile.

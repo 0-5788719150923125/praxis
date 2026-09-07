@@ -505,20 +505,14 @@ class BackpropagationTrainer(LightningModule):
             # That recon CE is codec fidelity, NOT generation quality, and an
             # energy-based head has no closed-form per-byte likelihood - so we
             # report it as its own val_codec_bpb and do not let it masquerade
-            # as val_bits_per_byte (trust val_brierlm for the generative path).
+            # as a generation metric (trust val_brierlm for that path).
             encoder = getattr(self.model, "encoder", None)
             codec_loss = None
             if encoder is not None and hasattr(encoder, "codec_recon_loss"):
                 codec_loss = encoder.codec_recon_loss()
             if codec_loss is not None:
-                stats["val_codec_bpb"] = self._compute_bits_per_byte(
-                    input_ids, codec_loss
-                )
-            else:
-                stats["val_bits_per_byte"] = self._compute_bits_per_byte(
-                    input_ids, loss
-                )
-            # The calibrated companion. See `_compute_byte_nll_bits`.
+                stats["val_codec_bpb"] = self._compute_bits_per_byte(codec_loss)
+            # The per-byte likelihood. See `_compute_byte_nll_bits`.
             nll_bits = self._compute_byte_nll_bits(outputs, labels)
             if nll_bits is not None:
                 stats["val_byte_nll_bits"] = nll_bits
@@ -644,47 +638,34 @@ class BackpropagationTrainer(LightningModule):
         alpha = 0.1
         return alpha * new_value + (1 - alpha) * ema
 
-    def _compute_bits_per_byte(self, batch, loss):
+    def _compute_bits_per_byte(self, loss):
+        """Nats to bits: ``loss / ln(2)``. Codec reconstruction only.
+
+        Valid as "bits per byte" precisely when ``loss`` is already a mean
+        per-byte NLL, which is true of the codec's reconstruction CE and of
+        nothing else here. It used to be applied to ``val_loss`` as well, and
+        that was wrong twice over: the result was a fixed multiple of a series
+        already being charted (so it carried no information), and it inherited
+        whatever the training objective happened to be - under HALOLoss's honest
+        mode, "CE + a geometry penalty", giving a bits-per-byte with no entropy
+        floor that opened above 16 against a hard chance ceiling of 8.
+        ``_compute_byte_nll_bits`` is the per-byte likelihood.
         """
-        From "Byte Latent Transformer: Patches Scale Better Than Tokens":
-        https://arxiv.org/abs/2412.09871
-
-        NOTE ON WHAT THIS ACTUALLY IS. ``num_bytes`` cancels: multiplying the
-        mean loss up to a sum and dividing by the same count leaves
-        ``loss / ln(2)``. So this converts nats to bits and nothing more, and it
-        is per-BYTE only when ``loss`` is itself a mean per-byte NLL.
-
-        Under several of our objectives it is not. ``HALOLoss`` in honest mode
-        is explicitly composite - "standard CE on the model's emitted logits
-        PLUS the HALO geometric objective on the trunk embeddings", 1:1 - so
-        this reports (CE + a geometry penalty) / ln(2). That is monotone in the
-        objective and fine for ranking checkpoints WITHIN a run, but its LEVEL
-        is not calibrated against an entropy floor: a byte model at chance
-        should read 8.0 bits and ours have opened above 16.
-
-        The arithmetic is kept exactly as-is anyway. Every run in the archive
-        was ranked on it, and silently changing what the series means would
-        invalidate those comparisons for no gain. ``val_byte_nll_bits`` is the
-        calibrated number; this is the historical one.
-        """
-        batch_size, seq_length = batch.shape
-        # Calculate number of bytes
-        num_bytes = batch_size * seq_length
-        # Convert mean loss back to sum loss
-        sum_loss = loss * num_bytes
-        # Calculate bits per byte using sum loss
-        return sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
+        return loss / torch.log(torch.tensor(2.0))
 
     @torch.no_grad()
     def _compute_byte_nll_bits(self, outputs, labels):
         """Plain per-byte NLL in bits, measured and never optimized.
 
-        WHY THIS EXISTS. ``val_bits_per_byte`` is whatever the training
-        objective is, divided by ln(2) - see above. That makes the absolute
-        level uninterpretable, and the level is the thing you need to know
-        where a run sits on a scaling curve: bits per byte has a hard chance
-        ceiling (8.0 for a 256-way byte prediction) and a data-dependent floor,
-        and "how far between those are we" is not answerable from a composite.
+        WHY THIS EXISTS. The series this replaced was ``val_loss / ln(2)``,
+        i.e. whatever the training objective happened to be, converted to bits.
+        That made the absolute level uninterpretable, and the level is the
+        thing you need to know where a run sits on a scaling curve: bits per
+        byte has a hard chance ceiling (8.0 for a 256-way byte prediction) and
+        a data-dependent floor, and "how far between those are we" is not
+        answerable from a composite. Under HALOLoss's honest mode - CE plus a
+        geometry penalty, 1:1 - runs opened above 16 on a scale whose maximum
+        is 8.
 
         This is the same quantity every byte-level scaling law is written in:
         unweighted mean cross-entropy of the emitted logits against the byte

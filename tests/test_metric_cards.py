@@ -575,3 +575,30 @@ def test_no_metric_description_becomes_an_essay():
         MAX_DESCRIPTION_CHARS,
         ", ".join(f"{w} ({n})" for w, n in too_long),
     )
+
+
+def test_dynamically_built_descriptions_respect_the_length_cap():
+    """The static scan reads `metric_descriptions` class attrs, so cards built
+    at runtime (ParallelHead's per-arm set, ObjectiveConflict's per-term set)
+    slip past it entirely - and every one of them was 190-612 chars when first
+    written. Same 180-char cap, checked where the scan cannot reach."""
+    import torch
+
+    from praxis.heads import HEAD_REGISTRY
+    from praxis.losses.conflict import conflict_metric_descriptions
+    from tests.test_prismatic8 import Cfg, Enc
+
+    torch.manual_seed(0)
+    built = dict(HEAD_REGISTRY["prismatic9"](Cfg(), encoder=Enc())._arm_descriptions())
+    built.update(
+        conflict_metric_descriptions(
+            ["conflict_mtp", "conflict_mag_mtp", "conflict_min"]
+        )
+    )
+    assert built, "no dynamic descriptions found - the builders moved"
+    too_long = {
+        k: len(v["description"])
+        for k, v in built.items()
+        if len(v["description"]) > 180
+    }
+    assert not too_long, f"dynamic metric descriptions over 180 chars: {too_long}"

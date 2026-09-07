@@ -1,5 +1,6 @@
 """Tests for the trainers module."""
 
+import math
 import pytest
 import torch
 from transformers import AutoTokenizer
@@ -433,9 +434,10 @@ class TestRLCTProbeUnpacksTheBatch:
 def test_byte_nll_bits_is_calibrated_against_chance():
     """The whole point of this metric is that its LEVEL means something.
 
-    `val_bits_per_byte` is the objective / ln(2), so under a composite loss it
-    can sit anywhere; this one has to read 8.0 for a uniform 256-way predictor
-    and 0.0 for a certain one, or it cannot be compared to a scaling law.
+    The series this replaced was the objective / ln(2), so under a composite
+    loss it could sit anywhere (HALO runs opened above 16 on a scale whose
+    maximum is 8). This one has to read 8.0 for a uniform 256-way predictor and
+    0.0 for a certain one, or it cannot be compared to a scaling law.
 
     The trainer is not constructed here - `_compute_byte_nll_bits` only touches
     `self.outputs_are_aligned`, so a stub isolates the arithmetic from the
@@ -500,3 +502,108 @@ def test_byte_nll_bits_shifts_for_unaligned_encoders():
     # Aligned with a mismatched shape returns None rather than raising: a
     # missing series is readable, an exception inside validation is not.
     assert run(True, logits, labels) is None
+
+
+def test_bits_per_byte_is_reported_only_as_a_likelihood():
+    """`val_bits_per_byte` used to be `val_loss / ln(2)` - a unit conversion of
+    a series already charted, carrying no information, and inheriting whatever
+    the training objective was. It is gone. The reported bits-per-byte is now
+    `val_byte_nll_bits`, unweighted CE on the emitted logits.
+
+    Pinned because the tempting "fix" is to redefine the old key in place, and
+    a series that changes meaning under a stable name is worse than one that
+    ends.
+    """
+    from praxis.metrics.training_metrics import TRAINING_METRIC_REGISTRY as REG
+    from praxis.pillars.runs import METRIC_LABELS, METRIC_PRIORITY
+
+    assert "val_bits_per_byte" not in REG
+    assert "val_bits_per_byte" not in METRIC_LABELS
+    assert "val_bits_per_byte" not in METRIC_PRIORITY
+    # The calibrated series takes its place, at the front and on the chart.
+    assert METRIC_PRIORITY[0] == "val_byte_nll_bits"
+    assert REG["val_byte_nll_bits"]["chart"]["title"] == "Bits per Byte"
+    # Codec fidelity keeps its own series and its own nats-to-bits helper.
+    assert "val_codec_bpb" in REG
+
+
+def test_nats_to_bits_helper_is_codec_only_and_correct():
+    import math
+    import types
+
+    import torch
+
+    from praxis.trainers.backpropagation import BackpropagationTrainer
+
+    stub = types.SimpleNamespace()
+    got = BackpropagationTrainer._compute_bits_per_byte(stub, torch.tensor(3.0))
+    assert abs(float(got) - 3.0 / math.log(2)) < 1e-6
+
+
+@pytest.mark.parametrize(
+    "tag,over",
+    [
+        ("plain", {}),
+        ("byte_latent_conv", {"encoder_type": "byte_latent_conv", "vocab_size": 1024}),
+        (
+            "abstractinator",
+            {
+                "encoder_type": "abstractinator_harmonic_gdn_vocab_bank_static",
+                "vocab_size": 1024,
+                "codebook_size": 256,
+            },
+        ),
+    ],
+)
+def test_byte_nll_bits_is_emitted_for_every_byte_level_family(tag, over):
+    """Any byte-level tokenizer needs this metric, not just codec encoders.
+
+    The gate is `self.byte_level`, which comes from the TOKENIZER
+    (`cli/config.py`: `tokenizer_type == "byte_level"`), and the emission sits
+    outside the codec branch - so a vanilla byte-latent run with no codec, and a
+    plain model with no encoder at all, both get it. Only `val_codec_bpb` is
+    encoder-gated.
+
+    Pinned across families because this is now the front of METRIC_PRIORITY: a
+    family that silently stops emitting it drops out of every run comparison.
+    """
+    import types
+
+    import torch
+
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+    from praxis.trainers.backpropagation import BackpropagationTrainer
+
+    cfg = dict(
+        vocab_size=256, hidden_size=64, embed_size=64, num_heads=2, depth=2,
+        max_length=512, decoder_type="sequential", head_type="forward",
+        tokenizer_type="byte_level", encoder_type=None,
+    )
+    cfg.update(over)
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(PraxisConfig(**cfg)).eval()
+
+    encoder = getattr(model, "encoder", None)
+    aligned = getattr(encoder, "outputs_are_aligned", False) if encoder else False
+    stub = types.SimpleNamespace(
+        outputs_are_aligned=aligned,
+        _compute_byte_nll_bits=BackpropagationTrainer._compute_byte_nll_bits,
+    )
+
+    ids = torch.randint(0, 256, (2, 128))
+    with torch.no_grad():
+        out = model(input_ids=ids, attention_mask=torch.ones_like(ids))
+    labels = ids if aligned else ids[:, 1:].contiguous()
+
+    bits = stub._compute_byte_nll_bits(stub, out, labels)
+    assert bits is not None, f"{tag} emits no val_byte_nll_bits"
+
+    # At random init the model is at chance, which for a V-way softmax is
+    # log2(V). That is the whole reason this metric replaced the objective
+    # rescaling: its LEVEL is interpretable against a known ceiling.
+    chance = math.log2(out.logits.shape[-1])
+    assert abs(float(bits) - chance) < 0.25, f"{tag}: {float(bits)} vs chance {chance}"
+
+    # val_codec_bpb is the encoder-gated one, and none of these have a codec.
+    assert not hasattr(encoder, "codec_recon_loss")

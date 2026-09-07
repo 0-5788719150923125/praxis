@@ -100,29 +100,16 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "val_brier_2": {"description": "BrierLM order-2 raw score, x100."},
     "val_brier_3": {"description": "BrierLM order-3 raw score, x100."},
     "val_brier_4": {"description": "BrierLM order-4 raw score, x100."},
-    "val_bits_per_byte": {
-        "description": (
-            "val_loss / log(2). Byte-latent runs only; codec encoders report "
-            "val_codec_bpb instead."
-        ),
-        "chart": {
-            "title": "Bits per Byte",
-            "y_label": "Bits per Byte",
-            "y_scale": "linear",
-            "order": 50,
-            "is_validation": True,
-        },
-    },
     "val_byte_nll_bits": {
         "description": (
             "Plain per-byte cross-entropy of the emitted logits, in bits - measured, "
             "never optimized. Chance is 8.0. Absent under cut-CE."
         ),
         "chart": {
-            "title": "Byte NLL (bits)",
+            "title": "Bits per Byte",
             "y_label": "Bits per byte",
             "y_scale": "linear",
-            "order": 51,
+            "order": 50,
             "is_validation": True,
         },
     },
