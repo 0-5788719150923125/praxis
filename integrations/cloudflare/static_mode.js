@@ -10,7 +10,8 @@
  *   2. Patches window.fetch to redirect same-origin /api/* reads onto the dumped
  *      static files under /data/, filters KB search client-side, and returns an
  *      offline stub for every write/interactive endpoint.
- *   3. Greys out the controls that can't work offline (chat, swarm, downloads).
+ *   3. Greys out the controls that can't work offline (chat, swarm, downloads,
+ *      and the run pickers - a snapshot only ever carries one run).
  *   4. Pushes the "orange" accent into the frontend's offline-theme registry
  *      (js/theme.js) - a dead page should look dead, not the live green.
  *
@@ -325,7 +326,14 @@
       // client-side sim. Download stays live too: the print zips are dumped
       // for both themes, which is the only way to get the orange accent onto
       // a printed card.)
-      '#biz-card-draw {' +
+      '#biz-card-draw,' +
+      // Run pickers: a snapshot carries ONE run. The dumped files are keyed by
+      // path, not by the `runs=` query the pickers append, so every row in
+      // these dropdowns resolves back to the same data - and runs.json is
+      // trimmed to the exported run anyway, so there is nothing to switch to.
+      '#run-selector-btn,' +
+      '#dynamics-run-selector-btn,' +
+      '#spec-run-selector-btn {' +
       'opacity:.4 !important;pointer-events:none !important;cursor:not-allowed !important;}';
     var style = document.createElement('style');
     style.setAttribute('data-static-mode', '');

@@ -235,9 +235,43 @@ def _export_endpoints(client: Any, data: Path) -> None:
             payload = resp.get_data()
             if out_name == "agents.json":
                 payload = _rewrite_agents_localhost(payload)
+            elif out_name == "runs.json":
+                payload = _filter_runs_to_current(payload, client.application)
             (data / out_name).write_bytes(payload)
         except Exception as exc:  # one bad endpoint never kills the export
             _log(f"warning: {path} dump failed: {exc}")
+
+
+def _filter_runs_to_current(payload: bytes, app: Any) -> bytes:
+    """Keep only the exported run in ``runs.json``.
+
+    ``/api/runs`` lists every run directory on disk, but a snapshot dumps the
+    metrics of exactly one of them. Publishing the full list would leak the
+    hashes and step counts of runs whose data never leaves the machine, and it
+    would fill the run pickers with rows that all resolve back to the single
+    dumped file. Trim the list to the current run so what the picker shows is
+    what the export actually contains.
+    """
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return payload
+    runs = parsed.get("runs") if isinstance(parsed, dict) else None
+    if not isinstance(runs, list):
+        return payload
+
+    current_hash = app.config.get("truncated_hash")
+    kept = [r for r in runs if isinstance(r, dict) and r.get("is_current")]
+    if not kept and current_hash:
+        kept = [
+            r for r in runs if isinstance(r, dict) and r.get("hash") == current_hash
+        ]
+    if len(kept) == len(runs):
+        return payload
+
+    _log(f"runs: trimmed {len(runs)} run(s) to {len(kept)} (exported run only)")
+    parsed["runs"] = kept
+    return json.dumps(parsed).encode("utf-8")
 
 
 def _rewrite_agents_localhost(payload: bytes) -> bytes:
