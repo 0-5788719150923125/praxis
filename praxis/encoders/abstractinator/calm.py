@@ -99,6 +99,16 @@ ENERGY_SAMPLES_M: int = 100
 # 0.05 here: a 10x looser floor than the codec CALM actually trains against.
 FREE_BITS: float = 0.5
 
+# Codec dropout, the reference's `ae_dropout`. NOT a regularization knob: it is
+# what makes the decoder tolerant of a latent the energy head PREDICTED rather
+# than one the encoder produced, which is the only train/test gap CALM's design
+# actually has. Applied to the encoder's input features and to the sampled
+# latent before reconstruction, so the decoder learns to map a NEIGHBOURHOOD of
+# z to the right features. `CALMVAE` already carried it at this value and calls
+# both sites load-bearing for generation; `PatchVAE` was first built with it at
+# 0, which silently removed the reference's own answer to the problem.
+VAE_DROPOUT: float = 0.15
+
 # NO HAND-SET WEIGHTS. `CODE_CE_WEIGHT = 5.0` and `KL_WEIGHT = 1e-3` used to
 # live here and are gone: the three CALM objectives are now balanced by learned
 # uncertainty weighting (Kendall, Gal & Cipolla, CVPR 2018 - see
@@ -235,6 +245,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             hidden_dim=D,
             depth=vae_depth,
             latent_norm=True,
+            dropout=VAE_DROPOUT,
         )
 
         hidden = max(1, int(D * energy_hidden_ratio))

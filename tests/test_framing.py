@@ -140,6 +140,24 @@ def test_stock_phrases_stay_under_limit(experiment, pattern, limit):
     )
 
 
+def test_the_calm_arm_addendum_gates_on_the_paired_codec():
+    """The order-13 addendum describes TWO codecs over one patch. It must not
+    fire for an Abstractinator carrying only the quantizer, or for a CALM run
+    carrying only the autoencoder - either would have the paper claim a pairing
+    the run does not have, which is the whole invariant this package enforces."""
+    fires = {}
+    for exp in ("abstractinator-p", "abstractinator-o", "calm-d"):
+        cfg = resolve_config(exp)
+        ids = {f.id for f in active_fragments(cfg)}
+        fires[exp] = "harmonic-calm-arm-abstractinator" in ids
+        assert cfg["uses_calm_arm"] is fires[exp]
+    assert fires == {
+        "abstractinator-p": True,
+        "abstractinator-o": False,
+        "calm-d": False,
+    }, fires
+
+
 def test_no_experiment_names_hardcoded_in_fragment_prose():
     """Fragment bodies must not name specific runs - the paper is rebuilt per
     run, so 'in calm-d, two physical layers' is wrong on every other run. Counts

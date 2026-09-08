@@ -228,6 +228,14 @@ def _augment(config: Dict) -> Dict:
     # for the one that states the conjecture is being run.
     derived["uses_harmonic_bottleneck"] = encoder.startswith("abstractinator_harmonic")
 
+    # The Abstractinator run that carries a SECOND codec: CALM's autoencoder
+    # beside the residual quantizer, over the same patch features. Gates the
+    # order-13 addendum, which describes the paired construction rather than
+    # the single bottleneck the order-12 fragments cover.
+    derived["uses_calm_arm"] = encoder.startswith("abstractinator") and encoder.endswith(
+        "calm"
+    )
+
     # HALO objective: a distance-to-centroid loss in embedding space (a shell
     # of consensus + an origin abstain sink) rather than cross-entropy.
     derived["uses_halo"] = str(config.get("loss_func", "")) == "halo"

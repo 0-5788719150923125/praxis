@@ -287,7 +287,7 @@ class PatchVAE(nn.Module):
         hidden_dim: int,
         depth: int = 2,
         latent_norm: bool = True,
-        dropout: float = 0.0,
+        dropout: float = 0.15,
         activation: str = "silu",
     ) -> None:
         super().__init__()
@@ -314,7 +314,15 @@ class PatchVAE(nn.Module):
         self.out_norm = nn.RMSNorm(hidden_dim)
 
     def encode(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """``[..., feature_dim]`` -> ``(mean, logvar)``, each ``[..., latent_dim]``."""
+        """``[..., feature_dim]`` -> ``(mean, logvar)``, each ``[..., latent_dim]``.
+
+        Input corruption first, the reference's first dropout site (it zeroes
+        random token ids; the continuous analogue is dropping feature
+        channels). Forces the latent to DENOISE its patch rather than memorize
+        it, which is half of what makes the decoder tolerant of a latent the LM
+        predicted rather than encoded.
+        """
+        h = F.dropout(h, p=self.dropout_p, training=self.training)
         x = self.enc_in(h)
         for blk in self.enc_blocks:
             x = blk(x)
@@ -334,7 +342,21 @@ class PatchVAE(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-5)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """``[..., latent_dim]`` -> ``[..., feature_dim]`` reconstruction."""
+        """``[..., latent_dim]`` -> ``[..., feature_dim]`` reconstruction.
+
+        LATENT DROPOUT, and it is the whole answer to the train/test gap this
+        codec otherwise has. At generation the decoder is handed a latent the
+        energy head PREDICTED; in training it would only ever see one the
+        encoder produced from real bytes. Dropping the latent teaches the
+        decoder to map a NEIGHBOURHOOD of z to the right features, so an
+        imperfect prediction still decodes. The reference does exactly this
+        (``ae_dropout`` on the sampled latent) and so does ``CALMVAE``, whose
+        docstring calls these sites load-bearing for generation.
+
+        Only the RECONSTRUCTION path is perturbed. The trunk consumes the clean
+        ``z_c``, and the energy score's target is the clean posterior mean -
+        as in the reference, where the LM never sees a dropped latent either.
+        """
         z = self.normalize_latent(z)
         z = F.dropout(z, p=self.dropout_p, training=self.training)
         x = self.dec_in(z)

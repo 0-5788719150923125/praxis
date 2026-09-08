@@ -865,3 +865,65 @@ def test_vote_generation_honors_the_deadline():
         stopping_criteria=Halt(),
     )
     assert out.shape[1] < 32 + 256, out.shape
+
+
+# ── the train/test gap, and the reference's answer to it ───────────────────
+
+
+def test_the_codec_is_trained_on_perturbed_latents():
+    """THE fix for the one train/test gap CALM's design has.
+
+    At generation the decoder is handed a latent the energy head PREDICTED; in
+    training it would otherwise only ever see one the encoder produced from
+    real bytes. The reference's `ae_dropout` (0.15) perturbs the sampled latent
+    so the decoder learns to map a NEIGHBOURHOOD of z to the right features.
+    `CALMVAE` already carried it and calls the sites load-bearing for
+    generation; `PatchVAE` was built with dropout at 0, which silently removed
+    the reference's own answer to the problem."""
+    from praxis.encoders.abstractinator.calm import VAE_DROPOUT
+
+    assert VAE_DROPOUT == 0.15  # the reference's ae_dropout
+    m = build()
+    enc = m.encoder
+    assert enc.vae.dropout_p == VAE_DROPOUT
+
+    D = m.config.hidden_size
+    z = torch.randn(2, 8, D)
+    enc.eval()
+    assert torch.allclose(enc.vae.decode(z), enc.vae.decode(z))
+    enc.train()
+    assert not torch.allclose(enc.vae.decode(z), enc.vae.decode(z))
+
+
+def test_the_encoder_input_is_corrupted_too():
+    """The reference's first dropout site: it zeroes random token ids, forcing
+    the latent to DENOISE its patch rather than memorize it. The continuous
+    analogue is dropping feature channels."""
+    m = build()
+    enc = m.encoder.train()
+    h = torch.randn(2, 8, m.config.hidden_size)
+    mu1, _ = enc.vae.encode(h)
+    mu2, _ = enc.vae.encode(h)
+    assert not torch.allclose(mu1, mu2)
+
+
+def test_only_the_reconstruction_path_is_perturbed():
+    """The trunk consumes the clean z_c and the energy score targets the clean
+    posterior mean - as in the reference, where the LM never sees a dropped
+    latent either. Perturbing those would be training the trunk on noise."""
+    import inspect
+
+    from praxis.encoders.calm.vae import PatchVAE
+
+    # Dropout lives in encode()/decode(), never in the caller's latent path.
+    assert "F.dropout" in inspect.getsource(PatchVAE.decode)
+    assert "F.dropout" in inspect.getsource(PatchVAE.encode)
+
+    m = build()
+    enc = m.encoder.train()
+    h = torch.randn(2, 8, m.config.hidden_size)
+    enc._post_downsample(h, torch.zeros(()))
+    mu, _ = enc._last_posterior
+    # The stashed energy target is the normalized posterior MEAN, undropped.
+    expected = enc.vae.normalize_latent(mu).detach()
+    assert torch.allclose(enc._last_code_mean, expected)

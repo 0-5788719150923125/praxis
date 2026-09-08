@@ -1,0 +1,55 @@
+# Addendum at order 13, after the order-12 bottleneck fragments, for the run
+# that carries BOTH codecs. The order-12 harmonic-bottleneck fragment states the
+# conjecture that residual codes might approximate a continuous latent; this run
+# does not approximate one, it runs one alongside, so the addendum describes the
+# pairing and the supervision that flows between the two. Claims stay inside
+# what the run instruments, with the falsifiers named - the paper's standard.
+section: harmonic
+order: 13
+requires:
+  uses_calm_arm: [true]
+body: >
+  \subsubsection*{Two codecs over one patch}
+
+  The preceding construction reads residual codes as harmonic amplitudes and
+  asks whether a discrete address can stand in for a continuous latent. This
+  run declines the substitution and carries both. Over the same patch features
+  the encoder produces, a residual quantizer yields a discrete code and a
+  continuous autoencoder~\cite{calm2025} - encoder, decoder, its own
+  reconstruction objective and a free-bits Kullback-Leibler term - yields a
+  Gaussian posterior. The global transformer receives their sum, the
+  quantized latent plus a bounded fraction of the continuous one, so the two
+  are not alternatives being compared but a single representation each is
+  responsible for part of. Both are trained in one stage, by their own
+  objectives, with no freeze and no pretraining phase.
+
+  What makes this more than a second bottleneck is the direction the
+  supervision runs. The energy score CALM trains its head with is
+  likelihood-free and high-variance: the head must learn a full continuous
+  conditional from a proper scoring rule, and the reference buys a clean one
+  by training its codec to near-lossless reconstruction on a separate corpus
+  and freezing it before the head begins. Single-stage training removes that
+  purchase, and the head is left chasing a target its own gradient is
+  reshaping. The discrete arm supplies what the continuous objective lacks:
+  a dense, mode-seeking cross-entropy that predicts the \emph{next code} from
+  the same conditioning state the energy head reads, so the representation
+  the head conditions on is sharpened by a low-variance signal while the
+  score shapes the conditional itself. The codebook also furnishes the
+  equivalence classes generation needs. CALM resolves each step by drawing
+  many candidate latents and counting how often they decode to the same
+  output, which costs a decode per draw; here a candidate's class is read off
+  by nearest neighbour in the codebook, so the count-based vote - temperature
+  realized as a draw count rather than a logit scale - becomes affordable at
+  the paper's own sample budget.
+
+  Two instruments decide whether the pairing earns itself, and both are on the
+  dashboard. The first is the conditional gap: the energy head's score against
+  targets deliberately misaligned by one patch, minus its score against the
+  aligned ones. A gap at zero says the head is modelling the marginal and
+  reading nothing from its context, in which case the continuous arm is a
+  passenger and the discrete codec is carrying the run alone. The second is
+  the learned share of the ceiling the continuous latent is allowed to occupy
+  in the transformer's input. It begins near silent by construction, so the
+  comparison against the same encoder without the arm is honest; a share that
+  never rises is the arm declining to earn the space, whatever its
+  reconstruction says. We report both and claim nothing past them.

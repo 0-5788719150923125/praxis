@@ -97,6 +97,11 @@ func _run() -> void:
 
 	_check_film_fit(comic)
 	_check_focal_live(comic)
+<<<<<<< Updated upstream
+=======
+	_check_settle_runs(comic)
+	_check_held_share(comic)
+>>>>>>> Stashed changes
 
 	Director.set_camera(was)
 	Director.hold(false)
@@ -119,9 +124,150 @@ func _measure(comic: ComicVehicle) -> Dictionary:
 	comic._film_at = -1
 	comic._roll_plan()
 	comic._read = int(comic._plan[0])
+<<<<<<< Updated upstream
 	comic._choose_spread_look()
 	var swing := 0.0
 	var jumps := 0
+=======
+	Director._current.exit_spec = {"hold": 30.0}
+	Director._elapsed = 0.0
+	comic._choose_move()
+	var settles := 0
+	var dt := 1.0 / 30.0
+	# Run a 30 s scene right to its backstop, ticking the camera as the app does.
+	for f in int(30.0 / dt):
+		Director._elapsed += dt
+		var was := String(comic._mv.get("kind", ""))
+		comic._ease(dt)
+		if String(comic._mv.get("kind", "")) == "settle" and was != "settle":
+			settles += 1
+	print("  one 30s scene driven to its backstop -> %d distinct settle(s)" % settles)
+	if settles > 1:
+		_fails.append("the camera settled %d separate times inside one scene - it re-corrects"
+			% settles)
+	Director._current.exit_spec = spec_was
+	Director._elapsed = 0.0
+	Director.hold(true)
+
+
+## HOW MUCH OF A SCENE IS THE CAMERA ACTUALLY HOLDING?
+##
+## THE NUMBER NOBODY HAD. Every previous instrument here measured the PLAN - does a move finish
+## before the cut, does a chain go backwards, does a zoom get re-rolled - and every one of them
+## was green while the report was "the camera NEVER holds a position: the second it lands
+## somewhere, it's moving somewhere else. Left, right, up, down, in, out - it never stops
+## moving." The look probe cannot see it either, because it calls Director.hold(true) and the
+## travel allowance is a fraction of a hold that is then effectively infinite.
+##
+## The defect was that the allowance was counted in MOVES. `_budget` caps a move at its share
+## of the hold, but it CAPS - on a long hold the sampled duration is the binding one, so at
+## scene hold 4.0 and camera 0.05 a drift ran its full 27 s and the chain then started another
+## full-length move. Turning the hold slider up made the moves longer, not the holds longer.
+##
+## So this drives a LONG scene - the setting the report came from - and counts the fraction of
+## frames spent in a settle or a breathe rather than travelling. A calm camera spends
+## ARRIVE_CALM of its hold getting somewhere and the rest looking at it, so the held share
+## should be most of the scene, not a few seconds at the end of it.
+func _check_held_share(comic: ComicVehicle) -> void:
+	Director.hold(false)
+	var spec_was: Dictionary = Director._current.exit_spec
+	var was_cam := Director.camera
+	for sev: float in [0.05, 1.0]:
+		Director.set_camera(sev)
+		comic._spread = ComicSpread.new(hash(["held", sev]))
+		comic._spread_i = 21
+		comic._film_at = -1
+		comic._roll_plan()
+		comic._step = 0
+		comic._read = int(comic._plan[0])
+		Director._current.exit_spec = {"hold": 90.0}
+		Director._elapsed = 0.0
+		comic._choose_move()
+		var held := 0
+		var frames := 0
+		var dt := 1.0 / 30.0
+		for f in int(90.0 / dt):
+			Director._elapsed += dt
+			comic._ease(dt)
+			frames += 1
+			var k := String(comic._mv.get("kind", ""))
+			if k == "settle" or k == "breathe":
+				held += 1
+		var share := float(held) / maxf(1.0, float(frames))
+		print("  a 90s scene at camera %.2f -> %.0f%% of it held" % [sev, share * 100.0])
+		# The bar is deliberately loose at severity 1, where travelling IS the point, and firm
+		# at the calm end, where the whole complaint was that nothing ever stopped.
+		var want := 0.55 if sev < 0.5 else 0.25
+		if share < want:
+			_fails.append("at camera %.2f the camera held only %.0f%% of a 90s scene (want %.0f%%)"
+				% [sev, share * 100.0, want * 100.0])
+	Director.set_camera(was_cam)
+	Director._current.exit_spec = spec_was
+	Director._elapsed = 0.0
+	Director.hold(true)
+
+
+## IS THE PANEL BEING READ EVER FROZEN?
+##
+## "The scene in that comic book frame becomes stuck, frozen, and stops moving at all." The
+## liveness sort puts every panel below its warm-up ahead of every warm one, and LIVE_MAX is
+## three - so the three panels cast by a page turn could take the whole budget and freeze the
+## Director's own current scene. This casts a full spread (so every panel is cold, the worst
+## case) and asserts the read panel survives it.
+func _check_focal_live(comic: ComicVehicle) -> void:
+	comic._spread = ComicSpread.new(hash(["focal"]))
+	comic._spread_i = 11
+	comic._film_at = -1
+	var n := comic._spread.panels.size()
+	comic._cast = []
+	comic._cast.resize(n)
+	comic._warm = []
+	comic._warm.resize(n)
+	comic._warm.fill(0)
+	# Stand in for a cast spread: every panel holds a scene and none has drawn yet.
+	for i in n:
+		var sc := GhostScene.new()
+		comic._slots[comic._pool * ComicVehicle.POOL + i].add_child(sc)
+		comic._cast[i] = sc
+	var missed := 0
+	for i in n:
+		comic._read = i
+		comic._update_liveness()
+		if not comic._live.has(i):
+			missed += 1
+	print("  every panel of a freshly cast %d-panel spread read in turn -> focal frozen %d time(s)"
+		% [n, missed])
+	if missed > 0:
+		_fails.append("the panel being READ was frozen on %d of %d panels - its scene stops"
+			% [missed, n])
+	for i in n:
+		if comic._cast[i] != null and is_instance_valid(comic._cast[i]):
+			comic._cast[i].queue_free()
+	comic._cast = []
+	comic._warm = []
+
+
+## DOES THE ZOOM SIT STILL BETWEEN CUTS?
+##
+## "It zoomed-in then immediately zoomed-out again, but barely. It barely moved in either
+## direction; that felt strange, and it would have been better to just remain stable, or to
+## zoom and keep zooming."
+##
+## Every move takes its target framing from a fresh _station, which SAMPLES `fill`. At a cut
+## that is the point - a new shot. Between cuts it is not: the chain is the same shot
+## continuing, so re-rolling the distance nudged the picture in and then out by a few percent
+## with no gesture behind it. Only `push` and `pull`, whose whole subject is the zoom, may
+## change it now.
+func _check_zoom_stability(comic: ComicVehicle) -> void:
+	comic._spread = ComicSpread.new(hash(["zoom"]))
+	comic._spread_i = 9
+	comic._film_at = -1
+	comic._roll_plan()
+	comic._step = 0
+	comic._read = int(comic._plan[0])
+	comic._choose_move()
+	var moved := 0
+>>>>>>> Stashed changes
 	var worst := 0.0
 	var n := 0
 	for m in SHOTS + WARMUP:
