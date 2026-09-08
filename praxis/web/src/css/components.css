@@ -413,6 +413,18 @@
     white-space: pre-wrap;
 }
 
+/* A turn still being written. The caret marks "more is coming", which reads
+   differently from a turn that simply ended short - the distinction the old
+   blocking request could not make, because nothing appeared until it was done.
+   Reuses the system prompt's blink so the two carets agree. */
+.message.streaming .message-content::after {
+    content: '|';
+    margin-left: 0.05rem;
+    font-weight: 300;
+    opacity: 0.7;
+    animation: prompt-cursor-blink 1s step-end infinite;
+}
+
 .message.user .message-content {
     color: #1a1a1a;
 }

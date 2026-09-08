@@ -772,19 +772,11 @@ def test_an_unsupported_mode_fails_loudly_at_build():
 
 def test_default_is_the_byte_loop_and_the_vote_is_off():
     """`vote_next_latent` was fully implemented, tested, and NEVER CALLED: the
-    class defined no custom_generate, so it inherited the base hook that
-    returns None and generation fell through to the byte-level loop."""
+    class declared no decoding method of its own, so it inherited the base hook
+    that returns None and generation fell through to the byte-level loop."""
     m = build().eval()
     assert m.encoder.generation_mode == "standard"
-    assert (
-        m.encoder.custom_generate(
-            torch.randint(0, 256, (1, 8)),
-            base_forward=None,
-            latent_forward=None,
-            decode_logits=None,
-        )
-        is None
-    )
+    assert m.encoder.decoding_method() is None
     assert _gen(m).shape == (1, 48)
 
 
@@ -821,16 +813,16 @@ def test_vote_generation_never_mutates_the_codebook():
 def test_vote_generation_requires_the_latent_and_logits_seams():
     """A patch the model just PREDICTED has no bytes behind it, so
     `base_forward` cannot reach it; and the head belongs to the model, not the
-    encoder. Both arrive as closures rather than stored back-references."""
+    encoder. Both arrive per call - derived from `model` via `trunk_hooks`, or
+    supplied explicitly by a non-standard driver - rather than as stored
+    back-references, so the loop cannot run with neither."""
     m = _build_mode("vote")
-    for missing in ("latent_forward", "decode_logits"):
-        kw = {
-            "base_forward": None,
-            "latent_forward": object(),
-            "decode_logits": object(),
-        }
-        kw[missing] = None
-        assert m.encoder.custom_generate(torch.randint(0, 256, (1, 8)), **kw) is None
+    with pytest.raises(ValueError, match="trunk"):
+        m.encoder.vote_decoding(None, torch.randint(0, 256, (1, 8)))
+    # The encoder still names the loop; the seams are what it lacks.
+    assert m.encoder.decoding_method().__func__ is type(m.encoder).vote_decoding
+    # Given a model it derives every seam from it and runs.
+    assert _gen(m).shape == (1, 48)
 
 
 def test_vote_generation_honors_return_dict_in_generate():
@@ -848,21 +840,63 @@ def test_vote_generation_honors_return_dict_in_generate():
     assert hasattr(out, "sequences") and out.sequences.shape == (1, 48)
 
 
+def test_vote_generation_survives_a_stop_string_format():
+    """The vote is a custom decoding method too, so it hit the same wall: under
+    `prose` (stop strings only) transformers could not build StopStringCriteria
+    because the tokenizer never survived the hand-off, and raised before this
+    loop ran at all. See PraxisForCausalLM._extract_generation_mode_kwargs."""
+    from transformers import GenerationConfig
+    from transformers.generation.stopping_criteria import StopStringCriteria
+
+    from praxis.tokenizers import create_tokenizer
+    from praxis.tokenizers.chat_templates import chat_format_of
+
+    tokenizer = create_tokenizer(
+        tokenizer_type="byte_level", vocab_size=1024, chat_format="prose"
+    )
+    stops = list(chat_format_of(tokenizer).stop_strings())
+
+    m = _build_mode("vote")
+    seen = {}
+    original = type(m.encoder).vote_decoding
+
+    def capture(self, model, input_ids=None, **kwargs):
+        seen.update(kwargs)
+        return input_ids
+
+    type(m.encoder).vote_decoding = capture
+    try:
+        m.generate(
+            torch.randint(0, 256, (1, 32)),
+            generation_config=GenerationConfig(
+                max_new_tokens=16, do_sample=False, stop_strings=stops
+            ),
+            tokenizer=tokenizer,
+        )
+    finally:
+        type(m.encoder).vote_decoding = original
+
+    assert seen["tokenizer"] is tokenizer
+    assert any(isinstance(c, StopStringCriteria) for c in seen["stopping_criteria"])
+
+
 def test_vote_generation_honors_the_deadline():
     """Queued generations decode INSIDE the training loop, so a loop that
     ignores the caller's stopping criteria stalls the run. transformers never
     runs the criteria list for a loop it does not own."""
     from transformers import GenerationConfig
 
-    class Halt:
-        def __call__(self, seq, scores):
+    from transformers import StoppingCriteria, StoppingCriteriaList
+
+    class Halt(StoppingCriteria):
+        def __call__(self, seq, scores, **kwargs):
             return torch.ones(seq.shape[0], dtype=torch.bool)
 
     m = _build_mode("vote")
     out = m.generate(
         torch.randint(0, 256, (1, 32)),
         generation_config=GenerationConfig(max_new_tokens=256, do_sample=False),
-        stopping_criteria=Halt(),
+        stopping_criteria=StoppingCriteriaList([Halt()]),
     )
     assert out.shape[1] < 32 + 256, out.shape
 
@@ -982,6 +1016,6 @@ def test_the_vote_temperature_is_not_the_sampler_temperature():
 
     from praxis.encoders.abstractinator.calm import AbstractinatorCALM
 
-    src = inspect.getsource(AbstractinatorCALM.custom_generate)
+    src = inspect.getsource(AbstractinatorCALM.vote_decoding)
     assert "calm_vote_temperature" in src
     assert "temperature=vote_t" in src

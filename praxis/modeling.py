@@ -560,9 +560,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         **kwargs,
     ) -> dict:
         # NB: this path is HF's generate() loop. Byte-latent models with MTP
-        # never reach it - generate() dispatches to _speculative_generate first
-        # - so the encoder branch here only covers encoder models decoding
-        # without MTP.
+        # never reach it - generate() resolves the speculative decoding method
+        # first (praxis/generation/speculative.py) - so the encoder branch here
+        # only covers encoder models decoding without MTP.
         #
         # Why the encoder cannot cache: NOT "the prefix isn't stable" (the old
         # reason, and false - the space patcher is prefix-monotone and the local
@@ -1107,456 +1107,125 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return self.strategy(loss_values)
         return loss
 
-    def generate(self, inputs=None, generation_config=None, **kwargs):
-        """Generate tokens, dispatching to specialised paths when applicable."""
-        # Encoders may own their generation loop (e.g. CALM's latent path).
-        # The hook gets a callable to run the global transformer and returns
-        # None to defer to the standard HF generate loop.
+    # ------------------------------------------------------------------
+    # generation
+    # ------------------------------------------------------------------
+
+    def _resolve_decoding_method(self, inputs, generation_config):
+        """The decoding method this call should run, or None for ``_sample``.
+
+        Praxis has two loops that are not next-token sampling, and both are
+        registered the way transformers wants a non-standard strategy
+        registered - as a *decoding method* handed to ``generate``, which then
+        does all of its ordinary preparation (prompt handling, cache setup, the
+        logits-processor list, the stopping-criteria list, the streamer's first
+        publish) and calls ours in place of ``_sample``. They are mutually
+        exclusive, so exactly one is chosen here.
+
+        Encoder-owned decoding wins when the encoder declares one: CALM
+        autoregresses over PATCHES rather than tokens, so no token-level loop
+        can express it at all.
+        """
         if self.encoder and not self.training:
-            result = self.encoder.custom_generate(
-                inputs,
-                base_forward=lambda ids: PraxisModel.forward(self, input_ids=ids),
-                # Latent-level trunk pass. An encoder that autoregresses over
-                # PATCHES (CALM's vote) has to run the trunk on a latent
-                # sequence it constructed - one it just predicted, which by
-                # definition has no bytes behind it yet - and `base_forward`
-                # always encodes from bytes, so there was no seam for that.
-                # The closure is handed over rather than stored, so no encoder
-                # ends up holding a back-reference to the trunk.
-                latent_forward=lambda pe, positions=None: self.decoder(
-                    pe,
-                    None,
-                    None,
-                    None,
-                    None,
-                    LossContainer(),
-                    None,
-                    positions,
-                )[0],
-                # The head belongs to the MODEL, not the encoder - the
-                # Abstractinator deliberately holds no reference to it. An
-                # encoder driving its own loop still has to turn decoder
-                # embeddings into byte logits, so it gets a closure for that
-                # too rather than a stored back-reference.
-                decode_logits=lambda embeds: self.head(embeds),
-                generation_config=generation_config,
-                **kwargs,
-            )
-            if result is not None:
-                return result
+            method = self.encoder.decoding_method(generation_config)
+            if method is not None:
+                return method
+
         # Speculative decode: token models directly; byte-latent encoders via
-        # byte-level MTP (the encoder's custom_generate above returned None, so
-        # we own the loop here). Both are greedy-lossless.
+        # byte-level MTP (the encoder declined above, so we own the loop here).
+        # Both are greedy-lossless.
         # `num_beams` is UNSET (None), not 1, on a transformers>=5 default
         # GenerationConfig - and `getattr` finds the attribute, so its own
         # default never applies. Comparing that None to 1 silently disabled
         # speculative decoding on every real call: the tests pass num_beams=1
         # explicitly, so they exercised a path production never took. `or 1`
         # reads unset/0 as single-beam, which is what both mean here.
+        # Note there is no `generation_config is not None` test here any more.
+        # There used to be, because the old loop read every knob off the config
+        # and a None one crashed it - but transformers builds a config from
+        # loose kwargs before it dispatches, so a caller passing
+        # `max_new_tokens=256` instead of a config (the RL path in
+        # trainers/backpropagation.py does) was silently routed through plain
+        # sampling. Same shape of bug as the num_beams one below, so the guard
+        # went with the reason for it.
         num_beams = getattr(generation_config, "num_beams", None) or 1
         # BATCH SIZE 1 ONLY. The speculative loop verifies ONE growing prefix:
-        # `_verify_prefixes_batched` builds its rows from `generated[0]` and
-        # `candidates[0]`, and the stop-string check reads `seq[0]`, so the
-        # batch axis there carries the n truncated PREFIXES, not n sequences.
-        # Handed a real batch it reached a `.item()` on a per-row tensor and
-        # died with "a Tensor with B elements cannot be converted to Scalar" -
-        # which is what broke BrierLMCallback, whose whole job is to generate
-        # two continuations for each of a batch of prompts. Nothing about this
-        # is byte-latent or CALM specific; any MTP model generating with B > 1
-        # hit it. Defer to the standard loop instead, which batches correctly.
+        # `verify_prefixes_batched` builds its rows from `generated[0]` and
+        # `candidates[0]`, so the batch axis there carries the n truncated
+        # PREFIXES, not n sequences. Handed a real batch it reached a `.item()`
+        # on a per-row tensor and died with "a Tensor with B elements cannot be
+        # converted to Scalar" - which is what broke BrierLMCallback, whose
+        # whole job is to generate two continuations for each of a batch of
+        # prompts. Nothing about this is byte-latent or CALM specific; any MTP
+        # model generating with B > 1 hit it. Defer to the standard loop
+        # instead, which batches correctly.
         batch_ok = inputs is None or inputs.dim() < 2 or inputs.size(0) == 1
         spec_ok = (
             self.mtp is not None
             and not self.training
-            and generation_config is not None
             and num_beams == 1
             and batch_ok
             and (not self.encoder or getattr(self.mtp, "byte_level", False))
         )
         if spec_ok:
-            return self._speculative_generate(inputs, generation_config, **kwargs)
-        return super().generate(inputs, generation_config=generation_config, **kwargs)
+            from praxis.generation.speculative import speculative_decoding
 
-    @torch.no_grad()
-    def _spec_logits_and_hidden(self, generated, attention_mask=None):
-        """Vocab logits + the hidden the MTP drafts from, for one prefix.
+            return speculative_decoding
+        return None
 
-        Byte-latent: the shared head classifies the byte-level decoder hidden
-        (``_compute_logits`` returns it as ``hidden_states``), so drafting rides
-        that same byte space. Token models: head over the trunk's last hidden.
+    def _extract_generation_mode_kwargs(
+        self, custom_generate, kwargs, synced_gpus, assistant_model, streamer
+    ):
+        """Restore the two mode kwargs transformers drops for a CALLABLE method.
 
-        ``attention_mask`` right-pads a batch of ragged prefixes; the byte-latent
-        core is padding-invariant, so masked rows read identically to their
-        unpadded form (the basis for lossless batched-prefix verification).
+        Verified against transformers 5.2.0. The base implementation opens by
+        POPPING ``tokenizer`` out of ``kwargs``, and then, for a callable
+        ``custom_generate``, discards the dict it just built and rebuilds it
+        from ``kwargs`` - where ``tokenizer`` no longer is. ``streamer`` is lost
+        the same way for a different reason: it is compared against
+        ``_sample``'s signature, which contains it, so it never counts as one of
+        the method's "own" arguments.
+
+        Losing ``streamer`` only costs the preview. Losing ``tokenizer`` is
+        fatal and not to our own loop - ``_get_stopping_criteria`` needs it to
+        build ``StopStringCriteria``, and RAISES without it, several steps
+        before our method is ever called. So any model resolving a custom
+        decoding method under a text-boundary chat format (``prose``, whose
+        halting is stop-strings-only) failed every single request with "we
+        could not locate a tokenizer".
+
+        Restoring both here rather than smuggling them under private names
+        keeps our decoding methods signature-compatible with ``_sample``, which
+        is the whole point of registering them as decoding methods.
         """
-        base_out = PraxisModel.forward(
-            self, input_ids=generated, attention_mask=attention_mask
+        tokenizer = kwargs.get("tokenizer")
+        mode_kwargs = super()._extract_generation_mode_kwargs(
+            custom_generate, kwargs, synced_gpus, assistant_model, streamer
         )
-        if self.encoder:
-            logits, _, hidden, _ = self._compute_logits(
-                base_out, generated, skip_logits=False, attention_mask=attention_mask
-            )
-            return logits, hidden
-        hidden = base_out.last_hidden_state
-        return self.head(hidden), hidden
+        if callable(custom_generate):
+            if tokenizer is not None:
+                mode_kwargs.setdefault("tokenizer", tokenizer)
+            if streamer is not None:
+                mode_kwargs.setdefault("streamer", streamer)
+        return mode_kwargs
 
-    @torch.no_grad()
-    def _verify_prefixes_batched(self, generated, candidates):
-        """Lossless byte-latent verification via batched truncated prefixes.
+    def generate(self, inputs=None, generation_config=None, streamer=None, **kwargs):
+        """Generate tokens, dispatching to specialised paths when applicable.
 
-        For each ``k`` in ``1..n`` build ``P_k = generated + candidates[:k]`` and
-        read the model's prediction at ``P_k``'s LAST real position. That read is
-        causal (nothing follows it) and the byte-latent core is padding-invariant,
-        so it equals exactly what byte-by-byte greedy would predict after
-        committing ``candidates[:k]``. All ``n`` prefixes ride one right-padded,
-        mask-gated forward instead of ``n`` sequential ones.
-
-        Returns ``pred_logits[k-1]`` = next-token logits following
-        ``generated + candidates[:k]``, shape ``[n, vocab]``.
+        A thin resolver over ``GenerationMixin.generate``: it picks the decoding
+        method (see :meth:`_resolve_decoding_method`) and hands it to
+        transformers, which prepares everything and calls it. There is no
+        second implementation of prompt handling, sampling, or halting here -
+        that duplication is exactly what this replaces.
         """
-        g = generated.size(1)
-        n = candidates.size(1)
-        full = g + n
-        device = generated.device
-        # Right-pad with 0 and gate it off with `mask` below. 0 is a real byte
-        # under a pure-byte tokenizer, so the mask - not the value - is what
-        # makes these positions inert.
-        rows = generated.new_zeros((n, full))
-        mask = generated.new_zeros((n, full))
-        last_pos = torch.empty(n, dtype=torch.long, device=device)
-        for k in range(1, n + 1):
-            length = g + k
-            rows[k - 1, :length] = torch.cat([generated[0], candidates[0, :k]])
-            mask[k - 1, :length] = 1
-            last_pos[k - 1] = length - 1
-        logits, _ = self._spec_logits_and_hidden(rows, attention_mask=mask)
-        return logits[torch.arange(n, device=device), last_pos]
-
-    @torch.no_grad()
-    def _speculative_generate(self, input_ids, generation_config, **kwargs):
-        """MTP-based speculative decoding for faster inference.
-
-        ONE model forward per step. Each step:
-        1. Draft N candidates from the hidden states carried out of the previous
-           step's forward (the MTP bank; a few tenths of a percent of a forward)
-        2. Run ONE forward over ``generated + candidates``
-        3. Read position ``gen_len-1+k`` for the true next byte after
-           ``generated + candidates[:k]``, and accept up to the first divergence
-        4. Carry that same forward's hidden states into the next step
-
-        This works because every stage of the stack is causal, so position ``t``
-        of a long row equals running the prefix ending at ``t`` on its own. That
-        was NOT always true here. The scheme this replaces blamed byte-latent
-        patching ("non-causal within a partial patch") and verified each
-        truncated prefix ``P_k`` in its own re-encoded row, costing ``1 + N``
-        full-prefix forwards per step. The byte-latent core is in fact exactly
-        causal under append: the space patcher is prefix-monotone, the local
-        conv encoder/decoder are causal, and ``decoder_patch_ids_from_lengths``
-        drops patch 0 so byte ``t`` gathers a patch that closed at or before
-        ``t`` - no byte ever reads the open patch. The real contamination was a
-        head that pooled the whole sequence to route (see ``BaseHead.
-        causal_readout``). Heads that still do keep the truncated-prefix
-        verifier, ``_verify_prefixes_batched``, which remains correct.
-
-        A step always commits one byte past the block it verified - the
-        correction that ended a run, or the bonus that followed a full one - so
-        no forward has ever seen that position and its hidden is supplied by
-        ``mtp.bridge_hidden``. That estimate steers only the NEXT step's drafts;
-        every committed byte is still confirmed against a real read, so a poor
-        bridge costs accept rate and never correctness.
-
-        Greedy is lossless (up to floating-point argmax ties, where greedy is
-        itself ill-defined). With ``do_sample`` acceptance stays equality-based,
-        so sampling remains approximate; greedy is the guarantee. Candidate 0 is
-        exempt from re-verification only when it was drawn from a MEASURED
-        hidden, where accepting it is distribution-exact; when it came from the
-        bridge it is verified like any other candidate.
-        """
-        from types import SimpleNamespace
-
-        from transformers import (
-            LogitsProcessorList,
-            RepetitionPenaltyLogitsProcessor,
-            TopKLogitsWarper,
-            TopPLogitsWarper,
+        method = self._resolve_decoding_method(inputs, generation_config)
+        return super().generate(
+            inputs,
+            generation_config=generation_config,
+            streamer=streamer,
+            custom_generate=method,
+            **kwargs,
         )
-
-        from praxis.generation.stopping import find_stop_cut, normalize_stop_strings
-
-        max_new_tokens = getattr(generation_config, "max_new_tokens", 100)
-        do_sample = getattr(generation_config, "do_sample", False)
-        temperature = getattr(generation_config, "temperature", 1.0) or 1.0
-        eos_token_id = getattr(generation_config, "eos_token_id", None)
-        return_dict = kwargs.get("return_dict_in_generate", False)
-
-        eos_set = make_eos_set(eos_token_id)
-
-        # Text-boundary chat formats halt on a string, not an id. This loop owns
-        # its sampling, so transformers' StopStringCriteria never runs here and
-        # the check has to be explicit - without it a prose-format turn always
-        # runs to max_new_tokens. `tokenizer` rides in through generate(**kwargs)
-        # exactly as StopStringCriteria requires it.
-        stop_strings = normalize_stop_strings(
-            getattr(generation_config, "stop_strings", None)
-        )
-        stop_tokenizer = kwargs.get("tokenizer")
-        stop_active = bool(stop_strings and stop_tokenizer is not None)
-
-        # This loop owns its decoding, so transformers never runs the criteria
-        # list for it - the same reason stop_strings has to be checked by hand
-        # above. Honoring it matters for the request DEADLINE in particular
-        # (praxis/generation/stopping.py::DeadlineCriteria): queued generations
-        # decode inside the training loop, so an unbounded turn is a stalled
-        # run, and a deadline the speculative path ignored would bound only
-        # models that never took this path.
-        stopping_criteria = kwargs.get("stopping_criteria")
-
-        def criteria_halt(seq):
-            if not stopping_criteria:
-                return False
-            return bool(stopping_criteria(seq, None).all())
-
-        def stop_cut(seq, from_index: int):
-            """Truncated sequence when a stop string completed past
-            ``from_index``, else None."""
-            if not stop_active:
-                return None
-            keep = find_stop_cut(
-                stop_tokenizer, seq[0].tolist(), from_index, stop_strings
-            )
-            return None if keep is None else seq[:, :keep]
-
-        # Context-dependent logits processing. The terminal relies on
-        # repetition_penalty (default 1.15) to keep the rolling contexts from
-        # degenerating; the spec sampler must honor it or byte-latent runs drift.
-        # Each read is penalized over ITS OWN prefix, so greedy-with-penalty
-        # stays lossless vs byte-by-byte greedy-with-penalty (the penalty is a
-        # deterministic function of the committed prefix).
-        rep_penalty = getattr(generation_config, "repetition_penalty", 1.0) or 1.0
-        top_k = getattr(generation_config, "top_k", None)
-        top_p = getattr(generation_config, "top_p", None)
-        penalizers = LogitsProcessorList()
-        if rep_penalty != 1.0:
-            penalizers.append(RepetitionPenaltyLogitsProcessor(penalty=rep_penalty))
-        # This loop owns its sampling, so transformers never builds its own
-        # processor list - suppress_tokens has to be honored here explicitly or
-        # a control token the format never trains stays sampleable.
-        suppress = getattr(generation_config, "suppress_tokens", None)
-        if suppress:
-            from transformers import SuppressTokensLogitsProcessor
-
-            penalizers.append(
-                SuppressTokensLogitsProcessor(list(suppress), device=input_ids.device)
-            )
-        warpers = LogitsProcessorList()
-        if do_sample:
-            if top_k:
-                warpers.append(TopKLogitsWarper(int(top_k)))
-            if top_p is not None and top_p < 1.0:
-                warpers.append(TopPLogitsWarper(float(top_p)))
-
-        def pick(raw_logits, context_ids):
-            """Argmax/sample a token from ``raw_logits`` ([1, vocab]) with the
-            repetition penalty (+ warpers) evaluated over ``context_ids``."""
-            scores = penalizers(context_ids, raw_logits)
-            if do_sample and temperature > 0:
-                scores = warpers(context_ids, scores)
-                probs = F.softmax(scores / temperature, dim=-1)
-                return torch.multinomial(probs, 1).squeeze(-1)
-            return scores.argmax(dim=-1)
-
-        generated = input_ids
-        # Byte-latent keeps its byte table on the encoder side, so
-        # get_input_embeddings() is None there; use the model's byte embeds.
-        embed_fn = self.embeds if self.encoder else self.get_input_embeddings()
-        num_new = 0
-
-        # A head whose logits at position t depend on bytes after t (SMEAR-style
-        # sequence pooling) cannot have a whole candidate block read out of one
-        # row, and falls back to the truncated-prefix verifier below - correct,
-        # but a full re-encode per candidate. Default False so a head that has
-        # not declared the property takes the safe path.
-        single_row = bool(getattr(self.head, "causal_readout", False))
-
-        # Hidden states aligned with `generated`, so the MTP has something to
-        # draft from without a forward of its own. Rebuilt from each step's
-        # verify forward. `first_exact` records whether its LAST position came
-        # from a real forward or from the MTP bridge.
-        h_row = None
-        first_exact = False
-
-        while num_new < max_new_tokens:
-            # Where this step's commits start, so the stop-string scan below
-            # only inspects bytes this step produced.
-            step_start = generated.size(1)
-            gen_len = generated.size(1)
-
-            if h_row is None:
-                # Only the first step (or the fallback path, which drops h_row
-                # every step because its verifier returns no hidden states).
-                main_logits, h_row = self._spec_logits_and_hidden(generated)
-                last_logits = main_logits[:, -1, :]
-                first_exact = True
-            else:
-                # The trunk already ran over these positions last step; only the
-                # head is re-applied, which is a few percent of a forward.
-                last_logits = self.head(h_row)[:, -1, :]
-
-            # First candidate: the model's own next-byte pick when `h_row` ends
-            # on a measured position, a draft when it ends on the bridge. The
-            # verify below reads position gen_len-1 either way, so this is
-            # confirmed like any other candidate rather than trusted.
-            token_0 = pick(last_logits, generated)
-            token_0_2d = token_0.unsqueeze(1)
-
-            # Draft additional tokens with MTP. The width is the run length
-            # acceptance actually delivers (mtp.draft_width), not the trained
-            # depth: candidates past the first divergence are discarded, but
-            # each one still costs a sequential draft here and one more column
-            # in the verify row. Cutting the width cannot change what gets
-            # committed, only how much is thrown away, so greedy stays lossless.
-            draft_ids = self.mtp.draft_next_tokens(
-                h_row[:, -1:, :], token_0_2d, embed_fn, self.head
-            )
-
-            # Combine: first pick + drafts → [batch, 1+N]
-            candidates = torch.cat([token_0_2d, draft_ids], dim=1)
-            n_candidates = candidates.size(1)
-
-            # Greedy target following prefix P_k = generated + candidates[:k]; the
-            # penalty context is that same prefix.
-            def prefix_ids(k):
-                if k == 0:
-                    return generated
-                return torch.cat([generated, candidates[:, :k]], dim=1)
-
-            if single_row:
-                # ONE causal forward over prefix + candidates. Position
-                # gen_len-1+k carries the true next-byte logits after
-                # `generated + candidates[:k]` AND the hidden at that prefix's
-                # last byte, so this single row supplies both the verification
-                # and the next step's drafting state.
-                row = torch.cat([generated, candidates], dim=1)
-                verify_logits, verify_hidden = self._spec_logits_and_hidden(row)
-
-                def raw_at(k):
-                    return verify_logits[:, gen_len - 1 + k, :]
-
-            elif self.encoder:
-                # Non-causal head: byte-latent must read each prefix's OWN last
-                # position, batched behind a mask (lossless, but n re-encodes).
-                pred_logits = self._verify_prefixes_batched(generated, candidates)
-                verify_hidden = None
-
-                def raw_at(k):
-                    return last_logits if k == 0 else pred_logits[k - 1 : k]
-
-            else:
-                verify_input = torch.cat([generated, candidates], dim=1)
-                verify_logits, _ = self._spec_logits_and_hidden(verify_input)
-                verify_hidden = None
-
-                def raw_at(k):
-                    return verify_logits[:, gen_len - 1 + k, :]
-
-            def target_at(k):
-                return pick(raw_at(k), prefix_ids(k))
-
-            def carry(exact_len, token):
-                """Next step's `h_row`: measured through `exact_len` positions,
-                bridged for the one byte past them."""
-                if verify_hidden is None:
-                    return None
-                exact = verify_hidden[:, :exact_len, :]
-                bridged = self.mtp.bridge_hidden(
-                    exact[:, -1:, :], token.unsqueeze(1), embed_fn
-                )
-                return torch.cat([exact, bridged], dim=1)
-
-            # Under sampling, a candidate 0 drawn from a MEASURED hidden is
-            # already a valid draw from the conditional the verify would
-            # re-sample; a fresh multinomial matches only with probability
-            # sum(p^2), so re-rolling adds no correctness and only drags the
-            # width EMA down. Greedy verifies from 0 - the read is real and
-            # confirms by construction - which is what keeps it lossless when
-            # candidate 0 came from the bridge instead.
-            skip_first = do_sample and first_exact
-            accepted = 1 if skip_first else 0
-            for i in range(accepted, n_candidates):
-                v_token = target_at(i)
-
-                if v_token.item() == candidates[:, i].item():
-                    accepted += 1
-                    if v_token.item() in eos_set:
-                        generated = torch.cat(
-                            [generated, candidates[:, :accepted]], dim=1
-                        )
-                        num_new += accepted
-                        if return_dict:
-                            return SimpleNamespace(sequences=generated)
-                        return generated
-                else:
-                    # Divergence: keep accepted prefix + the true greedy token.
-                    parts = [generated]
-                    if accepted > 0:
-                        parts.append(candidates[:, :accepted])
-                    parts.append(v_token.unsqueeze(1))
-                    generated = torch.cat(parts, dim=1)
-                    num_new += accepted + 1
-                    # The run ended here, so the width this step used was right
-                    # (or too wide) - feed the observed run back.
-                    self.mtp.note_accepted(accepted)
-                    h_row = carry(gen_len + accepted, v_token)
-                    first_exact = False
-                    # The correction token is committed like any other, so it
-                    # can be the halt token. Without this test a halt landing on
-                    # the first divergence is swallowed and the next step
-                    # resumes from a sequence that already ended - which is how
-                    # a turn runs to max_new_tokens despite emitting [EOS].
-                    if v_token.item() in eos_set:
-                        if return_dict:
-                            return SimpleNamespace(sequences=generated)
-                        return generated
-                    break
-            else:
-                # All candidates accepted — also take a bonus token.
-                generated = torch.cat([generated, candidates], dim=1)
-                num_new += n_candidates
-                # The window filled: the run was at least this long, so the EMA
-                # is pulled UP and the next step probes wider.
-                self.mtp.note_accepted(n_candidates)
-                h_row = verify_hidden
-                first_exact = verify_hidden is not None
-
-                if num_new < max_new_tokens:
-                    bonus = target_at(n_candidates)
-                    generated = torch.cat([generated, bonus.unsqueeze(1)], dim=1)
-                    num_new += 1
-                    h_row = carry(gen_len + n_candidates, bonus)
-                    first_exact = False
-                    if bonus.item() in eos_set:
-                        break
-
-            # Checked once per step, like the stop-string scan below: a step is
-            # one forward, which is the unit of time this bounds. Committed
-            # bytes are kept - halting on a deadline is a length halt, not an
-            # error, and the partial turn extracts normally.
-            if criteria_halt(generated):
-                break
-
-            # Text-boundary halt. Checked once per step rather than per
-            # candidate: a speculative run commits several bytes at once, so the
-            # boundary can complete mid-run, and find_stop_cut returns the
-            # earliest completion. Drafted bytes past it belong to a turn this
-            # model does not get to write, so they are dropped.
-            cut = stop_cut(generated, step_start)
-            if cut is not None:
-                generated = cut
-                break
-
-        if return_dict:
-            return SimpleNamespace(sequences=generated)
-        return generated
 
     def get_input_embeddings(self) -> nn.Module:
         """Get the input embeddings module."""
@@ -1702,15 +1371,6 @@ def build_rl_policies(config):
             policy = policy_cls(config)
             policy_type = rl_name
     return policy, policy_type, recall
-
-
-def make_eos_set(eos_token_id) -> set:
-    """Normalize an eos_token_id (int, list, tuple, or None) to a set."""
-    if isinstance(eos_token_id, int):
-        return {eos_token_id}
-    if isinstance(eos_token_id, (list, tuple)):
-        return set(eos_token_id)
-    return set()
 
 
 @functools.lru_cache(maxsize=None)

@@ -1031,13 +1031,26 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             # Encoders that own their decoding loop (CALM) must NOT be sampled
             # token-by-token from a logits projection: CALM predicts the next
             # latent via the energy head and decodes K tokens through the frozen
-            # VAE (patch-vote). Delegate to custom_generate, feeding it a
-            # base_forward that runs the MF worker route and returns the
-            # per-patch hidden state - the same signal modeling.generate() hands
-            # the standard path. custom_generate returns None for byte-latent
-            # (BaseEncoder default), so that path falls through to the token loop.
-            if encoder is not None and hasattr(encoder, "custom_generate"):
+            # VAE (patch-vote). Run the encoder's own decoding method, feeding
+            # it a base_forward that hops the MF worker route and returns the
+            # per-patch hidden state - the same signal trunk_hooks builds for
+            # the standard path. That override is the whole reason the loop
+            # takes its trunk closures as parameters: there is no
+            # PraxisForCausalLM here to derive them from, so `model` is None.
+            # An encoder with no decoding method of its own returns None and
+            # this falls through to the token loop below.
+            decoding = (
+                encoder.decoding_method()
+                if hasattr(encoder, "decoding_method")
+                else None
+            )
+            if decoding is not None:
                 from types import SimpleNamespace
+
+                from transformers.generation.stopping_criteria import (
+                    EosTokenCriteria,
+                    StoppingCriteriaList,
+                )
 
                 def _mf_base_forward(ids):
                     ids = ids.detach().long().to(target_device)
@@ -1051,21 +1064,33 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                             h, _ = w.infer_batch(h, step_idx, bids_use, None)
                     return SimpleNamespace(last_hidden_state=h)
 
-                calm_out = encoder.custom_generate(
+                # Built by hand because transformers is not driving this call;
+                # EOS is the only halt the MF hook has (no chat format, no
+                # deadline), and the decoding method reads it from here rather
+                # than from generation_config, like every other caller.
+                criteria = StoppingCriteriaList()
+                if eos_ids:
+                    criteria.append(
+                        EosTokenCriteria(eos_token_id=torch.tensor(list(eos_ids)))
+                    )
+
+                calm_out = decoding(
+                    None,
                     prefix,
-                    base_forward=_mf_base_forward,
+                    stopping_criteria=criteria,
                     generation_config=SimpleNamespace(
                         max_new_tokens=max_new_tokens,
                         temperature=temperature,
-                        eos_token_id=eos_ids,
+                        do_sample=do_sample,
+                        return_dict_in_generate=False,
                     ),
+                    base_forward=_mf_base_forward,
                 )
-                if calm_out is not None:
-                    seq = getattr(calm_out, "sequences", calm_out)
-                    new = seq[:, prefix.shape[1] :]
-                    for j in range(new.shape[1]):
-                        yield new[:, j].detach().cpu().clone()
-                    return
+                seq = getattr(calm_out, "sequences", calm_out)
+                new = seq[:, prefix.shape[1] :]
+                for j in range(new.shape[1]):
+                    yield new[:, j].detach().cpu().clone()
+                return
 
             for _ in range(max_new_tokens):
                 # Re-prepare inputs every step. For the embeds path that's

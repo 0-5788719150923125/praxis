@@ -411,6 +411,8 @@ def test_batched_verify_matches_single_row(spec_config):
     crystal head's ``-n*log(dist^2)``) stays well under 5e-2. The gap cleanly
     separates the two.
     """
+    from praxis.generation.speculative import verify_prefixes_batched
+
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
     torch.manual_seed(500)
@@ -418,7 +420,7 @@ def test_batched_verify_matches_single_row(spec_config):
     for length, k in ((24, 6), (12, 4)):
         gen = torch.randint(4, 260, (1, length))
         cand = torch.randint(4, 260, (1, k))
-        batched = model._verify_prefixes_batched(gen, cand)  # [k, vocab]
+        batched = verify_prefixes_batched(model, gen, cand)  # [k, vocab]
         for j in range(1, k + 1):
             prefix = torch.cat([gen, cand[:, :j]], dim=1)
             with torch.no_grad():
@@ -481,34 +483,31 @@ def test_speculative_uses_one_forward_per_step(spec_config):
     not exceed the number of speculative steps (plus the one that primes the
     loop).
     """
-    from types import SimpleNamespace
+    from transformers import GenerationConfig
+
+    from praxis.generation import speculative
 
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
     ids = torch.randint(4, 260, (1, 16))
 
     seen = []
-    original = PraxisForCausalLM._spec_logits_and_hidden
+    original = speculative.spec_logits_and_hidden
 
-    def counting(self, generated, attention_mask=None):
+    def counting(model_, generated, attention_mask=None):
         seen.append(generated.shape)
-        return original(self, generated, attention_mask)
+        return original(model_, generated, attention_mask)
 
-    PraxisForCausalLM._spec_logits_and_hidden = counting
+    speculative.spec_logits_and_hidden = counting
     try:
-        out = model._speculative_generate(
+        out = model.generate(
             ids,
-            SimpleNamespace(
-                max_new_tokens=24,
-                do_sample=False,
-                temperature=1.0,
-                num_beams=1,
-                eos_token_id=None,
-                repetition_penalty=1.0,
+            generation_config=GenerationConfig(
+                max_new_tokens=24, do_sample=False, num_beams=1
             ),
         )
     finally:
-        PraxisForCausalLM._spec_logits_and_hidden = original
+        speculative.spec_logits_and_hidden = original
 
     produced = out.shape[1] - ids.shape[1]
     assert produced > 0
@@ -525,7 +524,7 @@ def test_speculative_matches_byte_by_byte_greedy(spec_config):
     threshold); a mismatch at a real margin would signal a genuine correctness
     bug in the batched-prefix verifier, not float nondeterminism.
     """
-    from types import SimpleNamespace
+    from transformers import GenerationConfig
 
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
@@ -552,14 +551,8 @@ def test_speculative_matches_byte_by_byte_greedy(spec_config):
     for length in (10, 22):
         ids = torch.randint(4, 260, (1, length))
         ref, gaps = byte_by_byte_greedy(ids, n_new)
-        gen_cfg = SimpleNamespace(
-            max_new_tokens=n_new,
-            do_sample=False,
-            temperature=1.0,
-            num_beams=1,
-            eos_token_id=None,
-        )
-        spec = model._speculative_generate(ids, gen_cfg)
+        gen_cfg = GenerationConfig(max_new_tokens=n_new, do_sample=False, num_beams=1)
+        spec = model.generate(ids, generation_config=gen_cfg)
         ref_bytes = ref[0, length : length + n_new].tolist()
         spec_bytes = spec[0, length : length + n_new].tolist()
         for i in range(min(len(ref_bytes), len(spec_bytes))):
@@ -578,7 +571,7 @@ def test_speculative_honors_repetition_penalty(spec_config):
     The terminal passes repetition_penalty to keep rolling contexts from
     degenerating; before the fix the spec sampler dropped it entirely.
     """
-    from types import SimpleNamespace
+    from transformers import GenerationConfig
 
     from transformers import LogitsProcessorList, RepetitionPenaltyLogitsProcessor
 
@@ -604,15 +597,13 @@ def test_speculative_honors_repetition_penalty(spec_config):
     for length in (10, 20):
         ids = torch.randint(4, 260, (1, length))
         ref, gaps = greedy_with_penalty(ids, n_new)
-        gen_cfg = SimpleNamespace(
+        gen_cfg = GenerationConfig(
             max_new_tokens=n_new,
             do_sample=False,
-            temperature=1.0,
             num_beams=1,
-            eos_token_id=None,
             repetition_penalty=penalty,
         )
-        spec = model._speculative_generate(ids, gen_cfg)
+        spec = model.generate(ids, generation_config=gen_cfg)
         ref_bytes = ref[0, length : length + n_new].tolist()
         spec_bytes = spec[0, length : length + n_new].tolist()
         for i in range(min(len(ref_bytes), len(spec_bytes))):
@@ -643,21 +634,20 @@ def test_speculative_sampled_always_commits(spec_config):
     invariant (EMA >= 1 always) was an artifact of auto-accepting candidate 0
     unconditionally, which counted a byte the drafts had not earned.
     """
-    from types import SimpleNamespace
+    from transformers import GenerationConfig
 
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
     ids = torch.randint(4, 260, (1, 12))
-    gen_cfg = SimpleNamespace(
+    gen_cfg = GenerationConfig(
         max_new_tokens=24,
         do_sample=True,
         temperature=1.0,
         num_beams=1,
-        eos_token_id=None,
         repetition_penalty=1.15,
     )
     torch.manual_seed(7)
-    out = model._speculative_generate(ids, gen_cfg)
+    out = model.generate(ids, generation_config=gen_cfg)
     assert out.shape[1] >= ids.shape[1] + 24  # sampled steps still commit
     assert model.mtp._accept_seen > 0
     assert model.mtp._accept_ema >= 0.0
@@ -951,7 +941,7 @@ def test_narrow_width_still_matches_byte_by_byte_greedy(deep_spec_config):
     with torch.no_grad():
         # A commit lands a whole accepted run, so the spec path may overshoot
         # the budget; compare over the bytes that were actually requested.
-        spec = model._speculative_generate(prompt, gc)[0, prompt.size(1) :][:n_new]
+        spec = model.generate(prompt, generation_config=gc)[0, prompt.size(1) :][:n_new]
         greedy = prompt
         for _ in range(n_new):
             step = model(input_ids=greedy).logits[0, -1]
@@ -963,7 +953,7 @@ def test_narrow_width_still_matches_byte_by_byte_greedy(deep_spec_config):
 
 
 def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
-    """`_speculative_generate` verifies ONE growing prefix - its batch axis
+    """Speculative decoding verifies ONE growing prefix - its batch axis
     carries the n truncated prefixes, not n sequences - so `generated[0]` and
     `seq[0]` are hard-coded. Handed a real batch it died on a `.item()` over a
     per-row tensor ("a Tensor with B elements cannot be converted to Scalar"),

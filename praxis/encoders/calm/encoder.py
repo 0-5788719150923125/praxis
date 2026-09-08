@@ -31,8 +31,16 @@ import torch
 import torch._dynamo as dynamo
 import torch.nn.functional as F
 from torch import nn
+from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from praxis.activations import ACT2CLS
+from praxis.generation.decoding import (
+    first_halt,
+    is_halted,
+    stream_end,
+    stream_put,
+    trunk_hooks,
+)
 from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, EnergyHead
 from praxis.heads.flow import LATENT_HEAD_REGISTRY
 from praxis.losses import get_loss_function
@@ -1526,37 +1534,57 @@ class CALMEncoder(BaseEncoder):
         # Defensive fallback (n=1 must find a match unless num_samples=0).
         return patches[0]
 
+    def decoding_method(self, generation_config=None):
+        """CALM always decodes by vote - it has no token-level loop to fall
+        back to, since it predicts a LATENT and the VAE turns that into K
+        tokens at once."""
+        return self.vote_decoding
+
     @torch.no_grad()
-    def custom_generate(
+    def vote_decoding(
         self,
-        inputs: Optional[torch.Tensor] = None,
-        *,
-        base_forward,
+        model,
+        input_ids: Optional[torch.Tensor] = None,
+        logits_processor=None,
+        stopping_criteria=None,
         generation_config=None,
-        **kwargs,
+        tokenizer: Any = None,
+        streamer: Any = None,
+        base_forward=None,
+        **model_kwargs: Any,
     ):
         """CALM generation: latent LM -> energy head -> VAE decode.
+
+        A transformers decoding method (see ``BaseEncoder.decoding_method``), so
+        ``stopping_criteria`` arrives prepared and carries the EOS ids, the chat
+        format's stop strings, the positional cap and the request deadline.
 
         Each step runs the global transformer over the latent prefix
         (``base_forward``), then uses approximate count-based temperature
         sampling to pick the next K-token patch: draw a pool of candidate
         latents, decode each to an argmax patch, and select by combinatorial
-        voting on exact patch matches. Stops on EOS or ``max_new_tokens``.
+        voting on exact patch matches.
 
-        Temperature defaults to ``self.vote_temperature`` (0.5) when the
-        caller leaves it unset: at T=1 a CALM model draws a single full-noise
-        latent and argmaxes it - effectively random.
+        No ``logits_processor`` runs here and that is not an oversight: this
+        loop never forms a token distribution to warp. The patch is chosen by
+        counting exact matches among decoded candidates, so temperature is a
+        draw COUNT (``n = round(1/T)``) rather than a softmax scale, and the
+        selected patch is emitted verbatim. ``temperature`` therefore defaults
+        to the encoder's ``vote_temperature`` (0.5) when the caller leaves it
+        unset: at T=1 a CALM model draws a single full-noise latent and
+        argmaxes it - effectively random.
         """
-        from types import SimpleNamespace
-
-        if inputs is None:
+        if base_forward is None and model is not None:
+            base_forward = trunk_hooks(model)["base_forward"]
+        if input_ids is None:
             raise ValueError("CALM generate requires an input_ids prompt")
+        if base_forward is None:
+            raise ValueError("CALM generate requires a trunk to run on")
 
-        max_new_tokens = getattr(generation_config, "max_new_tokens", 100) or 100
+        max_new_tokens = getattr(generation_config, "max_new_tokens", None) or 100
         temperature = (
             getattr(generation_config, "temperature", None) or self.vote_temperature
         )
-        eos_token_id = getattr(generation_config, "eos_token_id", None)
         # Pool size for patch-vote (T<1). Profile default lives in
         # self.vote_num_samples (paper-scale = 200); generation_config can
         # still override per-call. Smaller pools = faster but noisier votes.
@@ -1567,13 +1595,7 @@ class CALMEncoder(BaseEncoder):
         # Non-paper diagnostic: <1 shrinks the head's noise toward its mean
         # prediction (peek at a weakly-trained head). Default 1.0 = paper-faithful.
         noise_scale = float(getattr(generation_config, "calm_noise_scale", None) or 1.0)
-        return_dict = kwargs.get("return_dict_in_generate", False)
-
-        eos_set = set()
-        if isinstance(eos_token_id, int):
-            eos_set = {eos_token_id}
-        elif isinstance(eos_token_id, (list, tuple)):
-            eos_set = set(eos_token_id)
+        return_dict = bool(getattr(generation_config, "return_dict_in_generate", False))
 
         # Left-pad the prompt to a multiple of K. The codec compresses K tokens
         # into one latent, so a non-aligned prompt would make _pad_to_chunk
@@ -1583,16 +1605,17 @@ class CALMEncoder(BaseEncoder):
         # strip them from the returned sequence. (The reference pads here too,
         # modeling_calm.py; it right-pads, but that injects pads between prompt
         # and continuation, which corrupts the Terminal's self-fed buffer.)
-        pad_n = (-inputs.shape[1]) % self.K
+        pad_n = (-input_ids.shape[1]) % self.K
         if pad_n:
-            pad = inputs.new_full((inputs.shape[0], pad_n), self.pad_token_id)
-            inputs = torch.cat([pad, inputs], dim=1)
+            pad = input_ids.new_full((input_ids.shape[0], pad_n), self.pad_token_id)
+            input_ids = torch.cat([pad, input_ids], dim=1)
 
-        generated = inputs
+        generated = input_ids
         num_new = 0
         done = False
 
         while num_new < max_new_tokens and not done:
+            step_start = generated.shape[1]
             base_out = base_forward(generated)
             h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
             # Conditioning patch position (the harmonic prior's clock).
@@ -1616,15 +1639,29 @@ class CALMEncoder(BaseEncoder):
             generated = torch.cat([generated, new_tokens], dim=1)
             num_new += self.K
 
-            if eos_set:
-                for t in new_tokens.view(-1).tolist():
-                    if t in eos_set:
-                        done = True
-                        break
+            # A patch commits K tokens at once, so a boundary can complete in
+            # the middle of one; first_halt says where, and the rest of the
+            # patch is dropped rather than emitted past it.
+            #
+            # Asked about the UNPADDED view, because that is the sequence the
+            # criteria were built against: transformers sized MaxLengthCriteria
+            # from the caller's prompt length, which knows nothing about the
+            # alignment pads prepended above. Offsetting by pad_n is what keeps
+            # "max_new_tokens" meaning the same number here as everywhere else.
+            view = generated[:, pad_n:]
+            cut = first_halt(view, stopping_criteria, step_start - pad_n)
+            if cut is not None:
+                generated = generated[:, : cut + pad_n]
+                done = True
+            stream_put(streamer, generated[:, step_start:])
+            # A deadline ends the loop without truncating - see first_halt.
+            if not done and is_halted(generated[:, pad_n:], stopping_criteria):
+                break
 
         # Drop the alignment pads so callers see a clean [prompt, continuation].
         generated = generated[:, pad_n:]
 
+        stream_end(streamer)
         if return_dict:
-            return SimpleNamespace(sequences=generated)
+            return GenerateDecoderOnlyOutput(sequences=generated)
         return generated

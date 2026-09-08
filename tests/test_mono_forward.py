@@ -578,11 +578,10 @@ class _ToyTokenizer:
     """Minimal tokenizer stub that satisfies MonoForwardGenerator's needs.
 
     The real Praxis tokenizer (``StandardTokenizer``) is heavy to build
-    and reads dataset metadata. All :class:`MonoForwardGenerator`
-    actually calls on the tokenizer are ``encode``, ``decode``, and
-    ``apply_chat_template`` - a character-level stub covers that
-    surface area for a functional test without pulling in any of the
-    training-time tokenization machinery.
+    and reads dataset metadata. A character-level stub covers the surface
+    ``Generator`` touches - ``encode``, ``decode``, ``apply_chat_template``,
+    and the id lookup ``ChatFormat.suppressed_token_ids`` needs - without
+    pulling in any of the training-time tokenization machinery.
     """
 
     def __init__(self, vocab_size: int = 256):
@@ -593,6 +592,21 @@ class _ToyTokenizer:
         self.sep_token_id = 3
         self.bos_token = "<s>"
         self.eos_token = "</s>"
+
+    def convert_tokens_to_ids(self, token):
+        """Named control tokens only; anything else is unknown (None).
+
+        ``ChatFormat.suppressed_token_ids`` asks for the ids a format's data
+        never makes a target, so the Generator can keep them out of the
+        sampler.
+        """
+        named = {
+            self.bos_token: self.bos_token_id,
+            self.eos_token: self.eos_token_id,
+        }
+        if isinstance(token, (list, tuple)):
+            return [named.get(t) for t in token]
+        return named.get(token)
 
     def encode(self, text: str) -> list:
         # Byte-level: map each character to ``ord(c) % vocab_size``,
@@ -696,21 +710,87 @@ def test_mono_forward_generator_api_bridge(tmp_path):
     )
 
 
+class _StubTrainer:
+    """The whole surface :class:`MonoForwardLM` needs: a config and one forward.
+
+    That is the point of the face - Mono-Forward's only real difference from
+    in-process decoding is where the forward runs, so everything above it
+    (sampling, halting, the request queue) is the ordinary path and needs no
+    stub at all.
+    """
+
+    def __init__(self, token: int = 65, num_layers: int = 2):
+        self._config = _mf_config(num_layers=num_layers)
+        self.token = token
+        self.calls = 0
+
+    def infer_logits(self, input_ids):
+        self.calls += 1
+        b, t = input_ids.shape
+        logits = torch.full((b, t, self._config.vocab_size), -10.0)
+        logits[:, :, self.token] = 10.0
+        return logits
+
+
+def _stub_generator(trainer=None):
+    from praxis.generation import MonoForwardGenerator
+
+    return MonoForwardGenerator(
+        trainer=trainer or _StubTrainer(), tokenizer=_ToyTokenizer()
+    )
+
+
+def test_mono_forward_decodes_through_the_standard_backend():
+    """Mono-Forward is no longer a second decode backend.
+
+    Its weights live on Ray actors, so the forward differs - and nothing else
+    does. `MonoForwardLM` is a PreTrainedModel over the actor chain handed to
+    the same `ModelBackend` every other run uses, which is what gets this path
+    the prepared logits processors, the stop strings, the deadline and the
+    streamer instead of a hand-rolled copy of each.
+    """
+    from praxis.generation.decode_backend import ModelBackend
+    from praxis.trainers.mono_forward.hf_model import MonoForwardLM
+
+    gen = _stub_generator()
+    assert isinstance(gen.backend, ModelBackend)
+    assert isinstance(gen.backend.model, MonoForwardLM)
+
+
+def test_mono_forward_face_reports_a_device_with_no_parameters_of_its_own():
+    """`PreTrainedModel.device` walks `parameters()`, and this module has none -
+    the weights are on the actors. Left inherited it raised StopIteration the
+    first time the backend asked where to put a prompt."""
+    from praxis.trainers.mono_forward.hf_model import MonoForwardLM
+
+    lm = MonoForwardLM(_StubTrainer())
+    assert list(lm.parameters()) == []
+    assert lm.device == torch.device("cpu")
+    assert lm.dtype == torch.float32
+    # ...and nothing it holds leaks into a checkpoint.
+    assert lm.state_dict() == {}
+
+
+def test_mono_forward_face_always_forwards_the_whole_prefix():
+    """Prefill-every-step: the actors hold no KV cache, so a cache-shortened
+    tail would feed them a one-token sequence and generate from nothing."""
+    from praxis.trainers.mono_forward.hf_model import MonoForwardLM
+
+    trainer = _StubTrainer()
+    lm = MonoForwardLM(trainer)
+    ids = torch.tensor([[1, 2, 3, 4]])
+    prepared = lm.prepare_inputs_for_generation(ids, past_key_values=object())
+    assert torch.equal(prepared["input_ids"], ids)
+    assert prepared["use_cache"] is False
+
+
 def test_mono_forward_generator_result_is_popped_once():
     """``get_result`` is destructive: a second lookup returns None.
 
-    No Ray required - this test only exercises the adapter's
-    bookkeeping, with a mock trainer whose ``generate`` yields a
-    fixed sequence.
+    No Ray required - this test only exercises the adapter's bookkeeping, with
+    a mock trainer whose forward returns a fixed distribution.
     """
-    from praxis.generation import MonoForwardGenerator
-
-    class _StubTrainer:
-        def generate(self, input_ids, **kwargs):
-            yield torch.tensor([42])
-            yield torch.tensor([43])
-
-    gen = MonoForwardGenerator(trainer=_StubTrainer(), tokenizer=_ToyTokenizer())
+    gen = _stub_generator()
     request_id = gen.request_generation("x", {"max_new_tokens": 2})
 
     first = gen.get_result(request_id)
@@ -731,13 +811,7 @@ def test_mono_forward_generator_fulfill_requests_is_noop():
     ``fulfill_requests`` should always find the queue empty and
     return 0.
     """
-    from praxis.generation import MonoForwardGenerator
-
-    class _StubTrainer:
-        def generate(self, input_ids, **kwargs):
-            yield torch.tensor([5])
-
-    gen = MonoForwardGenerator(trainer=_StubTrainer(), tokenizer=_ToyTokenizer())
+    gen = _stub_generator()
     gen.request_generation("x", {"max_new_tokens": 1})
     assert gen.fulfill_requests() == 0
     assert gen.fulfill_requests(max_requests=10) == 0
@@ -887,50 +961,50 @@ def test_inprocess_does_not_require_ray():
 
 # ---------------------------------------------------------------------------
 # Unproducible control ids must not be sampleable on this decode path either.
-# MonoForwardBackend runs its own sampling loop, so transformers never builds a
-# logits-processor list for it - without an explicit mask a format's untrained
-# control ids stay reachable and turn up in generations as bracketed tokens.
+# A chat format declares ids its data never makes a target
+# (ChatFormat.suppressed_token_ids); under prose [BOS]/[SEP] hold ids 1 and 3
+# of a 260-wide byte head, so leaving them reachable puts a bracketed token the
+# model was structurally forbidden from learning into generations. This used to
+# need a hand-rolled mask because the MF loop sampled for itself.
 # ---------------------------------------------------------------------------
 
 
-def test_suppressed_tokens_are_unreachable_under_both_decode_policies():
-    from praxis.trainers.mono_forward.trainer import mask_suppressed_tokens
+def test_suppressed_tokens_are_unreachable_on_the_served_path():
+    """The Generator puts the format's suppression list in step_kwargs and the
+    backend hands it to transformers, which builds a
+    SuppressTokensLogitsProcessor - no Mono-Forward-specific mask involved."""
+    trainer = _StubTrainer(token=3)  # the model would emit id 3 every step
+    gen = _stub_generator(trainer)
+
+    rid = gen.request_generation(
+        "x", {"max_new_tokens": 6, "do_sample": False, "suppress_tokens": [1, 3]}
+    )
+    out = gen.get_result(rid)
+    assert out is not None
+    # Decoded through the toy tokenizer, so assert on the ids the face saw.
+    assert trainer.calls > 0
+    ids = _ToyTokenizer().encode(out)
+    assert 3 not in ids[1:], f"a suppressed id was sampled anyway: {ids}"
+
+
+def test_suppressed_tokens_are_unreachable_in_the_trainers_own_loop():
+    """The display hook decodes through ``MonoForwardTrainer.generate``, which
+    now shares ``pick_next`` and a processor list assembled the way
+    transformers assembles one."""
+    from transformers import LogitsProcessorList, SuppressTokensLogitsProcessor
+
+    from praxis.generation.decoding import pick_next
 
     logits = torch.zeros(1, 8)
     logits[0, 3] = 10.0  # would win greedily and dominate any sample
-    masked = mask_suppressed_tokens(logits, [1, 3])
+    procs = LogitsProcessorList([SuppressTokensLogitsProcessor([1, 3], device="cpu")])
 
-    assert masked[0, 3] == float("-inf")
-    assert masked[0, 1] == float("-inf")
-    assert int(masked.argmax(dim=-1)) != 3
-    assert float(torch.softmax(masked, dim=-1)[0, 3]) == 0.0
-    # The caller's tensor is untouched; the mask returns its own copy.
+    assert int(pick_next(logits, torch.tensor([[0]]), procs, do_sample=False)) != 3
+    torch.manual_seed(0)
+    draws = {
+        int(pick_next(logits, torch.tensor([[0]]), procs, do_sample=True))
+        for _ in range(50)
+    }
+    assert 3 not in draws and 1 not in draws
+    # The caller's tensor is untouched.
     assert logits[0, 3] == 10.0
-
-
-def test_masking_is_a_no_op_when_the_format_suppresses_nothing():
-    from praxis.trainers.mono_forward.trainer import mask_suppressed_tokens
-
-    logits = torch.randn(1, 8)
-    assert mask_suppressed_tokens(logits, None) is logits
-    assert mask_suppressed_tokens(logits, []) is logits
-
-
-def test_backend_forwards_the_formats_suppression_list():
-    """The Generator puts ChatFormat.suppressed_token_ids in step_kwargs; the
-    backend is the only thing that can carry it into the sampling loop."""
-    from praxis.generation.decode_backend import MonoForwardBackend
-
-    seen = {}
-
-    class _StubTrainer:
-        def generate(self, input_ids, **kwargs):
-            seen.update(kwargs)
-            yield torch.tensor([7])
-
-    backend = MonoForwardBackend(trainer=_StubTrainer(), tokenizer=_ToyTokenizer())
-    backend.generate_until_halt(
-        torch.tensor([[5]]),
-        {"max_new_tokens": 1, "do_sample": True, "suppress_tokens": [0, 1, 3]},
-    )
-    assert seen["suppress_tokens"] == [0, 1, 3]

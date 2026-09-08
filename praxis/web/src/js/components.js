@@ -396,13 +396,15 @@ export function createSettingsModalContainer() {
  * @param {boolean} isLast - Whether this is the last message
  * @returns {string} HTML string
  */
-export function createMessage({ role, content, caption, jokeScore, score = 0 }, isDarkMode, isLast = false) {
+export function createMessage({ role, content, caption, jokeScore, score = 0, streaming = false }, isDarkMode, isLast = false) {
     const headerText = isDarkMode
         ? (role === 'user' ? 'Me' : 'You')
         : (role === 'user' ? 'You' : 'Me');
 
     // Reroll button on the last assistant turn - re-rolls just this section.
-    const rerollButton = (role === 'assistant' && isLast)
+    // Withheld while the turn is still being written: there is nothing to
+    // re-roll yet, and the request is still in flight.
+    const rerollButton = (role === 'assistant' && isLast && !streaming)
         ? '<button class="reroll-button" id="reroll-button">🔄 Reroll</button>'
         : '';
 
@@ -425,8 +427,10 @@ export function createMessage({ role, content, caption, jokeScore, score = 0 }, 
            </div>`
         : '';
 
+    // `streaming` carries the blinking caret (CSS): the turn is arriving, which
+    // reads differently from a turn that simply ended short.
     return `
-        <div class="message ${role}">
+        <div class="message ${role}${streaming ? ' streaming' : ''}">
             ${rerollButton}
             <div class="message-header">${headerText}</div>
             <div class="message-content">${escapeHtml(content)}</div>

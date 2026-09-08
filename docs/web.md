@@ -59,8 +59,8 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Generation
 
-- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L68))
-- **POST** `/messages` / `/messages/` - Handle message-based generation. ([source](../praxis/web/routes/generation.py#L14))
+- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L77))
+- **POST** `/messages` / `/messages/` - Handle message-based generation. ([source](../praxis/web/routes/generation.py#L15))
 
 ### Git HTTP backend
 

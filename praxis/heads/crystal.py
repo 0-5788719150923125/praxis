@@ -568,7 +568,7 @@ class CrystalVearHead(BaseHead):
         ``t`` depends on bytes after ``t``. That is a future read in a causal LM,
         and it is the single thing that made speculative verification expensive:
         appending draft bytes shifted the pooled mean and moved every earlier
-        logit, so ``_speculative_generate`` could not verify a block in one row
+        logit, so ``speculative_decoding`` could not verify a block in one row
         and fell back to one full re-encode per candidate.
 
         The cumulative mean removes it. At position ``t`` this is the mean over

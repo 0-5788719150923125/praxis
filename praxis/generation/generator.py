@@ -26,6 +26,7 @@ import torch
 
 from praxis.generation.decode_backend import ModelBackend
 from praxis.generation.request import GenerationRequest, GenerationResult
+from praxis.generation.streamers import ReplyStreamer
 from praxis.tokenizers.chat_templates import chat_format_of
 from praxis.tools import (
     STOP_TOOL_LOOP,
@@ -203,7 +204,9 @@ class Generator:
             return int(width) + 1
         return 1
 
-    def request_generation(self, prompt, kwargs={}, deadline=None) -> str:
+    def request_generation(
+        self, prompt, kwargs={}, deadline=None, on_text=None, on_reset=None
+    ) -> str:
         """
         Submit a generation request and return a request ID.
 
@@ -215,13 +218,29 @@ class Generator:
                 the queued path runs inside the training loop, so an abandoned
                 request without a deadline stalls the run to completion for
                 nobody. See ``GenerationRequest``.
+            on_text: Optional callback receiving the model's reply as text
+                deltas while it is decoded. Additive: the final result is
+                unchanged, so a caller that does not pass one is unaffected.
+                Note the callback runs on whichever thread serves the request -
+                the TRAINING thread for a queued one - so it must be cheap and
+                must not raise.
+            on_reset: Optional callback fired when everything published so far
+                stops being part of the answer, which happens once per tool
+                call (the turn anchor moves past the spliced result). A caller
+                that cannot revise what it has shown may omit it and treat the
+                final result as authoritative instead.
 
         Returns:
             Request ID string
         """
         request_id = str(uuid.uuid4())
         request = GenerationRequest(
-            id=request_id, prompt=prompt, kwargs=kwargs, deadline=deadline
+            id=request_id,
+            prompt=prompt,
+            kwargs=kwargs,
+            deadline=deadline,
+            on_text=on_text,
+            on_reset=on_reset,
         )
         # Synchronous backends (no training loop to drain the queue) run now;
         # the queued path defers the work to fulfill_requests.
@@ -404,6 +423,16 @@ class Generator:
         # itself. See GenerationResult.reply_start.
         reply_start_tokens = initial_len
 
+        # Incremental publication, when the caller asked for it. The streamer
+        # spans the WHOLE turn rather than one decode: a turn halts and resumes
+        # at every tool boundary, and each of those calls re-publishes the
+        # sequence so far as its prompt, which `begin_step` tells it to ignore.
+        streamer = (
+            ReplyStreamer(self.tokenizer, request.on_text, request.on_reset)
+            if request.on_text is not None
+            else None
+        )
+
         with self.backend.eval_mode():
             while True:
                 # The caller's patience, enforced where it costs something.
@@ -445,8 +474,10 @@ class Generator:
                     for key in ("temperature", "top_k", "top_p", "renormalize_logits"):
                         step_kwargs.pop(key, None)
 
+                if streamer is not None:
+                    streamer.begin_step()
                 extended = self.backend.generate_until_halt(
-                    tokens, step_kwargs, deadline=request.deadline
+                    tokens, step_kwargs, deadline=request.deadline, streamer=streamer
                 )
                 if extended.shape[1] <= tokens.shape[1]:
                     tokens = extended
@@ -457,6 +488,12 @@ class Generator:
 
                 if tools_enabled and halt == "call_open":
                     in_tool_call = True
+                    if streamer is not None:
+                        # The JSON body is not part of the reply, and it cannot
+                        # be recognised as such until the block closes - so stop
+                        # listening rather than publish something that would
+                        # have to be taken back.
+                        streamer.mute()
                     continue
 
                 if tools_enabled and halt == "call_close":
@@ -501,6 +538,14 @@ class Generator:
                     tokens = torch.tensor(
                         [spliced], dtype=torch.long, device=tokens.device
                     )
+                    if streamer is not None:
+                        # `reply_start_tokens` just moved past the splice, so
+                        # the reply is now only what the model writes NEXT -
+                        # everything published before this call is no longer
+                        # part of the answer and the consumer is told to drop
+                        # it. This also clears the opening tool marker, which
+                        # the hold-back kept private but the buffer still held.
+                        streamer.restart()
                     # Both splice styles end by handing control back to the
                     # reply role, so the end of the splice opens a new turn and
                     # the anchor belongs there - but only when the splice went
@@ -538,13 +583,23 @@ class Generator:
                         break
                     step_kwargs = dict(gen_kwargs)
                     step_kwargs["max_new_tokens"] = 1
-                    extended = self.backend.generate_until_halt(tokens, step_kwargs)
+                    if streamer is not None:
+                        streamer.begin_step()
+                    extended = self.backend.generate_until_halt(
+                        tokens, step_kwargs, streamer=streamer
+                    )
                     if extended.shape[1] <= tokens.shape[1]:
                         break
                     tokens = extended
                 strip = getattr(self.tokenizer, "strip_incomplete_tail", None)
                 if strip is not None and incomplete_tail(tokens[0].tolist()):
                     tokens = tokens[:, : len(strip(tokens[0].tolist()))]
+
+        # End of turn - release whatever the hold-back was still keeping. Only
+        # here, never in the streamer's own `end()`: transformers calls that at
+        # the close of every decode, and a turn is several of them.
+        if streamer is not None:
+            streamer.finish()
 
         self._record_inference(time.time() - start_time, produced)
 

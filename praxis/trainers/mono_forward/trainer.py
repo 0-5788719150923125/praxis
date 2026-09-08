@@ -58,12 +58,20 @@ import copy
 import math
 import os
 import time
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 
 from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
 from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
+from transformers import (
+    LogitsProcessorList,
+    SuppressTokensLogitsProcessor,
+    TemperatureLogitsWarper,
+    TopKLogitsWarper,
+)
+
+from praxis.generation.decoding import pick_next
 from praxis.utils import create_block_ids
 
 _RAY_MISSING_MSG = (
@@ -78,29 +86,6 @@ _RAY_MISSING_MSG = (
     "For single-host training without Ray, use --trainer-type mono_forward "
     "(the in-process profile).\n"
 )
-
-
-def mask_suppressed_tokens(
-    logits: torch.Tensor, suppress_tokens: Optional[Sequence[int]]
-) -> torch.Tensor:
-    """Drive ``suppress_tokens`` to -inf, returning a fresh tensor.
-
-    The chat format declares which control ids its data never makes a target
-    (``ChatFormat.suppressed_token_ids``). Conditioning on such an id is one
-    thing; SAMPLING it is another - under the prose format ``[BOS]`` and
-    ``[SEP]`` hold ids 1 and 3 out of a 260-wide byte head and are trained
-    nowhere, so leaving them reachable puts a bracketed token in generations
-    the model was structurally forbidden from learning.
-
-    ``generate`` samples for itself, so no transformers logits processor runs
-    over it and the mask has to be applied by hand. Callers apply it before
-    temperature/top-k and before argmax so it binds on both decode policies.
-    """
-    if not suppress_tokens:
-        return logits
-    masked = logits.clone()
-    masked[:, list(suppress_tokens)] = float("-inf")
-    return masked
 
 
 class MonoForwardTrainer:
@@ -226,7 +211,7 @@ class MonoForwardTrainer:
 
         # Phase 6: bridge training state into the LiveMetrics singleton
         # so the web dashboard's Terminal tab (and anyone else reading
-        # the /metrics-live WebSocket) sees live batch/loss/status
+        # the /realtime WebSocket) sees live batch/loss/status
         # updates. Under backprop this is populated by the Lightning
         # TerminalInterface callback; MF bypasses Lightning entirely,
         # so we mirror the same state pushes ourselves inside the
@@ -1706,6 +1691,47 @@ class MonoForwardTrainer:
     # live inference routed through the actor set
     # ------------------------------------------------------------------
 
+    def infer_logits(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """One no-grad forward over the whole prefix, through the actor chain.
+
+        THE single implementation of "run the route", shared by this trainer's
+        own token loop and by :class:`MonoForwardLM`, the ``PreTrainedModel``
+        façade that lets ``model.generate`` drive Mono-Forward inference. Both
+        used to carry their own copy of the hop-and-project code, which is how
+        the served path and the display path drifted apart.
+
+        Prefill-every-step by design: the actors hold no KV cache, so the whole
+        prefix is re-run each time and ``block_ids`` is rebuilt against it -
+        EOS-aware attention masking has to reflect the prefix about to be run,
+        not the original prompt.
+
+        Returns ``[batch, seq_len, vocab]`` on CPU.
+        """
+        if self._actors is None or self._embeds is None or self._config is None:
+            raise RuntimeError(
+                "MonoForwardTrainer.infer_logits requires an active actor set."
+            )
+        import ray  # local import to avoid hard dep at module load
+
+        prefix = input_ids.detach().cpu().long()
+        block_ids = create_block_ids(prefix, self._config.eos_token_id)
+        with torch.no_grad():
+            hidden = self._embeds(prefix)
+
+        # Hop activations through the actor chain one layer at a time, shoving
+        # block_ids into every hop. ``ray.get`` on each hop serializes the
+        # pipeline for this single inference request - pipelining multiple
+        # inference requests is a Phase 6 concern.
+        route = self._route_table
+        for step_idx in range(len(route)):
+            actor = self._actors[route[step_idx]]
+            hidden, _kv = ray.get(
+                actor.infer_batch.remote(hidden, step_idx, block_ids, None)
+            )
+
+        # Project through the final depth step's actor head.
+        return ray.get(self._actors[route[-1]].project_logits.remote(hidden))
+
     def generate(
         self,
         input_ids: torch.Tensor,
@@ -1783,57 +1809,42 @@ class MonoForwardTrainer:
             else:
                 eos_ids = [int(eos_token_id)]
 
+        # Assembled the way transformers' `_get_logits_processor` assembles it,
+        # and applied through the same `pick_next` every Praxis decode loop
+        # uses - so suppression, temperature and top-k mean exactly what they
+        # mean on the served path. Suppression is not optional: the chat format
+        # declares ids its data never makes a target
+        # (`ChatFormat.suppressed_token_ids`), and under prose `[BOS]`/`[SEP]`
+        # hold ids 1 and 3 of a 260-wide byte head, so leaving them reachable
+        # puts a bracketed token the model was forbidden from learning into
+        # generations. Warpers are sampling-only, exactly as transformers
+        # gates them.
+        processors = LogitsProcessorList()
+        if suppress_tokens:
+            processors.append(
+                SuppressTokensLogitsProcessor(list(suppress_tokens), device="cpu")
+            )
+        if do_sample:
+            if temperature is not None and temperature != 1.0:
+                processors.append(
+                    TemperatureLogitsWarper(max(float(temperature), 1e-5))
+                )
+            if top_k:
+                processors.append(TopKLogitsWarper(int(top_k)))
+
         prefix = input_ids.detach().cpu().long()
         batch_size = prefix.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool)
 
         for _ in range(max_new_tokens):
-            # Rebuild block_ids against the current prefix every step.
-            # EOS-aware attention masking needs to reflect the prefix
-            # we're about to run the forward on, not the original
-            # prompt.
-            block_ids = create_block_ids(prefix, config.eos_token_id)
-            with torch.no_grad():
-                activations = embeds(prefix)
-
-            # Hop activations through the actor chain one layer at a
-            # time, shoving block_ids into every hop. ``ray.get`` on
-            # each hop serializes the pipeline for this single
-            # inference request - pipelining multiple inference
-            # requests is a Phase 6 concern.
-            import ray  # local import to avoid hard dep at module load
-
-            hidden = activations
-            route = self._route_table
-            for step_idx in range(len(route)):
-                actor = actors[route[step_idx]]
-                future = actor.infer_batch.remote(hidden, step_idx, block_ids, None)
-                hidden, _kv = ray.get(future)
-
-            # Project through the final depth step's actor head.
-            last_actor = actors[route[-1]]
-            logits = ray.get(last_actor.project_logits.remote(hidden))
+            logits = self.infer_logits(prefix)
 
             # Decode the *last* position - we do a prefill each step so
             # the "next-token" logits live at index -1. Greedy by
             # default (deterministic for tests); the demo hook turns on
             # ``do_sample`` to avoid the "5 5 5 5 5 5" degenerate
             # greedy-decode pathology undertrained models exhibit.
-            # Before the temperature/top-k warp and before argmax, so a
-            # suppressed id can neither be sampled nor win greedily.
-            step_logits = mask_suppressed_tokens(logits[:, -1, :], suppress_tokens)
-            if do_sample:
-                if temperature != 1.0:
-                    step_logits = step_logits / max(temperature, 1e-5)
-                if top_k is not None and top_k > 0:
-                    topk_vals, topk_idx = torch.topk(step_logits, top_k, dim=-1)
-                    mask = torch.full_like(step_logits, float("-inf"))
-                    mask.scatter_(-1, topk_idx, topk_vals)
-                    step_logits = mask
-                probs = torch.softmax(step_logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
-            else:
-                next_token = step_logits.argmax(dim=-1)
+            next_token = pick_next(logits[:, -1, :], prefix, processors, do_sample)
 
             # Early-stop: once a row has emitted EOS, freeze it.
             if eos_ids is not None:

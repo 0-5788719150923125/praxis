@@ -163,26 +163,33 @@ class BaseEncoder(nn.Module, ABC):
         The rest of the model is unlocked immediately afterward."""
         return None
 
-    def custom_generate(
-        self,
-        inputs: Optional[torch.Tensor] = None,
-        *,
-        base_forward: Callable[[torch.Tensor], object],
-        generation_config=None,
-        **kwargs,
-    ):
-        """Encoder-owned generation loop. Return None to defer to the standard
-        HF generate path.
+    def decoding_method(self, generation_config=None) -> Optional[Callable]:
+        """The transformers decoding method this encoder drives, or None.
 
-        ``base_forward(input_ids)`` runs the global transformer from tokens and
-        returns an output exposing ``last_hidden_state`` (plus ``patch_embeds``,
-        ``h_encoder``, ``patch_lengths`` and ``local_decoder_tokens`` for
-        encoders that patch).
+        Returning None defers to the standard loop, which is what every encoder
+        that decodes token-by-token wants.
 
-        ``latent_forward(patch_embeds, positions=None)`` arrives in ``kwargs``
-        and runs the trunk directly on a latent sequence, returning its hidden
-        states. An encoder that autoregresses over PATCHES needs it: the patch
-        it just predicted has no bytes behind it, so ``base_forward`` cannot
-        reach it.
+        An encoder that returns something returns a *transformers decoding
+        method*: a callable with the shape ``GenerationMixin._sample`` has, so
+        ``generate(custom_generate=...)`` can run it in place of sampling after
+        doing all of its own preparation.
+
+            method(model, input_ids, logits_processor=..., stopping_criteria=...,
+                   generation_config=..., tokenizer=..., stream=..., **model_kwargs)
+
+        The contract that buys: the processor list (repetition penalty,
+        suppressed ids, temperature/top-k/top-p) and the criteria list (max
+        length, max time, stop strings, EOS) arrive already built, and must be
+        used rather than re-derived from ``generation_config``.
+
+        ``model`` is the ``PraxisForCausalLM``, which is how the loop reaches
+        the trunk: :func:`praxis.generation.decoding.trunk_hooks` turns it into
+        the three closures an encoder-owned loop needs. Passing them as
+        overrides instead is what lets a non-standard driver (the Mono-Forward
+        in-process trainer, whose trunk is a chain of workers) reuse the same
+        loop.
+
+        Chosen once per ``generate`` call rather than stored, so no encoder ends
+        up holding a back-reference to the trunk.
         """
         return None

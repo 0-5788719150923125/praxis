@@ -412,10 +412,54 @@ PROSE_FORMAT = ChatFormat(
     document_separator=None,
 )
 
+# A foreign tokenizer's OWN contract, discovered rather than declared.
+#
+# This is the format for a model Praxis did not train: anything off the
+# HuggingFace hub, whose prompt layout lives in its own `chat_template` and
+# whose turn ends at its own EOS. Praxis never renders with it - the tokenizer's
+# template does that - so the fields here describe only what the RUNTIME needs
+# from a foreign model: where a reply ends, and what must not be sampled.
+#
+# What it deliberately does NOT claim:
+# - `template` is left empty. Filling it in with the tokenizer's own template
+#   would make it look like a Praxis format that could be trained against, and
+#   nothing here is a trained target.
+# - `tool_style="tokens"` with no `[TOOL_CALL]` ids registered. A foreign
+#   tokenizer has none, so `tool_token_ids` finds nothing, the Generator's
+#   `boundaries_detectable` check fails, and the tool state machine turns
+#   itself off - which is right, because a model that was never trained on our
+#   tool layout cannot participate in it.
+HF_NATIVE_FORMAT = ChatFormat(
+    name="hf_native",
+    template="",
+    roles=("system", "user", "assistant"),
+    generated_roles=("assistant",),
+    boundary_style="tokens",
+    stop_token_names=("eos_token_id",),
+    tool_style="tokens",
+    document_separator="eos_token_id",
+)
+
 CHAT_FORMAT_REGISTRY: Dict[str, ChatFormat] = {
     "default": DEFAULT_FORMAT,
     "prose": PROSE_FORMAT,
+    "hf_native": HF_NATIVE_FORMAT,
 }
+
+
+def _is_praxis_tokenizer(tokenizer: Any) -> bool:
+    """Whether this tokenizer was built by Praxis.
+
+    The question matters only at the fallback below: a Praxis tokenizer with an
+    unfamiliar template is a Praxis tokenizer someone customized, and it keeps
+    the default contract it has always had. Anything else with a template we do
+    not recognise is a foreign model.
+    """
+    try:
+        from praxis.tokenizers.base import PraxisTokenizerBase
+    except Exception:
+        return False
+    return isinstance(tokenizer, PraxisTokenizerBase)
 
 
 def resolve_chat_format(name: Optional[str]) -> ChatFormat:
@@ -458,10 +502,19 @@ def get_chat_format(tokenizer_or_name: Any = None) -> ChatFormat:
     # format from the template rather than silently pairing a prose template
     # with the default halting contract, which would never terminate.
     template = getattr(tokenizer_or_name, "chat_template", None)
-    if isinstance(template, str):
+    if isinstance(template, str) and template:
         for candidate in CHAT_FORMAT_REGISTRY.values():
-            if candidate.template == template:
+            if candidate.template and candidate.template == template:
                 return candidate
+        # A template we do not recognise on a tokenizer we did not build is a
+        # FOREIGN model. Returning DEFAULT_FORMAT here was the quiet failure
+        # that made running one impossible: the prompt would be rendered by the
+        # model's own template (`apply_chat_template` always uses the
+        # tokenizer's) while halting and reply extraction were measured against
+        # Praxis's `[BOS]role` boundaries, which its output never contains - so
+        # every turn ran to max_new_tokens and came back as the raw transcript.
+        if not _is_praxis_tokenizer(tokenizer_or_name):
+            return HF_NATIVE_FORMAT
     return DEFAULT_FORMAT
 
 

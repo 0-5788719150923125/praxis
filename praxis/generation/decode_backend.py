@@ -6,23 +6,27 @@ A backend answers "extend this token sequence until the next halt token"
 plus a little metadata (device, positional capacity, eval-mode context,
 preferred sampling temperature). Everything else is shared.
 
-- :class:`ModelBackend` wraps ``model.generate`` (halt-and-resume native:
-  the boundary tokens sit in ``eos_token_id``, and text boundaries in
-  ``stop_strings``, which transformers honours because the tokenizer is
-  passed through).
-- :class:`MonoForwardBackend` drives ``MonoForwardTrainer.generate``,
-  whose streaming token iterator hops activations through Ray actors. It
-  implements the same halt-and-resume contract by stopping its yield loop
-  when a produced token lands in the stop set, or when the decoded tail
-  completes a stop string.
+There is one backend, :class:`ModelBackend`, and that is the point: it wraps
+``model.generate``, so every halt in the contract below is transformers' own -
+``eos_token_id`` becomes an ``EosTokenCriteria``, ``stop_strings`` a
+``StopStringCriteria`` (the tokenizer is passed through for it), the request
+deadline a ``MaxTimeCriteria``, and the positional cap a ``MaxLengthCriteria``.
+Nothing here re-implements any of them.
+
+Mono-Forward, whose weights live on Ray actors rather than in one module, used
+to be a second backend carrying its own copies of all of that. It is now a
+``PreTrainedModel`` face over the actor chain
+(:class:`praxis.trainers.mono_forward.hf_model.MonoForwardLM`) handed to this
+same backend, so the difference is confined to the forward.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 import torch
 from transformers import GenerationConfig
@@ -71,6 +75,7 @@ class DecodeBackend(ABC):
         tokens: torch.Tensor,
         step_kwargs: Dict[str, Any],
         deadline: Optional[float] = None,
+        streamer: Optional[Any] = None,
     ) -> torch.Tensor:
         """Extend ``tokens`` until a halt token (any id in
         ``step_kwargs['eos_token_id']``), a completed stop string (any of
@@ -86,7 +91,14 @@ class DecodeBackend(ABC):
         ``deadline`` is wall-clock (``time.time()`` scale) and has to be honored
         PER STEP, not just on entry. The queued path decodes inside the training
         loop, and a plain turn is one call to this method, so a check that only
-        ran between calls would never fire."""
+        ran between calls would never fire.
+
+        ``streamer`` is a ``transformers.generation.BaseStreamer``. It sees the
+        prompt of every step plus each token as it is produced, so a consumer
+        that wants only the model's own new text skips what it is handed before
+        the first token of each step - see
+        :class:`praxis.generation.streamers.ReplyStreamer`, which the
+        ``Generator`` drives across the whole halt-and-resume turn."""
 
 
 class ModelBackend(DecodeBackend):
@@ -127,6 +139,16 @@ class ModelBackend(DecodeBackend):
 
     @property
     def device(self):
+        """Where prompts have to live.
+
+        ``PreTrainedModel`` answers this itself, and asking it rather than
+        walking ``parameters()`` is what lets a model with no parameters of its
+        own work - the Mono-Forward face holds none, because its weights are on
+        Ray actors. The walk stays as the fallback for a bare module.
+        """
+        device = getattr(self.model, "device", None)
+        if device is not None:
+            return device
         return next(self.model.parameters()).device
 
     @property
@@ -223,92 +245,27 @@ class ModelBackend(DecodeBackend):
         tokens: torch.Tensor,
         step_kwargs: Dict[str, Any],
         deadline: Optional[float] = None,
+        streamer: Optional[Any] = None,
     ) -> torch.Tensor:
-        from praxis.generation.stopping import deadline_criteria
-
-        extra = {}
-        criteria = deadline_criteria(deadline)
-        if criteria is not None:
-            # Honored by the transformers loop natively, and by our own
-            # speculative loop explicitly (see _speculative_generate).
-            extra["stopping_criteria"] = criteria
+        step_kwargs = dict(step_kwargs)
+        if deadline is not None:
+            # The deadline is ABSOLUTE wall-clock; `max_time` is a budget
+            # measured from the moment `generate` builds its criteria. A turn
+            # that halts and resumes calls this several times, so the budget is
+            # recomputed per step rather than set once - otherwise each step
+            # would restart the clock and get the full timeout again.
+            #
+            # Clamped at 0 rather than skipped when already expired: a
+            # MaxTimeCriteria with a zero budget halts before the first token,
+            # which is what an expired request should cost.
+            step_kwargs["max_time"] = max(0.0, deadline - time.time())
+        # On the config, not as a sibling kwarg: transformers deprecates mixing
+        # a GenerationConfig with generation parameters passed alongside it.
+        step_kwargs["return_dict_in_generate"] = True
         outputs = self.model.generate(
             tokens,
             generation_config=GenerationConfig(**step_kwargs),
             tokenizer=self.tokenizer,
-            return_dict_in_generate=True,
-            **extra,
+            streamer=streamer,
         )
         return outputs.sequences
-
-
-class MonoForwardBackend(DecodeBackend):
-    """Routes decoding through ``MonoForwardTrainer.generate`` (Ray actor
-    chain). The trainer yields one token at a time; we accumulate until a
-    halt token to honour the shared halt-and-resume tool loop."""
-
-    def __init__(self, trainer, tokenizer, default_temperature: float = 0.5) -> None:
-        self.trainer = trainer
-        self.tokenizer = tokenizer
-        self.device = "cpu"  # actors run CPU-only; prompts must live on CPU
-        self._default_temperature = default_temperature
-
-    @property
-    def default_sampling_temperature(self) -> Optional[float]:
-        return self._default_temperature
-
-    @staticmethod
-    def _stop_ids(step_kwargs: Dict[str, Any]) -> Set[int]:
-        eos = step_kwargs.get("eos_token_id")
-        if eos is None:
-            return set()
-        if isinstance(eos, (list, tuple, set)):
-            return {int(x) for x in eos}
-        return {int(eos)}
-
-    def generate_until_halt(
-        self,
-        tokens: torch.Tensor,
-        step_kwargs: Dict[str, Any],
-        deadline: Optional[float] = None,
-    ) -> torch.Tensor:
-        import time
-
-        from praxis.generation.stopping import find_stop_cut, normalize_stop_strings
-
-        stop_ids = self._stop_ids(step_kwargs)
-        stop_strings = normalize_stop_strings(step_kwargs.get("stop_strings"))
-        max_new_tokens = int(step_kwargs.get("max_new_tokens", 100))
-        top_k = step_kwargs.get("top_k")
-        prefix = tokens[0].tolist()
-        produced = []
-        for tok in self.trainer.generate(
-            tokens.cpu(),
-            max_new_tokens=max_new_tokens,
-            eos_token_id=None,  # we own halting against the full stop set
-            do_sample=bool(step_kwargs.get("do_sample", True)),
-            temperature=float(step_kwargs.get("temperature", 1.0)),
-            top_k=int(top_k) if top_k else None,
-            # This loop owns its sampling, so transformers never builds a
-            # processor list for it - the format's unproducible control ids
-            # have to be masked explicitly, exactly as the speculative path
-            # does (praxis/modeling.py::_speculative_generate).
-            suppress_tokens=step_kwargs.get("suppress_tokens"),
-        ):
-            produced.append(tok)
-            if deadline is not None and time.time() >= deadline:
-                break
-            if int(tok.view(-1)[0].item()) in stop_ids:
-                break
-            # Text-boundary halt. The scan starts at the prompt's length so the
-            # boundary we resumed from cannot re-halt this step; only one new
-            # token arrives per iteration, so the earliest completion is here.
-            if stop_strings:
-                ids = prefix + [int(t.view(-1)[0].item()) for t in produced]
-                keep = find_stop_cut(self.tokenizer, ids, len(ids) - 1, stop_strings)
-                if keep is not None:
-                    break
-        if not produced:
-            return tokens
-        new_ids = torch.stack(produced, dim=-1).to(tokens.device)
-        return torch.cat([tokens, new_ids], dim=-1)

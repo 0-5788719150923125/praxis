@@ -1,6 +1,13 @@
 /**
  * Praxis Web - WebSocket Service
- * Handle metrics-live and live-reload WebSocket connections
+ *
+ * Two sockets. `/realtime` is the server's live push channel - everything it
+ * sends unprompted while a run is going: the metrics snapshot, typed cache
+ * invalidations, and the deltas of a reply being written. `/live-reload` is the
+ * dev-only template watcher, and is unrelated.
+ *
+ * `/realtime` was `/metrics-live` while metrics were all it carried. It is not
+ * named for any one of its passengers now, because it has several.
  */
 
 import { state } from './state.js';
@@ -32,10 +39,37 @@ function mergeNotifications(events) {
 // Live reload socket
 let liveReloadSocket = null;
 
-// Metrics live socket
-let metricsSocket = null;
+// The live push socket
+let realtimeSocket = null;
 // Guards the one-time foreground/online revival listeners (see below).
 let revivalWired = false;
+
+// ---------------------------------------------------------------------------
+// Streaming replies
+//
+// `POST /messages/` still returns the whole reply and is still authoritative;
+// the deltas below are a SIDE CHANNEL on the socket that is already open, so a
+// disconnected socket costs the preview and nothing else. Frames carry the
+// stream id the client minted, so several in flight cannot cross-talk.
+// ---------------------------------------------------------------------------
+
+const activeStreams = new Map();   // id -> { onDelta, onReset }
+
+/** Listen for one request's deltas. Returns a release fn; ALWAYS call it. */
+export function openStream(id, handlers) {
+    activeStreams.set(id, handlers);
+    return () => activeStreams.delete(id);
+}
+
+function dispatchStream(id, apply) {
+    const handlers = activeStreams.get(id);
+    if (!handlers) return;   // already released: the POST beat the frame
+    try {
+        apply(handlers);
+    } catch (error) {
+        console.error('[WS] Stream handler failed:', error);
+    }
+}
 
 /**
  * Get the socket.io path based on current URL
@@ -52,22 +86,22 @@ function getSocketPath() {
 }
 
 /**
- * Connect to metrics-live WebSocket for real-time dashboard data
+ * Connect the live push socket (metrics, invalidations, generation deltas)
  */
-export function connectMetricsLive() {
+export function connectRealtime() {
     // Reuse the existing socket: if it's mid-reconnect just nudge it awake,
     // never build a second one (orphaned sockets keep firing on shared state).
-    if (metricsSocket) {
-        if (!metricsSocket.connected) metricsSocket.connect();
+    if (realtimeSocket) {
+        if (!realtimeSocket.connected) realtimeSocket.connect();
         return;
     }
 
-    console.log('[WS] Connecting to metrics-live');
+    console.log('[WS] Connecting to /realtime');
 
     // Let socket.io own reconnection entirely - no hand-rolled retry loop, and
     // crucially no attempt cap (default ['polling','websocket'] handshake is the
     // robust path through mobile carriers/proxies that block a bare WS upgrade).
-    metricsSocket = io.connect('/metrics-live', {
+    realtimeSocket = io.connect('/realtime', {
         path: getSocketPath(),
         reconnection: true,
         reconnectionDelay: 1000,
@@ -75,8 +109,8 @@ export function connectMetricsLive() {
         reconnectionAttempts: Infinity
     });
 
-    metricsSocket.on('connect', () => {
-        console.log('[WS] Metrics-live connected');
+    realtimeSocket.on('connect', () => {
+        console.log('[WS] Realtime connected');
         state.liveMetrics.connected = true;
         state.terminal.connected = true;
         // Only the connection dot reflects this; a full render() here re-touched
@@ -84,8 +118,8 @@ export function connectMetricsLive() {
         renderTerminalStatus();
     });
 
-    metricsSocket.on('disconnect', () => {
-        console.log('[WS] Metrics-live disconnected');
+    realtimeSocket.on('disconnect', () => {
+        console.log('[WS] Realtime disconnected');
         state.liveMetrics.connected = false;
         state.terminal.connected = false;
         renderTerminalStatus();
@@ -97,7 +131,7 @@ export function connectMetricsLive() {
     // the page returns to the foreground or the network comes back.
     wireConnectionRevival();
 
-    metricsSocket.on('metrics_snapshot', (data) => {
+    realtimeSocket.on('metrics_snapshot', (data) => {
         state.liveMetrics.data = data;
 
         // Surface any backend events in the notification bell.
@@ -109,16 +143,29 @@ export function connectMetricsLive() {
         }
     });
 
+    // A reply being written. `gen_delta` appends; `gen_reset` means the runtime
+    // spliced a tool result and moved the turn anchor past it, so everything
+    // published for this stream so far has stopped being part of the answer.
+    realtimeSocket.on('gen_delta', (data) => {
+        if (!data || !data.id || !data.text) return;
+        dispatchStream(data.id, (h) => h.onDelta && h.onDelta(data.text));
+    });
+
+    realtimeSocket.on('gen_reset', (data) => {
+        if (!data || !data.id) return;
+        dispatchStream(data.id, (h) => h.onReset && h.onReset());
+    });
+
     // Server-pushed invalidations ("metrics" on each flushed training step,
     // "snapshots" when a model-probe snapshot actually changes). Re-broadcast
     // as a DOM event so the refresh scheduler (main.js) stays decoupled from
     // the socket lifecycle.
-    metricsSocket.on('invalidate', (data) => {
+    realtimeSocket.on('invalidate', (data) => {
         window.dispatchEvent(new CustomEvent('praxis:data-invalidate', { detail: data }));
     });
 
-    metricsSocket.on('connect_error', (error) => {
-        console.error('[WS] Metrics-live connection error:', error);
+    realtimeSocket.on('connect_error', (error) => {
+        console.error('[WS] Realtime connection error:', error);
         state.liveMetrics.connected = false;
         state.terminal.connected = false;
         renderTerminalStatus();
@@ -126,12 +173,12 @@ export function connectMetricsLive() {
 }
 
 /**
- * Disconnect metrics-live WebSocket
+ * Disconnect the live push socket
  */
-export function disconnectMetricsLive() {
-    if (metricsSocket) {
-        metricsSocket.disconnect();
-        metricsSocket = null;
+export function disconnectRealtime() {
+    if (realtimeSocket) {
+        realtimeSocket.disconnect();
+        realtimeSocket = null;
     }
 }
 
@@ -147,8 +194,8 @@ function wireConnectionRevival() {
     revivalWired = true;
 
     const revive = () => {
-        if (metricsSocket && !metricsSocket.connected) {
-            metricsSocket.connect();
+        if (realtimeSocket && !realtimeSocket.connected) {
+            realtimeSocket.connect();
         }
     };
 

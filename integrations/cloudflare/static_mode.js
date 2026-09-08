@@ -43,7 +43,7 @@
         (handlers[ev] = handlers[ev] || []).push(cb);
         if (!sock._scheduled) {
           sock._scheduled = true;
-          // Defer past the synchronous run of connectMetricsLive(), so every
+          // Defer past the synchronous run of connectRealtime(), so every
           // handler (connect, metrics_snapshot, ...) is registered first.
           setTimeout(function () {
             sock.connected = true;

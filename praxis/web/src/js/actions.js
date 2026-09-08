@@ -14,6 +14,7 @@ import {
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
 import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.js';
+import { streamingTurn } from './chatstream.js';
 import { kbCacheFetch } from './kbcache.js';
 import { renderMarkdown, renderJson } from './markdown.js';
 import { revealPrewarmed } from './prefetch.js';
@@ -169,18 +170,20 @@ export const ACTION_HANDLERS = {
         state.isThinking = true;
         render();
 
+        const turn = streamingTurn();
         try {
             // Re-send to API
-            const response = await sendMessage(state.messages);
+            const response = await sendMessage(state.messages, {
+                onDelta: turn.onDelta,
+                onReset: turn.onReset
+            });
 
             // Add new response
-            state.messages.push({
-                role: 'assistant',
-                content: response.response || response.content || 'Error: No response'
-            });
+            turn.settle(response.response || response.content || 'Error: No response');
 
         } catch (error) {
             console.error('[Chat] Reroll error:', error);
+            turn.discard();
             state.messages.push({
                 role: 'assistant',
                 content: `Error: ${error.message}`

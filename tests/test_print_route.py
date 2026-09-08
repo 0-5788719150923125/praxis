@@ -29,7 +29,7 @@ class _FakeGen:
     def __init__(self, reply):
         self._reply = reply
 
-    def request_generation(self, prompt, kwargs, deadline=None):
+    def request_generation(self, prompt, kwargs, deadline=None, **_):
         return "rid"
 
     def get_result(self, rid):

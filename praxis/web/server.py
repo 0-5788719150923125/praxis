@@ -31,7 +31,7 @@ from .snapshots import (
 )
 from .utils import find_available_port
 from .utils.file_watcher import TemplateWatcher
-from .websocket import setup_live_reload, setup_metrics_live_namespace
+from .websocket import NAMESPACE, setup_live_reload, setup_realtime_namespace
 
 
 class APIServer:
@@ -103,7 +103,7 @@ class APIServer:
 
         # Set up WebSocket namespaces
         setup_live_reload(socketio)
-        setup_metrics_live_namespace(socketio)
+        setup_realtime_namespace(socketio)
 
     def _configure_logging(self) -> None:
         """Configure logging based on dashboard and dev mode."""
@@ -226,7 +226,7 @@ class APIServer:
         self.snapshot_store.notify = lambda name, version: socketio.emit(
             "invalidate",
             {"topic": "snapshots", "key": name, "version": version},
-            namespace="/metrics-live",
+            namespace=NAMESPACE,
         )
         app.config["snapshot_store"] = self.snapshot_store
         # Dynamics/data-metrics scan their whole SQLite table (uniform

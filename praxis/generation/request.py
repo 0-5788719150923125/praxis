@@ -1,7 +1,7 @@
 """Generation request/result data structures."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 @dataclass
@@ -21,6 +21,15 @@ class GenerationRequest:
 
     ``None`` means no deadline, which is what callers that poll forever
     (the ``/input`` route) need.
+
+    ``on_text`` opts the request into incremental publication: the Generator
+    builds a :class:`~praxis.generation.streamers.ReplyStreamer` around it and
+    drives it across the whole halt-and-resume turn, so the callback receives
+    the model's reply as text DELTAS while it is being decoded. The final
+    result is unchanged and remains authoritative - streaming is additive, and
+    a consumer that ignores it sees exactly what it saw before. ``on_reset``
+    is the other half of that: it fires when what was already published stops
+    being part of the answer, which happens once per tool call.
     """
 
     id: str
@@ -28,6 +37,8 @@ class GenerationRequest:
     kwargs: Dict[str, Any]
     result: Optional[str] = None
     deadline: Optional[float] = None
+    on_text: Optional[Callable[[str], None]] = None
+    on_reset: Optional[Callable[[], None]] = None
 
 
 class GenerationResult(str):

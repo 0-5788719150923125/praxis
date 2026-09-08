@@ -6,6 +6,7 @@ import time
 from flask import Blueprint, current_app, jsonify, request
 
 from ..utils import generate_from_messages
+from ..websocket import stream_callbacks
 
 generation_bp = Blueprint("generation", __name__)
 api_logger = logging.getLogger("praxis.web")
@@ -41,6 +42,12 @@ def generate_messages():
             error_response = jsonify({"error": "Tokenizer not available"})
             return error_response, 503
 
+        # Incremental publication, when the client asked for it. `stream_id` is
+        # minted by the client and echoed on every frame, so the deltas travel
+        # on the socket it already has open while THIS response stays exactly
+        # what it was. A client that sends no id gets no streamer built at all.
+        on_text, on_reset = stream_callbacks(data.get("stream_id"))
+
         # Use unified generation function
         assistant_reply = generate_from_messages(
             messages=messages,
@@ -51,6 +58,8 @@ def generate_messages():
             repetition_penalty=data.get("repetition_penalty", 1.15),
             do_sample=data.get("do_sample", True),
             timeout=float(data.get("timeout", 60.0)),
+            on_text=on_text,
+            on_reset=on_reset,
         )
 
         # A baby/untrained model may produce nothing or gibberish - never 500 over

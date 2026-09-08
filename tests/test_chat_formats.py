@@ -7,7 +7,7 @@ rather than an exception:
   checkpoint's data pipeline depends on it,
 - the boundary that ENDS a generated turn must be a trained target (the defect
   `prose` exists to remove),
-- a stop-string scan must not re-halt on the boundary it resumed from, or the
+- a stop-string halt must not re-fire on the boundary it resumed from, or the
   tool loop returns zero new tokens forever,
 - the tool flow's three boundaries must classify unambiguously.
 """
@@ -19,13 +19,8 @@ import torch
 
 from praxis.data.formatters.tools import format_tool_calling
 from praxis.data.validators import ChatTemplateValidator
+from praxis.generation.decoding import first_halt
 from praxis.generation.request import GenerationRequest
-from praxis.generation.stopping import (
-    find_stop_cut,
-    normalize_stop_strings,
-    split_at_stop,
-    trailing_stop,
-)
 from praxis.tokenizers import create_tokenizer
 from praxis.tokenizers.chat_templates import (
     CHAT_FORMAT_REGISTRY,
@@ -72,7 +67,10 @@ def default_tokenizer():
 
 
 def test_registry_keys():
-    assert set(CHAT_FORMAT_REGISTRY) == {"default", "prose"}
+    # `hf_native` is not a Praxis format - it is the contract for a model we did
+    # NOT train (see tests/test_hf_native_format.py). It lives in the registry
+    # so a run can name it, but the two TRAINABLE formats are still these.
+    assert set(CHAT_FORMAT_REGISTRY) == {"default", "prose", "hf_native"}
 
 
 def test_unknown_format_is_a_hard_error():
@@ -238,45 +236,56 @@ def test_reply_boundary_is_not_a_stop_string(prose_tokenizer):
     assert fmt.boundary(fmt.reply_role) not in fmt.stop_strings()
 
 
+def _stop_criteria(tokenizer):
+    """The criteria transformers builds for this format's stop strings.
+
+    Praxis used to carry its own scan for this (``generation/stopping.py``,
+    now deleted). ``StopStringCriteria`` does the same job against a
+    precomputed vocab table, and it is what every decode path receives.
+    """
+    from transformers.generation.stopping_criteria import (
+        StoppingCriteriaList,
+        StopStringCriteria,
+    )
+
+    stops = list(chat_format_of(tokenizer).stop_strings())
+    if not stops:
+        return StoppingCriteriaList()
+    return StoppingCriteriaList(
+        [StopStringCriteria(stop_strings=stops, tokenizer=tokenizer)]
+    )
+
+
 def test_stop_cut_lands_exactly_on_the_boundary(prose_tokenizer):
-    fmt = chat_format_of(prose_tokenizer)
-    stops = fmt.stop_strings()
     prompt = "user\n\nhi\n\nassistant\n\n"
     full = prompt + "Hello there!\n\nuser\n\nbytes the model kept drafting"
-    ids = prose_tokenizer.encode(full)
+    ids = torch.tensor([prose_tokenizer.encode(full)])
     start = len(prose_tokenizer.encode(prompt))
 
-    keep = find_stop_cut(prose_tokenizer, ids, start, stops)
+    keep = first_halt(ids, _stop_criteria(prose_tokenizer), start)
     assert keep is not None
-    assert prose_tokenizer.decode(ids[:keep]) == prompt + "Hello there!\n\nuser\n\n"
+    assert (
+        prose_tokenizer.decode(ids[0, :keep].tolist())
+        == prompt + "Hello there!\n\nuser\n\n"
+    )
 
 
 def test_stop_cut_ignores_the_boundary_it_resumed_from(prose_tokenizer):
     """Resumption depends on this: after halting on the call boundary the
     sequence already ends with a stop string."""
-    fmt = chat_format_of(prose_tokenizer)
-    stops = fmt.stop_strings()
+    criteria = _stop_criteria(prose_tokenizer)
     ids = prose_tokenizer.encode("assistant\n\nlet me look\n\ncall\n\n")
-    assert find_stop_cut(prose_tokenizer, ids, len(ids), stops) is None
+    assert first_halt(torch.tensor([ids]), criteria, len(ids)) is None
     ids_plus = ids + prose_tokenizer.encode("{")
-    assert find_stop_cut(prose_tokenizer, ids_plus, len(ids), stops) is None
+    assert first_halt(torch.tensor([ids_plus]), criteria, len(ids)) is None
 
 
 def test_stop_cut_is_inert_without_stop_strings(default_tokenizer):
-    ids = default_tokenizer.encode("anything at all\n\nuser\n\n")
-    assert find_stop_cut(default_tokenizer, ids, 0, ()) is None
-
-
-def test_stopping_helpers():
-    assert normalize_stop_strings(None) == ()
-    assert normalize_stop_strings("\n\nuser\n\n") == ("\n\nuser\n\n",)
-    assert normalize_stop_strings(["a", "b"]) == ("a", "b")
-    assert split_at_stop("hello\n\nuser\n\nrest", ("\n\nuser\n\n",)) == "hello"
-    assert split_at_stop("no boundary", ("\n\nuser\n\n",)) == "no boundary"
-    assert trailing_stop("x\n\ntool\n\n", ("\n\ntool\n\n", "\n\nuser\n\n")) == (
-        "\n\ntool\n\n"
-    )
-    assert trailing_stop("x", ("\n\ntool\n\n",)) is None
+    """The default format halts on control TOKENS, so it declares no stop
+    strings and builds no StopStringCriteria at all."""
+    assert chat_format_of(default_tokenizer).stop_strings() == ()
+    ids = torch.tensor([default_tokenizer.encode("anything at all\n\nuser\n\n")])
+    assert first_halt(ids, _stop_criteria(default_tokenizer), 0) is None
 
 
 # ------------------------------------------------------------- tool flow
@@ -439,7 +448,7 @@ def test_validator_still_checks_bos_under_default(default_tokenizer):
 
 
 def test_reply_extraction_under_prose(prose_tokenizer):
-    from praxis.web.utils.formatters import extract_assistant_reply
+    from praxis.generation.reply import extract_assistant_reply
 
     text = (
         "user\n\nWhat is 750 times 485?\n\nassistant\n\nlet me check.\n\n"
@@ -462,8 +471,8 @@ def test_empty_prose_turn_does_not_leak_the_next_speaker(prose_tokenizer, role):
     leading `\\n\\n`, so a cut that only looks for the full `\\n\\n<role>\\n\\n`
     form returns the bare role word as if it were the model's answer.
     """
-    from praxis.web.utils.formatters import (
-        _EMPTY_REPLY_PLACEHOLDER,
+    from praxis.generation.reply import (
+        EMPTY_REPLY_PLACEHOLDER,
         extract_assistant_reply,
     )
 
@@ -473,12 +482,12 @@ def test_empty_prose_turn_does_not_leak_the_next_speaker(prose_tokenizer, role):
         add_generation_prompt=True,
     )
     text = f"{prompt}{role}\n\n"
-    assert extract_assistant_reply(text, prose_tokenizer) == _EMPTY_REPLY_PLACEHOLDER
+    assert extract_assistant_reply(text, prose_tokenizer) == EMPTY_REPLY_PLACEHOLDER
 
 
 def test_prose_reply_keeps_a_role_word_that_is_only_prose(prose_tokenizer):
     """The cut needs the boundary's trailing blank line, not just the word."""
-    from praxis.web.utils.formatters import extract_assistant_reply
+    from praxis.generation.reply import extract_assistant_reply
 
     prompt = prose_tokenizer.apply_chat_template(
         [{"role": "user", "content": "hi"}],
@@ -496,8 +505,8 @@ def test_prose_has_no_separator_to_decode(prose_tokenizer):
     there is no literal `[EOS]` string for it to trip over, because the id does
     not exist in this tokenizer at all.
     """
-    from praxis.web.utils.formatters import (
-        _EMPTY_REPLY_PLACEHOLDER,
+    from praxis.generation.reply import (
+        EMPTY_REPLY_PLACEHOLDER,
         extract_assistant_reply,
     )
 
@@ -514,7 +523,7 @@ def test_prose_has_no_separator_to_decode(prose_tokenizer):
     ) == ("Hello there.")
     assert (
         extract_assistant_reply(f"{prompt}\n\nuser\n\n", prose_tokenizer)
-        == _EMPTY_REPLY_PLACEHOLDER
+        == EMPTY_REPLY_PLACEHOLDER
     )
 
 
@@ -535,7 +544,7 @@ def test_answered_call_is_not_pending_again(prose_tokenizer):
 
 
 def test_reply_extraction_strips_tool_plumbing_under_default(default_tokenizer):
-    from praxis.web.utils.formatters import extract_assistant_reply
+    from praxis.generation.reply import extract_assistant_reply
 
     text = (
         "[BOS]assistant\n[TOOL_CALL]\n"
@@ -612,21 +621,48 @@ class _ScriptedBackend:
     def eval_mode(self):
         yield
 
-    def generate_until_halt(self, tokens, step_kwargs, deadline=None):
-        stops = normalize_stop_strings(step_kwargs.get("stop_strings"))
-        eos = step_kwargs.get("eos_token_id") or []
-        eos = set(eos if isinstance(eos, (list, tuple)) else [eos])
+    def _criteria(self, step_kwargs):
+        """The criteria transformers would build for these kwargs.
+
+        Assembled here rather than approximated, so the scripted backend halts
+        on exactly what the real one halts on.
+        """
+        from transformers.generation.stopping_criteria import (
+            EosTokenCriteria,
+            StoppingCriteriaList,
+            StopStringCriteria,
+        )
+
+        criteria = StoppingCriteriaList()
+        stops = step_kwargs.get("stop_strings")
+        if stops:
+            criteria.append(
+                StopStringCriteria(stop_strings=list(stops), tokenizer=self.tokenizer)
+            )
+        eos = step_kwargs.get("eos_token_id")
+        if eos:
+            eos = list(eos) if isinstance(eos, (list, tuple)) else [eos]
+            criteria.append(EosTokenCriteria(eos_token_id=torch.tensor(eos)))
+        return criteria
+
+    def generate_until_halt(self, tokens, step_kwargs, deadline=None, streamer=None):
+        criteria = self._criteria(step_kwargs)
         budget = int(step_kwargs.get("max_new_tokens", 100))
         start = tokens.shape[1]
+        if streamer is not None:
+            streamer.put(tokens)
         ids = tokens[0].tolist()
         produced = 0
         while self.pending and produced < budget:
-            ids.append(self.pending.pop(0))
+            nxt = self.pending.pop(0)
+            ids.append(nxt)
             produced += 1
-            if ids[-1] in eos:
+            if streamer is not None:
+                streamer.put(torch.tensor([nxt]))
+            if first_halt(torch.tensor([ids]), criteria, start) is not None:
                 break
-            if stops and find_stop_cut(self.tokenizer, ids, start, stops) is not None:
-                break
+        if streamer is not None:
+            streamer.end()
         return torch.tensor([ids], dtype=torch.long)
 
 
@@ -705,8 +741,8 @@ def test_seam_cut_needs_the_boundary_to_be_the_whole_turn(prose_tokenizer):
     generation halts at the seam and the slice really is just the boundary -
     but `extract_assistant_reply` is public and also takes bare strings.
     """
-    from praxis.web.utils.formatters import (
-        _EMPTY_REPLY_PLACEHOLDER,
+    from praxis.generation.reply import (
+        EMPTY_REPLY_PLACEHOLDER,
         _extract_reply_text_boundaries,
     )
 
@@ -717,7 +753,7 @@ def test_seam_cut_needs_the_boundary_to_be_the_whole_turn(prose_tokenizer):
         "call\n\nme back later.", fmt, prose_tokenizer, 0
     )
     assert kept == "call\n\nme back later."
-    assert _EMPTY_REPLY_PLACEHOLDER  # the caller substitutes it for `empty`
+    assert EMPTY_REPLY_PLACEHOLDER  # the caller substitutes it for `empty`
 
 
 def test_default_turn_opener_repetition_does_not_eat_the_reply(default_tokenizer):
@@ -816,7 +852,7 @@ def test_generation_stays_inside_the_positional_capacity(prose_tokenizer):
 
 def test_bare_string_still_falls_back_to_scanning(prose_tokenizer):
     """Callers holding plain text (not a GenerationResult) keep working."""
-    from praxis.web.utils.formatters import extract_assistant_reply
+    from praxis.generation.reply import extract_assistant_reply
 
     raw = "user\n\nWhat is 2+2?\n\nassistant\n\nIt is 4.\n\nuser\n\n"
     assert extract_assistant_reply(raw, prose_tokenizer) == "It is 4."
@@ -866,7 +902,7 @@ class _ScriptedMTP:
 
 
 class _ScriptedModel:
-    """The minimum surface ``_speculative_generate`` touches, driven by a fixed
+    """The minimum surface ``speculative_decoding`` touches, driven by a fixed
     list of byte ids so the loop's output is deterministic."""
 
     encoder = object()  # truthy: take the byte-latent branch
@@ -887,43 +923,77 @@ class _ScriptedModel:
             logits[0, 0] = 10.0  # past the script: emit PAD
         return logits
 
-    def _spec_logits_and_hidden(self, generated, attention_mask=None):
+    def spec_logits_and_hidden(self, generated, attention_mask=None):
         produced = generated.size(1) - self.prompt_len
         logits = torch.full((1, generated.size(1), self.vocab_size), -10.0)
         logits[:, -1, :] = self._one_hot(produced)
         return logits, torch.zeros(1, generated.size(1), 8)
 
-    def _verify_prefixes_batched(self, generated, candidates):
+    def verify_prefixes_batched(self, generated, candidates):
         produced = generated.size(1) - self.prompt_len
         return self._one_hot(produced + candidates.size(1))
 
 
 def _run_scripted(tokenizer, prompt, continuation, stop_strings, max_new_tokens=200):
-    from transformers import GenerationConfig
+    """Drive the real decoding method with criteria assembled the way
+    ``generate`` assembles them.
 
-    from praxis.modeling import PraxisForCausalLM
+    The scripted model is not a ``PreTrainedModel``, so it cannot go through
+    ``generate`` itself - but the decoding method is a plain function taking
+    ``model`` explicitly, so it can be called directly with the same inputs
+    transformers would have handed it. That is the point of the shape: the halt
+    contract under test is transformers' own ``StopStringCriteria``, not a
+    hand-rolled scan this loop carries.
+    """
+    from transformers import GenerationConfig
+    from transformers.generation.stopping_criteria import (
+        MaxLengthCriteria,
+        StoppingCriteriaList,
+        StopStringCriteria,
+    )
+
+    from praxis.generation import speculative
 
     prompt_ids = tokenizer.encode(prompt)
     script = tokenizer.encode(continuation)
     model = _ScriptedModel(script, prompt_len=len(prompt_ids))
-    config = GenerationConfig(
-        max_new_tokens=max_new_tokens,
-        do_sample=False,
-        stop_strings=list(stop_strings) or None,
+    config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)
+
+    criteria = StoppingCriteriaList(
+        [MaxLengthCriteria(max_length=len(prompt_ids) + max_new_tokens)]
     )
-    out = PraxisForCausalLM._speculative_generate(
-        model,
-        torch.tensor([prompt_ids], dtype=torch.long),
-        config,
-        tokenizer=tokenizer,
+    if stop_strings:
+        criteria.append(
+            StopStringCriteria(stop_strings=list(stop_strings), tokenizer=tokenizer)
+        )
+
+    saved = (speculative.spec_logits_and_hidden, speculative.verify_prefixes_batched)
+    speculative.spec_logits_and_hidden = (
+        lambda m, generated, attention_mask=None: m.spec_logits_and_hidden(
+            generated, attention_mask
+        )
     )
+    speculative.verify_prefixes_batched = (
+        lambda m, generated, candidates: m.verify_prefixes_batched(
+            generated, candidates
+        )
+    )
+    try:
+        out = speculative.speculative_decoding(
+            model,
+            torch.tensor([prompt_ids], dtype=torch.long),
+            stopping_criteria=criteria,
+            generation_config=config,
+        )
+    finally:
+        speculative.spec_logits_and_hidden, speculative.verify_prefixes_batched = saved
     return tokenizer.decode(out[0], skip_special_tokens=False)
 
 
 def test_speculative_decode_halts_on_a_text_boundary(prose_tokenizer):
-    """The path abstractinator-g actually decodes through. It owns its own
-    sampling, so transformers' StopStringCriteria never runs and without an
-    explicit check every prose turn would run to max_new_tokens."""
+    """The path abstractinator-g actually decodes through. It commits several
+    bytes per step, so the boundary can complete mid-run and the criteria only
+    report that it completed somewhere - ``first_halt`` recovers where."""
     fmt = chat_format_of(prose_tokenizer)
     prompt = "user\n\nhi\n\nassistant\n\n"
     text = _run_scripted(

@@ -62,9 +62,18 @@ from typing import Any, Dict, Optional, TypeVar
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from praxis.encoders.abstractinator.encoder import AbstractinatorEncoder
 from praxis.encoders.calm.vae import PatchVAE
+from praxis.generation.decoding import (
+    first_halt,
+    is_halted,
+    pick_next,
+    stream_end,
+    stream_put,
+    trunk_hooks,
+)
 from praxis.heads.energy import EnergyHead
 from praxis.losses.energy_score import energy_score_loss
 from praxis.losses.uncertainty import UncertaintyWeighting
@@ -617,22 +626,38 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         ).clamp(max=1.0)
         return z_q + contribution
 
+    def decoding_method(self, generation_config=None):
+        """CALM's patch vote, when the run resolved to ``generation_mode="vote"``.
+
+        Selectable per run rather than replacing byte-level generation outright,
+        so one checkpoint can be decoded either way.
+        """
+        if self.generation_mode != "vote":
+            return None
+        return self.vote_decoding
+
     @torch.no_grad()
-    def custom_generate(
+    def vote_decoding(
         self,
-        inputs: Optional[torch.Tensor] = None,
-        *,
-        base_forward,
+        model,
+        input_ids: Optional[torch.Tensor] = None,
+        logits_processor=None,
+        stopping_criteria=None,
         generation_config=None,
+        tokenizer: Any = None,
+        streamer: Any = None,
+        base_forward=None,
         latent_forward=None,
         decode_logits=None,
-        **kwargs: Any,
+        **model_kwargs: Any,
     ):
         """CALM's vote, driving generation one PATCH at a time.
 
-        Returns ``None`` - deferring to the standard byte loop - unless the run
-        resolved to ``generation_mode="vote"``, so this is selectable per run
-        rather than replacing byte-level generation outright.
+        A transformers decoding method (see ``BaseEncoder.decoding_method``):
+        ``logits_processor`` and ``stopping_criteria`` arrive fully prepared, so
+        the repetition penalty, the suppressed control ids, temperature/top-k/
+        top-p, the request deadline, the chat format's stop strings and its EOS
+        ids are all honored without this loop re-deriving any of them.
 
         Each patch costs ONE trunk forward, which is the whole point:
 
@@ -652,90 +677,33 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         contaminate it. Static patching is what makes the whole loop well posed:
         boundaries are at fixed multiples of ``patch_size``, so the patch the
         vote is predicting is known before any of its bytes exist.
+
+        The VOTE's temperature is a draw COUNT (``n = round(1/T)``), a different
+        quantity from the logit temperature the processors apply, which is why
+        it is read from ``calm_vote_temperature`` (or the encoder's own default)
+        and never from ``generation_config.temperature``.
         """
-        if (
-            self.generation_mode != "vote"
-            or inputs is None
-            or latent_forward is None
-            or decode_logits is None
-        ):
-            return None
+        hooks = trunk_hooks(model) if model is not None else {}
+        base_forward = base_forward or hooks.get("base_forward")
+        latent_forward = latent_forward or hooks.get("latent_forward")
+        decode_logits = decode_logits or hooks.get("decode_logits")
+        if input_ids is None or base_forward is None or latent_forward is None:
+            raise ValueError("CALM vote decoding needs a prompt and a trunk to run on")
 
-        from transformers import (
-            LogitsProcessorList,
-            RepetitionPenaltyLogitsProcessor,
-            TopKLogitsWarper,
-            TopPLogitsWarper,
-        )
-
-        max_new = getattr(generation_config, "max_new_tokens", 100) or 100
-        # The VOTE's temperature is a draw COUNT (n = round(1/T)), a different
-        # quantity from the logit temperature above; `calm_vote_temperature` on
-        # the generation config overrides it, never the sampler's `temperature`.
+        max_new = getattr(generation_config, "max_new_tokens", None) or 100
+        do_sample = bool(getattr(generation_config, "do_sample", False))
+        return_dict = bool(getattr(generation_config, "return_dict_in_generate", False))
         vote_t = float(
             getattr(generation_config, "calm_vote_temperature", None)
             or self.vote_temperature
         )
         K = int(self.byte_config.patch_size)
-        # `return_dict_in_generate` arrives as a KWARG on model.generate (see
-        # DecodeBackend), not on the config, and the caller then reads
-        # `.sequences`. Returning a bare tensor made every queued generation
-        # fail with "'Tensor' object has no attribute 'sequences'".
-        return_dict = bool(
-            kwargs.get("return_dict_in_generate")
-            or getattr(generation_config, "return_dict_in_generate", False)
-        )
-        # DEADLINE. Queued generations decode inside the training loop, so a
-        # loop that ignores the caller's stopping criteria is a stalled run.
-        # transformers never runs the criteria list for a loop it does not own,
-        # which is why the speculative path checks them by hand too.
-        stopping_criteria = kwargs.get("stopping_criteria")
-        # SAMPLING. This loop owns its decoding, so transformers builds no
-        # processor list for it and every knob has to be honored by hand - the
-        # same reason the speculative path does it explicitly.
-        #
-        # Hard-coding argmax here made two "independent" draws BYTE-IDENTICAL,
-        # which silently destroyed BrierLM: its estimator is
-        # `1{a=y} + 1{b=y} - 1{a=b}` over two i.i.d. samples, so a=b forces the
-        # self-match term to 1 and every order non-positive. Floored, the
-        # geometric mean is then exactly 0 by construction - the metric could
-        # not report anything else, whatever the model had learned. The vote's
-        # own randomness did not rescue it: the continuous arm enters the trunk
-        # at a fraction of a percent, so a differently-voted patch barely moves
-        # the byte decoder's argmax.
-        do_sample = bool(getattr(generation_config, "do_sample", False))
-        temperature = float(getattr(generation_config, "temperature", 1.0) or 1.0)
-        rep_penalty = float(getattr(generation_config, "repetition_penalty", 1.0) or 1.0)
-        top_k = getattr(generation_config, "top_k", None)
-        top_p = getattr(generation_config, "top_p", None)
-        penalizers = LogitsProcessorList()
-        if rep_penalty != 1.0:
-            penalizers.append(RepetitionPenaltyLogitsProcessor(penalty=rep_penalty))
-        warpers = LogitsProcessorList()
-        if do_sample:
-            if top_k:
-                warpers.append(TopKLogitsWarper(int(top_k)))
-            if top_p is not None and top_p < 1.0:
-                warpers.append(TopPLogitsWarper(float(top_p)))
 
-        def pick(raw_logits, context_ids):
-            scores = penalizers(context_ids, raw_logits)
-            if do_sample and temperature > 0:
-                scores = warpers(context_ids, scores)
-                probs = F.softmax(scores / temperature, dim=-1)
-                return torch.multinomial(probs, 1)
-            return scores.argmax(dim=-1, keepdim=True)
-
-        eos_id = getattr(generation_config, "eos_token_id", None)
-        eos = (
-            {eos_id}
-            if isinstance(eos_id, int)
-            else set(eos_id) if isinstance(eos_id, (list, tuple)) else set()
-        )
-
-        generated = inputs
+        generated = input_ids
         produced = 0
-        while produced < max_new:
+        halted = False
+        while produced < max_new and not halted:
+            step_start = generated.shape[1]
             out = base_forward(generated)
             z_hat = self.vote_next_latent(
                 out.last_hidden_state[:, -1, :], temperature=vote_t
@@ -745,7 +713,6 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             z_ext = torch.cat([out.patch_embeds, z_next], dim=1)
             h_ext = latent_forward(z_ext)
 
-            stop = False
             for _ in range(min(K, max_new - produced)):
                 pos = generated.shape[1]
                 pad = generated.new_zeros((generated.shape[0], K))
@@ -756,23 +723,29 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 )
                 if logits is None:
                     logits = decode_logits(embeds)
-                nxt = pick(logits[:, pos - 1, :], generated)
-                generated = torch.cat([generated, nxt], dim=1)
+                nxt = pick_next(
+                    logits[:, pos - 1, :], generated, logits_processor, do_sample
+                )
+                generated = torch.cat([generated, nxt.unsqueeze(1)], dim=1)
                 produced += 1
-                if eos and int(nxt.view(-1)[0]) in eos:
-                    stop = True
-                    break
-                if stopping_criteria is not None and bool(
-                    stopping_criteria(generated, None).all()
-                ):
-                    stop = True
-                    break
-            if stop:
-                break
-        if return_dict:
-            from types import SimpleNamespace
 
-            return SimpleNamespace(sequences=generated)
+            # One halt scan per patch, over the bytes this patch committed. A
+            # patch commits K bytes at once, so an EOS or a stop string can
+            # complete in the middle of one and the criteria only report that
+            # it completed somewhere; first_halt says where, and the rest of
+            # the patch is dropped rather than emitted past the boundary.
+            cut = first_halt(generated, stopping_criteria, step_start)
+            if cut is not None:
+                generated = generated[:, :cut]
+                halted = True
+            stream_put(streamer, generated[:, step_start:])
+            # A deadline ends the loop without truncating - see first_halt.
+            if not halted and is_halted(generated, stopping_criteria):
+                break
+
+        stream_end(streamer)
+        if return_dict:
+            return GenerateDecoderOnlyOutput(sequences=generated)
         return generated
 
     metric_descriptions = {

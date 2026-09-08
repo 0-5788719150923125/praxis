@@ -4,10 +4,23 @@
  */
 
 import { state } from './state.js';
+import { openStream } from './websocket.js';
 
 /**
  * Send a chat message to the API
+ *
+ * Pass `onDelta` to watch the reply arrive. That is purely additive: the model
+ * decodes inside the training loop either way, so streaming does not make a
+ * turn faster - it replaces a 30-60s blank wait with text appearing, which is
+ * the difference between "thinking" and "broken". The resolved value stays
+ * authoritative; a caller that appended deltas should replace with it.
+ *
+ * `onReset` means "drop everything appended so far" and fires once per tool
+ * call, because the runtime's turn anchor moves past each spliced tool result
+ * and the reply is only what the model writes after it.
+ *
  * @param {Array} messages - Conversation history
+ * @param {Object} [opts] - { maxNewTokens, timeout, onDelta, onReset }
  * @returns {Promise<Object>} API response
  */
 export async function sendMessage(messages, opts = {}) {
@@ -25,29 +38,54 @@ export async function sendMessage(messages, opts = {}) {
     // Loop/short turns can cap generation time so "thinking" doesn't drag.
     if (opts.timeout) payload.timeout = opts.timeout;
 
+    // Subscribe BEFORE the request goes out, or the first deltas land with
+    // nowhere to go - the model can start writing before fetch() resolves its
+    // own promise chain.
+    let release = null;
+    if (opts.onDelta) {
+        const streamId = newStreamId();
+        payload.stream_id = streamId;
+        release = openStream(streamId, {
+            onDelta: opts.onDelta,
+            onReset: opts.onReset
+        });
+    }
+
     if (state.settings.debugLogging) {
         console.log('[API] Sending:', payload);
     }
 
-    const response = await fetch(`${state.settings.apiUrl}/messages/`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    });
+    try {
+        const response = await fetch(`${state.settings.apiUrl}/messages/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
 
-    if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (state.settings.debugLogging) {
+            console.log('[API] Response:', data);
+        }
+
+        return data;
+    } finally {
+        // Released on every path, so a delta produced after the final answer
+        // arrived (different thread, different connection) is simply dropped.
+        if (release) release();
     }
+}
 
-    const data = await response.json();
-
-    if (state.settings.debugLogging) {
-        console.log('[API] Response:', data);
-    }
-
-    return data;
+/** Ids only have to be unique among this client's in-flight requests. */
+function newStreamId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**

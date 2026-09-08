@@ -73,26 +73,61 @@ def test_calm_handles_loss_skips_main_ce():
 
 
 def test_calm_generate_advances_in_K_steps():
+    """The vote emits a whole K-token patch per trunk forward - it predicts a
+    LATENT, and the VAE turns that into K tokens at once."""
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.eval()
     from transformers import GenerationConfig
 
-    gc = GenerationConfig(max_new_tokens=12, temperature=1.0, do_sample=True)
+    K = model.encoder.K
+    # A budget that is a whole number of patches, so nothing is trimmed and the
+    # K-at-a-time mechanism is what the length reports.
+    gc = GenerationConfig(max_new_tokens=2 * K, temperature=1.0, do_sample=True)
     input_ids = torch.randint(4, 200, (1, 8), dtype=torch.long)
     out = model.generate(input_ids, generation_config=gc)
     new = out.size(1) - input_ids.size(1)
-    # Generation moves in chunk-size-sized jumps: at least 12, rounded up.
-    K = model.encoder.K
     assert new % K == 0
-    assert new >= 12
+    assert new == 2 * K
+
+
+def test_calm_generate_honors_an_off_patch_budget():
+    """`max_new_tokens` means the same number here as on every other path.
+
+    The patch is still the unit of PREDICTION - the loop cannot vote for half a
+    latent - but the caller's budget is a hard bound, so the tail of the last
+    patch is trimmed rather than overshot. It has to be: `Generator` sizes the
+    prompt so prompt + max_new_tokens fits `max_position_embeddings`, and an
+    overshoot past that is exactly the positional overflow that sizing exists
+    to prevent. Transformers' own MaxLengthCriteria is what enforces it now.
+    """
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.eval()
+    from transformers import GenerationConfig
+
+    K = model.encoder.K
+    budget = K + 1  # deliberately not a whole number of patches
+    input_ids = torch.randint(4, 200, (1, 8), dtype=torch.long)
+    out = model.generate(
+        input_ids,
+        generation_config=GenerationConfig(
+            max_new_tokens=budget, temperature=1.0, do_sample=True
+        ),
+    )
+    assert out.size(1) - input_ids.size(1) == budget
 
 
 def test_calm_generate_aligns_unaligned_prompt():
     # A prompt whose length is not a multiple of K must still generate cleanly:
-    # custom_generate left-pads for alignment (so the conditioning patch stays
+    # vote_decoding left-pads for alignment (so the conditioning patch stays
     # full of real tokens) then strips the pads, so the returned sequence begins
     # with the verbatim prompt - no pad tokens injected into the output.
+    #
+    # The pads are also why the halt scan runs against the UNPADDED view: the
+    # criteria were sized from the caller's prompt length and know nothing
+    # about them, so a budget measured on the padded sequence would come up
+    # short by exactly pad_n.
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.eval()
@@ -106,7 +141,7 @@ def test_calm_generate_aligns_unaligned_prompt():
 
     assert torch.equal(out[:, :prompt_len], input_ids)  # prompt preserved, no pads
     new = out.size(1) - prompt_len
-    assert new % K == 0 and new >= 2 * K
+    assert new % K == 0 and new == 2 * K
 
 
 def test_calm_with_crystal_head():

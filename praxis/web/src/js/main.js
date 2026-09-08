@@ -7,7 +7,8 @@
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton, renderKbResults } from './render.js';
 import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy, loopGenerate } from './api.js';
-import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
+import { streamingTurn } from './chatstream.js';
+import { connectRealtime, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe, setupTerminalPullRelease, setupLogTouchScroll } from './mobile.js';
@@ -118,8 +119,8 @@ function init() {
     // Set up event listeners
     setupEventListeners();
 
-    // Connect to metrics-live WebSocket
-    connectMetricsLive();
+    // Connect the server's live push channel
+    connectRealtime();
 
     // Setup live reload
     setupLiveReload();
@@ -909,15 +910,17 @@ async function sendUserMessage() {
     updateInputContainerStyling();
     render();
 
+    // Fills in as the reply arrives; settles on the POST's authoritative answer.
+    const turn = streamingTurn();
     try {
         // Send to API
-        const response = await sendMessage(state.messages);
+        const response = await sendMessage(state.messages, {
+            onDelta: turn.onDelta,
+            onReset: turn.onReset
+        });
 
         // Add assistant response
-        state.messages.push({
-            role: 'assistant',
-            content: response.response || response.content || 'Error: No response'
-        });
+        turn.settle(response.response || response.content || 'Error: No response');
 
         // Trim history if too long
         if (state.messages.length > CONSTANTS.MAX_HISTORY_LENGTH) {
@@ -926,6 +929,7 @@ async function sendUserMessage() {
 
     } catch (error) {
         console.error('[Chat] Error:', error);
+        turn.discard();
         state.messages.push({
             role: 'assistant',
             content: `Error: ${error.message}`
@@ -1136,18 +1140,20 @@ async function handleReroll() {
     state.isThinking = true;
     render();
 
+    const turn = streamingTurn();
     try {
         // Re-send to API
-        const response = await sendMessage(state.messages);
+        const response = await sendMessage(state.messages, {
+            onDelta: turn.onDelta,
+            onReset: turn.onReset
+        });
 
         // Add new response
-        state.messages.push({
-            role: 'assistant',
-            content: response.response || response.content || 'Error: No response'
-        });
+        turn.settle(response.response || response.content || 'Error: No response');
 
     } catch (error) {
         console.error('[Chat] Reroll error:', error);
+        turn.discard();
         state.messages.push({
             role: 'assistant',
             content: `Error: ${error.message}`

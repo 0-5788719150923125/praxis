@@ -527,7 +527,7 @@ class _StubGenerator:
 
     model = None
 
-    def request_generation(self, prompt, kwargs):
+    def request_generation(self, prompt, kwargs, deadline=None, **_):
         return "capture_0"
 
     def get_result(self, request_id):

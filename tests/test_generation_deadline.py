@@ -38,10 +38,11 @@ class _SlowBackend:
 
     Not halting is the point: it isolates the deadline as the only thing that
     can end the decode, so a passing test cannot be passing because the model
-    happened to stop. The per-token deadline check mirrors what a real backend
-    does - ``ModelBackend`` hands a ``DeadlineCriteria`` to the transformers
-    loop, ``MonoForwardBackend`` checks it in its yield loop - because the
-    caller only calls this ONCE for a turn with no tool in it.
+    happened to stop. The per-token check mirrors what the real backend gets
+    from transformers - ``ModelBackend`` turns the deadline into
+    ``GenerationConfig.max_time``, which ``_get_stopping_criteria`` builds into
+    a ``MaxTimeCriteria`` evaluated after every token - because the caller only
+    calls this ONCE for a turn with no tool in it.
     """
 
     model = None
@@ -58,7 +59,7 @@ class _SlowBackend:
     def eval_mode(self):
         yield
 
-    def generate_until_halt(self, tokens, step_kwargs, deadline=None):
+    def generate_until_halt(self, tokens, step_kwargs, deadline=None, streamer=None):
         self.calls += 1
         budget = int(step_kwargs.get("max_new_tokens", 100))
         for _ in range(budget):
@@ -160,3 +161,77 @@ def test_no_deadline_means_no_limit(tokenizer):
 
     assert backend.tokens_emitted == 8
     assert gen.get_result(rid) is not None
+
+
+# ---------------------------------------------------------------------------
+# the wiring itself: an absolute deadline becomes a per-step relative budget
+# ---------------------------------------------------------------------------
+
+
+class _CapturingModel:
+    """Records the GenerationConfig ``ModelBackend`` builds, then no-ops."""
+
+    def __init__(self):
+        self.configs = []
+        self.config = None
+
+    def parameters(self):
+        yield torch.zeros(1)
+
+    def generate(self, tokens, generation_config=None, **kwargs):
+        from types import SimpleNamespace
+
+        self.configs.append(generation_config)
+        return SimpleNamespace(sequences=tokens)
+
+
+def test_the_deadline_reaches_transformers_as_max_time(tokenizer):
+    """``DeadlineCriteria`` is gone; ``MaxTimeCriteria`` was always the same
+    class, and it is the one transformers evaluates inside its own loop.
+
+    The translation matters: the request carries an ABSOLUTE wall-clock
+    deadline, while ``max_time`` is a budget measured from the moment
+    ``generate`` builds its criteria. Recomputing it per call is what stops a
+    turn that halts and resumes from handing each step the full timeout again.
+    """
+    from praxis.generation.decode_backend import ModelBackend
+
+    model = _CapturingModel()
+    backend = ModelBackend(model, tokenizer)
+    ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    backend.generate_until_halt(ids, {"max_new_tokens": 4}, deadline=time.time() + 5.0)
+    assert 4.0 < model.configs[-1].max_time <= 5.0
+
+    # Second step of the same turn, a moment later: a SMALLER budget, not a
+    # fresh 5 seconds.
+    time.sleep(0.05)
+    backend.generate_until_halt(ids, {"max_new_tokens": 4}, deadline=time.time() + 0.5)
+    assert 0.0 < model.configs[-1].max_time <= 0.5
+
+
+def test_an_already_expired_deadline_becomes_a_zero_budget(tokenizer):
+    """Clamped rather than skipped: a zero budget halts before the first token,
+    which is what an expired request should cost. Passing a negative through
+    would be silently ignored by MaxTimeCriteria's `elapsed > max_time`."""
+    from praxis.generation.decode_backend import ModelBackend
+
+    model = _CapturingModel()
+    backend = ModelBackend(model, tokenizer)
+    backend.generate_until_halt(
+        torch.tensor([[1]], dtype=torch.long),
+        {"max_new_tokens": 4},
+        deadline=time.time() - 10.0,
+    )
+    assert model.configs[-1].max_time == 0.0
+
+
+def test_no_deadline_leaves_max_time_unset(tokenizer):
+    """``/input`` polls forever and passes no deadline, so no time criterion
+    should be built at all."""
+    from praxis.generation.decode_backend import ModelBackend
+
+    model = _CapturingModel()
+    backend = ModelBackend(model, tokenizer)
+    backend.generate_until_halt(torch.tensor([[1]], dtype=torch.long), {})
+    assert model.configs[-1].max_time is None
