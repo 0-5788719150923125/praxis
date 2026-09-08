@@ -86,6 +86,66 @@ def test_the_turn_boundary_is_never_published(prose_tokenizer):
     assert sink.joined == "Hi there."
 
 
+def _tokens_until_first_text(tokenizer, reply):
+    sink = _Sink()
+    streamer = ReplyStreamer(tokenizer, sink.text)
+    for i, token_id in enumerate(tokenizer.encode(reply), start=1):
+        streamer.put(torch.tensor([token_id]))
+        if sink.chunks:
+            return i
+    return None
+
+
+def test_the_first_character_ships_immediately(prose_tokenizer):
+    """The latency regression, and it was invisible in every other test here
+    because they all call `finish()`.
+
+    The hold-back used to be a flat "longest terminator" - 16 characters under
+    both shipped formats - taken from the very first token. On a byte-level
+    model decoding inside the training loop that is 16 bytes before ANY text
+    reaches the reader, however fast the model runs, and it reads as the model
+    never having started.
+    """
+    assert _tokens_until_first_text(prose_tokenizer, "The capital of France.") == 1
+
+
+def test_the_first_character_ships_immediately_under_token_boundaries(
+    default_tokenizer,
+):
+    assert _tokens_until_first_text(default_tokenizer, "The capital of France.") == 1
+
+
+def test_only_a_real_partial_match_is_held_back(prose_tokenizer):
+    """Every terminator starts with a newline or a bracket, so ordinary prose
+    withholds nothing - and a tail that could still become a boundary withholds
+    exactly itself, no more."""
+    sink = _Sink()
+    streamer = ReplyStreamer(prose_tokenizer, sink.text)
+    _feed(streamer, prose_tokenizer, "Hello there")
+    assert sink.joined == "Hello there", "ordinary prose was held back"
+
+    # "\n\nus" could still become "\n\nuser\n\n": hold those five, ship nothing more.
+    _feed(streamer, prose_tokenizer, "\n\nus")
+    assert sink.joined == "Hello there"
+
+    # A character that rules every terminator out releases the lot.
+    _feed(streamer, prose_tokenizer, "!")
+    assert sink.joined == "Hello there\n\nus!"
+
+
+def test_the_head_strip_is_not_half_published(default_tokenizer):
+    """`extract_assistant_reply` strips a leading `#RESPONSE`, so shipping half
+    of it would have to be retracted - and a retraction is what the streamer
+    cannot do."""
+    sink = _Sink()
+    streamer = ReplyStreamer(default_tokenizer, sink.text)
+    _feed(streamer, default_tokenizer, "#RESP")
+    assert sink.joined == ""
+    _feed(streamer, default_tokenizer, "ONSE the answer")
+    streamer.finish()
+    assert sink.joined == "the answer"
+
+
 def test_half_a_boundary_is_never_published(prose_tokenizer):
     """The hold-back's whole job. Feeding text that ends mid-boundary, the
     partial must stay private - published text cannot be retracted, and one

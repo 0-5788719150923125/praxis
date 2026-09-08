@@ -71,7 +71,6 @@ class ReplyStreamer(BaseStreamer):
         tokenizer: Any,
         on_text: Callable[[str], None],
         on_reset: Optional[Callable[[], None]] = None,
-        holdback: Optional[int] = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.on_text = on_text
@@ -80,9 +79,8 @@ class ReplyStreamer(BaseStreamer):
         self._published = ""
         self._skip_next_put = False
         self._muted = False
-        self.holdback = (
-            self._default_holdback(tokenizer) if holdback is None else int(holdback)
-        )
+        self._terminators = self._terminator_strings(tokenizer)
+        self._max_holdback = max((len(t) for t in self._terminators), default=0)
 
     # ------------------------------------------------------------------
     # driver hooks
@@ -156,31 +154,67 @@ class ReplyStreamer(BaseStreamer):
     # internals
     # ------------------------------------------------------------------
 
-    def _default_holdback(self, tokenizer) -> int:
-        """Longest string the reply extractor might cut at.
+    def _terminator_strings(self, tokenizer) -> List[str]:
+        """Every string the reply extractor might cut the turn at.
 
-        Holding back that many characters guarantees a boundary is never half
-        published: any cut the extractor will make is fully visible in the
-        buffer before the characters preceding it are released.
+        These are what the hold-back protects: a boundary arrives one character
+        at a time, and publishing the first half of one cannot be taken back.
         """
+        strings = list(self._TOOL_MARKERS)
         try:
             fmt = chat_format_of(tokenizer)
         except Exception:
-            return 16
-        candidates = [fmt.boundary(role) for role in fmt.roles]
-        candidates.extend(self._TOOL_MARKERS)
+            return strings
+        strings.extend(fmt.boundary(role) for role in fmt.roles)
         for name in ("eos_token", "sep_token", "bos_token"):
             token = getattr(tokenizer, name, None)
             if isinstance(token, str) and token:
-                candidates.append(token)
+                strings.append(token)
         try:
             for token_id in fmt.stop_token_ids(tokenizer):
-                candidates.append(
-                    tokenizer.decode([token_id], skip_special_tokens=False)
-                )
+                strings.append(tokenizer.decode([token_id], skip_special_tokens=False))
         except Exception:
             pass
-        return max((len(c) for c in candidates if c), default=0)
+        return [s for s in strings if s]
+
+    # Stripped from the head of a reply by the extractor (a training-data
+    # artifact). Only ever at the head, so it is only held back there.
+    _HEAD_PREFIX = "#RESPONSE"
+
+    def _pending_boundary(self, visible: str) -> int:
+        """How many trailing characters could still turn into a boundary.
+
+        The hold-back used to be a flat "longest terminator" - 16 characters
+        under both shipped chat formats - applied from the very first token. On
+        a byte-level model that is 16 bytes of generation before ANY text
+        reaches the reader, and it does not matter how fast the model is: the
+        wait is constant, and it reads as the model not having started.
+
+        Only a tail that could be part of a terminator needs holding. Every
+        terminator here begins with ``\n`` or ``[``, so ordinary prose holds
+        back nothing at all and the first character ships the moment it is
+        decoded; ``"...\n\nus"`` holds five, because one more character could
+        make it ``\n\nuser\n\n``.
+        """
+        terminators = self._terminators
+        limit = self._max_holdback
+        if not self._published:
+            # Nothing has shipped yet, so the head strip is still in play: half
+            # of `#RESPONSE` must not go out and then be retracted.
+            terminators = terminators + [self._HEAD_PREFIX]
+            limit = max(limit, len(self._HEAD_PREFIX))
+        limit = min(limit, len(visible))
+        for n in range(limit, 0, -1):
+            tail = visible[-n:]
+            # A COMPLETE terminator counts too, not just a proper prefix.
+            # Trimming only partial matches would expose a boundary that was
+            # already whole: "...\n\nuser\n\n" ends in "\n\n", which is a
+            # partial match for every other role, so trimming just those two
+            # left "...\n\nuser" - no longer a complete boundary, so the
+            # extractor stopped cutting and the next speaker's name shipped.
+            if any(t.startswith(tail) for t in terminators):
+                return n
+        return 0
 
     def _decode(self) -> str:
         """The model's text so far, without a severed multi-byte tail.
@@ -202,7 +236,7 @@ class ReplyStreamer(BaseStreamer):
             return ""
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
-    def _visible(self) -> str:
+    def _visible(self, raw: str) -> str:
         """The reply the caller would get if the turn ended right now.
 
         Delegated to the real extractor rather than reimplemented, so a
@@ -216,7 +250,6 @@ class ReplyStreamer(BaseStreamer):
         )
         from praxis.generation.request import GenerationResult
 
-        raw = self._decode()
         if not raw:
             return ""
         try:
@@ -230,9 +263,17 @@ class ReplyStreamer(BaseStreamer):
         return "" if reply == EMPTY_REPLY_PLACEHOLDER else reply
 
     def _flush(self, final: bool = False) -> None:
-        visible = self._visible()
-        if not final and self.holdback:
-            visible = visible[: max(0, len(visible) - self.holdback)]
+        # The partial-match is measured on the RAW buffer and the extractor then
+        # runs over what is left, rather than the other way round. The extractor
+        # strips leading whitespace, so asking it first turns "\n\nu" - three
+        # characters into a boundary - into "u", which matches no terminator at
+        # all and ships the first letter of the next speaker's name.
+        raw = self._decode()
+        if not final:
+            pending = self._pending_boundary(raw)
+            if pending:
+                raw = raw[:-pending]
+        visible = self._visible(raw)
         if not visible.startswith(self._published):
             # The extractor revised what it had already shown - a boundary
             # completed inside text we released, which the hold-back is sized
