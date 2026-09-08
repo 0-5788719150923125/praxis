@@ -655,6 +655,19 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             getattr(generation_config, "temperature", None) or self.vote_temperature
         )
         K = int(self.byte_config.patch_size)
+        # `return_dict_in_generate` arrives as a KWARG on model.generate (see
+        # DecodeBackend), not on the config, and the caller then reads
+        # `.sequences`. Returning a bare tensor made every queued generation
+        # fail with "'Tensor' object has no attribute 'sequences'".
+        return_dict = bool(
+            kwargs.get("return_dict_in_generate")
+            or getattr(generation_config, "return_dict_in_generate", False)
+        )
+        # DEADLINE. Queued generations decode inside the training loop, so a
+        # loop that ignores the caller's stopping criteria is a stalled run.
+        # transformers never runs the criteria list for a loop it does not own,
+        # which is why the speculative path checks them by hand too.
+        stopping_criteria = kwargs.get("stopping_criteria")
         eos_id = getattr(generation_config, "eos_token_id", None)
         eos = (
             {eos_id}
@@ -691,8 +704,17 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 if eos and int(nxt.view(-1)[0]) in eos:
                     stop = True
                     break
+                if stopping_criteria is not None and bool(
+                    stopping_criteria(generated, None).all()
+                ):
+                    stop = True
+                    break
             if stop:
                 break
+        if return_dict:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(sequences=generated)
         return generated
 
     metric_descriptions = {

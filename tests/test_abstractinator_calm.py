@@ -831,3 +831,37 @@ def test_vote_generation_requires_the_latent_and_logits_seams():
         }
         kw[missing] = None
         assert m.encoder.custom_generate(torch.randint(0, 256, (1, 8)), **kw) is None
+
+
+def test_vote_generation_honors_return_dict_in_generate():
+    """`return_dict_in_generate` arrives as a KWARG on model.generate (see
+    DecodeBackend), not on the config, and the caller then reads `.sequences`.
+    Returning a bare tensor made every queued generation fail with "'Tensor'
+    object has no attribute 'sequences'"."""
+    from transformers import GenerationConfig
+
+    m = _build_mode("vote")
+    ids = torch.randint(0, 256, (1, 32))
+    gc = GenerationConfig(max_new_tokens=16, do_sample=False)
+    assert isinstance(m.generate(ids, generation_config=gc), torch.Tensor)
+    out = m.generate(ids, generation_config=gc, return_dict_in_generate=True)
+    assert hasattr(out, "sequences") and out.sequences.shape == (1, 48)
+
+
+def test_vote_generation_honors_the_deadline():
+    """Queued generations decode INSIDE the training loop, so a loop that
+    ignores the caller's stopping criteria stalls the run. transformers never
+    runs the criteria list for a loop it does not own."""
+    from transformers import GenerationConfig
+
+    class Halt:
+        def __call__(self, seq, scores):
+            return torch.ones(seq.shape[0], dtype=torch.bool)
+
+    m = _build_mode("vote")
+    out = m.generate(
+        torch.randint(0, 256, (1, 32)),
+        generation_config=GenerationConfig(max_new_tokens=256, do_sample=False),
+        stopping_criteria=Halt(),
+    )
+    assert out.shape[1] < 32 + 256, out.shape
