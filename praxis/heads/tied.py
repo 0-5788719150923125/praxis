@@ -48,6 +48,11 @@ class TiedWeights(BaseHead):
                 config.hidden_size, config.embed_size, bias=False
             )
 
+    def compose_repr(self) -> str:
+        """The readout is the embedding matrix, reused. Named for what it
+        computes, like every other leaf arm."""
+        return "TiedClassifier"
+
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         """
         Forward pass using tied weights.

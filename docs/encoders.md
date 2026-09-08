@@ -3,7 +3,7 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (28 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (27 entries)
 
 ## `abstractinator`, `abstractinator_harmonic`, `abstractinator_harmonic_gdn_vocab_bank`, `abstractinator_harmonic_gdn_vocab_bank_static`, `abstractinator_harmonic_serpent`, `abstractinator_harmonic_serpent_avg`, `abstractinator_harmonic_serpent_vocab_bank`, `abstractinator_harmonic_vocab_bank` - AbstractinatorEncoder
 
@@ -26,19 +26,22 @@ Presets:
 - `abstractinator_harmonic_serpent_vocab_bank` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
 - `abstractinator_harmonic_vocab_bank` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
 
-## `abstractinator_harmonic_gdn_vocab_bank_static_calm`, `abstractinator_harmonic_gdn_vocab_bank_static_calm_vote` - AbstractinatorCALM
+## `abstractinator_harmonic_gdn_vocab_bank_static_calm` - AbstractinatorCALM
 
-Abstractinator with a continuous CALM arm and a count-based vote.
+Abstractinator with a continuous CALM codec and a count-based vote.
 
-Everything the parent does is unchanged; this adds a Gaussian posterior beside the
-quantizer, an energy head over the trunk output, and the dense code objective that pays
-for it.
+Everything the parent does is unchanged; this adds a VAE beside the quantizer, an energy
+head over the trunk output, and the dense code objective that pays for it.
+
+BOTH DECODING PATHS ARE TRAINED AT ONCE, so which one a run generates with is a runtime
+choice and not part of the model's identity: `--generation-mode` is excluded from the
+run hash, and the same checkpoint can be read out either way. That is the whole reason
+this ...
 
 Source: [praxis/encoders/abstractinator/calm.py:164](../praxis/encoders/abstractinator/calm.py#L164)
 
 Presets:
 - `abstractinator_harmonic_gdn_vocab_bank_static_calm` - `bottleneck='harmonic_gdn', patch_size=8, patching_mode='static', vq_codebook_size=None`
-- `abstractinator_harmonic_gdn_vocab_bank_static_calm_vote` - `bottleneck='harmonic_gdn', patch_size=8, patching_mode='static', vote_temperature=0.5, vq_codebook_size=None`
 
 ## `byte_latent`, `byte_latent_conv`, `byte_latent_conv_small`, `byte_latent_transformer` - ByteLatentEncoder
 

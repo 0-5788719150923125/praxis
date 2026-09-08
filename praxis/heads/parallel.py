@@ -17,7 +17,8 @@ branches' ``forward`` outputs (logit-level) and is itself the model's head. The
 ``prismatic`` profile uses the latter as a top-level split that balances
 bias against variance per token::
 
-    Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
+    Parallel(arms=[Sequential(HarmonicField),
+                   Sequential(HarmonicField, CrystalClassifier)])
 
 - branch 0 = a harmonic field read out by a plain linear head (a strong
   structural prior - the bias arm),
@@ -227,10 +228,25 @@ class ParallelHead(BaseHead):
             self.gate = nn.Linear(feature_dim, len(self.branches), bias=False)
 
     def compose_repr(self) -> str:
-        arms = ", ".join(b.compose_repr() for b in self.branches)
+        """Blueprint label, in the keyword style every other module uses.
+
+        This used to read ``Parallel(HarmonicField -> [A, B, C])``. The arrow
+        was invented notation - no torch module reprs like that - and it was
+        also WRONG about the wiring, because it implied the stem feeds every
+        arm. An arm with ``reads_trunk`` (HALO) branches ABOVE the stem and
+        scores the raw trunk hidden states, since HALOLoss scores those same
+        features and a transform in front would train one feature space and
+        score another. So arms that bypass the stem say so.
+        """
+        arms = ", ".join(
+            f"{b.compose_repr()}(reads_trunk=True)"
+            if getattr(b, "reads_trunk", False)
+            else b.compose_repr()
+            for b in self.branches
+        )
         if self.stem is None:
-            return f"Parallel({arms})"
-        return f"Parallel({self.stem.compose_repr()} -> [{arms}])"
+            return f"Parallel(arms=[{arms}])"
+        return f"Parallel(stem={self.stem.compose_repr()}, arms=[{arms}])"
 
     def __repr__(self) -> str:
         return self.compose_repr()

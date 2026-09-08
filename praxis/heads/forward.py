@@ -33,3 +33,17 @@ class ForwardHead(BaseHead):
     @property
     def classifier(self) -> Optional[nn.Module]:
         return self.lm_head
+
+    def compose_repr(self) -> str:
+        """Name the READOUT, not the class.
+
+        Inside a composed head every other arm names what it computes -
+        ``CrystalClassifier``, ``HaloClassifier`` - so a bare ``ForwardHead``
+        read like a passthrough or a leftover default rather than the plain
+        linear readout it is. In prismatic6-9 that arm is the deliberate
+        CONTROL: it reads the same harmonic stem the crystal arm does, and its
+        gate share is what says whether the geometry earns its cost. Calling it
+        "ForwardHead" hid the harmonic field from anyone reading the blueprint
+        and made the three arms look like two classifiers plus a fallback.
+        """
+        return "LinearClassifier"

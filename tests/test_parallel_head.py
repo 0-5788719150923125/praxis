@@ -65,8 +65,8 @@ def test_prismatic_forward_logits_shape():
 def test_prismatic_repr_is_nested():
     head = HEAD_REGISTRY["prismatic"](_cfg(), encoder=None)
     assert repr(head) == (
-        "Parallel(Sequential(HarmonicField), "
-        "Sequential(HarmonicField, CrystalClassifier))"
+        "Parallel(arms=[Sequential(HarmonicField), "
+        "Sequential(HarmonicField, CrystalClassifier)])"
     )
 
 
@@ -117,3 +117,97 @@ def test_prismatic3_three_arms_and_identity_third_branch():
     # And it reads as pure variance once its strands carry any energy.
     fld = head.branches[2].heads[0].field
     assert fld.amp_modulation == "pure"
+
+
+# ── the blueprint repr ─────────────────────────────────────────────────────
+
+
+def test_every_leaf_head_names_its_readout():
+    """`compose_repr` is what the blueprint tab renders, and the base default
+    falls back to the CLASS name. Two leaves never overrode it, so prismatic6-9
+    rendered as `[CrystalClassifier, ForwardHead, HaloClassifier]` - one arm
+    naming its class where the others name their function, which reads like a
+    passthrough or a leftover default instead of the linear readout that is the
+    deliberate control arm."""
+    import inspect
+
+    import praxis.heads as heads_pkg
+    from praxis.heads.base import BaseHead
+
+    import importlib
+    import pkgutil
+
+    seen = set()
+    for info in pkgutil.iter_modules(heads_pkg.__path__):
+        m = importlib.import_module(f"praxis.heads.{info.name}")
+        for _, obj in inspect.getmembers(m, inspect.isclass):
+            if (
+                issubclass(obj, BaseHead)
+                and obj is not BaseHead
+                and not inspect.isabstract(obj)
+            ):
+                seen.add(obj)
+
+    missing = [
+        c.__name__
+        for c in seen
+        if c.compose_repr is BaseHead.compose_repr
+    ]
+    assert not missing, f"leaf heads falling back to their class name: {missing}"
+    assert seen, "no head classes discovered"
+
+
+def test_the_prismatic_arms_read_as_three_classifiers():
+    """Geometric, direct, hyperspherical - and the shared harmonic stem in
+    front of them, which is the part that looked missing."""
+    import torch
+
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    for head, geometric in (
+        ("prismatic8", "CrystalClassifier"),
+        ("prismatic9", "CrystalClassifier"),
+    ):
+        cfg = PraxisConfig(
+            vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
+            max_length=512, decoder_type="sequential", head_type=head,
+            loss_func="halo", tokenizer_type="byte_level",
+        )
+        torch.manual_seed(0)
+        r = repr(PraxisForCausalLM(cfg).head)
+        # Keyword style, like every other module in the blueprint - no invented
+        # arrow notation, which no torch repr produces.
+        assert "->" not in r, r
+        assert "stem=HarmonicField" in r, r
+        assert f"arms=[{geometric}, LinearClassifier, " in r, r
+        # And honest about the wiring: the HALO arm branches ABOVE the stem.
+        assert "HaloClassifier(reads_trunk=True)" in r, r
+        assert "ForwardHead" not in r, r
+
+
+def test_the_stem_does_not_feed_every_arm():
+    """The old `HarmonicField -> [...]` notation implied it did. An arm with
+    `reads_trunk` branches above the stem and scores the raw trunk hidden
+    states - HALOLoss scores those same features, and a transform in front
+    would train one feature space and score another."""
+    import torch
+
+    from praxis import PraxisConfig
+    from praxis.modeling import PraxisForCausalLM
+
+    cfg = PraxisConfig(
+        vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
+        max_length=512, decoder_type="sequential", head_type="prismatic8",
+        loss_func="halo", tokenizer_type="byte_level",
+    )
+    torch.manual_seed(0)
+    head = PraxisForCausalLM(cfg).head
+    trunk = torch.randn(2, 6, 64)
+    stemmed = head._stem_out(trunk)
+    reads = {
+        type(b).__name__: head._branch_input(b, stemmed, trunk) is stemmed
+        for b in head.branches
+    }
+    assert reads["CrystalHead"] and reads["ForwardHead"]
+    assert not reads["HaloHead"], "HALO must score trunk features, not the stem"
