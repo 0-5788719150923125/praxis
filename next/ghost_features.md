@@ -1,10 +1,18 @@
 # Ghost Features: extra channels from weights you already have
 
-Status: **unvalidated, reading note + experiment design** (2026-09-07). Nothing
-implemented. Opened from a question about "phantom neurons" - whether a model
-can carry 12M parameters' worth of shape on 6M real trainable ones - and closed
-onto one specific, cheap, testable mechanism. Sibling to
-[mixture_of_widths.md](mixture_of_widths.md),
+Status: **BUILT 2026-09-07, unrun.** `praxis/ghost/` ships the mechanism,
+`abstractinator-q` (arm) and `-r` (control) are scaffolded, `tests/test_ghost.py`
+passes. Opened from a question about "phantom neurons" - whether a model can
+carry 12M parameters' worth of shape on 6M real trainable ones - and closed onto
+one specific, cheap, testable mechanism.
+
+> **The site below is WRONG and is kept for its reasoning, not its conclusion.**
+> This note picked the FFN, then PEER, before anyone counted parameters. See
+> [Correction: where the parameters actually are](#correction-where-the-parameters-actually-are)
+> at the end. The decision RULE it derived - big tied tensor, mixer already
+> downstream - survived and is what picked the real site.
+
+Sibling to [mixture_of_widths.md](mixture_of_widths.md),
 [lottery_engineering.md](lottery_engineering.md),
 [information_density.md](information_density.md),
 [exact_solve.md](exact_solve.md).
@@ -436,3 +444,163 @@ Ghost features are a second, orthogonal helping of the same trade, *within* a
 tensor rather than *across* depth, at a real 2x on the FFN up-projection. Whether
 the specific algebraic structure matters is unknown and cheap to find out, which
 is the whole reason to bother.
+
+
+## Correction: where the parameters actually are
+
+Measured on `abstractinator-o`, CPU build, deduplicated by tensor identity
+(`head` holds an encoder back-ref, so `named_children` double-counts by 85%).
+**6,824,306 trainable.**
+
+| group | params | % model |
+| --- | --- | --- |
+| `encoder.encoder.layers.conv` | 1,333,344 | 19.5% |
+| `encoder.decoder.layers.conv` | 1,333,344 | 19.5% |
+| `encoder.embeddings...embeddings` | 1,114,112 | 16.3% |
+| `mtp.bank.depths.projection` | 739,840 | 10.8% |
+| **`decoder...ffn.{down,gate,up}`** (PEER) | **594,864** | **8.7%** |
+| `encoder.{encoder,decoder}.layers.proj` | 443,904 | 6.5% |
+
+The model is **67.3% encoder**. PEER - "most Praxis-native", and the site this
+note recommended if any - is 8.7%, so halving it is a **4.4% cut** and no
+arbiter series would resolve it. The six `ConvBlock` convolutions are **39.1%**,
+and halving them is a **19.5% cut**. Everything above about "big projections
+yes, combine sites no" was right; the arithmetic was never done.
+
+`ConvBlock` (`praxis/encoders/byte_latent/encoder.py:1383`) is
+`RMSNorm -> Conv1d(272, 544, k=3) -> GLU multiply -> proj Linear(272, 272)`.
+The comment on the conv reads "Project to 2*dim for GLU gating". So it is
+**exactly the shape this note argued for at the GLU up-projection**, the mixer
+is already bought, and it is a plain `nn.Conv1d`: no product keys, no
+`EmbeddingBag(mode='sum')` summing rows before a per-row sign flip could reach
+them, no perfect-square constraint (729/2 is not one, and neither is 2 x 361).
+
+**`d = 2`, and the paper permits it.** Section 2.1: "a hypercomplex algebra is
+called non-degenerate ... if the matrices `P_0, ..., P_{d-1}` are all
+non-singular. Non-degenerate hypercomplex algebras guarantee the universal
+approximation capability ... and are essential for extracting ghost features."
+Section 2.2 names the covered cases: "in particular, for **complex-**,
+quaternion-, and Clifford-valued MLP networks". Section 3 opens "Let H be a
+hypercomplex algebra with dimension `d`". No result is quaternion-specific, and
+`d = 2` is the only choice that HALVES rather than quarters.
+
+**Not inherited:** the "real part replicates the original layer" property
+assumes a SPLIT (component-wise) activation. The GLU mixes the two blocks
+multiplicatively. That property serves their frozen-backbone transfer setup;
+training from scratch does not need it, so it is not claimed.
+
+**The sharpest risk, and it is specific to this site.** Under `d = 2` block 0 is
+real and block 1 is derived, so **the GLU's gate becomes a fixed signed
+permutation of its value filters**. Charitably: value and gate as `Re` and `Im`
+of one complex filter bank. Skeptically: a hard constraint on the one place the
+block has multiplicative expressiveness, and the likeliest way the arm loses.
+
+### What was built
+
+A **pure function over an assembled model**, in the shape
+`praxis/routers/smear.py` established for target discovery - walk the tree,
+apply a named profile, rebind what matches - so moving the experiment to another
+tensor is a regex, not a reimplementation. Patching host modules in place would
+have meant the same change in the encoder, the FFN, the MTP bank and the head to
+ask one question four times.
+
+| file | what |
+| --- | --- |
+| `praxis/ghost/algebra.py` | `PERM`/`SIGN` tables; asserts non-degeneracy AND the odd-activation antipodal check |
+| `praxis/ghost/expansions.py` | `EXPANSION_REGISTRY`: `complex`, `quaternion`, `random`, `lowrank` |
+| `praxis/ghost/modules.py` | `GhostLinear`, `GhostConv1d` - weight is a property, not a Parameter |
+| `praxis/ghost/__init__.py` | `GHOST_REGISTRY` profiles + `ghostify(model, profile)` |
+
+**The expansion is a contraction, not a gather.** Block `k` is
+`expanded[k, r, g, p] = sum_q P_k[p, q] * real[r, g, q]`, so the whole thing is
+one `einsum` against the tiny `[d, d, d]` structure tensor - which is the form
+the paper itself points at ("the product of two hypercomplex numbers can also be
+expressed as a matrix-vector product, which is particularly interesting from a
+computational perspective", section 2.1). The first implementation used an
+index-gather, which is the natural reading of "signed permutation" and was
+measurably worse: the expansion is 4.4e5 element ops against the conv's 1.8
+GFLOP, so its cost is not arithmetic but memory traffic and, above all, the
+**scatter-add its backward needs**. Conv fwd+bwd on `[544, 272, 3]`, interleaved
+min-of-rounds against a plain conv on a leaf weight:
+
+| weight source | ms | vs plain |
+| --- | --- | --- |
+| plain conv, leaf weight | 28.2 | baseline |
+| contraction, `d=4` | 30.4 | +7.8% |
+| contraction, `d=2` | 31.7 | +12.5% |
+| lowrank `U @ V` | 31.3 | +11.2% |
+| *index-gather (removed)* | *41.2* | *~+30%* |
+
+A `d = 2` fast path was **tried and rejected**: two elements admit only two
+permutations, so a swap is a `flip` and the contraction can be skipped for a
+broadcast multiply. It measured **nine points worse** - flip, multiply and
+concatenate is three passes over the output where the contraction is one. There
+is one path for every `d`.
+
+Method note, because it cost two wrong answers: comparing timings **across
+separate benchmark processes** produced a 30% ordering artifact that read as a
+result twice, once making the gather look fine and once making the flip look
+free. Interleave the candidates in one process and take the min of rounds. The
+tell was `complex` and `random` - the same code path - disagreeing by 2x.
+
+VRAM is roughly a wash and **activations do not move at all**. Parameters,
+gradients and optimizer state all halve on the real tensor (about -20 MiB fp32
+at two optimizer states), against +10 MiB for the expanded weight retained for
+the conv's backward plus a similar transient peak. Nothing was widened - the
+conv still emits 544 channels and every downstream shape is identical - so this
+note's own warning that "`d=4` means 4x the pre-mixer activations" does **not**
+apply to the halving framing, and the batch governor should pick the same tier.
+That was the confound most likely to have made -q vs -o uninterpretable.
+
+It deliberately does **not** reuse `discover_targets`. That walker excludes
+`MERGE_OPAQUE` subtrees, which is a statement about *routing granularity* ("this
+already routes per token, a per-batch merge buys nothing") with nothing to say
+about weight tying. Reusing it would make PEER un-ghostable for a reason that
+does not apply. `TargetSpec` - the regex rules - is what is shared.
+
+Measured, from the build log:
+
+```
+[GHOST] conv_complex (complex): 6 targets, 2,663,424 -> 1,331,712 (1,331,712 saved)
+  model 6,824,274 -> 5,492,562 (19.5% cut)
+```
+
+### The arms, as registry entries rather than sites
+
+| profile | rule | params at site | asks |
+| --- | --- | --- | --- |
+| `conv_complex` | `d=2` fixed signed permutation | 221,952 / conv | **-q. Does it work at all?** |
+| `conv_lowrank` | rank-163, budget-matched | 221,680 / conv | **-r.** Does the STRUCTURE help, or just the halving? |
+| `conv_random` | frozen arbitrary signed permutation | 221,952 / conv | Is the algebra decoration? Only worth GPU time if -q beats -r |
+| `conv_quaternion` | `d=4` | 110,976 / conv | The paper's own algebra, at a 75% cut |
+
+Totals: **-q 5,492,594**, **-r 5,490,962**. The control is 1,632 parameters
+*smaller*, so a -q win cannot be a budget artifact. The rank is solved for
+(`round(out * fan / d / (out + fan))`), never set, so the two stay matched at any
+shape the profile lands on.
+
+The narrow-dense control this note asked for is **unavailable here**, and that
+is structural rather than an oversight: narrowing `conv` to 272 outputs makes
+the GLU chunk 136 wide and breaks `proj`'s 272-in contract, so it would require
+shrinking `dim` itself and stop being one change. `lowrank` replaces it and is
+the stronger control anyway.
+
+### Still open
+
+- **The free gate was designed but not run.** On a trained `-o` checkpoint, split
+  a `conv.weight` `[544, 272, 3]` into value `W0` and gate `W1` and fit the best
+  ghost-structured approximation, `W_r = (W0 + G^-1(W1)) / 2`; report
+  `||W - [W_r; G(W_r)]|| / ||W||`. Low error means the trained solution already
+  lies near the ghost manifold. High error does not kill the arm - the ghost
+  model is not obliged to reproduce `-o`'s solution - but it bounds how much of
+  the "same function, half the weights" story is available. Checkpoints are in
+  `build/runs/*/model/`.
+- **Mixer mass per ghost slot** and **effective rank of the expanded pre-mixer
+  activations**, both still unwired. The second is where this paper and Sonoda's
+  meet: ghosts work exactly to the degree their `d` blocks avoid the null space.
+- **PHM is the unexamined competitor.** Zhang et al., ICLR 2021,
+  `arXiv:2102.08597`, builds `W = sum_i A_i (x) S_i` with **learned** `n x n`
+  algebra matrices for a `1/n` parameter cut at unchanged shape - the same trade
+  with the structure learned instead of fixed. Compacter (`arXiv:2106.04647`)
+  applies it to adapters. Both cited from memory, unverified, and both belong in
+  the arm table before any writeup claims novelty for the fixed version.

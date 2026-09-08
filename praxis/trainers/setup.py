@@ -87,10 +87,25 @@ class ModelBundle:
     num_params: str
 
 
+def _materialized_numel(model) -> int:
+    """Trainable parameter count, skipping anything still lazy."""
+    from torch.nn.parameter import UninitializedParameter
+
+    seen: set = set()
+    total = 0
+    for param in model.parameters():
+        if isinstance(param, UninitializedParameter) or id(param) in seen:
+            continue
+        seen.add(id(param))
+        total += param.numel()
+    return total
+
+
 def assemble_model(cfg, config) -> ModelBundle:
     """Resolve the optimizer profile, build hparams, instantiate the model."""
     from transformers import AutoModelForCausalLM
 
+    from praxis.ghost import ghostify
     from praxis.optimization import get_optimizer_profile, wrappers_disable_schedule
     from praxis.trainers.precision import cast_module, init_context
     from praxis.utils import initialize_lazy_modules
@@ -138,6 +153,16 @@ def assemble_model(cfg, config) -> ModelBundle:
     # the same mixed rules.
     with init_context(profile):
         model = AutoModelForCausalLM.from_config(config)
+        # Ghosting rebinds submodules, so it runs BEFORE the dtype cast and
+        # before the lazy-init forward: the wrappers must be the modules those
+        # two passes actually see, or the derived weight is left in the build
+        # dtype while everything around it moved.
+        ghost_stats = ghostify(model, getattr(config, "ghost_type", "none"))
+        if ghost_stats.targets:
+            # Lazy parameters (the Servant activations) have no shape until the
+            # dummy forward below, so they are excluded rather than counted as
+            # zero; the [GHOST] total is a count of what is materialized here.
+            print(ghost_stats.describe(_materialized_numel(model)))
         model = cast_module(model, profile)
         initialize_lazy_modules(model, cfg.device)
         model = cast_module(model, profile)

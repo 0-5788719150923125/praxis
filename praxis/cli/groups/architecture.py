@@ -12,6 +12,7 @@ from praxis import (
     ENCODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
+    GHOST_REGISTRY,
     HALTING_REGISTRY,
     HEAD_REGISTRY,
     MEMORY_REGISTRY,
@@ -134,6 +135,16 @@ class ArchitectureGroup:
             help="Mixture-of-widths policy: deflate each recurrent step's inner "
             "rank to a helically-precessing slice. Presets tune the floor/peak "
             "of the arch (default none = full width)",
+        )
+
+        group.add_argument(
+            "--ghost-type",
+            type=str,
+            choices=["none", *GHOST_REGISTRY.keys()],
+            default="none",
+            help="Ghost-feature profile: replace the matched weights with a "
+            "half-size real tensor expanded back to full shape by a fixed "
+            "signed permutation (default none = every weight is stored)",
         )
 
         group.add_argument(

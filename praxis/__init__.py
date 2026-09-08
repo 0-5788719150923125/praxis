@@ -28,6 +28,7 @@ from praxis.policies import RL_POLICIES_REGISTRY, RL_PROFILES
 from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.routers import ROUTER_REGISTRY
+from praxis.ghost import GHOST_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
 from praxis.spider import SPIDER_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY

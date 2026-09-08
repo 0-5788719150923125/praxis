@@ -68,6 +68,13 @@ class PraxisConfig(PretrainedConfig):
         sorting_type: str = "none",
         norm_type: str = "rms_norm",
         head_type: str = "forward",
+        # Ghost features: derive part of the model's weight shape from a
+        # smaller real tensor by fixed signed permutation, instead of
+        # storing it. A registry profile names BOTH the target regex and
+        # the expansion rule, so the arms of the experiment (algebra vs
+        # frozen-random vs parameter-matched low-rank) are one key.
+        # See praxis/ghost/__init__.py. "none" = store every weight.
+        ghost_type: str = "none",
         halting_type: Optional[str] = None,
         width_type: Optional[str] = None,
         # INFERENCE-ONLY, and excluded from the run hash on purpose. Both
