@@ -148,11 +148,7 @@ def test_every_leaf_head_names_its_readout():
             ):
                 seen.add(obj)
 
-    missing = [
-        c.__name__
-        for c in seen
-        if c.compose_repr is BaseHead.compose_repr
-    ]
+    missing = [c.__name__ for c in seen if c.compose_repr is BaseHead.compose_repr]
     assert not missing, f"leaf heads falling back to their class name: {missing}"
     assert seen, "no head classes discovered"
 
@@ -170,9 +166,16 @@ def test_the_prismatic_arms_read_as_three_classifiers():
         ("prismatic9", "CrystalClassifier"),
     ):
         cfg = PraxisConfig(
-            vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
-            max_length=512, decoder_type="sequential", head_type=head,
-            loss_func="halo", tokenizer_type="byte_level",
+            vocab_size=1024,
+            hidden_size=64,
+            embed_size=64,
+            num_heads=2,
+            depth=2,
+            max_length=512,
+            decoder_type="sequential",
+            head_type=head,
+            loss_func="halo",
+            tokenizer_type="byte_level",
         )
         torch.manual_seed(0)
         r = repr(PraxisForCausalLM(cfg).head)
@@ -197,9 +200,16 @@ def test_the_stem_does_not_feed_every_arm():
     from praxis.modeling import PraxisForCausalLM
 
     cfg = PraxisConfig(
-        vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
-        max_length=512, decoder_type="sequential", head_type="prismatic8",
-        loss_func="halo", tokenizer_type="byte_level",
+        vocab_size=1024,
+        hidden_size=64,
+        embed_size=64,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        decoder_type="sequential",
+        head_type="prismatic8",
+        loss_func="halo",
+        tokenizer_type="byte_level",
     )
     torch.manual_seed(0)
     head = PraxisForCausalLM(cfg).head

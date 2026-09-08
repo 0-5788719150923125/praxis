@@ -367,7 +367,9 @@ def zoom_ladder(n: int) -> Tuple[float, ...]:
         if len(out) < n:
             out.append(1.0 / k)
         k += 1
-    return tuple(sorted(out[:max(0, n)]))
+    return tuple(sorted(out[: max(0, n)]))
+
+
 # Probability of dropping a mirror from a blend during training. SMEAR's own
 # load-balancing mechanism at SMEAR's own rate; see praxis/routers/smear.py,
 # where its absence let "every one of the twelve targets duly saturate to near
@@ -669,7 +671,7 @@ class KaleidoscopeAttention(nn.Module):
         # divides the per-token modulation ceiling by sqrt(N). Turn it on for
         # both arms of an N sweep or neither.
         self.mix_norm = bool(mix_norm)
-        self.mix_scale = self.num_mirrors ** -0.5 if self.mix_norm else 1.0
+        self.mix_scale = self.num_mirrors**-0.5 if self.mix_norm else 1.0
 
         self.resolution = int(resolution or type(self).resolution)
         self.alpha = float(type(self).alpha if alpha is None else alpha)

@@ -342,9 +342,7 @@ class PatchVAE(nn.Module):
             x = blk(x)
         return self.dec_out(self.out_norm(x))
 
-    def reconstruction_loss(
-        self, h_hat: torch.Tensor, h: torch.Tensor
-    ) -> torch.Tensor:
+    def reconstruction_loss(self, h_hat: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
         """RELATIVE squared error: 1.0 is the trivial predict-zero solution.
 
         Dimensionless on purpose. A raw MSE would carry the scale of whatever

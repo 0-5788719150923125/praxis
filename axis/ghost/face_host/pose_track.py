@@ -87,8 +87,8 @@ MAGIC = b"GST2"
 VERSION = 2
 POINTS = 33
 HEADER = 44  # 4 magic + u32 version + f32 rate + u32 count + u32 points
-             #   + u32 mask_w + u32 mask_h + u32 start
-             #   + f32 dir_x + f32 dir_y + f32 conf
+#   + u32 mask_w + u32 mask_h + u32 start
+#   + f32 dir_x + f32 dir_y + f32 conf
 
 
 def main() -> int:
@@ -189,7 +189,11 @@ def main() -> int:
         ok, bgr = cap.read()
         if not ok:
             break
-        t = (cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0) / 1000.0 if seeked else idx / src_fps
+        t = (
+            (cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0) / 1000.0
+            if seeked
+            else idx / src_fps
+        )
         idx += 1
         if t >= stop_t:
             break
@@ -205,7 +209,10 @@ def main() -> int:
         # noisy at exactly the scale we are about to magnify. Area averaging
         # is a box filter, which is what "coverage of this cell" means.
         grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        lum = cv2.resize(grey, (mw, mh), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+        lum = (
+            cv2.resize(grey, (mw, mh), interpolation=cv2.INTER_AREA).astype(np.float32)
+            / 255.0
+        )
         lum_sum += lum
         lum_sq += lum.astype(np.float64) ** 2
         frames_seen += 1
@@ -276,7 +283,16 @@ def main() -> int:
     f.write(
         struct.pack(
             "<IfIIIIIfff",
-            VERSION, args.rate, count, POINTS, mw, mh, start_index, dx, dy, conf,
+            VERSION,
+            args.rate,
+            count,
+            POINTS,
+            mw,
+            mh,
+            start_index,
+            dx,
+            dy,
+            conf,
         )
     )
     f.close()

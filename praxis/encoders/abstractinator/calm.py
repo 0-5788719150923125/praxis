@@ -366,9 +366,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 target = digits[s][:, 1:].reshape(-1)
                 logits = head(h_cond).reshape(-1, self.vq_K)
                 ce = ce + F.cross_entropy(logits.float(), target)
-                acc += float(
-                    (logits.detach().argmax(-1) == target).float().mean()
-                )
+                acc += float((logits.detach().argmax(-1) == target).float().mean())
             n = max(1, min(len(digits), len(self.code_heads)))
             # Normalize by the chance level so the term is dimensionless: 1.0 is
             # chance, 0 is perfect. Without this the objective's magnitude was
@@ -403,9 +401,13 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         _, logvar = self._last_posterior
         centre = self._last_code_mean[:, 1:, :].unsqueeze(2)
         std_n = (0.5 * logvar[:, 1:, :]).exp().detach().unsqueeze(2)
-        targets = centre + torch.randn(
-            B, P, ENERGY_SAMPLES_M, D, device=h.device, dtype=centre.dtype
-        ) * std_n
+        targets = (
+            centre
+            + torch.randn(
+                B, P, ENERGY_SAMPLES_M, D, device=h.device, dtype=centre.dtype
+            )
+            * std_n
+        )
         loss = energy_score_loss(proposals, targets)
         self._pending["calm_energy"] = self.loss_balance("calm_energy", loss)
 
@@ -521,16 +523,18 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         # Through the head's own sampler, so generation draws the same uniform
         # [-0.5, 0.5] noise training does - and so the noise width stays the
         # head's, not the latent's. [n, B, D] -> [B, n, D].
-        proposals = self.energy_head.sample(h_cond, num_samples=n_draws).permute(1, 0, 2)
+        proposals = self.energy_head.sample(h_cond, num_samples=n_draws).permute(
+            1, 0, 2
+        )
         D = proposals.shape[-1]
         # The reference votes by DECODING every candidate and comparing the
         # tokens. Same thing here: decode the latent through the VAE, then read
         # off the RVQ cell of the reconstructed feature - one nearest-neighbour
         # lookup instead of a full byte decode, which is what having the
         # discrete codec beside the continuous one buys.
-        codes = self._quantize_to_codes(
-            self.vae.decode(proposals.reshape(-1, D))
-        ).view(B, n_draws)
+        codes = self._quantize_to_codes(self.vae.decode(proposals.reshape(-1, D))).view(
+            B, n_draws
+        )
 
         # Count-based temperature: n = round(1/T), exactly as the reference.
         n_initial = max(1, int(round(1.0 / max(float(temperature), 1e-6))))
@@ -543,7 +547,9 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             winner = self._cascade_pick(vals, counts, n_initial)
             members = proposals[b][codes[b] == winner]
             # A uniform draw from the winning cell - a real sample, not a mean.
-            out[b] = members[torch.randint(len(members), (1,), device=members.device)][0]
+            out[b] = members[torch.randint(len(members), (1,), device=members.device)][
+                0
+            ]
             if n_draws > 1:
                 spread = proposals[b].std(0).mean().clamp_min(1e-6)
                 lifts.append(
@@ -572,11 +578,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 continue
             c = counts[keep].to(torch.float64)
             # C(c, n) in log space: lgamma(c+1) - lgamma(n+1) - lgamma(c-n+1).
-            logw = (
-                torch.lgamma(c + 1)
-                - math.lgamma(n + 1)
-                - torch.lgamma(c - n + 1)
-            )
+            logw = torch.lgamma(c + 1) - math.lgamma(n + 1) - torch.lgamma(c - n + 1)
             probs = torch.softmax(logw - logw.max(), dim=0)
             return vals[keep][int(torch.multinomial(probs, 1).item())]
         return vals[int(counts.argmax())]
@@ -655,9 +657,9 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         K = int(self.byte_config.patch_size)
         eos_id = getattr(generation_config, "eos_token_id", None)
         eos = (
-            {eos_id} if isinstance(eos_id, int)
-            else set(eos_id) if isinstance(eos_id, (list, tuple))
-            else set()
+            {eos_id}
+            if isinstance(eos_id, int)
+            else set(eos_id) if isinstance(eos_id, (list, tuple)) else set()
         )
 
         generated = inputs

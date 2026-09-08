@@ -977,11 +977,19 @@ def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
     from praxis.modeling import PraxisForCausalLM
 
     cfg = PraxisConfig(
-        vocab_size=1024, hidden_size=64, embed_size=64, num_heads=2, depth=2,
-        max_length=512, decoder_type="sequential", head_type="forward",
+        vocab_size=1024,
+        hidden_size=64,
+        embed_size=64,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        decoder_type="sequential",
+        head_type="forward",
         encoder_type="abstractinator_harmonic_gdn_vocab_bank_static",
-        tokenizer_type="byte_level", codebook_size=256,
-        mtp_depth=3, mtp_type="per_depth",
+        tokenizer_type="byte_level",
+        codebook_size=256,
+        mtp_depth=3,
+        mtp_type="per_depth",
     )
     torch.manual_seed(0)
     m = PraxisForCausalLM(cfg).eval()

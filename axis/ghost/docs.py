@@ -1062,7 +1062,6 @@ def check_panel_controls() -> None:
             )
 
 
-
 def check_films_pumped() -> None:
     """`Films.pump()` must be called from main.gd's `_process`.
 
@@ -1079,6 +1078,7 @@ def check_films_pumped() -> None:
             "main.gd never calls Films.pump() - a finished window cut will never be "
             "promoted, and film will appear once per session at most"
         )
+
 
 def check_settings_owner() -> None:
     """Nothing but settings.gd may touch the config file directly.

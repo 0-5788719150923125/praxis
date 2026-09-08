@@ -56,4 +56,6 @@ class UncertaintyWeighting(nn.Module):
 
     def weights(self) -> Dict[str, float]:
         """Every current weight, for the dashboard."""
-        return {n: float(torch.exp(-p.detach()).squeeze(0)) for n, p in self.log_var.items()}
+        return {
+            n: float(torch.exp(-p.detach()).squeeze(0)) for n, p in self.log_var.items()
+        }

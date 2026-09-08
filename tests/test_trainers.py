@@ -576,9 +576,16 @@ def test_byte_nll_bits_is_emitted_for_every_byte_level_family(tag, over):
     from praxis.trainers.backpropagation import BackpropagationTrainer
 
     cfg = dict(
-        vocab_size=256, hidden_size=64, embed_size=64, num_heads=2, depth=2,
-        max_length=512, decoder_type="sequential", head_type="forward",
-        tokenizer_type="byte_level", encoder_type=None,
+        vocab_size=256,
+        hidden_size=64,
+        embed_size=64,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        decoder_type="sequential",
+        head_type="forward",
+        tokenizer_type="byte_level",
+        encoder_type=None,
     )
     cfg.update(over)
     torch.manual_seed(0)

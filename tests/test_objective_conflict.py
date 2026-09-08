@@ -93,7 +93,9 @@ def test_min_is_the_worst_of_the_terms():
     c, h = make()
     main = h.pow(2).sum()
     out = c.measure({ANCHOR: main, "a": 0.5 * main, "b": -main}, h)
-    assert out["conflict_min"] == pytest.approx(min(out["conflict_a"], out["conflict_b"]))
+    assert out["conflict_min"] == pytest.approx(
+        min(out["conflict_a"], out["conflict_b"])
+    )
     # Magnitude series must never be mistaken for a cosine when taking the min.
     assert out["conflict_min"] >= -1.0
 

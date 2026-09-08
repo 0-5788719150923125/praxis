@@ -23,9 +23,17 @@ PARENT = "abstractinator_harmonic_gdn_vocab_bank_static"
 
 def cfg(encoder=PROFILE, d=64):
     return PraxisConfig(
-        vocab_size=1024, hidden_size=d, embed_size=d, num_heads=2, depth=2,
-        max_length=512, decoder_type="sequential", head_type="forward",
-        encoder_type=encoder, tokenizer_type="byte_level", codebook_size=256,
+        vocab_size=1024,
+        hidden_size=d,
+        embed_size=d,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        decoder_type="sequential",
+        head_type="forward",
+        encoder_type=encoder,
+        tokenizer_type="byte_level",
+        codebook_size=256,
     )
 
 
@@ -80,8 +88,7 @@ def test_every_new_component_receives_gradient():
         ("code_heads", enc.code_heads),
     ):
         live = [
-            p for p in mod.parameters()
-            if p.grad is not None and p.grad.abs().sum() > 0
+            p for p in mod.parameters() if p.grad is not None and p.grad.abs().sum() > 0
         ]
         assert live, f"{name} received no gradient"
     assert all(
@@ -183,8 +190,7 @@ def test_the_vote_does_not_touch_the_codebook():
     m = build()
     enc = m.encoder
     before = [
-        enc.quantizer.quantizer.stage_codebook(s).clone()
-        for s in range(enc.vq_depth)
+        enc.quantizer.quantizer.stage_codebook(s).clone() for s in range(enc.vq_depth)
     ]
     enc.vote_next_latent(torch.randn(2, 64))
     for s, b in enumerate(before):
@@ -239,7 +245,7 @@ def test_the_winner_is_a_real_proposal_not_an_average():
     # than the pool's own spread.
     for b in range(4):
         d = (pool[b] - z[b]).norm(dim=-1)
-        assert float(d.min()) < float(pool[b].std(0).mean()) * 64 ** 0.5
+        assert float(d.min()) < float(pool[b].std(0).mean()) * 64**0.5
 
 
 def test_vote_lift_is_reported():
@@ -447,7 +453,6 @@ def test_the_conditioning_gap_is_reported():
     assert "calm_energy_cond_gap" in enc._calm_diag
 
 
-
 # ── balancing the arm against the main task ────────────────────────────────
 
 
@@ -461,7 +466,10 @@ def test_every_calm_loss_goes_through_the_balance():
     m.encoder._post_downsample(h, torch.zeros(()))
     m.encoder._register_calm_losses(h)
     assert set(m.encoder._pending) == {
-        "calm_kl", "calm_code_ce", "calm_energy", "calm_recon",
+        "calm_kl",
+        "calm_code_ce",
+        "calm_energy",
+        "calm_recon",
     }
     assert set(m.encoder.loss_balance.log_var) == set(m.encoder._pending)
 
@@ -545,11 +553,8 @@ def test_pairwise_distance_avoids_the_N_by_M_by_D_tensor():
 
     torch.manual_seed(0)
     a, b = torch.randn(2, 3, 8, 16), torch.randn(2, 3, 100, 16)
-    ref = torch.sqrt(
-        (a.unsqueeze(-2) - b.unsqueeze(-3)).pow(2).sum(-1).clamp_min(1e-4)
-    )
+    ref = torch.sqrt((a.unsqueeze(-2) - b.unsqueeze(-3)).pow(2).sum(-1).clamp_min(1e-4))
     assert torch.allclose(ref, _pairwise_distance(a, b), atol=1e-4)
-
 
 
 def test_the_kl_is_not_a_thousand_nats_at_init():
@@ -568,9 +573,17 @@ def test_the_kl_is_not_a_thousand_nats_at_init():
     assert kl < 2.0, kl
     # And it must not grow with model width.
     wide = PraxisConfig(
-        vocab_size=1024, hidden_size=256, embed_size=256, num_heads=2, depth=2,
-        max_length=512, decoder_type="sequential", head_type="forward",
-        encoder_type=PROFILE, tokenizer_type="byte_level", codebook_size=256,
+        vocab_size=1024,
+        hidden_size=256,
+        embed_size=256,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        decoder_type="sequential",
+        head_type="forward",
+        encoder_type=PROFILE,
+        tokenizer_type="byte_level",
+        codebook_size=256,
     )
     torch.manual_seed(0)
     enc2 = PraxisForCausalLM(wide).train().encoder
@@ -627,7 +640,8 @@ def test_the_vae_decoder_receives_gradient():
     m = build()
     step(m).loss.backward()
     live = [
-        p for p in m.encoder.vae.dec_blocks.parameters()
+        p
+        for p in m.encoder.vae.dec_blocks.parameters()
         if p.grad is not None and p.grad.abs().sum() > 0
     ]
     assert live
@@ -762,12 +776,15 @@ def test_default_is_the_byte_loop_and_the_vote_is_off():
     returns None and generation fell through to the byte-level loop."""
     m = build().eval()
     assert m.encoder.generation_mode == "standard"
-    assert m.encoder.custom_generate(
-        torch.randint(0, 256, (1, 8)),
-        base_forward=None,
-        latent_forward=None,
-        decode_logits=None,
-    ) is None
+    assert (
+        m.encoder.custom_generate(
+            torch.randint(0, 256, (1, 8)),
+            base_forward=None,
+            latent_forward=None,
+            decode_logits=None,
+        )
+        is None
+    )
     assert _gen(m).shape == (1, 48)
 
 
@@ -807,6 +824,10 @@ def test_vote_generation_requires_the_latent_and_logits_seams():
     encoder. Both arrive as closures rather than stored back-references."""
     m = _build_mode("vote")
     for missing in ("latent_forward", "decode_logits"):
-        kw = {"base_forward": None, "latent_forward": object(), "decode_logits": object()}
+        kw = {
+            "base_forward": None,
+            "latent_forward": object(),
+            "decode_logits": object(),
+        }
         kw[missing] = None
         assert m.encoder.custom_generate(torch.randint(0, 256, (1, 8)), **kw) is None

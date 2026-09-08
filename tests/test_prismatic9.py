@@ -192,9 +192,11 @@ def test_halo_row_is_its_own_objective_not_a_cross_entropy():
     assert torch.allclose(out["arm2_loss"], direct, atol=1e-5)
     # And it is NOT what a CE on the arm would give.
     ce = torch.nn.functional.cross_entropy(
-        halo_arm(x)[..., :-1, :].reshape(-1, 32).float()
-        if halo_arm(x).shape[-2] != y.shape[-1]
-        else halo_arm(x).reshape(-1, 32).float(),
+        (
+            halo_arm(x)[..., :-1, :].reshape(-1, 32).float()
+            if halo_arm(x).shape[-2] != y.shape[-1]
+            else halo_arm(x).reshape(-1, 32).float()
+        ),
         y.reshape(-1),
     )
     assert not torch.allclose(direct, ce, atol=1e-3)
@@ -233,9 +235,7 @@ def test_the_surrogate_delivers_exactly_the_pcgrad_gradient_to_the_trunk():
     expected = _pcgrad(grads)
     # The stem is dim-preserving and differentiable, so the trunk gradient is
     # g_hat pushed back through it; check the stem-level identity directly.
-    (gz,) = torch.autograd.grad(
-        (z * expected.detach()).sum(), x, retain_graph=True
-    )
+    (gz,) = torch.autograd.grad((z * expected.detach()).sum(), x, retain_graph=True)
     assert torch.allclose(g, gz, atol=1e-5)
 
 
@@ -245,12 +245,16 @@ def test_solo_ce_trains_the_arm_but_never_the_trunk():
     head = build().train()
     x, y = batch()
     out = head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
-    (g,) = torch.autograd.grad(out["arm0_loss"], x, allow_unused=True, retain_graph=True)
+    (g,) = torch.autograd.grad(
+        out["arm0_loss"], x, allow_unused=True, retain_graph=True
+    )
     assert g is None, "an arm's solo CE must not reach the trunk"
 
     crystal = head.branches[0]
     params = [p for p in crystal.parameters() if p.requires_grad]
-    gs = torch.autograd.grad(out["arm0_loss"], params, allow_unused=True, retain_graph=True)
+    gs = torch.autograd.grad(
+        out["arm0_loss"], params, allow_unused=True, retain_graph=True
+    )
     assert any(t is not None and t.abs().sum() > 0 for t in gs)
 
 
@@ -320,7 +324,9 @@ def test_override_is_zero_when_arms_agree():
 
     big = torch.tensor([20.0, 20.0, 20.0])
     small = torch.tensor([1.0, 1.0, 1.0])
-    out = P._override_shares([small, big], [float(small.norm()), float(big.norm())], [0, 1])
+    out = P._override_shares(
+        [small, big], [float(small.norm()), float(big.norm())], [0, 1]
+    )
     assert out["arm_override_0"] == pytest.approx(0.0)
     assert out["arm_override_1"] == pytest.approx(0.0)
 
@@ -332,7 +338,9 @@ def test_override_catches_a_loud_row_reversing_a_quiet_one():
 
     quiet = torch.tensor([1.0, 1.0, 1.0])
     loud = torch.tensor([-20.0, -20.0, -20.0])
-    out = P._override_shares([quiet, loud], [float(quiet.norm()), float(loud.norm())], [0, 1])
+    out = P._override_shares(
+        [quiet, loud], [float(quiet.norm()), float(loud.norm())], [0, 1]
+    )
     assert out["arm_override_0"] == pytest.approx(1.0)
     assert out["arm_override_1"] == pytest.approx(0.0)
     # And PCGrad is what recovers it: fully opposed rows cancel to zero rather
@@ -404,9 +412,7 @@ def test_equalization_preserves_the_step_magnitude():
 
     assert float(equal.norm()) == pytest.approx(float(plain.norm()), rel=0.05)
     # Same size, genuinely different direction.
-    cos = float(
-        equal.flatten() @ plain.flatten() / (equal.norm() * plain.norm())
-    )
+    cos = float(equal.flatten() @ plain.flatten() / (equal.norm() * plain.norm()))
     assert cos < 0.99
 
 
@@ -437,9 +443,16 @@ def test_full_model_survives_the_lazy_init_pass():
     from praxis.modeling import PraxisForCausalLM
 
     cfg = PraxisConfig(
-        vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
-        max_length=128, decoder_type="sequential", encoder_type=None,
-        head_type="prismatic9", loss_func="halo",
+        vocab_size=1000,
+        hidden_size=32,
+        embed_size=32,
+        num_heads=4,
+        depth=2,
+        max_length=128,
+        decoder_type="sequential",
+        encoder_type=None,
+        head_type="prismatic9",
+        loss_func="halo",
     )
     torch.manual_seed(0)
     m = PraxisForCausalLM(cfg)
@@ -466,9 +479,16 @@ def test_validation_loss_stays_comparable_to_prismatic8():
 
     def val_loss(head):
         c = PraxisConfig(
-            vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
-            max_length=128, decoder_type="sequential", encoder_type=None,
-            head_type=head, loss_func="halo",
+            vocab_size=1000,
+            hidden_size=32,
+            embed_size=32,
+            num_heads=4,
+            depth=2,
+            max_length=128,
+            decoder_type="sequential",
+            encoder_type=None,
+            head_type=head,
+            loss_func="halo",
         )
         torch.manual_seed(0)
         m = PraxisForCausalLM(c).eval()
@@ -483,9 +503,9 @@ def test_validation_loss_stays_comparable_to_prismatic8():
     assert m8.criterion.composite_geometry is True
     assert m9.criterion.composite_geometry is False
     # ...but at EVAL both must score the same composite objective.
-    assert nine == pytest.approx(eight, rel=1e-4), (
-        f"val loss diverged: prismatic8 {eight}, prismatic9 {nine}"
-    )
+    assert nine == pytest.approx(
+        eight, rel=1e-4
+    ), f"val loss diverged: prismatic8 {eight}, prismatic9 {nine}"
 
 
 def test_geometry_is_still_suppressed_during_training():
@@ -525,16 +545,26 @@ def test_mtp_still_trains_under_a_surgical_head():
 
     def run(head):
         cfg = PraxisConfig(
-            vocab_size=1000, hidden_size=32, embed_size=32, num_heads=4, depth=2,
-            max_length=128, decoder_type="sequential", encoder_type=None,
-            head_type=head, loss_func="halo", mtp_depth=3, mtp_type="per_depth",
+            vocab_size=1000,
+            hidden_size=32,
+            embed_size=32,
+            num_heads=4,
+            depth=2,
+            max_length=128,
+            decoder_type="sequential",
+            encoder_type=None,
+            head_type=head,
+            loss_func="halo",
+            mtp_depth=3,
+            mtp_type="per_depth",
         )
         torch.manual_seed(0)
         m = PraxisForCausalLM(cfg).train()
         ids = torch.randint(0, 1000, (2, 16))
         m(input_ids=ids, labels=ids[:, 1:].contiguous()).loss.backward()
         live = [
-            n for n, p in m.mtp.named_parameters()
+            n
+            for n, p in m.mtp.named_parameters()
             if p.grad is not None and p.grad.abs().sum() > 0
         ]
         return m, live, sum(1 for _ in m.mtp.named_parameters())

@@ -52,7 +52,6 @@ from praxis.heads.base import BaseHead
 HeadSpec = Union[BaseHead, Callable[..., BaseHead]]
 
 
-
 # ── Per-arm objectives and gradient surgery ─────────────────────────────────
 #
 # WHAT THIS IS FOR. A gated mixture combines PREDICTIONS well - it is a mixture
@@ -239,9 +238,11 @@ class ParallelHead(BaseHead):
         score another. So arms that bypass the stem say so.
         """
         arms = ", ".join(
-            f"{b.compose_repr()}(reads_trunk=True)"
-            if getattr(b, "reads_trunk", False)
-            else b.compose_repr()
+            (
+                f"{b.compose_repr()}(reads_trunk=True)"
+                if getattr(b, "reads_trunk", False)
+                else b.compose_repr()
+            )
             for b in self.branches
         )
         if self.stem is None:
@@ -761,9 +762,7 @@ class ParallelHead(BaseHead):
         # Only the first series in a series_group carries title/axis; the rest
         # ride it. Drop the None placeholders rather than shipping them.
         for entry in out.values():
-            entry["chart"] = {
-                k: v for k, v in entry["chart"].items() if v is not None
-            }
+            entry["chart"] = {k: v for k, v in entry["chart"].items() if v is not None}
         return out
 
     @property
