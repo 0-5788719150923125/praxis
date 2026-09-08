@@ -916,11 +916,12 @@ async function sendUserMessage() {
         // Send to API
         const response = await sendMessage(state.messages, {
             onDelta: turn.onDelta,
-            onReset: turn.onReset
+            onReset: turn.onReset,
+            onTool: turn.onTool
         });
 
         // Add assistant response
-        turn.settle(response.response || response.content);
+        turn.settle(response.response || response.content, response.tools);
 
         // Trim history if too long
         if (state.messages.length > CONSTANTS.MAX_HISTORY_LENGTH) {
@@ -1141,11 +1142,12 @@ async function handleReroll() {
         // Re-send to API
         const response = await sendMessage(state.messages, {
             onDelta: turn.onDelta,
-            onReset: turn.onReset
+            onReset: turn.onReset,
+            onTool: turn.onTool
         });
 
         // Add new response
-        turn.settle(response.response || response.content);
+        turn.settle(response.response || response.content, response.tools);
 
     } catch (error) {
         console.error('[Chat] Reroll error:', error);

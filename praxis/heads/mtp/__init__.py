@@ -50,6 +50,31 @@ _CONTEXT_DEPENDENT_TYPES = frozenset({"transformer", "conv"})
 # every step, since acceptance stops at the first divergence).
 _ACCEPT_EMA_DECAY: float = 0.9
 _ACCEPT_WIDTH_MARGIN: int = 1
+# How often the margin is actually spent. The margin is a PROBE - its job is to
+# let a model whose drafts improve discover a longer run - and a probe does not
+# have to run every step. Adding it unconditionally made it a permanent tax
+# instead: `_accept_ema` starts at 1.0, so a model accepting runs of 1 drafts 2
+# forever and the second candidate never lands.
+#
+# What makes that expensive is that a draft is not cheap here. The premise
+# written into `draft_next_tokens` - "a few tenths of a percent of a forward" -
+# holds for a linear LM head and not for the heads this line runs: each draft
+# pays a full head evaluation, ~5 ms against a ~60 ms forward, and drafting is
+# 21% of a turn. Swept on abstractinator-r at batch 5439 (1000-byte prompt, 64
+# bytes greedy), width 1/2/3/5 cost 2.53/2.80/3.13/3.65 s - a flat ~0.28 s per
+# extra draft - while bytes-per-forward stayed at 1.56 at EVERY width, because
+# the second candidate is never accepted at that stage of training. The
+# permanent margin was buying nothing and charging a fifth of the turn for it.
+#
+# Probing every 8 commits amortizes it to ~2%, and the discovery path is intact:
+# a model that starts landing its second draft raises the EMA on a probe step,
+# and the base width follows. Same shape as `NeuralMemory.PROBE_EVERY` - a
+# diagnostic that only has to be right on average pays on a cadence.
+#
+# This can only change SPEED. Committed bytes are verified against a real
+# forward whatever the width, so greedy output is identical at every width -
+# which is asserted in the tests rather than left as a claim.
+_WIDTH_PROBE_EVERY: int = 8
 
 
 def _is_byte_latent(encoder_type) -> bool:
@@ -214,10 +239,16 @@ class MultiTokenPrediction(nn.Module):
         per candidate. Width therefore tracks the measured run length rather
         than ``num_depths``: the useful window, not the trained one. Bounded by
         ``num_depths``, and never below 1 so drafting cannot switch itself off.
+
+        The growth margin rides on top only on probe steps - see
+        ``_WIDTH_PROBE_EVERY`` for why a probe that runs every step is a tax
+        rather than a probe.
         """
         import math
 
-        width = math.ceil(self._accept_ema) + _ACCEPT_WIDTH_MARGIN
+        width = math.ceil(self._accept_ema)
+        if self._accept_seen % _WIDTH_PROBE_EVERY == 0:
+            width += _ACCEPT_WIDTH_MARGIN
         return max(1, min(self.num_depths, int(width)))
 
     def note_accepted(self, run_length: int) -> None:

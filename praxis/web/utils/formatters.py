@@ -35,6 +35,7 @@ def generate_from_messages(
     timeout: float = 60.0,
     on_text: Optional[Callable[[str], None]] = None,
     on_reset: Optional[Callable[[], None]] = None,
+    on_tool: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """Generate a response from a list of messages.
 
@@ -56,6 +57,10 @@ def generate_from_messages(
             and stays authoritative, so a caller that passes nothing behaves
             exactly as before.
         on_reset: Optional callback meaning "drop what was published so far".
+        on_tool: Optional callback receiving the name of each tool the runtime
+            runs. NOT recoverable from the return value below - the reply
+            extractor strips the tool exchange - so a caller that wants to
+            report tool use has to pass this.
 
     Returns:
         Generated assistant reply, or None on failure
@@ -97,7 +102,12 @@ def generate_from_messages(
     # nobody. The deadline is what actually bounds that.
     deadline = time.time() + timeout
     request_id = generator.request_generation(
-        formatted_prompt, kwargs, deadline=deadline, on_text=on_text, on_reset=on_reset
+        formatted_prompt,
+        kwargs,
+        deadline=deadline,
+        on_text=on_text,
+        on_reset=on_reset,
+        on_tool=on_tool,
     )
 
     # Keep listening a little PAST the deadline. The deadline stops the decode

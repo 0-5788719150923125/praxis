@@ -12,6 +12,18 @@ generation_bp = Blueprint("generation", __name__)
 api_logger = logging.getLogger("praxis.web")
 
 
+def _tool_counts(names):
+    """``[{"name", "count"}, ...]`` in first-use order.
+
+    Order matters more than it looks: the chips render in it, so a turn that
+    searched and then read a file reads left to right the way it happened.
+    """
+    counts = {}
+    for name in names:
+        counts[name] = counts.get(name, 0) + 1
+    return [{"name": name, "count": count} for name, count in counts.items()]
+
+
 @generation_bp.route("/messages/", methods=["POST"])
 @generation_bp.route("/messages", methods=["POST"])
 def generate_messages():
@@ -46,7 +58,21 @@ def generate_messages():
         # minted by the client and echoed on every frame, so the deltas travel
         # on the socket it already has open while THIS response stays exactly
         # what it was. A client that sends no id gets no streamer built at all.
-        on_text, on_reset = stream_callbacks(data.get("stream_id"))
+        on_text, on_reset, emit_tool = stream_callbacks(data.get("stream_id"))
+
+        # Tool use is tallied HERE rather than left to the socket, and the
+        # tally is installed whether or not the client is streaming. It is not
+        # a preview that the final answer supersedes: the reply extractor
+        # strips the call/result exchange, so this response is otherwise the
+        # one place a tool run leaves no trace. A client whose socket was down
+        # still gets the counts; a client watching the socket gets them live
+        # AND gets this to settle on.
+        tools_used = []
+
+        def on_tool(name):
+            tools_used.append(name)
+            if emit_tool is not None:
+                emit_tool(name)
 
         # Use unified generation function
         assistant_reply = generate_from_messages(
@@ -60,12 +86,18 @@ def generate_messages():
             timeout=float(data.get("timeout", 60.0)),
             on_text=on_text,
             on_reset=on_reset,
+            on_tool=on_tool,
         )
 
         # A baby/untrained model may produce nothing or gibberish - never 500 over
         # it. Return whatever we got (possibly empty); the UI handles it. No
         # sanitization, just whatever the model said.
-        return jsonify({"response": assistant_reply or ""}), 200
+        return (
+            jsonify(
+                {"response": assistant_reply or "", "tools": _tool_counts(tools_used)}
+            ),
+            200,
+        )
 
     except Exception as e:
         api_logger.error(f"Error in /messages endpoint: {e}")

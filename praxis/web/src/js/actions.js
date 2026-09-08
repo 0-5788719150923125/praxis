@@ -175,11 +175,12 @@ export const ACTION_HANDLERS = {
             // Re-send to API
             const response = await sendMessage(state.messages, {
                 onDelta: turn.onDelta,
-                onReset: turn.onReset
+                onReset: turn.onReset,
+                onTool: turn.onTool
             });
 
             // Add new response
-            turn.settle(response.response || response.content);
+            turn.settle(response.response || response.content, response.tools);
 
         } catch (error) {
             console.error('[Chat] Reroll error:', error);

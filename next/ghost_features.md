@@ -585,6 +585,31 @@ the GLU chunk 136 wide and breaks `proj`'s 272-in contract, so it would require
 shrinking `dim` itself and stop being one change. `lowrank` replaces it and is
 the stronger control anyway.
 
+### The bug that voided the first -r run
+
+Worth keeping, because it is a class rather than an incident: **any factorized
+re-parameterization has to pin its init against the module it replaces, and
+getting it wrong is silent.** `LowRankExpansion` init'd `U` and `V` with
+`kaiming_uniform_` and then multiplied both by `rank^-0.25`. Kaiming already
+normalizes by each factor's own fan-in, so that was a second, unearned
+`rank^-0.5` on the product - **0.045x the correct scale at rank 163**, six
+encoder convolutions starting 22x too quiet.
+
+Nothing in the parameter count, the shapes, the tests or the build log moved.
+It surfaced as oscillating validation and visibly worse samples, and it was read
+correctly as "something is wrong" before it was read correctly as what.
+
+The algebra arms were never affected: a signed permutation preserves the element
+distribution of the real tensor, and the real tensor shares the original's
+`fan_in = in * prod(tail)`, so torch's own default init on the smaller tensor is
+already exactly right. Measured 0.998-1.000x for `complex`, `quaternion` and
+`random`. **-q stands; only -r was rerun.**
+
+Same shape as the failure `praxis/dense/peer.py:init_weights` documents for
+Xavier on a lookup bank - an init scale falling with a dimension that is not a
+fan. `Expansion.GAIN_SQ` and `test_init_scale_matches_the_replaced_module` now
+hold every rule to the module it replaces, at three shapes.
+
 ### Still open
 
 - **The free gate was designed but not run.** On a trained `-o` checkpoint, split

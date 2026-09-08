@@ -47,8 +47,17 @@ def spec_logits_and_hidden(model, generated, attention_mask=None):
     ``attention_mask`` right-pads a batch of ragged prefixes; the byte-latent
     core is padding-invariant, so masked rows read identically to their
     unpadded form (the basis for lossless batched-prefix verification).
+
+    That same invariance is what lets the row be padded up to a bucket when one
+    is in force (:mod:`praxis.generation.bucketing`), so a turn produces a
+    handful of shapes instead of one per step. Outputs are trimmed back here,
+    so every caller keeps indexing by absolute position into a row exactly as
+    long as ``generated`` was.
     """
+    from praxis.generation.bucketing import pad_for_decode
     from praxis.modeling import PraxisModel
+
+    generated, attention_mask, true_len = pad_for_decode(generated, attention_mask)
 
     base_out = PraxisModel.forward(
         model, input_ids=generated, attention_mask=attention_mask
@@ -57,9 +66,10 @@ def spec_logits_and_hidden(model, generated, attention_mask=None):
         logits, _, hidden, _ = model._compute_logits(
             base_out, generated, skip_logits=False, attention_mask=attention_mask
         )
-        return logits, hidden
-    hidden = base_out.last_hidden_state
-    return model.head(hidden), hidden
+    else:
+        hidden = base_out.last_hidden_state
+        logits = model.head(hidden)
+    return logits[:, :true_len], hidden[:, :true_len]
 
 
 @torch.no_grad()

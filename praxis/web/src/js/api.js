@@ -19,8 +19,12 @@ import { openStream } from './websocket.js';
  * call, because the runtime's turn anchor moves past each spliced tool result
  * and the reply is only what the model writes after it.
  *
+ * `onTool` names a tool as it runs. Unlike the deltas this is NOT recoverable
+ * from the resolved value's text - the server strips the tool exchange out of
+ * the reply - so the response carries its own `tools` tally to settle on.
+ *
  * @param {Array} messages - Conversation history
- * @param {Object} [opts] - { maxNewTokens, timeout, onDelta, onReset }
+ * @param {Object} [opts] - { maxNewTokens, timeout, onDelta, onReset, onTool }
  * @returns {Promise<Object>} API response
  */
 export async function sendMessage(messages, opts = {}) {
@@ -47,7 +51,8 @@ export async function sendMessage(messages, opts = {}) {
         payload.stream_id = streamId;
         release = openStream(streamId, {
             onDelta: opts.onDelta,
-            onReset: opts.onReset
+            onReset: opts.onReset,
+            onTool: opts.onTool
         });
     }
 

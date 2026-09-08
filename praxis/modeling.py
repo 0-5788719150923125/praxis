@@ -688,6 +688,36 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.training and self.encoder:
             self._set_pretraining_lock(False)
 
+        # Decode-length bucketing (praxis/generation/bucketing.py). Inert
+        # unless a generation opened the context AND this is a label-free
+        # inference forward, so training and validation never see a padded
+        # row. Everything downstream of here - the encoder, the trunk, the
+        # head, the losses - runs on the padded length and stays internally
+        # consistent; only what leaves this method is trimmed back, because
+        # `_sample` reads `logits[:, -1]` and that has to be the caller's last
+        # real position.
+        #
+        # NEVER when a KV cache is in play. Padding is only inert because
+        # nothing reads the pad positions - and a cache is exactly a thing that
+        # reads them later, so a padded prefill would write pad K/V into the
+        # cache and every subsequent step would attend to it. `past_key_values`
+        # is None precisely on the full-recompute paths (the encoder branch of
+        # `prepare_inputs_for_generation` returns no cache at all, and the
+        # speculative loop calls `PraxisModel.forward` without one), which is
+        # the same set of paths bucketing is for.
+        true_len = None
+        if labels is None and past_key_values is None and not self.training:
+            # Imported here, not at module scope: `praxis.generation` pulls in
+            # the Generator, which imports this module back. The lookup is a
+            # sys.modules hit and it is behind the training guard, so a
+            # training step never reaches it at all.
+            from praxis.generation.bucketing import active_buckets, pad_for_decode
+
+            if active_buckets():
+                input_ids, attention_mask, true_len = pad_for_decode(
+                    input_ids, attention_mask
+                )
+
         outputs = super().forward(
             input_ids=input_ids,
             current_state=current_state,
@@ -748,6 +778,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             classifier,
         )
         loss = self._finalize_loss(loss, outputs.losses, labels)
+
+        if true_len is not None and torch.is_tensor(logits) and logits.dim() == 3:
+            logits = logits[:, :true_len]
 
         return CausalLMOutputWithPast(
             loss=loss,

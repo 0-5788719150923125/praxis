@@ -76,12 +76,12 @@ def test_the_channel_is_not_named_for_any_one_passenger():
 def test_no_stream_id_means_no_streaming():
     """How a caller opts out. `Generator` then builds no streamer at all, so a
     client that does not want deltas pays nothing for them."""
-    assert stream_callbacks(None) == (None, None)
-    assert stream_callbacks("") == (None, None)
+    assert stream_callbacks(None) == (None, None, None)
+    assert stream_callbacks("") == (None, None, None)
 
 
 def test_deltas_carry_the_clients_own_id(emitted):
-    on_text, on_reset = stream_callbacks("abc123")
+    on_text, _, _ = stream_callbacks("abc123")
     on_text("Hello")
     on_text(" there")
 
@@ -96,7 +96,7 @@ def test_frames_are_sequenced(emitted):
     """The deltas are produced on the training thread and the final reply comes
     back over HTTP, so their ARRIVAL order is not guaranteed even though their
     production order is. The client uses this to drop a straggler."""
-    on_text, on_reset = stream_callbacks("s1")
+    on_text, on_reset, _ = stream_callbacks("s1")
     on_text("a")
     on_reset()
     on_text("b")
@@ -108,7 +108,7 @@ def test_frames_are_sequenced(emitted):
 
 def test_a_reset_carries_no_text(emitted):
     """It means "drop what you have", not "replace it with this"."""
-    _, on_reset = stream_callbacks("s1")
+    _, on_reset, _ = stream_callbacks("s1")
     on_reset()
     assert "text" not in emitted[0][1]
 
@@ -126,9 +126,10 @@ def test_a_broken_socket_never_reaches_the_training_loop(monkeypatch):
 
     monkeypatch.setattr(sys.modules["praxis.web.app"], "socketio", _Broken())
 
-    on_text, on_reset = stream_callbacks("s1")
+    on_text, on_reset, on_tool = stream_callbacks("s1")
     on_text("this must not raise")
     on_reset()
+    on_tool("read_file")
 
 
 def test_the_route_streams_and_still_returns_the_whole_reply(emitted, client):
@@ -143,7 +144,7 @@ def test_the_route_streams_and_still_returns_the_whole_reply(emitted, client):
             self.pending = None
 
         def request_generation(
-            self, prompt, kwargs, deadline=None, on_text=None, on_reset=None
+            self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, **_
         ):
             for chunk in ("It ", "is ", "noon."):
                 if on_text:
@@ -195,9 +196,14 @@ def test_the_route_without_a_stream_id_emits_nothing(emitted, client):
 
     class _Generator:
         def request_generation(
-            self, prompt, kwargs, deadline=None, on_text=None, on_reset=None
+            self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, **kw
         ):
+            # `on_tool` is the exception: the route installs a tally for it
+            # unconditionally, because the counts ride the RESPONSE and not
+            # the socket. Nothing is emitted without a stream id, which is
+            # what this test goes on to assert.
             assert on_text is None and on_reset is None
+            assert kw.get("on_tool") is not None
             return "rid"
 
         def get_result(self, request_id):
@@ -226,3 +232,105 @@ def test_the_route_without_a_stream_id_emits_nothing(emitted, client):
     assert response.status_code == 200
     assert response.get_json()["response"] == "quiet reply"
     assert emitted == []
+
+
+# ---------------------------------------------------------------------------
+# tool use: the one thing the reply itself can never show
+# ---------------------------------------------------------------------------
+
+
+class _ToolTokenizer:
+    bos_token = "[BOS]"
+    eos_token = "[EOS]"
+    sep_token = "[SEP]"
+
+    def apply_chat_template(self, messages, **kwargs):
+        return "[BOS]user\nhi[SEP]\n[BOS]assistant\n"
+
+    def convert_tokens_to_ids(self, token):
+        return None
+
+
+class _ToolUsingGenerator:
+    """Runs two tools (one of them twice) and then answers, which is the shape
+    `Generator._process_single_request` produces around a spliced result."""
+
+    def __init__(self):
+        self.pending = None
+
+    def request_generation(
+        self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, on_tool=None
+    ):
+        for name in ("read_file", "search", "read_file"):
+            if on_tool:
+                on_tool(name)
+            if on_reset:
+                # Every tool call moves the turn anchor, so a reset follows it.
+                on_reset()
+        if on_text:
+            on_text("done")
+        self.pending = "done"
+        return "rid"
+
+    def get_result(self, request_id):
+        result, self.pending = self.pending, None
+        return result
+
+
+def _post_tools(client, **body):
+    client.config["generator"] = _ToolUsingGenerator()
+    client.config["tokenizer"] = _ToolTokenizer()
+    client.config.pop("api_server", None)
+    with client.test_client() as http:
+        return http.post(
+            "/messages/",
+            json={"messages": [{"role": "user", "content": "hi"}], **body},
+        )
+
+
+def test_tool_use_is_counted_in_the_response(emitted, client):
+    """The reply extractor strips the whole call/result exchange, so without
+    this the response is the same whether a tool ran or not. Counted per name,
+    in first-use order - which is the order the chips render in."""
+    response = _post_tools(client)
+
+    assert response.status_code == 200
+    assert response.get_json()["tools"] == [
+        {"name": "read_file", "count": 2},
+        {"name": "search", "count": 1},
+    ]
+
+
+def test_tool_counts_do_not_need_a_socket(emitted, client):
+    """The tally is server-side and unconditional. A client whose socket is
+    down loses the live chips, not the record - the same bargain the reply
+    text already makes."""
+    response = _post_tools(client)
+
+    assert emitted == []  # no stream id, so nothing went out on the wire
+    assert [t["name"] for t in response.get_json()["tools"]] == ["read_file", "search"]
+
+
+def test_a_tool_frame_names_the_tool(emitted, client):
+    """Live half. One frame per execution, carrying the client's own id."""
+    response = _post_tools(client, stream_id="tab-9")
+
+    tools = [f[1] for f in emitted if f[0] == "gen_tool"]
+    assert [f["name"] for f in tools] == ["read_file", "search", "read_file"]
+    assert all(f["id"] == "tab-9" for f in tools)
+    assert all(f[2] == NAMESPACE for f in emitted)
+    # ...and the response still carries the authoritative tally to settle on.
+    assert response.get_json()["tools"] == [
+        {"name": "read_file", "count": 2},
+        {"name": "search", "count": 1},
+    ]
+
+
+def test_a_tool_frame_precedes_the_reset_it_causes(emitted, client):
+    """Ordering the client depends on: the reset retracts the model's pre-call
+    chatter, and a chip that arrived after it would look like something the
+    reset should have taken back. It arrives first, and stands."""
+    _post_tools(client, stream_id="tab-9")
+
+    kinds = [f[0] for f in emitted if f[0] in ("gen_tool", "gen_reset")]
+    assert kinds == ["gen_tool", "gen_reset"] * 3

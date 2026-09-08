@@ -32,6 +32,7 @@ import torch
 from transformers import GenerationConfig
 
 from praxis.environments import EnvironmentFeatures
+from praxis.generation.bucketing import DECODE_BUCKETS
 
 _log = logging.getLogger("praxis.generation")
 
@@ -129,13 +130,43 @@ class ModelBackend(DecodeBackend):
         # FIXED prompt length, which is exactly the case that never recompiles,
         # so it measured wall clock and missed the cost entirely.
         #
-        # Re-enable per environment once the shape set is bounded (symbolic
-        # shapes, or bucketing the decode length), and measure host RSS and
-        # child memory over a GROWING context, not a fixed one.
+        # THE SHAPE SET IS NOW BOUNDED, which was the stated precondition.
+        # `eval_mode` opens `decode_buckets`, so a turn's forwards land on the
+        # rungs of `DECODE_BUCKETS` rather than on every length it walks: a
+        # 64-byte turn from a 1000-byte prompt walks 41 distinct lengths and
+        # lands on 2 rungs, and a growing context that covers the whole 4096
+        # positional cap can only reach 18. `warmup()` below compiles that
+        # whole ladder up front, so nothing is minted mid-request either.
+        #
+        # STILL OPT-IN. The memory-growth measurement that justified turning
+        # this off was made over a GROWING context on a real 14h run, and a
+        # short synthetic replay does not clear it: a 105-step growing-context
+        # loop (120 -> 4000 bytes) showed a FLAT 686 MB of child memory
+        # bucketed and 691 MB unbucketed, i.e. it failed to reproduce the
+        # failure at all - Dynamo's own recompile limit and automatic dynamic
+        # shapes cut in long before the storm. An experiment that cannot
+        # reproduce the problem cannot certify the fix, so the default stays
+        # where it was and the real check is host RSS over a real run.
+        # Worth 1.29x on a turn when enabled (25.2 -> 32.5 bytes/s on
+        # abstractinator-r, byte-identical output), and compiling
+        # KaleidoscopeAttention alongside it is worth a further 1.04x if that
+        # is ever wanted. NOTE this is ANDed with the trainer's `no_compile`,
+        # so a run that turns training compilation off gets no decode
+        # compilation either - which is the case on the abstractinator line.
         cfg = getattr(self.model, "config", None)
         self._compile_memory = EnvironmentFeatures.is_enabled(
             "compile_decode_memory"
         ) and not bool(getattr(cfg, "no_compile", False))
+        # Bucketing follows compilation by default, because on its own it is a
+        # small COST rather than a free win: padding to the next rung buys
+        # nothing eagerly and measured 24.4 -> 22.9 bytes/s on a 1000-byte
+        # prompt. Its value is entirely that it bounds the shape set for
+        # whatever specializes on shape - the compiled bodies here today, CUDA
+        # graphs if the trunk ever becomes graphable - so it turns on with
+        # them. Settable independently for measuring one against the other.
+        self._bucket_decode = EnvironmentFeatures.get(
+            "bucket_decode_lengths", self._compile_memory
+        )
 
     @property
     def device(self):
@@ -192,20 +223,25 @@ class ModelBackend(DecodeBackend):
         What DOES pay is compiling the one module that is ~59% of the forward's
         dispatch count and has stable shapes - see ``decode_compiled``.
         """
+        from praxis.generation.bucketing import decode_buckets
         from praxis.memory.neural_memory import decode_compiled
 
         training = self.model.training
         self.model.eval()
         try:
-            with decode_compiled(self.model, enabled=self._compile_memory):
+            with decode_buckets(
+                enabled=bool(self._bucket_decode), cap=self.max_positions
+            ), decode_compiled(self.model, enabled=self._compile_memory):
                 yield
         finally:
             self.model.train(training)
 
-    # Probe lengths for warmup, spread over the range a rolling context and a
-    # chat turn actually occupy. Cheap to add to (each is one short forward);
-    # the cost that matters is Inductor's, and that is per distinct shape.
-    WARMUP_LENGTHS = (8, 64, 128, 256, 512, 1024)
+    # Probe lengths for warmup: the bucket ladder itself, so what warmup
+    # compiles is EXACTLY the shape set decode can produce. Before bucketing
+    # this was a guess at the range a turn occupies and it could only ever be
+    # a guess; now it is the complete enumeration, which is what lets a
+    # growing context reach steady state on request one and stay there.
+    WARMUP_LENGTHS = DECODE_BUCKETS
 
     def warmup(self) -> None:
         """Compile the decode-time memory bodies on throwaway forwards.

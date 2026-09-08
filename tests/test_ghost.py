@@ -20,7 +20,11 @@ from praxis.ghost.algebra import (
     structure_matrices,
     tables,
 )
-from praxis.ghost.expansions import EXPANSION_REGISTRY, AlgebraExpansion
+from praxis.ghost.expansions import (
+    EXPANSION_REGISTRY,
+    AlgebraExpansion,
+    Expansion,
+)
 from praxis.ghost.modules import GhostConv1d, GhostLinear
 
 CONV_SHAPE = (544, 272, 3)  # abstractinator-o's ConvBlock.conv
@@ -276,3 +280,38 @@ def test_random_control_expands_by_its_own_drawn_permutation():
     rows, in_ = exp.real.shape[0], exp.real.shape[1]
     ref = _reference_expand(exp.real, exp.perm, exp.sign, exp.d, 8, 6, (2,))
     assert torch.allclose(exp(), ref, atol=1e-6)
+
+
+@pytest.mark.parametrize("rule", sorted(EXPANSION_REGISTRY))
+@pytest.mark.parametrize("shape", [CONV_SHAPE, (256, 128, 3), (272, 272)])
+def test_init_scale_matches_the_replaced_module(rule, shape):
+    """The EXPANDED weight must start at the scale the original module would.
+
+    This is the regression for the bug that invalidated the first -r run: the
+    lowrank control init'd at 0.045x the correct scale, so six conv layers began
+    22x too quiet and the arm was measuring an init as well as a mechanism. An
+    arm that starts somewhere else is not a control.
+    """
+    torch.manual_seed(0)
+    out, in_, *tail = shape
+    if tail:
+        ref = nn.Conv1d(in_, out, kernel_size=tail[0]).weight
+    else:
+        ref = nn.Linear(in_, out).weight
+    got = EXPANSION_REGISTRY[rule](shape, "t")()
+    ratio = (got.std() / ref.std()).item()
+    assert (
+        0.85 < ratio < 1.15
+    ), f"{rule} at {shape}: init scale {ratio:.3f}x the original"
+
+
+@pytest.mark.parametrize("rank_shape", [(544, 272, 3), (128, 64, 3), (64, 64)])
+def test_lowrank_init_is_solved_not_fitted(rank_shape):
+    """``rank * Var(U) * Var(V) == GAIN_SQ / fan`` must hold exactly, at any
+    rank, so the scale cannot drift when the profile moves to another shape."""
+    exp = EXPANSION_REGISTRY["lowrank"](rank_shape, "t")
+    out, in_, *tail = rank_shape
+    fan = in_ * math.prod(tail) if tail else in_
+    predicted = exp.rank * exp.u.var().item() * exp.v.var().item()
+    target = Expansion.GAIN_SQ / fan
+    assert abs(predicted - target) / target < 0.15

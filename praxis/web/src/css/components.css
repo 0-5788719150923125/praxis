@@ -351,6 +351,42 @@
     letter-spacing: 0.02em;
 }
 
+/* Tools the runtime ran while writing a turn - a row of small labels along
+   the bottom of the bubble, the way reactions sit under a chat message. Name
+   and count only; the call and its result never reach the client. */
+.message-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.375rem;
+}
+
+.tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.65rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+}
+
+/* Suffixed only past one, so a single call reads as a plain label. */
+.tool-chip-count {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+}
+
+.tool-chip-count::before {
+    content: '\00d7';
+    opacity: 0.7;
+}
+
 /* Loop mode: the want->need score slider - the human signal under a looped
    output. Continuous control instead of a binary vote. */
 .joke-score {

@@ -396,7 +396,7 @@ export function createSettingsModalContainer() {
  * @param {boolean} isLast - Whether this is the last message
  * @returns {string} HTML string
  */
-export function createMessage({ role, content, caption, jokeScore, score = 0, streaming = false }, isDarkMode, isLast = false) {
+export function createMessage({ role, content, caption, tools, jokeScore, score = 0, streaming = false }, isDarkMode, isLast = false) {
     const headerText = isDarkMode
         ? (role === 'user' ? 'Me' : 'You')
         : (role === 'user' ? 'You' : 'Me');
@@ -411,6 +411,20 @@ export function createMessage({ role, content, caption, jokeScore, score = 0, st
     // Optional muted footnote (e.g. the Print reward shown alongside an answer).
     const captionHtml = caption
         ? `<div class="message-caption">${escapeHtml(caption)}</div>`
+        : '';
+
+    // Tools the runtime ran while writing this turn - name and how many times,
+    // nothing else. They belong here rather than in the text because the
+    // server strips the whole call/result exchange out of the reply, so
+    // without this row a turn that consulted a tool is indistinguishable from
+    // one that made the same claim up. The count is suffixed only when it is
+    // more than one, so the common case reads as a plain label.
+    const toolsHtml = (tools && tools.length)
+        ? `<div class="message-tools">${tools.map(({ name, count }) => `<span
+               class="tool-chip" title="${escapeHtml(name)} ran ${count} time${count === 1 ? '' : 's'}"
+               ><span class="tool-chip-name">${escapeHtml(name)}</span>${
+                   count > 1 ? `<span class="tool-chip-count">${count}</span>` : ''
+               }</span>`).join('')}</div>`
         : '';
 
     // Loop mode: a want->need score slider (the human signal). A continuous -1..1
@@ -434,6 +448,7 @@ export function createMessage({ role, content, caption, jokeScore, score = 0, st
             ${rerollButton}
             <div class="message-header">${headerText}</div>
             <div class="message-content">${escapeHtml(content)}</div>
+            ${toolsHtml}
             ${captionHtml}
             ${scoreHtml}
         </div>

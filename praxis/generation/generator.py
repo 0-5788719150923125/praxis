@@ -35,6 +35,7 @@ from praxis.tools import (
     execute_tool_call,
     find_pending_call_text,
     find_unprocessed_tool_call_ids,
+    tool_call_name,
     tool_token_ids,
 )
 
@@ -205,7 +206,13 @@ class Generator:
         return 1
 
     def request_generation(
-        self, prompt, kwargs={}, deadline=None, on_text=None, on_reset=None
+        self,
+        prompt,
+        kwargs={},
+        deadline=None,
+        on_text=None,
+        on_reset=None,
+        on_tool=None,
     ) -> str:
         """
         Submit a generation request and return a request ID.
@@ -229,6 +236,10 @@ class Generator:
                 call (the turn anchor moves past the spliced result). A caller
                 that cannot revise what it has shown may omit it and treat the
                 final result as authoritative instead.
+            on_tool: Optional callback receiving the name of each tool the
+                runtime executes. Same thread caveat as ``on_text``; unlike it,
+                this is not recoverable from the final result, because the
+                reply extractor strips the tool exchange entirely.
 
         Returns:
             Request ID string
@@ -241,6 +252,7 @@ class Generator:
             deadline=deadline,
             on_text=on_text,
             on_reset=on_reset,
+            on_tool=on_tool,
         )
         # Synchronous backends (no training loop to drain the queue) run now;
         # the queued path defers the work to fulfill_requests.
@@ -522,6 +534,7 @@ class Generator:
                     )
                     if payload is STOP_TOOL_LOOP:
                         break
+                    self._announce_tool(request, tool_call)
 
                     result_ids = build_result_splice_ids(self.tokenizer, payload)
                     spliced = (
@@ -609,6 +622,35 @@ class Generator:
             text,
             self._reply_start_char(ids, reply_start_tokens, text, skip_special_tokens),
         )
+
+    def _announce_tool(self, request: GenerationRequest, tool_call: Any) -> None:
+        """Tell the caller a tool just ran, by name.
+
+        The reply never carries this. Under either format the extractor strips
+        the whole call/result exchange - and under ``tool_style="roles"`` the
+        streamer is muted for the duration of the call on top of that - so a
+        consumer reading only the answer cannot tell a turn that consulted a
+        tool from one that made the same claim up. This is the one place that
+        knows, and it is a fact rather than a parse: the call has already been
+        executed by the time we get here.
+
+        Only NAMED calls are announced. A malformed or nameless call produces
+        an error payload the model reads and (usually) recovers from, and
+        captioning that with the name of a tool that never ran would be worse
+        than saying nothing.
+
+        Guarded because this runs inside the training step. The callback is a
+        UI affordance; an exception from one must not take the run down.
+        """
+        if request.on_tool is None:
+            return
+        name = tool_call_name(tool_call)
+        if not name:
+            return
+        try:
+            request.on_tool(str(name))
+        except Exception:
+            _log.debug("on_tool callback failed", exc_info=True)
 
     def _record_inference(self, seconds: float, produced: int) -> None:
         """Fold one served request into the inference EMAs.

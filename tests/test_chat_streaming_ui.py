@@ -170,12 +170,22 @@ def _snapshot(page):
             const nodes = document.querySelectorAll(
                 '#chat-container .message:not(#thinking-message)');
             const last = nodes[nodes.length - 1];
+            // Name and count are separate elements, so the assertion reads
+            // the way the row does rather than depending on whitespace.
+            const chips = last
+                ? [...last.querySelectorAll('.tool-chip')].map((c) => {
+                      const count = c.querySelector('.tool-chip-count');
+                      const name = c.querySelector('.tool-chip-name').textContent;
+                      return count ? `${name} x${count.textContent}` : name;
+                  })
+                : [];
             return {
                 count: nodes.length,
                 text: last ? last.querySelector('.message-content').textContent : null,
                 streaming: last ? last.classList.contains('streaming') : false,
                 reroll: !!document.getElementById('reroll-button'),
                 thinking: !!document.querySelector('.thinking-status'),
+                tools: chips,
             };
         }""")
 
@@ -667,3 +677,253 @@ def test_the_users_own_new_turn_jumps_into_view(page):
         }""")
     assert out["before"] == 0
     assert out["atBottom"], f"stopped at {out['after']}"
+
+
+# ---------------------------------------------------------------------------
+# tool badges: the row of chips under a turn that used tools
+# ---------------------------------------------------------------------------
+
+
+def test_a_tool_chip_appears_while_the_reply_is_still_arriving(page, app_url):
+    """A tool that ran leaves no trace in the reply text - the server strips
+    the whole call/result exchange - so the chip is the only thing that shows
+    it, and it shows up as it happens rather than at the end."""
+    _reset(page)
+    seen = []
+
+    def handle(route):
+        stream_id = json.loads(route.request.post_data)["stream_id"]
+
+        def deliver(event, payload):
+            page.evaluate(
+                "([ev, data]) => window.__deliver(ev, data)",
+                [event, {"id": stream_id, "seq": 1, **payload}],
+            )
+            page.wait_for_timeout(40)
+            seen.append(_snapshot(page))
+
+        deliver("gen_delta", {"text": "let me look"})
+        deliver("gen_tool", {"name": "read_file"})
+        deliver("gen_delta", {"text": " - found it"})
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "response": "let me look - found it",
+                    "tools": [{"name": "read_file", "count": 1}],
+                }
+            ),
+        )
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        page.evaluate("""async () => {
+                const { sendMessage } = await import('/static/js/api.js');
+                const { streamingTurn } = await import('/static/js/chatstream.js');
+                const { state } = await import('/static/js/state.js');
+                const { render } = await import('/static/js/render.js');
+                const turn = streamingTurn();
+                const response = await sendMessage(state.messages, {
+                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+                });
+                turn.settle(response.response, response.tools);
+                state.isThinking = false;
+                render();
+            }""")
+    finally:
+        page.unroute(f"{app_url}messages/")
+
+    assert [s["tools"] for s in seen] == [[], ["read_file"], ["read_file"]]
+    # One turn throughout - the chip is part of the message, not a bubble.
+    assert {s["count"] for s in seen} == {2}
+    assert _snapshot(page)["tools"] == ["read_file"]
+
+
+def test_a_reset_clears_the_text_but_not_the_chips(page, app_url):
+    """`gen_reset` fires BECAUSE a tool ran: the runtime spliced the result and
+    moved the turn anchor past it, so the model's pre-call chatter stopped
+    being part of the answer. The call itself still happened."""
+    _reset(page)
+
+    seen = []
+
+    def handle(route):
+        stream_id = json.loads(route.request.post_data)["stream_id"]
+        for event, payload in (
+            ("gen_delta", {"text": "let me look"}),
+            ("gen_tool", {"name": "read_file"}),
+            ("gen_reset", {}),
+            ("gen_delta", {"text": "it says 42"}),
+        ):
+            page.evaluate(
+                "([ev, data]) => window.__deliver(ev, data)",
+                [event, {"id": stream_id, "seq": 1, **payload}],
+            )
+            page.wait_for_timeout(40)
+            seen.append(_snapshot(page))
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"response": "it says 42", "tools": [{"name": "read_file", "count": 1}]}
+            ),
+        )
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        page.evaluate("""async () => {
+                const { sendMessage } = await import('/static/js/api.js');
+                const { streamingTurn } = await import('/static/js/chatstream.js');
+                const { state } = await import('/static/js/state.js');
+                const { render } = await import('/static/js/render.js');
+                const turn = streamingTurn();
+                const response = await sendMessage(state.messages, {
+                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+                });
+                turn.settle(response.response, response.tools);
+                state.isThinking = false;
+                render();
+            }""")
+    finally:
+        page.unroute(f"{app_url}messages/")
+
+    # Measured MID-STREAM, which is the only place the rule is visible: the
+    # response's own tally would restore the chips at the end either way.
+    after_reset = seen[2]
+    assert after_reset["text"] == ""  # the chatter was dropped
+    assert after_reset["tools"] == ["read_file"]  # the call was not
+
+    final = _snapshot(page)
+    assert final["text"] == "it says 42"
+    assert final["tools"] == ["read_file"]
+
+
+def test_repeated_use_of_one_tool_is_counted_not_repeated(page, app_url):
+    """Two chips reading `read_file` would be noise. One with a count is the
+    Discord-reaction shape the row is modelled on."""
+    _reset(page)
+
+    def handle(route):
+        stream_id = json.loads(route.request.post_data)["stream_id"]
+        for name in ("read_file", "search", "read_file"):
+            page.evaluate(
+                "([id, name]) => window.__deliver('gen_tool', { id, name, seq: 1 })",
+                [stream_id, name],
+            )
+            page.wait_for_timeout(30)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "response": "done",
+                    "tools": [
+                        {"name": "read_file", "count": 2},
+                        {"name": "search", "count": 1},
+                    ],
+                }
+            ),
+        )
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        page.evaluate("""async () => {
+                const { sendMessage } = await import('/static/js/api.js');
+                const { streamingTurn } = await import('/static/js/chatstream.js');
+                const { state } = await import('/static/js/state.js');
+                const { render } = await import('/static/js/render.js');
+                const turn = streamingTurn();
+                const response = await sendMessage(state.messages, {
+                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+                });
+                turn.settle(response.response, response.tools);
+                state.isThinking = false;
+                render();
+            }""")
+    finally:
+        page.unroute(f"{app_url}messages/")
+
+    # First-use order, and the count only shows past one.
+    assert _snapshot(page)["tools"] == ["read_file x2", "search"]
+
+
+def test_the_response_tally_is_what_the_turn_settles_on(page, app_url):
+    """The chips are not a preview the answer supersedes and then forgets: the
+    server tallies them in the branch that runs each tool and sends them
+    whether or not the socket was up. A client whose socket dropped every
+    frame still ends up with the right row."""
+    _reset(page)
+
+    def handle(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"response": "done", "tools": [{"name": "calc", "count": 3}]}
+            ),
+        )
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        page.evaluate("""async () => {
+                const { sendMessage } = await import('/static/js/api.js');
+                const { streamingTurn } = await import('/static/js/chatstream.js');
+                const { state } = await import('/static/js/state.js');
+                const { render } = await import('/static/js/render.js');
+                const turn = streamingTurn();
+                const response = await sendMessage(state.messages, {
+                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+                });
+                turn.settle(response.response, response.tools);
+                state.isThinking = false;
+                render();
+            }""")
+    finally:
+        page.unroute(f"{app_url}messages/")
+
+    assert _snapshot(page)["tools"] == ["calc x3"]
+
+
+def test_a_failed_request_keeps_the_chips_it_earned(page, app_url):
+    """A tool that ran still ran. The error is a footnote on the turn, not a
+    replacement for the record of what it did."""
+    _reset(page)
+
+    def handle(route):
+        stream_id = json.loads(route.request.post_data)["stream_id"]
+        page.evaluate(
+            "(id) => window.__deliver('gen_tool', { id, name: 'search', seq: 1 })",
+            stream_id,
+        )
+        page.wait_for_timeout(40)
+        route.abort()
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        page.evaluate("""async () => {
+                const { sendMessage } = await import('/static/js/api.js');
+                const { streamingTurn } = await import('/static/js/chatstream.js');
+                const { state } = await import('/static/js/state.js');
+                const { render } = await import('/static/js/render.js');
+                const turn = streamingTurn();
+                try {
+                    const response = await sendMessage(state.messages, {
+                        onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+                    });
+                    turn.settle(response.response, response.tools);
+                } catch (error) {
+                    turn.fail(`Error: ${error.message}`);
+                }
+                state.isThinking = false;
+                render();
+            }""")
+    finally:
+        page.unroute(f"{app_url}messages/")
+
+    final = _snapshot(page)
+    assert final["tools"] == ["search"]
+    assert page.evaluate("""async () => {
+            const { state } = await import('/static/js/state.js');
+            return state.messages[state.messages.length - 1].caption;
+        }""").startswith("Error:")

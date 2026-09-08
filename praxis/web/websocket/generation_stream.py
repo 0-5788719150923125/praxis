@@ -51,8 +51,12 @@ def _emit(event: str, payload: Dict[str, Any]) -> None:
 
 def stream_callbacks(
     stream_id: Optional[str],
-) -> Tuple[Optional[Callable[[str], None]], Optional[Callable[[], None]]]:
-    """``(on_text, on_reset)`` for a request, or ``(None, None)``.
+) -> Tuple[
+    Optional[Callable[[str], None]],
+    Optional[Callable[[], None]],
+    Optional[Callable[[str], None]],
+]:
+    """``(on_text, on_reset, on_tool)`` for a request, or three ``None``.
 
     ``None`` when the client sent no stream id, which is how a caller opts out:
     ``Generator`` then builds no streamer at all and the decode is exactly what
@@ -62,9 +66,14 @@ def stream_callbacks(
     runtime's turn anchor moves past each spliced tool result, so the reply is
     only what the model writes after it (see
     :class:`praxis.generation.streamers.ReplyStreamer`).
+
+    ``on_tool`` names each tool as it runs. It is deliberately NOT undone by
+    the reset that follows it: the reset retracts the model's pre-call chatter,
+    which stopped being part of the answer, but the call itself happened and
+    stays true for the rest of the turn.
     """
     if not stream_id:
-        return None, None
+        return None, None, None
 
     def on_text(delta: str) -> None:
         _emit("gen_delta", {"id": stream_id, "seq": next(_seq), "text": delta})
@@ -72,4 +81,7 @@ def stream_callbacks(
     def on_reset() -> None:
         _emit("gen_reset", {"id": stream_id, "seq": next(_seq)})
 
-    return on_text, on_reset
+    def on_tool(name: str) -> None:
+        _emit("gen_tool", {"id": stream_id, "seq": next(_seq), "name": name})
+
+    return on_text, on_reset, on_tool

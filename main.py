@@ -80,6 +80,12 @@ def main():
     ckpt_path = resolve_resume_checkpoint(run.cache_dir, cfg.reset)
 
     generator = Generator(bundle.model, tokenizer, device=cfg.device)
+    # Pay any one-time decode setup (compiling the decode-time memory bodies at
+    # every bucket rung) HERE, where nothing is waiting on it. The alternative
+    # is that it lands inside the first request, and the web chat gives up
+    # after 60s while a single forward cannot be interrupted. A no-op unless
+    # decode compilation is enabled for this run.
+    generator.backend.warmup()
     param_stats = safe_parameter_stats(bundle.model)
 
     # Web services first (so dataset loading can log to them), then init hooks.

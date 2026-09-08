@@ -53,7 +53,16 @@ class Expansion(nn.Module):
 
     ``shape`` is the ORIGINAL weight shape, ``[out, in, *tail]`` for both
     ``nn.Linear`` (empty tail) and ``nn.Conv1d`` (tail ``(kernel,)``).
+
+    EVERY RULE MUST INIT TO THE SAME SCALE. The expanded weight has to start
+    where the module it replaced would have, or the arms differ by an init as
+    well as by a mechanism and the comparison measures both at once.
     """
+
+    # torch's default for Linear/Conv weights is `kaiming_uniform_(a=sqrt(5))`,
+    # whose gain is `sqrt(2 / (1 + a^2)) = sqrt(1/3)`. Named here because two
+    # rules have to reproduce that target rather than inherit it.
+    GAIN_SQ: float = 1.0 / 3.0
 
     def __init__(self, shape: Sequence[int], tag: str = "") -> None:
         super().__init__()
@@ -211,13 +220,30 @@ class LowRankExpansion(Expansion):
         self.tail: Tuple[int, ...] = tuple(tail)
         self.u = nn.Parameter(torch.empty(out, self.rank))
         self.v = nn.Parameter(torch.empty(self.rank, fan))
-        # Same fan-in as the tensor being replaced, split across the two
-        # factors so the product matches its scale rather than each factor.
-        nn.init.kaiming_uniform_(self.v, a=math.sqrt(5))
-        nn.init.kaiming_uniform_(self.u, a=math.sqrt(5))
+        # INIT IS SOLVED, NOT ADJUSTED. The PRODUCT has to land on the variance
+        # the module being replaced would have had, which for torch's default
+        # `kaiming_uniform_(a=sqrt(5))` on a Linear/Conv weight is
+        # ``gain^2 / fan`` with ``gain^2 = 2 / (1 + 5) = 1/3``. Since
+        # ``Var(UV) = rank * Var(U) * Var(V)``, splitting evenly gives
+        #
+        #     s = (gain^2 / (fan * rank)) ** 0.25
+        #
+        # and ``rank * s^4 == gain^2 / fan`` by construction, at any rank.
+        #
+        # The previous version init'd each factor with `kaiming_uniform_` and
+        # then multiplied both by `rank^-0.25`. `kaiming_uniform_` already
+        # normalizes by each factor's OWN fan-in, so those multipliers were a
+        # second, unearned `rank^-0.5` on the product: measured 0.045x the
+        # correct scale at rank 163, i.e. six conv layers starting 22x too
+        # quiet. That is the same failure `praxis/dense/peer.py:init_weights`
+        # documents for Xavier on a lookup bank - an init scale falling with a
+        # dimension that is not a fan - and it invalidated the first -r run.
+        # `test_init_scale_matches_the_replaced_module` now pins this.
+        std = (self.GAIN_SQ / (fan * self.rank)) ** 0.25
+        bound = math.sqrt(3.0) * std  # uniform with this std
         with torch.no_grad():
-            self.u.mul_(math.sqrt(1.0 / self.rank) ** 0.5)
-            self.v.mul_(math.sqrt(1.0 / self.rank) ** 0.5)
+            self.u.uniform_(-bound, bound)
+            self.v.uniform_(-bound, bound)
 
     def forward(self) -> Tensor:
         return (self.u @ self.v).view(*self.shape)

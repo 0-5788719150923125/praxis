@@ -28,7 +28,7 @@ const NO_ANSWER = 'Error: No response';
  * conversation sent to the API never contains the turn being generated, and a
  * request that streams nothing behaves exactly as it did before.
  *
- * @returns {{onDelta: function, onReset: function, settle: function, fail: function}}
+ * @returns {{onDelta: function, onReset: function, onTool: function, settle: function, fail: function}}
  */
 export function streamingTurn() {
     let turn = null;
@@ -63,12 +63,35 @@ export function streamingTurn() {
         },
 
         /** The runtime spliced a tool result and moved the turn anchor past it:
-         *  everything shown so far has stopped being part of the answer. */
+         *  everything shown so far has stopped being part of the answer.
+         *
+         *  The TEXT only. `turn.tools` survives deliberately: the reset is
+         *  caused by a tool call, and retracting the chip that records it
+         *  along with the chatter that preceded it would erase the one thing
+         *  the reply itself can never show. */
         onReset() {
             if (turn) {
                 turn.content = '';
                 scheduleRender();
             }
+        },
+
+        /**
+         * A tool ran, by name. Tallied per name, in first-use order.
+         *
+         * A turn can open before any text arrives (a model that calls a tool
+         * as its first act), so this creates the turn the same way a delta
+         * does - otherwise the chips would have nowhere to live until the
+         * model spoke, and on a tool-only turn that is never.
+         */
+        onTool(name) {
+            if (!name) return;
+            const t = ensureTurn();
+            t.tools = t.tools || [];
+            const entry = t.tools.find((x) => x.name === name);
+            if (entry) entry.count += 1;
+            else t.tools.push({ name, count: 1 });
+            scheduleRender();
         },
 
         /**
@@ -86,21 +109,34 @@ export function streamingTurn() {
          * what the model produced before the request was abandoned. Keep it,
          * and say it was cut short.
          */
-        settle(content) {
+        settle(content, tools) {
             // The fallback lives HERE, not at the call sites: they used to pass
             // `response.response || 'Error: No response'`, so `settle` never saw
             // an empty answer and could not tell "the model said nothing" from
             // "we already showed the reader a page of text".
             content = content || '';
-            if (turn && !content && turn.content) {
+            // Tool counts, unlike the text, are NOT a preview the answer
+            // supersedes - the server tallies them in the same branch that
+            // executes each tool, and sends them whether or not the socket was
+            // up. Prefer them; keep what streamed if the response has none
+            // (an older server, or a route that failed after the calls ran).
+            const tally = (tools && tools.length) ? tools : null;
+            // "Something reached the reader" includes a chip: a turn whose
+            // only visible act was calling a tool is still a turn that was cut
+            // short, not one that never happened.
+            const shown = turn && (turn.content || (turn.tools && turn.tools.length));
+            if (!content && shown) {
                 return finishTurn(
                     turn.content,
-                    'cut short - the request timed out while this was still being written'
+                    'cut short - the request timed out while this was still being written',
+                    tally
                 );
             }
             const answer = content || NO_ANSWER;
-            if (turn) return finishTurn(answer);
-            state.messages.push({ role: 'assistant', content: answer });
+            if (turn) return finishTurn(answer, null, tally);
+            const settled = { role: 'assistant', content: answer };
+            if (tally) settled.tools = tally;
+            state.messages.push(settled);
         },
 
         /**
@@ -112,16 +148,21 @@ export function streamingTurn() {
          * nothing to keep, and the error is the whole message.
          */
         fail(message) {
-            if (turn && turn.content) return finishTurn(turn.content, message);
+            // A tool that ran still ran, so a turn holding only chips is worth
+            // keeping too - the error becomes its footnote.
+            if (turn && (turn.content || (turn.tools && turn.tools.length))) {
+                return finishTurn(turn.content, message);
+            }
             discardTurn();
             state.messages.push({ role: 'assistant', content: message });
         }
     };
 
-    function finishTurn(content, caption) {
+    function finishTurn(content, caption, tools) {
         turn.content = content;
         delete turn.streaming;
         if (caption) turn.caption = caption;
+        if (tools) turn.tools = tools;
         turn = null;
     }
 

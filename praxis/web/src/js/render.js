@@ -334,9 +334,13 @@ function messageStructure(msg, isLast) {
         msg.role,
         isLast ? 'last' : '',
         msg.streaming ? 'streaming' : '',
-        // Caption and score are rendered as their own elements, so a change to
-        // either really is structural and has to fall through to a rebuild.
+        // Caption, tool chips and score are rendered as their own elements, so
+        // a change to any of them really is structural and has to fall through
+        // to a rebuild. Tools change at most a handful of times in a turn (the
+        // runtime caps recursive calls), so this costs a rebuild per tool call
+        // rather than the per-delta rebuild the text path exists to avoid.
         msg.caption ?? '',
+        (msg.tools || []).map((t) => `${t.name}:${t.count}`).join(','),
         msg.jokeScore ? `score:${msg.score ?? 0}` : '',
     ].join('');
 }

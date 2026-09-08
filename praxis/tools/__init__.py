@@ -310,6 +310,24 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
 STOP_TOOL_LOOP = object()
 
 
+def tool_call_name(tool_call: Any) -> Optional[str]:
+    """The tool a parsed call names, or ``None``.
+
+    Three spellings because three shapes of training data produced them
+    (``name``, ``tool``, and OpenAI's nested ``function.name``). Shared rather
+    than duplicated so a caller that only wants to REPORT the call - the chat
+    UI's tool badges - resolves it the same way the executor does; a badge
+    naming a different tool than the one that ran would be worse than none.
+    """
+    if not isinstance(tool_call, dict):
+        return None
+    return (
+        tool_call.get("name")
+        or tool_call.get("tool")
+        or (tool_call.get("function", {}) or {}).get("name")
+    )
+
+
 def execute_tool_call(
     tool_call: Dict[str, Any],
     history: List[tuple],
@@ -337,11 +355,7 @@ def execute_tool_call(
         log(f"Malformed tool call: {err}")
         return f"Error: {err}"
 
-    tool_name = (
-        tool_call.get("name")
-        or tool_call.get("tool")
-        or (tool_call.get("function", {}) or {}).get("name")
-    )
+    tool_name = tool_call_name(tool_call)
     if tool_name is None:
         log(f"Could not extract tool name from: {tool_call}")
         return "Error: tool call is missing the 'name' field."

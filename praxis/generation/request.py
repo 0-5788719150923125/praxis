@@ -30,6 +30,14 @@ class GenerationRequest:
     a consumer that ignores it sees exactly what it saw before. ``on_reset``
     is the other half of that: it fires when what was already published stops
     being part of the answer, which happens once per tool call.
+
+    ``on_tool`` is told the NAME of each tool the runtime actually ran, once
+    per execution. Unlike the two above it is not a preview of the reply - the
+    reply never contains the call, because the extractor strips the exchange
+    wholesale - it is the only account anyone outside this loop gets of the
+    fact that a tool ran at all. It fires from the same branch that executes
+    the tool, so a consumer tallying it holds the authoritative count rather
+    than an inference drawn from the text.
     """
 
     id: str
@@ -39,6 +47,7 @@ class GenerationRequest:
     deadline: Optional[float] = None
     on_text: Optional[Callable[[str], None]] = None
     on_reset: Optional[Callable[[], None]] = None
+    on_tool: Optional[Callable[[str], None]] = None
 
 
 class GenerationResult(str):

@@ -53,7 +53,7 @@ let revivalWired = false;
 // stream id the client minted, so several in flight cannot cross-talk.
 // ---------------------------------------------------------------------------
 
-const activeStreams = new Map();   // id -> { onDelta, onReset }
+const activeStreams = new Map();   // id -> { onDelta, onReset, onTool }
 
 /** Listen for one request's deltas. Returns a release fn; ALWAYS call it. */
 export function openStream(id, handlers) {
@@ -154,6 +154,15 @@ export function connectRealtime() {
     realtimeSocket.on('gen_reset', (data) => {
         if (!data || !data.id) return;
         dispatchStream(data.id, (h) => h.onReset && h.onReset());
+    });
+
+    // A tool ran. Not part of the reply - the server strips the call/result
+    // exchange out of the text entirely - so this is the only notice the
+    // client gets that one happened, and a `gen_reset` right behind it must
+    // not take it back.
+    realtimeSocket.on('gen_tool', (data) => {
+        if (!data || !data.id || !data.name) return;
+        dispatchStream(data.id, (h) => h.onTool && h.onTool(data.name));
     });
 
     // Server-pushed invalidations ("metrics" on each flushed training step,
