@@ -179,15 +179,11 @@ export const ACTION_HANDLERS = {
             });
 
             // Add new response
-            turn.settle(response.response || response.content || 'Error: No response');
+            turn.settle(response.response || response.content);
 
         } catch (error) {
             console.error('[Chat] Reroll error:', error);
-            turn.discard();
-            state.messages.push({
-                role: 'assistant',
-                content: `Error: ${error.message}`
-            });
+            turn.fail(`Error: ${error.message}`);
         } finally {
             state.isThinking = false;
             render();

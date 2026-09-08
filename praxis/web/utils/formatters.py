@@ -17,6 +17,11 @@ from praxis.tokenizers.chat_templates import chat_format_of
 
 api_logger = logging.getLogger("praxis.web")
 
+# Extra seconds to wait for a turn the deadline CUT SHORT. The deadline bounds
+# the decode; this bounds how long we wait to collect what it produced, which is
+# only as long as the training loop needs to store the result it already has.
+PARTIAL_TURN_GRACE = 5.0
+
 
 def generate_from_messages(
     messages: List[Dict[str, str]],
@@ -95,12 +100,19 @@ def generate_from_messages(
         formatted_prompt, kwargs, deadline=deadline, on_text=on_text, on_reset=on_reset
     )
 
-    # Wait for result with timeout
+    # Keep listening a little PAST the deadline. The deadline stops the decode
+    # (MaxTimeCriteria, per step), and what it stops is a turn the model was
+    # part-way through - `_process_single_request` returns that partial turn
+    # rather than discarding it. Giving up at exactly the deadline meant nobody
+    # ever collected it: the route answered with "" and the client, which had
+    # been watching the reply stream in the whole time, replaced it with an
+    # error. The grace is short because the result is already decoded by then;
+    # all that remains is the training loop storing it.
     while True:
         result = generator.get_result(request_id)
         if result is not None:
             break
-        if time.time() > deadline:
+        if time.time() > deadline + PARTIAL_TURN_GRACE:
             api_logger.error(f"Generation timed out after {timeout}s")
             return None
         time.sleep(0.1)

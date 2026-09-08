@@ -235,3 +235,49 @@ def test_no_deadline_leaves_max_time_unset(tokenizer):
     backend = ModelBackend(model, tokenizer)
     backend.generate_until_halt(torch.tensor([[1]], dtype=torch.long), {})
     assert model.configs[-1].max_time is None
+
+
+# ---------------------------------------------------------------------------
+# a turn the deadline cut short is still a turn
+# ---------------------------------------------------------------------------
+
+
+def test_a_deadline_cut_turn_is_collected_rather_than_discarded(tokenizer):
+    """The deadline stops the DECODE, not the reply.
+
+    `_process_single_request` returns the partial turn it was part-way through.
+    The caller used to stop listening at exactly the deadline, so nobody ever
+    collected it - the route answered `""`, and a client that had been watching
+    that very text stream in replaced it with "Error: No response" at the end.
+    """
+    from praxis.web.utils.formatters import generate_from_messages
+
+    backend = _SlowBackend(delay=0.01)
+    gen = _generator(tokenizer, backend)
+
+    # Served from a background "training loop", the way the real one does.
+    import threading
+
+    stop = threading.Event()
+
+    def drain():
+        while not stop.is_set():
+            gen.fulfill_requests(max_requests=1)
+            time.sleep(0.02)
+
+    worker = threading.Thread(target=drain, daemon=True)
+    worker.start()
+    try:
+        reply = generate_from_messages(
+            messages=[{"role": "user", "content": "hi"}],
+            generator=gen,
+            tokenizer=tokenizer,
+            max_new_tokens=5000,
+            timeout=0.5,
+        )
+    finally:
+        stop.set()
+        worker.join(timeout=5)
+
+    assert backend.tokens_emitted > 0, "the model never got to write anything"
+    assert reply, "the partial turn was thrown away"

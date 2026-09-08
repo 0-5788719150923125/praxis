@@ -416,16 +416,57 @@ def test_a_turn_that_streamed_nothing_is_still_appended(page):
     assert out["seen"][-1]["streaming"] is False
 
 
-def test_a_failed_request_leaves_no_half_written_turn(page):
+def test_a_reply_that_streamed_survives_an_empty_final_answer(page):
+    """The one that actually bit: a long reply streams in, the client's own 60s
+    patience runs out mid-turn, `POST /messages/` comes back with `""`, and the
+    whole visible reply was replaced by "Error: No response" at the very end.
+
+    The stream is closed by then, so what is on screen IS everything the model
+    produced before the request was abandoned. Keep it and caption it.
+    """
     out = _drive(
         page,
         """(async () => {
-            await step(() => turn.onDelta('partial...'));
-            await step(() => {
-                turn.discard();
-                state.messages.push({ role: 'assistant', content: 'Error: boom' });
-                render();
-            });
+            await step(() => turn.onDelta('a long reply the reader watched arrive'));
+            await step(() => { turn.settle(''); render(); });
+        })()""",
+    )
+    assert out["messages"] == ["hi", "a long reply the reader watched arrive"]
+    assert "No response" not in out["messages"][-1]
+    assert out["seen"][-1]["streaming"] is False
+
+
+def test_an_empty_answer_with_nothing_streamed_still_reports_the_failure(page):
+    """...and the converse. With nothing on screen there is nothing to protect,
+    so the failure is the message."""
+    out = _drive(
+        page,
+        """(async () => {
+            await step(() => { turn.settle(''); render(); });
+        })()""",
+    )
+    assert out["messages"] == ["hi", "Error: No response"]
+
+
+def test_a_failed_request_keeps_what_was_already_streamed(page):
+    """Same rule for an outright failure: the error becomes a footnote on the
+    text rather than a replacement for it."""
+    out = _drive(
+        page,
+        """(async () => {
+            await step(() => turn.onDelta('half a thought'));
+            await step(() => { turn.fail('Error: boom'); render(); });
+        })()""",
+    )
+    assert out["messages"] == ["hi", "half a thought"]
+    assert out["seen"][-1]["count"] == 2
+
+
+def test_a_failed_request_with_nothing_streamed_leaves_only_the_error(page):
+    out = _drive(
+        page,
+        """(async () => {
+            await step(() => { turn.fail('Error: boom'); render(); });
         })()""",
     )
     assert out["messages"] == ["hi", "Error: boom"]

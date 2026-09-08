@@ -15,6 +15,12 @@
 import { state } from './state.js';
 import { render, renderStreamingMessages } from './render.js';
 
+// Shown when the request produced nothing AND nothing was streamed. A turn that
+// DID stream keeps its text instead - see `settle`. (A genuinely empty model
+// turn is not this: the server substitutes its own placeholder for that, so an
+// empty body here means the request timed out or failed.)
+const NO_ANSWER = 'Error: No response';
+
 /**
  * Begin an assistant turn that fills in as the reply arrives.
  *
@@ -22,7 +28,7 @@ import { render, renderStreamingMessages } from './render.js';
  * conversation sent to the API never contains the turn being generated, and a
  * request that streams nothing behaves exactly as it did before.
  *
- * @returns {{onDelta: function, onReset: function, settle: function, discard: function}}
+ * @returns {{onDelta: function, onReset: function, settle: function, fail: function}}
  */
 export function streamingTurn() {
     let turn = null;
@@ -65,23 +71,64 @@ export function streamingTurn() {
             }
         },
 
-        /** Replace the streamed text with the authoritative reply. */
+        /**
+         * Replace the streamed text with the authoritative reply.
+         *
+         * Authoritative WHEN IT HAS ONE. An empty answer is not a better
+         * account of the turn than the text the reader already watched arrive:
+         * `POST /messages/` returns `""` when the client's own 60s patience ran
+         * out mid-reply (256 bytes of uncached byte-level decoding routinely
+         * takes longer) or when the route swallowed an error, and replacing a
+         * long visible reply with "Error: No response" at the very end is the
+         * one outcome worse than either.
+         *
+         * The stream is closed by then, so what is on screen is the whole of
+         * what the model produced before the request was abandoned. Keep it,
+         * and say it was cut short.
+         */
         settle(content) {
-            if (turn) {
-                turn.content = content;
-                delete turn.streaming;
-                turn = null;
-            } else {
-                state.messages.push({ role: 'assistant', content });
+            // The fallback lives HERE, not at the call sites: they used to pass
+            // `response.response || 'Error: No response'`, so `settle` never saw
+            // an empty answer and could not tell "the model said nothing" from
+            // "we already showed the reader a page of text".
+            content = content || '';
+            if (turn && !content && turn.content) {
+                return finishTurn(
+                    turn.content,
+                    'cut short - the request timed out while this was still being written'
+                );
             }
+            const answer = content || NO_ANSWER;
+            if (turn) return finishTurn(answer);
+            state.messages.push({ role: 'assistant', content: answer });
         },
 
-        /** Drop the partial turn - the caller is about to report an error. */
-        discard() {
-            if (!turn) return;
-            const index = state.messages.indexOf(turn);
-            if (index !== -1) state.messages.splice(index, 1);
-            turn = null;
+        /**
+         * The request failed outright.
+         *
+         * Same rule: a partial reply the reader watched arrive beats an error
+         * bubble that erases it, so the error becomes a footnote on the text
+         * rather than a replacement for it. With nothing streamed there is
+         * nothing to keep, and the error is the whole message.
+         */
+        fail(message) {
+            if (turn && turn.content) return finishTurn(turn.content, message);
+            discardTurn();
+            state.messages.push({ role: 'assistant', content: message });
         }
     };
+
+    function finishTurn(content, caption) {
+        turn.content = content;
+        delete turn.streaming;
+        if (caption) turn.caption = caption;
+        turn = null;
+    }
+
+    function discardTurn() {
+        if (!turn) return;
+        const index = state.messages.indexOf(turn);
+        if (index !== -1) state.messages.splice(index, 1);
+        turn = null;
+    }
 }
