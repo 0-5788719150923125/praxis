@@ -232,9 +232,9 @@ def _augment(config: Dict) -> Dict:
     # beside the residual quantizer, over the same patch features. Gates the
     # order-13 addendum, which describes the paired construction rather than
     # the single bottleneck the order-12 fragments cover.
-    derived["uses_calm_arm"] = encoder.startswith("abstractinator") and encoder.endswith(
-        "calm"
-    )
+    derived["uses_calm_arm"] = encoder.startswith(
+        "abstractinator"
+    ) and encoder.endswith("calm")
 
     # HALO objective: a distance-to-centroid loss in embedding space (a shell
     # of consensus + an origin abstain sink) rather than cross-entropy.

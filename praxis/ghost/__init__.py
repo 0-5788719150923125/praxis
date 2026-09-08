@@ -122,7 +122,12 @@ def ghostify(model: nn.Module, profile: str) -> GhostStats:
     factory = EXPANSION_REGISTRY[entry.rule]
 
     targets: List[Tuple[str, int, int]] = []
-    skipped: Dict[str, int] = {"unmatched": 0, "unwrappable": 0, "shared": 0, "shape": 0}
+    skipped: Dict[str, int] = {
+        "unmatched": 0,
+        "unwrappable": 0,
+        "shared": 0,
+        "shape": 0,
+    }
     seen_ids: set = set()
 
     # Materialize the walk before mutating: replacing a submodule during
@@ -162,7 +167,5 @@ def ghostify(model: nn.Module, profile: str) -> GhostStats:
         targets.append((name, before, wrapper.expansion.real_numel))
 
     if not targets:
-        raise ValueError(
-            f"Ghost profile {profile!r} matched nothing. Skips: {skipped}"
-        )
+        raise ValueError(f"Ghost profile {profile!r} matched nothing. Skips: {skipped}")
     return GhostStats(profile, entry.rule, targets, skipped)

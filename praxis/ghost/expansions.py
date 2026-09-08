@@ -103,10 +103,10 @@ class AlgebraExpansion(Expansion):
 
         if randomize:
             g = torch.Generator().manual_seed(_stable_seed(f"{tag}|{algebra}"))
-            perm = torch.stack([torch.randperm(self.d, generator=g) for _ in range(self.d)])
-            sign = torch.where(
-                torch.rand(self.d, self.d, generator=g) < 0.5, -1.0, 1.0
+            perm = torch.stack(
+                [torch.randperm(self.d, generator=g) for _ in range(self.d)]
             )
+            sign = torch.where(torch.rand(self.d, self.d, generator=g) < 0.5, -1.0, 1.0)
             # Keep the control honest: it must satisfy the same two conditions
             # the algebra does, or it is testing degeneracy rather than
             # arbitrariness. Resample until it does; both are near-certain.

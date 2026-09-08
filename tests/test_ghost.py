@@ -57,10 +57,12 @@ def test_complex_expansion_reproduces_the_complex_product():
         w0, w1 = real[row, 0], real[row, 1]
         re_block = full[row]
         im_block = full[real.shape[0] + row]
-        assert torch.allclose(re_block[0] * x[0] + re_block[1] * x[1],
-                              x[0] * w0 - x[1] * w1, atol=1e-6)
-        assert torch.allclose(im_block[0] * x[0] + im_block[1] * x[1],
-                              x[0] * w1 + x[1] * w0, atol=1e-6)
+        assert torch.allclose(
+            re_block[0] * x[0] + re_block[1] * x[1], x[0] * w0 - x[1] * w1, atol=1e-6
+        )
+        assert torch.allclose(
+            im_block[0] * x[0] + im_block[1] * x[1], x[0] * w1 + x[1] * w0, atol=1e-6
+        )
 
 
 def test_quaternion_expansion_matches_the_multiplication_table():
@@ -239,8 +241,15 @@ def _reference_expand(real, perm, sign, d, out, in_, tail):
     return full
 
 
-@pytest.mark.parametrize("algebra,shape", [("complex", (8, 6, 2)), ("quaternion", (8, 8, 2)),
-                                           ("complex", (6, 4)), ("quaternion", (8, 4))])
+@pytest.mark.parametrize(
+    "algebra,shape",
+    [
+        ("complex", (8, 6, 2)),
+        ("quaternion", (8, 8, 2)),
+        ("complex", (6, 4)),
+        ("quaternion", (8, 4)),
+    ],
+)
 def test_expansion_matches_the_naive_reference(algebra, shape):
     torch.manual_seed(0)
     exp = AlgebraExpansion(shape, algebra=algebra)

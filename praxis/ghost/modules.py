@@ -34,7 +34,9 @@ ExpansionFactory = Callable[[Sequence[int], str], Expansion]
 class GhostLinear(nn.Module):
     """``nn.Linear`` with a derived weight."""
 
-    def __init__(self, base: nn.Linear, factory: ExpansionFactory, tag: str = "") -> None:
+    def __init__(
+        self, base: nn.Linear, factory: ExpansionFactory, tag: str = ""
+    ) -> None:
         super().__init__()
         self.in_features = base.in_features
         self.out_features = base.out_features
@@ -55,7 +57,9 @@ class GhostLinear(nn.Module):
 class GhostConv1d(nn.Module):
     """``nn.Conv1d`` with a derived weight."""
 
-    def __init__(self, base: nn.Conv1d, factory: ExpansionFactory, tag: str = "") -> None:
+    def __init__(
+        self, base: nn.Conv1d, factory: ExpansionFactory, tag: str = ""
+    ) -> None:
         super().__init__()
         if base.groups != 1:
             raise ValueError("grouped convolutions are not a ghost target")

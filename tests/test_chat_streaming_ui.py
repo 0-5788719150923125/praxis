@@ -445,8 +445,7 @@ def test_a_failed_request_leaves_no_half_written_turn(page):
 def test_streaming_does_not_rebuild_the_message_nodes(page):
     """The nodes on the page are the SAME objects across deltas - only the text
     inside one of them changes."""
-    out = page.evaluate(
-        """async () => {
+    out = page.evaluate("""async () => {
             const { streamingTurn } = await import('/static/js/chatstream.js');
             const { state } = await import('/static/js/state.js');
             const { render } = await import('/static/js/render.js');
@@ -479,8 +478,7 @@ def test_streaming_does_not_rebuild_the_message_nodes(page):
                 identity,
                 text: replyNode.querySelector('.message-content').textContent,
             };
-        }"""
-    )
+        }""")
     assert out["identity"] == [True, True, True], "nodes were rebuilt mid-stream"
     assert out["text"] == "one two three four"
 
@@ -488,8 +486,7 @@ def test_streaming_does_not_rebuild_the_message_nodes(page):
 def test_a_selection_in_an_earlier_message_survives_streaming(page):
     """Rebuilding the list dropped any text the user had selected. Patching one
     node leaves every other one - and its selection - untouched."""
-    out = page.evaluate(
-        """async () => {
+    out = page.evaluate("""async () => {
             const { streamingTurn } = await import('/static/js/chatstream.js');
             const { state } = await import('/static/js/state.js');
             const { render } = await import('/static/js/render.js');
@@ -521,8 +518,7 @@ def test_a_selection_in_an_earlier_message_survives_streaming(page):
                 await frame();
             }
             return window.getSelection().toString();
-        }"""
-    )
+        }""")
     assert out == "select me please"
 
 
@@ -593,8 +589,7 @@ def test_the_users_own_new_turn_jumps_into_view(page):
     """What the user just did is worth jumping to whether or not they were
     following. A REPLY turn appearing is not - that one is the model's doing,
     and is covered by the sticky rule above."""
-    out = page.evaluate(
-        """async () => {
+    out = page.evaluate("""async () => {
             const { state } = await import('/static/js/state.js');
             const { render } = await import('/static/js/render.js');
 
@@ -628,7 +623,6 @@ def test_the_users_own_new_turn_jumps_into_view(page):
                 after: box.scrollTop,
                 atBottom: box.scrollHeight - box.clientHeight - box.scrollTop <= 48,
             };
-        }"""
-    )
+        }""")
     assert out["before"] == 0
     assert out["atBottom"], f"stopped at {out['after']}"
