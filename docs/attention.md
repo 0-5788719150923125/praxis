@@ -91,7 +91,7 @@ Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
 N frozen ``[T, T]`` mixing matrices, blended per token by a router.
 
-Source: [praxis/attention/kaleidoscope.py:380](../praxis/attention/kaleidoscope.py#L380)
+Source: [praxis/attention/kaleidoscope.py:382](../praxis/attention/kaleidoscope.py#L382)
 
 Presets:
 - `kaleido` - class defaults

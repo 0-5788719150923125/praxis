@@ -90,7 +90,7 @@ The honest cost, stated up front: solo cross-entropy on every arm removes the DI
 OF LABOUR. Under the mixture, arms specialize - each covers what it explains best and
 the gate routes accordingly. Trained ...
 
-Source: [praxis/heads/parallel.py:933](../praxis/heads/parallel.py#L933)
+Source: [praxis/heads/parallel.py:948](../praxis/heads/parallel.py#L948)
 
 Presets:
 - `prismatic9` - `branches=[<class 'praxis.heads.crystal.CrystalHead'>, <class 'praxis.heads.forward.ForwardHead'>, functools.partial(<class 'praxis.heads.halo.HaloHead'>, detach_in_blend=False)], stem=functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True)`
