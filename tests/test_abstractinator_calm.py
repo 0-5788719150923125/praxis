@@ -927,3 +927,61 @@ def test_only_the_reconstruction_path_is_perturbed():
     # The stashed energy target is the normalized posterior MEAN, undropped.
     expected = enc.vae.normalize_latent(mu).detach()
     assert torch.allclose(enc._last_code_mean, expected)
+
+
+def test_vote_generation_actually_samples():
+    """BrierLM's estimator is `1{a=y} + 1{b=y} - 1{a=b}` over two i.i.d.
+    samples. Hard-coding argmax made two draws BYTE-IDENTICAL, pinning the
+    self-match term at 1, forcing every order non-positive, and flooring the
+    geometric mean to exactly 0 - the metric could not report anything else,
+    whatever the model had learned. The vote's own randomness does not rescue
+    it: the continuous arm enters the trunk at a fraction of a percent, so a
+    differently-voted patch barely moves the byte decoder's argmax."""
+    from transformers import GenerationConfig
+
+    m = _build_mode("vote")
+    ids = torch.randint(0, 256, (1, 32))
+    sampled = GenerationConfig(max_new_tokens=24, do_sample=True, temperature=1.0)
+    a = m.generate(ids, generation_config=sampled)
+    b = m.generate(ids, generation_config=sampled)
+    assert not torch.equal(a, b), "two sampled draws must differ"
+
+    greedy = GenerationConfig(max_new_tokens=24, do_sample=False)
+    assert torch.equal(
+        m.generate(ids, generation_config=greedy),
+        m.generate(ids, generation_config=greedy),
+    ), "greedy must stay deterministic"
+
+
+def test_brier_is_not_structurally_zero_under_vote_generation():
+    """The end-to-end shape of the bug: identical samples make the self-match
+    term 1 and every Brier order negative, so val_brierlm reads 0 forever."""
+    from transformers import GenerationConfig
+
+    from praxis.metrics.brier import compute_brier_lm_with_orders
+
+    m = _build_mode("vote")
+    ids = torch.randint(0, 256, (1, 32))
+    gc = GenerationConfig(max_new_tokens=24, do_sample=True, temperature=1.0)
+    a = m.generate(ids, generation_config=gc)[0, 32:].tolist()
+    b = m.generate(ids, generation_config=gc)[0, 32:].tolist()
+    ref = torch.randint(0, 256, (24,)).tolist()
+    _, per = compute_brier_lm_with_orders([a], [b], [ref])
+    # An untrained model matches nothing, but it must not ANTI-match: a -1
+    # order is the a == b signature, not a statement about the model.
+    for n, v in per.items():
+        if v is not None:
+            assert v > -1.0 + 1e-9, (n, v)
+
+
+def test_the_vote_temperature_is_not_the_sampler_temperature():
+    """The vote's temperature is a draw COUNT (n = round(1/T)); the sampler's
+    is a logit scale. Reading one from the other would let a caller asking for
+    hotter text silently disable the vote's cascade."""
+    import inspect
+
+    from praxis.encoders.abstractinator.calm import AbstractinatorCALM
+
+    src = inspect.getsource(AbstractinatorCALM.custom_generate)
+    assert "calm_vote_temperature" in src
+    assert "temperature=vote_t" in src

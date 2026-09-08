@@ -661,9 +661,20 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         ):
             return None
 
+        from transformers import (
+            LogitsProcessorList,
+            RepetitionPenaltyLogitsProcessor,
+            TopKLogitsWarper,
+            TopPLogitsWarper,
+        )
+
         max_new = getattr(generation_config, "max_new_tokens", 100) or 100
-        temperature = (
-            getattr(generation_config, "temperature", None) or self.vote_temperature
+        # The VOTE's temperature is a draw COUNT (n = round(1/T)), a different
+        # quantity from the logit temperature above; `calm_vote_temperature` on
+        # the generation config overrides it, never the sampler's `temperature`.
+        vote_t = float(
+            getattr(generation_config, "calm_vote_temperature", None)
+            or self.vote_temperature
         )
         K = int(self.byte_config.patch_size)
         # `return_dict_in_generate` arrives as a KWARG on model.generate (see
@@ -679,6 +690,42 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         # transformers never runs the criteria list for a loop it does not own,
         # which is why the speculative path checks them by hand too.
         stopping_criteria = kwargs.get("stopping_criteria")
+        # SAMPLING. This loop owns its decoding, so transformers builds no
+        # processor list for it and every knob has to be honored by hand - the
+        # same reason the speculative path does it explicitly.
+        #
+        # Hard-coding argmax here made two "independent" draws BYTE-IDENTICAL,
+        # which silently destroyed BrierLM: its estimator is
+        # `1{a=y} + 1{b=y} - 1{a=b}` over two i.i.d. samples, so a=b forces the
+        # self-match term to 1 and every order non-positive. Floored, the
+        # geometric mean is then exactly 0 by construction - the metric could
+        # not report anything else, whatever the model had learned. The vote's
+        # own randomness did not rescue it: the continuous arm enters the trunk
+        # at a fraction of a percent, so a differently-voted patch barely moves
+        # the byte decoder's argmax.
+        do_sample = bool(getattr(generation_config, "do_sample", False))
+        temperature = float(getattr(generation_config, "temperature", 1.0) or 1.0)
+        rep_penalty = float(getattr(generation_config, "repetition_penalty", 1.0) or 1.0)
+        top_k = getattr(generation_config, "top_k", None)
+        top_p = getattr(generation_config, "top_p", None)
+        penalizers = LogitsProcessorList()
+        if rep_penalty != 1.0:
+            penalizers.append(RepetitionPenaltyLogitsProcessor(penalty=rep_penalty))
+        warpers = LogitsProcessorList()
+        if do_sample:
+            if top_k:
+                warpers.append(TopKLogitsWarper(int(top_k)))
+            if top_p is not None and top_p < 1.0:
+                warpers.append(TopPLogitsWarper(float(top_p)))
+
+        def pick(raw_logits, context_ids):
+            scores = penalizers(context_ids, raw_logits)
+            if do_sample and temperature > 0:
+                scores = warpers(context_ids, scores)
+                probs = F.softmax(scores / temperature, dim=-1)
+                return torch.multinomial(probs, 1)
+            return scores.argmax(dim=-1, keepdim=True)
+
         eos_id = getattr(generation_config, "eos_token_id", None)
         eos = (
             {eos_id}
@@ -691,7 +738,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         while produced < max_new:
             out = base_forward(generated)
             z_hat = self.vote_next_latent(
-                out.last_hidden_state[:, -1, :], temperature=float(temperature)
+                out.last_hidden_state[:, -1, :], temperature=vote_t
             )
             h_hat = self.vae.decode(z_hat)
             z_next = self._trunk_input(h_hat, z_hat).unsqueeze(1)
@@ -709,7 +756,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 )
                 if logits is None:
                     logits = decode_logits(embeds)
-                nxt = logits[:, pos - 1, :].argmax(-1, keepdim=True)
+                nxt = pick(logits[:, pos - 1, :], generated)
                 generated = torch.cat([generated, nxt], dim=1)
                 produced += 1
                 if eos and int(nxt.view(-1)[0]) in eos:
