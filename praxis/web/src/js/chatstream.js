@@ -13,7 +13,7 @@
  */
 
 import { state } from './state.js';
-import { render } from './render.js';
+import { render, renderStreamingMessages } from './render.js';
 
 /**
  * Begin an assistant turn that fills in as the reply arrives.
@@ -28,14 +28,15 @@ export function streamingTurn() {
     let turn = null;
     let pendingFrame = null;
 
-    /** Coalesce renders to one per frame: a byte-level model emits a delta per
-     *  byte, and re-serializing the whole message list that often is enough to
-     *  drop frames on its own. */
+    /** Coalesce repaints to one per frame, and repaint only the conversation.
+     *  A byte-level model emits a delta per byte; walking the whole app for
+     *  each one is waste, and `renderStreamingMessages` patches the text into
+     *  the nodes already on the page rather than rebuilding the list. */
     const scheduleRender = () => {
         if (pendingFrame !== null) return;
         pendingFrame = requestAnimationFrame(() => {
             pendingFrame = null;
-            render();
+            renderStreamingMessages();
         });
     };
 

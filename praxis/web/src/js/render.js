@@ -321,6 +321,58 @@ function scrollKbBodyToAnchor(body, anchor) {
 }
 
 /**
+ * Everything about a message that shapes its DOM, MINUS its text.
+ *
+ * Splitting this out is what lets a growing reply update in place. A streaming
+ * turn changes one thing - the characters inside one `.message-content` - and
+ * re-serializing the list for each of them destroyed and rebuilt every message
+ * node, taking the user's text selection, the caret's blink phase and a frame
+ * of layout with it. That is the flicker.
+ */
+function messageStructure(msg, isLast) {
+    return [
+        msg.role,
+        isLast ? 'last' : '',
+        msg.streaming ? 'streaming' : '',
+        // Caption and score are rendered as their own elements, so a change to
+        // either really is structural and has to fall through to a rebuild.
+        msg.caption ?? '',
+        msg.jokeScore ? `score:${msg.score ?? 0}` : '',
+    ].join('');
+}
+
+/**
+ * Write each message's text into the nodes already on the page.
+ *
+ * Returns whether anything actually changed, or `null` when the DOM does not
+ * line up with `state.messages` (a caller raced the rebuild) so the caller can
+ * fall back rather than paint nonsense.
+ */
+function patchMessageText(container) {
+    const nodes = container.querySelectorAll('.message-content');
+    if (nodes.length !== state.messages.length) return null;
+
+    let changed = false;
+    state.messages.forEach((msg, index) => {
+        const node = nodes[index];
+        const next = msg.content ?? '';
+        const current = node.textContent;
+        if (current === next) return;
+        changed = true;
+        // The streaming case is an APPEND, and appending a text node leaves the
+        // existing ones - and any selection inside them - untouched. Assigning
+        // textContent would replace the lot on every byte. Text nodes never
+        // parse markup, so this is as safe as the escapeHtml path it mirrors.
+        if (next.startsWith(current)) {
+            node.appendChild(document.createTextNode(next.slice(current.length)));
+        } else {
+            node.textContent = next;
+        }
+    });
+    return changed;
+}
+
+/**
  * Render chat messages
  */
 function renderMessages() {
@@ -328,16 +380,41 @@ function renderMessages() {
     if (!container) return;
 
     const isDarkMode = state.theme === 'dark';
+    const lastIndex = state.messages.length - 1;
 
-    // Render all messages
+    const structure =
+        state.messages.map((m, i) => messageStructure(m, i === lastIndex)).join('') +
+        `${state.isThinking ? 1 : 0}${isDarkMode ? 1 : 0}`;
+
+    // Measured BEFORE the DOM changes: whether the user is reading the tail (so
+    // following along is what they want) or has scrolled up (so yanking them
+    // back is not).
+    const pinned = isPinnedToBottom(container);
+
+    // Same nodes, different text - the streaming case. Patch in place and leave
+    // every other node, and the caret's animation, alone.
+    if (container._msgStructure === structure) {
+        const changed = patchMessageText(container);
+        if (changed !== null) {
+            // The html signature describes a build that no longer matches the
+            // DOM, so retire it rather than let a later render trust it. The
+            // count is kept CURRENT rather than retired: it is what tells the
+            // next render whether a turn appeared, and a stale one would make
+            // that answer arbitrary.
+            container._msgSig = null;
+            container._msgCount = state.messages.length;
+            // Instant, not smooth: a smooth scroll retriggered on every delta
+            // spends its whole animation being restarted, which reads as
+            // stutter. Only on a real change, so the 2Hz metrics render does
+            // not scroll a pinned reader for nothing.
+            if (changed && pinned) scrollToBottom(container, 'auto');
+            return;
+        }
+    }
+
     const messagesHTML = state.messages
-        .map((msg, index) => {
-            const isLast = index === state.messages.length - 1;
-            return createMessage(msg, isDarkMode, isLast);
-        })
+        .map((msg, index) => createMessage(msg, isDarkMode, index === lastIndex))
         .join('');
-
-    // Add thinking indicator if needed
     const thinkingHTML = state.isThinking ? createThinkingIndicator(isDarkMode) : '';
     const html = messagesHTML + thinkingHTML;
 
@@ -347,11 +424,40 @@ function renderMessages() {
     // slider. The signature lives on the element, so a fresh container (tab
     // rebuild) has none and always renders.
     if (container._msgSig === html) return;
+
+    // The USER adding a turn is worth jumping to whether or not they were
+    // pinned - they just did it, and it is what they want to see. Nothing else
+    // is: a reply turn appears because the MODEL started writing, and dragging
+    // the view down for that is precisely the yank that makes re-reading an
+    // earlier turn impossible while a reply streams.
+    const last = state.messages[lastIndex];
+    const userActed =
+        state.messages.length !== container._msgCount && last && last.role === 'user';
+    // Smooth reads well for a turn the user just sent. It does NOT for a reply
+    // arriving: the animation would still be running when the next delta
+    // scrolls again, and the two fight.
+    const behavior = userActed ? 'smooth' : 'auto';
+
     container._msgSig = html;
+    container._msgStructure = structure;
+    container._msgCount = state.messages.length;
     container.innerHTML = html;
 
-    // Scroll to bottom
-    ensureLastMessageVisible();
+    if (userActed || pinned) ensureLastMessageVisible(behavior);
+}
+
+/**
+ * Repaint the conversation alone, for a reply arriving a few characters at a
+ * time. `render()` walks the whole app - tabs, theme, modal, notifications -
+ * which is a lot of DOM to touch per animation frame for a change confined to
+ * one text node.
+ *
+ * Read mode shows KB results in this pane instead, and owns it; a stream
+ * landing while the user is over there is left to the next full render.
+ */
+export function renderStreamingMessages() {
+    if (state.conversationMode === 'read') return;
+    renderMessages();
 }
 
 /**
@@ -479,19 +585,43 @@ function renderSystemPrompt() {
     }
 }
 
+// How far from the bottom still counts as "reading the tail". One line's worth
+// of slack, so a scroll that lands a pixel short does not read as "the user
+// deliberately scrolled up".
+const STICK_TO_BOTTOM_SLACK = 48;
+
+/**
+ * Whether the user is at the tail of the conversation.
+ *
+ * The distinction this draws is the whole point: following along is what
+ * someone reading the newest reply wants, and is exactly what someone who
+ * scrolled up to re-read an earlier turn does NOT want. A container too short
+ * to scroll counts as pinned - there is nowhere else to be.
+ */
+function isPinnedToBottom(container) {
+    const slack = container.scrollHeight - container.clientHeight - container.scrollTop;
+    return slack <= STICK_TO_BOTTOM_SLACK;
+}
+
+/** Put the tail in view without touching focus or selection. */
+function scrollToBottom(container, behavior = 'smooth') {
+    container.scrollTo({ top: container.scrollHeight, behavior });
+}
+
 /**
  * Ensure last message is visible (scroll to bottom)
+ *
+ * Deferred a frame so the freshly written nodes have been laid out and
+ * `scrollHeight` is the real one. Scrolls the CONTAINER rather than calling
+ * `scrollIntoView` on the message: that walks up to the nearest scrollable
+ * ancestor, which on a short conversation is the page, and moving the page
+ * shifts the input box out from under the user.
  */
-function ensureLastMessageVisible() {
+function ensureLastMessageVisible(behavior = 'smooth') {
     const container = document.getElementById('chat-container');
     if (!container) return;
-
-    const lastMessage = container.lastElementChild;
-    if (lastMessage) {
-        requestAnimationFrame(() => {
-            lastMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        });
-    }
+    if (!container.lastElementChild) return;
+    requestAnimationFrame(() => scrollToBottom(container, behavior));
 }
 
 /**

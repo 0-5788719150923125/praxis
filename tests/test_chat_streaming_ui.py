@@ -431,3 +431,204 @@ def test_a_failed_request_leaves_no_half_written_turn(page):
     assert out["messages"] == ["hi", "Error: boom"]
     assert out["seen"][-1]["text"] == "Error: boom"
     assert out["seen"][-1]["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# repaint discipline
+#
+# A byte-level model emits a delta per byte. Re-serializing the message list for
+# each one destroyed and rebuilt every node, which is visible as flicker and
+# takes the user's text selection and the caret's blink phase with it.
+# ---------------------------------------------------------------------------
+
+
+def test_streaming_does_not_rebuild_the_message_nodes(page):
+    """The nodes on the page are the SAME objects across deltas - only the text
+    inside one of them changes."""
+    out = page.evaluate(
+        """async () => {
+            const { streamingTurn } = await import('/static/js/chatstream.js');
+            const { state } = await import('/static/js/state.js');
+            const { render } = await import('/static/js/render.js');
+
+            state.conversationMode = 'evaluate';
+            state.messages = [{ role: 'user', content: 'hi' }];
+            state.isThinking = false;
+            render();
+
+            const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+            // Captured AFTER the first delta: that one adds a message, which is
+            // a structural change and legitimately rebuilds the list. What must
+            // not happen is a rebuild for each of the deltas that follow.
+            const turn = streamingTurn();
+            turn.onDelta('one ');
+            await frame();
+            const nodes0 = document.querySelectorAll('#chat-container .message');
+            const userNode = nodes0[0];
+            const replyNode = nodes0[1];
+
+            const identity = [];
+            for (const chunk of ['two ', 'three ', 'four']) {
+                turn.onDelta(chunk);
+                await frame();
+                const nodes = document.querySelectorAll('#chat-container .message');
+                identity.push(nodes[0] === userNode && nodes[1] === replyNode);
+            }
+            return {
+                identity,
+                text: replyNode.querySelector('.message-content').textContent,
+            };
+        }"""
+    )
+    assert out["identity"] == [True, True, True], "nodes were rebuilt mid-stream"
+    assert out["text"] == "one two three four"
+
+
+def test_a_selection_in_an_earlier_message_survives_streaming(page):
+    """Rebuilding the list dropped any text the user had selected. Patching one
+    node leaves every other one - and its selection - untouched."""
+    out = page.evaluate(
+        """async () => {
+            const { streamingTurn } = await import('/static/js/chatstream.js');
+            const { state } = await import('/static/js/state.js');
+            const { render } = await import('/static/js/render.js');
+
+            state.conversationMode = 'evaluate';
+            state.messages = [{ role: 'user', content: 'select me please' }];
+            state.isThinking = false;
+            render();
+
+            const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+            const turn = streamingTurn();
+
+            // The first delta ADDS a message, which is a structural change and
+            // legitimately rebuilds the list - one rebuild per turn, not per
+            // byte. Select after that, which is also when a real user would:
+            // while the reply is arriving.
+            turn.onDelta('a');
+            await frame();
+
+            const target = document.querySelector('#chat-container .message-content');
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+
+            for (const chunk of ['b', 'c', 'd']) {
+                turn.onDelta(chunk);
+                await frame();
+            }
+            return window.getSelection().toString();
+        }"""
+    )
+    assert out == "select me please"
+
+
+# ---------------------------------------------------------------------------
+# scroll discipline
+# ---------------------------------------------------------------------------
+
+
+def _stream_with_scroll(page, scroll_to_top):
+    """Fill the pane past its height, optionally scroll up, then stream."""
+    return page.evaluate(
+        """async (scrollToTop) => {
+            const { streamingTurn } = await import('/static/js/chatstream.js');
+            const { state } = await import('/static/js/state.js');
+            const { render } = await import('/static/js/render.js');
+
+            state.conversationMode = 'evaluate';
+            state.messages = Array.from({ length: 40 }, (_, i) => ({
+                role: i % 2 ? 'assistant' : 'user',
+                content: 'filler '.repeat(20) + i,
+            }));
+            state.isThinking = false;
+            render();
+
+            const box = document.getElementById('chat-container');
+            const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+            await frame();
+            box.scrollTop = scrollToTop ? 0 : box.scrollHeight;
+            const before = box.scrollTop;
+
+            const turn = streamingTurn();
+            for (const chunk of ['x'.repeat(40), 'y'.repeat(40), 'z'.repeat(40)]) {
+                turn.onDelta(chunk);
+                await frame();
+            }
+            await frame();
+            return {
+                scrollable: box.scrollHeight > box.clientHeight,
+                before,
+                after: box.scrollTop,
+                atBottom:
+                    box.scrollHeight - box.clientHeight - box.scrollTop <= 48,
+            };
+        }""",
+        scroll_to_top,
+    )
+
+
+def test_a_reader_who_scrolled_up_is_not_yanked_back(page):
+    """The one that actually hurts: re-reading an earlier turn while a reply
+    streams used to drag the view to the bottom on every delta."""
+    out = _stream_with_scroll(page, True)
+    assert out["scrollable"], "the pane has to overflow for this to mean anything"
+    assert out["before"] == 0
+    assert out["after"] == 0, "streaming scrolled a user who had scrolled away"
+
+
+def test_a_reader_at_the_tail_keeps_following(page):
+    """...and the converse, which is what someone reading the newest reply
+    wants: the view stays with the text as it arrives."""
+    out = _stream_with_scroll(page, False)
+    assert out["scrollable"]
+    assert out["atBottom"], "the tail scrolled out of view while streaming"
+    assert out["after"] > out["before"]
+
+
+def test_the_users_own_new_turn_jumps_into_view(page):
+    """What the user just did is worth jumping to whether or not they were
+    following. A REPLY turn appearing is not - that one is the model's doing,
+    and is covered by the sticky rule above."""
+    out = page.evaluate(
+        """async () => {
+            const { state } = await import('/static/js/state.js');
+            const { render } = await import('/static/js/render.js');
+
+            state.conversationMode = 'evaluate';
+            state.messages = Array.from({ length: 40 }, (_, i) => ({
+                role: i % 2 ? 'assistant' : 'user',
+                content: 'filler '.repeat(20) + i,
+            }));
+            state.isThinking = false;
+            render();
+
+            const box = document.getElementById('chat-container');
+            const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+            await frame();
+            box.scrollTop = 0;
+
+            const before = box.scrollTop;
+            state.messages.push({ role: 'user', content: 'a brand new turn' });
+            render();
+
+            // The jump is SMOOTH here (it reads better for a turn the user just
+            // sent), so wait for the animation to settle rather than guessing a
+            // duration - it is proportional to the distance travelled.
+            let last = -1;
+            for (let i = 0; i < 60 && box.scrollTop !== last; i++) {
+                last = box.scrollTop;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            return {
+                before,
+                after: box.scrollTop,
+                atBottom: box.scrollHeight - box.clientHeight - box.scrollTop <= 48,
+            };
+        }"""
+    )
+    assert out["before"] == 0
+    assert out["atBottom"], f"stopped at {out['after']}"
