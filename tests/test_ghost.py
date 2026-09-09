@@ -7,12 +7,13 @@ artifact; if the targeting pass misses a conv the run is not the experiment.
 """
 
 import math
+from types import SimpleNamespace
 
 import pytest
 import torch
 import torch.nn as nn
 
-from praxis.ghost import GHOST_REGISTRY, ghostify
+from praxis.ghost import GHOST_REGISTRY, MIN_TARGET_NUMEL, ghostify
 from praxis.ghost.algebra import (
     ALGEBRAS,
     has_antipodal_pair,
@@ -25,7 +26,7 @@ from praxis.ghost.expansions import (
     AlgebraExpansion,
     Expansion,
 )
-from praxis.ghost.modules import GhostConv1d, GhostLinear
+from praxis.ghost.modules import GhostConv1d, GhostEmbedding, GhostLinear
 
 CONV_SHAPE = (544, 272, 3)  # abstractinator-o's ConvBlock.conv
 
@@ -170,30 +171,43 @@ def test_bias_stays_real():
 
 
 class _Toy(nn.Module):
-    """Mimics the abstractinator's qualified names closely enough to exercise
-    the profile regex, including a decoy the profile must not match."""
+    """Mimics the real qualified names closely enough to exercise the profile
+    regexes, with decoys each profile must NOT match. Every tensor is sized over
+    ``MIN_TARGET_NUMEL`` so the floor is not what the test is measuring."""
 
     def __init__(self):
         super().__init__()
+        self.config = SimpleNamespace(vocab_size=100)
         self.encoder = nn.Module()
         for half in ("encoder", "decoder"):
             stack = nn.Module()
             stack.layers = nn.ModuleList()
             for _ in range(3):
                 block = nn.Module()
-                block.conv = nn.Conv1d(16, 32, kernel_size=3)
-                block.proj = nn.Linear(16, 16, bias=False)
+                block.conv = nn.Conv1d(32, 64, kernel_size=3)  # [64, 32, 3]
+                block.proj = nn.Linear(64, 64, bias=False)  # [64, 64]
                 stack.layers.append(block)
             setattr(self.encoder, half, stack)
         self.decoder = nn.Module()
-        self.decoder.conv = nn.Conv1d(16, 32, kernel_size=3)  # decoy
+        self.decoder.conv = nn.Conv1d(32, 64, kernel_size=3)  # conv decoy
+        self.mtp = nn.Module()
+        self.mtp.bank = nn.Module()
+        self.mtp.bank.depths = nn.ModuleList()
+        for _ in range(3):
+            d = nn.Module()
+            d.projection = nn.Linear(128, 64)  # [64, 128]
+            d.norm = nn.Linear(64, 64)  # mtp decoy
+            self.mtp.bank.depths.append(d)
+        self.embeds = nn.Embedding(64, 128)  # [64, 128]
+        self.lm_head = nn.Linear(64, 100)  # [100, 64], vocab-dimensioned
+        self.tiny = nn.Linear(8, 8)  # under MIN_TARGET_NUMEL
 
 
 def test_ghostify_hits_exactly_the_profiled_targets():
     model = _Toy()
     stats = ghostify(model, "conv_complex")
     assert len(stats.targets) == 6
-    assert stats.before == 6 * 32 * 16 * 3
+    assert stats.before == 6 * 64 * 32 * 3
     assert stats.after == stats.before // 2
     for name, _, _ in stats.targets:
         assert name.startswith("encoder.")
@@ -220,11 +234,50 @@ def test_ghostify_raises_rather_than_silently_matching_nothing():
 @pytest.mark.parametrize("profile", sorted(GHOST_REGISTRY))
 def test_every_profile_builds_and_runs(profile):
     model = _Toy()
-    ghostify(model, profile)
-    x = torch.randn(2, 16, 10)
-    out = model.encoder.encoder.layers[0].conv(x)
-    assert out.shape[1] == 32
-    out.sum().backward()
+    stats = ghostify(model, profile)
+    assert stats.after < stats.before
+    if profile.startswith("mtp_"):
+        # Exactly the per-depth projections, never their norm siblings.
+        assert len(stats.targets) == 3
+        assert all(n.endswith(".projection") for n, _, _ in stats.targets)
+        assert isinstance(model.mtp.bank.depths[0].norm, nn.Linear)
+        y = model.mtp.bank.depths[0].projection(torch.randn(2, 128))
+    elif profile.startswith("conv_"):
+        assert len(stats.targets) == 6
+        y = model.encoder.encoder.layers[0].conv(torch.randn(2, 32, 10))
+    else:
+        # Broad profiles reach every kind of wrapper, not just one.
+        kinds = {type(model.get_submodule(n)).__name__ for n, _, _ in stats.targets}
+        assert {"GhostConv1d", "GhostLinear", "GhostEmbedding"} <= kinds
+        y = model.embeds(torch.randint(0, 64, (2, 5)))
+    y.sum().backward()
+
+
+def test_broad_profile_spares_the_vocab_tensors_and_the_small_ones():
+    model = _Toy()
+    stats = ghostify(model, "all_complex")
+    names = [n for n, _, _ in stats.targets]
+    assert "lm_head" not in names and "lm_head" in stats.missed.get("vocab", [])
+    assert "tiny" not in names and "tiny" in stats.missed.get("too_small", [])
+    assert isinstance(model.lm_head, nn.Linear)
+    # ...and the greedy profile does not spare the readout.
+    greedy = ghostify(_Toy(), "all_greedy_complex")
+    assert "lm_head" in [n for n, _, _ in greedy.targets]
+
+
+def test_broad_profile_reaches_more_than_the_narrow_ones():
+    narrow = ghostify(_Toy(), "conv_complex")
+    broad = ghostify(_Toy(), "all_complex")
+    assert len(broad.targets) > len(narrow.targets)
+    assert broad.before > narrow.before
+
+
+def test_missed_records_names_not_just_counts():
+    """A broad profile that silently covers a third of what you think it covers
+    is worse than one that covers nothing."""
+    stats = ghostify(_Toy(), "all_complex")
+    for reason, count in stats.skipped.items():
+        assert len(stats.missed[reason]) == count
 
 
 def _reference_expand(real, perm, sign, d, out, in_, tail):
@@ -315,3 +368,57 @@ def test_lowrank_init_is_solved_not_fitted(rank_shape):
     predicted = exp.rank * exp.u.var().item() * exp.v.var().item()
     target = Expansion.GAIN_SQ / fan
     assert abs(predicted - target) / target < 0.15
+
+
+@pytest.mark.parametrize(
+    "rule,expected_full_rank", [("complex", True), ("quaternion", True),
+                                ("random", True), ("lowrank", False)]
+)
+def test_algebra_expansions_are_full_rank_and_lowrank_is_not(rule, expected_full_rank):
+    """The fact that retired the first -r arm, pinned so it is not re-litigated.
+
+    ``P_k`` acts on the INPUT axis, so the d expanded blocks are not linear
+    combinations of the ``out // d`` real rows - each applies a different
+    input-space transform, and the stack comes out FULL rank. A parameter-matched
+    low-rank factor mixes the OUTPUT axis and is capped at
+    ``params / (out + fan)``, which at -o's conv shape is 163 of 544. Matched
+    budget, different rank class: not a control.
+    """
+    exp = EXPANSION_REGISTRY[rule](CONV_SHAPE, "t")
+    W = exp().detach().reshape(CONV_SHAPE[0], -1)
+    rank = torch.linalg.matrix_rank(W).item()
+    if expected_full_rank:
+        assert rank == CONV_SHAPE[0]
+    else:
+        assert rank == exp.rank < CONV_SHAPE[0]
+
+
+def test_ghost_opaque_subtrees_are_skipped_and_reported():
+    """A module whose parameters are addressed by a name captured at
+    construction, or rewritten in place by an inner loop, cannot be ghosted:
+    ghosting RENAMES (`weight` -> `expansion.real`) and DERIVES (nothing to write
+    back to). `praxis.memory.NeuralMemory` is the real case - its fast-weight
+    Adam looks its own tensors up through `self._param_names`, and ghosting it
+    raised `KeyError: '0.weight'` on the first forward.
+
+    Separate from MERGE_OPAQUE on purpose: a module can be opaque to the
+    parameter-merging routers and open to this transform, and PEER is exactly
+    that module.
+    """
+    model = _Toy()
+    model.encoder.decoder.GHOST_OPAQUE = True
+    stats = ghostify(model, "all_complex")
+    names = [n for n, _, _ in stats.targets]
+    assert not any(n.startswith("encoder.decoder.") for n in names)
+    assert stats.skipped.get("opaque", 0) >= 3
+    assert all(n.startswith("encoder.decoder.") for n in stats.missed["opaque"])
+    # the sibling stack is untouched by the exclusion
+    assert any(n.startswith("encoder.encoder.") for n in names)
+
+
+def test_ghost_opaque_is_not_merge_opaque():
+    """PEER sets MERGE_OPAQUE and must stay ghost-eligible."""
+    from praxis.dense.peer import ParameterEfficientExpertRetrieval as PEER
+
+    assert PEER.MERGE_OPAQUE is True
+    assert getattr(PEER, "GHOST_OPAQUE", False) is False

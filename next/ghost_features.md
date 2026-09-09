@@ -610,6 +610,132 @@ Xavier on a lookup bank - an init scale falling with a dimension that is not a
 fan. `Expansion.GAIN_SQ` and `test_init_scale_matches_the_replaced_module` now
 hold every rule to the module it replaces, at three shapes.
 
+### The free gate, RUN (2026-09-08, -o's last.ckpt)
+
+No forward pass, no GPU. Participation ratio of the trained `[544, 816]` filter
+bank, how many singular values carry 99%/99.9% of its energy, and the ghost-fit
+residual `||W - expand(real_est)|| / ||W||` where `real_est = mean_k P_k(W_k)`
+(every `P_k` here is an involution, so that mean IS the least-squares fit).
+
+| conv | PR | PR/544 | sv@99% | sv@99.9% | ghost resid | null |
+| --- | --- | --- | --- | --- | --- | --- |
+| encoder.layers.0 | 149.6 | 0.275 | **441** | 520 | 0.7074 | 0.7071 |
+| encoder.layers.1 | 25.8 | 0.047 | 166 | 363 | 0.7063 | 0.7071 |
+| encoder.layers.2 | 29.2 | 0.054 | 172 | 358 | 0.7066 | 0.7071 |
+| decoder.layers.0 | 26.5 | 0.049 | 167 | 344 | 0.7081 | 0.7071 |
+| decoder.layers.1 | 28.1 | 0.052 | 177 | 356 | 0.7068 | 0.7071 |
+| decoder.layers.2 | 18.4 | 0.034 | 158 | 341 | 0.7074 | 0.7071 |
+
+**1. The site is over-parameterized, and PR alone overstates it.** Five of six
+banks put 95% of their spectral mass in ~30 of 544 directions, which is a very
+concentrated spectrum - but they still need 158-177 directions for 99% and
+~350 for 99.9%, so they are not literally low-rank. Halving is cheap; halving to
+one direction is not.
+
+**2. `encoder.layers.0` is the outlier and explains the retired -r run.** It is
+the only bank with a rich spectrum (441 singular values for 99%), which is what a
+first layer over raw byte embeddings should look like. -r's rank cap was 163.
+So -r did not throttle every layer equally - it throttled the input layer by
+~2.7x while leaving the others near their 99% threshold. That is a sharper
+diagnosis than "rank 163 vs 544", and it is why -r crawled rather than diverged.
+
+**3. The ghost residual sits EXACTLY at the null.** 0.7063-0.7081 against a null
+of `sqrt(1 - 272/544) = 0.7071`. -o's trained conv weights are **no closer to the
+ghost manifold than a random matrix of the same shape**. This kills the "same
+function, half the weights" reading: -q is not a compression of -o's solution, it
+is finding a different one. It also means the gate does NOT explain -q's parity
+as "the constraint was already satisfied" - that explanation is dead.
+
+**What this does to the arm plan.** -s (`conv_random`) answers "is the complex
+algebra special", but it CANNOT separate "the halving is regularization" from
+"the fixed input-axis expansion is a useful prior", because -s is also a halving.
+The probe that separates those is a DEEPER cut: `conv_quaternion` at d=4 is a 75%
+cut, already implemented. If -q at 50% ties -o and d=4 at 75% also ties, capacity
+was never binding and the structure is not the story - the finding is about the
+architecture, not the algebra. If d=4 degrades markedly, 50% is near the useful
+floor and -q's parity means something. Run that before -s.
+
+A measurement-derived refinement worth noting but not running yet: ghost the five
+concentrated banks and leave `encoder.layers.0` real. Derived from the spectrum
+above rather than swept, so it is not a tuned knob - but it changes two things
+against -q, so it belongs after the capacity question is settled.
+
+### -t settled the conv site: NEGATIVE for the algebra, POSITIVE for the model
+
+`-t` (`conv_quaternion`, 75% cut, 4.83M vs -o's 6.82M) is **indistinguishable
+from -o**. Mean `|delta|` over the last ten matched-token validation points is
+**0.017 bits, smaller than -o's own point-to-point wobble of 0.027**. And -q
+(50% cut) ties too.
+
+So the conv site **cannot discriminate**. Any structure ties there, because the
+stack has slack - which is exactly what the free gate predicted (five of six
+banks reach 99% of their energy in ~30% of their rank). -q's small lead over -o
+was never evidence for signed permutations. `conv_random` at this site would be a
+third tie and is not worth a run.
+
+**The result that survives is about the architecture, not the paper.** Three
+quarters of this lineage's encoder convolutions are removable at no measured
+cost: a 29.3% model cut, free, on every future run in the line. It came out of a
+mechanism built to ask something else.
+
+Caveats: no seed-repeat of -o, so 0.027 is a within-run proxy for the noise floor
+rather than a measured one; and -t has not reached -o's horizon (0.228 vs 0.325
+token fraction), so a late divergence is not excluded.
+
+### Where the question can be asked: spectral slack survey
+
+Same gate over every large tensor in -o's checkpoint. `sv99/out` near 1.0 means
+the trained weight uses nearly all its rank.
+
+| site | params | PR/out | sv99/out |
+| --- | --- | --- | --- |
+| `mtp.bank.depths.*.projection` (x5) | 739,840 | 0.36-0.45 | **0.83-0.89** |
+| `encoder.encoder.layers.0.conv` | 443,904 | 0.275 | 0.811 |
+| `byte_multihash` embedding tables | 69,632 ea | 0.49-0.51 | 0.793 |
+| the five other ConvBlock convs | ~2.2M | 0.03-0.05 | **0.29-0.33** |
+
+The MTP bank is the tightest large tensor in the model, and its five projections
+are plain `Linear(272, 544)`, divisible by 2 and 4 on both axes. `-u`
+(`mtp_complex`) puts the ghost there: 739,840 -> 369,920, a 5.4% model cut.
+Smaller than -q's 19.5%, and that is the point - what makes a result readable is
+whether the constraint BITES, not how much it removes. `-v` (`mtp_random`) is the
+algebra test, and for the first time it would have a site where the two can
+differ.
+
+**Methodological lesson, and it is the one worth keeping from this whole thread:**
+run the slack survey BEFORE choosing the site. Three runs were spent on a site
+that could not answer the question, and one free checkpoint measurement would
+have said so.
+
+### Blanket application, wired up (-u, `all_complex`)
+
+Built on the user's call to stop hunting for a site and just have the mechanism
+available everywhere. **44 targets, 6,824,274 -> 4,102,082, a 39.9% cut**, and it
+builds and completes the lazy-init forward.
+
+`GhostEmbedding` was added so lookup tables are reachable; `all_*` spares
+vocab-dimensioned tensors (the same shape test `_split_muon_params` uses),
+anything under 4,096 elements, shapes that do not divide by `d` on both axes,
+tied-by-reference parameters, and lazy or frozen ones. `all_greedy_complex`
+spares nothing, for when tying the readout IS the experiment.
+
+**The change that matters is not the profile, it is the skip accounting.** The
+walker used to filter candidates by exact module type BEFORE the skip bookkeeping,
+so anything it could not wrap was reported nowhere - a broad profile could miss a
+third of the model and still read as full coverage. It now names every
+parameter-bearing module it could not take, by type. Two are worth knowing:
+`MergedLinear` (SMEAR installs its wrappers during model construction, which runs
+BEFORE ghostify, so those targets are permanently unreachable from here) and
+`EmbeddingBag` (PEER's `up` bank sums retrieved rows before a per-row expansion
+could reach them).
+
+Also fixed: `describe()` reconstructed the model baseline as `after + saved`
+instead of measuring it, which drifted whenever a wrapper carried a tensor it did
+not tie. Both totals are measured now. That surfaced a residual of 73,984 - the
+per-target savings exceed the model's actual shrink by exactly one 272x272 - which
+is **reported and not yet explained.** The cut figure is sound (both ends
+measured); the per-target column should not be built on until this is chased.
+
 ### Still open
 
 - **The free gate was designed but not run.** On a trained `-o` checkpoint, split

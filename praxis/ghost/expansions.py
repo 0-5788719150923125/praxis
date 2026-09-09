@@ -13,16 +13,36 @@ hypothesis and all of its controls: the arms of the experiment are entries in
                 actual test of whether the algebra carries anything. If
                 ``algebra ~= random``, the mechanism is "fixed expansion plus a
                 learned mixer" and the algebra is decoration.
-    lowrank     the strongest published parameter-matched competitor: a plain
-                rank-r factorization at the same budget, learned end to end.
-                This is the control that makes a LOSS interpretable, and it
-                replaces the narrow-dense control, which is unavailable at a
-                gated site (halving a GLU projection's output changes the width
-                its consumer contracts for).
+    lowrank     a plain rank-r factorization at the same parameter budget.
+                **NOT a matched control - see the warning below.** Kept as a
+                reference point for what the obvious alternative costs.
+
+WHY ``lowrank`` IS NOT THE CONTROL IT LOOKS LIKE, measured rather than argued.
+Matching the parameter budget on a ``[544, 816]`` unfolded conv weight forces
+``r = 221952 / (544 + 816) = 163``, and ``163 < 544``, so the factorization is
+RANK-CAPPED at 163 of 544 while every algebra rule produces a FULL-RANK 544:
+
+    complex / random   221,952 params   rank 544
+    quaternion         110,976 params   rank 544
+    lowrank            221,680 params   rank 163
+    lowrank4           111,520 params   rank  82
+
+That is a 3.3x harsher constraint at the same budget, so an arm built on it loses
+for a reason unrelated to fixed-versus-learned structure. Low-rank is only a
+competitive parameterization when the target matrix is itself nearly low-rank,
+and a dilated conv filter bank is not. The first -r run was retired on this.
+
+AND IT SHOWS WHAT THE ALGEBRA IS ACTUALLY BUYING. ``P_k`` acts on the INPUT
+axis, not the output axis, so the ``d`` expanded blocks are NOT linear
+combinations of the ``out // d`` real rows - each block applies a different
+input-space transform, so the rows land in different coordinate arrangements and
+the stack is full rank. Output-axis mixing (which is what a low-rank factor is)
+cannot do that at any budget. Input-axis structure buys output rank; that is the
+mechanism, and it is why the honest control is another SIGNED PERMUTATION
+(``random``) rather than another compression scheme.
 
 Rank for ``lowrank`` is DERIVED from the budget the algebra rule spends, not
-tuned: the two arms are matched by construction at every shape they are applied
-to.
+tuned, so the two are parameter-matched even though they are not rank-matched.
 """
 
 from __future__ import annotations

@@ -181,6 +181,16 @@ class NeuralMemory(nn.Module):
     # (praxis/decoders/base.py); this states it once, on the class.
     MERGE_OPAQUE: bool = True
 
+    # Opt out of ghost expansion (praxis/ghost). SEPARATE from MERGE_OPAQUE on
+    # purpose: that flag is about routing granularity, and a module can be
+    # opaque to one transform and open to the other. This one is about FAST
+    # WEIGHTS. ``memory_model``'s parameters are not trained by the outer
+    # optimizer - they are rewritten by an inner Adam loop that addresses them
+    # through ``self._param_names``, captured at construction. A ghost weight is
+    # DERIVED, so there is nothing for that loop to write to, and the rename
+    # alone (``0.weight`` -> ``0.expansion.real``) breaks the lookup outright.
+    GHOST_OPAQUE: bool = True
+
     # Cadence for the readout probe (see ``_readout_delta``), in forward calls.
     # The dynamics logger reads on a far slower cadence than this module runs
     # (once per depth, per microbatch), so probing every call would compute a

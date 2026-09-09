@@ -100,7 +100,59 @@ class GhostConv1d(nn.Module):
 # Module class -> wrapper. A type not listed here is never ghosted, which is
 # what keeps a broad target profile from silently reaching something whose
 # forward the wrapper does not reproduce.
+
+
+
+class GhostEmbedding(nn.Module):
+    """``nn.Embedding`` with a derived weight.
+
+    The expansion works on ``[out, in]``, and for a lookup table that means
+    ``out = num_embeddings``: rows ``0..num//d`` are real and the rest are signed
+    permutations of them along the FEATURE axis. Read plainly, the back half of
+    the table is a fixed re-coding of the front half. That is a strong tying and
+    it is meant to be - the broad profiles exist to find out where it survives.
+
+    ``max_norm`` and ``sparse`` are refused rather than silently mishandled:
+    ``max_norm`` renormalizes the weight IN PLACE, which a derived tensor cannot
+    honour, and a sparse gradient on an expanded weight has no meaning because
+    every real row feeds ``d`` looked-up rows.
+    """
+
+    def __init__(
+        self, base: nn.Embedding, factory: ExpansionFactory, tag: str = ""
+    ) -> None:
+        super().__init__()
+        if base.max_norm is not None:
+            raise ValueError("max_norm embeddings are not a ghost target")
+        if base.sparse:
+            raise ValueError("sparse embeddings are not a ghost target")
+        self.num_embeddings = base.num_embeddings
+        self.embedding_dim = base.embedding_dim
+        self.padding_idx = base.padding_idx
+        self.scale_grad_by_freq = base.scale_grad_by_freq
+        self.expansion = factory(tuple(base.weight.shape), tag)
+
+    @property
+    def weight(self) -> Tensor:
+        return self.expansion()
+
+    def forward(self, x: Tensor) -> Tensor:
+        return F.embedding(
+            x,
+            self.expansion(),
+            self.padding_idx,
+            None,
+            2.0,
+            self.scale_grad_by_freq,
+            False,
+        )
+
+    def extra_repr(self) -> str:
+        return f"{self.num_embeddings}, {self.embedding_dim}"
+
+
 WRAPPERS: dict[type, Callable[..., nn.Module]] = {
     nn.Linear: GhostLinear,
     nn.Conv1d: GhostConv1d,
+    nn.Embedding: GhostEmbedding,
 }

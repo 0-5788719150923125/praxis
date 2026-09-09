@@ -157,12 +157,13 @@ def assemble_model(cfg, config) -> ModelBundle:
         # before the lazy-init forward: the wrappers must be the modules those
         # two passes actually see, or the derived weight is left in the build
         # dtype while everything around it moved.
+        # Measured on BOTH sides of the pass. Lazy parameters (the Servant
+        # activations) have no shape until the dummy forward below, so they are
+        # excluded from both counts rather than counted as zero.
+        _pre_ghost = _materialized_numel(model)
         ghost_stats = ghostify(model, getattr(config, "ghost_type", "none"))
         if ghost_stats.targets:
-            # Lazy parameters (the Servant activations) have no shape until the
-            # dummy forward below, so they are excluded rather than counted as
-            # zero; the [GHOST] total is a count of what is materialized here.
-            print(ghost_stats.describe(_materialized_numel(model)))
+            print(ghost_stats.describe(_pre_ghost, _materialized_numel(model)))
         model = cast_module(model, profile)
         initialize_lazy_modules(model, cfg.device)
         model = cast_module(model, profile)

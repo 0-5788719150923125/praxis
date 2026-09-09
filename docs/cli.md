@@ -61,7 +61,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, dual_act, arc, poly, scatter, kan, peer, peer_glu, peer_dual, peer_split, eml_tree, spline) |
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
-| `--ghost-type` | str | `none` | Ghost-feature profile: replace the matched weights with a half-size real tensor expanded back to full shape by a fixed signed permutation (default none = every weight is stored) (choices: none, conv_complex, conv_quaternion, conv_random, conv_lowrank) |
+| `--ghost-type` | str | `none` | Ghost-feature profile: replace the matched weights with a half-size real tensor expanded back to full shape by a fixed signed permutation (default none = every weight is stored) (choices: none, mtp_complex, mtp_random, all_complex, all_quaternion, all_random, all_greedy_complex, conv_complex, conv_quaternion, conv_random, conv_lowrank) |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
 | `--head-size` | int | `None` | Specify the inner head dimension |
