@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ACT2FN
+from praxis.activations import build_activation
 from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 
@@ -64,7 +64,7 @@ class AttentionChanneler(BaseController):
         self.reducer = nn.ModuleList(
             nn.Sequential(
                 nn.Linear(hidden_size, hidden_size // 2),
-                ACT2FN["tanh"],
+                build_activation("tanh"),
                 nn.Linear(hidden_size // 2, 1),
                 nn.Softmax(dim=1),
             )
@@ -75,7 +75,7 @@ class AttentionChanneler(BaseController):
         self.router = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, hidden_size * 2),
-            ACT2FN[config.activation],
+            build_activation(config.activation),
             nn.Dropout(config.dropout),
             nn.Linear(hidden_size * 2, self.num_experts),
         )
@@ -93,7 +93,7 @@ class AttentionChanneler(BaseController):
                 nn.Sequential(
                     nn.LayerNorm(self.num_experts),
                     nn.Linear(self.num_experts, self.channel_size // 2),
-                    ACT2FN["relu"],
+                    build_activation("relu"),
                     nn.Linear(self.channel_size // 2, self.channel_size),
                 )
                 for _ in range(self.num_layers)

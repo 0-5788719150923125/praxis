@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ACT2FN
+from praxis.activations import build_activation
 from praxis.dense import DENSE_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -327,7 +327,7 @@ class CausalGlobalContext(nn.Module):
             nn.Conv1d(in_channels, bottleneck, kernel_size=1),
             # LayerNorm needs to be applied to channel dim for conv
             nn.GroupNorm(1, bottleneck),  # equivalent to LayerNorm for conv
-            ACT2FN["periodic_relu"],
+            build_activation("periodic_relu"),
             # Second conv restores channels
             nn.Conv1d(bottleneck, in_channels, kernel_size=1),
         )

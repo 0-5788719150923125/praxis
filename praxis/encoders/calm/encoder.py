@@ -33,7 +33,7 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 from praxis.generation.decoding import (
     first_halt,
     is_halted,
@@ -594,7 +594,7 @@ class CALMEncoder(BaseEncoder):
         self.lm_tok_emb = nn.Embedding(self._output_vocab_size, config.embed_size)
         self.embed_proj = nn.Sequential(
             nn.Linear(self.K * config.embed_size, 2 * config.hidden_size),
-            ACT2CLS[config.activation](),
+            build_activation(config.activation),
             nn.Linear(2 * config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size, eps=1e-6),
         )

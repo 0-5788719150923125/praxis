@@ -6,8 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ACT2CLS, ACT2FN
+from praxis.activations import ActivationSpec, build_activation
 from praxis.dense.base import BaseDense
+from praxis.transforms import aligned_size
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -70,10 +71,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         k: Optional[int] = None,
         offset_heads: bool = False,
         sparse: bool = False,
-        act_value: Optional[str] = None,
-        act_alt: Optional[str] = None,
+        activation: Optional[ActivationSpec] = None,
+        activation_value: Optional[ActivationSpec] = None,
         glu: bool = False,
-        even_keys: bool = False,
     ):
         """
         Initialize the PEER module.
@@ -92,11 +92,20 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 expert count) - the names collide but the quantities do not.
             num_heads: independent retrieval heads. Default: config.num_heads.
             k: experts retrieved per head. Default: TOP_K, clamped to num_keys.
-            act_alt: a SECOND activation for the branch ``self.act`` drives,
-                carried by the back half of the expert BANK while the front half
-                keeps ``config.activation``. Not a width change and not an extra
-                nonlinearity - the same function slot, filled two different ways
-                depending on which expert was retrieved.
+            activation: the expert (gate) activation - a registry name or a
+                ``{type, values}`` spec. Default: ``config.activation``. A
+                mixture type here gives every expert a BANK of function classes
+                instead of one (praxis/activations/mixture.py): ``mix_split``
+                partitions the bank by expert index, freezing one class per row;
+                ``mix_gated`` blends them continuously per element. PEER passes
+                the expert's position in the bank to any mixture that asks for
+                it (``wants_keys``); everything else about the choice lives in
+                the activation.
+            activation_value: activation for the GLU expert's linear value
+                branch (``glu`` only). Default: none, i.e. the ordinary gated
+                expert. The same second SLOT ``GatedLinearMLP`` exposes, so
+                ``peer_dual`` and ``dual_act`` are the same change to two
+                different feedforwards.
             glu: if True, every expert is a gated unit rather than a rank-1
                 projection: ``up_e * (act(x . gate_e) * (x . down_e))`` instead
                 of ``up_e * act(x . down_e)``. This is the same change SwiGLU
@@ -107,10 +116,6 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 expert count shrinks by 2/3 to hold the parameter budget: the
                 comparison against ``peer`` is capacity-matched, trading expert
                 COUNT for per-expert expressiveness.
-            even_keys: round the auto-sized key count to the nearest EVEN
-                integer, making ``num_experts`` divisible by 4 so the banks can
-                carry a ghost expansion (praxis/ghost). Ignored when
-                ``num_experts`` is given explicitly.
             sparse: if True, the expert banks emit sparse gradients (only the
                 selected rows get a grad/optimizer update), which is what lets
                 `num_experts` scale without paying dense grad + optimizer state
@@ -142,24 +147,34 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 / self.rows_per_expert
                 / self.num_sets
             )
-            root = math.sqrt(budgeted_rows)
-            # Rounding to the nearest EVEN key count makes num_experts divisible
-            # by 4, which is what a ghost expansion of the banks requires: the
-            # construction needs `d` to divide BOTH axes of `[num_experts,
-            # hidden_size]`, and at hidden_size 272 the default landed on 27
-            # keys - odd by 0.07 of a rounding step - giving 729 = 3^6 experts
-            # against 272 = 2^4 * 17. gcd(729, 272) = 1, so NO d > 1 divided
-            # both and the largest bank in the model was unreachable.
+            # `aligned_size` is normally just `round`. It differs only when a
+            # ghost transform is configured broadly enough to target these banks
+            # (praxis/transforms/alignment.py), in which case it rounds to the
+            # nearest key count whose bank rows - `num_keys ** 2 * num_sets` -
+            # are divisible by the expansion's `d`. The expansion needs `d` to
+            # divide BOTH axes of `[num_experts * num_sets, hidden_size]`, and at
+            # hidden_size 272 the plain round landed on 27 keys, odd by 0.07 of a
+            # step, giving 729 = 3^6 rows against 272 = 2^4 * 17. gcd(729, 272) =
+            # 1, so no d > 1 divided both and the largest tensor group in the
+            # model was unreachable for want of one key.
             #
-            # Still derived, not tuned: it is the same sqrt of the same budget,
-            # rounded to a different lattice, and it generalizes at every width
-            # (272 -> 26, 284 -> 28, 512 -> 36, 1024 -> 52). The cost at 272 is
-            # 676 experts instead of 729, a 7.3% bank reduction and 0.63% of the
+            # Still derived, not tuned: the same sqrt of the same budget, rounded
+            # onto a different lattice, and it generalizes at every width (272 ->
+            # 26, 284 -> 28, 512 -> 36, 1024 -> 52). The cost at 272 is 676
+            # experts instead of 729, a 7.3% bank reduction and 0.63% of the
             # model, which is why this is preferred over moving hidden_size:
             # widening to 284 would also work but changes EVERY tensor in the
             # model and invalidates comparison against any existing baseline.
-            self.num_keys: int = (
-                max(2, 2 * round(root / 2)) if even_keys else max(2, round(root))
+            #
+            # Asking rather than taking a flag is what keeps ONE registry entry
+            # per arm. `peer_split_even` / `peer_mix_even` existed only to pass
+            # `even_keys=True`, so every arm needed a ghost-shaped twin that
+            # differed by nothing an experiment cares about.
+            self.num_keys: int = aligned_size(
+                config,
+                math.sqrt(budgeted_rows),
+                extent=lambda keys: keys**2 * self.num_sets,
+                minimum=2,
             )
         else:
             assert (
@@ -183,9 +198,12 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         self.hidden_size: int = hidden_size
         self.sparse: bool = sparse
-        # Second activation for the GLU value branch (default: identity,
-        # i.e. unchanged behaviour). Named by a profile as `act_value`.
-        self.act_value: nn.Module = ACT2CLS[act_value]() if act_value else nn.Identity()
+        # Second activation for the GLU value branch (default: identity, i.e.
+        # unchanged behaviour). A SLOT, not a bank - see GatedLinearMLP, which
+        # exposes the same one on the dense path.
+        self.act_value: nn.Module = (
+            build_activation(activation_value) if activation_value else nn.Identity()
+        )
 
         # No parity constraint on hidden_size. Every use of it here is a
         # projection width, never a split: the `2` throughout is the
@@ -260,38 +278,20 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             if glu
             else None
         )
-        self.act = ACT2FN[config.activation]
-        # A second activation for the SAME function slot, carried by the back
-        # half of the bank. The split is keyed on the EXPERT INDEX, and the two
-        # alternatives are both worse:
+        self.act = build_activation(activation or config.activation)
+        # THE ACTIVATION MAY WANT THE EXPERT INDEX. An earlier version of this
+        # module carried an `act_alt` flag that split the bank in half and gave
+        # each half its own activation, keyed on the expert index. That logic
+        # now lives in `ActivationMixture` (praxis/activations/mixture.py) as
+        # the `keyed` mode, generalized to N segments, so PEER's only remaining
+        # job is to hand it the one quantity it cannot know: WHERE in the bank
+        # each element came from.
         #
-        #   the k axis is RANK. `topk` returns descending, so index j is the
-        #   j-th best-scoring expert for that token. Splitting there would hand
-        #   one activation the high-scoring experts systematically.
-        #   the head axis is not a property of the expert. With `offset_heads`
-        #   False - the default, and what every config here uses - all heads
-        #   share ONE bank, so expert 17 would be periodic when head 0 retrieved
-        #   it and non-periodic when head 2 did. The same row would be trained
-        #   under two different functions. (It is also unavailable at
-        #   `num_heads: 1`, which is this line's actual setting.)
-        #
-        # Keyed on the index, the function class is a persistent property of a
-        # bank row: an expert trains under one activation for the whole run and
-        # specializes into it. `% num_experts` makes that hold per-set under
-        # `offset_heads` too, rather than giving set 0 one class and set 1 the
-        # other.
-        #
-        # WHY THIS IS NOT `act_value`. `act_value` fills the GLU's empty LINEAR
-        # slot, adding a nonlinearity every channel then has to pass through
-        # (`peer_dual`). This one replaces `self.act` for half the experts and
-        # adds nothing: total nonlinear depth is unchanged, and the GLU's linear
-        # branch survives. Cheaper hypothesis, and separable from that one.
-        self.act_alt = ACT2FN[act_alt] if act_alt else None
-        # Front half keeps `config.activation`; the test is `index >= split`, so
-        # an odd bank hands the alternate the extra expert (289 -> 144/145). The
-        # split is a ratio, not a contract, and one row out of hundreds is not
-        # worth an assert or a rounding rule.
-        self.act_split: int = self.num_experts // 2
+        # This is plumbing, not selection. Nothing here decides which function
+        # an expert gets, or how many there are, or whether the split is
+        # discrete at all - swap `mix_split` for `mix_gated` and the same
+        # call site routes continuously instead.
+        self._keyed: bool = getattr(self.act, "wants_keys", False)
         self.dropout = nn.Dropout(config.dropout)
         self.up = nn.EmbeddingBag(
             self.num_experts * self.num_sets, hidden_size, mode="sum", sparse=sparse
@@ -354,11 +354,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             f"num_experts={self.num_experts}, num_keys={self.num_keys}, "
             f"key_dims={self.key_dims}, num_heads={self.num_heads}, k={self.k}, "
             f"expert={'glu' if self.glu else 'rank1'}, "
-            + (
-                f"act_split={self.act_split}/{self.num_experts - self.act_split} experts, "
-                if self.act_alt is not None
-                else ""
-            )
+            + ("act=keyed_by_expert, " if self._keyed else "")
             + f"projection={'gather' if self._gathers() else 'dense'}"
         )
 
@@ -398,32 +394,34 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         return projected.gather(-1, indices.reshape(b, n, -1)).view_as(indices)
 
     def _activate(self, projected: Tensor, indices: Tensor) -> Tensor:
-        """Apply the expert activation to ``[b, n, h, k]``, split by expert.
+        """Apply the expert activation to ``[b, n, h, k]``, handing it the key.
 
-        With no ``act_alt`` this is just ``self.act``. With one, an element takes
-        the alternate iff the expert it came from lives in the back half of the
-        bank, so the shape and the ordering are untouched and everything
-        downstream is unaware a split happened.
+        The key is the expert's position in the bank as a FRACTION, which is the
+        contract ``ActivationMixture`` asks for - it owns the index space, we
+        own the partition of it. ``% num_experts`` makes that per-set under
+        ``offset_heads``, so set 0 and set 1 are partitioned the same way rather
+        than one landing entirely in one segment.
 
-        BOTH activations are evaluated on the whole tensor and one is then
-        selected, because the mask is data-dependent and ragged - a token's
-        eight retrieved experts are an arbitrary mix of the two halves, so there
-        is no contiguous slice to hand each branch. The cost is one extra
-        elementwise pass over ``[b, n, h, k]``, which at ``h*k`` in the tens is
-        nothing; gradients still reach only the selected elements.
+        Keyed on the expert index rather than on the two axes that are also
+        available here, and both alternatives are worse:
 
-        The consequence worth naming is for STATEFUL activations. ``Servant``
-        standardizes against running statistics of live token energy, and here
-        that energy is reduced over the full retrieved set rather than over its
-        own experts. That is a consistent, population-level reference rather
-        than a mismatched one - which is the failure that actually bites
-        ([[project_energy_signal_saturation]]) - but it does mean the two
-        branches share a view of "how much is going on in this token".
+          the k axis is RANK. ``topk`` returns descending, so index j is the
+          j-th best-scoring expert for that token. Splitting there would hand
+          one activation the high-scoring experts systematically.
+          the head axis is not a property of the expert. With ``offset_heads``
+          False - the default, and what every config here uses - all heads share
+          ONE bank, so expert 17 would be periodic when head 0 retrieved it and
+          non-periodic when head 2 did. The same row would be trained under two
+          different functions. (It is also unavailable at ``num_heads: 1``,
+          which is this line's actual setting.)
+
+        Keyed on the index, the function class is a persistent property of a
+        bank row: an expert trains under one activation for the whole run and
+        specializes into it.
         """
-        if self.act_alt is None:
+        if not self._keyed:
             return self.act(projected)
-        alt = (indices % self.num_experts) >= self.act_split
-        return torch.where(alt, self.act_alt(projected), self.act(projected))
+        return self.act(projected, keys=(indices % self.num_experts) / self.num_experts)
 
     def forward(
         self,
@@ -484,10 +482,10 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # A GLU expert multiplies its activated gate by a linear branch, so the
         # activation gates the value instead of merely shaping it.
         if self.gate is not None:
-            # The value branch carries `act_value` when a profile names one -
-            # otherwise it stays linear and this is the ordinary GLU expert. Two
-            # multiplied function classes, rather than one steering a linear
-            # half; see praxis/dense/dual_act.py for the argument.
+            # The value branch carries `activation_value` when a profile names
+            # one - otherwise it stays linear and this is the ordinary GLU
+            # expert. Two multiplied function classes, rather than one steering
+            # a linear half; see GatedLinearMLP for the argument.
             outputs = self.act_value(outputs)
             outputs = (
                 self._activate(self._project(inputs, self.gate, indices), indices)

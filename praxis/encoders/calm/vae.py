@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 
 
 class HarmonicDropout(nn.Module):
@@ -67,7 +67,7 @@ class ResidualMLPBlock(nn.Module):
         super().__init__()
         self.norm = nn.RMSNorm(dim)
         self.fc1 = nn.Linear(dim, dim)
-        self.act = ACT2CLS[activation]()
+        self.act = build_activation(activation)
         self.drop = drop
         self.fc2 = nn.Linear(dim, dim)
 

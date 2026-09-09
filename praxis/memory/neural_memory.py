@@ -44,7 +44,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.func import functional_call, grad_and_value, vmap
 
-from praxis.activations import ACT2CLS
+from praxis.activations import ACT2CLS, activation_class
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -53,9 +53,7 @@ Weights = Dict[str, Tensor]
 # Reverse map from activation class -> registry name, for a readable repr.
 _ACTIVATION_NAMES = {}
 for _name, _entry in ACT2CLS.items():
-    _ACTIVATION_NAMES.setdefault(
-        _entry[0] if isinstance(_entry, tuple) else _entry, _name
-    )
+    _ACTIVATION_NAMES.setdefault(activation_class(_entry), _name)
 
 
 _log = logging.getLogger("praxis.memory")

@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ACT2FN
+from praxis.activations import build_activation
 from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -52,7 +52,7 @@ class KolmogorovArnoldNetwork(BaseDense):
         super().__init__()
         input_dim = config.hidden_size
         output_dim = config.hidden_size
-        base_activation = ACT2FN[config.activation]
+        base_activation = build_activation(config.activation)
         self.input_dim: int = input_dim
         self.output_dim: int = output_dim
         self.rbf: RadialBasisFunction = RadialBasisFunction(

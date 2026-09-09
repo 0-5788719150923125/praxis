@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.activations import ACT2CLS, ACT2FN
+from praxis.activations import build_activation
 from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -59,7 +59,7 @@ class ScatterMLP(BaseDense):
         self.mod: nn.Linear = nn.Linear(self.input_dim, self.hidden_dim)
         # Activation and dropout
         self.activation: str = activation or config.activation
-        self.act: Callable[[Tensor], Tensor] = ACT2FN[self.activation]
+        self.act: Callable[[Tensor], Tensor] = build_activation(self.activation)
         self.dropout: nn.Dropout = nn.Dropout(config.dropout)
         self.down: nn.Linear = nn.Linear(self.hidden_dim, self.input_dim)
 

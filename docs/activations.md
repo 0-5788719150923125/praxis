@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and heads.
 
-Registry: ``praxis.ACTIVATION_REGISTRY`` (35 entries)
+Registry: ``praxis.ACTIVATION_REGISTRY`` (39 entries)
 
 ## `gelu` - GELUActivation
 
@@ -120,6 +120,20 @@ https://huggingface.co/papers/1908.08681). Also visit the official repository fo
 paper: https://github.com/digantamisra98/Mish
 
 Source: `transformers.activations` (external dependency)
+
+## `mix`, `mix_affine`, `mix_gated`, `mix_split` - ActivationMixture
+
+Blend a bank of activations into a single activation module. Declared as a type plus
+its values, e.g. ``{type: mix_split, values: [servant, swish]}``, since the bank is
+never baked into the registry name.
+
+Source: [praxis/activations/mixture.py:119](../praxis/activations/mixture.py#L119)
+
+Presets:
+- `mix` - `mode='convex', type_name='mix'`
+- `mix_affine` - `mode='affine', type_name='mix_affine'`
+- `mix_gated` - `mode='gated', type_name='mix_gated'`
+- `mix_split` - `mode='keyed', type_name='mix_split'`
 
 ## `nmda` - NMDA
 

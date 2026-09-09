@@ -34,7 +34,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 from praxis.heads.mtp.vear import _hoyer
 from praxis.normalization import NORMALIZATION_REGISTRY
 
@@ -59,7 +59,7 @@ class SerpentRNNMTPBank(nn.Module):
         self.candidate = nn.Linear(hidden + embed, hidden)
         # The harmonic nonlinearity - the same activation the codec, memory,
         # and head use.
-        self.act = ACT2CLS[config.activation]()
+        self.act = build_activation(config.activation)
         self.norm_out = NORMALIZATION_REGISTRY[config.norm_type](
             hidden, eps=config.epsilon
         )

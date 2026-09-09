@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -79,7 +79,7 @@ class ArcGLU(BaseDense):
 
         self.up: nn.Linear = nn.Linear(config.hidden_size, up_size)
         self.act: nn.ModuleList = nn.ModuleList(
-            [ACT2CLS[activation](*args, **kwargs) for _ in range(num_passes)]
+            [build_activation(activation, **kwargs) for _ in range(num_passes)]
         )
         self.dropout: nn.Dropout = nn.Dropout(config.dropout)
         self.down: nn.Linear = nn.Linear(down_size, config.hidden_size)

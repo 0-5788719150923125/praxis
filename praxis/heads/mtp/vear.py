@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 from praxis.normalization import NORMALIZATION_REGISTRY
 
 # Cyclic window width over the expert pool. 3 = your "N-1 over 4" layout; fixed
@@ -69,7 +69,7 @@ class _HarmonicExpert(nn.Module):
         )
         # The harmonic nonlinearity (serpent for abstractinator-b) - the same
         # activation the codec, memory, and head use.
-        self.act = ACT2CLS[config.activation]()
+        self.act = build_activation(config.activation)
 
     def forward(self, hidden_states: Tensor, token_embeds: Tensor, mask=None) -> Tensor:
         h = self.norm_hidden(hidden_states, mode="direct")

@@ -31,7 +31,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 from praxis.activations.serpent import Serpent
 from praxis.encoders.basis import (
     harmonic_matrix as _harmonic_matrix,
@@ -168,7 +168,7 @@ class HybridCodec(FixedCodec):
         super().__init__(*args, **kwargs)
         self.residual_net = nn.Sequential(
             nn.Linear(self.chunk_size * self.embed_dim, self.hidden_dim),
-            ACT2CLS[self.activation](),
+            build_activation(self.activation),
             nn.Linear(self.hidden_dim, self.latent_dim),
         )
         # Zero the output so z starts exactly at the fixed scaffold; the residual

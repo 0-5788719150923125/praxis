@@ -3,7 +3,6 @@ from functools import partial
 from praxis.dense.arc import ArcGLU
 from praxis.dense.base import BaseDense
 from praxis.dense.eml import EMLTree
-from praxis.dense.dual_act import DualActivationMLP
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.kan import KolmogorovArnoldNetwork
 from praxis.dense.mlp import MultiLayerPerceptron
@@ -12,10 +11,28 @@ from praxis.dense.poly import PolynomialExpansionMLP
 from praxis.dense.scatter import ScatterMLP
 from praxis.dense.spline import SplineNetwork
 
+# The two activation banks these profiles run. Written out here, next to the
+# profiles that use them, because the whole point of the `{type, values}` spec
+# is that a reader can see what a name means without opening another file.
+#
+# The line's own periodic activation against a non-periodic one, nothing else -
+# the bank PEER's expert-index split was built to test.
+SPLIT_BANK = ["servant", "swish"]
+# Periodic, non-periodic, pass-through. The pass-through matters: it lets the
+# model decline both function classes for a feature rather than being forced to
+# pick one.
+HARMONIC_BANK = ["serpent", "swish", "linear"]
+
 DENSE_REGISTRY = dict(
     mlp=MultiLayerPerceptron,
     glu=GatedLinearMLP,
-    dual_act=DualActivationMLP,
+    # A GLU with BOTH halves activated instead of one. The plain GLU multiplies
+    # an activated gate by a LINEAR value branch, so half the channels never
+    # meet a nonlinearity; this puts a non-periodic one there (gelu) against the
+    # periodic gate `config.activation` supplies. Two multiplied function
+    # classes rather than one steering a linear half. Parameter-identical to
+    # `glu` - gelu carries none.
+    dual_act=partial(GatedLinearMLP, activation_value="gelu"),
     arc=ArcGLU,
     poly=PolynomialExpansionMLP,
     scatter=ScatterMLP,
@@ -27,20 +44,17 @@ DENSE_REGISTRY = dict(
     # COUNT, not the parameter budget, so this trades bank breadth for
     # per-expert expressiveness at a matched size.
     peer_glu=partial(ParameterEfficientExpertRetrieval, glu=True),
-    # peer_glu with BOTH halves activated instead of one. The plain GLU expert
-    # multiplies an activated gate by a LINEAR value branch, so half the
-    # channels never meet a nonlinearity; this puts a non-periodic one there
-    # (gelu) against the periodic gate `config.activation` supplies. Two
-    # multiplied function classes rather than one steering a linear half - the
-    # PEER-preserving twin of `dual_act`, so an ablation against `peer_glu` is
-    # one variable and does not also swap the expert-retrieval FFN out.
-    # Parameter-identical: gelu carries no parameters.
-    peer_dual=partial(ParameterEfficientExpertRetrieval, glu=True, act_value="gelu"),
-    # peer_glu with HETEROGENEOUS gates: half the retrieval heads activate with
-    # `config.activation` (periodic, here Servant) and half with swish. Not a
-    # capacity change and not an extra nonlinearity - the GLU's linear value
-    # branch survives untouched, so this is one variable away from `peer_glu`
-    # and TWO away from `peer_dual`, which fills that linear slot instead.
+    # `dual_act`'s change applied to the PEER expert instead of the dense FFN,
+    # so an ablation against `peer_glu` is one variable and does not also swap
+    # the expert-retrieval feedforward out.
+    peer_dual=partial(
+        ParameterEfficientExpertRetrieval, glu=True, activation_value="gelu"
+    ),
+    # peer_glu with HETEROGENEOUS gates: half the expert bank activates with
+    # Servant (periodic) and half with swish. Not a capacity change and not an
+    # extra nonlinearity - the GLU's linear value branch survives untouched, so
+    # this is one variable away from `peer_glu` and TWO away from `peer_dual`,
+    # which fills that linear slot instead.
     #
     # The hypothesis it tests is coverage, not depth: `peer_dual` asked whether
     # a second function class helps when stacked on top of the first, and the
@@ -48,21 +62,33 @@ DENSE_REGISTRY = dict(
     # of whether the model wants BOTH classes available side by side, spending
     # half its periodic budget to get a non-periodic one. Parameter-identical to
     # `peer_glu` - swish carries none.
-    peer_split=partial(ParameterEfficientExpertRetrieval, glu=True, act_alt="swish"),
-    # peer_split with the key count rounded to the nearest EVEN integer, so
-    # `num_experts` is divisible by 4 and the banks - the largest single tensor
-    # group in the decoder - become reachable by a ghost expansion
-    # (praxis/ghost). At hidden_size 272 that is 676 experts instead of 729: the
-    # default rounded sqrt(725.3) up to 27, odd by 0.07 of a step, against a
-    # hidden width of 2^4 * 17, and coprime axes admit no expansion at any d.
     #
-    # NOT parameter-identical to `peer_split` - the bank shrinks 594,864 ->
-    # 551,616, i.e. 0.63% of the model - so an arm using this differs from
-    # `peer_split` by a small capacity reduction as well as by whatever it was
-    # testing. Stated because that is a confound, small and in the conservative
-    # direction, rather than a free change.
-    peer_split_even=partial(
-        ParameterEfficientExpertRetrieval, glu=True, act_alt="swish", even_keys=True
+    # The split itself is not PEER's business: `mix_split` is an
+    # `ActivationMixture` keyed on an external index, and all PEER does is hand
+    # it each element's position in the bank. The bank names `servant` outright
+    # rather than inheriting `config.activation`, so the profile means the same
+    # thing under any `--activation` (it matches abstractinator-a, which is what
+    # this line runs).
+    peer_split=partial(
+        ParameterEfficientExpertRetrieval,
+        glu=True,
+        activation={"type": "mix_split", "values": SPLIT_BANK},
+    ),
+    # The CONTINUOUS arm against `peer_split`'s discrete one. Both ask whether
+    # the model wants more than one function class available; `peer_split`
+    # answers by freezing a class onto each half of the bank at init, this one
+    # by letting every element blend between them and re-decide per token. Same
+    # module, same bank size, different coefficient source - so the pair is a
+    # one-variable ablation rather than two experiments.
+    #
+    # NOT parameter-identical to `peer_glu`: the gate carries 2N scalars per
+    # mixture (6 here) and Serpent's per-feature spectrum is materialized inside
+    # the bank rather than at the top level. Both are rounding error against the
+    # bank, but they are not zero.
+    peer_mix=partial(
+        ParameterEfficientExpertRetrieval,
+        glu=True,
+        activation={"type": "mix_gated", "values": HARMONIC_BANK},
     ),
     eml_tree=EMLTree,
     spline=SplineNetwork,

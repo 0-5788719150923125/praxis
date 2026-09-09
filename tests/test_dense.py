@@ -43,8 +43,14 @@ def test_forward_pass(module_setup):
 
 
 def test_dual_act_multiplies_two_activated_halves():
-    """Not a GLU: both halves are nonlinear and they multiply. Parameter count
-    must match GatedLinearMLP so a swap is a clean one-variable change."""
+    """`dual_act` fills the GLU's empty LINEAR slot, so both halves are
+    nonlinear and they multiply.
+
+    It is a parameter on `GatedLinearMLP` rather than a class of its own, so
+    this also pins the thing that makes that legitimate: a plain `glu` must be
+    byte-for-byte unchanged, and the two must match on parameter count so a swap
+    between them is a clean one-variable change.
+    """
     import torch
     from types import SimpleNamespace
     from praxis.dense import DENSE_REGISTRY
@@ -65,13 +71,14 @@ def test_dual_act_multiplies_two_activated_halves():
     y.pow(2).mean().backward()
     assert y.shape == x.shape
     assert all(p.grad is not None for p in dual.parameters())
-    # The gate half is genuinely activated, unlike a GLU's linear branch.
-    assert not isinstance(dual.act_gate, torch.nn.Identity)
-    assert type(dual.act_gate) is not type(dual.act)
+    # The value half is genuinely activated, unlike a GLU's linear branch.
+    assert isinstance(glu.act_value, torch.nn.Identity)
+    assert not isinstance(dual.act_value, torch.nn.Identity)
+    assert type(dual.act_value) is not type(dual.act)
 
 
 def test_peer_glu_value_branch_defaults_to_identity():
-    """`act_value` is opt-in: without it, peer_glu is byte-for-byte the old
+    """`activation_value` is opt-in: without it, peer_glu is byte-for-byte the old
     behaviour, so every config written before it is unaffected."""
     import torch
     from types import SimpleNamespace
@@ -97,66 +104,56 @@ def test_peer_glu_value_branch_defaults_to_identity():
         plain(torch.zeros(1, 4, 64))
     assert isinstance(plain.act_value, torch.nn.Identity)
     torch.manual_seed(0)
-    dual = DENSE_REGISTRY["peer_glu"](cfg, act_value="gelu")
+    dual = DENSE_REGISTRY["peer_glu"](cfg, activation_value="gelu")
     with torch.no_grad():
         dual(torch.zeros(1, 4, 64))
     x = torch.randn(2, 16, 64)
     assert not torch.allclose(plain(x), dual(x), atol=1e-6)
 
 
-def test_peer_split_activates_bank_halves_differently():
-    """`act_alt` splits the expert BANK, not the head or rank axis, and does so
-    without changing capacity.
-
-    Four things are asserted together because each alone would pass for a wrong
-    reason: parameter parity alone would pass if `act_alt` were ignored, and a
-    plain "output differs" alone would pass if it had swapped the activation for
-    every expert. The last two are the ones that pin the split - forcing both
-    slots to the same function must reproduce `peer_glu` exactly, and the split
-    must survive `num_heads: 1`, which is what this line's configs actually run
-    and what rules the head axis out.
-
-    The base activation is gelu rather than silu on purpose: `swish` and `silu`
-    are the SAME function under two registry keys, so a silu base would make the
-    split a genuine no-op and the difference assertion would fail for a reason
-    that says nothing about the code.
-    """
+def _peer_cfg(num_heads=4):
     from types import SimpleNamespace
 
+    return SimpleNamespace(
+        hidden_size=64,
+        activation="gelu",
+        epsilon=1e-5,
+        dropout=0.0,
+        num_experts=4,
+        num_heads=num_heads,
+        k=8,
+        num_queries=1,
+        head_size=32,
+        block_size=64,
+        depth=6,
+        num_layers=1,
+        transform_type="none",
+    )
+
+
+def test_peer_split_partitions_the_bank_by_expert():
+    """`peer_split` still splits the expert BANK, now through a `keyed`
+    mixture rather than PEER-local logic.
+
+    Three things together, because each alone passes for a wrong reason: the
+    activation slot has to hold a keyed mixture (not a silently-ignored kwarg),
+    the output has to differ from `peer_glu`, and the GLU's linear value branch
+    has to survive - otherwise this is `peer_dual` wearing a different name.
+    """
+    from praxis.activations.mixture import ActivationMixture
     from praxis.dense import DENSE_REGISTRY
 
-    def cfg(num_heads):
-        return SimpleNamespace(
-            hidden_size=64,
-            activation="gelu",
-            epsilon=1e-5,
-            dropout=0.0,
-            num_experts=4,
-            num_heads=num_heads,
-            k=8,
-            num_queries=1,
-            head_size=32,
-            block_size=64,
-            depth=6,
-            num_layers=1,
-        )
+    torch.manual_seed(0)
+    plain = DENSE_REGISTRY["peer_glu"](_peer_cfg())
+    torch.manual_seed(0)
+    split = DENSE_REGISTRY["peer_split"](_peer_cfg())
 
-    def build(name, num_heads=4, **kw):
-        torch.manual_seed(0)
-        return DENSE_REGISTRY[name](cfg(num_heads), **kw)
-
-    plain = build("peer_glu")
-    split = build("peer_split")
-
-    # A bank-half partition, and the GLU's linear value branch is untouched - so
-    # this is not `peer_dual` wearing a different name.
-    assert split.act_split == split.num_experts // 2
+    assert isinstance(split.act, ActivationMixture)
+    assert split.act.type_name == "mix_split" and split.act.wants_keys
+    # The bank is named by the profile, not inherited from `config.activation`,
+    # so `peer_split` means the same thing under any `--activation`.
+    assert split.act.names == ("servant", "swish")
     assert isinstance(split.act_value, torch.nn.Identity)
-
-    def count(m):
-        return sum(p.numel() for p in m.parameters())
-
-    assert count(plain) == count(split), "swish carries no parameters"
 
     x = torch.randn(2, 16, 64)
     plain.eval()
@@ -164,17 +161,10 @@ def test_peer_split_activates_bank_halves_differently():
     with torch.no_grad():
         assert not torch.allclose(plain(x), split(x), atol=1e-6)
 
-    # Same function in both slots == no split at all. If `_activate` masked on
-    # the wrong axis or misaligned the mask against `projected`, this is where
-    # it shows.
-    identical = build("peer_glu", act_alt="gelu")
-    identical.eval()
-    with torch.no_grad():
-        assert torch.allclose(plain(x), identical(x), atol=1e-6)
-
     # The configs in this line run `num_heads: 1`. A head-axis split would be
     # impossible there; an expert-index split is not.
-    single = build("peer_split", num_heads=1)
+    torch.manual_seed(0)
+    single = DENSE_REGISTRY["peer_split"](_peer_cfg(num_heads=1))
     single.eval()
     with torch.no_grad():
         assert single(x).shape == (2, 16, 64)
@@ -186,9 +176,86 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
     Retrieval order is score order, so a k-axis split would hand one activation
     the high-scoring experts systematically; and with `offset_heads` False every
     head shares one bank, so a head-axis split would train the same row under
-    two different functions. This asserts the mask is built from the expert
+    two different functions. This asserts the partition is built from the expert
     index and therefore agrees with itself across heads and ranks.
+
+    Asserted on the one-hot partition rather than on activation OUTPUTS,
+    because `mix_split`'s periodic branch (Servant) carries per-feature
+    parameters and legitimately produces a different value per slot - an output
+    comparison would fail for a reason that says nothing about the split.
     """
+    from praxis.dense import DENSE_REGISTRY
+
+    torch.manual_seed(0)
+    m = DENSE_REGISTRY["peer_split"](_peer_cfg())
+
+    # The same expert, reached from two different (head, rank) slots, must take
+    # the same branch. Constructing indices directly isolates the partition
+    # from retrieval.
+    front, back = 0, m.num_experts - 1
+    indices = torch.tensor([[[[front, back] * 4] * 4]])  # [1, 1, 4, 8]
+    weights = m.act._partition((indices % m.num_experts) / m.num_experts)
+
+    took_front = weights[..., 0::2, :]
+    took_back = weights[..., 1::2, :]
+    assert (took_front == took_front[..., :1, :]).all()
+    assert (took_back == took_back[..., :1, :]).all()
+    assert not torch.equal(took_front[..., 0, :], took_back[..., 0, :])
+
+    # And the shape is untouched, so nothing downstream is aware of the split.
+    projected = torch.ones_like(indices, dtype=torch.float32)
+    assert m._activate(projected, indices).shape == indices.shape
+
+
+def test_peer_mix_routes_through_an_activation_bank():
+    """`peer_mix` is `peer_glu` with a MIXTURE in the activation slot.
+
+    Four things together, because each alone passes for a wrong reason: the
+    slot has to actually hold the wrapper (not a silently-ignored kwarg), the
+    output has to differ from `peer_glu`, the GLU's linear value branch has to
+    survive (or this is `peer_dual` wearing a different name), and it has to
+    work at `num_heads: 1`, which is what the configs in this line run.
+
+    The base activation is gelu rather than silu on purpose: `swish` and `silu`
+    are the SAME function under two registry keys, so a silu base would make one
+    bank entry a duplicate and weaken the difference assertion.
+    """
+    from types import SimpleNamespace
+
+    from praxis.activations.mixture import ActivationMixture
+    from praxis.dense import DENSE_REGISTRY
+
+    def build(name, num_heads=4, **kw):
+        torch.manual_seed(0)
+        return DENSE_REGISTRY[name](_peer_cfg(num_heads), **kw)
+
+    plain = build("peer_glu")
+    mixed = build("peer_mix")
+
+    assert isinstance(mixed.act, ActivationMixture)
+    # Continuous, not the `keyed` partition `peer_split` runs - that is the one
+    # variable between the two arms.
+    assert mixed.act.type_name == "mix_gated" and not mixed.act.wants_keys
+    # The GLU's linear value branch is untouched: nonlinear DEPTH is unchanged,
+    # only the function class in the existing slot.
+    assert isinstance(mixed.act_value, torch.nn.Identity)
+
+    x = torch.randn(2, 16, 64)
+    plain.eval()
+    mixed.eval()
+    with torch.no_grad():
+        assert not torch.allclose(plain(x), mixed(x), atol=1e-6)
+
+    single = build("peer_mix", num_heads=1)
+    single.eval()
+    with torch.no_grad():
+        assert single(x).shape == (2, 16, 64)
+
+
+def test_peer_activation_override_defaults_to_config():
+    """The `activation` override is opt-in. Without it PEER reads
+    `config.activation`, so every config written before the override is
+    unaffected."""
     from types import SimpleNamespace
 
     from praxis.dense import DENSE_REGISTRY
@@ -208,18 +275,12 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
         num_layers=1,
     )
     torch.manual_seed(0)
-    m = DENSE_REGISTRY["peer_split"](cfg)
+    default = DENSE_REGISTRY["peer_glu"](cfg)
+    torch.manual_seed(0)
+    explicit = DENSE_REGISTRY["peer_glu"](cfg, activation="gelu")
 
-    # Same expert, reached from two different (head, rank) slots, must take the
-    # same branch. Constructing indices directly is the point: it isolates
-    # `_activate` from retrieval.
-    e_front, e_back = 0, m.num_experts - 1
-    indices = torch.tensor([[[[e_front, e_back] * 4] * 4]])  # [1, 1, 4, 8]
-    projected = torch.full_like(indices, 1, dtype=torch.float32)
-    out = m._activate(projected, indices)
-
-    front = out[..., 0::2]
-    back = out[..., 1::2]
-    assert torch.allclose(front, front[..., :1].expand_as(front))
-    assert torch.allclose(back, back[..., :1].expand_as(back))
-    assert not torch.allclose(front[..., 0], back[..., 0])
+    x = torch.randn(2, 16, 64)
+    default.eval()
+    explicit.eval()
+    with torch.no_grad():
+        assert torch.allclose(default(x), explicit(x), atol=1e-6)

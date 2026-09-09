@@ -39,13 +39,15 @@ tied pair and not the other silently unties them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.transforms.ghost import ghost_parameter, pick_algebra
+from praxis.transforms.algebra import ALGEBRAS
+from praxis.transforms.alignment import align_axis
+from praxis.transforms.ghost import AUTO_ORDER, ghost_parameter, pick_algebra
 from praxis.transforms.targeting import TargetSpec
 
 __all__ = [
@@ -53,7 +55,9 @@ __all__ = [
     "MIN_TARGET_NUMEL",
     "TransformProfile",
     "TransformStats",
+    "aligned_size",
     "apply_transform",
+    "block_alignment",
 ]
 
 
@@ -71,6 +75,12 @@ class TransformProfile:
     # Spare tensors with a `vocab_size` dimension. False only where tying the
     # readout IS the experiment.
     skip_vocab: bool = True
+    # Let modules that DERIVE one of their own dimensions round it to a lattice
+    # this profile's `d` divides, by consulting `aligned_size` at construction
+    # (praxis/transforms/alignment.py). Only for profiles broad enough to
+    # actually reach those modules: a site-specific profile must leave every
+    # other site's arithmetic exactly as its baseline had it.
+    request_alignment: bool = False
 
 
 # The encoder ConvBlock stack: `RMSNorm -> Conv1d(d, 2d) -> GLU -> proj`, so the
@@ -93,15 +103,61 @@ TRANSFORM_REGISTRY: Dict[str, TransformProfile] = {
     "ghost_conv_random": TransformProfile(_CONV, "complex", randomize=True),
     "ghost_mtp_complex": TransformProfile(_MTP, "complex"),
     "ghost_mtp_random": TransformProfile(_MTP, "complex", randomize=True),
-    "ghost_all_complex": TransformProfile(_ALL, "complex"),
-    "ghost_all_quaternion": TransformProfile(_ALL, "quaternion"),
-    "ghost_all_random": TransformProfile(_ALL, "complex", randomize=True),
+    # The broad profiles, and the only ones that ask auto-sized modules to round
+    # their derived dimensions onto a compatible lattice - see `request_alignment`
+    # above and praxis/transforms/alignment.py. They target everything, so they
+    # are the ones for which such a module IS a target.
+    "ghost_all_complex": TransformProfile(_ALL, "complex", request_alignment=True),
+    "ghost_all_quaternion": TransformProfile(
+        _ALL, "quaternion", request_alignment=True
+    ),
+    "ghost_all_random": TransformProfile(
+        _ALL, "complex", randomize=True, request_alignment=True
+    ),
     # Deepest cut each tensor admits. Maximizes coverage; costs attribution,
     # because a difference could be the algebra or the depth.
-    "ghost_all_auto": TransformProfile(_ALL, "auto"),
+    "ghost_all_auto": TransformProfile(_ALL, "auto", request_alignment=True),
     # Spares nothing, readout included. Expect the LM head to be what breaks.
-    "ghost_all_greedy_complex": TransformProfile(_ALL, "complex", skip_vocab=False),
+    "ghost_all_greedy_complex": TransformProfile(
+        _ALL, "complex", skip_vocab=False, request_alignment=True
+    ),
 }
+
+
+def block_alignment(config: object) -> int:
+    """Block count the configured profile will need to divide each targeted axis by.
+
+    1 - no request - when no transform is configured, when the name is unknown
+    (``apply_transform`` is the one place that should raise on a bad profile name,
+    and it does), or when the profile is site-specific: those name their site, and
+    resizing anything else would stop the run being one change off its baseline.
+
+    ``auto`` reports the DEEPEST cut in ``AUTO_ORDER`` rather than the shallowest.
+    Nothing is lost by asking for the larger: an axis divisible by 4 is divisible
+    by 2, so the shallower algebras stay available, and `pick_algebra` walks the
+    same order to prefer the deep one where it now fits.
+    """
+    entry = TRANSFORM_REGISTRY.get(getattr(config, "transform_type", "none"))
+    if entry is None or not entry.request_alignment:
+        return 1
+    names = AUTO_ORDER if entry.algebra == "auto" else (entry.algebra,)
+    return max(len(ALGEBRAS[name][0]) for name in names)
+
+
+def aligned_size(
+    config: object,
+    value: float,
+    extent: Optional[Callable[[int], int]] = None,
+    minimum: int = 1,
+) -> int:
+    """Round a DERIVED dimension onto a lattice the configured transform can use.
+
+    The whole interface a self-sizing module needs. It replaced an ``even_keys``
+    constructor flag and the duplicate registry profiles that existed to pass it;
+    see praxis/transforms/alignment.py for why the request is pulled rather than
+    pushed, and for what it deliberately does not buy.
+    """
+    return align_axis(value, block_alignment(config), extent=extent, minimum=minimum)
 
 
 @dataclass

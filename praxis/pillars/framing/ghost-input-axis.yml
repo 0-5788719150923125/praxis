@@ -11,8 +11,8 @@ requires:
 body: >
   One of the ways that structure substitutes for parameters is worth stating
   precisely, because it is easy to mistake for compression. The construction
-  used here is the one \citet{vieiraneto2026ghost} introduce as \emph{ghost
-  features}, and we keep their term for it: it stores a tensor of $1/d$ the size and derives the
+  used here is the one introduced as \emph{ghost features} by Vieira Neto and
+  Valle \cite{vieiraneto2026ghost}, and we keep their term for it: it stores a tensor of $1/d$ the size and derives the
   remaining $d-1$ blocks from it by fixed signed permutation. Every structure
   matrix of a non-degenerate hypercomplex algebra is such a permutation, so the
   construction needs no algebraic arithmetic at all: it is an index gather and a

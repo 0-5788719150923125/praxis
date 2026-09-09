@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.activations import ACT2FN
+from praxis.activations import build_activation
 from praxis.dense.base import BaseDense
 from praxis.dense.kan import SplineLinear
 
@@ -69,7 +69,7 @@ class SplineNetwork(BaseDense):
         )
         self.use_base_update: bool = use_base_update
         if use_base_update:
-            self.base_activation = ACT2FN[config.activation]
+            self.base_activation = build_activation(config.activation)
             self.base_linear = nn.Linear(dim, dim)
 
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:

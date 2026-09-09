@@ -3,7 +3,7 @@ from typing import Any, Optional, TypeVar
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.activations import ACT2CLS
+from praxis.activations import build_activation
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -35,7 +35,7 @@ class MultiLayerPerceptron(nn.Sequential):
         for i in range(num_layers):
             layers.append(nn.Linear(widths[i], widths[i + 1]))
             if i < num_layers - 1:
-                layers.append(ACT2CLS[activation]())
+                layers.append(build_activation(activation))
                 layers.append(nn.Dropout(config.dropout))
 
         super().__init__(*layers)

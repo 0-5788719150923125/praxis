@@ -136,11 +136,12 @@ def _activation_modules(root) -> Iterator:
     Activations are called as a bare ``act(x)`` and have no loss hook, so a
     module walk is the only way to reach them. ``nn.Module`` defines no
     ``training_metrics``, so the attribute check alone selects the opted-in
-    ones (currently Servant); the rest of the registry is skipped.
+    ones (currently Servant and ActivationMixture); the rest of the registry is
+    skipped.
     """
-    from praxis.activations import ACT2CLS
+    from praxis.activations import activation_classes
 
-    classes = tuple({v[0] if isinstance(v, tuple) else v for v in ACT2CLS.values()})
+    classes = activation_classes()
     for module in root.modules():
         if isinstance(module, classes) and hasattr(module, "training_metrics"):
             yield module

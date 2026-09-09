@@ -777,15 +777,36 @@ voided the first -r run, where the init was reproduced by hand at 0.045x.
 construction needs `d` to divide BOTH axes. PEER auto-sized to
 `round(sqrt(8*272/3)) = round(26.93) = 27` keys, so `729 = 3^6` experts against
 `272 = 2^4 * 17`, and **gcd(729, 272) = 1** - no `d > 1` divided both. Fixed in
-PEER, not in ghost: `even_keys` rounds the same sqrt of the same budget to the
-nearest EVEN integer, giving 26 keys and 676 experts, divisible by 2 and 4. Still
+PEER, not in ghost: the same sqrt of the same budget, rounded to the nearest key
+count whose bank rows divide by `d`, giving 26 keys and 676 experts. Still
 derived, generalizes at every width (272 -> 26, 284 -> 28, 512 -> 36, 1024 -> 52),
 and costs 7.3% of the bank (0.63% of the model) against widening `hidden_size` to
 284, which would also work but changes every tensor and invalidates the baseline.
-`peer_split_even` is the profile. All three banks including the `EmbeddingBag`
-are now ghosted - the earlier claim that `mode='sum'` adds rows "before a per-row
-flip could reach them" was **wrong**: the expansion materializes the full weight
-before the bag reduction.
+All three banks including the `EmbeddingBag` are now ghosted - the earlier claim
+that `mode='sum'` adds rows "before a per-row flip could reach them" was
+**wrong**: the expansion materializes the full weight before the bag reduction.
+
+**The rounding is REQUESTED, not passed.** The first version was an `even_keys`
+constructor flag plus a duplicate dense profile per arm to set it
+(`peer_split_even`, `peer_mix_even`) - a ghost implementation detail written into
+the signature of a retrieval module, and a registry that doubles every time
+another module auto-sizes. `praxis/transforms/alignment.py` inverts it: a module
+that derives one of its own dimensions calls `aligned_size(config, value,
+extent=...)` and gets back the nearest value whose resulting axis divides by the
+configured profile's `d`. Three consequences worth keeping.
+
+- One entry per arm. `peer_split` means the same thing whether or not a ghost
+  profile is configured, and `-u` is now literally one key off `-q` where before
+  it also overrode `ffn_type`.
+- Only BROAD profiles are answered (`request_alignment` on the profile, set on
+  the four `ghost_all_*`). A site-specific profile like `ghost_conv_complex` must
+  leave every other site's arithmetic exactly as its baseline had it - verified:
+  `-o` and `-q` both still build 729 experts, and only `ghost_all_*` moves them
+  to 676.
+- Requests are advisory. `align_axis` returns the unaligned value when no nearby
+  lattice satisfies `d`, and the `[GHOST]` block then reports the tensor as
+  `indivisible`. Granting the row axis is also not a guarantee: `d` still has to
+  divide `hidden_size`, which belongs to the config.
 
 **Cyclic algebras added.** `R[Z/d]` for any `d`: `PERM[k][p] = (k-p) mod d`, all
 signs `+1`, permutation matrices so non-degenerate at every `d`. Hurwitz limits

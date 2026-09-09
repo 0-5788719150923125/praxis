@@ -13,7 +13,7 @@ import torch.nn as nn
 from flask import Blueprint, current_app, jsonify, request, send_file
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import ACT2CLS
+from praxis.activations import activation_classes
 from praxis.metrics import DYNAMICS_CHART_REGISTRY, get_metric_descriptions
 from praxis.web.app import api_logger
 from praxis.web.snapshots import probe_model, serve_snapshot
@@ -686,12 +686,14 @@ def _activation_classes() -> tuple:
     """Module subclasses we treat as activations when walking a model.
 
     ``praxis.activations.ACT2CLS`` is the canonical registry (transformers
-    stock + our custom additions). We additionally include a few stock
-    ``nn.*`` classes that the registry stores under wrapper classes (e.g.
-    transformers registers ``gelu`` -> ``GELUActivation``, not ``nn.GELU``),
-    so direct uses of ``nn.GELU`` / ``nn.Mish`` in model code are matched.
+    stock + our custom additions), and ``activation_classes()`` unwraps its
+    three entry conventions (class, ``(class, kwargs)`` tuple, ``partial``). We
+    additionally include a few stock ``nn.*`` classes that the registry stores
+    under wrapper classes (e.g. transformers registers ``gelu`` ->
+    ``GELUActivation``, not ``nn.GELU``), so direct uses of ``nn.GELU`` /
+    ``nn.Mish`` in model code are matched.
     """
-    classes = {v[0] if isinstance(v, tuple) else v for v in ACT2CLS.values()}
+    classes = set(activation_classes())
     classes.update({nn.GELU, nn.Mish})
     return tuple(classes)
 
@@ -775,6 +777,13 @@ def _sample_activation(
     # with extra leading axes - Ouroboros' per-step gate bias is [MAX_STEPS, D].
     # Using numel there asks for MAX_STEPS * D features, the forward cannot
     # broadcast, and the module silently vanishes from the chart.
+    #
+    # RECURSES, because an activation can now CONTAIN activations:
+    # ActivationMixture holds a bank of them, and its own coefficients are a
+    # length-N vector while the widest branch parameter is per-feature. Sizing
+    # the probe off the wrapper alone hands a [P, N] input to a branch expecting
+    # [P, D], the forward raises, and the mixture disappears from the chart -
+    # exactly the silent failure this function is written to avoid.
     # Cheap, deliberate skip while the module is mid-transform on the training
     # thread. Sampling it would raise, and a sample is worth nothing next to a
     # scary traceback in the log every poll.
@@ -782,7 +791,7 @@ def _sample_activation(
         return None
 
     param_dim = 1
-    for p in module.parameters(recurse=False):
+    for p in module.parameters(recurse=True):
         if p is None:
             continue
         if isinstance(p, UninitializedParameter):
@@ -962,10 +971,12 @@ def _representative_feature_index(module, param_dim: int) -> int:
     cancellation). Instead, index into a single "typical" feature so the
     plotted curve preserves the actual shape.
     """
-    for p in module.parameters(recurse=False):
+    for p in module.parameters(recurse=True):
         # Rank on true per-feature vectors only. A parameter with leading axes
         # (e.g. [MAX_STEPS, D]) would flatten to an index out of range for the
-        # D columns actually plotted.
+        # D columns actually plotted, and a wrapper's own coefficient vector
+        # (ActivationMixture) is length-N rather than length-D - both are ruled
+        # out by the width check.
         if p is None or p.dim() != 1 or p.shape[-1] != param_dim:
             continue
         sorted_idx = torch.argsort(p.detach())

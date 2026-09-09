@@ -20,7 +20,7 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, burstable, f
 
 Praxis is organized as 53 pluggable registries. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
 
-- [Activation functions](docs/activations.md) (35)
+- [Activation functions](docs/activations.md) (39)
 - [Attention mechanisms](docs/attention.md) (34)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Data sampler strategies](docs/data.md) (6)

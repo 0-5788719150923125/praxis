@@ -14,7 +14,14 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from praxis.transforms import TRANSFORM_REGISTRY, MIN_TARGET_NUMEL, apply_transform
+from praxis.transforms import (
+    TRANSFORM_REGISTRY,
+    MIN_TARGET_NUMEL,
+    aligned_size,
+    apply_transform,
+    block_alignment,
+)
+from praxis.transforms.alignment import align_axis
 from praxis.transforms.algebra import (
     ALGEBRAS,
     has_antipodal_pair,
@@ -152,8 +159,9 @@ def test_init_scale_inherits_the_host_module(shape):
 
 def test_indivisible_shapes_are_refused_not_approximated():
     """PEER's default bank is the canonical case: [729, 272] with 729 = 3^6 and
-    272 = 2^4 * 17, so gcd == 1 and NO d > 1 divides both axes. The fix is PEER's
-    key count (`even_keys`), never a padded or partial expansion here."""
+    272 = 2^4 * 17, so gcd == 1 and NO d > 1 divides both axes. The fix belongs to
+    PEER's key count, which it requests through `aligned_size` - never a padded or
+    partial expansion here."""
     assert pick_algebra(PEER_SHAPE, "auto") is None
     assert pick_algebra(PEER_SHAPE, "complex") is None
     assert pick_algebra((676, 272), "auto") in AUTO_ORDER
@@ -411,15 +419,100 @@ def test_double_ghostify_is_refused_not_stacked():
     assert not any(n in already for n, _, _, _ in stats.targets)
 
 
-def test_peer_even_keys_makes_the_banks_reachable():
-    """The whole point of `even_keys`: at hidden_size 272 the default lands on 27
-    keys, giving 729 = 3^6 experts against 272 = 2^4 * 17. Coprime, so no d > 1
-    divides both and the largest bank in the model is unreachable."""
+# --- the alignment request --------------------------------------------------
+
+
+def _peer(transform_type, profile="peer_split"):
     from praxis.dense import DENSE_REGISTRY
 
-    cfg = SimpleNamespace(hidden_size=272, num_heads=1, activation="swish", dropout=0.0)
-    default = DENSE_REGISTRY["peer_split"](cfg)
-    even = DENSE_REGISTRY["peer_split_even"](cfg)
-    assert default.num_experts == 729 and even.num_experts == 676
-    assert pick_algebra(tuple(default.down.weight.shape), "auto") is None
-    assert pick_algebra(tuple(even.down.weight.shape), "auto") is not None
+    return DENSE_REGISTRY[profile](
+        SimpleNamespace(
+            hidden_size=272,
+            num_heads=1,
+            activation="swish",
+            dropout=0.0,
+            transform_type=transform_type,
+        )
+    )
+
+
+def test_peer_requests_alignment_and_that_reaches_the_banks():
+    """The interface that replaced `even_keys`. At hidden_size 272 the plain round
+    lands on 27 keys, giving 729 = 3^6 experts against 272 = 2^4 * 17. Coprime, so
+    no d > 1 divides both axes and the largest tensor group in the model is
+    unreachable. Configuring a broad ghost profile is now the whole fix: PEER asks
+    what it needs and rounds to 26."""
+    plain = _peer("none")
+    aligned = _peer("ghost_all_complex")
+    assert plain.num_experts == 729 and aligned.num_experts == 676
+    assert pick_algebra(tuple(plain.down.weight.shape), "auto") is None
+    assert pick_algebra(tuple(aligned.down.weight.shape), "auto") is not None
+
+
+def test_site_specific_profiles_leave_other_sites_alone():
+    """A profile that names one site must not resize anything else, or the run
+    stops being one change off its baseline. `ghost_conv_complex` is -q, and -q's
+    PEER banks have to match -o's exactly."""
+    assert block_alignment(SimpleNamespace(transform_type="ghost_conv_complex")) == 1
+    assert _peer("ghost_conv_complex").num_experts == _peer("none").num_experts
+
+
+def test_every_unrestricted_profile_requests_alignment():
+    """The guard on adding a profile. A spec that matches any name reaches the
+    auto-sized modules, so it is one of the profiles they should be asking about;
+    forgetting the flag would silently leave the largest banks indivisible."""
+    for name, entry in TRANSFORM_REGISTRY.items():
+        unrestricted = entry.spec.matches("decoder.0.ffn.down") and entry.spec.matches(
+            "encoder.encoder.layers.0.conv"
+        )
+        assert unrestricted == entry.request_alignment, name
+
+
+def test_auto_requests_the_deepest_cut():
+    """`auto` walks AUTO_ORDER preferring the deepest algebra, so the request has
+    to be the deepest too - an axis divisible by 4 is divisible by 2, so asking
+    for the larger costs nothing and keeps quaternion reachable."""
+    d = block_alignment(SimpleNamespace(transform_type="ghost_all_auto"))
+    assert d == max(len(ALGEBRAS[name][0]) for name in AUTO_ORDER)
+    assert _peer("ghost_all_auto").num_experts % d == 0
+
+
+@pytest.mark.parametrize(
+    "hidden, expected", [(272, 26), (284, 28), (512, 36), (1024, 52)]
+)
+def test_alignment_generalizes_across_widths(hidden, expected):
+    """Derived, not tuned: the same sqrt of the same budget on a different lattice.
+    These are the widths the module's own comment claims, asserted rather than
+    trusted."""
+    root = math.sqrt(4 * hidden * 2 / 3)
+    assert align_axis(root, 2, lambda k: k**2, minimum=2) == expected
+
+
+def test_alignment_measures_from_the_true_derived_value():
+    """26.93 rounds to 27, and both 26 and 28 satisfy d = 2 - but 26 is nearer the
+    value the budget actually produced. Rounding first and then stepping off the
+    rounded base would pick 28 half the time."""
+    assert align_axis(26.93, 2, lambda k: k**2, minimum=2) == 26
+    assert align_axis(27.4, 2, lambda k: k**2, minimum=2) == 28
+    # No request is an ordinary round, and the floor still holds.
+    assert align_axis(26.93, 1) == 27
+    assert align_axis(1.2, 2, minimum=4) == 4
+
+
+def test_alignment_is_advisory_not_a_forced_march():
+    """A request that cannot be met comes back unaligned rather than dragging the
+    model somewhere far away, and the transform then reports the tensor as
+    indivisible in the [GHOST] block. A missed request is a log line."""
+    # An extent that is odd at every candidate: nothing satisfies d = 2.
+    assert align_axis(27.0, 2, lambda k: 2 * k + 1, minimum=2) == 27
+    # And a config carrying no `transform_type` at all is simply not asking.
+    assert aligned_size(SimpleNamespace(), 27.0) == 27
+
+
+def test_alignment_cannot_grant_the_other_axis():
+    """Granting the row axis is not the same as being ghost-eligible: `d` has to
+    divide the hidden axis too, and that one belongs to the config. cyclic3 would
+    be satisfied by 27 keys (729 = 3^6) and still refused, because 272 = 2^4 * 17.
+    Named so the request is not mistaken for a guarantee."""
+    assert align_axis(26.93, 3, lambda k: k**2, minimum=2) == 27
+    assert pick_algebra((729, 272), "cyclic3") is None
