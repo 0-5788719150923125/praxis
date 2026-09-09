@@ -65,6 +65,36 @@ ALGEBRAS: Dict[str, Tuple[Tuple[Tuple[int, ...], ...], Tuple[Tuple[int, ...], ..
 }
 
 
+def cyclic_tables(
+    d: int,
+) -> Tuple[Tuple[Tuple[int, ...], ...], Tuple[Tuple[int, ...], ...]]:
+    """The group algebra ``R[Z/d]``, for any ``d``.
+
+    ``(x . w)_k = sum_{i+j=k mod d} x_i w_j``, so ``PERM[k][p] = (k - p) mod d``
+    and every sign is ``+1``. Each ``P_k`` is a plain permutation matrix, so the
+    algebra is non-degenerate at EVERY ``d`` - which is the point of having it.
+    Hurwitz limits DIVISION algebras to d = 1, 2, 4, 8, but the paper's condition
+    is only that each ``P_k`` be non-singular (section 2.1), and a permutation
+    always is. So d is free, and can be chosen to DIVIDE THE TENSOR rather than
+    the tensor chosen to suit the algebra.
+
+    That is what unlocks shapes the named algebras cannot reach. PEER's expert
+    banks are ``[729, 272]`` and 729 = 3^6, so d = 2 and d = 4 are both
+    ineligible on the output axis while d = 3 divides it exactly.
+
+    ``d = 2`` here is the SPLIT-complex (hyperbolic) numbers, not the complex
+    ones: same permutation, all-positive signs. Kept distinct from ``complex``
+    because the sign pattern is the whole difference between them.
+    """
+    perm = tuple(tuple((k - p) % d for p in range(d)) for k in range(d))
+    sign = tuple(tuple(1 for _ in range(d)) for _ in range(d))
+    return perm, sign
+
+
+for _d in (2, 3, 4, 5, 6, 8):
+    ALGEBRAS[f"cyclic{_d}"] = cyclic_tables(_d)
+
+
 def tables(algebra: str) -> Tuple[Tensor, Tensor]:
     """``(PERM, SIGN)`` as ``[d, d]`` long / float tensors."""
     if algebra not in ALGEBRAS:

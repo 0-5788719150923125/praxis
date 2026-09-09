@@ -105,7 +105,7 @@ def assemble_model(cfg, config) -> ModelBundle:
     """Resolve the optimizer profile, build hparams, instantiate the model."""
     from transformers import AutoModelForCausalLM
 
-    from praxis.ghost import ghostify
+    from praxis.transforms import apply_transform
     from praxis.optimization import get_optimizer_profile, wrappers_disable_schedule
     from praxis.trainers.precision import cast_module, init_context
     from praxis.utils import initialize_lazy_modules
@@ -161,7 +161,7 @@ def assemble_model(cfg, config) -> ModelBundle:
         # activations) have no shape until the dummy forward below, so they are
         # excluded from both counts rather than counted as zero.
         _pre_ghost = _materialized_numel(model)
-        ghost_stats = ghostify(model, getattr(config, "ghost_type", "none"))
+        ghost_stats = apply_transform(model, getattr(config, "transform_type", "none"))
         if ghost_stats.targets:
             print(ghost_stats.describe(_pre_ghost, _materialized_numel(model)))
         model = cast_module(model, profile)

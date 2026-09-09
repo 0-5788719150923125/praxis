@@ -1,0 +1,47 @@
+# Scaling-section fragment: what a ghost expansion actually trades, stated
+# generally so it applies to any usage of praxis/ghost rather than to one site.
+# The distinguishing claim is the input-axis rank argument, which is measurable
+# and is the reason ghosting is not interchangeable with compression. Kept
+# deliberately short and free of results: no arm has yet separated the algebra
+# from the halving, and this must not read as if one had.
+section: scaling
+order: 38
+requires:
+  transform_type: ["ghost_*"]
+body: >
+  One of the ways that structure substitutes for parameters is worth stating
+  precisely, because it is easy to mistake for compression. The construction
+  used here is the one \citet{vieiraneto2026ghost} introduce as \emph{ghost
+  features}, and we keep their term for it: it stores a tensor of $1/d$ the size and derives the
+  remaining $d-1$ blocks from it by fixed signed permutation. Every structure
+  matrix of a non-degenerate hypercomplex algebra is such a permutation, so the
+  construction needs no algebraic arithmetic at all: it is an index gather and a
+  sign flip, and the only property inherited from the algebra is
+  non-degeneracy - that each $P_k$ is non-singular, which is what carries the
+  universal approximation result to any dimension $d$ rather than only to the
+  division algebras.
+
+  The distinguishing property is which axis the permutation acts on. Each $P_k$
+  permutes the \emph{input} axis in groups of $d$, so the $d$ expanded output
+  blocks are not linear combinations of the $\text{out}/d$ stored rows: each
+  block applies a different transform of the input space, and the rows land in
+  different coordinate arrangements. The expanded weight is therefore full rank.
+  A factorization spending the same budget on the output axis cannot be - matching
+  parameters on an $[\text{out}, \text{fan}]$ weight forces rank
+  $\text{params}/(\text{out} + \text{fan})$, which on this model's encoder
+  convolutions is $163$ against a full $544$. Structured tying and low-rank
+  approximation are not two settings of one dial; they occupy different rank
+  classes at identical cost, and a parameter-matched comparison between them is
+  not a rank-matched one.
+
+  That is a statement about what the parameterization can express, not a claim
+  that it helps. Two things remain unshown and are not asserted here. Whether the
+  \emph{particular} algebra matters is untested against an arbitrary frozen signed
+  permutation of the same shape and budget, which is the control that would
+  separate the algebra from the tying. And where a tensor already carries far less
+  structure than its shape allows, any cut of it is close to free, so a tie there
+  measures slack rather than mechanism - which is why the sites are chosen by
+  measured spectral occupancy rather than by size. The source paper's stronger
+  property, that the real part reproduces the original layer exactly, assumes a
+  split activation applied component-wise and does not survive a gated
+  projection; it is not relied on.

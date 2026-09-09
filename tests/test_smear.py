@@ -26,7 +26,7 @@ import torch.nn as nn
 from praxis.routers import ROUTER_REGISTRY
 from praxis.routers.smear import SMEAR, MergedLinear, _get_param
 from praxis.routers.vear import VEAR
-from praxis.routers.targeting import TARGET_PROFILES, discover_targets
+from praxis.transforms.targeting import TARGET_PROFILES, discover_targets
 
 
 class Opaque(nn.Module):
@@ -314,7 +314,7 @@ def test_wrapper_preserves_parameter_identity_and_names():
 def test_batch_mean_parametrization_is_chosen_by_shape():
     """On the batch-mean path, big 2-D tensors factor and small ones stay dense.
     Shape-derived, so there is nothing to configure per experiment."""
-    from praxis.routers.targeting import DENSE_DELTA_MAX_NUMEL
+    from praxis.transforms.targeting import DENSE_DELTA_MAX_NUMEL
 
     router, block = make()
     assert router._factored["attn_norm.weight"] is False  # 1-D

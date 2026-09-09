@@ -74,7 +74,7 @@ class PraxisConfig(PretrainedConfig):
         # the expansion rule, so the arms of the experiment (algebra vs
         # frozen-random vs parameter-matched low-rank) are one key.
         # See praxis/ghost/__init__.py. "none" = store every weight.
-        ghost_type: str = "none",
+        transform_type: str = "none",
         halting_type: Optional[str] = None,
         width_type: Optional[str] = None,
         # INFERENCE-ONLY, and excluded from the run hash on purpose. Both

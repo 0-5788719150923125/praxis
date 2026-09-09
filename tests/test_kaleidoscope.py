@@ -477,7 +477,7 @@ def test_block_is_merge_opaque_to_the_smear_target_walker():
     """
     from praxis import PraxisConfig
     from praxis.modeling import PraxisForCausalLM
-    from praxis.routers.targeting import TARGET_PROFILES, discover_targets
+    from praxis.transforms.targeting import TARGET_PROFILES, discover_targets
 
     assert KaleidoscopeAttention.MERGE_OPAQUE is True
     cfg = PraxisConfig(

@@ -49,6 +49,21 @@ DENSE_REGISTRY = dict(
     # half its periodic budget to get a non-periodic one. Parameter-identical to
     # `peer_glu` - swish carries none.
     peer_split=partial(ParameterEfficientExpertRetrieval, glu=True, act_alt="swish"),
+    # peer_split with the key count rounded to the nearest EVEN integer, so
+    # `num_experts` is divisible by 4 and the banks - the largest single tensor
+    # group in the decoder - become reachable by a ghost expansion
+    # (praxis/ghost). At hidden_size 272 that is 676 experts instead of 729: the
+    # default rounded sqrt(725.3) up to 27, odd by 0.07 of a step, against a
+    # hidden width of 2^4 * 17, and coprime axes admit no expansion at any d.
+    #
+    # NOT parameter-identical to `peer_split` - the bank shrinks 594,864 ->
+    # 551,616, i.e. 0.63% of the model - so an arm using this differs from
+    # `peer_split` by a small capacity reduction as well as by whatever it was
+    # testing. Stated because that is a confound, small and in the conservative
+    # direction, rather than a free change.
+    peer_split_even=partial(
+        ParameterEfficientExpertRetrieval, glu=True, act_alt="swish", even_keys=True
+    ),
     eml_tree=EMLTree,
     spline=SplineNetwork,
 )

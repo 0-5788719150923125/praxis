@@ -66,7 +66,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.routers.targeting import (
+from praxis.transforms.targeting import (
     DENSE_DELTA_MAX_NUMEL,
     TARGET_PROFILES,
     TargetGroup,

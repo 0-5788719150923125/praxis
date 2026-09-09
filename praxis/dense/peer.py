@@ -73,6 +73,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         act_value: Optional[str] = None,
         act_alt: Optional[str] = None,
         glu: bool = False,
+        even_keys: bool = False,
     ):
         """
         Initialize the PEER module.
@@ -106,6 +107,10 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 expert count shrinks by 2/3 to hold the parameter budget: the
                 comparison against ``peer`` is capacity-matched, trading expert
                 COUNT for per-expert expressiveness.
+            even_keys: round the auto-sized key count to the nearest EVEN
+                integer, making ``num_experts`` divisible by 4 so the banks can
+                carry a ghost expansion (praxis/ghost). Ignored when
+                ``num_experts`` is given explicitly.
             sparse: if True, the expert banks emit sparse gradients (only the
                 selected rows get a grad/optimizer update), which is what lets
                 `num_experts` scale without paying dense grad + optimizer state
@@ -137,7 +142,25 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 / self.rows_per_expert
                 / self.num_sets
             )
-            self.num_keys: int = max(2, round(math.sqrt(budgeted_rows)))
+            root = math.sqrt(budgeted_rows)
+            # Rounding to the nearest EVEN key count makes num_experts divisible
+            # by 4, which is what a ghost expansion of the banks requires: the
+            # construction needs `d` to divide BOTH axes of `[num_experts,
+            # hidden_size]`, and at hidden_size 272 the default landed on 27
+            # keys - odd by 0.07 of a rounding step - giving 729 = 3^6 experts
+            # against 272 = 2^4 * 17. gcd(729, 272) = 1, so NO d > 1 divided
+            # both and the largest bank in the model was unreachable.
+            #
+            # Still derived, not tuned: it is the same sqrt of the same budget,
+            # rounded to a different lattice, and it generalizes at every width
+            # (272 -> 26, 284 -> 28, 512 -> 36, 1024 -> 52). The cost at 272 is
+            # 676 experts instead of 729, a 7.3% bank reduction and 0.63% of the
+            # model, which is why this is preferred over moving hidden_size:
+            # widening to 284 would also work but changes EVERY tensor in the
+            # model and invalidates comparison against any existing baseline.
+            self.num_keys: int = (
+                max(2, 2 * round(root / 2)) if even_keys else max(2, round(root))
+            )
         else:
             assert (
                 num_experts**0.5

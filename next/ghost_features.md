@@ -1,6 +1,6 @@
 # Ghost Features: extra channels from weights you already have
 
-Status: **BUILT 2026-09-07, unrun.** `praxis/ghost/` ships the mechanism,
+Status: **BUILT 2026-09-07, unrun.** `praxis/transforms/` ships the mechanism,
 `abstractinator-q` (arm) and `-r` (control) are scaffolded, `tests/test_ghost.py`
 passes. Opened from a question about "phantom neurons" - whether a model can
 carry 12M parameters' worth of shape on 6M real trainable ones - and closed onto
@@ -506,10 +506,10 @@ ask one question four times.
 
 | file | what |
 | --- | --- |
-| `praxis/ghost/algebra.py` | `PERM`/`SIGN` tables; asserts non-degeneracy AND the odd-activation antipodal check |
-| `praxis/ghost/expansions.py` | `EXPANSION_REGISTRY`: `complex`, `quaternion`, `random`, `lowrank` |
-| `praxis/ghost/modules.py` | `GhostLinear`, `GhostConv1d` - weight is a property, not a Parameter |
-| `praxis/ghost/__init__.py` | `GHOST_REGISTRY` profiles + `ghostify(model, profile)` |
+| `praxis/transforms/algebra.py` | `PERM`/`SIGN` tables; asserts non-degeneracy AND the odd-activation antipodal check |
+| `praxis/transforms/expansions.py` | `EXPANSION_REGISTRY`: `complex`, `quaternion`, `random`, `lowrank` |
+| `praxis/transforms/modules.py` | `GhostLinear`, `GhostConv1d` - weight is a property, not a Parameter |
+| `praxis/transforms/__init__.py` | `GHOST_REGISTRY` profiles + `ghostify(model, profile)` |
 
 **The expansion is a contraction, not a gather.** Block `k` is
 `expanded[k, r, g, p] = sum_q P_k[p, q] * real[r, g, q]`, so the whole thing is
@@ -735,6 +735,75 @@ not tie. Both totals are measured now. That surfaced a residual of 73,984 - the
 per-target savings exceed the model's actual shrink by exactly one 272x272 - which
 is **reported and not yet explained.** The cut figure is sound (both ends
 measured); the per-target column should not be built on until this is chased.
+
+### Rebuilt as an in-place parametrization, so it COMPOSES (2026-09-09)
+
+The user's call: ghost and SMEAR should stack, not exclude. They now do, and the
+mechanism changed to make that possible.
+
+**Wrapping was the obstacle.** Swapping a module for a wrapper changes the object
+at that qualname, and SMEAR registers its `MergedLinear` BOTH at the block
+qualname and in its own `wrappers` dict - so replacing the qualname would leave
+the router driving a module the block no longer uses. `register_parametrization`
+mutates in place: same object, `isinstance` unchanged, every reference still
+valid. Verified on the built model:
+
+```
+memory.gate: ParametrizedMergedLinear
+  parametrized weight: True     weight shape: (272, 272)
+  SMEAR deviations: lora_a (4, 34, 272)  lora_b (4, 272, 34)   <- intact
+  router.wrappers["memory_gate"] is that module: True
+```
+
+So `y = expand(real) x + sum_e c_be B_e (A_e x)`: ghost-derived base, SMEAR's
+per-example low-rank deviations on top. SMEAR's `_param_row` keys are the six
+norms and residual gates, disjoint from every ghost target, and
+`_merged_state_dict` raises `"Target parameter ... vanished from the block"` on a
+name collision - so this composition is loudly guarded rather than merely lucky.
+
+**Four wrapper classes deleted.** `praxis/transforms/modules.py` and
+`expansions.py` are gone; one `GhostParametrization` covers Linear, Conv1d,
+Embedding, EmbeddingBag and anything else owning a `weight` Parameter, because a
+host's own forward reads `weight` and no longer needs a per-type shim. `lowrank`
+went with them - it was retired on the rank argument and its code is in git.
+
+**Init now inherits the host, via `right_inverse`.** PyTorch calls it once at
+registration to turn the existing weight into the stored tensor; our `P_k` are
+involutions, so `mean_k P_k(W_k)` is the least-squares fit. Every module keeps
+its own init convention for free. That removes the entire class of bug that
+voided the first -r run, where the init was reproduced by hand at 0.045x.
+
+**PEER's banks are reachable now, and the blocker was arithmetic.** The
+construction needs `d` to divide BOTH axes. PEER auto-sized to
+`round(sqrt(8*272/3)) = round(26.93) = 27` keys, so `729 = 3^6` experts against
+`272 = 2^4 * 17`, and **gcd(729, 272) = 1** - no `d > 1` divided both. Fixed in
+PEER, not in ghost: `even_keys` rounds the same sqrt of the same budget to the
+nearest EVEN integer, giving 26 keys and 676 experts, divisible by 2 and 4. Still
+derived, generalizes at every width (272 -> 26, 284 -> 28, 512 -> 36, 1024 -> 52),
+and costs 7.3% of the bank (0.63% of the model) against widening `hidden_size` to
+284, which would also work but changes every tensor and invalidates the baseline.
+`peer_split_even` is the profile. All three banks including the `EmbeddingBag`
+are now ghosted - the earlier claim that `mode='sum'` adds rows "before a per-row
+flip could reach them" was **wrong**: the expansion materializes the full weight
+before the bag reduction.
+
+**Cyclic algebras added.** `R[Z/d]` for any `d`: `PERM[k][p] = (k-p) mod d`, all
+signs `+1`, permutation matrices so non-degenerate at every `d`. Hurwitz limits
+DIVISION algebras to 1, 2, 4, 8, but the paper's condition is only that each
+`P_k` be non-singular, so `d` is free and can be chosen to divide the tensor.
+`auto` takes the deepest cut a shape admits.
+
+**-u: 44 targets, 6,785,572 -> 3,787,572, a 44.2% cut**, reconciling exactly.
+
+**Two things left ghosted that arguably should not be.** `all_complex` takes
+`decoder.locals.0.router.router` (SMEAR's own routing head) and
+`head.branches.1.lm_head` (which is `[256, 272]`, so the vocab guard at
+`vocab_size` 1024 missed it). Both tie output rows that index UNRELATED
+DECISIONS - targets, experts, tokens - rather than features, and row `r` being a
+fixed re-coding of row `r + R` is a feature-space prior that says nothing
+sensible across an index space. Left in deliberately, because the user asked for
+maximum coverage and it is reported rather than hidden, but it is the first thing
+to exclude if the broad arm underperforms.
 
 ### Still open
 

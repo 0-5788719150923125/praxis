@@ -12,7 +12,7 @@ from praxis import (
     ENCODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
-    GHOST_REGISTRY,
+    TRANSFORM_REGISTRY,
     HALTING_REGISTRY,
     HEAD_REGISTRY,
     MEMORY_REGISTRY,
@@ -138,13 +138,13 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--ghost-type",
+            "--transform-type",
             type=str,
-            choices=["none", *GHOST_REGISTRY.keys()],
+            choices=["none", *TRANSFORM_REGISTRY.keys()],
             default="none",
-            help="Ghost-feature profile: replace the matched weights with a "
-            "half-size real tensor expanded back to full shape by a fixed "
-            "signed permutation (default none = every weight is stored)",
+            help="Model-transform profile: walk the module tree and rewrite the "
+            "matched parameters in place. `tie_*` stores 1/d of a weight and "
+            "derives the rest by fixed signed permutation (default none)",
         )
 
         group.add_argument(
