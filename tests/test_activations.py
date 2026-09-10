@@ -14,7 +14,10 @@ from praxis.activations import (
 # parameter-free values, so a mixture costs the same to exercise as a plain one.
 TEST_VALUES = ["gelu", "tanh"]
 SPECS = [(name, name) for name in ACTIVATION_MAP] + [
-    (f"type:{name}", {"type": name, "values": TEST_VALUES[: 1 if name == "single" else 2]})
+    (
+        f"type:{name}",
+        {"type": name, "values": TEST_VALUES[: 1 if name == "single" else 2]},
+    )
     for name in ACTIVATION_TYPE_REGISTRY
 ]
 

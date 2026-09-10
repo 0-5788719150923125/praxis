@@ -158,9 +158,7 @@ def test_peer_split_partitions_the_bank_by_expert():
     torch.manual_seed(0)
     plain = DENSE_REGISTRY["peer_glu"](_peer_cfg())
     torch.manual_seed(0)
-    split = DENSE_REGISTRY["peer_glu"](
-        _peer_cfg(activation=SPLIT)
-    )
+    split = DENSE_REGISTRY["peer_glu"](_peer_cfg(activation=SPLIT))
 
     assert isinstance(split.act, ActivationMixture)
     assert split.act.type_name == "mix_split" and split.act.wants_keys
@@ -176,9 +174,7 @@ def test_peer_split_partitions_the_bank_by_expert():
     # The configs in this line run `num_heads: 1`. A head-axis split would be
     # impossible there; an expert-index split is not.
     torch.manual_seed(0)
-    single = DENSE_REGISTRY["peer_glu"](
-        _peer_cfg(num_heads=1, activation=SPLIT)
-    )
+    single = DENSE_REGISTRY["peer_glu"](_peer_cfg(num_heads=1, activation=SPLIT))
     single.eval()
     with torch.no_grad():
         assert single(x).shape == (2, 16, 64)
@@ -201,9 +197,7 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
     from praxis.dense import DENSE_REGISTRY
 
     torch.manual_seed(0)
-    m = DENSE_REGISTRY["peer_glu"](
-        _peer_cfg(activation=SPLIT)
-    )
+    m = DENSE_REGISTRY["peer_glu"](_peer_cfg(activation=SPLIT))
 
     # The same expert, reached from two different (head, rank) slots, must take
     # the same branch. Constructing indices directly isolates the partition
@@ -244,7 +238,6 @@ def test_peer_mix_routes_through_an_activation_bank():
     def build(name, num_heads=4, **kw):
         torch.manual_seed(0)
         return DENSE_REGISTRY[name](_peer_cfg(num_heads), **kw)
-
 
     plain = build("peer_glu")
     mixed = build("peer_glu", activation=MIX)

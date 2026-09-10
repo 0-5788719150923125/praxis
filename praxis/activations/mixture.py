@@ -351,7 +351,6 @@ class ActivationMixture(nn.Module):
                 if getattr(branch, "has_uninitialized_params", bool)():
                     branch(inputs)
 
-
     def _stash(self, weights: Tensor) -> None:
         """Realized gate statistics, on-device (no host sync in the hot path).
 
