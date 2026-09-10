@@ -640,9 +640,9 @@ class NeuralMemory(nn.Module):
         way from the slow one and an unbounded bar would gate the whole batch
         off on a transient - a guard, not a setting."""
         tilt = self._gate_ref[0] / (self._gate_ref[1] + self.eps)
-        return torch.where(
-            self._gate_ref_ready > 0, tilt, torch.ones_like(tilt)
-        ).clamp(_GATE_TILT_RANGE[0], _GATE_TILT_RANGE[1])
+        return torch.where(self._gate_ref_ready > 0, tilt, torch.ones_like(tilt)).clamp(
+            _GATE_TILT_RANGE[0], _GATE_TILT_RANGE[1]
+        )
 
     def _write_gate_mask(
         self,
@@ -663,9 +663,7 @@ class NeuralMemory(nn.Module):
             ranked = scores.masked_fill(v == 0, torch.finfo(scores.dtype).min)
             idx = ranked.topk(k, dim=-1).indices
             return torch.zeros_like(scores).scatter(-1, idx, 1.0) * v, prior
-        mask, nxt = self._threshold_mask(
-            scores.reshape(b, -1), v.reshape(b, -1), prior
-        )
+        mask, nxt = self._threshold_mask(scores.reshape(b, -1), v.reshape(b, -1), prior)
         return mask.reshape(b, nc, c), nxt
 
     def _note_gate(self, scores: Tensor, valid: Tensor, mask: Tensor) -> None:

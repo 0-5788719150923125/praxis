@@ -38,9 +38,7 @@ ANCHOR_PREFERENCE: Tuple[str, ...] = ("main", "arm_surgery")
 MIN_NORM: float = 1e-12
 
 
-def trunk_gradients(
-    loss_dict: Dict[str, Any], wrt: Tensor
-) -> Dict[str, Tensor]:
+def trunk_gradients(loss_dict: Dict[str, Any], wrt: Tensor) -> Dict[str, Tensor]:
     """``{name: dL/dwrt}`` for every term that actually pulls on ``wrt``.
 
     A term with no path to the shared representation is ABSENT rather than

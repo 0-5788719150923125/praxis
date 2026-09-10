@@ -678,7 +678,11 @@ def test_the_gate_never_lets_the_pad_write(monkeypatch, gate):
         monkeypatch.setattr(
             nm.F,
             "pad",
-            real_pad if fill is None else (lambda t, p, **kw: real_pad(t, p, value=fill)),
+            (
+                real_pad
+                if fill is None
+                else (lambda t, p, **kw: real_pad(t, p, value=fill))
+            ),
         )
         mem = _pad_mem(write_objective="predictive", write_gate=gate)
         _, st = mem(seq)

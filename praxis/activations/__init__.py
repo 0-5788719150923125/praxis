@@ -245,9 +245,7 @@ def harmonic_spectrum(activation: Any) -> Optional[Tuple[Any, Any]]:
     for candidate in candidates:
         if not (hasattr(candidate, "a") and hasattr(candidate, "g")):
             continue
-        if any(
-            isinstance(p, UninitializedParameter) for p in candidate.parameters()
-        ):
+        if any(isinstance(p, UninitializedParameter) for p in candidate.parameters()):
             return None
         return candidate.a.detach(), candidate.g.detach()
     return None

@@ -114,7 +114,9 @@ def test_cap_is_the_plain_sum_when_nothing_out_pulls_the_anchor():
     losses = [(h * 4).sum(), (h * 0.1).sum()]
     s = _blend(names)
     folded = s(losses, names=names, trunk=h)
-    assert float(folded.detach()) == pytest.approx(float(sum(losses).detach()), rel=1e-6)
+    assert float(folded.detach()) == pytest.approx(
+        float(sum(losses).detach()), rel=1e-6
+    )
     assert all(w == pytest.approx(1.0) for w in s._weights.values())
 
 
