@@ -34,7 +34,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import build_activation
+from praxis.activations import build_activation, harmonic_spectrum
 from praxis.heads.mtp.vear import _hoyer
 from praxis.normalization import NORMALIZATION_REGISTRY
 
@@ -96,10 +96,9 @@ class SerpentRNNMTPBank(nn.Module):
 
     def _spectrum(self) -> Optional[tuple]:
         """The cell's Serpent parameters ``(alpha, gamma)`` as ``[D]``, or
-        ``None`` while the activation is still lazy."""
-        if any(isinstance(p, UninitializedParameter) for p in self.act.parameters()):
-            return None
-        return self.act.a.detach(), self.act.g.detach()
+        ``None`` when the slot holds no periodic activation, or while it
+        is still lazy."""
+        return harmonic_spectrum(self.act)
 
     @torch.no_grad()
     def training_metrics(self) -> dict:

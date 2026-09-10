@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.activations import build_activation
+from praxis.activations import build_activation, harmonic_spectrum
 from praxis.normalization import NORMALIZATION_REGISTRY
 
 # Cyclic window width over the expert pool. 3 = your "N-1 over 4" layout; fixed
@@ -204,14 +204,13 @@ class VearHarmonicMTPBank(nn.Module):
 
     def _spectrum(self) -> Optional[tuple]:
         """Per-expert Serpent parameters ``(alpha, gamma)`` as ``[N, D]``, or
-        ``None`` while any expert's activation is still lazy."""
-        acts = [e.act for e in self.experts]
-        if any(
-            isinstance(p, UninitializedParameter) for a in acts for p in a.parameters()
-        ):
+        ``None`` when any expert's slot holds no periodic activation, or while
+        one is still lazy."""
+        specs = [harmonic_spectrum(e.act) for e in self.experts]
+        if any(spec is None for spec in specs):
             return None
-        alpha = torch.stack([a.a.detach() for a in acts])  # [N, D]
-        gamma = torch.stack([a.g.detach() for a in acts])  # [N, D]
+        alpha = torch.stack([spec[0] for spec in specs])  # [N, D]
+        gamma = torch.stack([spec[1] for spec in specs])  # [N, D]
         return alpha, gamma
 
     @torch.no_grad()

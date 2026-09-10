@@ -320,3 +320,37 @@ def test_unused_branches_are_still_materialized():
     split(torch.randn(4, 16))
     torch.optim.SGD(split.parameters(), lr=0.1)  # raises if any stayed lazy
     assert [n for n, _ in split.named_parameters()], "servant should have params"
+
+
+def test_harmonic_spectrum_survives_a_mixture_in_the_slot():
+    """The regression that emptied the MTP field charts for a whole run.
+
+    Several diagnostics read `act.a` / `act.g` straight off whatever the
+    activation slot holds. That assumed a Serpent, and a mixture put an
+    `ActivationMixture` there instead - `AttributeError: no attribute 'a'`,
+    swallowed by the dynamics logger, charts blank, training unaffected and
+    nothing louder than a repeating log line to say so.
+    """
+    from praxis.activations import harmonic_spectrum
+
+    x = torch.randn(2, 8, 16)
+
+    direct = build_activation("servant")
+    direct(x)
+    spec = harmonic_spectrum(direct)
+    assert spec is not None and spec[0].shape == (16,)
+
+    # Found inside a bank, at whatever position it sits.
+    mixed = build_activation({"type": "mix", "values": ["swish", "servant", "relu"]})
+    mixed(x)
+    spec = harmonic_spectrum(mixed)
+    assert spec is not None and spec[0].shape == (16,)
+
+    # None, not a crash, when there is no periodic activation to find.
+    plain = build_activation({"type": "mix", "values": ["gelu", "relu"]})
+    plain(x)
+    assert harmonic_spectrum(plain) is None
+    assert harmonic_spectrum(build_activation("gelu")) is None
+
+    # None while still lazy - callers use that to skip the metric entirely.
+    assert harmonic_spectrum(build_activation("servant")) is None

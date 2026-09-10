@@ -37,6 +37,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
+from praxis.activations import harmonic_spectrum
 from praxis.heads.mtp.vear import _HarmonicExpert, _hoyer
 
 
@@ -77,15 +78,14 @@ class PerDepthMTPBank(nn.Module):
 
     def _spectrum(self) -> Optional[tuple]:
         """Per-depth Serpent parameters ``(alpha, gamma)`` as ``[K, D]``, or
-        ``None`` while any depth's activation is still lazy."""
-        acts = [d.act for d in self.depths]
-        if any(
-            isinstance(p, UninitializedParameter) for a in acts for p in a.parameters()
-        ):
+        ``None`` when any depth's slot holds no periodic activation, or while
+        one is still lazy."""
+        specs = [harmonic_spectrum(d.act) for d in self.depths]
+        if any(spec is None for spec in specs):
             return None
         return (
-            torch.stack([a.a.detach() for a in acts]),
-            torch.stack([a.g.detach() for a in acts]),
+            torch.stack([spec[0] for spec in specs]),
+            torch.stack([spec[1] for spec in specs]),
         )
 
     @torch.no_grad()

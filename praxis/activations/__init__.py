@@ -219,6 +219,40 @@ def _instantiate(spec: Any, **kwargs: Any) -> Module:
     return entry(**kwargs)
 
 
+def harmonic_spectrum(activation: Any) -> Optional[Tuple[Any, Any]]:
+    """The Serpent-family ``(alpha, gamma)`` behind an activation slot, or None.
+
+    Several diagnostics read a module's harmonic spectrum straight off the
+    activation it was configured with - ``act.a`` and ``act.g``, Serpent's
+    per-feature frequency and secondary amplitude. That reach-in assumes the slot
+    holds a Serpent, which stopped being true when a slot could hold a MIXTURE:
+    ``{type: mix, values: [servant, swish, relu]}`` puts an ``ActivationMixture``
+    there and ``act.a`` raises ``AttributeError``.
+
+    So the lookup goes through here instead. It finds the spectrum wherever it
+    actually is - the activation itself, or the first value of a bank that has
+    one - and returns None when there is none to find or it is still lazy.
+    Returning None rather than raising is what the callers already expect: they
+    are diagnostics, and "no spectrum" is a legitimate answer for a model
+    configured without a periodic activation at all.
+    """
+    from torch.nn.parameter import UninitializedParameter
+
+    candidates = [activation]
+    branches = getattr(activation, "branches", None)
+    if branches is not None:
+        candidates.extend(branches)
+    for candidate in candidates:
+        if not (hasattr(candidate, "a") and hasattr(candidate, "g")):
+            continue
+        if any(
+            isinstance(p, UninitializedParameter) for p in candidate.parameters()
+        ):
+            return None
+        return candidate.a.detach(), candidate.g.detach()
+    return None
+
+
 def activation_class(entry: Any) -> Any:
     """Resolve a registry entry to the class it constructs.
 

@@ -3,7 +3,23 @@
 
 LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 
-Registry: ``praxis.NORMALIZATION_REGISTRY`` (5 entries)
+Registry: ``praxis.NORMALIZATION_REGISTRY`` (8 entries)
+
+## `hero` - HeroNorm
+
+LayerNorm on the read, RMSNorm on the write.
+
+Centering conditions what the sublayer sees, while the residual write is rescaled
+without having its mean stripped - so the branch keeps the freedom to move the stream's
+mean, which is the one thing RMSNorm never touches.
+
+Source: [praxis/normalization/sandwich_norm.py:70](../praxis/normalization/sandwich_norm.py#L70)
+
+## `hero_inverted` - InvertedHeroNorm
+
+RMSNorm on the read, LayerNorm on the write: the hero's mirror image.
+
+Source: [praxis/normalization/sandwich_norm.py:82](../praxis/normalization/sandwich_norm.py#L82)
 
 ## `layer_norm` - LayerNorm
 
@@ -34,6 +50,16 @@ Source: [praxis/normalization/rms_norm.py:11](../praxis/normalization/rms_norm.p
 
 ## `sandwich` - SandwichNorm
 
-Sandwich normalization that applies both pre and post normalization.
+An RMSNorm at each position, with a separate weight for each.
 
-Source: [praxis/normalization/sandwich_norm.py:8](../praxis/normalization/sandwich_norm.py#L8)
+Source: [praxis/normalization/sandwich_norm.py:47](../praxis/normalization/sandwich_norm.py#L47)
+
+## `sandwich_tied` - TiedSandwichNorm
+
+One RMSNorm at both positions, sharing a single weight between them.
+
+Every arm before 2026-09-09 ran this under the name ``sandwich``; a checkpoint from one
+of those loads here and not under ``SandwichNorm``, whose weights live at ``.pre`` and
+``.post``.
+
+Source: [praxis/normalization/sandwich_norm.py:51](../praxis/normalization/sandwich_norm.py#L51)

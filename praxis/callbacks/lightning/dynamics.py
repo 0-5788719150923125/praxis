@@ -1,10 +1,38 @@
 """Lightning callback to integrate with DynamicsLogger."""
 
+import traceback
+
 from lightning.pytorch.callbacks import Callback
 
 from praxis.logging.dynamics_logger import DynamicsLogger
 from praxis.metrics import extract_layer_dynamics
 
+
+
+# Diagnostics that have already reported a failure, keyed by source and error.
+# A metric extractor runs every logging step, so an unguarded print repeats the
+# same line for the life of the run - which is how a broken diagnostic hides in
+# plain sight: it looks like noise rather than like something that started.
+_REPORTED: set = set()
+
+
+def _report(source: str, error: Exception) -> None:
+    """Say a diagnostic broke, ONCE, with the traceback.
+
+    Swallowing is right - a chart must never kill a training run - but
+    swallowing quietly is not. The first occurrence gets a full traceback so the
+    cause is actionable without a repro; later identical ones are dropped so the
+    log stays readable.
+    """
+    key = (source, type(error).__name__, str(error))
+    if key in _REPORTED:
+        return
+    _REPORTED.add(key)
+    print(
+        f"[DynamicsLogger] {source} failed and its charts will be EMPTY for this "
+        f"run: {type(error).__name__}: {error}\n"
+        + "".join(traceback.format_exception(error)).rstrip()
+    )
 
 class DynamicsLoggerCallback(Callback):
     """PyTorch Lightning callback that logs gradient dynamics to DynamicsLogger.
@@ -307,7 +335,7 @@ class DynamicsLoggerCallback(Callback):
         try:
             return head.training_metrics()
         except Exception as e:
-            print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
+            _report("head.training_metrics()", e)
             return {}
 
     def _extract_mtp_dynamics(self, model) -> dict:
@@ -319,7 +347,7 @@ class DynamicsLoggerCallback(Callback):
         try:
             return mtp.training_metrics()
         except Exception as e:
-            print(f"[DynamicsLogger] mtp.training_metrics() failed: {e}")
+            _report("mtp.training_metrics()", e)
             return {}
 
     def _extract_regularizer_dynamics(self, model) -> dict:
@@ -333,7 +361,7 @@ class DynamicsLoggerCallback(Callback):
             try:
                 out.update(reg.training_metrics())
             except Exception as e:
-                print(f"[DynamicsLogger] {reg.name} training_metrics() failed: {e}")
+                _report(f"{reg.name} training_metrics()", e)
         return out
 
     def _extract_sorting_dynamics(self, model) -> dict:
@@ -352,7 +380,7 @@ class DynamicsLoggerCallback(Callback):
         try:
             return order.training_metrics()
         except Exception as e:
-            print(f"[DynamicsLogger] order.training_metrics() failed: {e}")
+            _report("order.training_metrics()", e)
             return {}
 
     def _extract_encoder_dynamics(self, model) -> dict:
@@ -368,7 +396,7 @@ class DynamicsLoggerCallback(Callback):
         try:
             return encoder.training_metrics()
         except Exception as e:
-            print(f"[DynamicsLogger] encoder.training_metrics() failed: {e}")
+            _report("encoder.training_metrics()", e)
             return {}
 
     def _extract_seq_curriculum_dynamics(self) -> dict:
@@ -465,7 +493,7 @@ class DynamicsLoggerCallback(Callback):
         try:
             return criterion.training_metrics()
         except Exception as e:
-            print(f"[DynamicsLogger] criterion.training_metrics() failed: {e}")
+            _report("criterion.training_metrics()", e)
             return {}
 
     def _extract_arc_dynamics(self, model) -> dict:
