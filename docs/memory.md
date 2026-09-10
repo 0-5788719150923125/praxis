@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (14 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (15 entries)
 
 ## `mag`
 
@@ -36,6 +36,17 @@ mag_energy with writes stitched across linked batch rows. The packer splits long
 documents across consecutive rows; threading the memory state along such a run makes the
 write span the run's total length while the trunk still sees only one row, decoupling
 the memory's horizon from the sequence length the model can afford to train on.
+
+## `mag_energy_stitch_gated`
+
+mag_energy_stitch with the test-time write GATED per token. Energy mode carries no
+learned write gate, so every real token writes the same fixed-magnitude step and the
+stored association flattens toward a mean over the stream. Here a token writes only if
+its own surprise exceeds a ratio of the sequence's running mean - itself tilted by a
+slow-over-fast surprise EMA - so a memory already forecasting the stream well can
+decline to write at all - down to a chunk that writes nothing and holds its weights
+exactly. Costs one extra memory-net forward to score, and saves no compute: what it
+changes is which associations the write lands on.
 
 ## `mag_standard`
 

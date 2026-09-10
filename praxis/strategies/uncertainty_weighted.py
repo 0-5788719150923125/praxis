@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 from torch import Tensor, nn
@@ -39,7 +39,12 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
         # Ensure parameters require gradients
         self.params.requires_grad_(True)
 
-    def forward(self, losses: List[Tensor]) -> Tensor:
+    def forward(
+        self,
+        losses: List[Tensor],
+        names: Optional[List[str]] = None,
+        trunk: Optional[Tensor] = None,
+    ) -> Tensor:
         # Check if parameters need to be initialized
         if self.has_uninitialized_params():
             # Initialize based on the length of the losses list

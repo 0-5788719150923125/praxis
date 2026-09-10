@@ -15,7 +15,7 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Halting / early exit](halting.md) (3) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (27) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
-- [Long-term memory](memory.md) (14) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
+- [Long-term memory](memory.md) (15) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (11) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Mixture-of-widths](width.md) (7) - Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
 - [Mono-forward graph cutting](mono.md) (3) - Sequential-decoder graph cutting: detach hidden states on a cut schedule and train each segment from a local goodness score (vocab CE for token models, next-patch-embedding prediction for encoder models). Selected with ``--mono-type``; default is off.
@@ -31,7 +31,7 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (15) - Input embedding layers, paired with the corresponding block type.
 - [Token routers](routers.md) (15) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
-- [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.
+- [Training strategies](strategies.md) (5) - Multi-task / task-weighting strategies used by the trainer.
 - [Training-loop governors](governors.md) (1) - Feedback controllers over loop-level knobs, driven by endogenous signals - e.g. ``gns_batch`` governs the gradient-accumulation factor by tracking the measured gradient noise scale.
 
 ## Subsystems

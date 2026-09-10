@@ -21,6 +21,16 @@ class LossContainer:
     def get_loss_values(self):
         return list(self.loss_dict.values())
 
+    def get_named_losses(self):
+        """``(names, values)`` in registration order.
+
+        The values alone are what ``get_loss_values`` returns, and a strategy
+        that weights per objective cannot use them: the key set is conditional
+        (policies, MTP, the encoder's pending losses, a head's arm objectives),
+        so position is not a stable identity for a term across steps.
+        """
+        return list(self.loss_dict.keys()), list(self.loss_dict.values())
+
     def add_loss(self, key: str = "main", loss: Union[Tensor, float, int] = 0):
         # Convert all loss values to tensors for consistency
         if isinstance(loss, (int, float)):

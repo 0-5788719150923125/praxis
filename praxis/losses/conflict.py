@@ -14,15 +14,20 @@ in opposing directions.
 
 THIS MODULE IS THE MEASUREMENT, NOT THE METHOD. Every one of those rules costs
 compute per step and usually a hyperparameter. Whether one would buy anything is
-answered by the cosine between each objective's gradient and the main loss's:
+answered by the cosine between each objective's gradient and the ANCHOR's:
 persistently negative is conflict and the case for gradient surgery, near 0
 means orthogonal directions and the plain sum is fine, positive means the aux
-term is a reweighting of the main one.
+term is a reweighting of the anchor.
+
+THE ANCHOR IS NOT ALWAYS ``main``. Under a surgical head the mixture CE trains
+only the gate and has no path to the trunk, so anchoring on it measured
+nothing at all - see praxis.losses.trunk_grads, which resolves this and owns
+the row extraction both this module and the blending strategies use.
 
 EACH SERIES HAS A TWIN, because cosine is scale-invariant: a term contributing
 nothing and a term contributing a lot in an independent direction read
 identically. Every ``conflict_<name>`` ships with ``conflict_mag_<name>``, the
-ratio ``||g_term|| / ||g_main||`` at the same tensor. Cosine near 0 at ratio
+ratio ``||g_term|| / ||g_anchor||`` at the same tensor. Cosine near 0 at ratio
 near 0 says inert; cosine near 0 at ratio near 1 says two comparable forces are
 shaping independent directions, which is the only reading that licenses the sum.
 
@@ -48,25 +53,25 @@ from typing import Any, Dict, Optional
 import torch
 from torch import Tensor
 
+from praxis.losses.trunk_grads import (
+    MIN_NORM,
+    resolve_anchor,
+    trunk_gradients,
+    usable,
+)
+
 # Steps between measurements. Each one costs one head-sized backward per live
 # objective, so it is sampled rather than run every step - the same stance the
 # compute profiler takes. Baked, model-agnostic: this is a diagnostic, not a
 # knob an experiment is supposed to tune.
 CONFLICT_INTERVAL: int = 100
 
-# The objective every other one is compared against.
-ANCHOR: str = "main"
-
-# Below this the anchor or term gradient is numerically zero and the cosine is
-# noise, so the series is skipped for that step rather than reported as 0.
-MIN_NORM: float = 1e-12
-
 _GROUP = "conflict"
 
 
 class ObjectiveConflict:
-    """Samples cosines between each loss term's trunk gradient and the main
-    loss's, on one step in :data:`CONFLICT_INTERVAL`.
+    """Samples cosines between each loss term's trunk gradient and the
+    anchor's, on one step in :data:`CONFLICT_INTERVAL`.
 
     Stateless apart from the step counter and the last measurement, so it can
     live on the model and be drained by the dynamics callback like the compute
@@ -77,6 +82,8 @@ class ObjectiveConflict:
         self.interval = max(1, int(interval))
         self._step = 0
         self.metrics: Dict[str, float] = {}
+        # Resolved on the first measurement; which term the cosines are against.
+        self.anchor: Optional[str] = None
 
     def _due(self) -> bool:
         due = self._step % self.interval == 0
@@ -97,53 +104,28 @@ class ObjectiveConflict:
         measurement unchanged on steps that are not sampled, so the chart holds
         its value between samples rather than going sparse.
         """
-        # Dynamo cannot trace autograd.grad, and a control-flow branch that
-        # flips every `interval` steps would thrash the compiled graph. Under
-        # compile this installs nothing and the cards never appear, which is
-        # the compute profiler's convention for the same situation.
-        if torch.compiler.is_compiling():
+        if not usable(wrt):
             return self.metrics
         if not self._due():
             return self.metrics
-        if not isinstance(wrt, Tensor) or not wrt.requires_grad:
-            return self.metrics
 
-        anchor_loss = loss_dict.get(ANCHOR)
-        if not isinstance(anchor_loss, Tensor) or not anchor_loss.requires_grad:
+        rows = trunk_gradients(loss_dict, wrt)
+        anchor = resolve_anchor(rows)
+        if anchor is None:
+            # Nothing that reaches the trunk is the task, so there is no
+            # reference direction and a cosine would mean nothing. Happens when
+            # every candidate anchor is detached from the trunk by design.
             return self.metrics
-
-        try:
-            anchor_grad = torch.autograd.grad(
-                anchor_loss, wrt, retain_graph=True, allow_unused=True
-            )[0]
-        except RuntimeError:
-            # A term outside the retained graph (a stale container entry, an
-            # already-freed branch). Diagnostics never take the run down.
-            return self.metrics
-        if anchor_grad is None:
-            return self.metrics
-        anchor_grad = anchor_grad.detach().float()
+        self.anchor = anchor
+        anchor_grad = rows[anchor]
         anchor_norm = float(anchor_grad.norm())
         if anchor_norm < MIN_NORM:
             return self.metrics
 
         out: Dict[str, float] = {}
-        for name, term in loss_dict.items():
-            if name == ANCHOR:
+        for name, g in rows.items():
+            if name == anchor:
                 continue
-            if not isinstance(term, Tensor) or not term.requires_grad:
-                continue
-            try:
-                g = torch.autograd.grad(
-                    term, wrt, retain_graph=True, allow_unused=True
-                )[0]
-            except RuntimeError:
-                continue
-            if g is None:
-                # Parameter-only term: no path to the shared representation, so
-                # it cannot conflict over it. Emitting nothing is the answer.
-                continue
-            g = g.detach().float()
             cos = self._cosine(g, anchor_grad)
             if cos is None:
                 continue
@@ -174,7 +156,7 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
             ),
             "chart": {
                 "title": "Objective Conflict",
-                "y_label": "cosine vs main-loss gradient",
+                "y_label": "cosine vs anchor gradient",
                 "y_scale": "linear",
                 "group": _GROUP,
                 "group_order": 470,
@@ -188,13 +170,13 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
         name = key[len("conflict_mag_") :]
         out[key] = {
             "description": (
-                f"||g_{name}|| / ||g_main|| at the trunk output - the half "
+                f"||g_{name}|| / ||g_anchor|| at the trunk output - the half "
                 "a cosine cannot give. Near 0 means inert whatever the cosine "
                 "reads; near 1 means the cosine is worth believing."
             ),
             "chart": {
                 "title": "Objective Magnitude vs Main Loss",
-                "y_label": "||g_term|| / ||g_main||",
+                "y_label": "||g_term|| / ||g_anchor||",
                 "y_scale": "logarithmic",
                 "group": _GROUP,
                 "order": 20,
@@ -208,8 +190,9 @@ def conflict_metric_descriptions(keys) -> Dict[str, dict]:
         name = key[len("conflict_") :]
         out[key] = {
             "description": (
-                f"Cosine between the '{name}' gradient and the main loss's "
-                "at the trunk output. Negative = pulling against it; ~0 = "
+                f"Cosine between the '{name}' gradient and the anchor "
+                "objective's at the trunk output. Negative = pulling against "
+                "it; ~0 = "
                 "independent; positive = a reweighting."
             ),
             # No title/axis: rides conflict_min's chart via series_group.

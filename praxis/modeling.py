@@ -328,6 +328,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # this is the measurement and not the gradient-surgery method itself.
         self._conflict = ObjectiveConflict()
         self._conflict_metrics: Dict[str, float] = {}
+        # Drained by the dynamics callback; empty unless the strategy reports.
+        self._strategy_metrics: Dict[str, float] = {}
         # Per-arm Jacobian diagnostics, stashed by _collect_aux_losses.
         self._arm_metrics: Dict[str, float] = {}
         # A head that owns its arms' objectives takes the HALO geometric term
@@ -768,7 +770,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             assistant_mask,
             classifier,
         )
-        loss = self._finalize_loss(loss, outputs.losses, labels)
+        loss = self._finalize_loss(loss, outputs.losses, labels, hidden_states)
 
         if true_len is not None and torch.is_tensor(logits) and logits.dim() == 3:
             logits = logits[:, :true_len]
@@ -1119,7 +1121,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
     def _finalize_loss(
-        self, loss, losses: LossContainer, labels: Optional[torch.Tensor]
+        self,
+        loss,
+        losses: LossContainer,
+        labels: Optional[torch.Tensor],
+        hidden_states: Optional[torch.Tensor] = None,
     ):
         """Combine all tagged losses via the strategy.
 
@@ -1127,18 +1133,26 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         for handles_loss encoders (CALM), where the encoder owns the main loss
         and there is nothing else to fall back to (their val_loss would
         otherwise stay at 0).
+
+        Names and the trunk activation ride along because a fold that weights
+        per objective needs both: which term is which (the key set is
+        conditional, so position is not an identity) and how hard each one
+        pulls on the shared representation (which the loss VALUE does not say).
+        Strategies that ignore them take the same plain sum they always did.
         """
         handles_loss_encoder = self.encoder is not False and getattr(
             self.encoder, "handles_loss", False
         )
         if labels is None or not (self.training or handles_loss_encoder):
             return loss
-        loss_values = losses.get_loss_values()
-        if len(loss_values) > 1:
-            return self.strategy(loss_values)
-        if loss == 0 and len(loss_values) > 0:
-            # Only auxiliary losses (no main) - combine via strategy.
-            return self.strategy(loss_values)
+        names, loss_values = losses.get_named_losses()
+        if len(loss_values) > 1 or (loss == 0 and len(loss_values) > 0):
+            # The second case is aux-only (no main), e.g. a handles_loss encoder.
+            folded = self.strategy(loss_values, names=names, trunk=hidden_states)
+            metrics = getattr(self.strategy, "training_metrics", None)
+            if metrics is not None:
+                self._strategy_metrics = metrics() or {}
+            return folded
         return loss
 
     # ------------------------------------------------------------------

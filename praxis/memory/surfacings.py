@@ -153,8 +153,8 @@ class MemorySurfacing(MemoryBase):
         "memory_write_share": {
             "description": (
                 "Fraction of real tokens whose write survived the gate. 1.0 = "
-                "ungated. Falling = the memory is declining to write, which is the "
-                "gate working, not the memory dying - read it beside Memory Gain."
+                "ungated. Falling = the memory is declining to write - read it "
+                "beside Memory Gain."
             ),
             "chart": {
                 "title": "Memory Write Share",
@@ -166,9 +166,9 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_write_selectivity": {
             "description": (
-                "Mean surprise of written tokens over mean surprise of all of them. "
-                "1.0 = the gate is picking at random and buys nothing; above 1 = it "
-                "is selecting on content. This is the null the gate has to beat."
+                "Mean surprise of written tokens over the mean of all of them. 1.0 = "
+                "the gate is picking at random; above 1 = it selects on content. "
+                "The null this arm must beat."
             ),
             "chart": {
                 "title": "Memory Write Selectivity",
@@ -180,10 +180,9 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_write_tilt": {
             "description": (
-                "How far the threshold gate has lifted its bar off the local mean: a "
-                "slow surprise EMA over a fast one. Above 1 = the memory is "
-                "forecasting better than its long-run average and the gate is backing "
-                "off; below 1 = it is losing ground and writing more; 1.0 = neither."
+                "How far the gate lifted its bar off the local mean: a slow surprise "
+                "EMA over a fast one. Above 1 = the memory forecasts better than "
+                "its long-run average and writes less."
             ),
             "chart": {
                 "title": "Memory Write Tilt",

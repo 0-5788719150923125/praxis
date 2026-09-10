@@ -72,7 +72,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
-| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag, mag_standard, mag_energy_stitch, mag_standard_stitch, mag_energy_static, mag_energy) |
+| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag, mag_standard, mag_energy_stitch, mag_energy_stitch_gated, mag_standard_stitch, mag_energy_static, mag_energy) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
@@ -122,7 +122,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--no-mask-prompts` | bool | `False` | Drop the assistant_mask before composing loss weights so every token contributes (the pre-2bc2cd4 language-modeling objective). Default off, meaning prompts are masked. Useful for small models that lack the capacity for the SFT-style prompt-conditional split. |
 | `--optimizer` | str | `Lion` | The optimizer profile to use (choices: AdamW, Lion, MARS, Muon, MuonGeo, LionGeo, Prodigy) |
 | `--optimizer-wrappers` |  | `[]` | Optimizer wrappers to stack, in order. Choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free. E.g. --optimizer-wrappers ortho gated_schedule_free (choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free) |
-| `--strategy` | str | `naive` | The multitask objective strategy to use for loss combination (choices: naive, real_time, weighted, weighted_clamped) |
+| `--strategy` | str | `naive` | The multitask objective strategy to use for loss combination (choices: naive, real_time, weighted, weighted_clamped, capped) |
 | `--task-weights` | str | `None` | Named per-task loss weighting strategy from TASK_WEIGHTER_REGISTRY. Unset = identity (every task at 1.0). Fixed variants use constant scalars; learnable variants use a sigmoid-gated per-task parameter with an L2 anchor. (choices: bias_pretrain, difficulty_bias_pretrain, flat, learnable_bias_pretrain) |
 
 ### networking

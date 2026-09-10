@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 from torch import Tensor, nn
@@ -14,6 +14,11 @@ class RealTime(nn.Module):
     https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-learning-e1a641e0bcc0
     """
 
-    def forward(self, losses: List[Tensor]):
+    def forward(
+        self,
+        losses: List[Tensor],
+        names: Optional[List[str]] = None,
+        trunk: Optional[Tensor] = None,
+    ):
         # Normalize losses and combine them, skipping zeros to avoid nan
         return sum([loss / loss.detach() for loss in losses if loss.detach() != 0])

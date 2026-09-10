@@ -157,6 +157,9 @@ class DynamicsLoggerCallback(Callback):
             # Do the several objectives agree about the shared trunk?
             dynamics.update(self._extract_conflict_dynamics(model))
 
+            # ...and what did the fold do about it?
+            dynamics.update(self._extract_strategy_dynamics(model))
+
             # Do the head's several ARMS agree about the shared trunk?
             dynamics.update(self._extract_arm_dynamics(model))
 
@@ -434,6 +437,18 @@ class DynamicsLoggerCallback(Callback):
         """
         core = getattr(model, "_orig_mod", model)
         metrics = getattr(core, "_conflict_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+
+    def _extract_strategy_dynamics(self, model) -> dict:
+        """Drain the loss-blend weights stashed by the combination strategy.
+
+        Empty for a strategy that reports none (``naive`` and friends), and
+        until the first weighted fold lands.
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_strategy_metrics", None)
         if not isinstance(metrics, dict):
             return {}
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}

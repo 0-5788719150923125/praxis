@@ -149,6 +149,7 @@ VAE_DROPOUT: float = 0.15
 # The scaling is a SOFT cap - below the ceiling z_c passes through untouched, so
 # the silent start and the KL's shaping both survive - and the fraction of the
 # ceiling actually used is LEARNED (`arm_gate`).
+ARM_CEILING: float = 1.0
 
 # Logit init for that learned fraction. sigmoid(-6) ~ 0.0025, so the arm still
 # starts effectively silent and -p remains an A/B against -o rather than a

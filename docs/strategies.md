@@ -3,7 +3,13 @@
 
 Multi-task / task-weighting strategies used by the trainer.
 
-Registry: ``praxis.STRATEGIES_REGISTRY`` (4 entries)
+Registry: ``praxis.STRATEGIES_REGISTRY`` (5 entries)
+
+## `capped` - AnchorCapped
+
+Sum the losses, first scaling any term that out-pulls the anchor.
+
+Source: [praxis/strategies/anchor_capped.py:68](../praxis/strategies/anchor_capped.py#L68)
 
 ## `naive` - NaiveSummation
 

@@ -244,6 +244,19 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
             entry = out.get(key)
             if entry is not None and "caller" not in entry:
                 entry["caller"] = "ObjectiveConflict"
+    # Same pattern for the loss-combination strategy: series named after
+    # whichever terms this config carries, so cards come from the live stash.
+    _blend = getattr(_core, "_strategy_metrics", None)
+    if _blend:
+        from praxis.strategies.anchor_capped import blend_metric_descriptions
+
+        descs = blend_metric_descriptions(_blend.keys())
+        out.update(_collect_from(descs))
+        strategy_name = type(getattr(_core, "strategy", None)).__name__
+        for key in descs:
+            entry = out.get(key)
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = strategy_name
     # Same pattern for the probe-attribution sequence curriculum.
     if getattr(_core, "_seq_probe_metrics", None) is not None:
         from praxis.data.seq_probe import SEQ_PROBE_METRIC_DESCRIPTIONS
