@@ -52,7 +52,7 @@ constrained solution.
   differentiable end-to-end, and the one that fits Praxis's existing machinery.
 
 The second is what we want, and we nearly have it already: the regularizer
-registry (`REGULARIZER_REGISTRY`, `model.reg`) computes scalar penalties from
+registry (`REGULARIZER_REGISTRY`, registered on `model.criterion`) computes scalar penalties from
 model state. What is missing is the *per-something weight* - per position, per
 frequency band, per depth step - conditioned on a measured signal.
 

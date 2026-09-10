@@ -18,11 +18,12 @@ from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from praxis.containers import LossContainer
 from praxis.heads.mtp.conv import ConvMTPModule
 from praxis.heads.mtp.transformer import TransformerMTPModule
+from praxis.losses.cross_entropy import CrossEntropyLoss
+from praxis.losses.regression import MeanSquaredErrorLoss
 
 MTP_REGISTRY = {
     "transformer": TransformerMTPModule,
@@ -96,13 +97,6 @@ def _weighted_mean(per_position: torch.Tensor, weights: Optional[torch.Tensor]):
     return (per_position * weights).sum() / weights.sum().clamp(min=1.0)
 
 
-def _masked_ce(preds: torch.Tensor, targets: torch.Tensor, weights):
-    per_position = F.cross_entropy(
-        preds.reshape(-1, preds.size(-1)), targets.reshape(-1), reduction="none"
-    )
-    return _weighted_mean(per_position, weights)
-
-
 @dataclass
 class MTPInputs:
     """Bundled inputs for an MTP forward pass."""
@@ -111,6 +105,9 @@ class MTPInputs:
     embeds: torch.Tensor
     targets: torch.Tensor
     head: nn.Module
+    # The registered "mtp" term (praxis/losses/objectives.py), called as
+    # ``loss_fn(preds, targets, loss_weights=...)``: cross-entropy on the
+    # token/byte paths, squared error on the patch path.
     loss_fn: Callable
     attention_mask: Optional[torch.Tensor] = None
     # Per-position 0/1 weights over ``input_ids`` positions, or None to train
@@ -206,6 +203,16 @@ class MultiTokenPrediction(nn.Module):
         self._accept_ema: float = 1.0
         self._accept_seen: int = 0
 
+        # The term this path trains under, held OFF the module tree: the
+        # model's Objectives container owns it (praxis/losses/objectives.py)
+        # and registers it as "mtp", so the loss shows up in exactly one place
+        # in the blueprint instead of hiding inside a forward.
+        self.__dict__["criterion"] = (
+            MeanSquaredErrorLoss()
+            if self.encoder_path and not self.byte_level
+            else CrossEntropyLoss()
+        )
+
         # Non-byte encoder path (e.g. CALM) owns a projection + head for
         # patch-level MTP; byte-level and token paths reuse the model's head.
         if self.encoder_path and not self.byte_level:
@@ -215,6 +222,11 @@ class MultiTokenPrediction(nn.Module):
             self.patch_head = nn.Linear(
                 config.hidden_size, config.hidden_size, bias=False
             )
+
+    def objectives(self) -> dict:
+        """The term this stack trains under, for the model's Objectives
+        container to own (praxis/losses/objectives.py)."""
+        return {"mtp": self.criterion}
 
     def __repr__(self) -> str:
         return (
@@ -290,7 +302,7 @@ class MultiTokenPrediction(nn.Module):
                 embeds=embed_fn(input_ids),
                 targets=input_ids,
                 head=head,
-                loss_fn=_masked_ce,
+                loss_fn=self.criterion,
                 attention_mask=attention_mask,
                 loss_weights=loss_weights,
             )
@@ -300,7 +312,7 @@ class MultiTokenPrediction(nn.Module):
                 embeds=self.embed_proj(patch_embeds),
                 targets=patch_embeds,
                 head=self.patch_head,
-                loss_fn=lambda p, t, w: F.mse_loss(p, t),
+                loss_fn=self.criterion,
                 attention_mask=attention_mask,
                 loss_weights=None,
             )
@@ -310,7 +322,7 @@ class MultiTokenPrediction(nn.Module):
                 embeds=embed_fn(input_ids),
                 targets=input_ids,
                 head=head,
-                loss_fn=_masked_ce,
+                loss_fn=self.criterion,
                 attention_mask=attention_mask,
                 loss_weights=loss_weights,
             )
@@ -493,7 +505,9 @@ class MultiTokenPrediction(nn.Module):
             if inputs.loss_weights is not None:
                 weights = inputs.loss_weights[:, offset + 1 :][:, :min_out]
 
-            total_loss = total_loss + inputs.loss_fn(preds, targets, weights)
+            total_loss = total_loss + inputs.loss_fn(
+                preds, targets, loss_weights=weights
+            )
             if discrete:
                 with torch.no_grad():
                     # Stays on-device: an .item() here is a forced GPU sync per

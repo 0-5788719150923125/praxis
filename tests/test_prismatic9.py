@@ -21,8 +21,24 @@ from praxis.heads.parallel import (
     SurgicalParallelHead,
     _pcgrad,
 )
+from praxis.losses import Objectives
+from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.halo import HALOLoss
 from tests.test_prismatic8 import Cfg, Enc
+
+
+def objectives(main=None):
+    """The loss container a head is handed, as modeling.py builds it.
+
+    Every arm's row comes out of here: ``arm_ce`` for the plain arms, the
+    main criterion's geometry for the HALO one. Omitting ``main`` is the
+    no-criterion case - the HALO arm has nothing to score with.
+    """
+    terms = Objectives()
+    if main is not None:
+        terms.register("main", main)
+    terms.register("arm_ce", CrossEntropyLoss())
+    return terms
 
 
 def build(name="prismatic9"):
@@ -90,7 +106,7 @@ def test_arm_conflict_reports_a_full_jacobian_on_a_plain_parallel_head():
     any change to how it trains."""
     head = build("prismatic8").train()
     x, y = batch()
-    m = head.arm_conflict(x, y, criterion=HALOLoss(vocab_size=32))
+    m = head.arm_conflict(x, y, objectives(HALOLoss(vocab_size=32)))
     # ALL THREE arms are rows. The HALO arm's row is its own geometric
     # objective, not an invented CE - a Jacobian row is any objective's
     # gradient w.r.t. the shared representation and need not be a CE.
@@ -110,18 +126,19 @@ def test_arm_conflict_reports_a_full_jacobian_on_a_plain_parallel_head():
 def test_arm_conflict_is_sampled_and_holds_between_samples():
     head = build("prismatic8").train()
     x, y = batch()
-    first = dict(head.arm_conflict(x, y))
+    terms = objectives()
+    first = dict(head.arm_conflict(x, y, terms))
     assert first
     for _ in range(ARM_CONFLICT_INTERVAL - 1):
-        assert head.arm_conflict(x, y) == first
+        assert head.arm_conflict(x, y, terms) == first
     assert head._arm_step == ARM_CONFLICT_INTERVAL
 
 
 def test_arm_conflict_is_inert_at_eval_and_without_labels():
     head = build("prismatic8")
     x, y = batch()
-    assert head.eval().arm_conflict(x, y) == {}
-    assert head.train().arm_conflict(x, None) == {}
+    assert head.eval().arm_conflict(x, y, objectives()) == {}
+    assert head.train().arm_conflict(x, None, objectives()) == {}
 
 
 def test_arm_conflict_does_not_disturb_the_training_graph():
@@ -129,7 +146,7 @@ def test_arm_conflict_does_not_disturb_the_training_graph():
     follows must be unaffected."""
     head = build("prismatic8").train()
     x, y = batch()
-    head.arm_conflict(x, y)
+    head.arm_conflict(x, y, objectives())
     head(x).sum().backward()
     assert x.grad is not None and torch.isfinite(x.grad).all()
 
@@ -140,14 +157,14 @@ def test_arm_conflict_does_not_disturb_the_training_graph():
 def test_prismatic8_emits_no_arm_objectives():
     head = build("prismatic8").train()
     x, y = batch()
-    assert head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32)) == {}
+    assert head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32))) == {}
     assert head.arm_surgery is False
 
 
 def test_prismatic9_emits_one_ce_per_arm_plus_the_surrogate():
     head = build().train()
     x, y = batch()
-    out = head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
+    out = head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32)))
     # Every arm is a row, HALO included, so nothing reaches the trunk outside
     # the arbitration.
     assert set(out) == {"arm0_loss", "arm1_loss", "arm2_loss", "arm_surgery"}
@@ -161,9 +178,9 @@ def test_surgery_refuses_rather_than_shipping_a_partial_jacobian():
     stands down instead of arbitrating two rows out of three."""
     head = build().train()
     x, y = batch()
-    assert head.arm_objectives(x, y, criterion=None) == {}
+    assert head.arm_objectives(x, y, objectives()) == {}
     assert head._arm_gap is True
-    assert head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
+    assert head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32)))
 
 
 def test_the_gate_cannot_bypass_the_surgery():
@@ -185,8 +202,8 @@ def test_the_gate_cannot_bypass_the_surgery():
 def test_halo_row_is_its_own_objective_not_a_cross_entropy():
     head = build().train()
     x, y = batch()
-    crit = HALOLoss(vocab_size=32)
-    out = head.arm_objectives(x, y, criterion=crit)
+    crit = objectives(HALOLoss(vocab_size=32))
+    out = head.arm_objectives(x, y, crit)
     halo_arm = head.branches[2]
     direct = halo_arm.arm_loss(x.detach().requires_grad_(True), y, crit)
     assert torch.allclose(out["arm2_loss"], direct, atol=1e-5)
@@ -207,7 +224,7 @@ def test_the_surrogate_contributes_no_value_to_the_loss():
     must not land in the loss curve people read."""
     head = build().train()
     x, y = batch()
-    out = head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
+    out = head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32)))
     assert float(out["arm_surgery"].detach()) == pytest.approx(0.0, abs=1e-9)
     (g,) = torch.autograd.grad(out["arm_surgery"], x, retain_graph=True)
     assert g.abs().sum() > 0, "value-neutral must not mean gradient-neutral"
@@ -219,7 +236,7 @@ def test_the_surrogate_delivers_exactly_the_pcgrad_gradient_to_the_trunk():
     head = build().train()
     head.equalize_rows = False  # the identity is over the raw PCGrad result
     x, y = batch()
-    out = head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
+    out = head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32)))
     (g,) = torch.autograd.grad(out["arm_surgery"], x, retain_graph=True)
 
     # Recompute the expected combination independently.
@@ -227,7 +244,7 @@ def test_the_surrogate_delivers_exactly_the_pcgrad_gradient_to_the_trunk():
     z_d = z.detach().requires_grad_(True)
     trunk_d = x.detach().requires_grad_(True)
     grads = []
-    crit = HALOLoss(vocab_size=32)
+    crit = objectives(HALOLoss(vocab_size=32))
     for b in head.branches:
         inp = trunk_d if getattr(b, "reads_trunk", False) else z_d
         loss = b.arm_loss(inp, y, crit)
@@ -244,7 +261,7 @@ def test_solo_ce_trains_the_arm_but_never_the_trunk():
     each backward crosses one small classifier, never the trunk."""
     head = build().train()
     x, y = batch()
-    out = head.arm_objectives(x, y, criterion=HALOLoss(vocab_size=32))
+    out = head.arm_objectives(x, y, objectives(HALOLoss(vocab_size=32)))
     (g,) = torch.autograd.grad(
         out["arm0_loss"], x, allow_unused=True, retain_graph=True
     )
@@ -273,11 +290,11 @@ def test_a_starved_arm_still_gets_full_gradient():
     can never recover."""
     head = build().train()
     x, y = batch()
-    crit = HALOLoss(vocab_size=32)
-    before = head.arm_objectives(x, y, criterion=crit)
+    crit = objectives(HALOLoss(vocab_size=32))
+    before = head.arm_objectives(x, y, crit)
     with torch.no_grad():
         head.gate.weight.mul_(0).add_(torch.randn_like(head.gate.weight) * 100)
-    after = head.arm_objectives(x, y, criterion=crit)
+    after = head.arm_objectives(x, y, crit)
     # Wrecking the gate leaves every arm's own objective bit-identical.
     for k in ("arm0_loss", "arm1_loss", "arm2_loss"):
         assert torch.equal(before[k], after[k]), k
@@ -304,7 +321,7 @@ def test_repr_names_the_intervention():
 def test_metrics_and_descriptions_line_up():
     head = build().train()
     x, y = batch()
-    crit = HALOLoss(vocab_size=32)
+    crit = objectives(HALOLoss(vocab_size=32))
     head.arm_conflict(x, y, crit)
     head.arm_objectives(x, y, crit)
     metrics = head.training_metrics()
@@ -363,7 +380,7 @@ def test_override_ships_on_a_plain_parallel_head_too():
     """Measurement is universal, so -n-style runs can be read the same way."""
     head = build("prismatic8").train()
     x, y = batch()
-    m = head.arm_conflict(x, y, criterion=HALOLoss(vocab_size=32))
+    m = head.arm_conflict(x, y, objectives(HALOLoss(vocab_size=32)))
     for i in range(3):
         assert 0.0 <= m[f"arm_override_{i}"] <= 1.0
         assert 0.0 <= m[f"arm_override_pcg_{i}"] <= 1.0
@@ -399,7 +416,7 @@ def test_equalization_preserves_the_step_magnitude():
     """It changes the update's DIRECTION, not the effective learning rate."""
     head = build().train()
     x, y = batch()
-    crit = HALOLoss(vocab_size=32)
+    crit = objectives(HALOLoss(vocab_size=32))
 
     head.equalize_rows = False
     plain = torch.autograd.grad(
@@ -428,7 +445,7 @@ def test_no_grad_forward_while_training_is_a_no_op():
     tensors does not require grad" - which is exactly how -o died at startup."""
     head = build().train()
     x, y = batch()
-    crit = HALOLoss(vocab_size=32)
+    crit = objectives(HALOLoss(vocab_size=32))
     with torch.no_grad():
         assert head.arm_objectives(x, y, crit) == {}
         assert head.arm_conflict(x, y, crit) == {}
@@ -500,8 +517,8 @@ def test_validation_loss_stays_comparable_to_prismatic8():
     eight, m8 = val_loss("prismatic8")
     nine, m9 = val_loss("prismatic9")
     # The criterion is configured differently...
-    assert m8.criterion.composite_geometry is True
-    assert m9.criterion.composite_geometry is False
+    assert m8.criterion.main.composite_geometry is True
+    assert m9.criterion.main.composite_geometry is False
     # ...but at EVAL both must score the same composite objective.
     assert nine == pytest.approx(
         eight, rel=1e-4

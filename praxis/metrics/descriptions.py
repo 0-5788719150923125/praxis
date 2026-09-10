@@ -123,11 +123,6 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if field_descs:
             yield field_descs
 
-    for reg in getattr(model, "reg", []) or []:
-        descs = getattr(type(reg), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            yield descs
-
     # Loss-owning encoders (e.g. CALM) declare chart hints as a class attr;
     # guard against ``model.encoder = False`` (the no-encoder sentinel).
     encoder = getattr(model, "encoder", None)
@@ -145,12 +140,11 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
                 if isinstance(loss_descs, dict):
                     yield loss_descs
 
-    # Loss functions (e.g. HALO) declare chart/snapshot hints as a class attr.
+    # Every registered objective (the criterion, the regularizers, the terms
+    # other modules compute) declares chart/snapshot hints as a class attr.
     criterion = getattr(model, "criterion", None)
-    if criterion is not None:
-        descs = getattr(type(criterion), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            yield descs
+    if criterion is not None and hasattr(criterion, "metric_descriptions"):
+        yield from criterion.metric_descriptions()
 
 
 def resolve_callers(root: Any) -> Dict[str, str]:
@@ -187,12 +181,6 @@ def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
 
     for key, caller in resolve_callers(model).items():
         claim(key, caller)
-
-    for reg in getattr(model, "reg", []) or []:
-        descs = getattr(type(reg), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            for key in descs:
-                claim(key, type(reg).__name__)
 
     weighter = getattr(model, "tasker", None)
     if weighter is not None and getattr(weighter, "is_dynamic", False):

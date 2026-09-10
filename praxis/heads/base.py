@@ -146,7 +146,7 @@ class BaseHead(nn.Module, ABC):
         pass
 
     def arm_loss(
-        self, inp: Tensor, labels: Tensor, criterion: Optional[nn.Module] = None
+        self, inp: Tensor, labels: Tensor, objectives: Optional[nn.Module] = None
     ) -> Optional[Tensor]:
         """This head's OWN objective, when it is one arm among several.
 
@@ -157,6 +157,11 @@ class BaseHead(nn.Module, ABC):
         trained by something else (HaloHead, under HALOLoss's geometry)
         overrides this and returns its real one.
 
+        ``objectives`` is the model's :class:`~praxis.losses.Objectives`
+        container. The CE below comes from it (registered as ``arm_ce``)
+        rather than being built here, so an arm's objective is declared where
+        every other one is.
+
         Returning None drops the arm from the Jacobian, which the caller must
         treat as a gap rather than as a zero: an objective that reaches the
         shared representation but sits outside the arbitration is worse than
@@ -165,11 +170,7 @@ class BaseHead(nn.Module, ABC):
         logits = self(inp)
         if logits.shape[-2] != labels.shape[-1]:
             logits = logits[..., :-1, :]
-        return torch.nn.functional.cross_entropy(
-            logits.reshape(-1, logits.shape[-1]).float(),
-            labels.reshape(-1),
-            ignore_index=-100,
-        )
+        return objectives.require("arm_ce")(logits=logits.float(), labels=labels)
 
     def aux_losses(self) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.

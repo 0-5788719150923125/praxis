@@ -154,7 +154,10 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         embeds = getattr(model, "embeds", None)
         encoder = model.encoder if getattr(model, "encoder", False) else None
         layers: List[Any] = list(model.decoder.locals)
-        criterion = model.criterion
+        # The main term only: workers score one layer's local CE, and a
+        # deep copy of the whole Objectives container would hand every
+        # worker its own copy of the regularizers too.
+        criterion = model.criterion.main
         strategy = getattr(model, "strategy", None)
         num_layers = len(layers)
         depth = model.config.depth

@@ -235,7 +235,7 @@ class HaloHead(BaseHead):
     def classifier(self) -> nn.Module:
         return self.lm_head
 
-    def arm_loss(self, inp, labels, criterion=None):
+    def arm_loss(self, inp, labels, objectives=None):
         """HALO's geometry, not an invented cross-entropy.
 
         This arm is trained by HALOLoss, so that is what its Jacobian row must
@@ -244,10 +244,11 @@ class HaloHead(BaseHead):
         scores are not calibrated as CE logits, so its CE runs ~25 nats against
         the other arms' ~7 and would dominate any combination rule by accident.
 
-        Returns None when the criterion is not HALOLoss, so the caller drops
-        the row rather than substituting something wrong.
+        Returns None when the main criterion is not HALOLoss, so the caller
+        drops the row rather than substituting something wrong.
         """
-        fn = getattr(criterion, "geometry_only", None)
+        main = getattr(objectives, "main", None)
+        fn = getattr(main, "geometry_only", None)
         if fn is None:
             return None
         return fn(inp, labels, self.classifier)

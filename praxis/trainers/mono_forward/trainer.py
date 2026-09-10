@@ -484,7 +484,10 @@ class MonoForwardTrainer:
             torch.cuda.empty_cache()
         embeds = model_host.embeds
         layers: List[Any] = list(model_host.decoder.locals)
-        criterion = model_host.criterion
+        # The main term only: workers score one layer's local CE, and a
+        # deep copy of the whole Objectives container would hand every
+        # worker its own copy of the regularizers too.
+        criterion = model_host.criterion.main
         strategy = getattr(model_host, "strategy", None)
         num_layers = len(layers)
         depth = model_host.config.depth

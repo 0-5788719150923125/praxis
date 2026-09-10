@@ -24,9 +24,8 @@ from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, Praxi
 from praxis.attention.cache import PraxisCache
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
-from praxis.losses import get_loss_function
+from praxis.losses import build_objectives
 from praxis.losses.conflict import ObjectiveConflict
-from praxis.losses.regularizers import build_regularizers
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
@@ -297,12 +296,20 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.policies = nn.ModuleDict(_recall)
         self._engagement_metrics = {}  # latest recall-policy scalars
 
-        # Encoders that own their loss (e.g. CALM) bypass the main-CE path
-        # entirely, so don't build a criterion we'd never call.
-        if self.encoder and self.encoder.handles_loss:
-            self.criterion = None
-        else:
-            self.criterion = get_loss_function(config.loss_func, config.vocab_size)
+        # Every loss this model can add to its objective, in one container:
+        # the main criterion, the additive representation-shaping
+        # regularizers, and the terms other modules compute (registered just
+        # below). An encoder that owns the loss (CALM) bypasses the main-CE
+        # path entirely, so `main` stays unregistered there.
+        self.criterion = build_objectives(config, self.encoder)
+        # A module that computes its own term declares it via ``objectives()``
+        # and reads it back out of the container; collected once here, so the
+        # blueprint is complete before a step runs.
+        self.criterion.claim(self)
+
+        # Checkpoints written before the terms were collapsed into one
+        # container carry the regularizers at the model's own top level.
+        self._register_load_state_dict_pre_hook(self.criterion.migrate_regularizer_keys)
 
         # Per-task loss weighting. Identity (no-op) unless --task-weights
         # is set; the assistant mask from the chat template is always
@@ -313,18 +320,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Set by the trainer to the task indices a live dataset produces;
         # get_metrics() uses it to skip charting weights for absent tasks.
         self.active_task_ids = None
-
-        # Additive representation-shaping regularizers (see forward): a list of
-        # swappable losses from REGULARIZER_REGISTRY, chosen by name in
-        # config.regularizers (default: contrastive isotropy). The dynamics
-        # extractor / descriptions walker iterate model.reg.
-        self.reg = build_regularizers(
-            getattr(config, "regularizers", None),
-            # `or 0`: a pure-byte tokenizer defines no pad token, and this
-            # is only a gather-safe index - padding itself is identified by
-            # ignore_index in the labels.
-            pad_id=config.pad_token_id or 0,
-        )
 
         # The strategy for combining multiple losses into a single scalar objective.
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
@@ -340,9 +335,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # - otherwise it is double-counted AND reaches the trunk uncorrected,
         # bypassing the arbitration it is supposed to be subject to.
         if getattr(self.head, "arm_surgery", False) and hasattr(
-            self.criterion, "composite_geometry"
+            self.criterion.main, "composite_geometry"
         ):
-            self.criterion.composite_geometry = False
+            self.criterion.main.composite_geometry = False
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -408,7 +403,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 hidden_states=hidden_states,
                 labels=labels,
                 head=self.head,
-                criterion=self.criterion,
+                criterion=self.criterion.main,
                 strategy=self.strategy,
                 aux_losses=aux_losses,
                 input_ids=input_ids,
@@ -475,11 +470,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         """Compute the main loss using the criterion."""
         # cut_cross_entropy needs FULL UNSHIFTED embeddings to avoid materializing shifted tensors
         # Check by class name to avoid hard dependency on integration
-        is_cut_ce = self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
+        is_cut_ce = type(self.criterion.main).__name__ == "CutCrossEntropyLoss"
 
         # Check if encoder outputs are already aligned
         if self.encoder and self.encoder.outputs_are_aligned:
-            return self.criterion(
+            return self.criterion.main(
                 logits=logits.contiguous(),
                 embeddings=embeddings if is_cut_ce else embeddings,
                 classifier=classifier,
@@ -488,7 +483,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 loss_weights=loss_weights,
             )
         else:
-            return self.criterion(
+            return self.criterion.main(
                 logits=logits[..., :-1, :].contiguous(),
                 embeddings=(
                     embeddings if is_cut_ce else embeddings[..., :-1, :].contiguous()
@@ -536,7 +531,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             back_classifier = classifier
 
         # Compute backward loss
-        backward_loss = self.criterion(
+        backward_loss = self.criterion.main(
             logits=back_logits,
             embeddings=embeddings[..., 1:, :].contiguous(),
             classifier=back_classifier,
@@ -657,8 +652,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # one left behind. `_add_auxiliary_losses` only calls them when training
         # AND labels are present, so a labels-free training forward would
         # otherwise strand live autograd graphs for a later step to consume.
-        for reg in self.reg:
-            reg.reset()
+        self.criterion.reset()
 
         # Encoder-owned self-supervised warmup (e.g. CALM's autoencoder). While
         # active, train ONLY the encoder's objective and skip the global
@@ -732,10 +726,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Under cut-CE training, full logits are never materialized; the loss
         # projects internally from embeddings + classifier.
-        is_cut_ce = (
-            self.criterion is not None
-            and self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
-        )
+        is_cut_ce = type(self.criterion.main).__name__ == "CutCrossEntropyLoss"
         skip_logits = is_cut_ce and self.training and labels is not None
 
         logits, classifier, hidden_states, backward_logits = self._compute_logits(
@@ -1105,7 +1096,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # `classifier` is passed as optional context, not stored: a regularizer
         # holding a reference to the readout would register it a second time and
         # duplicate its parameters in state_dict and the optimizer.
-        for reg in self.reg:
+        for reg in self.criterion.regularizers():
             outputs.losses.add_loss(
                 reg.name, reg(hidden_states, input_ids, classifier=classifier)
             )

@@ -115,7 +115,7 @@ def test_byte_latent_forward_with_mode_criterion():
         loss_func="mode_cross_entropy",
     )
     model = PraxisForCausalLM(cfg).train()
-    assert isinstance(model.criterion, ModeCrossEntropyLoss)
+    assert isinstance(model.criterion.main, ModeCrossEntropyLoss)
     ids = torch.randint(4, 260, (2, 24))
     out = model(input_ids=ids, labels=ids[..., 1:].contiguous())
     assert torch.isfinite(out.loss)

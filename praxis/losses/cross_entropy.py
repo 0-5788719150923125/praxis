@@ -22,7 +22,7 @@ class CrossEntropyLoss(nn.Module):
         self,
         logits: Tensor,
         labels: Tensor,
-        input_ids: Tensor,
+        input_ids: Optional[Tensor] = None,
         loss_weights: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
@@ -32,16 +32,17 @@ class CrossEntropyLoss(nn.Module):
         Args:
             logits: Predicted logits, already shifted to match labels.
             labels: Target labels.
-            input_ids: Unshifted input token IDs (used for the dedup penalty).
+            input_ids: Unshifted input token IDs, needed only by the dedup
+                penalty.
             loss_weights: Optional per-token weight tensor matching ``labels``
                 shape. See :func:`praxis.losses.reduction.weighted_reduce`.
         """
-        shift_logits = logits.view(-1, logits.shape[-1])
-        shift_labels = labels.view(-1)
+        shift_logits = logits.reshape(-1, logits.shape[-1])
+        shift_labels = labels.reshape(-1)
         ce_loss = F.cross_entropy(
             shift_logits, shift_labels, reduction="none", ignore_index=-100
         )
-        if self.penalty_weight != 0:
+        if self.penalty_weight != 0 and input_ids is not None:
             token_output = torch.argmax(shift_logits, dim=1)
             duplicated_masks = (
                 torch.eq(input_ids.view(-1), token_output.unsqueeze(-1))

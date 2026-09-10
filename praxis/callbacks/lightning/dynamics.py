@@ -7,8 +7,6 @@ from lightning.pytorch.callbacks import Callback
 from praxis.logging.dynamics_logger import DynamicsLogger
 from praxis.metrics import extract_layer_dynamics
 
-
-
 # Diagnostics that have already reported a failure, keyed by source and error.
 # A metric extractor runs every logging step, so an unguarded print repeats the
 # same line for the life of the run - which is how a broken diagnostic hides in
@@ -33,6 +31,7 @@ def _report(source: str, error: Exception) -> None:
         f"run: {type(error).__name__}: {error}\n"
         + "".join(traceback.format_exception(error)).rstrip()
     )
+
 
 class DynamicsLoggerCallback(Callback):
     """PyTorch Lightning callback that logs gradient dynamics to DynamicsLogger.
@@ -121,9 +120,6 @@ class DynamicsLoggerCallback(Callback):
             # MTP harmonic-field diagnostics (vear bank's Serpent spectrum).
             dynamics.update(self._extract_mtp_dynamics(model))
 
-            # Regularizer diagnostics (each regularizer's own training_metrics).
-            dynamics.update(self._extract_regularizer_dynamics(model))
-
             # Arc per-depth bias specialization, averaged across Arc modules.
             dynamics.update(self._extract_arc_dynamics(model))
 
@@ -139,8 +135,10 @@ class DynamicsLoggerCallback(Callback):
             # energy loss). Encoders opt in via training_metrics().
             dynamics.update(self._extract_encoder_dynamics(model))
 
-            # Loss-function diagnostics (e.g. HALO: gamma, shell radius,
-            # abstain rate). The criterion opts in via training_metrics().
+            # Every registered objective's own diagnostics, criterion and
+            # regularizers alike (HALO: gamma, shell radius, abstain rate;
+            # isotropy: the representation probes). Each opts in via
+            # training_metrics().
             dynamics.update(self._extract_loss_dynamics(model))
 
             # Sequence-length curriculum: per-arm fitted value + evidence, and
@@ -350,20 +348,6 @@ class DynamicsLoggerCallback(Callback):
             _report("mtp.training_metrics()", e)
             return {}
 
-    def _extract_regularizer_dynamics(self, model) -> dict:
-        """Collect each regularizer's own diagnostics from model.reg.
-
-        Each module opts in via ``training_metrics()``; wrapped in try/except
-        so a buggy metric doesn't kill the whole dynamics log.
-        """
-        out: dict = {}
-        for reg in getattr(model, "reg", []) or []:
-            try:
-                out.update(reg.training_metrics())
-            except Exception as e:
-                _report(f"{reg.name} training_metrics()", e)
-        return out
-
     def _extract_sorting_dynamics(self, model) -> dict:
         """Delegate to the decoder's sorting slot (``decoder.order``).
 
@@ -481,20 +465,26 @@ class DynamicsLoggerCallback(Callback):
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
 
     def _extract_loss_dynamics(self, model) -> dict:
-        """Delegate to the loss function's own diagnostics (e.g. HALO).
+        """Every objective's own diagnostics (HALO's geometry, the
+        regularizers' representation probes, ...).
 
-        The criterion opts in via ``training_metrics()`` (chart hints declared
-        as a ``metric_descriptions`` class attr); wrapped so a buggy metric
-        doesn't kill the dynamics log.
+        Each term opts in via ``training_metrics()`` (chart hints declared as
+        a ``metric_descriptions`` class attr); collected per term so a buggy
+        metric costs its own card rather than the whole dynamics log.
         """
         criterion = getattr(model, "criterion", None)
-        if criterion is None or not hasattr(criterion, "training_metrics"):
+        if criterion is None or not hasattr(criterion, "terms"):
             return {}
-        try:
-            return criterion.training_metrics()
-        except Exception as e:
-            _report("criterion.training_metrics()", e)
-            return {}
+        out: dict = {}
+        for name, term in criterion.terms():
+            fn = getattr(term, "training_metrics", None)
+            if fn is None:
+                continue
+            try:
+                out.update(fn() or {})
+            except Exception as e:
+                _report(f"criterion.{name} training_metrics()", e)
+        return out
 
     def _extract_arc_dynamics(self, model) -> dict:
         """Collect Arc per-depth specialization, averaged across Arc modules.

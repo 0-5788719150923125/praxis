@@ -10,6 +10,8 @@ from praxis.losses.focal import FocalLoss
 from praxis.losses.halo import HALOLoss
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.losses.mile import MiLeLoss
+from praxis.losses.objectives import Objectives
+from praxis.losses.regression import MeanSquaredErrorLoss
 from praxis.losses.regularizers import REGULARIZER_REGISTRY, build_regularizers
 from praxis.losses.stablemax import StableMaxCrossEntropyLoss
 
@@ -46,3 +48,27 @@ LOSS_REGISTRY = {
 
 def get_loss_function(name, vocab_size):
     return LOSS_REGISTRY[name](vocab_size=vocab_size)
+
+
+def build_objectives(config, encoder=None) -> Objectives:
+    """The model's loss terms: the main criterion plus its regularizers.
+
+    Producers that own a term (MTP, a parallel head's arms) register theirs
+    on the returned container as they are built. An encoder that owns the
+    loss (CALM) leaves ``main`` unregistered - there is no criterion for the
+    model to call.
+    """
+    objectives = Objectives()
+    if not (encoder and getattr(encoder, "handles_loss", False)):
+        objectives.register(
+            "main", get_loss_function(config.loss_func, config.vocab_size)
+        )
+    for regularizer in build_regularizers(
+        getattr(config, "regularizers", None),
+        # `or 0`: a pure-byte tokenizer defines no pad token, and this is only
+        # a gather-safe index - padding itself is identified by ignore_index
+        # in the labels.
+        pad_id=config.pad_token_id or 0,
+    ):
+        objectives.register(regularizer.name, regularizer)
+    return objectives

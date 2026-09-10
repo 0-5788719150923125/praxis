@@ -7,8 +7,10 @@ class BaseRegularizer(nn.Module):
 
     Regularizers read the trunk's hidden states and return a scalar that joins
     the main objective additively - they shape the representation geometry, they
-    do not replace the LM loss. The model holds them in a list (``model.reg``)
-    and folds each one's ``forward`` into the loss container under ``name``.
+    do not replace the LM loss. They are registered alongside every other loss
+    term in the model's :class:`~praxis.losses.Objectives` container
+    (``model.criterion``), which folds each one's ``forward`` into the loss
+    container under ``name``.
 
     Subclasses set ``name`` (the loss-container tag), may declare
     ``metric_descriptions`` (dashboard chart hints), and may override

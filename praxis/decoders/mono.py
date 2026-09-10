@@ -44,10 +44,11 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.containers import LossContainer
+from praxis.losses.cross_entropy import CrossEntropyLoss
+from praxis.losses.regression import SmoothL1Loss
 
 # Named cut schedules. Values are spec dicts (docs render the descriptions);
 # selection flows through build_mono, never a per-knob CLI flag.
@@ -127,6 +128,16 @@ class MonoForward(MonoBase):
         self._score_values: list = []  # detached per-cut values, for metrics
         self._labels: Optional[Tensor] = None
         self._target: Optional[Tensor] = None
+        # The goodness objective, held OFF the module tree: the model's
+        # Objectives container owns it (praxis/losses/objectives.py) and
+        # registers it as "mono", the tag this module reports under.
+        self.__dict__["criterion"] = (
+            SmoothL1Loss() if self.latent else CrossEntropyLoss()
+        )
+
+    def objectives(self) -> dict:
+        """The term each cut scores under, for the container to own."""
+        return {"mono": self.criterion}
 
     def __repr__(self) -> str:
         return (
@@ -191,7 +202,7 @@ class MonoForward(MonoBase):
             if hidden_states.size(1) < 2:
                 return
             pred = self.proj[idx](hidden_states[:, :-1])
-            loss = F.smooth_l1_loss(pred, target[:, 1:])
+            loss = self.criterion(pred, target[:, 1:])
         else:
             labels = self._labels
             if labels is None or labels.size(1) != hidden_states.size(1):
@@ -199,10 +210,7 @@ class MonoForward(MonoBase):
             if hidden_states.size(1) < 2:
                 return
             logits = self.proj[idx](hidden_states[:, :-1])
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                labels[:, 1:].reshape(-1),
-            )
+            loss = self.criterion(logits=logits, labels=labels[:, 1:])
         self._scores.append(loss)
         with torch.no_grad():
             self._score_values.append(loss.detach())

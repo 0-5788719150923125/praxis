@@ -271,6 +271,14 @@ export function formatAxisTick(value) {
     return String(Number(value.toPrecision(3)));
 }
 
+// Tooltip precision for a series value. toFixed(4) alone renders the small
+// magnitudes these diagnostics carry (3e-5 gains, sub-1% deltas) as "0.0000".
+function formatSeriesValue(value) {
+    if (!Number.isFinite(value)) return '-';
+    if (value === 0) return '0';
+    return Math.abs(value) < 1e-3 ? value.toExponential(2) : value.toFixed(4);
+}
+
 // ── In-place chart upsert ───────────────────────────────────────────────────
 // Pour fresh data (and options - they embed theme colors) into a live Chart
 // instance instead of destroy+recreate. Recreating on every metrics poll is
@@ -3703,13 +3711,16 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         return;
     }
 
-    // Calculate x-axis bounds from all data
+    // Calculate x-axis bounds from all data, and whether any series goes
+    // negative - the y floor below depends on it.
     let minX = Infinity;
     let maxX = -Infinity;
+    let minY = Infinity;
     allDatasets.forEach(dataset => {
         dataset.data.forEach(point => {
             minX = Math.min(minX, point.x);
             maxX = Math.max(maxX, point.x);
+            if (Number.isFinite(point.y)) minY = Math.min(minY, point.y);
         });
     });
 
@@ -3741,7 +3752,7 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                     borderColor: gridColor,
                     borderWidth: 1,
                     padding: 12,
-                    callbacks: crossRunTooltipCallbacks(axis)
+                    callbacks: crossRunTooltipCallbacks(axis, formatSeriesValue)
                 }
             },
             scales: {
@@ -3774,10 +3785,20 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    min: 0,
+                    // Floor at zero only when nothing dips below it. Signed
+                    // series live here too (an R^2 gain, a cosine, a delta): a
+                    // hard min of 0 clipped their whole negative half away, and
+                    // the surviving fragments entered the frame as stray
+                    // diagonals wherever a line crossed the clip edge.
+                    ...(Number.isFinite(minY) && minY >= 0 ? { min: 0 } : {}),
                     ticks: {
                         color: textColor,
-                        callback: options.stepped ? (value) => value.toFixed(0) : (value) => `${value.toFixed(0)}%`
+                        // Raw scalars, never percentages - entropies, cosines,
+                        // R^2 gains, counts. The old `toFixed(0)%` turned a
+                        // 0..1 range into a ladder of identical "0%"/"1%"
+                        // labels, worst on a narrow card where the ticks are
+                        // closest together.
+                        callback: formatAxisTick
                     },
                     grid: { color: gridColor }
                 }

@@ -48,6 +48,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
+from praxis.losses.cross_entropy import CrossEntropyLoss
 
 HeadSpec = Union[BaseHead, Callable[..., BaseHead]]
 
@@ -225,6 +226,19 @@ class ParallelHead(BaseHead):
         else:
             feature_dim, _ = dims
             self.gate = nn.Linear(feature_dim, len(self.branches), bias=False)
+
+    def objectives(self) -> dict:
+        """This head's per-arm cross-entropy, for the model's Objectives
+        container to own (praxis/losses/objectives.py).
+
+        Every arm's Jacobian row is an objective like any other - the HALO
+        arm's is the criterion's geometry, the rest score plain CE - so the CE
+        is declared where the model's other terms are rather than built inside
+        ``arm_loss``. Held off the module tree: the container owns it.
+        """
+        if "arm_ce" not in self.__dict__:
+            self.__dict__["arm_ce"] = CrossEntropyLoss()
+        return {"arm_ce": self.arm_ce}
 
     def compose_repr(self) -> str:
         """Blueprint label, in the keyword style every other module uses.
@@ -423,7 +437,7 @@ class ParallelHead(BaseHead):
 
     # ── Arm-level Jacobian: measurement, then optionally the intervention ──
 
-    def _arm_grads(self, hidden_states: Tensor, labels: Tensor, criterion=None):
+    def _arm_grads(self, hidden_states: Tensor, labels: Tensor, objectives=None):
         """``(z, losses, grads)``: each arm's solo CE and its gradient at the
         branch point where the arms diverge.
 
@@ -445,7 +459,7 @@ class ParallelHead(BaseHead):
             # Each arm's OWN objective, not an invented cross-entropy. For most
             # arms those coincide; for the HALO arm they do not, and using CE
             # there would add a second objective fighting its real one.
-            loss = b.arm_loss(inp, labels, criterion)
+            loss = b.arm_loss(inp, labels, objectives)
             if loss is None:
                 self._arm_gap = True
                 continue
@@ -458,7 +472,7 @@ class ParallelHead(BaseHead):
         return z, losses, grads, index
 
     def arm_conflict(
-        self, hidden_states: Tensor, labels: Tensor, criterion=None
+        self, hidden_states: Tensor, labels: Tensor, objectives=None
     ) -> Dict[str, float]:
         """Pairwise cosines and relative magnitudes of the arms' solo gradients.
 
@@ -490,7 +504,7 @@ class ParallelHead(BaseHead):
             return dict(self._arm_metrics)
         self._arm_gap = False
         with torch.enable_grad():
-            _, losses, grads, index = self._arm_grads(hidden_states, labels, criterion)
+            _, losses, grads, index = self._arm_grads(hidden_states, labels, objectives)
         if len(grads) < 2:
             return dict(self._arm_metrics)
         flat = [g.detach().float().flatten() for g in grads]
@@ -562,7 +576,7 @@ class ParallelHead(BaseHead):
         return out
 
     def arm_objectives(
-        self, hidden_states: Tensor, labels: Tensor, criterion=None
+        self, hidden_states: Tensor, labels: Tensor, objectives=None
     ) -> Dict[str, Tensor]:
         """Losses that replace the mixture as the arms' training signal.
 
@@ -597,7 +611,7 @@ class ParallelHead(BaseHead):
         if not torch.is_grad_enabled():
             return {}
         self._arm_gap = False
-        z, losses, grads, index = self._arm_grads(hidden_states, labels, criterion)
+        z, losses, grads, index = self._arm_grads(hidden_states, labels, objectives)
         if not grads or self._arm_gap:
             # A row that reaches the shared representation but sits OUTSIDE the
             # arbitration is worse than no arbitration: it routes around the
