@@ -1,48 +1,38 @@
 """Harmonic drift penalty: KL between the readout and a slow EMA of itself.
 
 THE CLAIM THIS TESTS. The harmonic line in research/main.tex argues that the
-model's readout basis is CONSTITUTIVE rather than learned-in-passing: a fixed
-eigenbasis whose coefficients rotate while its form does not. Read operationally,
-that says the map from representation to output distribution should mostly never
-change - every output token should look, mostly, the same. This regularizer is
-that sentence written as a loss, so the claim becomes falsifiable instead of
-rhetorical. If the basis really is constitutive, the penalty should sit near zero
-without being paid for, and switching it on should cost almost nothing. If it is
-expensive, the claim is doing less work than the paper says.
+readout basis is CONSTITUTIVE rather than learned-in-passing: a fixed eigenbasis
+whose coefficients rotate while its form does not. Operationally, the map from
+representation to output distribution should mostly never change. This
+regularizer writes that sentence as a loss, so the claim becomes falsifiable: if
+the basis really is constitutive the penalty sits near zero without being paid
+for, and switching it on costs almost nothing.
 
-WHAT IT DOES. It keeps a non-trainable EMA copy of the output classifier's
+WHAT IT DOES. Keeps a non-trainable EMA copy of the output classifier's
 PARAMETERS, runs the SAME live hidden states through both the live classifier and
-a functional call of it under the EMA parameters, and penalises the divergence
-between the two distributions. Two readout evaluations, no second trunk pass, no
-second model, and nothing new for the optimizer to own.
+a functional call of it under the EMA parameters, and penalises the divergence.
+Two readout evaluations, no second trunk pass, no second model, nothing new for
+the optimizer to own.
 
 The EMA is generic over the classifier's parameters rather than assuming a
-``weight``/``bias`` linear. That is not defensiveness, it is the actual case
-here: the abstractinator line runs ``head_type: prismatic4``, whose readout is
-``CrystalClassifier`` - a distance-based layer whose only parameter is
-``centers``, the per-vocabulary prototypes (praxis/heads/crystal.py). Those
-centers ARE the geometry the paper's crystal claim is about, so "how far has the
-readout moved from its own recent past" is measured directly on them. An earlier
-version of this file duck-typed ``.weight`` and silently no-opped on every
-abstractinator config.
+``weight``/``bias`` linear, because the abstractinator line runs
+``head_type: prismatic4``, whose readout is ``CrystalClassifier`` - its only
+parameter is ``centers``, the per-vocabulary prototypes
+(praxis/heads/crystal.py). Those centers ARE the geometry the crystal claim is
+about.
 
-DIRECTION. The penalty is KL(ema || live), i.e. the EMA acts as a teacher and
-the live model is charged for mass the teacher assigned and it dropped. That is
-the mass-covering direction, chosen deliberately: the failure this codebase
-actually suffers is collapse onto a few high-probability continuations, and
-mode-seeking KL(live || ema) would happily reward exactly that. Only the live
+DIRECTION. KL(ema || live): the EMA is the teacher and the live model is charged
+for mass the teacher assigned and it dropped. Mass-covering, chosen because the
+failure this codebase suffers is collapse onto a few high-probability
+continuations, which mode-seeking KL(live || ema) would reward. Only the live
 term carries gradient; the teacher is detached.
 
-WHAT IT DOES NOT DO. It bounds drift of the READOUT, not of the trunk. Two
-different trunks that happen to feed the same classifier are indistinguishable to
-it. A full trust region needs an EMA of the whole model and a second forward
-pass; this is the cheap version that fits the existing regularizer contract, and
-it is the version worth trying first because the claim it tests is specifically
-about the readout basis.
+WHAT IT DOES NOT DO. It bounds drift of the READOUT, not the trunk - two
+different trunks feeding the same classifier are indistinguishable to it. A full
+trust region needs an EMA of the whole model and a second forward pass.
 
-STATUS. Opt-in. It is NOT in DEFAULT_REGULARIZERS - select it by name in a
-config's ``regularizers`` list. See next/rl.md for why this is the direction the
-RL work is taking instead of the forward-path reward policies.
+Opt-in: not in DEFAULT_REGULARIZERS, select it by name in a config's
+``regularizers`` list. See next/rl.md.
 """
 
 from typing import Optional

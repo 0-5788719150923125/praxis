@@ -323,9 +323,10 @@ class InfiniAttention(CausalAttention):
                 )
                 self._cpu_fallback_warned = True
             # Reuse the block-aware path with a dummy single-block mask so
-            # ghostmax (softmax1 via the zero ghost column) is preserved.
-            # The previous code stripped the ghost before SDPA, which
-            # silently downgraded to plain softmax in the CPU path.
+            # Reuse the block-aware path with a dummy single-block mask so
+            # ghostmax (softmax1 via the zero ghost column) is preserved -
+            # stripping the ghost before SDPA silently downgrades to plain
+            # softmax on this path.
             dummy_blocks = torch.zeros(
                 batch_size, seg_len, device=device, dtype=torch.long
             )

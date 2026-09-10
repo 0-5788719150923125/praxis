@@ -83,7 +83,11 @@ TOOLS_WEIGHT = 1.0
 # blend down later for generalization.
 PRINT_WEIGHT = 5.0
 
-# Dataset collections with weights
+# Dataset collections with weights.
+#
+# A dataset whose DATASETS entry declares `requires_rl_type` must NOT appear
+# here: it belongs to that RL policy, which injects it via `dataset_weights`
+# (praxis.policies.rl_dataset_weights). `add_collection` enforces this.
 DATASET_COLLECTIONS = dict(
     base={
         "fineweb-edu-350bt": DEFAULT_WEIGHT,
@@ -104,7 +108,6 @@ DATASET_COLLECTIONS = dict(
         "natural-instructions": DEFAULT_WEIGHT,
         "cosmopedia-v2": DEFAULT_WEIGHT,
         "smoltalk": DEFAULT_WEIGHT,
-        "hh-rlhf": DEFAULT_WEIGHT,
     },
     phi={
         "fineweb": 0.75,
@@ -140,14 +143,6 @@ DATASET_COLLECTIONS = dict(
     },
     rl={
         "intellect-rl": DEFAULT_WEIGHT,
-    },
-    # The dense grounding for `rl_type: preference`. PreferencePolicy scores
-    # only positions tagged PREF_CHOSEN / PREF_REJECTED, and hh-rlhf
-    # (DataFormat.PREFERENCE_PAIR) is the sole source of those tags - so the
-    # policy is inert without it. Pulled in automatically by the policy's
-    # `dataset_collections`; it also rides along inside `focused`.
-    preference={
-        "hh-rlhf": DEFAULT_WEIGHT,
     },
     print={
         "synthetic-print": PRINT_WEIGHT,
@@ -209,10 +204,17 @@ DATASETS = {
     # PREF_REJECTED per token. Chosen trains as conversation data AND anchors
     # the preference margin; rejected is contrast-only (excluded from main CE,
     # pushed down by rl_type: preference - praxis/policies/preference.py).
+    # The dataset card forbids use outside preference modeling, so the entry
+    # is bound to the policy that honors it: only `rl_type: preference`
+    # (PreferencePolicy.dataset_weights) can pull it into a mixture, and
+    # naming it in a plain collection raises. It sat orphaned inside `focused`
+    # for a while - SFT on the `chosen` transcripts, no preference objective -
+    # which is the failure `requires_rl_type` now makes impossible.
     "hh-rlhf": dict(
         path="Anthropic/hh-rlhf",
         keys=["chosen", "rejected"],
         format=DataFormat.PREFERENCE_PAIR,
+        requires_rl_type=("preference",),
     ),
     "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",

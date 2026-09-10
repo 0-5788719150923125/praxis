@@ -208,58 +208,40 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=False,
     ),
     # ONE memory, gated, at the FIRST recurrent pass only - the Titans-faithful
-    # arrangement, after the depth bank measured as a bank of static MLPs.
+    # arrangement, and mag_standard is its differentiable-update variant (the
+    # paper's own mode) against mag_energy's detached one.
     #
-    # passes=[0]. The depth bank spread four cores along the recurrence and the
-    # late ones starved: `*_memory_core_use` read 0.46 / 0.28 / 0.17 / 0.09,
-    # which is not a routing decision, it is the halting distribution. Training
-    # samples a loop count up front (halting/kl.py:122-133) and eval exits at
-    # loop boundaries (:154), so pass 0 is the ONLY station every input reaches,
-    # every gradient step trains, and the speculative decoder sees identically
-    # on every forward. One memory call per forward instead of ~3.
+    # passes=[0], because pass 0 is the only station every input reaches:
+    # training samples a loop count up front (halting/kl.py:122-133) and eval
+    # exits at loop boundaries (:154). One memory call per forward instead of ~3.
     #
-    # segment_block=4, matching the reference (lucidrains' train_mac.py runs
-    # SEQ_LEN 512 on a 4-token grid = 128 chunks). This is the number that
-    # decides whether test-time learning happens at all: retrieval reads
-    # PRE-write weights, so the writes the model can feel is chunks - 1, and on
-    # a 16-token grid this repo's latent lengths (bytes/8) gave 0.70 writes per
-    # forward with 62% of forwards getting ZERO. A 4-token grid gives ~5.
+    # Energy mode detaches the whole test-time update, which severs the outer
+    # loss from the memory net - retrieval reads PRE-write weights, so only chunk
+    # 0 reads W0 itself. The gradient reaching W0 decays as 1/nc (1.00x / 0.52x /
+    # 0.31x / 0.18x at 2 / 4 / 8 / 16 chunks) where standard mode holds it flat.
+    # Under energy mode W0 is trained to be a good COLD READOUT, never a good
+    # INITIALIZATION for the update.
+    #
+    # chunk_size 4, NOT segment_block: standard mode hard-gates segmentation off
+    # (`segment and use_energy`), so the update grid is chunk_size, and 64 would
+    # give ONE chunk at this model's latent lengths. segment_block=4 does the
+    # same job for the energy variants, matching the reference (lucidrains'
+    # train_mac.py runs SEQ_LEN 512 on a 4-token grid). Retrieval reads PRE-write
+    # weights, so the writes the model can feel is chunks - 1.
     #
     # swish, NOT serpent. Every parameter of the memory net is a fast weight, so
     # a periodic activation puts its per-feature FREQUENCIES in the test-time
-    # update - and the energy rule's step is sign-like at a fixed magnitude,
-    # which is well-conditioned on a linear map and not on a frequency (sin(a*x)
-    # is not locally linear in a). A parameter-free activation keeps the whole
-    # fast-weight set linear, which is what the Adam rule's scale-invariance
-    # argument assumes, and it hands the trunk a genuinely different function
-    # class - everything else here is periodic (Servant experts, ArcHoPE's phase
-    # warp, the harmonic head). `swish` is torch's SiLU, the paper's activation;
-    # the `silu` key is transformers' copy.
-    # mag_energy's twin with the update DIFFERENTIABLE (the paper's own mode).
+    # update, and the energy rule's sign-like step is well-conditioned on a
+    # linear map but not on a frequency. A parameter-free activation keeps the
+    # fast-weight set linear, which the Adam rule's scale-invariance argument
+    # assumes, and hands the trunk a genuinely different function class from the
+    # periodic modules elsewhere. `swish` is torch's SiLU, the paper's
+    # activation; the `silu` key is transformers' copy.
     #
-    # Energy mode detaches the whole test-time update, which severs the outer
-    # loss from the memory net: retrieval reads PRE-write weights, so only chunk
-    # 0 reads W0 itself and every later chunk reads a detached constant.
-    # Measured, the gradient reaching W0 decays as 1/nc - 1.00x / 0.52x / 0.31x
-    # / 0.18x at 2 / 4 / 8 / 16 chunks - while standard mode holds it flat
-    # (1.00x / 1.00x / 1.01x / 1.03x). So under energy mode W0 is trained to be
-    # a good COLD READOUT and never to be a good INITIALIZATION for the update,
-    # which is exactly the shape every run in this line reported: gate high,
-    # gain high, adapt ~0. We were training a static function and then measuring
-    # that it behaved like one.
-    #
-    # chunk_size 4, NOT segment_block. Standard mode hard-gates segmentation off
-    # (`segment and use_energy`), so the update grid is chunk_size - leaving it
-    # at 64 would give ONE chunk at this model's latent lengths and a memory
-    # that cannot adapt at all. This keeps mag_energy's 4-latent grid by the
-    # only route standard mode has.
-    #
-    # The learned gates come back with it: to_lr / to_momentum / to_decay are
-    # theta_t / eta_t / alpha_t from the paper's Eqs. 13-14, all data-dependent,
-    # and they are what makes the step size LEARNED rather than a constant the
-    # energy rule has to hardcode. The forgetting gate is init-biased to retain
-    # (_DECAY_GATE_BIAS); at its old default it erased the memory within a few
-    # chunks.
+    # The learned gates come with standard mode: to_lr / to_momentum / to_decay
+    # are theta_t / eta_t / alpha_t from the paper's Eqs. 13-14, all
+    # data-dependent, making the step size LEARNED rather than a constant. The
+    # forgetting gate is init-biased to retain (_DECAY_GATE_BIAS).
     "mag_standard": dict(
         surfacing="mag",
         passes=[0],
@@ -273,26 +255,17 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
-    # mag_energy + STITCHED WRITES across linked batch rows.
-    #
-    # The write span, not the credit path, is the last standing explanation for
-    # why this line's memories never learn. A pass writes over its whole
-    # sequence, which at patch_size 8 and block_size 64 is 8-64 latents - 64-512
-    # bytes. That is enough for grammar and not for a fact, and the trunk cannot
-    # afford longer sequences at this model size.
-    #
-    # It does not have to. The packer already splits long documents across
-    # consecutive rows and drains the remainder into the next one; it simply
-    # discarded the linkage at the row boundary, because `block_ids` restart at
-    # 1 per row and cannot express it. With `row_continues` published, the
-    # memory threads its state along a run of linked rows - so the write span
-    # becomes the run's total length while the TRUNK still only ever sees one
-    # row. Memory horizon is decoupled from trunk sequence length, which no
-    # config change can buy.
-    #
-    # Total work is unchanged (a run of G rows is G batched calls over b/G rows
-    # each); what it costs is serialization into G sequential memory calls.
-    # Read `memory_run_length` x `memory_chunks` for the span actually written.
+    # mag_energy + STITCHED WRITES across linked batch rows. A pass writes over
+    # its whole sequence, which at patch_size 8 and block_size 64 is 8-64 latents
+    # - enough for grammar, not for a fact - and the trunk cannot afford longer
+    # sequences at this model size. The packer already splits long documents
+    # across consecutive rows; with `row_continues` published, the memory threads
+    # its state along a run of linked rows, so the write span becomes the run's
+    # total length while the TRUNK still sees one row. Memory horizon decouples
+    # from trunk sequence length. Total work is unchanged (a run of G rows is G
+    # batched calls over b/G rows each); the cost is serialization into G
+    # sequential memory calls. Read `memory_run_length` x `memory_chunks` for the
+    # span actually written.
     "mag_energy_stitch": dict(
         surfacing="mag",
         passes=[0],
@@ -310,21 +283,13 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         write_objective="predictive",
     ),
     # Stitched writes AND a differentiable update - the only pairing in which a
-    # longer write span can actually pay.
-    #
-    # `mag_energy_stitch` was self-defeating and abstractinator-e measured it:
-    # in energy mode the state handed from one row of a run to the next is
-    # DETACHED, so a row at position >= 1 reads detached weights at every chunk
-    # including chunk 0, and only RUN-START rows give the memory net any
-    # gradient at all. Measured ||grad W0|| against unstitched: 0.72x at runs of
-    # 2, 0.48x at 4, 0.35x at 8. -e ran at run_length 1.94, i.e. ~0.70x the
-    # gradient of its unstitched twin, and duly gave up that twin's advantage.
-    # Standard mode keeps a graph through the carried state, so the same sweep
-    # reads 0.99x / 0.97x / 0.93x - the span is nearly free.
-    #
-    # Everything else tracks mag_standard, including `chunk_size: 4` (standard
-    # mode has no segmentation, so the grid comes from chunk_size and leaving it
-    # at 64 would give one chunk and a dead memory).
+    # Stitched writes AND a differentiable update - the only pairing in which a
+    # longer write span can pay. In energy mode the state handed between rows of
+    # a run is DETACHED, so only run-START rows give the memory net gradient at
+    # all (||grad W0|| against unstitched: 0.72x at runs of 2, 0.48x at 4, 0.35x
+    # at 8). Standard mode keeps a graph through the carried state, so the same
+    # sweep reads 0.99x / 0.97x / 0.93x and the span is nearly free. Everything
+    # else tracks mag_standard, including chunk_size 4.
     "mag_standard_stitch": dict(
         surfacing="mag",
         passes=[0],
@@ -342,13 +307,10 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
     # mag_energy with the test-time write FROZEN (max_lr=0): same module, same
     # gate, same parameters, same step cost - the surprise is still computed, so
     # the governor sees an identical run - and the only thing removed is whether
-    # the write lands. THE control the thread never had: -v, -x and -y all
-    # confounded "a gated nonlinear module at this depth" with "test-time
-    # memory", and -y's own numbers say the split is lopsided (gate 0.55 and
-    # gain 2.56 put the branch at ~76% of the output magnitude, while adapt of
-    # 0.004 puts the write at 0.4% of the readout). If this matches its live
-    # twin, the adaptation is contributing nothing measurable and the honest
-    # comparison for anything bigger is against a dense of the same size.
+    # the write lands. The control that separates "a gated nonlinear module at
+    # this depth" from "test-time memory". If it matches its live twin, the
+    # adaptation contributes nothing measurable and the honest comparison for
+    # anything bigger is against a dense of the same size.
     "mag_energy_static": dict(
         surfacing="mag",
         passes=[0],

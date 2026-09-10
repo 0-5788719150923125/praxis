@@ -3,72 +3,58 @@ class_name MaskSession
 
 ## MaskSession - the data model for one mask-mode editing session.
 ##
-## A session pairs one imported clip (video + its extracted audio, see masks/README)
-## with a timeline of MARKERS: distinct points where the mask changes. A marker is
-## not a free-form dictionary - it is a fixed-schema scalar VECTOR (see
-## VECTOR_FIELDS). That is deliberate: a session's marker list is then literally a
-## small matrix (one row per marker), the same shape as the harmonic-signature /
-## seed-bias vectors elsewhere in this project, so it can later be inspected,
-## compared, or correlated the same way instead of living as opaque nested JSON.
+## A session pairs one imported clip (video + its extracted audio, see masks/README) with a
+## timeline of MARKERS: distinct points where the mask changes. A marker is a fixed-schema
+## scalar VECTOR (see VECTOR_FIELDS), so a session's marker list is literally a small matrix
+## - the same shape as the harmonic-signature / seed-bias vectors elsewhere in this project,
+## and inspectable the same way instead of living as opaque nested JSON.
 ##
-## EVERY MARKER IS ONE LAYER. A marker carries a single channel - one target color,
-## one effect, one strength, one pattern placement - plus its own transition
-## envelope. Layers STACK chronologically: place a marker that devours the blues,
-## and a later marker adding fire to the reds layers on top WITHOUT disturbing the
-## blue layer (the old two-channels-per-marker model restated every channel at
-## every marker, so any later change silently rewrote what earlier markers were
-## doing - colors got "restored" that nobody asked to restore).
+## EVERY MARKER IS ONE LAYER, carrying a single channel - one target colour, one effect, one
+## strength, one pattern placement - plus its own transition envelope. Layers STACK
+## chronologically: place a marker that devours the blues, and a later marker adding fire to
+## the reds layers on top WITHOUT disturbing the blue layer.
 ##
-## The envelope's KIND (see MARKER_KINDS) is which side of the anchor its
-## transition occupies:
-##   RAMP  - the layer eases in over the `duration` seconds BEFORE the anchor,
-##           arriving complete exactly at the marker's time (anticipation).
-##   DAMP  - the layer begins AT the anchor and accumulates over the `duration`
-##           seconds AFTER it - the footage is progressively consumed (an audio
-##           damping envelope). Nothing happens before the anchor.
-## Once in, a layer HOLDS - until one of exactly three things ends it:
-##   1. THE RAW CHECKPOINT (the rebase). A full-raw marker (view_mode 2) is a
-##      canvas reset: once its transition to raw has COMPLETED (at its anchor for
-##      a ramp; anchor+duration for a damp - never mid-fade, or the cut would
-##      pop), no earlier marker's layer exists beyond it. Raw is the one place a
-##      reset is pop-free BY CONSTRUCTION - nothing is on screen while it
-##      happens - so composition history never crosses a raw boundary: a
-##      sliding-window model whose window edges are explicit, user-authored
-##      timeline events instead of a silent time constant (which would kill
-##      layers the author expects to hold - the fire-vanished bug class).
-##   2. "restore" - fades out earlier layers matching ITS color (see below).
-##   3. "clear" - restore for ALL colors at once: fades out every earlier layer
-##      over its envelope, scaled by its intensity.
-## Layering is otherwise a continuous, ADDITIVE process:
-## a later marker keying a second color - however near or far from the first in
-## hue - stacks WITH the earlier work, never over it. (An earlier version
-## silently superseded prior layers whose hue was "close enough", which meant
-## keying two nearby tones made the first quietly restore itself - implicit
-## magic, wrong.) The SUBTRACTIVE half is explicit: the "restore" effect (see
-## MASK_EFFECTS). A restore marker draws nothing of its own - it targets a color
-## exactly like a keying marker does (its own picker, its own threshold for how
-## wide around that color it reaches, its own ramp/damp envelope, its intensity
-## = how completely it restores) and fades out every EARLIER layer on that
-## color over its window. Mask a color out at minute one, restore it at minute
-## five, mask it differently at minute six - a chain of explicit operations.
-## A zero-length marker of either kind is an instant cut - the degenerate case,
-## not a third kind.
+## The envelope's KIND (see MARKER_KINDS) is which side of the anchor its transition
+## occupies:
+##   RAMP  - the layer eases in over the `duration` seconds BEFORE the anchor, arriving
+##           complete exactly at the marker's time (anticipation).
+##   DAMP  - the layer begins AT the anchor and accumulates over the `duration` seconds
+##           AFTER it. Nothing happens before the anchor.
+## A zero-length marker of either kind is an instant cut - the degenerate case, not a third
+## kind.
 ##
-## THE TRANSITION CONTRACT. Every visual quantity that leaves at_time() must be
-## transition-safe in exactly one of three standard shapes - any new modulation
-## added later MUST pick one; nothing may drive a visual straight off a discrete
-## snap (every "it pops instead of fading" bug so far has been a violation of
-## this rule, discovered one field at a time):
-##   1. CONTINUOUS  - global keying scalars (threshold, feather, sat_floor):
-##      lerped across transition windows. List: GLOBAL_CONTINUOUS.
-##   2. PRESENCE    - which screen layers are up (view_mode): the discrete value
-##      is kept for storage/labeling, but the visuals consume the derived
-##      AMOUNT_FIELDS, which lerp. A mode change is a presence fade.
-##   3. LAYER       - everything a marker's own channel carries (color, effect,
-##      strength, placement, coverage, contrast, resonance): baked into that
-##      marker's layer, whose ENVELOPE does all the transitioning. An identity
-##      change (new effect, new placement, restored color) is two layers with
-##      complementary envelopes - a dissolve, never a swap, never a glide.
+## Once in, a layer HOLDS until one of exactly three things ends it:
+##   1. THE RAW CHECKPOINT (the rebase). A full-raw marker (view_mode 2) is a canvas reset:
+##      once its transition to raw has COMPLETED (at its anchor for a ramp, anchor+duration
+##      for a damp - never mid-fade, or the cut would pop), no earlier marker's layer exists
+##      beyond it. Raw is the one place a reset is pop-free BY CONSTRUCTION, since nothing
+##      is on screen while it happens, so composition history never crosses a raw boundary -
+##      a sliding window whose edges are explicit, user-authored timeline events rather than
+##      a silent time constant.
+##   2. "restore" - fades out earlier layers matching ITS colour. It draws nothing of its
+##      own: it targets a colour exactly like a keying marker does (own picker, own
+##      threshold for how wide around that colour it reaches, own envelope, intensity = how
+##      completely it restores) and fades out every EARLIER layer on that colour over its
+##      window.
+##   3. "clear" - restore for ALL colours at once.
+##
+## Layering is otherwise continuous and ADDITIVE: a later marker keying a second colour,
+## however near or far in hue, stacks WITH the earlier work rather than superseding it. Mask
+## a colour out at minute one, restore it at minute five, mask it differently at minute six
+## - a chain of explicit operations.
+##
+## THE TRANSITION CONTRACT. Every visual quantity leaving at_time() must be
+## transition-safe in exactly one of three shapes; any new modulation MUST pick one, and
+## nothing may drive a visual straight off a discrete snap:
+##   1. CONTINUOUS  - global keying scalars (threshold, feather, sat_floor), lerped across
+##      transition windows. List: GLOBAL_CONTINUOUS.
+##   2. PRESENCE    - which screen layers are up (view_mode): the discrete value is kept for
+##      storage and labeling, but the visuals consume the derived AMOUNT_FIELDS, which lerp.
+##      A mode change is a presence fade.
+##   3. LAYER       - everything a marker's own channel carries (colour, effect, strength,
+##      placement, coverage, contrast, resonance), baked into that marker's layer, whose
+##      ENVELOPE does the transitioning. An identity change is two layers with complementary
+##      envelopes - a dissolve, never a swap.
 
 ## The vector schema. Order is the contract - to_vector()/from_vector() and any
 ## future analysis code index into this list, so append, never reorder or remove.
@@ -178,221 +164,111 @@ const MARKER_KINDS := ["ramp", "damp"]
 ## to this). When more are active, the OLDEST are dropped.
 const MAX_LAYERS := 6
 
-## The per-layer effect registry. "erase" hides the keyed region outright; fire /
-## freeze / smoke are volumetric CONSUMING fields (see shaders/mask_split.gdshader):
-## the wisps themselves are the substance - where the drifting noise field forms a
-## lick, the keyed footage is eaten to void, rimmed with a glow in the layer's own
-## hue; where the field is absent, the footage stays intact. fire = rising
-## domain-warped licks, freeze = near-static crystalline veins, smoke = soft
-## billowing gauze. Placement/coverage ride the fx_* fields; coverage 0 =
-## untouched, 1 = fully devoured.
+## The per-layer effect registry. Ids are the contract - append, never reorder.
 ##
-## "restore" is the SUBTRACTIVE operation (see the class doc): it draws nothing -
-## it fades out every earlier layer whose target hue lies within ITS OWN
-## `threshold` of its picked color, over its own envelope, scaled by its
-## intensity (0.5 = restore halfway). The one effect the shader never sees
-## (layers_at resolves it into the other layers' envelopes).
-## whisp / crystal / echo (appended - ids are the contract, EFFECT_RESTORE stays 4):
-##   whisp   - content-aware volumetric: its field is advected along the underlying
-##             picture's luminance edges (tendrils curl around features) and its
-##             placement auto-locks to the target color's mass centroid, EMA-tracked
-##             over short windows by the editor (see MaskEditor echo/anchor capture).
-##   crystal - fractal faceted glass rendered IN PLACE of the target color: voronoi
-##             facets refracting the footage, cold edge light. Projection-based like
-##             erase (no gates - no rings possible).
-##   echo    - temporal lag: the target color's region shows a muted, delayed echo
-##             of the footage (a ring of past frames), optionally cloned with
-##             accumulating X/Y offsets into staircase "time-shapes".
-## "clear" is restore generalized to EVERY color: it draws nothing and fades out
-## ALL earlier layers over its own envelope, scaled by its intensity - the
-## explicit "delete the old effects" primitive (restoring region-by-region was
-## the only way to unwind a stack, and it was clunky). Like restore, the shader
-## never sees it.
-## "snow" has NO key color - hue_a is unused. Foreground vs. background is
-## decided per pixel, automatically, from motion (the echo ring's two newest
-## captures) and color intensity: a lit, moving subject scores high on both, a
-## static, desaturated background scores low - so the flakes fall over the
-## background and thin out over the subject with no color pick required. The
-## Contrast slider is relabeled "Sensitivity" for it, and Pan X/Y become Wind
-## X/Y - a fall DIRECTION (default straight down), decoupled from Velocity's
-## speed. Gust (fx_smooth, its own slider - see MaskEditor's "snow" group) adds
-## irregular swings to that direction and speed together; echo's Smoothing
-## slider uses the same stored field for a different purpose, but the two
-## groups never show at once so there's no conflict.
-## "fur" - hair ANCHORED on the keyed surface itself, crystal-style. Strand
-## roots are the key color's own pixels, read live from the frame by the
-## same aligned-fraction projection crystal replaces with (fur_root_mass()
-## in mask_split.gdshader) - so the coat tracks the moving face with
-## crystal's per-pixel accuracy, no tap-ring estimate, no CPU centroid. A
-## pixel carries hair only if marching upstream against the local current
-## lands on real root mass within a strand's reach: structurally nothing
-## can draw where no march reaches the face (the old screen-space stripe
-## field read as straight streaks across the whole frame). The current is
-## one shared, slowly-breathing vector field (wind bias + smooth swirl)
-## every strand rides together - the swarm dynamic: curved strands that
-## sway coherently, mermaid hair underwater in slow motion. Pan steers the
-## wind, Scale sets strand length + fineness, Velocity the tempo. Unlike
-## every other volumetric here, its emissive body is tinted BY the key hue
-## itself (fur colored like the thing it grew from) rather than a fixed
-## palette - the one deliberate exception to the "never the key hue" rule,
-## because fur being roughly the color it's keyed on is the whole point,
-## not a halo. Its "fur" control group adds two tendril-dynamics knobs,
-## fur-only views onto stored fields other effects repurpose the same way
-## (the groups never show together): Undulation (fx_smooth) sends traveling
-## waves down each strand, and Coil (fx_lag, pushed raw as u_l_lagf) spins
-## the local flow frame into eddies and spirals.
-## "oracle" - echo INVERTED: predictive, dominant. Echo lags the keyed
-## region behind a live world; oracle keeps the keyed region LIVE and lags
-## the WORLD around it through the same temporal kernel - relative to
-## everything on screen the region runs ahead by the lag, leading the
-## motion instead of trailing it (delaying everything else is the only
-## causal way to put one region "in the future" in real time). Coverage
-## adds PREMONITIONS - muted copies of the live region stamped ahead along
-## the pan direction; Contrast mutes the delayed world; Lag is how far
-## ahead the region leads.
-## "serpent" - thousands of wriggling snakes as a sparse volumetric mask
-## (a scalar field through the shared consume/rim path, meant to eat organic
-## clusters out of mostly-flat footage). KEYLESS, like snow: it has no key
-## color at all - a mostly-white plane has nothing to key on (the first cut
-## gated on key membership and drew nothing there). Its contrast is
-## LUMINANCE-INVERSE instead: the consume bites hardest where the footage is
-## bright (dark snakes carved out of white), fading toward dark ground where
-## the viridian emissive carries the bodies instead. Three rotated,
-## domain-warped octaves of torus lanes; each lane hosts at most one snake
-## (most lanes empty), every snake sampling its own length (squared - mostly
-## small, a few long), speed, heading, girth, wriggle, banding, and glow
-## from per-lane hashes. Centerlines are nested-sine serpentines whose wave
-## travels backward along the body relative to motion (real snake
-## locomotion); bodies wrap a torus lap longer than themselves, so each
-## snake laps around with a gap. A slow fbm cluster field decides WHERE the
-## swarm lives - the sparse, clustered distribution is the point - and the
-## footage itself stirs it: frame-to-frame motion (the echo ring's captures)
-## is treated as energy in the water, its wide slow crests displacing the
-## snake domain and gathering the swarm along the moving model's wake.
-## Emissive is a fixed viridian-to-jade palette (never the key hue).
-## "chimera" - the imported track's video grafted INTO the main frame: two
-## heads merged, not cut. Purely heuristic: a soft window rides u_anchor
-## (keyed by this marker's color when the footage carries it; when the
-## lighting is flat and nothing keys, the tracker falls back to the MOTION
-## centroid - the moving head anchors itself). Per pixel, whichever side
-## carries more feature energy (edges/eyes/mouth beat flat skin) owns the
-## pixel, so the two heads interleave structurally instead of
-## double-exposing; the graft's exposure is pulled toward the local footage
-## first, and wherever the key color IS present the graft claims it
-## outright. Scale = window/zoom, Pan = graft offset, Coverage = how much of
-## the chimera is the other head, Contrast = interleave sharpness. Needs an
-## imported track (T); draws nothing without one.
-## "arealight" - cinematic area lighting: a small rig of light sources spread
-## across the FULL SPAN of azimuth angles behind the camera (not one direction
-## - a spread, so the subject catches something from wherever it turns), each
-## waxing and waning on its own slow clock so the rig reads as alive rather
-## than a static three-point setup. KEYLESS, like snow/serpent (there is no
-## subject color to gate on - it lights the whole frame) and ADDITIVE-ONLY:
-## nothing is consumed, only lit, unlike every volumetric effect above. Its
-## local "lighting normal" is the same mid/wide gradient probe whisp/freeze/
-## crystal already read as a feature-conformance cue, repurposed here as the
-## only depth proxy available without real 3D geometry - edges catch the rim,
-## flat regions don't. Deliberately ONE exposed dial (Contrast, relabeled
-## Envelope in the editor) rather than a knob per light: it doesn't aim
-## anything, it moves WHERE ALONG A LIGHTING MOOD the whole rig sits - and it
-## GROWS the rig, not just recolors it. At 0 only the first source (a wide,
-## soft, warm practical) is lit; the rest switch on staggered as the dial
-## rises, each in its own place in a curated cinematic gel palette, the
-## falloff sharpening from a wide wash to a tight hard rim as it goes. Past
-## that, the same dial also unlocks discrete point flares - sparse
-## gaussian-falloff light-source geometries scattered by the same per-cell
-## hash+threshold masking snow/serpent use to scatter their own elements -
-## none at 0, a scattered handful by 1. The angles and the waxing/waning are
-## automatic; the dial changes what the light IS, how MANY sources are live,
-## and whether standalone flares exist at all.
-## "clown" - white-face paint drawn onto a DETECTED face: a white base coat,
-## black patches on the eyes, streaks running from under them, red smeared
-## lips - Joker-school makeup, where the heuristics' imperfection reads as
-## greasepaint rather than error. The editor fits a face model each capture
-## tick (see MaskEditor._update_face_model): face mass = the key colour's
-## projection (with a natural-skin fallback), weighted by a centered prior
-## (the ASMR framing this is built for) -> centroid + spread; the EYES are
-## the two darkest clusters in the upper face band, split left/right; the
-## MOUTH is the red/dark centroid below. All EMA-glided like the anchor. The
-## shader then draws in the EYE-LINE FRAME (origin mid-eyes, rotated to the
-## eye axis, unit = eye distance), so the paint, cracks, patches and lips are
-## anchored to the face and turn/scale with it. Presence is the face oval
-## times a face-tint colour match with a high floor - bold paint, not a faint
-## key-tint. Scale sizes the features, Pan nudges the whole layout (in eye
-## units) when detection is off-target, Coverage is relabeled Wear (cracks +
-## chips + erosion), Contrast is relabeled Smear (ragged edges, drooping
-## patches, the grin), Velocity paces the smear's breathing. Per-element
-## numbers (streak counts/lengths/angles, grin pull, asymmetry) are sampled
-## from hashes salted by the key hue - a new hue is a new clown. Fixed
-## white/black/red palette (Morph rotates it like any other effect).
-## Its own "clown" control group adds three knobs - clown-only views onto
-## stored fields other effects repurpose the same way (the groups never show
-## together): Bleed (fx_smooth) widens where each feature's paint may reach
-## and softens it as it travels; Settle (fx_lag) is how sticky the paint is
-## in time - it sets both the decay of orphaned paint and the RATE the new
-## paint rises at, so raising it trades a little tracking speed for shapes
-## that stop shimmering; Hollow (fx_stick) keeps the paint AROUND a feature
-## rather than over it - a radial hole in the eye and lip paint, gated on
-## brightness so it opens over a visible eyeball or teeth and closes again
-## on a blink or a shut mouth.
-## "umbra" - the ghost that moves her. HER OWN SILHOUETTE, thrown as a cast
-## shadow that is larger than she is, standing beside her, reading the clip
-## AHEAD of the playhead so it turns its head before she turns hers. Never
-## drawn on her: she is carved out of it, the way a body occludes its own
-## shadow. See MaskEditor._umb_solve_cast for the throw and
-## shaders/umbra_field.gdshader for the mass itself.
-## WHERE THE SHAPE COMES FROM: face_host/pose_track.py, a MediaPipe pose
-## pre-pass run once over the clip - a person segmentation mask per sample plus
-## 33 body landmarks - cached in user://pose_tracks and read by time. What it
-## replaced hunted the footage's own cast shadow with a chroma-direction
-## detector: it needed the room to have one big soft shadow on a chromatically
-## uniform wall, a colour hypothesis scored per surface, two flood fills, and a
-## confidence gate that drew nothing when they disagreed. A person mask is the
-## same answer with none of those conditions, and it also hands over a
-## SKELETON, which is what lets the ghost's head and eyes be placed instead of
-## guessed at from the middle of a blob.
-## THE THROW IS A SIMILARITY PINNED BY TWO POINT PAIRS - her shoulder line to
-## the ghost's anchor, her eye line to the ghost's head - so the ghost's head
-## lands exactly where it was placed at any Scale. That is the property the
-## previous construction could not have: it magnified the region about a pivot,
-## and magnification is also a WINDOW, so growing it walked the head off the top
-## of the frame and every fix traded the looming against the eyes.
-## THE GHOST'S HEAD CLEARS HERS BY CONSTRUCTION. The separation is the two
-## skulls' own half-widths added together (Stand scales it), so it holds on a
-## close-up and on a wide shot without either being tuned for; and it stands on
-## whichever side has room, because a head jammed against the frame edge is half
-## a head with one eye. Standing it on top of her is what makes her own
-## exclusion eat the ghost - her silhouette is most of a close-up frame.
-## IT IS A BUST, NOT A BODY (Loom). Her outline is ~45% of a close-up frame and
-## thrown whole at any magnification it is a wall of black with nothing in it to
-## read - measured, 63% of the frame at Scale 2.8, and it looked like a dimmed
-## room. So the mass is a radial falloff about her eye line, in HER OWN units so
-## it rides the throw unchanged, and below that it dissolves into the field's
-## own smoke.
-## LEAD IS A REAL LOOK-AHEAD, in seconds, and it is the whole effect. The track
-## exists before playback, so the ghost is drawn from the frame she has not
-## reached: it turns first, and the picture reads as the ghost moving her rather
-## than following her. No live tracker can supply this at any amount of
-## smoothing, and a velocity extrapolation cannot either - it can only continue
-## what just happened, which on real footage is mostly detection noise
-## multiplied by the lead time.
-## THE EYES (Gaze) are her own eye landmarks pushed through the same throw, so
-## they are on the ghost's head by construction at every size, lit in hue_b (red
-## by default) inside a darkened socket. The version before this one had to
-## anchor them to the visible mass's centroid and amplify her motion as a
-## deviation, precisely because carrying them geometrically put them off frame.
-## Its own knobs: Stand (threshold) is how far to the side it stands, Lead
-## (feather) the look-ahead, Lean (swap) how far it leans out along the light as
-## it rises, Narrow (intensity_b) how much taller-than-wide it is drawn, Gaze
-## (sat_floor) how hard the eyes burn, Wisp (fx_smooth) how readily essence
-## tears off the top and rises, Cling (fx_lag) how long the mass holds its
-## shape, Depth (fx_stick) how much light it swallows. Coverage is relabeled
-## Loom, Contrast is Roil (turbulence), Velocity is the essence's climb, and
-## Resonance swells the loom with the audio - on a talking clip the ghost surges
-## when she speaks. Morph cools or warms the core. The mass DARKENS rather than
-## paints black: a shadow keeps the surface's hue, so it multiplies, and
-## shade_amount's ceiling keeps the wall's own texture alive inside it (a flat
-## black fill reads as a decal).
+## Most effects are volumetric CONSUMING fields (see shaders/mask_split.gdshader):
+## the wisps ARE the substance - where the drifting noise field forms a lick, the
+## keyed footage is eaten to void, rimmed with a glow in the layer's own hue.
+## Placement/coverage ride the fx_* fields; coverage 0 = untouched, 1 = devoured.
+##
+##   erase     hides the keyed region outright.
+##   fire      rising domain-warped licks.
+##   freeze    near-static crystalline veins.
+##   smoke     soft billowing gauze.
+##   restore   SUBTRACTIVE: draws nothing, fades out every earlier layer whose
+##             target hue lies within ITS OWN `threshold` of its picked colour,
+##             over its own envelope, scaled by intensity. The shader never sees
+##             it - layers_at resolves it into the other layers' envelopes.
+##   whisp     content-aware volumetric: its field is advected along the
+##             picture's luminance edges, and placement auto-locks to the target
+##             colour's mass centroid, EMA-tracked by the editor.
+##   crystal   fractal faceted glass drawn IN PLACE of the target colour -
+##             voronoi facets refracting the footage, cold edge light.
+##             Projection-based like erase, so no gates and no rings.
+##   echo      temporal lag: the target region shows a muted, delayed echo of the
+##             footage, optionally cloned with accumulating offsets into
+##             staircase "time-shapes".
+##   clear     restore generalized to EVERY colour - the explicit "delete the old
+##             effects" primitive. Like restore, the shader never sees it.
+##   snow      KEYLESS. Foreground vs background is decided per pixel from motion
+##             (the echo ring's two newest captures) and colour intensity, so
+##             flakes fall over the background and thin over the subject with no
+##             colour pick. Contrast is relabeled Sensitivity; Pan X/Y become
+##             Wind X/Y (a fall DIRECTION, decoupled from Velocity's speed);
+##             Gust (fx_smooth) adds irregular swings to both.
+##   fur       hair ANCHORED on the keyed surface. Strand roots are the key
+##             colour's own pixels, read live by crystal's aligned-fraction
+##             projection (fur_root_mass() in mask_split.gdshader), so the coat
+##             tracks the moving face with no tap-ring estimate. A pixel carries
+##             hair only if marching upstream against the local current reaches
+##             real root mass, so nothing can draw where no march reaches the
+##             face. One shared slowly-breathing current field every strand rides
+##             together gives the swarm dynamic. Its emissive is tinted BY the
+##             key hue - the one deliberate exception to "never the key hue",
+##             because fur being the colour it grew from is the point.
+##             Undulation (fx_smooth) sends waves down each strand; Coil (fx_lag)
+##             spins the local flow frame into eddies.
+##   oracle    echo INVERTED. Echo lags the region behind a live world; oracle
+##             keeps the region LIVE and lags the WORLD through the same kernel,
+##             so the region leads the motion (delaying everything else is the
+##             only causal way to put one region "in the future" live). Coverage
+##             adds premonitions stamped ahead along the pan; Contrast mutes the
+##             delayed world; Lag is how far ahead the region leads.
+##   serpent   thousands of wriggling snakes as a sparse volumetric mask.
+##             KEYLESS like snow; its contrast is LUMINANCE-INVERSE, biting
+##             hardest where the footage is bright. Domain-warped torus lanes
+##             host at most one snake each, every snake sampling length, speed,
+##             heading, girth, wriggle, banding and glow from per-lane hashes.
+##             Centerlines are nested-sine serpentines whose wave travels
+##             backward along the body (real snake locomotion). A slow fbm
+##             cluster field decides WHERE the swarm lives, stirred by
+##             frame-to-frame motion so the swarm gathers in the model's wake.
+##             Fixed viridian-to-jade palette.
+##   chimera   the imported track's video grafted INTO the main frame. A soft
+##             window rides u_anchor (keyed by this marker's colour, falling back
+##             to the MOTION centroid when nothing keys). Per pixel, whichever
+##             side carries more feature energy owns the pixel, so the heads
+##             interleave structurally instead of double-exposing. Needs an
+##             imported track (T); draws nothing without one.
+##   arealight cinematic area lighting. KEYLESS and ADDITIVE-ONLY - nothing is
+##             consumed. A rig of sources spread across the full span of azimuth
+##             behind the camera, each waxing on its own slow clock. Its lighting
+##             normal is the same mid/wide gradient probe whisp/freeze/crystal
+##             read, the only depth proxy available without real geometry. ONE
+##             dial (Contrast, relabeled Envelope): it GROWS the rig rather than
+##             aiming it - at 0 only a wide soft warm practical is lit, and the
+##             rest switch on staggered through a curated gel palette as the
+##             falloff sharpens, then discrete point flares scatter in.
+##   clown     white-face paint on a DETECTED face. The editor fits a face model
+##             each capture tick (MaskEditor._update_face_model); the shader
+##             draws in the EYE-LINE FRAME (origin mid-eyes, rotated to the eye
+##             axis, unit = eye distance) so paint turns and scales with the
+##             face. Coverage is Wear, Contrast is Smear, Velocity paces the
+##             smear's breathing. Per-element numbers come from hashes salted by
+##             the key hue - a new hue is a new clown. Bleed (fx_smooth) widens
+##             each feature's reach; Settle (fx_lag) sets both the decay of
+##             orphaned paint and the rise rate of new paint; Hollow (fx_stick)
+##             opens a radial hole gated on brightness, so it opens over a
+##             visible eyeball and closes on a blink.
+##   umbra     HER OWN SILHOUETTE thrown as a cast shadow larger than she is,
+##             standing beside her, read AHEAD of the playhead so it turns its
+##             head first. Never drawn on her - she is carved out of it. Shape
+##             comes from face_host/pose_track.py (a MediaPipe pose pre-pass
+##             cached in user://pose_tracks), which supplies a person mask AND a
+##             skeleton, so the head and eyes are placed rather than guessed.
+##             The throw is a similarity pinned by two point pairs - her shoulder
+##             line to the ghost's anchor, her eye line to its head - so the head
+##             lands where it was placed at any Scale. Separation is the two
+##             skulls' half-widths added (Stand scales it), and it stands on
+##             whichever side has room. IT IS A BUST, NOT A BODY: her outline is
+##             ~45% of a close-up frame, so the mass is a radial falloff about
+##             her eye line in HER OWN units, dissolving below into smoke. Lead
+##             is a real look-ahead in seconds and is the whole effect - no live
+##             tracker or velocity extrapolation can supply it. Knobs: Stand,
+##             Lead, Lean, Narrow, Gaze, Wisp, Cling, Depth; Coverage is Loom,
+##             Contrast is Roil, Velocity is the essence's climb, Resonance
+##             swells the loom with the audio. The mass DARKENS rather than
+##             paints black, so the surface keeps its hue and texture.
 const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown", "umbra", "repaint", "rain", "audio"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6

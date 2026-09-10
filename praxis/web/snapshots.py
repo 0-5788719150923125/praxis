@@ -1,16 +1,14 @@
 """Precomputed API snapshots: one producer, many cheap readers.
 
 The expensive dashboard endpoints (activation curves, head snapshots, evolution)
-probe the live model. Computing them per-request means every client - and there
-can be many on a public server - stampedes the model and races its train/eval
-mode (the calm-c stage-2 crash). Instead each snapshot is computed on a fixed
-cadence and stashed here; the routes just read the latest.
-
-Readers never touch the model, so concurrent requests are pure dict lookups.
+probe the live model. Computing them per-request means every client stampedes
+the model and races its train/eval mode. Instead each snapshot is computed on a
+fixed cadence and stashed here; the routes read the latest, so concurrent
+requests are pure dict lookups.
 
 WHERE a recipe runs matters as much as how often. A recipe that runs a torch op
-on the live model may only run on the TRAINING thread. Not "should" - may not.
-Two threads running ops on the same tensor deadlock the process outright:
+on the live model may only run on the TRAINING thread - two threads running ops
+on the same tensor deadlock the process outright:
 
     training thread   add(amp_coeffs, ...) -> collect_next_edges
                       -> grad_accumulator LOCKS the tensor's AutogradMeta
@@ -19,19 +17,16 @@ Two threads running ops on the same tensor deadlock the process outright:
                       drops it) -> slice_Tensor -> fw_grad
                       WANTS the same AutogradMeta lock
 
-That is an ABBA deadlock on (GIL, AutogradMeta.mutex_), and it wedged
-abstractinator-s hard enough that even the stall watchdog could not report it:
-the priority dump needs the GIL, and the GIL is exactly what is stuck. It is
-not a rare-tensor problem either - any op on any tensor both threads touch will
-do it, so the rule has to be structural.
+An ABBA deadlock on (GIL, AutogradMeta.mutex_), and one the stall watchdog
+cannot report: the priority dump needs the GIL, and the GIL is what is stuck.
+Any op on any tensor both threads touch will do it, so the rule is structural.
 
-So recipes declare where they run. ``Recipe.on_trainer`` (the DEFAULT, because
-the unsafe direction must be the one you opt out of) means the training loop
-runs it, pumped from a batch-end hook by ``SnapshotPumpCallback`` - the same
+Recipes therefore declare where they run. ``Recipe.on_trainer`` (the DEFAULT,
+because the unsafe direction must be the one you opt out of) means the training
+loop runs it, pumped from a batch-end hook by ``SnapshotPumpCallback`` - the same
 shape as ``GenerationQueueCallback``. Recipes that only read SQLite or git set
-``on_trainer=False`` and keep running on the background thread, where a slow
-whole-table scan costs the run nothing. Until a pump attaches (no trainer at
-all, e.g. an inference-only server) there is nothing to race and the thread
+``on_trainer=False`` and keep running on the background thread. Until a pump
+attaches (an inference-only server, say) there is nothing to race and the thread
 runs everything.
 """
 

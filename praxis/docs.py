@@ -41,6 +41,14 @@ def _registries() -> List[Tuple]:
             "Pointwise nonlinearities used inside blocks and heads.",
         ),
         (
+            "activation-types",
+            "Activation combination types",
+            praxis.ACTIVATION_TYPE_REGISTRY,
+            "How the `values` of an ``--activation-type`` combine at the gate. "
+            "Declared as ``{type: <one of these>, values: [<activations>]}``.",
+            praxis.ACTIVATION_TYPE_REGISTRY,
+        ),
+        (
             "attention",
             "Attention mechanisms",
             praxis.ATTENTION_REGISTRY,
@@ -1291,6 +1299,7 @@ def _registry_attr(slug: str) -> str:
         "controllers": "CONTROLLER_REGISTRY",
         "data": "SAMPLER_REGISTRY",
         "decoders": "DECODER_REGISTRY",
+        "activation-types": "ACTIVATION_TYPE_REGISTRY",
         "dense": "DENSE_REGISTRY",
         "embeddings": "EMBEDDING_REGISTRY",
         "encoders": "ENCODER_REGISTRY",

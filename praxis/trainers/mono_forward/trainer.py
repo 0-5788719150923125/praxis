@@ -1,55 +1,28 @@
 """MonoForwardTrainer - pipelined Mono-Forward training.
 
-The trainer runs one ``LayerActor`` per ``LocalLayer``: each actor
-owns its own copy of the layer + the shared output head + a local
-optimizer, and trains against the same next-token objective as the
-standard backprop path. Activation memory is O(1) in depth because
-gradients never cross a layer boundary, and the driver pipelines
-batches across layers so steady-state throughput is close to the
-fastest layer, not the sum of them.
+One ``LayerActor`` per ``LocalLayer``: each actor owns its layer, its own
+projection matrix ``M_i`` (Mono-Forward paper, section 3.1) and a local
+optimizer, and trains against the same next-token objective as the backprop
+path. There is no shared output head. Activation memory is O(1) in depth because
+gradients never cross a layer boundary, and the driver pipelines batches across
+layers so steady-state throughput tracks the slowest layer rather than the sum.
 
-A brief tour of the internals:
+``_run_manual_pipeline`` keeps in-flight Ray futures keyed by ObjectRef, refills
+layer 0 from the dataloader whenever there is slack, and uses ``ray.wait`` to
+find whichever actor finished next. Layer-``i`` outputs feed layer ``i+1``
+immediately; final-layer outputs finalize the batch, emit metrics and free a
+refill slot. In steady state up to ``num_layers`` batches are in flight.
 
-- **Manual pipeline driver** (``_run_manual_pipeline``): keeps a dict
-  of in-flight Ray futures keyed by ObjectRef, refills layer 0 from
-  the dataloader whenever the pipeline has slack, and uses
-  ``ray.wait`` to find whichever actor finished next. Completed
-  layer-``i`` outputs are forwarded into layer ``i+1`` immediately;
-  completed final-layer outputs finalize the batch, emit metrics,
-  and free a slot for the next refill. In steady state with
-  ``num_layers`` layers, up to ``num_layers`` batches are in flight
-  simultaneously - each layer processes a different batch per "tick".
+``_run_compiled_pipeline`` is deferred - ``--ray-pipeline-api compiled`` raises
+``NotImplementedError`` pointing at the manual variant.
 
-- **Compiled pipeline driver** (``_run_compiled_pipeline``): deferred.
-  Ray's ``experimental_compile`` API needs more validation before we
-  commit to it as a default; until then ``--ray-pipeline-api compiled``
-  raises ``NotImplementedError`` with a clear pointer at the manual
-  variant.
+Metrics: ``avg_step_time``, ``loss``, ``num_tokens`` and ``learning_rate`` land
+in their native columns; ``layer_{i}_loss`` and ``pipeline_in_flight`` go into
+``extra_metrics``.
 
-- **Per-layer projection matrices**: each actor owns its own
-  independent projection matrix ``M_i`` (per the Mono-Forward paper,
-  Section 3.1). There is no shared output head and no head
-  synchronisation. Each layer computes its own goodness score
-  ``G_i = a_i @ M_i^T`` and local cross-entropy loss independently.
-
-- **MetricsLogger emission**: ``avg_step_time``, ``loss``,
-  ``num_tokens``, and ``learning_rate`` land in the corresponding
-  native columns (the existing web dashboard already knows how to
-  read these). ``layer_{i}_loss`` and ``pipeline_in_flight`` go
-  into the ``extra_metrics`` JSON blob.
-
-- **CLI flag plumbing** (``--ray-address``, ``--ray-num-replicas-per-layer``,
-  ``--ray-head-sync-every``, ``--ray-pipeline-api``): main.py reads
-  these from ``processed_args`` and threads them into
-  ``create_trainer_with_module`` as keyword arguments; the factory's
-  ``mono_forward`` branch pulls them out of ``kwargs`` and hands them
-  to this class's ``__init__``.
-
-The Ray worker backend is an implementation detail; the ``--ray-*``
-flags live under the training group because they're the only knobs
-Ray exposes that we care about today, but the trainer surface itself
-is framework-agnostic (a future Lightning / native torch.distributed /
-Hivemind backend would slot behind the same ``MonoForwardTrainer``).
+The Ray backend is an implementation detail. The ``--ray-*`` flags live under
+the training group because they are the only knobs Ray exposes that matter
+today, but the trainer surface is framework-agnostic.
 """
 
 from __future__ import annotations
@@ -91,63 +64,39 @@ _RAY_MISSING_MSG = (
 class MonoForwardTrainer:
     """Framework-agnostic trainer that drives distributed Mono-Forward.
 
-    Unlike :class:`BackpropagationTrainer` (a Lightning module), this
-    trainer is itself the trainer - it exposes a ``.fit`` method matching
-    the call contract in ``main.py`` (``trainer.fit(model, datamodule,
-    ckpt_path=..., weights_only=...)``) and owns the full training loop.
+    Unlike :class:`BackpropagationTrainer` (a Lightning module), this trainer is
+    itself the trainer: it exposes ``.fit`` matching the call contract in
+    ``main.py`` and owns the full training loop. ``praxis/trainers/factory.py``
+    constructs it directly and returns ``(trainer, model)``, bypassing Lightning's
+    ``Trainer``. Lightning-specific kwargs in ``trainer_params`` are accepted but
+    largely ignored.
 
-    The factory in ``praxis/trainers/factory.py`` constructs this class
-    directly and returns ``(trainer, model)``, bypassing Lightning's
-    ``Trainer`` wrapper entirely. Lightning-specific kwargs passed in via
-    ``trainer_params`` (``accelerator``, ``callbacks``, ``precision``, ...)
-    are accepted but largely ignored - we only read the handful that map
-    to concepts we actually support.
+    Feature parity with BackpropagationTrainer - keep this list current, so drift is
+    caught at review time.
 
-    **Feature parity with BackpropagationTrainer** (keep this list
-    current - every new backprop metric needs a matching MF entry or
-    a documented reason to skip it, so drift is caught at review
-    time):
+    Supported: ``loss`` (per-batch, per-layer, averaged across actors), ``batch`` /
+    ``step`` counters, ``learning_rate`` (last-hop actor's optimizer),
+    ``num_tokens``, ``avg_step_time`` (EMA, same alpha as backprop),
+    ``softmax_collapse``, ``val_loss`` / ``val_perplexity`` (periodic sweep at
+    ``val_check_interval`` batches), per-layer gradient dynamics, per-dataset
+    metrics via ``data_metrics.db``, and live inference via ``trainer.generate()``
+    and the ``MonoForwardGenerator`` adapter.
 
-    Supported:
-    - ``loss`` (per-batch, per-layer loss averaged across actors)
-    - ``batch`` / ``step`` counters (step = batch // accumulate_grad_batches)
-    - ``learning_rate`` (from the last-hop actor's optimizer)
-    - ``num_tokens`` (billions, same unit convention as backprop)
-    - ``avg_step_time`` (EMA-smoothed, same alpha as backprop)
-    - ``softmax_collapse`` (final-layer actor computes from projected logits)
-    - ``val_loss`` / ``val_perplexity``
-      (periodic validation sweep at ``val_check_interval`` batches)
-    - per-layer gradient dynamics (``layer_{i}_grad_norm`` etc.,
-      written to dynamics.db at ``dynamics_log_freq`` cadence)
-    - per-dataset metrics via ``data_metrics.db`` (written by the
-      dataset manager directly, framework-agnostic - MF gets this
-      for free as long as the dataloader runs)
-    - live inference via ``trainer.generate()`` and the API
-      ``MonoForwardGenerator`` adapter (Phase 5 / Phase 6)
+    Hard-errors at trainer init:
 
-    Not supported, hard-errors at trainer init:
-    - ``router_type in {smear, distance, prismatic, scatter}``
-      (shared LocalLayer instances; decision D4)
-    - ``tie_word_embeddings=True`` (unregistered parameter in the
-      TiedWeights head; deepcopy orphans it)
-    - ``rl_type`` set (GRPO / REINFORCE / CoT; needs
-      ``model.generate`` + reward rollouts on the driver, which
-      under MF would run against untrained weights)
+    - ``router_type in {smear, distance, prismatic, scatter}`` - shared LocalLayer
+      instances (decision D4)
+    - ``tie_word_embeddings=True`` - unregistered parameter in the TiedWeights head;
+      deepcopy orphans it
+    - ``rl_type`` set - needs ``model.generate`` + reward rollouts on the driver,
+      which under MF would run against untrained weights
 
-    Not supported, blocked by the above:
-    - per-expert gradient dynamics (requires Prismatic/SMEAR)
-    - router convergence metrics from ``model.get_metrics()``
-      (requires Prismatic/SMEAR)
-    - Prismatic ``modify_expert_gradients`` hook
-      (fires inside the backprop ``on_after_backward`` Lightning
-      hook which MF never runs)
+    Blocked by those: per-expert gradient dynamics, router convergence metrics from
+    ``model.get_metrics()``, and Prismatic's ``modify_expert_gradients`` hook.
 
-    When you add a new metric to ``BackpropagationTrainer``, land
-    it here too by (1) emitting it from ``LayerActor.train_batch``
-    in the return dict, and (2) passing it to ``metrics_logger.log``
-    in ``_handle_completion``'s metrics block. The dict-return
-    shape from ``train_batch`` is intentional: new fields are
-    non-breaking.
+    To add a metric: emit it from ``LayerActor.train_batch``'s return dict and pass
+    it to ``metrics_logger.log`` in ``_handle_completion``. The dict return shape is
+    intentional - new fields are non-breaking.
     """
 
     def __init__(self, **trainer_params: Any) -> None:
@@ -1744,47 +1693,33 @@ class MonoForwardTrainer:
     ) -> Iterator[torch.Tensor]:
         """Autoregressive generation routed through the active actors.
 
-        Per Phase 5 Task 2, inference reuses the same LayerActor set
-        that training is running against. Ray serializes method calls
-        per actor, so an ``infer_batch`` submitted while a
-        ``train_batch`` is in flight queues behind it and sees a
-        consistent snapshot of actor state (either pre-step or
-        post-step weights, never mid-update). This is the affordance
-        that makes concurrent train+infer safe.
+        Inference reuses the same LayerActor set training is running against. Ray
+        serializes method calls per actor, so an ``infer_batch`` submitted while a
+        ``train_batch`` is in flight queues behind it and sees a consistent snapshot of
+        actor state - either pre-step or post-step weights, never mid-update. That is
+        what makes concurrent train+infer safe.
 
-        Phase 5 explicitly accepts prefill-every-step cost: we
-        recompute the entire prefix on every new token rather than
-        managing a driver-owned KV cache. The KV-cache ownership
-        question in PHASE_5.md is resolved by punting it to a later
-        phase - the user flagged that "we don't care about the KV
-        cache or recurrent state for now, really" for this phase.
-        ``block_ids`` is the one LocalLayer kwarg that *is* load
-        bearing, so we recompute it each step from the current prefix.
+        No driver-owned KV cache: the whole prefix is recomputed every token.
+        ``block_ids`` is the one LocalLayer kwarg that matters, so it is recomputed each
+        step from the current prefix.
 
-        Yields one-token tensors as they are produced (the streaming
-        form Phase 6 HTTP plumbing will consume). Callers that want a
-        batched return can ``torch.cat(list(trainer.generate(...)))``.
+        Yields one-token tensors as they are produced. Callers wanting a batched return
+        can ``torch.cat(list(trainer.generate(...)))``.
 
         Args:
-            input_ids: Prompt token ids, shape ``[batch, seq_len]``.
-                Must live on CPU (actors run CPU-only in Phase 5).
-            max_new_tokens: Number of tokens to generate past the end
-                of the prompt. Generation stops early if every row in
-                the batch has emitted ``eos_token_id``.
+            input_ids: Prompt token ids, shape ``[batch, seq_len]``, on CPU.
+            max_new_tokens: Tokens to generate past the prompt. Stops early once
+                every row has emitted ``eos_token_id``.
             eos_token_id: Optional EOS id for early-stop. Defaults to
-                ``self._config.eos_token_id`` if present. ``None`` means
-                "never stop early; always produce ``max_new_tokens``".
-            suppress_tokens: Ids the active chat format never makes a
-                training target (``ChatFormat.suppressed_token_ids``).
-                This loop samples for itself, so no transformers logits
-                processor runs here - without an explicit mask an untrained
-                control id stays reachable by sampling and shows up in
-                generations as a bracketed token the model was structurally
-                forbidden from learning.
+                ``self._config.eos_token_id`` if present; ``None`` means never stop
+                early.
+            suppress_tokens: Ids the active chat format never makes a training
+                target (``ChatFormat.suppressed_token_ids``). This loop samples for
+                itself, so no transformers logits processor runs - without an
+                explicit mask an untrained control id stays reachable by sampling.
 
         Yields:
-            1-D (shape ``[batch]``) long tensors, one per decoded
-            step.
+            1-D (shape ``[batch]``) long tensors, one per decoded step.
         """
         if self._actors is None or self._embeds is None or self._config is None:
             raise RuntimeError(

@@ -1,52 +1,43 @@
 """Sequence-length curriculum by probe attribution.
 
-The learning-progress bandit in :mod:`praxis.data.seq_curriculum` scores an arm
-by the loss drop between two visits to it. That quantity measures how much the
-WHOLE model improved in the interval, not what the arm contributed, so it
-carries no information about arm quality: an arm with zero teaching value still
-earns a full share, and because sampling an arm more often shortens the gap
-between its visits (shrinking the measured drop), the mechanism is a negative
-feedback loop on visit rate that drives the distribution to uniform. What the
-"Sequence Length Mix" card shows under that mode is the jitter around uniform.
-
-This module measures the thing the curriculum is supposed to optimize instead.
 Every ``window`` optimizer steps a FIXED held-out probe is re-scored, and the
 probe's improvement is regressed onto the arm mixture that produced it:
 
     delta_loss over the window  =  sum_m  beta_m * visits_m
 
-``beta_m`` is then the measured value of one visit to arm ``m``, denominated in
-held-out loss. It is causal (the regression only credits arms that were actually
-sampled), it targets the objective rather than an arm's self-improvement, and it
-costs one probe forward per arm per window instead of an extra forward per step.
+``beta_m`` is the measured value of one visit to arm ``m``, denominated in
+held-out loss. It is causal (the regression only credits arms actually sampled),
+it targets the objective rather than an arm's self-improvement, and it costs one
+probe forward per arm per window instead of an extra forward per step.
+
+This is the alternative to the learning-progress bandit in
+:mod:`praxis.data.seq_curriculum`, which scores an arm by the loss drop between
+two visits to it - a quantity measuring how much the WHOLE model improved, so an
+arm with zero teaching value still earns a full share, and sampling an arm more
+often shortens the gap between its visits and shrinks its own measured drop.
 
 Two details make it work rather than merely look principled:
 
 * **Recursive least squares with forgetting.** The best length changes over a
   run, so the normal equations decay by ``forget`` each window - the fit tracks
   instead of averaging over all of history.
-* **Posterior-of-best scoring, not a softmax.** The old controller divided by
-  the spread BETWEEN arms, which collapses toward zero when no arm is better, so
-  pure noise rendered as a confident distribution. A softmax over t-statistics
-  is no better - it needs a temperature relating coefficient units to
-  confidence, and at temperature 1 a t of 1.2 (no significant edge) still took
-  68% of the mixture. Sampling each arm's coefficient from its own fitted
-  posterior and counting argmax wins needs no such constant: it is near-uniform
-  while the standard errors swamp the differences and sharpens on its own as the
-  evidence accumulates, so the card reads as "nothing to exploit" when that is
-  the truth.
+* **Posterior-of-best scoring, not a softmax.** A softmax over t-statistics
+  needs a temperature relating coefficient units to confidence, and at
+  temperature 1 a t of 1.2 (no significant edge) still takes 68% of the mixture.
+  Sampling each arm's coefficient from its own fitted posterior and counting
+  argmax wins needs no such constant: near-uniform while the standard errors
+  swamp the differences, sharpening on its own as evidence accumulates.
 
-Self-prediction gain (Graves et al.'s prediction gain: score the same batch
-before and after the update) is the other causal option and is cheaper to
-reason about, but it optimizes an arm's improvement on its OWN distribution, so
-it chases whichever length is furthest from converged. Measured against a
-transfer-structured objective it lands worse than uniform sampling; probe
-attribution does not, which is why this is the mechanism here.
+Self-prediction gain (Graves et al.: score the same batch before and after the
+update) is the other causal option and is cheaper to reason about, but it
+optimizes an arm's improvement on its OWN distribution, so it chases whichever
+length is furthest from converged - measured worse than uniform sampling against
+a transfer-structured objective.
 
-Cross-process note: like the sampler weights and the batch schedule, the
-distribution is class-level state. The callback writes it, the data pipeline
-reads it. Praxis forces the ``spawn`` start method, so the dataset iterates in
-the same process and sees writes immediately.
+Cross-process: like the sampler weights and the batch schedule, the distribution
+is class-level state - the callback writes it, the data pipeline reads it.
+Praxis forces ``spawn``, so the dataset iterates in the same process and sees
+writes immediately.
 """
 
 import math

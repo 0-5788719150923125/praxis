@@ -47,22 +47,19 @@ extends GhostScene
 ## around 0.01-0.05. So the drives here are written for those ranges - alignment reads
 ## (f.high + f.treble) * 1.7 clamped, and the walk speed is movement + 14 * flux, not the
 ## nominal unit quantities a 0..1 reading would suggest.
-##
 ## COST, AND AN HONEST COUNT. The solver and the batching both live in a [FrameForge] job;
-## the scene never touches a bird. A real murmuration is tens of thousands of starlings and
-## the temptation is to write that number down, but it is not a number GDScript reaches:
-## the working ceiling on a ghost worker is around half a million interpreted operations
-## per tick (falling_sand's 23k-cell sweep at 25 Hz is the reference point), and a bird
-## costs roughly three hundred of them once the eight-cell block query, the scan cap and
-## the query stride are all in. That puts the honest range at [900, 2400], which is what is
-## sampled - a flock, drawn as animals with wings that beat, rather than nine thousand dots
-## that never render. The sim runs on a [SimClock] at a
-## sampled 22-30 Hz and the renderer interpolates between the last two solver states, so
-## the motion is smooth at display rate while the physics stays frame-rate independent -
-## which is not optional here, since the Director sub-steps update() up to fifteen times in
-## one frame, pre-warms every scene twelve times before it is drawn, and an Echo re-localize
-## can fast-forward hundreds of calls. Any of the three would have the flock in a corner
-## before the first frame anyone sees.
+## the scene never touches a bird. A real murmuration is tens of thousands of starlings, but
+## that is not a number GDScript reaches: the working ceiling on a ghost worker is around
+## half a million interpreted operations per tick (falling_sand's 23k-cell sweep at 25 Hz is
+## the reference point), and a bird costs roughly three hundred of them once the eight-cell
+## block query, the scan cap and the query stride are in. That puts the honest range at
+## [900, 2400], which is what is sampled - a flock drawn as animals with wings that beat,
+## rather than nine thousand dots that never render. The sim runs on a [SimClock] at a
+## sampled 22-30 Hz and the renderer interpolates between the last two solver states, so the
+## motion is smooth at display rate while the physics stays frame-rate independent - not
+## optional here, since the Director sub-steps update() up to fifteen times in one frame,
+## pre-warms every scene twelve times before it is drawn, and an Echo re-localize can
+## fast-forward hundreds of calls.
 
 ## Ceiling on solver ticks handed to one build. [SimClock] caps a single update() call;
 ## this caps what several capped calls may ACCUMULATE between two drawn frames.

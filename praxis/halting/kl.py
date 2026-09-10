@@ -13,40 +13,35 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 class KLDivergenceHalting(BaseHalting):
     """Randomized depth during training, KL-based halting at inference.
 
-    Training: each forward pass gets a random number of recurrence loops
-    sampled from a log-normal Poisson distribution. This forces the model
-    to front-load useful computation, since it never knows how many loops
-    it will receive.
+    Training: each forward gets a random number of recurrence loops sampled from a
+    log-normal Poisson distribution, forcing the model to front-load useful
+    computation since it never knows how many loops it will receive.
 
-    Inference: runs up to full depth but monitors KL-divergence between
-    hidden states at successive loop boundaries, halting once the latent
-    has stopped moving. The floor it must drop below is ``convergence_ratio``
-    times a *global* scale - a slow EMA of the per-pass peak KL across passes
-    - not this pass's own peak.
+    Inference: runs up to full depth but monitors KL-divergence between hidden
+    states at successive loop boundaries, halting once the latent has stopped
+    moving. The floor it must drop below is ``convergence_ratio`` times a *global*
+    scale - a slow EMA of the per-pass peak KL across passes - not this pass's own
+    peak.
 
-    That distinction is the whole design. A trained recurrent block acts like
-    a contraction toward a fixed point, so within one pass the per-position KL
-    decays geometrically at a rate that is a property of the learned operator,
-    roughly *independent of the input* (kl_r ~= kl_1 * lambda^(r-1)).
-    Normalizing by this pass's own peak cancels kl_1 - the only input-dependent
-    term - so ``kl_r < ratio * peak`` reduces to ``lambda^(r-1) < ratio``, a
-    constant: every input exits at the same depth and the halting distribution
-    collapses to a single route. Anchoring instead to a fixed global scale
-    keeps the absolute magnitude of the early movement, so harder inputs (which
-    move more) cross the floor later and the exit depth spreads into a curve.
-    The scale is learned endogenously (the EMA), so there is still no
+    That distinction is the design. A trained recurrent block acts like a
+    contraction toward a fixed point, so within one pass the per-position KL decays
+    geometrically at a rate that is a property of the learned operator, roughly
+    input-independent (kl_r ~= kl_1 * lambda^(r-1)). Normalizing by this pass's own
+    peak cancels kl_1 - the only input-dependent term - so ``kl_r < ratio * peak``
+    reduces to ``lambda^(r-1) < ratio``, a constant, and every input exits at the
+    same depth. Anchoring to a global scale keeps the absolute magnitude of the
+    early movement, so harder inputs cross the floor later and the exit depth
+    spreads into a curve. The scale is learned endogenously, so there is still no
     per-experiment threshold to tune.
 
-    Two details keep the signal honest across models and training: the
-    hidden state is standardized (shift/scale invariant) before the
-    softmax, so the measure does not drift as residual norms grow (this is
-    what made an absolute floor flaky before, and the EMA tracks any slow
-    residual drift on top of it); and KL is averaged per position, so it does
-    not scale with sequence length. No LM head required - works uniformly for
-    head- and encoder-based models.
+    Two details keep the signal honest across models and training: the hidden state
+    is standardized (shift/scale invariant) before the softmax, so the measure does
+    not drift as residual norms grow; and KL is averaged per position, so it does
+    not scale with sequence length. No LM head required - works uniformly for head-
+    and encoder-based models.
 
-    Reference: Geiping et al., "Scaling up Test-Time Compute with Latent
-    Reasoning: A Recurrent Depth Approach" (arXiv 2502.05171)
+    Reference: Geiping et al., "Scaling up Test-Time Compute with Latent Reasoning:
+    A Recurrent Depth Approach" (arXiv:2502.05171)
     """
 
     def __init__(

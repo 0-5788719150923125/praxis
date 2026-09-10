@@ -3,87 +3,80 @@ extends Scene3D
 ## Canopy - trees growing on real terrain, from taproot to leaf, through one season.
 ##
 ## A wooded slope under a low raking sun. Two to six hundred trees stand on a real
-## [Terrain] heightfield - not a decal, not a sprite: each one is a genuine 3D branching
-## structure grown by [Branch3D], a tapered trunk lofted as a closed 6-sided tube with limbs
-## forking away at species-specific angles, a divergence roll between successive whorls, and
-## twigs thinning into soft leaf masses. Trunks and crowns rasterize into a [ShadowField], so
-## the hillside is striped with the wood's own shadows, and the whole thing merges into
-## [method Terrain.collect_surface]'s quad list before the depth sort - which is what makes a
-## hill occlude the trees standing behind it instead of the wood floating over the land.
+## [Terrain] heightfield - not a decal, not a sprite: each is a genuine 3D branching
+## structure grown by [Branch3D], a tapered trunk lofted as a closed 6-sided tube with
+## limbs forking at species-specific angles, a divergence roll between whorls, and twigs
+## thinning into soft leaf masses. Trunks and crowns rasterize into a [ShadowField], so the
+## hillside is striped with the wood's own shadows, and the whole thing merges into
+## [method Terrain.collect_surface]'s quad list before the depth sort - which is what makes
+## a hill occlude the trees behind it instead of the wood floating over the land.
 ##
-## THE FOREST IS INSTANCED, and that is the only reason it fits. A handful of MODELS (three to
-## five per stand) are grown once in [method build_params]; every tree is one of them, yawed,
-## scaled and BENT at draw time. That is furry's trick - grow once in local space, re-lean at
-## draw - lifted into three dimensions, and it turns six hundred L-systems into eight.
+## THE FOREST IS INSTANCED, and that is the only reason it fits. A handful of MODELS (three
+## to five per stand) are grown once in [method build_params]; every tree is one of them,
+## yawed, scaled and BENT at draw time. That is furry's trick lifted into three dimensions,
+## and it turns six hundred L-systems into eight.
 ##
-## WHAT A WOOD LOOKS LIKE, which is the whole subject of this scene and was got wrong in four
-## separate ways at once. Reported: "the trees always look kind of weird. The way they grow is
-## weird, their size seems too large, relative to the terrain, and their placement is far too
-## sparse. Proper tree coverage will be dense in some places, sparse in others - and it will
-## track features of the terrain." Each of those is a number, and tests/canopy_scatter_check.gd
-## holds all of them:
+## WHAT A WOOD LOOKS LIKE is the subject of this scene, and each part of it is a number that
+## tests/canopy_scatter_check.gd holds:
 ##
-##   SIZE. A tree is a small fraction of the landscape's own vertical range - a mean of 0.11 of
-##   the relief here, against 0.78 before, when the average tree was three quarters as tall as
-##   the whole hillside and the tallest was half again taller than it. Height is sampled AS a
-##   fraction of relief now, so it cannot drift when a landform changes.
+##   SIZE. A tree is a small fraction of the landscape's own vertical range - a mean of 0.11
+##   of the relief. Height is sampled AS a fraction of relief, so it cannot drift when a
+##   landform changes.
 ##
-##   DENSITY. Two to six hundred trees rather than thirty to a hundred and ten.
+##   DENSITY. Two to six hundred trees.
 ##
-##   DISTRIBUTION. Stands, built as stands: clump centres rejection-sampled against a density
-##   field, trees scattered around them with a gaussian falloff, and a minority of stragglers on
-##   the open ground between. A minimum-distance test cannot do this - forbidding close
-##   neighbours is its whole job - and one measured as a lattice (nearest-neighbour spread 0.20,
-##   where a random scatter is 0.52 and stands are above 0.6). It reads 0.9 to 1.3 now.
+##   DISTRIBUTION. Stands, built as stands: clump centres rejection-sampled against a
+##   density field, trees scattered around them with a gaussian falloff, and a minority of
+##   stragglers on the open ground between. A minimum-distance test cannot do this -
+##   forbidding close neighbours is its whole job - and measures as a lattice
+##   (nearest-neighbour spread 0.20, where a random scatter is 0.52 and stands are above
+##   0.6). This reads 0.9 to 1.3.
 ##
-##   WHERE. [method _density_at]: a tree line the wood thins out under, wetness that gathers it
-##   in the valleys (or up the ridges - the elevation preference is one signed sample), a grove
-##   field that opens clearings, and a slope term. The four rules this replaced were each a
-##   power of height, which is monotonic and so cannot know where a valley is.
+##   WHERE. [method _density_at]: a tree line the wood thins out under, wetness that gathers
+##   it in the valleys (or up the ridges - the elevation preference is one signed sample), a
+##   grove field that opens clearings, and a slope term. A power of height cannot do this,
+##   being monotonic and therefore unable to know where a valley is.
 ##
-##   FOLIAGE. [constant FOLIAGE] - broadleaf, needle, frond, blossom, scrub - deciding cluster
-##   size (as a fraction of the crown, so it scales with the tree), rim shape, and the band the
-##   mood may move its colour inside. A wood carries TWO STANDS, a canopy and an understory,
-##   each with its own architecture, hue and leaf form, and a share of clusters in a second hue
-##   taken along the arc toward the scheme's own base. Crowns are shaded by which side of the
-##   crown a cluster sits on, which is what makes a cluster cloud read as a lit mass.
+##   FOLIAGE. [constant FOLIAGE] - broadleaf, needle, frond, blossom, scrub - deciding
+##   cluster size (as a fraction of the crown, so it scales with the tree), rim shape, and
+##   the band the mood may move its colour inside. A wood carries TWO STANDS, a canopy and
+##   an understory, each with its own architecture, hue and leaf form, and a share of
+##   clusters in a second hue taken along the arc toward the scheme's base. Crowns are
+##   shaded by which side of the crown a cluster sits on, which makes a cluster cloud read
+##   as a lit mass.
 ##
-## WIND IS A TRAVELLING FRONT, not a global multiplier. A gust has a real position, a real
-## crossing speed and a gaussian width, so it sweeps the hillside as a visible wave and the
-## far trees answer LATE. That delay is physical - it falls out of the geometry rather than
-## being scheduled - and it is the single detail that stops a field of trees reading as one
-## object jiggling. The two frequencies of wind are separated the way real wind separates
-## them: `f.bass` drives the long-period trunk sway as an ANGULAR cantilever displacement
-## (never a scale - a tree that grows and shrinks on the beat is a joke), while `f.high` plus
-## `f.treble` drive the fast small flutter of the leaf clusters alone.
+## WIND IS A TRAVELLING FRONT, not a global multiplier. A gust has a real position, crossing
+## speed and gaussian width, so it sweeps the hillside as a visible wave and the far trees
+## answer LATE. That delay falls out of the geometry rather than being scheduled, and it is
+## the single detail that stops a field of trees reading as one object jiggling. The two
+## frequencies of wind are separated the way real wind separates them: `f.bass` drives the
+## long-period trunk sway as an ANGULAR cantilever displacement (never a scale - a tree that
+## grows and shrinks on the beat is a joke), while `f.high` plus `f.treble` drive the fast
+## flutter of the leaf clusters alone.
 ##
-## THE SEASON is the first thing the seed chooses, and everything is read off it - the mood on
-## offer, the climate the terrain may take, leaf density, how hard the foliage turns from base
-## to tip, whether the saturation is drained out, and what is in the air. Leaves come off over
-## the scene, but shedding is NOT an rng draw: each leaf carries a fixed release threshold set
-## at build and detaches when the running peak of an EMA of `f.beat` crosses it. That matters
-## because the live analyzer and the offline export bake do not produce identical feature
-## streams - anything that rolled dice on an audio event would render a different wood in the
-## video than in the preview. Being a pure function of (threshold, shed level) it also costs
-## no per-leaf state at all: sixty trees share eight models and the bare ones are computed,
-## not stored.
+## THE SEASON is the first thing the seed chooses, and everything is read off it - the mood
+## on offer, the climate the terrain may take, leaf density, how hard the foliage turns from
+## base to tip, whether saturation is drained, and what is in the air. Leaves come off over
+## the scene, but shedding is NOT an rng draw: each leaf carries a fixed release threshold
+## set at build and detaches when the running peak of an EMA of `f.beat` crosses it, because
+## the live analyzer and the offline bake do not produce identical feature streams. Being a
+## pure function of (threshold, shed level) it also costs no per-leaf state.
 ##
-## THE BUDGET IS THE DESIGN. Sixty trees at ~200 segments lofted six-sided is ninety thousand
-## quads, which is not a frame. So LOD is structural: the nearest dozen get full tubes on the
-## heavy wood and screen-space ribbons on the twigs, the middle band drops the finest order and
-## thins its foliage, and everything beyond collapses to three to six crown puffs over a single
-## trunk ribbon - a silhouette on the ridge. The whole frame is built off the main thread
-## through [FrameForge], because under `--export` that builder runs synchronously and the LOD
-## budget IS the render wall time.
+## THE BUDGET IS THE DESIGN. Sixty trees at ~200 segments lofted six-sided is ninety
+## thousand quads, which is not a frame. So LOD is structural: the nearest dozen get full
+## tubes on the heavy wood and screen-space ribbons on the twigs, the middle band drops the
+## finest order and thins its foliage, and everything beyond collapses to three to six crown
+## puffs over a single trunk ribbon. The whole frame is built off the main thread through
+## [FrameForge], because under `--export` that builder runs synchronously and the LOD budget
+## IS the render wall time.
 ##
-## What the seed decides: the season and its mood; the wooded landform and a climate that suits
-## both;
-## the sun's elevation (8-35 degrees, kept low for long shadows) and its drift direction; one
-## species rule table (fork angle, divergence roll, length/width ratios, depth, children,
-## crown fraction, buttress flare, trunk lean, leaf size); how many models and how many trees;
-## the density field the trees scatter under (tree line, wetness, groves, elevation preference)
-## and the stands they gather into; the slope they refuse to root on; the gust's speed, width and
-## strength; and the LOD distances.
+## What the seed decides: the season and its mood; the wooded landform and a climate that
+## suits both; the sun's elevation (8-35 degrees, kept low for long shadows) and its drift
+## direction; one species rule table (fork angle, divergence roll, length/width ratios,
+## depth, children, crown fraction, buttress flare, trunk lean, leaf size); how many models
+## and how many trees; the density field the trees scatter under and the stands they gather
+## into; the slope they refuse to root on; the gust's speed, width and strength; and the LOD
+## distances.
 
 ## SEASONS - the top-level choice, made before anything else, adapted from rooted_growth's
 ## table for a canopy rather than a root system.

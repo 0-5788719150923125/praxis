@@ -10,15 +10,13 @@ class_name Phrasing
 ## position, and it is the difference between a machine reciting a word list and
 ## a person saying a sentence.
 ##
-## Before this stage, the accent was the walk's coin flip: `randf() < 0.22 *
-## appetite` decided whether a word got emphasis, so the same sentence stressed
-## different words on different seeds and no seed stressed them where English
-## does. The walk was GENERATING prosody it should only have been COLOURING.
+## The accent must not come from the walk's coin flip: a `randf() < 0.22 * appetite`
+## decision stresses different words on different seeds and no seed stresses them where
+## English does, which is the walk GENERATING prosody it should only be COLOURING.
 ##
-## So: this stage sets the baseline from four well-established, parser-free
-## rules, and [Voice.ProsodyWalk] modulates around it. Nothing here is seeded -
-## the same text always gets the same phrasing, and the voice's temperament
-## decides how hard it leans, not where.
+## So this stage sets the baseline from four well-established, parser-free rules, and
+## [Voice.ProsodyWalk] modulates around it. Nothing here is seeded - the same text always
+## gets the same phrasing, and the voice's temperament decides how hard it leans, not where.
 ##
 ##   1. CONTENT vs FUNCTION - function words carry no accent in English. This
 ##      is the oldest and strongest of the rules.

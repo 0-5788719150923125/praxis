@@ -1,22 +1,10 @@
 """Kaleidoscope attention: frozen mixing geometries, turned by a router.
 
-A kaleidoscope's mirrors never change. Every pattern it produces comes from
-turning the tube, and no pattern is stored anywhere inside it. This attention
-is built the same way: ``N`` full ``[T, T]`` mixing matrices are drawn once at
-construction and **never trained**, and everything the model learns is *which
-combination of them to look through* at each token and each recurrent pass.
-
-There are no Q and K projections. Nothing here is computed from content by a
-pairwise comparison, so the projections have nothing to project - only ``V``
-and the output survive. That is the whole point of the design and it is also
-where its efficiency comes from: the score half costs ``N * T^2`` instead of
-``T^2 * d``, and at ``N << d`` that is a large saving.
-
-The mirrors are functions on the unit square in RELATIVE position, stored at a
-canonical ``[R, R]`` and resampled to the live ``[T, T]`` every forward. They
-are length-free: no span, nothing to slice, no sequence length that raises, and
-the same geometry at every point of a sequence curriculum rather than a
-different corner of one big matrix. See ``MIRROR_RES`` for what that costs.
+``N`` full ``[T, T]`` mixing matrices are drawn once at construction and never
+trained. What the model learns is which combination of them to look through at
+each token and each recurrent pass. There are no Q/K projections - nothing is
+computed by pairwise comparison - so the score half costs ``N * T^2`` instead of
+``T^2 * d``.
 
     turn      w(x_i) = beta_d + m * tanh(W_turn x_i)     free, signed, per token
     facets    M_k^(d) = A_k + s * tanh(u_{d,k} (x) v_{d,k})
@@ -24,157 +12,45 @@ different corner of one big matrix. See ``MIRROR_RES`` for what that costs.
     O         = ghostmax(mask(S)) @ dropoff(V)
     out       W_o (gamma * O),   gamma = silu(W_gamma x)
 
-ONE HEAD, following ``arc_single``. Mega (Ma et al., arXiv:2209.10655)
-Theorem 1: if G is a universal approximator then for every X there is a gate
-``gamma = G(X)`` with ``gamma * O_single == O_multihead``, so one head plus a
-learned elementwise gate spans what the heads spanned. The gate is SiLU and not
-sigmoid for the reason ``praxis/attention/single.py`` gives at length - sigmoid
-lands in (0, 1) and can only attenuate, while the theorem needs a gate that can
-also amplify and flip sign - and ``kaleido_gate_negative`` reports whether that
-freedom is ever used. ``patch_config`` corrects the head COUNT to 1 and touches
-nothing else, so width still falls out of the standing
-``head_size or hidden_size // num_heads`` rule.
+Mirrors are functions on the unit square in RELATIVE position, stored at a
+canonical ``[R, R]`` and resampled to the live ``[T, T]``, so the geometry is
+length-free across a sequence curriculum.
 
-The single head is a better fit here than it is for Arc, because the dictionary
-was already shared across heads: multi-head kaleido would have been H
-independent turns of one set of mirrors, which is a router widening rather than
-new geometry. Collapsing to one head and gating the output loses nothing the
-mirrors were providing.
+One head, following ``arc_single``: Mega (arXiv:2209.10655) Thm 1 says a SiLU
+elementwise gate on a single head spans what multi-head spanned. SiLU rather
+than sigmoid so the gate can amplify and flip sign, not only attenuate;
+``kaleido_gate_negative`` reports whether that freedom is used.
 
-GHOSTMAX IS ON, and ``ssog.py``'s reason for declining it does not transfer.
-That module left the ghost out because "Softmax1's always-visible zero-logit
-ghost would take roughly half of a Gaussian field's mass" - true there, because
-its logits are log-DENSITIES and therefore large and negative, so a logit of
-zero dominates them: measured, a Gaussian field hands the ghost 0.505 of the
-mass at T=256 and does so at EVERY position. Kaleidoscope's logits are
-unit-scale blends of N(0, 1) mirrors, and the same measurement over causal
-prefixes gives a mean share of 0.054 at T=64, 0.018 at 256 and 0.010 at 512.
-The objection was about a logit SCALE, not about ghostmax.
+Design points worth knowing:
 
-Those means are dominated by the START of the sequence and that is the point.
-Position 0 has exactly one key, so its ghost share is ~0.50 whatever the logit
-scale, while deep in the sequence it falls to 0.0034 at T=256 and 0.0017 at 512.
-So the ghost is doing precisely the job SSOG had to build a learned null atom
-for - it lets a query near the start say "there is nothing back there" - and it
-costs nothing where there IS something to read. Read `kaleido_ghost_share`
-against sequence length, not as an absolute.
+- Mixing happens BEFORE the softmax. Blending distributions can only
+  interpolate inside their hull; blending logits is log-linear pooling, which
+  can put mass where two mirrors agree and nowhere else.
+- The per-depth bias deforms the MIRRORS, not the inputs, and per mirror. A bias
+  added to every mirror alike factors back out of a weighted sum. Rank-1 per
+  (depth, mirror) keeps this at ``D * N * 2T`` parameters.
+- The blend is free and signed, not a simplex. A softmax confines it to the
+  convex hull and pressures toward one-hot, where the blend is exactly one
+  frozen mirror (Synthesizer's Fixed Random, the known-worse variant). A
+  negative weight subtracts a mirror, which no mixture can reach.
+- Base plus deviation, SMEAR's form: ``beta_d`` is the unbounded per-depth
+  preference, ``m * tanh(W_turn x)`` the bounded per-token deviation. Both
+  zero-init, so step 0 is uniform attention over the causal prefix.
+- Ghostmax is on, applied without materializing the column via
+  ``sigmoid(logsumexp)``. Unit-scale logits keep the ghost's share small except
+  near position 0, which is exactly where "nothing back there" is the right
+  answer. Read ``kaleido_ghost_share`` against sequence length.
+- Mirror dropout keeps the blend honest; dropping every mirror falls back to
+  uniform attention exactly.
 
-It is applied without materializing the column. Softmax1 is ordinary softmax
-scaled by ``Z / (1 + Z)``, and ``Z / (1 + Z) = sigmoid(log Z)``, so one sigmoid
-on the log-sum-exp the softmax already needs gives it exactly - the same
-identity ``ssog.py::_apply_null`` uses for its learned null atom. No extra
-column, no wider mask.
+Relation to prior work: Synthesizer (arXiv:2005.00743) covered fixed-random,
+trained, and mixture-of-synthesizers token mixing, but its mixture weights are
+static learned scalars per head and layer. Input-conditional blending is the
+cell left open, and their static mixture reached vanilla-Transformer parity, so
+that is the bar.
 
-DROPOFF is a registry profile (``kaleido_dropoff``), matching ``arc_dropoff``
-and the ``arc_single_dropoff_nomem`` the abstractinator line runs. It reuses
-``CausalAttention._dropoff_warp_value`` rather than reimplementing the envelope:
-the ablation is one idea and two copies of it would drift.
-
-WHY THIS IS NOT A KNOWN VARIANT. Synthesizer (Tay et al., arXiv:2005.00743)
-asked whether the attention matrix can be synthesized rather than computed, and
-covered nearly every cell of this space: a single frozen random ``[L, L]``
-("Fixed Random", ~24 BLEU on WMT EnDe against ~27.3 for a Transformer), a
-single trained one (which their own 2021 addendum notes *is* an MLP-Mixer
-token-mixing layer), and a "Mixture of Synthesizers" that blends several. But
-their mixture weights are ``alpha_{i,h,l}`` - static learned scalars indexed by
-head and layer. They are parameters, not functions of the input. Nobody made
-the blend input-conditional, which is the only cell left and the one this file
-occupies. Their static mixture already reached parity with a vanilla
-Transformer, so that - not fixed-random - is the bar.
-
-MIXING HAPPENS BEFORE THE SOFTMAX, and the choice is load-bearing. Blending
-after the softmax is a convex combination of distributions, which can only
-*interpolate* between the frozen patterns: everything reachable lies inside
-their hull. Blending logits is log-linear pooling, and
-``softmax(a*A + b*B) ~ exp(A)^a * exp(B)^b`` is an intersection - it can put
-mass where two mirrors *agree* and nowhere else, which is a pattern neither
-mirror contains. Synthesizer also mixes inside the softmax.
-
-THE PER-DEPTH BIAS GOES ON THE MIRRORS, NOT ON THE INPUTS, and those are
-genuinely different transformations. Arc adds ``nn.Embedding(depth, dim)`` to
-the *projected inputs* (``praxis/attention/arc.py``); for a linear map that is
-``W(x + b) = Wx + Wb``, a constant offset, identical for every token. Biasing
-the operator gives ``(W + B)x = Wx + Bx``, a correction that scales with what
-it acts on. Here the operator IS the score matrix and it passes through a
-softmax, so an additive bias on the mirror is a MULTIPLICATIVE reweighting of
-the geometry - the same coupling argument ``HarmonicField`` makes for applying
-its field as ``h * (1 + b)`` rather than ``h + b``: the upstream cannot cancel
-it by emitting the difference.
-
-The deformation has to be PER MIRROR or it collapses. The turn weights sum to
-one, so a bias added to every mirror alike factors straight back out,
-``sum_k w_k (A_k + B) = (sum_k w_k A_k) + B``, and all it buys is a per-depth
-score bias. Giving each (depth, mirror) pair its own rank-1 deformation does
-not factor: each pass sees a differently ground set of mirrors while their
-frozen core persists. Rank 1 keeps this at ``D * N * 2T`` parameters.
-
-THE BLEND IS NOT A SIMPLEX, and that is the whole point of the mechanism.
-
-Softmax weights sum to one, which confines the blend to the CONVEX HULL of the
-mirrors - an (N-1)-simplex. Worse, softmax's exponential pressures the weights
-toward one-hot, and at one-hot the blend is EXACTLY one frozen mirror: the
-synthesis disappears and what is left is Synthesizer's Fixed Random evaluated
-per token, the variant measured to be worse than a trained matrix. Measured on
-the first cut of this file: blend entropy 0.31 means the top mirror carried
-~90%, and mirror utilization was oscillating down to 1/N.
-
-That is the same failure ``praxis/routers/smear.py`` records for itself -
-"nothing stopped one deviation per target from monopolizing its coefficient,
-and on abstractinator-m every one of the twelve targets duly saturated to near
-one-hot" - and it is why sharpening is off by default there.
-
-Free signed weights give the linear SPAN instead (dimension N, not N-1), and a
-negative weight SUBTRACTS a mirror, which no mixture of any weighting can reach.
-In the product-of-experts reading below, a negative exponent is "attend where
-this mirror says not to". This is also what the harmonic head already does:
-``HarmonicField.amplitudes`` is a free real parameter over a frozen basis, not a
-distribution over it. A simplex here was the inconsistent choice.
-
-BASE PLUS DEVIATION, which is SMEAR's own form. ``beta_d`` is a per-depth free
-blend - the static preference, "mirror 2 is generally useful at pass 3" - and
-``m * tanh(W_turn x)`` is the bounded input-conditional deviation on top. The
-static half is unbounded, matching ``amplitudes``; the deviation is tanh-bounded
-the way ``AMP_MOD_DEPTH`` bounds the harmonic envelope, so the slow blend stays
-foundational and the per-token part cannot run away with the logit scale.
-
-Both zero-init, so at step 0 the score matrix is exactly ZERO and attention is
-uniform over the causal prefix. That is a cleaner identity start than the old
-softmax gave (the dictionary mean, an arbitrary random matrix), and every
-departure from it is learned.
-
-MIRROR DROPOUT keeps the blend honest, at SMEAR's own rate and by SMEAR's own
-mechanism - expert dropout, not an auxiliary balance loss or a DeepSeek-style
-bias. Dropping every mirror is safe here for the same reason it is safe there:
-``w`` becomes zero and the score falls back to uniform attention exactly,
-rather than to an all-zero parameter block.
-
-THE TURN IS NOT A SMEAR ROUTER, and the difference is in kaleidoscope's favour.
-It is a plain ``nn.Linear`` plus softmax; nothing is imported from
-``praxis/routers/smear.py``. What is borrowed is the ``input_dependence``
-estimator for the metric, and the count N=4, which is inherited from that
-module's expert count and is therefore an arbitrary starting point rather than a
-calibrated one.
-
-The mechanism is SMEAR-SHAPED in the way that matters - merge N things by a
-softmax and apply the merged object once, rather than run N and average outputs
-- but the reduction is PER TOKEN. ``smear.py`` lists its own reductions as
-``("token", "example", "batch")`` and states the honest limit: "Routing is per
-EXAMPLE, never per TOKEN ... a per-token merge would need a distinct geometry
-per position." That is exactly what a row of a ``[T, T]`` mixing matrix already
-is, so the thing SMEAR cannot reach for a Linear target is free here.
-
-WHAT TO WATCH FIRST, before perplexity: ``kaleido_turn_modes``, the effective
-number of mirrors in the blend. At 1 the score IS one frozen matrix and this has
-silently become Synthesizer's Fixed Random per token - the known-worse variant,
-and the failure the softmax cut of this file actually hit. ``kaleido_turn_negative``
-is the companion: pinned at 0 means the free parameterization bought nothing a
-softmax could not have done.
-
-Do NOT read collapse here as SMEAR's constant-router fixed point. That one is
-specific to the BATCH reduction, where "the loss reaches the routing only
-through ``probs.mean(0)``, so every example receives the identical routing
-gradient" - measured decaying to exactly 0 on abstractinator-m. This routes per
-token, with a distinct gradient per position.
+Watch ``kaleido_turn_modes`` (effective mirrors in the blend) before perplexity;
+at 1 this has silently become Fixed Random per token.
 """
 
 import math
@@ -190,31 +66,19 @@ from torch import Tensor
 # runs one head, so there is no per-head multiple on it.
 NUM_MIRRORS: int = 4
 # Side of the canonical mirror grid. Mirrors are functions on the unit square in
-# RELATIVE position, sampled at whatever resolution the live sequence needs, so
-# a mirror is length-free: there is no span, nothing to slice, and no sequence
-# length that raises. `[R, R]` is bilinearly resampled to `[T, T]` every
-# forward, which at align_corners=True maps the grid's corners onto the
-# sequence's corners - the whole distribution shrinks or stretches to fit.
+# RELATIVE position, bilinearly resampled from `[R, R]` to the live `[T, T]`
+# every forward, so a mirror is length-free - no span, nothing to slice.
 #
-# WHAT THIS BUYS. Under a sequence curriculum T changes every batch. An
-# absolute-indexed dictionary hands the model a DIFFERENT geometry at each T (a
-# different corner slice of one big random matrix, with no relationship between
-# them); a ratio-indexed one hands it the SAME geometry resampled. It also makes
-# the module a continuous frozen basis evaluated at the positions in use, which
-# is exactly what HarmonicField does with `_phase_table` rather than storing a
-# `[T, D]` table.
+# Under a sequence curriculum T changes every batch. Ratio indexing hands the
+# model the SAME geometry resampled where absolute indexing would hand it a
+# different corner slice at each T. Same idea as HarmonicField evaluating
+# `_phase_table` rather than storing a `[T, D]` table.
 #
-# WHAT IT COSTS, measured. Ratio structure survives resampling exactly -
-# "attend to the start", "attend a third of the way back", the diagonal itself.
-# FIXED-LAG structure does not: a canonical previous-token band (lag 1 at R=64)
-# resamples to lag 2 with width 5 at T=128, and lag 5 with width 21 at T=512.
-# So R is the knob trading length-invariance against positional acuity, and a
-# dictionary of ratio mirrors alone cannot express "the token immediately
-# before" at large T.
-#
-# THAT IS THE UNIFORM STRETCH, NOT RELATIVE INDEXING - see MIRROR_COORDS, where
-# "split" reads half the dictionary on a LOG LAG axis and recovers single-token
-# acuity at any length. This constant only governs the ratio half.
+# The cost is positional acuity: ratio structure survives resampling exactly,
+# but a canonical lag-1 band lands at lag 2 width 5 at T=128 and lag 5 width 21
+# at T=512. R trades length-invariance against acuity. See MIRROR_COORDS, where
+# "split" reads half the dictionary on a log lag axis and recovers single-token
+# acuity at any length; this constant governs only the ratio half.
 MIRROR_RES: int = 64
 # Logit scale of a fresh mirror. Softmax over t keys with iid N(0, 1) logits
 # puts its peak roughly sqrt(2 ln t) above the mean - about 3.5 at t = 512 - so
@@ -222,57 +86,38 @@ MIRROR_RES: int = 64
 # every mirror is the prefix mean; sharper and each is a single random key.
 MIRROR_SCALE: float = 1.0
 # Radial envelope over the dictionary: mirror ``k`` (1-indexed) is scaled by
-# ``k^-alpha``, the same pink-noise prior HarmonicField puts on its frequency
-# grid. Zero here, so the base variant has a FLAT dictionary - every mirror
-# unit-scale, nothing suppressed.
+# ``k^-alpha``, the pink-noise prior HarmonicField puts on its frequency grid.
+# Zero here, so the base variant has a flat dictionary.
 #
-# The flat case is not an oversight, it is the alpha=0 corner of the paper's own
-# interference-capacity argument (research/framing.tex, proposition (iii)): the
-# count is in EFFECTIVE coefficients, amplitude after the envelope, and
-# "interference capacity is available only if the model spends amplitude against
-# the envelope where the envelope is suppressing it." With no envelope there is
-# nothing to spend against and amplitude buys capacity directly. With one, the
-# prior costs capacity unless the blend fights it - which is a prediction, and
-# ``kaleido_envelope_fight`` is the measurement.
+# alpha=0 is the corner of the paper's interference-capacity argument
+# (research/framing.tex, proposition (iii)): with no envelope, amplitude buys
+# capacity directly; with one, the prior costs capacity unless the blend fights
+# it. ``kaleido_envelope_fight`` is the measurement.
 #
-# One honest caveat on the analogy. HarmonicField's envelope is indexed by
-# FREQUENCY, so suppressing high f is a smoothness prior with a meaning. The
-# mirrors are iid random and carry no frequency ordering, so an index envelope
-# is a CAPACITY-ALLOCATION prior ("use few mirrors unless you have reason to use
-# more") rather than a smoothness one. It is the paper's mechanism on an
-# arbitrary ordering. Making the ordering real - mirror k band-limited to
-# spatial frequency ~k, so the index IS a frequency - is the principled version
-# and is not built.
+# Caveat: HarmonicField's envelope is indexed by FREQUENCY, so suppressing high
+# f is a smoothness prior. The mirrors are iid and carry no frequency ordering,
+# so this is a capacity-allocation prior on an arbitrary ordering. Making
+# mirror k band-limited to spatial frequency ~k would make the ordering real.
 MIRROR_ALPHA: float = 0.0
 # Which coordinate system each mirror is read in. A mirror is a function on the
 # unit square; this says what the square's axes MEAN.
 #
-#   "ratio" - (query fraction, key fraction). The original. Ratio structure
-#       survives resampling exactly ("attend to the start", "attend a third of
-#       the way back", the diagonal), and FIXED LAG does not: uniform bilinear
-#       stretch sends a canonical lag-1 band to peak lag 2 spanning 6 positions
-#       at T=128, and peak lag 5 spanning 24 at T=512 (measured, R=64).
+#   "ratio" - (query fraction, key fraction). Ratio structure survives
+#       resampling exactly; fixed lag does not.
 #
 #   "split" - half the dictionary in ratio coordinates, half in (query
-#       fraction, WARPED LAG), where the lag axis is sampled at
-#       ``log1p(i - j) / log1p(T - 1)``. That log warp is the whole point: it
-#       gives every small lag its own canonical cell at any length. At T=512,
-#       R=64, lags 0/1/2/3 land on canonical columns 0/7/11/14 where the
-#       uniform grid puts them at 0/0.1/0.2/0.4 - indistinguishable. Fine near
-#       the diagonal, compressed away from it.
+#       fraction, WARPED LAG), the lag axis sampled at
+#       ``log1p(i - j) / log1p(T - 1)``. The log warp gives every small lag its
+#       own canonical cell at any length: at T=512, R=64, lags 0/1/2/3 land on
+#       columns 0/7/11/14 where a uniform grid puts them at 0/0.1/0.2/0.4.
 #
-# WHY BOTH RATHER THAN A WARP. A lag-warped mirror spans fixed lags and loses
-# ratios, exactly as a ratio mirror spans ratios and loses lags: warping the
-# whole dictionary swaps the limitation rather than removing it. Splitting it
-# lets the blend reach both, and the router decides - which is the same
-# argument the block already makes for blending geometries at all, applied one
-# level up to the coordinate systems those geometries live in.
+# Both rather than a warp, because a lag-warped mirror loses ratios exactly as a
+# ratio mirror loses lags. Splitting lets the router reach either - the same
+# argument the block makes for blending geometries, one level up.
 #
-# This is the acuity half of the limits paragraph in the paper. The SELECTION
-# half is not touched by it: a smooth router over a frozen dictionary emits a
-# smooth attention row however well the geometry resolves position, and
-# induction wants a discrete pointer. Acuity is fixable, selection is
-# structural, and only the first of them is what a warp is for.
+# This fixes acuity only. Selection stays structural: a smooth router over a
+# frozen dictionary emits a smooth attention row however well the geometry
+# resolves position, and induction wants a discrete pointer.
 MIRROR_COORDS: str = "ratio"
 # Fixed seed for the dictionary. The mirrors are never trained, so they are
 # reproducible constants of the architecture rather than learned state: they
@@ -299,57 +144,30 @@ FACET_V_STD: float = 0.02
 # temperature and an unbounded one would sharpen attention to a single key.
 TURN_MOD: float = 0.5
 
-# Per-mirror spatial zoom. A mirror at zoom z is read over a grid folded z
-# times across the sequence, so its features are z times finer in POSITION while
-# the canonical dictionary is untouched. This is granularity, not amplitude: a
-# zoomed mirror is a different function, so no router can absorb it, where a
-# per-mirror SCALE is absorbed by the unbounded `turn_static` (and already
-# exists as the pink envelope, which -j measured inert). It is also the
-# multi-scale dictionary the log warp was reaching for WITHOUT giving up
-# scale-equivariance: a zoomed ratio mirror is still a ratio mirror, so a
-# periodic feature stays periodic at every length rather than becoming a chirp
-# whose rate depends on T.
+# Per-mirror spatial zoom. A mirror at zoom z is read over a grid folded z times
+# across the sequence, so its features are z times finer in POSITION while the
+# canonical dictionary is untouched. This is granularity, not amplitude: a
+# zoomed mirror is a different function, so no router can absorb it. It is also
+# a multi-scale dictionary that keeps scale-equivariance - a zoomed ratio mirror
+# is still a ratio mirror, so a periodic feature stays periodic at every length.
 #
-# The ladder is derived, not chosen. It steps outward from the identity through
-# the harmonic series and its SUB-harmonics: ... 1/3, 1/2, 1, 2, 3 ... so the
-# group spans periods 3T, 2T, T, T/2, T/3. That is the same spacing
-# HarmonicField uses on its frequency grid rather than an arbitrary octave
-# ladder, and it ties granularity to N, so a wider dictionary buys finer AND
-# coarser rungs instead of more draws from one distribution. Which matters,
-# because the measured problem is redundancy: `kaleido_turn_modes` settles near
-# 2.4 of 4 and FALLS as sequences lengthen, and N iid draws from one
-# distribution stay redundant however many you take.
+# The ladder is derived: it steps outward from the identity through the harmonic
+# series and its sub-harmonics (... 1/3, 1/2, 1, 2, 3 ...), the same spacing
+# HarmonicField uses on its frequency grid. That ties granularity to N, so a
+# wider dictionary buys finer AND coarser rungs rather than more draws from one
+# distribution - which is the measured problem, `kaleido_turn_modes` settling
+# near 2.4 of 4 and falling as sequences lengthen.
 #
-# BOTH DIRECTIONS, because zooming in is only half the axis. At T=257 against
-# R=64 the ratio mirror is already UPSAMPLED 4x, so the identity is a fairly
-# smooth function of position and z > 1 only ever sharpens it. z < 1 reads a
-# sub-region of the canonical square stretched across the sequence, which is
-# genuinely coarser - measured at T=129, mean adjacent delta along a row falls
-# 0.474 -> 0.222 -> 0.095 for z = 1 -> 1/2 -> 1/4. A coarse mirror carries broad
-# shape ("the first third"); a fine one carries local structure. The router
-# should be able to buy either.
+# Both directions. z > 1 sharpens; z < 1 reads a sub-region stretched across the
+# sequence and is genuinely coarser (mean adjacent row delta 0.474 -> 0.222 ->
+# 0.095 for z = 1 -> 1/2 -> 1/4 at T=129). Factors must be positive and nonzero:
+# the triangle fold is odd, so a negative factor is the same mirror reversed at
+# the same granularity, and z = 0 is constant across the row and therefore
+# invisible to softmax.
 #
-# NEGATIVE FACTORS ARE NOT THE COARSE DIRECTION, and are rejected. The triangle
-# fold is odd, so `fold(-z) == -fold(z) == reverse(fold(z))` exactly: a negative
-# factor gives the SAME mirror at the SAME granularity, read backwards. Under
-# the causal mask that is a different function, but it is a reflected draw from
-# the same distribution - which is the redundancy this ladder exists to escape.
-# Coarser means |z| < 1, not z < 0.
-#
-# ZERO IS ALSO NOT A UNIFORM MIRROR. At z = 0 every coordinate reads one
-# canonical point, so the mirror is constant across the row - and softmax is
-# invariant to adding a constant to every logit. Such a mirror cannot touch the
-# attention distribution at all; it would only shift `keep = sigmoid(lse)` in
-# the ghostmax. It is a gate on the ghost, not a granularity, so it is excluded.
-#
-# The folding is a reflection (triangle wave), not a wrap, so the tiling is
-# continuous and the facets still see a smooth grid to learn through.
-#
-# ALIASING, stated rather than solved: at zoom z a canonical cell spans
-# T / (z * R) positions, so anything below 1 is being downsampled. At R=64 and
-# T=257 that binds from z=4 up. The block already runs downsampled at every tier
-# below T=64, so this is the regime it has always been in, not a new one - but
-# the finest rungs do carry less than the ladder implies at short sequences.
+# The fold is a reflection, not a wrap, so the facets still see a smooth grid.
+# Aliasing binds from z = 4 up at R=64, T=257 - the finest rungs carry less than
+# the ladder implies at short sequences.
 
 
 def zoom_ladder(n: int) -> Tuple[float, ...]:
@@ -382,28 +200,15 @@ _EPS: float = 1e-9
 class KaleidoscopeAttention(nn.Module):
     """N frozen ``[T, T]`` mixing matrices, blended per token by a router."""
 
-    # This block already routes its own parameters PER TOKEN, which is exactly
-    # the condition praxis/routers/targeting.py's structural exclusion names:
-    # "a module that already routes its own parameters per token gains nothing
-    # from a per-batch merge wrapped around it."
-    #
-    # Without this flag, discovery targets `attn.turn.weight` and wraps the turn
-    # in a SMEAR MergedLinear routed PER EXAMPLE - a coarser router around a
-    # finer one - and also batch-mean-merges `facet_u`, `facet_v` and
-    # `turn_static`, all of which are already per-depth conditioned. Verified by
-    # running discover_targets against a built model.
-    #
-    # The decisive reason is measurement, not cost: if SMEAR varies
-    # `turn.weight` per example, `kaleido_turn_modes` picks up variation
-    # caused by SMEAR's router rather than by this one, and the first number
-    # this architecture is meant to be judged on stops measuring what it claims.
+    # This block already routes its own parameters PER TOKEN, which is the
+    # structural exclusion praxis/routers/targeting.py names. Without the flag
+    # SMEAR wraps the turn in a per-EXAMPLE MergedLinear - a coarser router
+    # around a finer one - and `kaleido_turn_modes` would then measure SMEAR's
+    # router rather than this one.
     #
     # The flag covers the whole subtree, so `value`, `gate` and `output` are
-    # excluded too. That is a real loss - they are ordinary projections and
-    # routing them is what SMEAR does for arc - but it is the conservative side
-    # to err on while the block's own routing is the thing under test. Splitting
-    # the geometry machinery into an opaque submodule would recover them, at the
-    # cost of changing parameter qualnames.
+    # excluded too. Recovering them would mean splitting the geometry machinery
+    # into an opaque submodule, changing parameter qualnames.
     MERGE_OPAQUE: bool = True
 
     num_mirrors: int = NUM_MIRRORS
@@ -657,19 +462,15 @@ class KaleidoscopeAttention(nn.Module):
             layers = max(1, int(getattr(config, "num_layers", 1) or 1))
             self.dropoff_step = max(0, self.depths - layers)
 
-        # 1/sqrt(N) on the mix, the same reason attention divides q.k by
-        # sqrt(d): `scores` sums N mirror terms, so at equal per-mirror router
-        # magnitude the logit variance grows with N and a wider dictionary opens
-        # SHARPER rather than merely richer. Measured at T=257 over 12 seeds,
-        # effective attention support falls 181 -> 65 -> 25 positions going
-        # N = 4 -> 12 -> 24. `static` is unbounded so the router can compensate,
-        # which makes this a bias on the optimization path rather than a limit -
-        # but it is exactly the bias that would confound an ablation on N.
+        # 1/sqrt(N) on the mix, for the reason attention divides q.k by
+        # sqrt(d): `scores` sums N mirror terms, so logit variance grows with N
+        # and a wider dictionary opens SHARPER rather than richer (measured
+        # support 181 -> 65 -> 25 positions at N = 4 -> 12 -> 24).
         #
-        # OFF by default: it is not free. A global constant is absorbed by
-        # `turn_static` but NOT by the tanh-bounded conditional half, so it also
-        # divides the per-token modulation ceiling by sqrt(N). Turn it on for
-        # both arms of an N sweep or neither.
+        # OFF by default: a global constant is absorbed by `turn_static` but not
+        # by the tanh-bounded conditional half, so it also divides the
+        # per-token modulation ceiling. Set it for both arms of an N sweep or
+        # neither.
         self.mix_norm = bool(mix_norm)
         self.mix_scale = self.num_mirrors**-0.5 if self.mix_norm else 1.0
 
@@ -725,16 +526,12 @@ class KaleidoscopeAttention(nn.Module):
         gen = torch.Generator().manual_seed(MIRROR_SEED)
         R = self.resolution
         # The envelope multiplies the dictionary itself, so it survives the
-        # resample and needs no separate bookkeeping in the forward. At
-        # alpha=0 this is exactly ones and the draw is bit-identical to the flat
-        # variant, which keeps a flat/pink A/B honest.
+        # resample and needs no bookkeeping in the forward. At alpha=0 it is
+        # exactly ones, keeping a flat/pink A/B bit-identical.
         #
-        # The envelope ranks WITHIN a coordinate group, not across the whole
-        # dictionary. Ranking globally would hand the lag mirrors the tail of
-        # the ladder purely because they are stored second, so a pink run would
-        # suppress the new coordinate system by an accident of ordering and the
-        # warp would be measured at a handicap. Each group gets its own ladder;
-        # at coords="ratio" the group is everything and this is unchanged.
+        # It ranks WITHIN a coordinate group. Ranking globally would suppress
+        # the lag mirrors purely because they are stored second, handicapping
+        # the warp by an accident of ordering.
         rank = torch.cat(
             [
                 torch.arange(1, self.n_ratio + 1, dtype=torch.float32),
@@ -1052,13 +849,9 @@ class KaleidoscopeAttention(nn.Module):
         )
 
         # Proposition (iii) made measurable: is the blend SPENDING amplitude
-        # against the envelope, or accepting it? Fit the log-slope of |w_k|
-        # against log k. Pure acceptance leaves |w_k| flat (slope 0) and the
-        # effective amplitude decays with the envelope, so the suppressed
-        # mirrors carry nothing and the prior has simply cost capacity. Full
-        # compensation is slope = alpha, which cancels the envelope exactly.
-        # Reported normalized, so 1.0 = fighting all the way, 0 = accepting,
-        # and >1 = over-compensating (the suppressed mirrors now dominate).
+        # against the envelope, or accepting it? Log-slope of |w_k| against
+        # log k, normalized so 1.0 = fighting all the way (slope = alpha,
+        # cancelling the envelope), 0 = accepting it, >1 = over-compensating.
         if self.alpha > 0.0:
             mag = f.abs().reshape(-1, n).mean(0).clamp_min(1e-9)
             # Against the rank the envelope actually used, which resets per

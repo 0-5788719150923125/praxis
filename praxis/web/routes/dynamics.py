@@ -42,22 +42,16 @@ def get_dynamics():
                 "metadata": { "num_points": 100 },
                 "dynamics": {
                     "steps": [0, 100, 200, ...],
-                    "expert_0_top_norm": [0.12, 0.11, ...],
-                    "expert_0_bottom_norm": [0.003, 0.004, ...],
-                    "expert_0_middle_norm": [0.05, 0.04, ...],
-                    "expert_1_top_norm": [0.08, 0.09, ...],
-                    "expert_1_bottom_norm": [0.012, 0.015, ...],  # Awakened?
-                    "expert_1_middle_norm": [0.04, 0.04, ...],
-                    "expert_1_divergence": [0.05, 0.06, ...]
+                    "expert_0_top_norm": [...],
+                    "expert_0_bottom_norm": [...],
+                    "expert_0_middle_norm": [...],
+                    "expert_1_divergence": [...]
                 }
             }]
         }
 
-    Note:
-        Gradient logging must be enabled in training loop by calling:
-        `router.log_gradient_dynamics()` after backward() but before step().
-
-        See docs/gradient_visualization_proposals.md for integration details.
+    Requires ``router.log_gradient_dynamics()`` to be called in the training loop
+    after backward() but before step().
     """
     try:
         # Get query parameters

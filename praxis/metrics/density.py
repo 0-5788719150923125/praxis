@@ -2,80 +2,59 @@
 information-density conjecture (body.tex, "Information density at the rim",
 Figure fig:density).
 
-WHAT THE CONJECTURE SAYS. Figure fig:density piles the sequence's characters
-into the head cells and thins them toward the tip: the whole sequence, compressed
-as far as one vector's capacity allows, is already present in the early hidden
-states, and later positions add sparse detail rather than new structure. The
-received picture (tokens in boxes, an arrow to the next) says the opposite: a
-vector at position t knows its prefix and nothing else, so what a single vector
+THE CONJECTURE. The whole sequence, compressed as far as one vector's capacity
+allows, is already present in the early hidden states, and later positions add
+sparse detail rather than new structure. The received picture says the opposite:
+a vector at position t knows its prefix and nothing else, so what one vector
 carries about the whole sequence grows monotonically toward the tip.
 
 WHAT THIS MEASURES. Take the sequence as the decoder receives it - the pre-loop
-hidden state, ``[T, D]`` per example - and ask, of the hidden state at ONE
-position, how much of that whole sequence can be read back out of it linearly.
-"The whole sequence" is taken at three resolutions, as bands of its discrete
-Fourier transform along position: ``bag`` (mode 0: the mean over the window,
-the bag of content), ``coarse`` (modes 1-3: window-scale structure) and ``mid``
-(modes 4-7). The bands are window-relative because the decoder's window is
-whatever it is - patches for a byte-latent encoder, a curriculum tier's worth
-of tokens - and the conjecture speaks about the window's rim, not about
-absolute token counts. The
-readout is a ridge regression fit per position bucket and per depth step, and
-the reading is its held-out R^2 in each band, ABOVE CHANCE: the same readout is
-fit against a shuffled target (another sequence's), and the reported value is
-(R^2 - R^2_null) / (1 - R^2_null) - the fraction of the way from chance to
-perfect - so the finite-sample overfitting bias of a D-dimensional readout
-cancels, zero means "nothing readable" and one means "fully read", at any
-sample count. This is the framing the probing
-literature calls a linear readout (Future Lens reads tokens k ahead from one
-state; vec2text shows one vector can hold a short sequence exactly), applied
-across the window instead of at one offset.
+hidden state, ``[T, D]`` per example - and ask how much of the whole sequence
+can be read back linearly out of the state at ONE position. "The whole sequence"
+is taken at three resolutions, as bands of its DFT along position: ``bag``
+(mode 0, the window mean), ``coarse`` (modes 1-3) and ``mid`` (modes 4-7). The
+bands are window-relative because the conjecture speaks about the window's rim,
+not about absolute token counts. The readout is a ridge regression per position
+bucket and depth step, reported as held-out R^2 ABOVE CHANCE: the same readout
+is fit against a shuffled target and the value is
+``(R^2 - R^2_null) / (1 - R^2_null)``, so the finite-sample bias of a
+D-dimensional readout cancels and 0 means "nothing readable" at any sample
+count.
 
 Predictions, stated so a flat or opposite reading is unmistakable:
 
     readout_cell_{pos}_{band}  the profile: R^2 at position bucket ``pos``
                                (head, q1..q6, tip) for band index ``band``
                                (0 bag, 1 coarse, 2 mid), at the last executed
-                               depth step. Drawn as ONE heatmap - x = position,
-                               y = band, shade = R^2 - which is fig:density
-                               measured: is the head strip lit?
+                               depth step. One heatmap - x = position, y = band
+                               - which is fig:density measured: is the head
+                               strip lit?
     readout_{band}_rim_gap     R^2(tip) - R^2(head). The received picture puts
-                               this strongly positive - the tip has seen
-                               everything, the head only its own token; for
-                               the bag it is a linear rise. The conjecture
-                               says the bag and coarse gaps close: the head
-                               anticipates the window-scale content.
+                               this strongly positive; the conjecture says the
+                               bag and coarse gaps close.
     readout_{band}_depth_gain  mean over positions of R^2(last step) -
-                               R^2(entry). Whether the depth loop BUILDS
-                               whole-sequence content into the states, over
-                               what the raw embeddings already carry.
+                               R^2(entry): whether the depth loop BUILDS
+                               whole-sequence content beyond what the raw
+                               embeddings carry.
 
-Causality makes the null hypothesis sharp. A causal state cannot contain later
-tokens, so the only way the head can carry the whole is by anticipating it, and
-anticipation is only possible for the slow structure - which is exactly the
-band the conjecture claims for the head. The entry-step reading (the raw
-embeddings, before any depth) is the built-in null: nothing there can carry the
-whole beyond its own token, so ``depth_gain`` is what the loop added.
+Causality makes the null sharp. A causal state cannot contain later tokens, so
+the only way the head can carry the whole is by anticipating it, and
+anticipation is only possible for the slow structure - exactly the band the
+conjecture claims for the head. The entry-step reading is the built-in null.
 
-HOW THE READOUT IS FIT, AND WHY IT IS HONEST. One batch has too few sequences
-to fit and hold out a D-dimensional readout, so the probe keeps exponentially
-decayed running moments (mean, second moment, cross moment) per (bucket, step)
-and solves the ridge readout from those. Every sampled forward is scored FIRST
-against the readout fit from earlier batches, THEN folded into the moments -
-prequential evaluation, so R^2 is always on unseen sequences. It warms up over
-the first few dozen sampled forwards and tracks the model with the decay. One
-batch's R^2 is a noisy draw, so the emitted readings are an EMA over sampled
-forwards (``SCORE_EMA``) - a card shows a trend, not one batch. The
-shuffled-null readout shares the left-hand side (same x), so both come out of
-one batched solve; the null is what makes a 256-feature readout on a few
-thousand sequences readable at all - without it every unpredictable target
-dimension costs ~D/N of R^2 and swamps the signal.
+HOW THE READOUT IS FIT. One batch has too few sequences to fit and hold out a
+D-dimensional readout, so the probe keeps exponentially decayed running moments
+(mean, second, cross) per (bucket, step) and solves the ridge readout from
+those. Every sampled forward is scored FIRST against the readout fit from
+earlier batches, THEN folded into the moments - prequential evaluation, so R^2
+is always on unseen sequences. Emitted readings are an EMA over sampled forwards
+(``SCORE_EMA``). The shuffled-null readout shares the left-hand side, so both
+come out of one batched solve.
 
 WHERE IT RUNS. ``BaseDecoder`` owns one probe and the depth loop drives it
-(``begin`` pre-loop, ``observe`` after each layer application, ``finalize``
-after). It is a plain object, not an ``nn.Module``: no parameters, no
-persistent buffers, nothing in ``state_dict``. The running moments live on the
-object and are rebuilt from scratch after a restart.
+(``begin`` pre-loop, ``observe`` after each layer, ``finalize`` after). It is a
+plain object, not an ``nn.Module``: no parameters, nothing in ``state_dict``,
+and the moments rebuild from scratch after a restart.
 """
 
 from typing import Any, Dict, List, Optional, Tuple

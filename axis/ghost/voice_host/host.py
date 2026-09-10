@@ -1,29 +1,21 @@
 #!/usr/bin/env python3
 """ghost voice host - a neural synthesis subprocess, spoken to over stdio.
 
-WHY A SUBPROCESS AND NOT A GDEXTENSION
---------------------------------------
-Godot has no first-class ONNX support, and wrapping ONNX Runtime's C API natively
-means per-platform binaries and a build story ghost does not have (there is no
-export_presets.cfg for any target yet). It would also mean a native rebuild every
-time we want to try a different model, which is exactly the thing the design is
-supposed to make cheap.
+WHY A SUBPROCESS AND NOT A GDEXTENSION. Godot has no first-class ONNX support,
+and wrapping ONNX Runtime's C API natively means per-platform binaries and a
+build story ghost does not have. It would also mean a native rebuild every time
+we try a different model, which is exactly what the design is supposed to make
+cheap. ghost already bootstraps a private virtualenv at user://ytdlp_venv for
+its YouTube import, so the pattern and the failure handling exist. Adding a
+model becomes a file in backends/ and an entry in the registry, with no Godot
+code touched - the swappability test in VOICE_PLAN.md section 3. If latency ever
+justifies it, the transport can become a GDExtension without changing the
+protocol.
 
-So: a Python process. ghost already bootstraps a private virtualenv at
-user://ytdlp_venv for its YouTube import, complete with upgrade-and-retry, so the
-pattern, the failure handling and the precedent all exist. Adding a model becomes
-a file in backends/ and an entry in the registry, with no Godot code touched at
-all - that is the swappability test in VOICE_PLAN.md section 3.
-
-If inference latency ever justifies it, the transport can be replaced by a
-GDExtension without changing the protocol below.
-
-PROTOCOL
---------
-Newline-delimited JSON on stdin and stdout. One request per line, one response
-per line, `id` echoed back. Audio never travels as JSON - it is written to a file
-whose path is returned - because base64 over a pipe is a needless copy of
-megabytes and Godot can load a WAV directly.
+PROTOCOL. Newline-delimited JSON on stdin and stdout. One request per line, one
+response per line, `id` echoed back. Audio never travels as JSON - it is written
+to a file whose path is returned, because base64 over a pipe is a needless copy
+of megabytes and Godot can load a WAV directly.
 
   -> {"id": 1, "op": "capabilities"}
   <- {"id": 1, "ok": true, "backends": {...}}
@@ -38,14 +30,13 @@ megabytes and Godot can load a WAV directly.
 
   -> {"id": 4, "op": "shutdown"}
 
-Every response carries "ok". On failure it is false and "error" holds a string
-that is safe to show a user. The host never exits on a bad request - a crashed
-host is a worse failure than a failed request, because the model load is the slow
-part and we want it to stay warm.
+Every response carries "ok". On failure it is false and "error" holds a
+user-safe string. The host never exits on a bad request - the model load is the
+slow part and we want it to stay warm.
 
 STDOUT IS THE PROTOCOL. Anything a backend prints would corrupt it, so stdout is
-redirected for the whole process and only the protocol writer holds the real one.
-Diagnostics go to stderr, which ghost's console surfaces.
+redirected for the whole process and only the protocol writer holds the real
+one. Diagnostics go to stderr, which ghost's console surfaces.
 """
 
 from __future__ import annotations

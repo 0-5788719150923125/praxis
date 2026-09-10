@@ -1,40 +1,34 @@
-"""
-SingleHeadArcAttention: Arc with Mega-style single-head gated attention.
+"""SingleHeadArcAttention: Arc with Mega-style single-head gated attention.
 
 ArcAttention runs ``num_heads * num_queries`` heads through Infini's segment
-loop, and every one of them pays twice - an S x S score matrix per segment,
-plus a ``head_dim x head_dim`` compressive-memory state to retrieve from and
-update on every segment boundary. This variant keeps exactly ONE head, which
-divides both costs by ``num_query_heads`` and removes two of the block's three
-projections.
+loop, and each pays twice - an S x S score matrix per segment, plus a
+``head_dim x head_dim`` compressive-memory state retrieved and updated at every
+segment boundary. This variant keeps exactly ONE head, dividing both costs by
+``num_query_heads`` and removing two of the block's three projections.
 
-Read that as a PARAMETER saving, not a wall-clock one, unless the sequence is
-long. Measured (5060 Ti, uncompiled flex_attention, which is what the arc
-configs run): the flex call costs a flat ~2.5 ms at seq 64 and 256 whether it
-is handed 1 head or 16 - it is fixed-overhead bound, and head count only bites
-past roughly a thousand positions, where 16 heads cost 10.3x one. Below that
-the head count is free and this class is a wash on speed; the win it reliably
-delivers is 5.5x fewer attention parameters at abstractinator-g's dimensions.
+That is a PARAMETER saving, not a wall-clock one, unless the sequence is long.
+Measured (5060 Ti, uncompiled flex_attention): the flex call costs a flat
+~2.5 ms at seq 64 and 256 whether handed 1 head or 16 - it is fixed-overhead
+bound, and head count only bites past ~1000 positions, where 16 heads cost
+10.3x one. The reliable win is 5.5x fewer attention parameters at
+abstractinator-g's dimensions.
 
 Two results say the capacity cut is not the loss it looks like.
 
-Liu et al. (arXiv:2106.09650) find that multi-head attention's advantage over
-single-head is not that it attends to several positions at once - multi-LAYER
-single-head attention does that too, and does it better - but that it is
-shallower, and therefore easier to optimize. With modern stabilization the
-deeper single-head variant wins outright, without hyperparameter tuning. This
-stack is already built in the regime their result needs: ``depth`` recurrent
-passes over ``num_layers`` physical blocks, held under SandwichNorm precisely
-because additive signals compound across a recurrent unroll.
+Liu et al. (arXiv:2106.09650): multi-head attention's advantage over
+single-head is not attending to several positions at once - multi-LAYER
+single-head does that better - but being shallower and therefore easier to
+optimize. With modern stabilization the deeper single-head variant wins
+outright, without hyperparameter tuning. This stack is already in that regime:
+``depth`` recurrent passes over ``num_layers`` physical blocks under
+SandwichNorm.
 
-Mega (Ma et al., arXiv:2209.10655) supplies the other half, as Theorem 1: if
-the transformation G is a universal approximator, then for every X there is a
-gate ``gamma = G(X)`` such that ``gamma * O_single == O_multihead``. One head
-plus a learned elementwise gate on its output spans what the heads spanned.
-Mega's other two ingredients are already present here in different clothing -
-its damped EMA exists to inject position-aware local structure into a
-position-agnostic attention, which ArcHoPE's warped rotary phase and Infini's
-segment memory already do - so only the attention core is adopted:
+Mega (Ma et al., arXiv:2209.10655) Theorem 1: if G is a universal approximator,
+then for every X there is a gate ``gamma = G(X)`` with
+``gamma * O_single == O_multihead``. Mega's other ingredients are already here
+in different clothing - its damped EMA injects position-aware local structure,
+which ArcHoPE's warped rotary phase and Infini's segment memory already do - so
+only the attention core is adopted:
 
     Z     = silu(X W_z + b_z)                      shared representation
     Q, K  = kappa_q * Z + mu_q,  kappa_k * Z + mu_k
@@ -42,34 +36,27 @@ segment memory already do - so only the attention core is adopted:
     O     = attn(Q K^T / sqrt(d)) V
     Y     = W_o (gamma * O),   gamma = silu(X W_gamma + b_gamma)
 
-Q and K are per-dimension affine reads of one shared Z, which is where the
-parameters go: the block holds a single input projection where multi-head Arc
-holds a fused three-way one, and the score matmul runs once rather than
-``num_query_heads`` times.
+Q and K are per-dimension affine reads of one shared Z, so the block holds a
+single input projection where multi-head Arc holds a fused three-way one, and
+the score matmul runs once.
 
-The gate is the one place this deliberately departs from ArcAttention. Arc
-follows Qiu et al. (arXiv:2505.06708), whose head-specific SIGMOID gate after
-SDPA is the right answer for a multi-head block - it introduces non-linearity
-over the low-rank softmax mapping, applies query-dependent sparsity, and damps
-the attention sink. It is the wrong answer here: sigmoid lands in (0, 1), so
-it can only attenuate, while Mega's theorem needs a gate that can also amplify
-and flip sign to reach an output the removed heads could have produced. SiLU
-can do both; sigmoid cannot. The two classes gate differently on purpose, and
-``arc_gate_negative`` reports whether that freedom is ever used.
+The gate is SiLU, where ArcAttention follows Qiu et al. (arXiv:2505.06708) with
+a head-specific sigmoid. Sigmoid lands in (0, 1) and can only attenuate, while
+Mega's theorem needs a gate that can also amplify and flip sign to reach an
+output the removed heads could have produced. ``arc_gate_negative`` reports
+whether that freedom is used.
 
-Head width is ``head_size``, and only ``head_size``. ``patch_config`` below
-corrects the head COUNT to 1 and touches nothing else, so width still falls out
-of the standing rule - ``head_size or hidden_size // num_heads`` - which with
-the count already corrected means an unset ``head_size`` gives one head
-spanning the full hidden size. Set ``head_size`` to narrow it; at
-abstractinator-g's width the flex kernel needs it narrowed, since a head_dim of
-90 asks for more Triton shared memory than the card has.
+Head width is ``head_size`` and only ``head_size``. ``patch_config`` corrects
+the head COUNT to 1 and touches nothing else, so width still falls out of
+``head_size or hidden_size // num_heads`` - with the count corrected, an unset
+``head_size`` gives one head spanning the full hidden size. Narrow it
+explicitly at abstractinator-g's width: a head_dim of 90 asks for more Triton
+shared memory than the card has.
 
-Rewriting the count is what keeps the config honest: config.json, the
-blueprint tab, the Arguments card and every module reading ``config.num_heads``
-all report the 1 head that was actually built, and the inherited __init__ chain
-sizes the output projection, the blend gate and the memory buffers from it with
-no head-count overrides in this class.
+Rewriting the count keeps the config honest - config.json, the blueprint tab,
+the Arguments card and every module reading ``config.num_heads`` report the 1
+head that was built, and the inherited __init__ chain sizes the output
+projection, blend gate and memory buffers from it.
 """
 
 from contextlib import contextmanager

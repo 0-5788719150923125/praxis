@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""Whether a checkpoint actually says the vowel its phoneme string names - measured, not assumed.
+"""Whether a checkpoint actually says the vowel its phoneme string names.
 
-THE BUG THIS EXISTS FOR
------------------------
-"the house of healing that can read them" was read with the vowel of `rid`. Every
-stage upstream was correct: the tagger called it VB, homographs.py decided `bare
-form after MD 'can'` and left the word alone, and eSpeak's own reading - the one
-handed to the model - was `ɹˈiːd`. The phonemes said "reed" and the audio said
-"rid", so the defect is in the acoustic model and nowhere else.
+Some Piper checkpoints read a word-initial `ɹˈiːd` with the vowel of `rid`, even
+though every upstream stage is correct and eSpeak hands the model `ɹˈiːd`. The
+defect is in the acoustic model.
 
 Measured on en_US-libritts-high, speaker 32, one frame, one word swapped, five
-renders of each. F1 is the discriminator: this reader's /iː/ sits at F1 343 and its
+renders each. F1 is the discriminator: this reader's /iː/ sits at F1 343 and its
 /ɪ/ at F1 444.
 
     that can feed them    fˈiːd     F1 283      that can read them   ɹˈiːd  F1 463
@@ -18,54 +14,38 @@ renders of each. F1 is the discriminator: this reader's /iː/ sits at F1 343 and
     that can beat them    bˈiːt     F1 284      that can breed them  bɹˈiːd F1 333
     that can reach them   ɹˈiːtʃ    F1 322      that can freed them  fɹˈiːd F1 330
 
-`reed` fails exactly as `read` does, and the model never sees spelling, so this is
-the SYMBOL STRING and not the word. Put any consonant in front of the ɹ and it
-recovers; change the coda and it recovers. The one broken string is a word-initial
-`ɹˈiːd`.
+`reed` fails exactly as `read` does and the model never sees spelling, so this
+is the SYMBOL STRING, not the word. Any consonant in front of the ɹ recovers it;
+so does changing the coda. That is the signature of a contaminated training set:
+eSpeak phonemized the LibriTTS transcripts the same way, so every past-tense
+"read" was labelled `ɹˈiːd` over audio of a reader saying `ɹˈɛd`, and the
+checkpoint hedges to a mid vowel.
 
-That is the signature of a contaminated training set, and the contamination is this
-same homograph bug one level down: eSpeak phonemized the LibriTTS transcripts the
-way ghost does, so every past-tense "read" in that corpus was labelled `ɹˈiːd` over
-audio of a reader saying `ɹˈɛd`. The checkpoint learned the string is ambiguous and
-now hedges to a mid vowel. It is not confined to one word either - `healing` laxes
-the same way in connected speech in that voice (F1 413 against a 343 target).
-
-THE REPAIR IS PHONETICALLY NULL
--------------------------------
-English /iː/ in a stressed syllable before a consonant already has an offglide;
-writing it is a spelling choice, not a different vowel. Written, the string leaves
-the region the training data poisoned:
+THE REPAIR IS PHONETICALLY NULL. English /iː/ in a stressed syllable before a
+consonant already has an offglide; writing it is a spelling choice, not a
+different vowel, and it leaves the poisoned region:
 
     ɹˈiːd -> ɹˈiːjd    speaker 32  F1 478 -> 298      speaker 29  F1 511 -> 377
 
-and on the words that were never broken it is a no-op within measurement noise -
-feed, seed, beat, keep, reach, meet and breed all move less than the scatter of the
-model's own stochastic duration predictor.
+On words that were never broken it is a no-op within measurement noise.
 
-WHY IT IS ASKED AND NOT LISTED
-------------------------------
-Because it is NOT true of every checkpoint, and a table would say it was. Measured
-on the other four installed voices, `read` is already correct, and on
-en_US-kristin-medium the offglide actively HURTS (F2 2730 -> 2070). A voice added
-next year is a coin toss. So the same policy homographs.py has: the question is put
-to the model that has to answer it, in a form it can answer, and the answer is
-cached rather than written down. Three probe words in one frame, an /iː/ the model
-gets right, an /ɪ/ for the other end of the scale, and the string under suspicion
-between them. If the suspect lands nearer the /ɪ/, the checkpoint needs the repair;
-if writing the offglide does not actually move it back, the repair is declined.
+IT IS ASKED, NOT LISTED, because it is not true of every checkpoint. On the
+other four installed voices `read` is already correct, and on
+en_US-kristin-medium the offglide actively HURTS (F2 2730 -> 2070). Same policy
+as homographs.py: put the question to the model that has to answer it and cache
+the answer. Three probe words in one frame - an /iː/ the model gets right, an
+/ɪ/ for the other end of the scale, and the string under suspicion between them.
+If the suspect lands nearer the /ɪ/, the checkpoint needs the repair; if writing
+the offglide does not move it back, the repair is declined.
 
-The probe words are a PROBE and not a lexicon - the same thing homographs.py's four
-carrier frames are. Nothing here is keyed to a word: the repair, once adopted,
-applies to every stressed /iː/ before a consonant, which is why it has to be shown
-harmless on words that were never broken before it is allowed to run at all.
+The probe words are a PROBE, not a lexicon. Nothing is keyed to a word: the
+repair applies to every stressed /iː/ before a consonant, which is why it must
+be shown harmless on unbroken words before it runs at all.
 
 Costs three short inferences for a healthy voice and four for one that needs the
-repair, once per
-voice per install, cached to disk beside the weights and taken on the cold path of
-`_load` so it never happens inside a reading. If numpy is missing, the ONNX has no
-duration output to locate a vowel with, or anything else goes wrong, the answer is
-"no repair" and the reading is exactly what it was before: this can decline, but it
-cannot fail.
+repair, once per voice per install, cached beside the weights and taken on the
+cold path of `_load`. If numpy is missing, the ONNX has no duration output, or
+anything else goes wrong, the answer is "no repair".
 """
 
 from __future__ import annotations

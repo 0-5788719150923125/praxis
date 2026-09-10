@@ -1,46 +1,23 @@
 #!/usr/bin/env python3
 """Homograph readings chosen by part of speech - and elicited from eSpeak itself.
 
-THE BUG THIS EXISTS FOR
------------------------
-"He read the book" and "I will read the book" are not the same word, and the
-generative reading was saying the present-tense one both times - ten times in a
-single export. It is not a lexicon gap: eSpeak-NG knows both readings and picks
-between them from surrounding syntax. It never gets the chance here, because
-`PiperBackend._espeak` phonemizes WORD BY WORD (it has to: ghost needs to know
+"He read the book" and "I will read the book" are not the same word.
+`PiperBackend._espeak` phonemizes WORD BY WORD, because ghost needs to know
 which phones belong to which word to place the karaoke line and the per-token
-timings, and a sentence-level transcription gives no word boundaries - eSpeak
-happily welds "of the" into one ʌvðə). A word alone on the line has no syntax,
-so eSpeak falls back to its default reading, forever.
+timings, and a sentence-level transcription gives no word boundaries (eSpeak
+welds "of the" into one ʌvðə). A word alone on the line has no syntax, so
+eSpeak falls back to its default reading.
 
-WHY THERE IS NO PRONUNCIATION TABLE IN THIS FILE
-------------------------------------------------
-The obvious fix is a homograph dictionary - `g2p_en` ships one (370 headwords,
-CMUdict readings, one Penn tag per entry) and it was the first thing tried. Two
-measurements killed it:
-
-  1. Its READ entry is INVERTED (`READ|R IY1 D|R EH1 D|VBD` reads "use R IY1 D
-     when the tag is VBD"), so it leaves the exact reported bug in place and
-     breaks the present tense as well.
-  2. More fundamentally, its readings are CMUdict's and this model wants
-     eSpeak's. Translating all 371 entries through `arpabet.to_symbols` and
-     comparing against eSpeak's own transcription of the same word: 223 of them
-     disagreed. Not lexically - ɐ vs ə, ᵻ vs ɪ, secondary stress on a different
-     syllable - but that is precisely the class of difference that made "was"
-     come out as "wars" (see requirements.txt). Substituting a dictionary
-     reading would have changed how those words sound in EVERY context, to buy
-     a fix in one.
-
-So nothing is substituted from a table. eSpeak is asked the question it already
-knows how to answer, in a form it can answer: the word is phonemized a second
-time inside a CARRIER PHRASE that forces the part of speech the tagger found.
+NO PRONUNCIATION TABLE LIVES HERE. eSpeak already knows both readings, so it is
+asked the question in a form it can answer: the word is phonemized a second time
+inside a CARRIER PHRASE that forces the part of speech the tagger found.
 
     they will {} them     verb, base/present      (VB VBP VBZ VBG)
     they have {} them     verb, past/participle   (VBD VBN)
     the {} was            noun                    (NN NNS NNP NNPS)
     the {} thing          adjective               (JJ JJR JJS)
 
-Measured, that is enough to move eSpeak off its default:
+Measured, that moves eSpeak off its default:
 
     read     alone ɹˈiːd      "they have read them"    ɹˈɛd
     record   alone ɹˈɛkɚd     "they will record them"  ɹᵻkˈɔːɹd
@@ -49,43 +26,34 @@ Measured, that is enough to move eSpeak off its default:
     refuse   alone ɹᵻfjˈuːz   "the refuse was"         ɹˈɛfjuːs
     tear     alone tˈɪɹ       "they will tear them"    tˈɛɹ
 
-and the reading that comes back is eSpeak's own, in eSpeak's own symbols, for a
-model trained on eSpeak - so the substitution cannot introduce a convention
-mismatch the way a dictionary one does.
+The reading that comes back is eSpeak's own, in eSpeak's own symbols, for a
+model trained on eSpeak - so it cannot introduce the convention mismatch a
+CMUdict-based table would (223 of g2p_en's 371 entries transcribe differently
+from eSpeak, which is the class of difference that made "was" come out
+"wars").
 
-THE CARRIERS END IN A CONSONANT ON PURPOSE. The first pair were "they will {}
-it" and "the {} is", and over a 3000-word sample they reported 257 words as
-having a POS-conditioned reading. Nearly all of them were LINKING R: `miller`
-is mˈɪlɚ alone and mˈɪlɚɹ before a vowel, which is cross-word phonology and has
-nothing to do with part of speech. Following the slot with `them`/`was`/`thing`
-drops that to 24 words in 3000, and the residue is genuine (update, deliberate,
-degenerate, abuses...) plus a handful that differ only in stress LEVEL, which
-the comparison below normalizes away.
+THE CARRIERS END IN A CONSONANT ON PURPOSE. With "they will {} it" / "the {}
+is", a 3000-word sample reported 257 POS-conditioned readings, nearly all of
+them LINKING R - `miller` is mˈɪlɚ alone and mˈɪlɚɹ before a vowel, which is
+cross-word phonology, not part of speech. `them`/`was`/`thing` drops that to 24
+in 3000, and the residue is genuine.
 
-WHAT CAN AND CANNOT CHANGE
---------------------------
-The same safety property `Phonemes.SPEAK_AS` has, for the same reason: a word is
-only ever rewritten when the carrier reading DIFFERS from the reading the
-word-by-word path already produces. A word eSpeak reads one way in every frame -
-`lead`, `minute`, `sow`, `row`, which eSpeak simply does not distinguish - is
-untouched, and so is every word that is not a homograph at all. An authored
-`[R EH1 D]` override (or a `Phonemes.SPEAK_AS` / `names:` entry, which reach
-here the same way) arrives with `arpa` set and is skipped outright: the author
-still outranks everything.
+WHAT CAN AND CANNOT CHANGE. Same safety property as `Phonemes.SPEAK_AS`: a word
+is rewritten only when the carrier reading DIFFERS from what the word-by-word
+path already produces, so a word eSpeak reads one way in every frame (`lead`,
+`minute`, `sow`, `row`) is untouched. An authored `[R EH1 D]` override arrives
+with `arpa` set and is skipped outright - the author outranks everything.
 
-Tagging is nltk's averaged perceptron, over the sentence ghost already split, and
-the tag alone turned out not to be enough - see the tense pass below. If nltk or
-its data is missing the whole pass turns itself off and the reading is exactly what
-it was before: this can degrade, but it cannot fail.
+Tagging is nltk's averaged perceptron over the sentence ghost already split; the
+tag alone is not enough, hence the tense pass below. If nltk or its data is
+missing the whole pass turns itself off and the reading is unchanged.
 
 AND IT KEEPS NO WORD LISTS. Not the homographs (eSpeak knows them), not the
-function words (nltk's stopword corpus knows them), not the modals, coordinators,
-determiners or adverbs (the Penn tags name them). One twelve-word constant survives,
-the inflection of BE and HAVE, and it is closed by construction. This is a rule, not
-a preference: a list assembled from the mistakes in one chapter would need extending
-after the next one, forever, and two separate drafts of this file went that way
-before the policy was written down. Where a category cannot be sourced, the
-limitation is documented and left in place instead - see rule 8.
+function words (nltk's stopword corpus), not the modals, coordinators,
+determiners or adverbs (the Penn tags name them). One twelve-word constant
+survives, the inflection of BE and HAVE, closed by construction. Where a
+category cannot be sourced, the limitation is documented and left in place - see
+rule 8.
 """
 
 from __future__ import annotations

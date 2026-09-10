@@ -1,11 +1,11 @@
 """LionGeo: one Lion momentum, N norm geometries, SMEAR-blended per matrix.
 
-Lion and Muon are endpoints of one family: sign() is steepest descent under
-the elementwise (vector-infinity) norm, and Newton-Schulz orthogonalization is
-steepest descent under the spectral norm (the Lion-K / Schatten-p view). Read
-through the Schatten duality - for ``G = U S V^T`` the dual map under Schatten-p
-is ``U S^(q-1) V^T``, with q the conjugate exponent - that family has more than
-two members, and every member is a normalization of the SAME momentum:
+Lion and Muon are endpoints of one family: sign() is steepest descent under the
+elementwise (vector-infinity) norm, and Newton-Schulz orthogonalization is
+steepest descent under the spectral norm (the Lion-K / Schatten-p view). Under
+Schatten duality - for ``G = U S V^T`` the dual map is ``U S^(q-1) V^T``, q the
+conjugate exponent - the family has more members, and each is a normalization of
+the SAME momentum:
 
     c      = lerp(m, g, 1 - beta1)          Lion's lookahead momentum
     u_sign = sign(c)                        elementwise infinity norm, RMS 1
@@ -14,56 +14,43 @@ two members, and every member is a normalization of the SAME momentum:
     u      = sum_i w_i u_i,  w = softmax(geo_logits)
 
 The Frobenius arm is the one that does NOT whiten: sign discards magnitude
-coordinatewise and Newton-Schulz discards the singular-value profile outright,
-so with only those two, no setting of the mixture can simply follow the
-momentum's own conditioning. It costs no extra compute and no extra state.
+coordinatewise and Newton-Schulz discards the singular-value profile, so without
+it no setting of the mixture can simply follow the momentum's own conditioning.
 Every arm is RMS-matched, so a single Lion-scale lr drives the mixture and the
 convex combination is always a bounded step.
 
-The mixture logits adapt by HYPERGRADIENT descent (Baydin et al., 2018). The
-realized loss sensitivity to logit i is <g_t, dp_t/dlogit_i>, and the softmax
-Jacobian gives dp_t/dlogit_i proportional to w_i (u_i - u_bar) evaluated at the
-previous step, where u_bar is the mixture that was actually applied. We keep
+The mixture logits adapt by HYPERGRADIENT descent (Baydin et al., 2018). Loss
+sensitivity to logit i is <g_t, dp_t/dlogit_i>, and the softmax Jacobian makes
+dp_t/dlogit_i proportional to w_i (u_i - u_bar) at the previous step. We keep
 those deviations, take each one's cosine against the incoming gradient
-(norm-free, so the rate stays a fixed model-agnostic constant), damp by
-4 w_i (1 - w_i), then CENTRE the logits - softmax is shift-invariant, so
-without centring the whole vector can drift into the clamp and pin the mixture
-for a reason that has nothing to do with geometry - and clamp to +/- LOGIT_CLAMP.
+(norm-free, so the rate is a fixed model-agnostic constant), damp by
+4 w_i (1 - w_i), CENTRE the logits - softmax is shift-invariant, so uncentred
+logits can drift into the clamp together and pin the mixture for reasons
+unrelated to geometry - then clamp to +/- LOGIT_CLAMP.
 
-The clamp is the mixture floor, and it is what keeps a badly-chosen arm
-recoverable: it bounds the logits, so the softmax Jacobian never reaches zero
-and a suppressed arm can always climb back. It is the same floored-mixture rule
-as the memory bandit, the residual SMEAR and the mode-loss floor.
+The clamp is the mixture floor and keeps a badly-chosen arm recoverable: it
+bounds the logits, so the softmax Jacobian never reaches zero. Same floored
+rule as the memory bandit, the residual SMEAR and the mode-loss floor.
 
-Its width follows from CENTRING, not from the arm count. Centred logits sum to
-zero, so the widest reachable configuration puts one logit at +LOGIT_CLAMP and
-spreads -LOGIT_CLAMP/(n-1) across the rest. At LOGIT_CLAMP = 2 that gives:
+Its width follows from CENTRING, not the arm count. Centred logits sum to zero,
+so the widest configuration puts one logit at +LOGIT_CLAMP and spreads
+-LOGIT_CLAMP/(n-1) across the rest. At LOGIT_CLAMP = 2:
 
     2 arms -> [0.018, 0.982]      3 arms -> [0.024, 0.909]
     4 arms -> [0.023, 0.828]
 
-The ceiling falls as arms are added (one arm can dominate less) while the floor
-sits near 0.02 throughout. So adding arms does NOT widen the band - three arms
-are slightly tighter than two.
-
-What widened it was the move to a centred softmax. The previous single-logit
-form, w = sigmoid(logit) with the same +/-2 clamp, reached only [0.119, 0.881],
-because one logit carried the whole relative preference; centring splits the
-clamp across both, so the RELATIVE logit now spans +/-4. That old bound was
-genuinely binding - on the -f run, opt_geo_share_spread peaked at 0.7616 against
-a band width of 0.881 - 0.119 = 0.7616 exactly, i.e. individual matrices sat
-pinned at both ends of it. The relief came from the reparameterization; the
-third geometry was along for the ride.
+The ceiling falls as arms are added while the floor sits near 0.02, so adding
+arms does NOT widen the band.
 
 State per matrix: exp_avg (the shared momentum; named so the optimizer dynamics
 suite reads it), geo_diffs (previous u_i - u_bar, stacked, half precision),
-geo_logits. Against fp32 params that is 2.5x the parameter bytes for three arms,
-where the two-arm version was 2x - Adam's footprint. The deviations are what buy
-real credit assignment (which past choice improved the next gradient) rather than
-a greedy "which normalization matches the current gradient", which would need no
-state at all. Compute is one Newton-Schulz per matrix per step, the same as Muon,
-and the extra arm measured at about +5% step time. No syncs in the step path; the
-share accessors sync only when the metrics interval reads them.
+geo_logits. Against fp32 params that is 2.5x the parameter bytes for three
+arms. The deviations buy real credit assignment - which past choice improved the
+next gradient - rather than a greedy "which normalization matches the current
+gradient", which would need no state. Compute is one Newton-Schulz per matrix
+per step, the same as Muon, and the third arm measured at about +5% step time.
+No syncs in the step path; the share accessors sync only when the metrics
+interval reads them.
 
 Intended for interior >=2D matrices only (the MuonGeo split): embeddings, the
 head, norms and biases route to a plain Lion secondary via CompositeOptimizer.

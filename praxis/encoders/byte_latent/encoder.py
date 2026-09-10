@@ -1011,48 +1011,30 @@ def packed_rnn_block(
     eos_token_id: Optional[int] = None,
     block_ids: Optional[torch.LongTensor] = None,
 ) -> torch.Tensor:
-    """
-    Efficiently use packed sequences within transformer architecture.
+    """Efficiently use packed sequences within transformer architecture.
 
-    Runs EAGER, for the same reason ``Patcher.patch`` does: the block count and
-    the longest block are properties of where the document separators landed,
-    so ``num_blocks`` and ``max_len`` below are read out of tensor data and
-    become shapes. ``pack_padded_sequence`` also requires its lengths on the
-    CPU, which is a host sync no graph can contain. Only reached under
-    ``local_architecture: recurrent`` (the abstractinator profiles use conv),
-    so this is pre-emptive rather than a fix for an observed failure - but it
-    is the same trap and would surface the moment a recurrent profile is
-    compiled.
+    Runs EAGER, for the same reason ``Patcher.patch`` does: the block count and the
+    longest block are properties of where the document separators landed, so
+    ``num_blocks`` and ``max_len`` are read out of tensor data and become shapes.
+    ``pack_padded_sequence`` also requires its lengths on the CPU, a host sync no
+    graph can contain.
 
-    EVERY packed document is processed, each as its own sequence with its own
-    fresh hidden state. ``pack_padded_sequence`` cannot represent two
-    sub-sequences inside one batch row, so the blocks are first re-laid out one
-    per row, run, and scattered back.
+    EVERY packed document is processed, each as its own sequence with its own fresh
+    hidden state. ``pack_padded_sequence`` cannot represent two sub-sequences inside
+    one batch row, so blocks are re-laid out one per row, run, and scattered back.
 
-    This used to keep only each row's FIRST block: ``pad_packed_sequence``
-    zero-fills past the given length, so every position after the first
-    document came back as zeros and ``RecurrentBlock`` returned the bare
-    residual for it - silently, with no error. That was inert under
-    ``chat_format: default``, whose template emits no ``[EOS]``: block ids were
-    uniformly 1 and the truncation was a no-op. ``prose`` made the packer's
-    document separator real (see ``MessageQueueManager._terminate_doc``), which
-    turned the same code path live and wrong at once.
-
-    Peak memory is ``num_blocks * longest_block``, which exceeds
-    ``batch * seq_len`` when one long document shares a batch with many short
-    ones. The transient is the padded re-layout only; the RNN itself sees the
-    compacted PackedSequence.
+    Peak memory is ``num_blocks * longest_block``, which exceeds ``batch * seq_len``
+    when one long document shares a batch with many short ones. The transient is the
+    padded re-layout only; the RNN itself sees the compacted PackedSequence.
 
     Args:
         rnn: nn.RNN module (or compatible RNN type like GRU, LSTM)
         x: Feature tensor of shape [batch_size, seq_len, features]
         input_ids: Token IDs of shape [batch_size, seq_len]
         eos_token_id: ID to split on when block_ids is None. Required in that
-            case, and deliberately has no default: it previously defaulted to
-            0, which is ``PAD_ID``/``BOE_ID`` and not a document separator at
-            all. A caller relying on that default split on padding instead of
-            on document ends, which is silent - the wrong block layout still
-            produces a correctly shaped tensor.
+            case, with no default: 0 is ``PAD_ID``/``BOE_ID``, not a document
+            separator, and splitting on padding produces a correctly shaped
+            tensor with the wrong block layout.
         block_ids: Optional block IDs of shape [batch_size, seq_len]
 
     Raises:

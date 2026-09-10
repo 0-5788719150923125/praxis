@@ -1189,15 +1189,12 @@ func _reading() -> bool:
 # The punch envelope, 0 -> 1 -> 0 across `_sting_span`. The whole point of it is
 # the ATTACK.
 #
-# It used to be a step: `_sting = 1.0` on the beat edge, read by the same frame's
-# draw, so `pulse_zoom` went 1.00 -> 1.20 between two consecutive frames and the
-# roll, skew and a 1.5x brightness flash all arrived in that same frame. Nothing
-# else in ghost's camera moves like that - `SceneView.commit` exists precisely so
-# framing eases rather than snaps, and `snap()` is documented as a pre-warm-only
-# exception - and a one-frame scale step does not read as an accent, it reads as
-# the picture tearing. That is the reported "the whole scene explodes, then
-# recovers immediately", and it was jarring on peaceful scenes because a
-# discontinuity is jarring on anything.
+# A step (`_sting = 1.0` on the beat edge, read by the same frame's draw) does not
+# read as an accent - `pulse_zoom` going 1.00 -> 1.20 between two consecutive
+# frames, with the roll, skew and brightness flash all arriving at once, reads as
+# the picture tearing. Nothing else in ghost's camera moves like that:
+# `SceneView.commit` exists precisely so framing eases rather than snaps, and
+# `snap()` is documented as a pre-warm-only exception.
 #
 # The envelope was always meant to BE the easing (SceneView: "not eased - the
 # Director drives the envelope"); it simply never eased the onset.
@@ -1416,15 +1413,12 @@ func hold_remaining() -> float:
 		return med - _elapsed
 	# PAST THE MEDIAN THE SCENE IS STILL RUNNING, so the answer is not zero.
 	#
-	# It used to be `maxf(0.0, med - _elapsed)`, which reports ZERO for the whole tail of any
-	# hold that outlives its median - and the median is only 56% of the way through the window,
-	# so that is most of the second half of every scene. A caller asking "how long have I got"
-	# was told "none" over and over while the scene ran on, and [ComicVehicle] answered it the
-	# way it should: by settling, again, every few seconds. Measured in an export log, 19 of 42
-	# camera moves were settles, in runs of up to seven, each re-easing the shot a fifth of the
-	# way toward the same panel it was already on. Reported as "the camera corrects and jumps to
-	# focus on the exact same frame it's already on" and "it never holds long enough to look at
-	# anything".
+	# `maxf(0.0, med - _elapsed)` reports ZERO for the whole tail of any hold that outlives
+	# its median - and the median is only 56% of the way through the window, so that is most
+	# of the second half of every scene. A caller asking "how long have I got" is told "none"
+	# over and over while the scene runs on, and [ComicVehicle] answers that by settling again
+	# every few seconds: measured in an export log, 19 of 42 camera moves were settles, in runs
+	# of up to seven, each re-easing the shot a fifth of the way toward the panel it was on.
 	#
 	# Beyond the median the honest remaining time is the distance to the BACKSTOP, which is the
 	# one moment the cut is certain. It shrinks to zero as that arrives, so a caller pacing
@@ -1435,12 +1429,10 @@ func hold_remaining() -> float:
 
 ## Take this cue, or let it pass? A ramp, not a gate.
 ##
-## THE BUG THIS FIXES. `min_hold` was a hard gate: once the scene had held that long, the next
-## trigger cut. On speech the beat detector fires an onset several times a second, so "the next
-## trigger" is always within a frame or two of the gate opening - measured, a 7.29 s median with an
-## IQR of 0.94 s, i.e. every scene exiting at essentially the same instant. Raising the hold just
-## moved the metronome: at the top of the Scene hold slider it cut every ~15 s almost on the dot.
-##
+## A hard `min_hold` gate is a metronome. On speech the beat detector fires an onset several
+## times a second, so "the next trigger past the gate" is always within a frame or two of the
+## gate opening - measured, a 7.29 s median with an IQR of 0.94 s, every scene exiting at
+## essentially the same instant, and raising the hold only moves the metronome.
 ## So eligibility no longer decides anything by itself. Past the minimum, an arriving cue is
 ## ACCEPTED with a probability that starts near zero and rises the longer the scene has run:
 ## possible at the minimum, likely by the backstop. `u` is the position through the window and the

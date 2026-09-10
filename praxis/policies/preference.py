@@ -1,39 +1,32 @@
 """Forward-path preference policy over chosen/rejected-tagged tokens.
 
-The hh-rlhf card's contract: the pairs are preference-modeling data, not SFT
-material. DPO's core insight makes the simplest compliant objective possible
-with no reward model and no sampling - the policy IS the reward model, and a
-reference-free (SimPO-style) margin needs only the model's own likelihoods:
-push the mean per-token log-probability of chosen text above that of rejected
-text through a logistic margin.
-
-DISABLED BY DEFAULT, AND THE CONTRAST IS NOT PAIRED. No experiment lists this in
-``rl_type``; see next/rl.md. The reason is not that packing loses the row
-alignment - it is that ``format_preference_pair`` emits exactly ONE side per
-call, chosen 50/50 at random (praxis/data/formatters/conversation.py). A pair's
-two halves are therefore never co-resident by construction, so the margin below
-contrasts one random hh-rlhf conversation's chosen text against a DIFFERENT
-random conversation's rejected text. What it measures is largely the difficulty,
-length and domain gap between two unrelated documents, not a preference. Live
-metrics agree it is not working: preference_rejected_logp rose over the
-abstractinator-g run (rejected text becoming MORE likely) while the margin
-shrank.
-
-Restoring a real pairwise objective needs a formatter change, not a policy
-change: emit both sides with a shared pair id and thread that id alongside the
-task tags, then contrast within a pair id. Specified in next/rl.md.
+The hh-rlhf pairs are preference-modeling data, not SFT material. DPO's core
+insight makes the simplest compliant objective possible with no reward model and
+no sampling - the policy IS the reward model, and a reference-free (SimPO-style)
+margin needs only the model's own likelihoods: push the mean per-token
+log-probability of chosen text above that of rejected text through a logistic
+margin.
 
 The margin contrasts the two tag POPULATIONS (``PREF_CHOSEN`` /
-``PREF_REJECTED``) within a batch - the chunk-level analogue of the pairwise
-loss, honestly an unpaired approximation. The overall objective is ORPO-shaped:
-chosen text keeps flowing through the main CE (the SFT anchor), rejected text is
+``PREF_REJECTED``) within a batch. The overall objective is ORPO-shaped: chosen
+text keeps flowing through the main CE (the SFT anchor), rejected text is
 excluded from the main CE entirely (``_build_loss_weights``) and appears only
-here, being pushed down relative to chosen.
+here, pushed down relative to chosen.
 
-Recall-family policy (like engagement/joke): any number coexist, partitioned
-by task tags, invoked with ``(logits, labels, assistant_mask, task_type_ids)``
-on the ordinary training forward. No extra parameters, no rollouts, no
-reference model.
+DISABLED BY DEFAULT, because the contrast is not paired.
+``format_preference_pair`` emits exactly ONE side per call, chosen 50/50 at
+random (praxis/data/formatters/conversation.py), so a pair's two halves are
+never co-resident and the margin contrasts one conversation's chosen text
+against a DIFFERENT conversation's rejected text - largely a measure of the
+difficulty, length and domain gap between two unrelated documents. Restoring a
+real pairwise objective needs a formatter change: emit both sides with a shared
+pair id, thread that id alongside the task tags, and contrast within a pair id.
+Specified in next/rl.md.
+
+Recall-family policy (like engagement/joke): any number coexist, partitioned by
+task tags, invoked with ``(logits, labels, assistant_mask, task_type_ids)`` on
+the ordinary training forward. No extra parameters, no rollouts, no reference
+model.
 """
 
 from typing import Optional, Tuple
@@ -54,9 +47,12 @@ class PreferencePolicy(nn.Module):
     prefix = "preference"
     # PREF_CHOSEN / PREF_REJECTED come only from hh-rlhf
     # (DataFormat.PREFERENCE_PAIR), so the margin has nothing to score without
-    # this collection. See ChatFormat-independent tagging in
-    # praxis/data/formatters/conversation.py::format_preference_pair.
-    dataset_collections = ("preference",)
+    # it - and the dataset card permits nothing else, so this policy is its
+    # only legitimate consumer. Declared dataset-level rather than as a
+    # collection so the pairing is owned here: `rl_type: preference` is both
+    # necessary and sufficient to get the data. See ChatFormat-independent
+    # tagging in praxis/data/formatters/conversation.py::format_preference_pair.
+    dataset_weights = {"hh-rlhf": 1.0}
     # Margin sharpness (SimPO's beta). Fixed, model-agnostic: 2.0 sits in the
     # paper's stable range and the loss is scale-bounded by logsigmoid anyway.
     BETA = 2.0

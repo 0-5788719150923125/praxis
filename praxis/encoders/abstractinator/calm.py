@@ -1,19 +1,17 @@
 """AbstractinatorCALM: a continuous CALM arm beside the discrete RVQ arm.
 
-WHY THIS EXISTS. CALM (arXiv 2510.27688) autoregresses over *continuous*
-latents and resolves each step by a count-based vote over many draws rather
-than by an argmax over a categorical - temperature realized as a draw count,
-``n = round(1/T)``. That is the mechanism worth having. Its cost is that the
-energy head must learn a full continuous conditional ``p(z_{t+1} | context)``
-from an energy score, which is a weak, high-variance signal: measured here at
-correct-next-patch 0.003 and cross-sample agreement 0.000. Not a bug - the port
-is faithful and the architecture is correct - but an optimization that needs
-far more tokens than this line can afford.
+CALM (arXiv:2510.27688) autoregresses over *continuous* latents and resolves
+each step by a count-based vote over many draws rather than an argmax over a
+categorical - temperature realized as a draw count, ``n = round(1/T)``. Its cost
+is that the energy head must learn a full continuous conditional
+``p(z_{t+1} | context)`` from an energy score, a weak high-variance signal
+(measured here at correct-next-patch 0.003, cross-sample agreement 0.000): an
+optimization needing far more tokens than this line can afford.
 
-The Abstractinator has exactly what that objective lacks: a DISCRETE code per
-patch, supervised end-to-end by cross-entropy through the byte decoder, and
-therefore dense, low-variance and mode-seeking. So this encoder runs both and
-lets the discrete arm pay for the continuous one:
+The Abstractinator has what that objective lacks - a DISCRETE code per patch,
+supervised end-to-end by cross-entropy through the byte decoder, and therefore
+dense, low-variance and mode-seeking. So this encoder runs both and lets the
+discrete arm pay for the continuous one:
 
     patch features (already in CALM's standing-wave basis)
         |
@@ -30,30 +28,24 @@ lets the discrete arm pay for the continuous one:
         +--> code CE:    predict code_{t+1}      the dense signal that
                                                  concentrates the conditional
 
-WHY THE CODE CE AND NOT THE EXISTING ANCHOR. ``CALMEncoder`` already carries an
-``ENERGY_ANCHOR_WEIGHT`` MSE from the head's zero-noise prediction onto the next
-posterior MEAN, and it works (correct-next-patch 0.003 -> 0.139). But an MSE
-onto a mean is MEAN-SEEKING, which is precisely the blur CALM's energy score
-exists to avoid - the code says so, and calls it a deviation from the paper.
-Cross-entropy over codebook entries is MODE-SEEKING and carries no such defect.
-It is also a better target than the trinary mode's HALO cells: those partition a
-frozen codec after the fact, while this codebook is trained jointly with EMA
-updates and dead-code revival, and is guaranteed sufficient to reconstruct.
+Cross-entropy over codebook entries is MODE-SEEKING, where an MSE onto the next
+posterior mean (``CALMEncoder``'s ``ENERGY_ANCHOR_WEIGHT``) is mean-seeking -
+the blur CALM's energy score exists to avoid. It is also a better target than
+the trinary mode's HALO cells, which partition a frozen codec after the fact,
+where this codebook is trained jointly with EMA updates and dead-code revival
+and is guaranteed sufficient to reconstruct.
 
 JOINT, SINGLE-STAGE, ALWAYS. No pretraining phase, no frozen codec, no stage
-boundary - the standing requirement on this line. Everything above folds into
-one loss container inside one training loop. This is also the honest risk: the
-CALM reference gets its clean conditional partly BECAUSE its codec is frozen and
-near-lossless before the energy head starts, and here the head chases a moving
-target. The bet is that the code CE is dense enough to make that tractable, and
-``calm_code_acc`` is where the bet is settled.
+boundary. That is also the honest risk: CALM's reference gets its clean
+conditional partly BECAUSE its codec is frozen and near-lossless before the
+energy head starts, and here the head chases a moving target. The bet is that
+the code CE is dense enough to make that tractable, and ``calm_code_acc`` is
+where it settles.
 
-THE VOTE, AND WHY IT IS CHEAPER HERE. CALM votes by decoding every candidate to
-a K-token patch and counting exact matches - a full decode per draw. Here the
-RVQ already defines the equivalence classes: quantizing a candidate latent
-yields its code index directly, so the vote is a nearest-neighbour lookup per
-draw instead of a decode. Same count-based vote, a fraction of the cost, and the
-discrete arm is what makes it possible.
+THE VOTE IS CHEAPER HERE. CALM votes by decoding every candidate to a K-token
+patch and counting exact matches. The RVQ already defines the equivalence
+classes, so quantizing a candidate latent yields its code index directly: a
+nearest-neighbour lookup per draw instead of a decode.
 """
 
 import math
@@ -118,61 +110,45 @@ FREE_BITS: float = 0.5
 # 0, which silently removed the reference's own answer to the problem.
 VAE_DROPOUT: float = 0.15
 
-# NO HAND-SET WEIGHTS. `CODE_CE_WEIGHT = 5.0` and `KL_WEIGHT = 1e-3` used to
-# live here and are gone: the three CALM objectives are now balanced by learned
+# NO HAND-SET WEIGHTS: the three CALM objectives are balanced by learned
 # uncertainty weighting (Kendall, Gal & Cipolla, CVPR 2018 - see
 # praxis/losses/uncertainty.py).
 #
-# WHY, measured on run b32ddef0f. With the arm capped to 0.25% of the discrete
-# one - i.e. contributing essentially nothing to the trunk's input - the run
-# still degraded on every axis that matters: all three prismatic arms got WORSE
-# (`arm_solo_loss_1` +3.4/1k, `_2` +1.4/1k, `_0` +0.5/1k), `halting/eval_mean_kl`
-# rose 10x, `vq_resets_s0` doubled to 2178, and `val_byte_nll_bits` went
-# 5.053 -> 5.43. The arm was silent, so the damage was not the arm: it was the
-# CALM LOSSES' GRADIENT arriving on the trunk. `calm_energy` sits near 16 at
-# init (2*sqrt(D) against unit-RMS targets) while the byte CE is around 5, so
-# the hard, slow objective was outweighing the main task roughly 3:1 from step
-# zero - and `calm_energy_cond_gap` says it was not even using its conditioning
-# while it did so.
+# Measured on run b32ddef0f: with the arm capped to 0.25% of the discrete one -
+# contributing essentially nothing to the trunk's input - the run still degraded
+# on every axis. All three prismatic arms got WORSE, `halting/eval_mean_kl` rose
+# 10x, `vq_resets_s0` doubled to 2178, and `val_byte_nll_bits` went 5.053 ->
+# 5.43. The damage was the CALM LOSSES' GRADIENT on the trunk, not the arm:
+# `calm_energy` sits near 16 at init (2*sqrt(D) against unit-RMS targets) where
+# the byte CE is around 5, so the hard, slow objective outweighed the main task
+# roughly 3:1 from step zero.
 #
 # Uncertainty weighting settles each objective's weight at 1/L, so an objective
 # that stays hard down-weights ITSELF and cannot drown a task that is already
-# working, then re-engages on its own as it becomes learnable. That is the
-# balance this arm needed, it is learned rather than tuned, and it removes two
-# constants instead of adding any.
+# working, then re-engages as it becomes learnable. Learned rather than tuned.
 
 # Hard ceiling on ||z_c|| / ||z_q||, enforced per patch.
 #
-# THE FAILURE THIS EXISTS TO PREVENT, measured on -p run b32ddef0f. The arm was
-# added as a bare residual, `z = z_q + z_c`, with only the 1e-3 KL opposing its
-# growth. `calm_arm_ratio` went 7e-4 -> 1.5 by step 500 and 20-35 by step 2500:
-# the continuous channel became 95%+ of the trunk's input. Everything else
-# followed from that one number:
+# As a bare residual, `z = z_q + z_c` with only the 1e-3 KL opposing its growth,
+# `calm_arm_ratio` went 7e-4 -> 1.5 by step 500 and 20-35 by step 2500: the
+# continuous channel became 95%+ of the trunk's input. The byte decoder's CE
+# then had almost no reason to differentiate CODES, so the codebook starved
+# (`vq_dead_frac_s0` 0.73, perplexity 6-10 of K, 1200+ resets); those resets
+# relabel the code CE's targets, so `calm_code_acc` slammed between ~0.6 and
+# exactly chance; and both `calm_energy` and the KL scale with ||z||, so the
+# train loss sat at 330-650 and `val_byte_nll_bits` ROSE.
 #
-#   - The byte decoder's CE had almost no reason to differentiate CODES, so the
-#     codebook starved: `vq_dead_frac_s0` 0.73, `vq_perplexity_s0` 6-10 of K,
-#     1200+ dead-code resets.
-#   - Those resets relabel the code CE's targets under it, so `calm_code_acc`
-#     slammed between ~0.6 and EXACTLY chance (1/K) batch to batch.
-#   - `calm_energy` and the KL both scale with ||z||, so train `loss` sat at
-#     330-650 with spikes to 5572, and `val_byte_nll_bits` ROSE, 5.169 -> 5.355.
-#
-# WHY THE KL COULD NEVER HAVE HELD IT. Every objective whose cost grows with
-# ||z_c|| is detached from the posterior by design: the energy score's target is
-# `z.detach()` and its target draws use `mu.detach()` (correct - the score must
-# train the head, not the posterior). So the one term that both sees the
-# magnitude and can act on it is the KL, at 1e-3 against a fully-connected
-# decoder CE that prefers an unbottlenecked channel. Raising that weight would
-# be a tuned number opposing an untuned one, and would mute the arm rather than
-# bound it.
+# THE KL COULD NOT HOLD IT. Every objective whose cost grows with ||z_c|| is
+# detached from the posterior by design - the energy score's target is
+# `z.detach()` and its draws use `mu.detach()`, correct because the score must
+# train the head, not the posterior. That leaves the KL at 1e-3 against a
+# fully-connected decoder CE that prefers an unbottlenecked channel.
 #
 # So the bound is STRUCTURAL, and parity is the principled place for it: at
-# ratio 1 the continuous arm has stopped being a residual on the discrete one
-# and this is no longer the architecture under test. The scaling is a SOFT cap -
-# below the ceiling z_c passes through untouched, so the silent start and the
-# KL's shaping both survive - and the fraction of the ceiling actually used is
-# LEARNED (`arm_gate`), so nothing here is a tuned level.
-ARM_CEILING: float = 1.0
+# ratio 1 the continuous arm has stopped being a residual on the discrete one.
+# The scaling is a SOFT cap - below the ceiling z_c passes through untouched, so
+# the silent start and the KL's shaping both survive - and the fraction of the
+# ceiling actually used is LEARNED (`arm_gate`).
 
 # Logit init for that learned fraction. sigmoid(-6) ~ 0.0025, so the arm still
 # starts effectively silent and -p remains an A/B against -o rather than a
@@ -218,36 +194,20 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         self.vote_samples = int(vote_samples)
         self.vote_temperature = float(vote_temperature)
 
-        # The continuous arm: a Gaussian posterior over the SAME patch features
-        # the quantizer sees. Deliberately not CALM's token-chunk VAE - that
-        # compresses K token embeddings and owns its own table, which is a job
-        # the Abstractinator's local encoder already did. What is needed here is
-        # only the continuous channel, so this is the posterior and nothing else.
-        # The byte decoder supplies the reconstruction pressure, so no second
-        # decoder exists to disagree with the one already there.
         # THE CONTINUOUS CODEC. A real VAE - encoder, decoder, its own
         # reconstruction objective, its own free-bits KL - over the same patch
-        # features the quantizer sees. This replaces a bare
-        # `nn.Linear(D, 2 * D)` "posterior", and that substitution is what four
-        # rounds of instability were actually about.
+        # features the quantizer sees.
         #
-        # The original reasoning for dropping CALM's VAE checked exactly one of
-        # the three jobs it does. It compresses K tokens into one vector - and
-        # the Abstractinator's local encoder genuinely already did that, so a
-        # second token-chunk VAE really would be redundant. But it also supplies
-        # a continuous, KL-regularized, unit-scale, STATIONARY latent space, and
-        # a per-patch POSTERIOR for the energy score's target draws. Neither is
-        # redundant with an RVQ, and both were dropped along with the
-        # compression. They came back one crisis at a time: as a scale runaway
-        # (band-aided with an RMS map at the loss), and as a linear layer with
-        # no reconstruction pressure of its own, which had to be capped to 0.25%
-        # because it destabilized everything it touched.
+        # CALM's VAE does three jobs. Compressing K tokens into one vector is
+        # the one the Abstractinator's local encoder genuinely already does.
+        # Supplying a continuous, KL-regularized, unit-scale, STATIONARY latent
+        # space, and a per-patch POSTERIOR for the energy score's target draws,
+        # are the two an RVQ does not - so both are needed here.
         #
-        # Two encoders side by side, sharing one trunk. That is well-posed here
-        # ONLY because the patching is static (`patch_size=8`): both codecs emit
-        # exactly one latent per patch, so `z_q + z_c` is an alignable merge and
-        # not two sequences that cannot be reconciled. Each path carries its own
-        # objective, so each is independently optimizable - which is the point.
+        # Two encoders side by side, sharing one trunk. Well-posed ONLY because
+        # the patching is static (`patch_size=8`): both codecs emit exactly one
+        # latent per patch, so `z_q + z_c` is an alignable merge. Each path
+        # carries its own objective, so each is independently optimizable.
         self.vae = PatchVAE(
             feature_dim=D,
             latent_dim=D,

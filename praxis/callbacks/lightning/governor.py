@@ -1,44 +1,39 @@
 """Lightning wiring for the gradient-noise-scale batch governor.
 
-Replaces the static ``AccumulationSchedule`` when ``governor: gns_batch`` is
-set. The governed quantity is the EFFECTIVE BATCH in rows per optimizer step,
-tracking the measured gradient noise scale (see ``praxis/governors/gns.py``);
+Replaces the static ``AccumulationSchedule`` when ``governor: gns_batch`` is set.
+The governed quantity is the EFFECTIVE BATCH in rows per optimizer step,
+tracking the measured gradient noise scale (``praxis/governors/gns.py``);
 ``praxis/data/batch_schedule.py`` factorizes it into rows-per-microbatch and an
-accumulation factor. ``target_batch_size`` is the ceiling on the effective
-batch, ``batch_size`` the ceiling on one microbatch - neither is a floor.
+accumulation factor. ``target_batch_size`` is the ceiling on the effective batch,
+``batch_size`` the ceiling on one microbatch - neither is a floor.
 
 Timing contract with Lightning 2.x automatic optimization:
 
-* ``on_after_backward`` fires once per microbatch, gradients accumulated so
-  far in ``.grad``. After the FIRST microbatch, ``.grad`` holds exactly that
-  microbatch's gradient - scaled by 1/K, because Lightning divides each
-  microbatch loss by ``accumulate_grad_batches``. We record its squared norm
-  and undo the scaling (x K^2) at estimation time.
-* ``on_before_optimizer_step`` fires once per completed cycle, pre-clip
-  (clipping happens inside the optimizer step closure afterwards), which is
-  exactly the accumulated gradient the estimator wants.
+* ``on_after_backward`` fires once per microbatch. After the FIRST microbatch,
+  ``.grad`` holds exactly that microbatch's gradient scaled by 1/K, because
+  Lightning divides each microbatch loss by ``accumulate_grad_batches``. We
+  record its squared norm and undo the scaling (x K^2) at estimation time.
+* ``on_before_optimizer_step`` fires once per completed cycle, pre-clip, which
+  is exactly the accumulated gradient the estimator wants.
 * Lightning steps when ``batch_progress.current.ready % factor == 0``, so a
   factor change only produces correctly-scaled full cycles if it lands on a
-  boundary aligned to the NEW factor. Down-moves (new divides old) are always
-  aligned at a step boundary; up-moves may need to wait one extra cycle. The
-  commit logic defers until ``ready % new == 0``.
+  boundary aligned to the NEW factor. Down-moves are always aligned; up-moves
+  may wait one extra cycle. The commit logic defers until ``ready % new == 0``.
 
 The accumulation factor is the minimum the ceiling requires, EXCEPT on the
-measuring windows that buy the estimator its second point. Once the governed
-effective batch fits in one microbatch that minimum is 1, so a small batch runs
-one forward per step instead of two - see ``MEASURE_EVERY``. The measuring flag
-travels through the same aligned-commit path as a tier change, because it moves
-the factor and Lightning cares about nothing else.
+measuring windows that buy the estimator its second point (see
+``MEASURE_EVERY``). The measuring flag travels through the same aligned-commit
+path as a tier change, because it moves the factor and Lightning cares about
+nothing else.
 
 Row counts feeding the estimator are read from the batches that actually
-arrived, never from the plan: the plan is shared state the data pipeline may
-lag on, and a two-point estimate built from assumed batch sizes would be
-silently wrong rather than merely stale.
+arrived, never from the plan: the plan is shared state the data pipeline may lag
+on, and a two-point estimate built from assumed batch sizes would be silently
+wrong rather than merely stale.
 
-Distributed note: with multiple ranks the first-microbatch gradient is
-rank-local while the accumulated one is all-reduced, so the two-point pair
-is inconsistent - the governor is built for the single-process runs Praxis
-actually does; it logs a warning and holds the initial batch otherwise.
+Distributed: with multiple ranks the first-microbatch gradient is rank-local
+while the accumulated one is all-reduced, so the two-point pair is inconsistent.
+The governor logs a warning and holds the initial batch.
 """
 
 import math

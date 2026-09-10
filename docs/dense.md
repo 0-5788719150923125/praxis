@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 
-Registry: ``praxis.DENSE_REGISTRY`` (14 entries)
+Registry: ``praxis.DENSE_REGISTRY`` (10 entries)
 
 ## `arc` - ArcGLU
 
@@ -17,7 +17,13 @@ activation list by current_depth // num_layers so each pass gets its own instanc
 
 Source: [praxis/dense/arc.py:15](../praxis/dense/arc.py#L15)
 
-## `dual_act`, `glu` - GatedLinearMLP
+## `eml_tree` - EMLTree
+
+``dim -> dim`` stack of EML layers, each ``e^{Ax} - log(softplus(Bx))``.
+
+Source: [praxis/dense/eml.py:39](../praxis/dense/eml.py#L39)
+
+## `glu` - GatedLinearMLP
 
 A standard MLP, augmented with Gated Linear Units.
 
@@ -29,16 +35,6 @@ rather than one steering a linear half. That is a real architectural change and 
 why the arm ...
 
 Source: [praxis/dense/glu.py:15](../praxis/dense/glu.py#L15)
-
-Presets:
-- `dual_act` - `activation_value='gelu'`
-- `glu` - class defaults
-
-## `eml_tree` - EMLTree
-
-``dim -> dim`` stack of EML layers, each ``e^{Ax} - log(softplus(Bx))``.
-
-Source: [praxis/dense/eml.py:39](../praxis/dense/eml.py#L39)
 
 ## `kan` - KolmogorovArnoldNetwork
 
@@ -58,7 +54,7 @@ A multi-layer perceptron mapping ``input_dim -> input_dim``.
 
 Source: [praxis/dense/mlp.py:11](../praxis/dense/mlp.py#L11)
 
-## `peer`, `peer_dual`, `peer_glu`, `peer_mix`, `peer_split` - ParameterEfficientExpertRetrieval
+## `peer`, `peer_glu` - ParameterEfficientExpertRetrieval
 
 This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
 https://arxiv.org/abs/2407.04153v1
@@ -75,10 +71,7 @@ Source: [praxis/dense/peer.py:43](../praxis/dense/peer.py#L43)
 
 Presets:
 - `peer` - class defaults
-- `peer_dual` - `activation_value='gelu', glu=True`
 - `peer_glu` - `glu=True`
-- `peer_mix` - `activation={'type': 'mix_gated', 'values': ['serpent', 'swish', 'linear']}, glu=True`
-- `peer_split` - `activation={'type': 'mix_split', 'values': ['servant', 'swish']}, glu=True`
 
 ## `poly` - PolynomialExpansionMLP
 

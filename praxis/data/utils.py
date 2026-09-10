@@ -309,7 +309,69 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         return dataset
 
 
-def add_collection(config, collection_name, target_key, skip_existing=False):
+def _resolve_entry(dataset_name, source, injected_by=None):
+    """Look up a DATASETS entry, enforcing any ``requires_rl_type`` binding.
+
+    A dataset can carry a usage restriction its data alone doesn't express -
+    ``Anthropic/hh-rlhf`` may be used for preference modeling and nothing
+    else. ``requires_rl_type`` names the ``rl_type`` entries allowed to load
+    it, and ``injected_by`` is the policy asking. Anything else - a collection
+    listing it, an explicit ``train_datasets``, a validation mix - raises,
+    because the way this breaks otherwise is quiet: the dataset trains as
+    ordinary conversation data with no objective that honors the restriction.
+    """
+    entry = DATASETS.get(dataset_name)
+    if entry is None:
+        raise ValueError(f"{source} references unknown dataset '{dataset_name}'")
+    required = entry.get("requires_rl_type")
+    if required and injected_by not in tuple(required):
+        raise ValueError(
+            f"Dataset '{dataset_name}' is reserved for rl_type "
+            f"{list(required)} and cannot be loaded from {source}. Enable the "
+            f"policy instead (e.g. rl_type: {tuple(required)[0]}); it injects "
+            f"the dataset itself via `dataset_weights`."
+        )
+    return entry
+
+
+def add_datasets(
+    config, weights, target_key, skip_existing=False, source=None, injected_by=None
+):
+    """Add named datasets with explicit weights to the config.
+
+    Args:
+        config: Configuration dictionary to update
+        weights: ``{dataset_id: weight}`` to append
+        target_key: Key in config to add datasets to (primary or validation)
+        skip_existing: Drop datasets already present under ``target_key``
+        source: What asked for these, for error messages
+        injected_by: ``rl_type`` name on whose behalf this runs, if any;
+            satisfies a dataset's ``requires_rl_type`` binding
+
+    Returns:
+        Updated configuration dictionary
+    """
+    present = {e.get("_id") for e in config[target_key]} if skip_existing else set()
+    added = []
+    for dataset_name, weight in weights.items():
+        if dataset_name in present:
+            continue
+        entry = _resolve_entry(
+            dataset_name, source or "train_datasets", injected_by=injected_by
+        )
+        # Don't clobber an entry's own `name` (HuggingFace BuilderConfig);
+        # carry the registry key under a private field for internal use.
+        dataset_config = entry.copy()
+        dataset_config["_id"] = dataset_name
+        dataset_config["weight"] = weight
+        config[target_key].append(dataset_config)
+        added.append(dataset_name)
+    return config, added
+
+
+def add_collection(
+    config, collection_name, target_key, skip_existing=False, injected_by=None
+):
     """Add datasets from a collection to the config with their weights.
 
     Args:
@@ -317,35 +379,28 @@ def add_collection(config, collection_name, target_key, skip_existing=False):
         collection_name: Name of the collection to add
         target_key: Key in config to add datasets to (primary or validation)
         skip_existing: Drop datasets already present under ``target_key``.
-            Collections OVERLAP (``hh-rlhf`` is in both ``focused`` and
-            ``preference``), and this function appends unconditionally, so a
-            second collection carrying the same dataset would list it twice and
-            double its sampling weight. Used by the rl_type auto-include path,
-            where the collection is added on the model's behalf and must not
-            reweight a mix the user set deliberately. Off by default: an
-            explicit ``train_datasets`` listing the same dataset via two
-            collections is asking for the combined weight.
+            Collections OVERLAP at the dataset level, and this function appends
+            unconditionally, so a second collection carrying the same dataset
+            would list it twice and double its sampling weight. Used by the
+            rl_type auto-include path, where the collection is added on the
+            model's behalf and must not reweight a mix the user set
+            deliberately. Off by default: an explicit ``train_datasets``
+            listing the same dataset via two collections is asking for the
+            combined weight.
+        injected_by: ``rl_type`` name on whose behalf this runs, if any
 
     Returns:
         Updated configuration dictionary
     """
     if collection_name in DATASET_COLLECTIONS:
-        present = {e.get("_id") for e in config[target_key]} if skip_existing else set()
-        for dataset_name, weight in DATASET_COLLECTIONS[collection_name].items():
-            if dataset_name in present:
-                continue
-            entry = DATASETS.get(dataset_name)
-            if entry is None:
-                raise ValueError(
-                    f"Collection '{collection_name}' references unknown dataset "
-                    f"'{dataset_name}'"
-                )
-            # Don't clobber an entry's own `name` (HuggingFace BuilderConfig);
-            # carry the registry key under a private field for internal use.
-            dataset_config = entry.copy()
-            dataset_config["_id"] = dataset_name
-            dataset_config["weight"] = weight
-            config[target_key].append(dataset_config)
+        config, _ = add_datasets(
+            config,
+            DATASET_COLLECTIONS[collection_name],
+            target_key,
+            skip_existing=skip_existing,
+            source=f"collection '{collection_name}'",
+            injected_by=injected_by,
+        )
     return config
 
 
@@ -399,20 +454,26 @@ def get_dataset_configs(
     for name in requested:
         config = add_collection(config, name, "primary")
 
-    from praxis.policies import normalize_rl_types, rl_dataset_collections
+    from praxis.policies import (
+        normalize_rl_types,
+        rl_dataset_collections,
+        rl_dataset_weights,
+    )
 
-    # Each rl_type entry declares the collections it is bound to, and they are
-    # force-included here so `rl_type` alone is enough to configure a working
-    # RL task. Without this the two keys had to agree by hand, and disagreeing
-    # failed silently: a policy filtering on a task tag no dataset emits scores
-    # nothing and reports nothing. See praxis.policies.rl_dataset_collections.
+    # Each rl_type entry declares the data it is bound to - named collections
+    # (`dataset_collections`) or individual datasets with weights
+    # (`dataset_weights`) - and both are force-included here so `rl_type` alone
+    # is enough to configure a working RL task. Without this the two keys had
+    # to agree by hand, and disagreeing failed silently: a policy filtering on
+    # a task tag no dataset emits scores nothing and reports nothing. The
+    # dataset-level form additionally makes the policy the ONLY door in for a
+    # restricted dataset (see _resolve_entry).
     #
     # `skip_existing` is what keeps this side-effect-free for a mix the user
-    # already set: add_collection APPENDS, collections overlap at the dataset
-    # level (`hh-rlhf` is in both `focused` and `preference`), and a duplicate
-    # entry does not error - it silently doubles that dataset's sampling
-    # weight. Deduping by collection name alone is not enough for the same
-    # reason.
+    # already set: these helpers APPEND, collections overlap at the dataset
+    # level, and a duplicate entry does not error - it silently doubles that
+    # dataset's sampling weight. Deduping by collection name alone is not
+    # enough for the same reason.
     rl_names = normalize_rl_types(rl_type)
     seen_collections = set(requested)
     forced: List[str] = []
@@ -421,11 +482,23 @@ def get_dataset_configs(
             if collection in seen_collections:
                 continue
             seen_collections.add(collection)
-            forced.append(collection)
             before = len(config["primary"])
-            config = add_collection(config, collection, "primary", skip_existing=True)
-            if len(config["primary"]) == before:
-                forced.pop()  # every dataset was already in the mix
+            config = add_collection(
+                config, collection, "primary", skip_existing=True, injected_by=name
+            )
+            if len(config["primary"]) > before:
+                forced.append(collection)
+        weights = rl_dataset_weights(name)
+        if weights:
+            config, added = add_datasets(
+                config,
+                weights,
+                "primary",
+                skip_existing=True,
+                source=f"rl_type '{name}'",
+                injected_by=name,
+            )
+            forced.extend(added)
 
     for name in validation_datasets:
         config = add_collection(config, name, "validation")

@@ -1,98 +1,67 @@
 """One factorization for the three dynamic batch knobs.
 
-Praxis varies three things about a batch during training, each driven by its
-own signal:
+Praxis varies three things about a batch during training:
 
-* the **sequence-length multiplier** ``m`` - chosen by the probe curriculum in
-  :mod:`praxis.data.seq_probe`, deciding what LENGTH to train on;
-* the **effective batch** ``B_eff`` (rows consumed per optimizer step) - chosen
-  by the gradient-noise-scale governor in :mod:`praxis.governors.gns`, deciding
-  how many SAMPLES the step averages over;
-* the **accumulation factor** - historically a static
-  ``target_batch_size / batch_size``.
+* the **sequence-length multiplier** ``m`` - the probe curriculum in
+  :mod:`praxis.data.seq_probe` decides what LENGTH to train on;
+* the **effective batch** ``B_eff`` (rows per optimizer step) - the
+  gradient-noise-scale governor in :mod:`praxis.governors.gns` decides how many
+  SAMPLES the step averages over;
+* the **accumulation factor**, derived from the two.
 
-They used to be wired together in a way that made ``batch_size`` do two
-unrelated jobs. It set the rows per microbatch (a memory/compute property of
-the GPU) AND, because the effective batch could only be a whole multiple of it,
-it set a FLOOR under the governed quantity: with ``batch_size=64`` and the
-estimator's two-microbatch minimum, the smallest reachable effective batch was
-128 rows. Reaching smaller batches meant shrinking the microbatch, which taxes
-throughput at every batch size - the run pays for downward range forever.
-
-Here the two jobs separate. ``batch_size`` is a CEILING on rows per microbatch,
-nothing more; ``B_eff`` is governed independently and factorized against that
-ceiling:
+``batch_size`` is a CEILING on rows per microbatch and nothing more; ``B_eff``
+is governed independently and factorized against that ceiling:
 
     accum      = smallest power of two >= 2 with B_eff / accum <= row_ceiling
     base_rows  = B_eff // accum                 (rows per microbatch at m=1)
     micro_rows = max(1, base_rows // m**2)      (attention budget at length m)
 
-Three properties matter, and each is a constraint the old wiring violated:
+Three properties the rest of the class exists to hold:
 
 1. **``accum`` depends only on ``B_eff``, never on ``m``.** Lightning steps when
    ``ready % accum == 0``, so an ``accum`` that moved with the curriculum's dice
-   would land mid-cycle and produce short, mis-scaled cycles. Keeping it a
-   function of the governed quantity alone means it changes only when the
-   governor moves a tier, which is the one case the governor already defers to
-   an aligned boundary.
+   would land mid-cycle and produce short, mis-scaled cycles.
 
 2. **At least two microbatches, always.** The noise-scale estimator is a
    two-point method: it needs a first-microbatch gradient AND an accumulated
-   one. The old code protected this by flooring the effective batch at
-   ``2 * batch_size``; the guard belongs on the microbatch COUNT, which is what
-   it was really about. Flooring the count instead is what frees the effective
-   batch to reach 2 rows.
+   one. The guard is on the microbatch COUNT, which frees ``B_eff`` to reach 2
+   rows.
 
-3. **The multiplier is fixed for a whole accumulation cycle.** ``m`` divides
-   rows by ``m**2``, so sampling it per microbatch made the microbatches within
-   one cycle different sizes. Lightning divides every microbatch loss by
-   ``accum`` uniformly, which only averages correctly when they are the same
-   size, and the estimator's two points are only comparable when they are drawn
-   from the same distribution. Resampling per cycle instead of per microbatch
-   fixes both, and gives the curriculum a clean unit to count: one arm visit per
-   optimizer step, which is the regressor its fit is built on.
+3. **``m`` is fixed for a whole accumulation cycle.** It divides rows by
+   ``m**2``, so per-microbatch sampling makes the microbatches within one cycle
+   different sizes - and Lightning divides every microbatch loss by ``accum``
+   uniformly, which only averages correctly when they match. It also gives the
+   curriculum a clean unit: one arm visit per optimizer step.
 
-On the ``m**2``: it holds ATTENTION COST constant, not token count. Rows scale
-as ``1/m**2`` while length scales as ``m``, so ``rows * len**2`` is invariant
-while ``rows * len`` falls as ``1/m``. A consequence worth reading off the
-cards rather than assuming away: at large ``m`` the attention budget caps
-``micro_rows`` hard enough that ``accum * micro_rows`` lands below the governed
-``B_eff``. The plan reports what it actually delivers, and the governor
-regulates against the delivered mean, so neither the controller nor the chart
-believes a batch size that never ran.
+The ``m**2`` holds ATTENTION COST constant, not token count: ``rows * len**2``
+is invariant while ``rows * len`` falls as ``1/m``. At large ``m`` the attention
+budget can cap ``micro_rows`` so hard that ``accum * micro_rows`` lands below
+the governed ``B_eff``, so the plan reports what it actually delivers and the
+governor regulates against the delivered mean.
 
-Cross-process note: like the sampler weights and the probe curriculum, the
-schedule is class-level state - the governor writes it, the data pipeline reads
-it. Praxis forces the ``spawn`` start method (``configure_multiprocessing``),
-which makes ``num_workers=0``, so the dataset iterates in the same process and
-sees writes immediately. A forked worker would see the snapshot it was forked
-with; the governor therefore measures rows from the batch it actually received
-rather than from what it asked for, so a stale plan can degrade throughput but
-cannot corrupt the estimator.
+Cross-process: the schedule is class-level state, written by the governor and
+read by the data pipeline. Praxis forces ``spawn``
+(``configure_multiprocessing``), which makes ``num_workers=0``, so the dataset
+iterates in the same process and sees writes immediately. The governor measures
+rows from the batch it actually received, so a stale plan can degrade throughput
+but cannot corrupt the estimator.
 
 PRODUCTION RUNS AHEAD OF CONSUMPTION. Lightning's ``_PrefetchDataFetcher``
-pre-fetches one batch whenever the loader has no length - which an infinite
-streaming ``IterableDataset`` never does - and its ``__next__`` refills the
-moment it hands a batch over. So the pipeline builds microbatch N+1 (a
-``next_microbatch`` call, which may roll a new multiplier and open a new cycle)
-BEFORE the hooks for microbatch N run:
+refills the moment it hands a batch over, and an infinite streaming
+``IterableDataset`` has no length, so the pipeline builds microbatch N+1 - which
+may roll a new multiplier and open a new cycle - before the hooks for N run:
 
     produce b0, produce b1, [hooks b0], produce b2, [hooks b1], ...
 
-Two consequences the class handles explicitly:
+Hence two things:
 
-* ``current()`` must mean "the plan of the microbatch the trainer is training
-  on", not "the last plan produced" - otherwise every consumption-time reader
-  (telemetry, the info panel) reports the NEXT batch's shape against THIS
-  batch's numbers and looks one step ahead. ``consume()`` advances that
-  pointer; the governor calls it once per training batch.
-* ``restart_cycle()`` must not simply truncate the open production cycle. The
-  microbatches already in flight belong to the trainer's next accumulation
-  cycle, so a fresh cycle that ignores them shifts the production phase by one
-  microbatch FOR GOOD, and every optimizer step afterwards straddles two
-  production cycles - two multipliers, two row counts, inside one step
-  Lightning scales uniformly by 1/accum. The in-flight count is carried into
-  the fresh cycle's budget instead.
+* ``current()`` means "the plan of the microbatch being trained on", not "the
+  last plan produced"; ``consume()`` advances that pointer once per training
+  batch.
+* ``restart_cycle()`` carries the in-flight microbatch count into the fresh
+  cycle's budget. Truncating instead would shift the production phase by one
+  microbatch permanently, so every later optimizer step would straddle two
+  production cycles that Lightning scales uniformly by 1/accum.
 """
 
 import random

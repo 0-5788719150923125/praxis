@@ -5,77 +5,70 @@ extends Scene3D
 ## Three to six flat SHEETS of neurons hang one behind the other in genuine perspective,
 ## seen from a slow three-quarter yaw so the sheets overlap and the depth reads at once.
 ## Between consecutive sheets runs a sparse fan of straight edges, and EVERY edge is always
-## there - the geometry never changes, not once, for the whole life of the scene. What
-## changes is only which edges are LIT, and an edge lights only when BOTH of its endpoints
-## are firing at the same time. That single rule is the whole scene: you are not watching a
-## uniform twitch, you are watching a shifting subset of ROUTES through a slab.
+## there - the geometry never changes for the whole life of the scene. What changes is which
+## edges are LIT, and an edge lights only when BOTH endpoints are firing at the same time.
+## That single rule is the whole scene: not a uniform twitch, but a shifting subset of
+## ROUTES through a slab. Nothing is destroyed, nothing is re-randomised, and loudness alone
+## lights nothing.
 ##
-## This is the corrected version of the constant, meaningless twitching a network
-## visualization usually degenerates into - hairline edges destroyed and re-randomised off a
-## wall clock, every node reacting to loudness at once. Here nothing is destroyed, nothing is
-## re-randomised, and loudness alone lights nothing.
+## WHAT THE SEED DECIDES. The mood ([Scheme], every hue from one family, each sheet taking
+## `hue_at(l, layers)` so depth reads as a colour gradient too). How many sheets, and their
+## TOPOLOGY - `slab` keeps every sheet the same size, `funnel` narrows toward the output,
+## `fan_out` widens, `bottleneck` pinches in the middle and opens again - so the silhouette
+## of the network is sampled too. Rows and columns, the positional jitter that keeps the
+## grid from reading as graph paper, the fan-out degree and how far a neuron may reach
+## sideways for its targets, the exponent shaping the weight distribution (high exponent =
+## most weights near zero = a darker, more selective graph), the fraction of INHIBITORY
+## weights (drawn in the opposed hue), the sparsity/attack/decay of each sheet's
+## [Activation], the lens distance / pitch / yaw sway, layer spacing, edge width in pixels,
+## sub-segments per edge, disc facet count, and the darkness floor unlit edges rest at.
 ##
-## WHAT THE SEED DECIDES. The mood ([Scheme], every hue in the frame from one family, each
-## sheet taking `hue_at(l, layers)` so depth reads as a colour gradient too). How many sheets,
-## and their TOPOLOGY - `slab` keeps every sheet the same size, `funnel` narrows toward the
-## output, `fan_out` widens, `bottleneck` pinches in the middle and opens again - so the
-## silhouette of the network itself is sampled, not just its colours. Rows and columns, the
-## positional jitter that keeps the grid from reading as graph paper, the fan-out degree and
-## how far a neuron may reach sideways for its targets, the exponent that shapes the weight
-## distribution (high exponent = most weights near zero = a darker, more selective graph),
-## the fraction of INHIBITORY weights (drawn in the opposed hue), the sparsity/attack/decay
-## of each sheet's [Activation], the lens distance / pitch / yaw sway, layer spacing, edge
-## width in pixels, how many sub-segments each edge splits into, disc facet count, and the
-## darkness floor that unlit edges rest at.
-##
-## AUDIO. The input sheet is read across its width: neuron at column fraction cx takes
+## AUDIO. The input sheet is read across its width: the neuron at column fraction cx takes
 ## `f.sample(cx)`, so bass enters one side of the sheet and treble the other. Every neuron
-## also carries a PITCH CLASS assigned at build, and mixes in `Spectrum.harmonic_signature()`
-## for that class - so which neurons are ELIGIBLE to fire is decided by the harmony rather
-## than by loudness, and a chord change re-routes the slab without the level moving at all.
-## (The signature array is EMPTY until the analyzer is up, hence the `.size() > pc` guard.)
-## One [Activation] per sheet, driven by the sheet's aggregate, supplies the slow seeded GATE
-## - who is on this passage - while a faster per-neuron envelope supplies the actual firing.
-## Sheet L+1's drive is the mean of sheet L's levels times a sampled gain, so activity really
-## propagates instead of every sheet reacting to the same frame independently. On a beat
-## onset a bright PACKET leaves the input sheet and walks one pre-rolled route forward, one
-## layer per `beat_period * hops`, lighting each neuron it lands on, and you can follow it
-## through the fan until it exits the far side. A `movement` spike eases the lens toward a new
-## seeded three-quarter angle, so the framing turns over on section changes. `chroma_hue()`
-## pulls every hue in the frame toward the tonal centre by `0.35 * strength`.
+## also carries a PITCH CLASS assigned at build and mixes in
+## `Spectrum.harmonic_signature()` for that class - so which neurons are ELIGIBLE to fire is
+## decided by the harmony rather than loudness, and a chord change re-routes the slab
+## without the level moving. (The signature array is EMPTY until the analyzer is up, hence
+## the `.size() > pc` guard.) One [Activation] per sheet, driven by the sheet's aggregate,
+## supplies the slow seeded GATE - who is on this passage - while a faster per-neuron
+## envelope supplies the actual firing. Sheet L+1's drive is the mean of sheet L's levels
+## times a sampled gain, so activity really propagates instead of every sheet reacting to
+## the same frame independently. On a beat onset a bright PACKET leaves the input sheet and
+## walks one pre-rolled route forward, one layer per `beat_period * hops`, lighting each
+## neuron it lands on. A `movement` spike eases the lens toward a new seeded three-quarter
+## angle. `chroma_hue()` pulls every hue toward the tonal centre by `0.35 * strength`.
 ##
-## NOTHING HERE MULTIPLIES A RADIUS BY ENERGY. The discs are a constant world size and shrink
+## NOTHING MULTIPLIES A RADIUS BY ENERGY. The discs are a constant world size and shrink
 ## only with distance; sound moves colour, brightness and which routes exist.
 ##
 ## MEASUREMENT AND THE COSTS THAT SHAPED THE CODE.
 ##
-##   Edges are SPLIT into sub-segments before sorting. A painter's sort over whole edges makes
-##   each edge win or lose against the discs as a block, which is wrong for any edge that
-##   passes between two sheets - the exact failure measured at 20-45% of quads for the old
-##   water sheet (terrain.gd's collect_surface doc). Three to five segments per edge lets the
-##   sort interleave an edge with the neurons it passes.
+##   Edges are SPLIT into sub-segments before sorting. A painter's sort over whole edges
+##   makes each edge win or lose against the discs as a block, which is wrong for any edge
+##   passing between two sheets - measured at 20-45% of quads for the old water sheet
+##   (terrain.gd's collect_surface doc). Three to five segments per edge lets the sort
+##   interleave an edge with the neurons it passes.
 ##
-##   The item budget is enforced, not hoped for. Neurons per sheet are capped so no seed can
-##   ask for more than [constant MAX_PER_SHEET], and the fan-out degree is then clamped so
-##   `edges * segments` never exceeds [constant MAX_SEGMENTS]. Left unbudgeted, 324 neurons
-##   with k = 5 and 4 segments is ~6.8k sortable items, and at the ~2.2 us/item anchor
-##   measured for terrain that is a whole frame gone on emission alone.
+##   The item budget is enforced, not hoped for. Neurons per sheet are capped at [constant
+##   MAX_PER_SHEET], and the fan-out degree is then clamped so `edges * segments` never
+##   exceeds [constant MAX_SEGMENTS]. Unbudgeted, 324 neurons with k = 5 and 4 segments is
+##   ~6.8k sortable items, and at the ~2.2 us/item anchor measured for terrain that is a
+##   whole frame gone on emission alone.
 ##
 ##   [Scene3D]'s own `add_body` / `render_world` are deliberately NOT used: render_world
 ##   sort_customs its item list (a GDScript lambda per comparison) and each body flushes the
 ##   batch, so a few hundred neurons would be a few hundred draw calls plus a few hundred
 ##   thousand lambda calls. Everything here is emitted into one [TriBatch] inside a
-##   [FrameForge] job object instead - one or two draw calls, sorted natively by
-##   `TriBatch.painter_sort`, and built entirely off the main thread.
+##   [FrameForge] job instead - one or two draw calls, sorted natively by
+##   `TriBatch.painter_sort`, built entirely off the main thread.
 ##
-##   Dark edges are emitted with TriBatch's cheap hard-edged line (2 triangles) and only lit
-##   ones pay for the feathered form (6). The dark ones are the overwhelming majority and are
-##   near-black by design, so there is nothing there for antialiasing to smooth.
+##   Dark edges use TriBatch's cheap hard-edged line (2 triangles) and only lit ones pay for
+##   the feathered form (6). The dark ones are the overwhelming majority and near-black by
+##   design, so there is nothing for antialiasing to smooth.
 ##
 ## The propagation and the packets run on a [SimClock], not on `update()`: the Director
-## sub-steps a scene up to 15 times in a frame, pre-warms it 12 times before its first frame,
-## and an [Echo] re-localize can fast-forward hundreds of calls. A network that advanced once
-## per call would arrive on screen already saturated.
+## sub-steps a scene up to 15 times in a frame, pre-warms it 12 times before its first
+## frame, and an [Echo] re-localize can fast-forward hundreds of calls.
 
 ## Neurons a single sheet may hold. Rows and columns are each sampled in [4,9], which would
 ## allow 81 per sheet and 486 across six - and every neuron costs a projection, an envelope

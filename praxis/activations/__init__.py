@@ -1,21 +1,39 @@
 """The activation registry, and the one function that builds from it.
 
-TWO SPELLINGS, ONE REGISTRY. An activation is declared either as a bare
-registry name::
+ONE ARGUMENT, ONE SHAPE. ``--activation-type`` carries every activation choice a
+model makes, so the dashboard's Arguments card shows what the run actually built
+rather than one name that several modules then override. It is always a
+combination TYPE over a list of VALUES::
 
-    activation: gelu
-
-or, when the entry needs arguments, as a type plus its values::
-
-    activation:
+    activation_type:
       type: mix_split
       values: [servant, swish]
 
-``build_activation`` accepts both, so every consumer resolves an activation the
-same way and a config says at a glance what it runs. That second form exists
-because ``ActivationMixture`` (praxis/activations/mixture.py) holds a BANK of
-activations, and baking one bank per registry key produced names like
-``mix_harmonic`` that tell a reader nothing about what is inside them.
+and the ordinary single-activation case is that same shape with one value::
+
+    activation_type: {type: single, values: [gelu]}
+    activation_type: gelu                              # shorthand for the above
+
+EVERY VALUE IS A GATE. ``values`` is the list of activations the gating position
+draws from, and ``type`` says how they combine there - one of them (``single``),
+a learned blend (``mix``, ``mix_affine``, ``mix_gated``) or a hard partition
+(``mix_split``). Nothing else in the list means anything else. A gated
+feedforward holds out half its up-projection to multiply against, but that half
+is a STRUCTURAL choice made by the feedforward, not an activation choice, which
+is why it does not appear here.
+
+    ``type``    how the values combine. Default ``single``.
+    ``values``  the activations available at the gate.
+    ``linear``  optional. Activates the held-out linear half of a gated
+                feedforward, which a plain GLU leaves untouched. The one thing
+                here that is not a gate, and named for the half it fills.
+
+A TYPE THAT NEEDS AN INDEX AND CANNOT GET ONE FALLS BACK TO ``values[0]``.
+``mix_split`` partitions by an index its caller supplies - PEER hands it each
+element's position in the expert bank - and most modules have no such index. So
+a model-wide ``{type: mix_split, values: [servant, swish]}`` splits PEER's bank
+and runs plain ``servant`` everywhere else, which is what makes the declaration
+usable as one line instead of needing a scope.
 """
 
 from collections.abc import Mapping
@@ -53,80 +71,72 @@ ACTIVATION_MAP = dict(
     snake=Snake,
 )
 
-# --- mixtures of activations (praxis/activations/mixture.py) ----------------
-# These are the entries that take `values`. All four are the SAME module and
-# differ only in where the blending coefficients come from, which is what makes
-# an ablation between any two of them one variable:
-#
-#   mix         learned scalars through a softmax        conv(F), arXiv:1801.09403
-#   mix_affine  learned scalars, sum-to-one, signs free  aff(F), same paper
-#   mix_gated   per element, read off the input VALUE    ours
-#   mix_split   per element, one-hot by an EXTERNAL key  ours (was PEER's act_alt)
-#
-# The bank is never baked into the name: `{type: mix_split, values: [...]}` says
-# what it runs, `mix_harmonic` did not.
-ACTIVATION_MAP.update(
-    {
-        name: partial(ActivationMixture, mode=mode, type_name=name)
-        for name, mode in MIXTURE_MODES.items()
-    }
-)
-
 for k, v in ACTIVATION_MAP.items():
     ACT2CLS.update({k: v})
 
 ACT2FN = ClassInstantier(ACT2CLS)
+# Concrete nonlinearities only. Combination strategies are a separate axis
+# (ACTIVATION_TYPE_REGISTRY), which is what keeps this list uniform: every entry
+# here is something you can put in `values`.
 ACTIVATION_REGISTRY = dict(sorted(ACT2FN.items()))
 
-# Names whose entry cannot stand alone: they need `values`.
-TYPED_ACTIVATIONS: Tuple[str, ...] = tuple(sorted(MIXTURE_MODES))
+SINGLE: str = "single"
+
+# How the `values` combine at the gate. `single` is not a mixture at all - it is
+# the ordinary one-activation case, written in the same shape so that every
+# config has one shape.
+ACTIVATION_TYPE_REGISTRY: dict = {
+    SINGLE: "Use the one activation in `values`. The default.",
+    "mix": (
+        "Learned convex blend: softmax coefficients over the whole bank, one "
+        "set for the model (conv(F), arXiv:1801.09403)."
+    ),
+    "mix_affine": (
+        "Learned affine blend: sum-to-one with the sign constraint dropped, so "
+        "it can subtract one value from another (aff(F), same paper)."
+    ),
+    "mix_gated": (
+        "Per-element blend whose coefficients are read off the input VALUE, so "
+        "the model routes between values by input regime."
+    ),
+    "mix_split": (
+        "Hard partition by an index the caller supplies (PEER passes each "
+        "element's position in the expert bank). Falls back to values[0] where "
+        "there is no index."
+    ),
+}
 
 ActivationSpec = Union[str, Mapping, Module, None]
 
 
-def build_activation(spec: ActivationSpec, **kwargs: Any) -> Module:
-    """Instantiate an activation from a name, a ``{type, values}`` spec, or a
-    module that is already built.
-
-    This is the ONE way to turn a config value into an activation. Going
-    through ``ACT2FN[name]`` or ``ACT2CLS[name]()`` directly still works for a
-    literal name, but it cannot resolve a typed spec and it mishandles the
-    ``(class, kwargs)`` tuples transformers registers for a few of its own
-    entries - so config-driven sites all come through here.
-
-    Args:
-        spec: a registry name (``"gelu"``), a mapping with ``type`` and
-            ``values`` (``{"type": "mix_split", "values": ["servant",
-            "swish"]}``), or an already-constructed module, which is returned
-            unchanged so a caller can accept either.
-        **kwargs: forwarded to the constructor, under anything the spec names.
-    """
-    if spec is None:
-        raise ValueError("No activation given.")
-    if isinstance(spec, Module):
-        return spec
-
+def _as_spec(spec: ActivationSpec) -> Mapping:
+    """Normalize any accepted spelling to ``{type, values, linear}``."""
     if isinstance(spec, Mapping):
-        options = dict(spec)
-        name = options.pop("type", None)
-        if name is None:
+        unknown = set(spec) - {"type", "values", "linear"}
+        if unknown:
             raise ValueError(
-                f"An activation spec needs a `type`; got keys {sorted(spec)}."
+                f"Unknown activation key(s) {sorted(unknown)}; an activation is "
+                f"`{{type, values, linear}}`."
             )
-        values = options.pop("values", None)
-        if values is not None:
-            options["activations"] = _as_specs(values)
-        return _instantiate(name, **{**options, **kwargs})
+        options = dict(spec)
+        options.setdefault("type", SINGLE)
+        if "values" not in options:
+            raise ValueError(
+                f"An activation needs `values`, e.g. "
+                f"`{{type: {options['type']}, values: [gelu]}}`."
+            )
+        options["values"] = _as_values(options["values"])
+        return options
+    # A bare name is the single-activation case; keeping the shorthand is what
+    # lets `activation_type: gelu` stay the thing anyone would write.
+    return {"type": SINGLE, "values": (spec,)}
 
-    return _instantiate(spec, **kwargs)
 
+def _as_values(values: Union[str, Sequence[Any]]) -> Tuple[Any, ...]:
+    """``values`` as a tuple, from a list or a comma-separated string.
 
-def _as_specs(values: Union[str, Sequence[Any]]) -> Tuple[Any, ...]:
-    """``values`` as a tuple of specs, from a list or a comma-separated string.
-
-    Entries are left as they came, because a bank entry may itself be a typed
-    spec - a mixture can hold a mixture, and nothing along that path needs a
-    special case.
+    Entries are left as they came, because a value may itself be a spec - a
+    mixture can hold a mixture, and nothing along that path needs a special case.
     """
     if isinstance(values, str):
         values = values.split(",")
@@ -136,24 +146,73 @@ def _as_specs(values: Union[str, Sequence[Any]]) -> Tuple[Any, ...]:
             out.append(value)
         elif str(value).strip():
             out.append(str(value).strip())
+    if not out:
+        raise ValueError("An activation needs at least one value.")
     return tuple(out)
 
 
-def _instantiate(name: str, **kwargs: Any) -> Module:
-    """Build registry entry ``name``, whatever shape that entry happens to be."""
+def build_activation(spec: ActivationSpec, **kwargs: Any) -> Module:
+    """Build the GATE activation named by ``spec``.
+
+    Accepts a bare name, a ``{type, values}`` mapping, or a module that is
+    already built (returned unchanged, so a caller can accept either).
+
+    This is the ONE way to turn a config value into an activation. Going through
+    ``ACT2FN[name]`` still works for a literal name, but it cannot resolve a
+    typed spec and it mishandles the ``(class, kwargs)`` tuples transformers
+    registers for a few of its own entries - so config-driven sites come here.
+    """
+    if spec is None:
+        raise ValueError("No activation given.")
+    if isinstance(spec, Module):
+        return spec
+
+    options = _as_spec(spec)
+    name, values = options["type"], options["values"]
+    if name not in ACTIVATION_TYPE_REGISTRY:
+        raise ValueError(
+            f"Unknown activation type {name!r}. Known: "
+            f"{', '.join(ACTIVATION_TYPE_REGISTRY)}."
+        )
+    if name == SINGLE:
+        if len(values) != 1:
+            raise ValueError(
+                f"`type: single` takes exactly one value, got {list(values)}. "
+                f"Use a mixture type to combine several: "
+                f"{', '.join(n for n in ACTIVATION_TYPE_REGISTRY if n != SINGLE)}."
+            )
+        return _instantiate(values[0], **kwargs)
+    return ActivationMixture(
+        activations=values, mode=MIXTURE_MODES[name], type_name=name, **kwargs
+    )
+
+
+def linear_activation(spec: ActivationSpec) -> Optional[Module]:
+    """The activation for a gated feedforward's held-out LINEAR half, or None.
+
+    None is the ordinary GLU, whose linear half is exactly that. Returning None
+    rather than an identity keeps "unfilled" distinguishable from "filled with
+    something that does nothing", which is what lets the filled case be a clean
+    one-variable arm.
+    """
+    if not isinstance(spec, Mapping):
+        return None
+    value = _as_spec(spec).get("linear")
+    return build_activation(value) if value else None
+
+
+def _instantiate(spec: Any, **kwargs: Any) -> Module:
+    """Build one VALUE: a registry name, or a nested spec."""
+    if isinstance(spec, (Mapping, Module)):
+        return build_activation(spec, **kwargs)
     try:
-        entry = ACT2CLS[name]
+        entry = ACT2CLS[spec]
     except KeyError:
         raise KeyError(
-            f"Unknown activation {name!r}. Known: {', '.join(sorted(ACT2CLS))}"
+            f"Unknown activation {spec!r}. Known: {', '.join(sorted(ACT2CLS))}"
         ) from None
-    if name in MIXTURE_MODES and "activations" not in kwargs:
-        raise ValueError(
-            f"Activation {name!r} is a mixture and needs a bank. Declare it as "
-            f"`{{type: {name}, values: [gelu, tanh]}}` rather than as a bare name."
-        )
     # transformers registers a few entries as (class, kwargs) for its
-    # ClassInstantier; ours are classes or partials over one.
+    # ClassInstantier; ours are plain classes.
     if isinstance(entry, tuple):
         cls, defaults = entry
         return cls(**{**defaults, **kwargs})
@@ -180,8 +239,16 @@ def activation_class(entry: Any) -> Any:
 
 
 def activation_classes() -> Tuple[type, ...]:
-    """Every class reachable from the registry, for model walks."""
-    return tuple({activation_class(v) for v in ACT2CLS.values()})
+    """Every class a model walk should treat as an activation.
+
+    ``ActivationMixture`` is added explicitly because it is NOT a registry
+    entry - the registry holds concrete nonlinearities and combination types are
+    a separate axis. Leaving it out is not cosmetic: the dashboard's
+    activation-curve probe and the metric collectors both select modules by
+    ``isinstance`` against this tuple, so every mixture in the model would
+    silently vanish from the charts.
+    """
+    return tuple({activation_class(v) for v in ACT2CLS.values()} | {ActivationMixture})
 
 
 def activation_name(cls: type) -> Optional[str]:

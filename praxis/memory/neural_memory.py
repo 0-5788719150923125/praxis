@@ -4,34 +4,32 @@ The memory network's weights are updated online by gradient descent on a
 "surprise" loss - how badly the network reconstructs the value from the key -
 modulated per token by a learned learning rate, with per-chunk momentum
 (surprise carries forward) and weight decay (adaptive forgetting). Memory is
-re-initialized per sequence (no learnable init state), which sidesteps the
-collapse mode that bit the Infini/Arc memories.
+re-initialized per sequence, with no learnable init state.
 
-Following the paper, every chunk's surprise gradient is taken against the
-frozen segment-start weights, so all chunks are differentiated in one batched
-pass and the per-chunk momentum/decay recurrence collapses to a parallel
-associative scan (``_affine_scan``) over the chunk axis.
+Following the paper, every chunk's surprise gradient is taken against the frozen
+segment-start weights, so all chunks differentiate in one batched pass and the
+per-chunk momentum/decay recurrence collapses to a parallel associative scan
+(``_affine_scan``) over the chunk axis.
 
 With ``use_energy=True`` the whole test-time update runs detached: the surprise
-gradient is a purely local learning rule and no scan trajectory / second-order
+gradient is a purely local learning rule and no scan trajectory or second-order
 graph is retained (that trajectory dominates VRAM). The learned update gates are
-replaced by a fixed Adam-style rule - per-chunk EMAs of the surprise (1st/2nd
-moment) give a direction, which is then scaled by the segment-start weights' own
-RMS so the write is a constant RELATIVE perturbation. That second half is not
-cosmetic: ``m_hat / sqrt(v_hat)`` is sign-like, so without it the step is a fixed
-ABSOLUTE ``max_lr`` while W0 is a trained parameter that grows unchecked (the
-readout is behind ``out_norm``, so nothing constrains the memory net's output
-magnitude), and the test-time update decays into irrelevance over a run - see
-``_step_scale``, which also divides by ``sqrt(num_chunks)`` so the update grid
-is not a second, undeclared learning rate. There are no untrained gate heads
-either way. Training the encoder on the reconstruction
-energy would collapse (value -> 0), so instead the key projection is tied to the
-query projection - the shared addressing map learns on the task through
-retrieval - and the value side is fixed to identity, leaving ``combine`` to adapt
-content. The backbone connects through that retrieval and the residual skip.
-The reconstruction is measured on RMS-normalized vectors (matching the
-out_norm'd readout), so the memory net's free output-scale mode can't dominate
-the energy.
+replaced by a fixed Adam-style rule - per-chunk EMAs of the surprise give a
+direction, scaled by the segment-start weights' own RMS so the write is a
+constant RELATIVE perturbation. That scaling matters: ``m_hat / sqrt(v_hat)`` is
+sign-like, so without it the step is a fixed ABSOLUTE ``max_lr`` while W0 grows
+unchecked (the readout sits behind ``out_norm``, so nothing constrains the memory
+net's output magnitude) and the update decays into irrelevance over a run. See
+``_step_scale``, which also divides by ``sqrt(num_chunks)`` so the chunk grid is
+not a second, undeclared learning rate.
+
+Training the encoder on the reconstruction energy would collapse (value -> 0),
+so the key projection is tied to the query projection - the shared addressing map
+learns on the task through retrieval - and the value side is fixed to identity,
+leaving ``combine`` to adapt content. The backbone connects through that
+retrieval and the residual skip. Reconstruction is measured on RMS-normalized
+vectors, matching the out_norm'd readout, so the memory net's free output-scale
+mode cannot dominate the energy.
 """
 
 import contextlib
@@ -480,47 +478,38 @@ class NeuralMemory(nn.Module):
         self, w0: Weights, name: str, ndim: int, b: int, num_chunks: int = 1
     ) -> Tensor:
         """What one chunk's update step is scaled by, shaped to broadcast over a
-        surprise/update tensor of ``ndim`` dims. Two normalizations, so that
-        ``max_lr`` means the same thing regardless of how big the memory net's
-        weights have grown and regardless of how finely the pass is chunked.
+        surprise/update tensor of ``ndim`` dims. Two normalizations, so ``max_lr``
+        means the same thing regardless of how big the memory net's weights have grown
+        and how finely the pass is chunked.
 
-        ``u = m_hat / (sqrt(v_hat) + eps)`` is sign-like, so without this the
-        test-time step is a FIXED ABSOLUTE ``max_lr`` per element while ``W0``
-        is a trained parameter free to grow - and it does, because the readout
-        sits behind ``out_norm`` (RMSNorm, exactly scale-invariant), leaving the
-        memory net's output magnitude a mode the outer loss cannot see and a
-        sign-based optimizer random-walks upward. abstractinator-x measured the
-        consequence: raw surprise up 85,935x (an output scale of ~185x),
-        ``memory_write`` down 14x and ``memory_adapt`` down 78x to 0.010, so the
-        module ended the run as a large static nonlinearity that the gate still
-        wanted (0.53) but that no longer learned anything in context. Scaling by
-        the parameter's own RMS makes the write a constant RELATIVE
-        perturbation, which is the invariance this rule always claimed: measured
-        across a 185x weight-scale sweep, write holds at 0.031 and adapt at
-        0.07-0.09 where the absolute step decayed to 0.0027 and 0.0087.
+        ``u = m_hat / (sqrt(v_hat) + eps)`` is sign-like, so without the first the
+        test-time step is a FIXED ABSOLUTE ``max_lr`` per element while ``W0`` is a
+        trained parameter free to grow - and it does, because the readout sits behind
+        ``out_norm`` (RMSNorm, exactly scale-invariant), leaving the memory net's output
+        magnitude a mode the outer loss cannot see. Measured on abstractinator-x: raw
+        surprise up 85,935x (an output scale of ~185x), ``memory_write`` down 14x and
+        ``memory_adapt`` down 78x to 0.010, so the module ended the run as a large
+        static nonlinearity. Scaling by the parameter's own RMS makes the write a
+        constant RELATIVE perturbation - across a 185x weight-scale sweep, write holds
+        at 0.031 and adapt at 0.07-0.09.
 
-        Taken from the SEGMENT-START weights, not the running ones, so every
-        chunk in a pass is scaled identically and the parallel and sequential
-        paths cannot drift apart.
+        The RMS is taken from the SEGMENT-START weights, not the running ones, so every
+        chunk in a pass is scaled identically and the parallel and sequential paths
+        cannot drift apart.
 
-        The second normalization is ``1/sqrt(num_chunks)``, and it exists so the
-        UPDATE GRID stops acting as a hidden learning rate. ``u`` is sign-like
-        and roughly decorrelated across chunks, so a pass's total write
-        accumulates as ``max_lr * sqrt(nc)``: measured, ``write / sqrt(nc)``
-        sits at 0.0104-0.0115 against a ``max_lr`` of 0.01 across grids from 2
-        to 32 chunks. Halving ``segment_block`` therefore multiplied the
-        effective step by 1.41 as a silent side effect, so two profiles sharing
-        a ``max_lr`` but differing in grid were not running the same rule - the
-        kind of undeclared knob this repo's no-tuning rule exists to remove.
-        With this, ``max_lr`` is the TOTAL RELATIVE WRITE PER PASS and the grid
-        sets only granularity, not strength.
+        The second normalization is ``1/sqrt(num_chunks)``, so the UPDATE GRID stops
+        acting as a hidden learning rate. ``u`` is sign-like and roughly decorrelated
+        across chunks, so a pass's total write accumulates as ``max_lr * sqrt(nc)``
+        (measured: ``write / sqrt(nc)`` sits at 0.0104-0.0115 against a ``max_lr`` of
+        0.01 across grids from 2 to 32 chunks). Halving ``segment_block`` therefore
+        multiplied the effective step by 1.41 as a silent side effect. With this,
+        ``max_lr`` is the TOTAL RELATIVE WRITE PER PASS and the grid sets granularity
+        only.
 
-        NOTE this REDEFINES ``max_lr`` rather than merely tidying it. Runs
-        before this were writing ``max_lr * sqrt(nc)`` per pass - for
-        abstractinator-y, whose median grid is 5-9 chunks, an effective
-        0.022-0.030 against the nominal 0.01. A later run at the same nominal
-        value is a genuinely gentler one, and is not comparable to -y on that
-        axis.
+        NOTE this REDEFINES ``max_lr``. Runs before it wrote ``max_lr * sqrt(nc)`` per
+        pass - for abstractinator-y, whose median grid is 5-9 chunks, an effective
+        0.022-0.030 against the nominal 0.01 - so a later run at the same nominal value
+        is genuinely gentler and is not comparable to -y on that axis.
         """
         rms = w0[name].flatten(1).pow(2).mean(-1).sqrt().clamp(min=self.eps)
         rms = rms / max(1.0, float(num_chunks)) ** 0.5

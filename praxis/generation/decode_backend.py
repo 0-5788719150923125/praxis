@@ -113,46 +113,38 @@ class ModelBackend(DecodeBackend):
         # from being an accident of wiring that a future caller could undo.
         self.model = getattr(model, "_orig_mod", model)
         self.tokenizer = tokenizer
-        # OFF BY DEFAULT, and the reason is a measured regression rather than
-        # caution. Compiling the decode-time memory bodies is worth 1.43x on a
-        # turn, but with static shapes it recompiles as the rolling context
-        # GROWS: the terminal generates every `infer_every` seconds from a
-        # buffer that gains bytes each time, and every crossing of a patch
-        # boundary (patch_size 8) is a new trunk length, a new graph, and
-        # another wake-up for Inductor's 8-worker compile pool. Measured across
-        # two runs of the same model, child-process memory:
+        # OFF BY DEFAULT, on a measured regression. Compiling the decode-time
+        # memory bodies is worth 1.43x on a turn, but with static shapes it
+        # recompiles as the rolling context GROWS: the terminal generates every
+        # `infer_every` seconds from a buffer that gains bytes each time, and
+        # every crossing of a patch boundary (patch_size 8) is a new trunk
+        # length, a new graph, and another wake-up for Inductor's 8-worker
+        # compile pool. Child-process memory across two runs of the same model:
         #
         #     abstractinator-t (off)  mean  599MB,  4% of samples over 1GB
         #     abstractinator-u (on)   mean 2839MB, 62% of samples over 1GB
         #
         # -u died at its first validation with swap exhausted, ~2h in, where -t
-        # had run 14h on the same host. The benchmark that justified this ran a
-        # FIXED prompt length, which is exactly the case that never recompiles,
-        # so it measured wall clock and missed the cost entirely.
+        # ran 14h on the same host.
         #
         # THE SHAPE SET IS NOW BOUNDED, which was the stated precondition.
         # `eval_mode` opens `decode_buckets`, so a turn's forwards land on the
-        # rungs of `DECODE_BUCKETS` rather than on every length it walks: a
-        # 64-byte turn from a 1000-byte prompt walks 41 distinct lengths and
-        # lands on 2 rungs, and a growing context that covers the whole 4096
-        # positional cap can only reach 18. `warmup()` below compiles that
-        # whole ladder up front, so nothing is minted mid-request either.
+        # rungs of `DECODE_BUCKETS`: a 64-byte turn from a 1000-byte prompt
+        # walks 41 distinct lengths and lands on 2 rungs, and a growing context
+        # covering the whole 4096 positional cap can only reach 18. `warmup()`
+        # compiles that ladder up front, so nothing is minted mid-request.
         #
-        # STILL OPT-IN. The memory-growth measurement that justified turning
-        # this off was made over a GROWING context on a real 14h run, and a
-        # short synthetic replay does not clear it: a 105-step growing-context
-        # loop (120 -> 4000 bytes) showed a FLAT 686 MB of child memory
-        # bucketed and 691 MB unbucketed, i.e. it failed to reproduce the
+        # STILL OPT-IN, because a short synthetic replay cannot certify the fix:
+        # a 105-step growing-context loop (120 -> 4000 bytes) showed a FLAT
+        # 686 MB bucketed and 691 MB unbucketed, failing to reproduce the
         # failure at all - Dynamo's own recompile limit and automatic dynamic
-        # shapes cut in long before the storm. An experiment that cannot
-        # reproduce the problem cannot certify the fix, so the default stays
-        # where it was and the real check is host RSS over a real run.
+        # shapes cut in long before the storm. The real check is host RSS over a
+        # real run.
+        #
         # Worth 1.29x on a turn when enabled (25.2 -> 32.5 bytes/s on
-        # abstractinator-r, byte-identical output), and compiling
-        # KaleidoscopeAttention alongside it is worth a further 1.04x if that
-        # is ever wanted. NOTE this is ANDed with the trainer's `no_compile`,
-        # so a run that turns training compilation off gets no decode
-        # compilation either - which is the case on the abstractinator line.
+        # abstractinator-r, byte-identical output). ANDed with the trainer's
+        # `no_compile`, so a run with training compilation off gets no decode
+        # compilation either.
         cfg = getattr(self.model, "config", None)
         self._compile_memory = EnvironmentFeatures.is_enabled(
             "compile_decode_memory"

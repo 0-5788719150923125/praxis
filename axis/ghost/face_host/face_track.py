@@ -1,39 +1,21 @@
 """Offline face-landmark track for the Masking editor's clown effect.
 
 Reads a video once, runs MediaPipe's face landmarker over it at a fixed sample
-rate, and writes a compact binary track the editor reads back BY TIME.
-
-WHY OFFLINE, AND WHY A TRACK FILE
----------------------------------
-This is the same shape as the umbra effect's look-ahead track (see
-MaskEditor._umb_ensure_track): decode the whole clip once, fit every sampled
-frame up front, cache the result, then playback is one array lookup. Three
-things fall out of that which a per-frame detector cannot give:
+rate, and writes a compact binary track the editor reads back BY TIME. Same
+shape as the umbra effect's look-ahead track (see MaskEditor._umb_ensure_track):
+decode once, fit every sampled frame up front, cache, then playback is one array
+lookup. Three things follow that a per-frame detector cannot give:
 
   DETERMINISM  the live preview and the export relaunch are separate processes
-               that must agree frame-for-frame. They read the same cached file,
-               so they do.
+               that must agree frame-for-frame. They read the same cached file.
   NO STALL     detection never runs inside the render loop, so it cannot cost
                frames or fight the audio clock.
   LOOK-AHEAD   the whole track exists before playback, so smoothing can use
-               frames on BOTH sides of the current one. A live tracker only has
-               the past and has to choose between lag and jitter; this doesn't.
-
-WHAT REPLACES WHAT
-------------------
-This exists because the hand-written detector it replaces could not do the job.
-That one built a weighted "this looks like skin" mass, took its centroid and
-second moments, and hunted for dark clusters in an axis-aligned band above the
-centre. It has no pose model, so a head turned or tilted broke it; its centroid
-is dragged by any other skin in frame (a neck, a bare chest); and it returns
-points and radii, so a nose could only ever be drawn as a circle. Measured on
-the clip this was written for, it placed the nose at (0.599, 0.466) where the
-nose really is (0.588, 0.507), after four rounds of corrections. MediaPipe finds
-478 points on 24 of 24 sampled frames of the same clip, including the eye that
-is turned away from the lens.
+               frames on BOTH sides of the current one. A live tracker has only
+               the past and must choose between lag and jitter.
 
 THE FORMAT (little-endian, matches GDScript's FileAccess defaults)
------------------------------------------------------------------
+
     magic     4s    b"GFT1"
     version   u32   1
     rate      f32   samples per second
@@ -43,11 +25,11 @@ THE FORMAT (little-endian, matches GDScript's FileAccess defaults)
         found u8    1 = a face was detected in this sample, 0 = none
         xy    f32 * points * 2   normalized to the frame (0..1), origin top-left
 
-Samples with found = 0 still carry their (stale) coordinates so a reader can
+Samples with found = 0 still carry their stale coordinates so a reader can
 choose between holding the last good fit and skipping - the flag is the truth,
-the numbers are a convenience. Coordinates are normalized deliberately: the
-editor works in frame UV throughout and a track must not care what resolution
-the clip was decoded at.
+the numbers are a convenience. Coordinates are normalized because the editor
+works in frame UV throughout and a track must not care what resolution the clip
+was decoded at.
 
 Usage:
     python face_track.py --video <path> --out <track.bin> --model <model.task>

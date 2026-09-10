@@ -1,22 +1,7 @@
 """A bank of activations, blended into one. The wrapper form of "use two
-nonlinearities", which the modules that wanted it were each implementing
-themselves.
-
-WHAT THIS REPLACES. ``ParameterEfficientExpertRetrieval`` grew an ``act_alt``
-that split its expert bank in half and gave each half a different activation,
-keyed on the expert index. The IDEA was right; the LOCATION was not. It put
-activation-selection logic inside a retrieval module, where it could only ever
-apply to PEER and could only ever hold two functions.
-
-Nothing about that experiment is lost here - the index split is a MODE
-(``mix_split``), generalized to N segments, and ``peer_split`` still exists and
-still means what it meant. What changed is that the mechanism now lives in an
-activation module, so anything that writes ``ACT2FN[name]`` gets it, the bank
-can be any length, and the discrete split sits next to the continuous blends as
-one arm of a single ablation rather than as a different implementation.
-
-It is the activation-level analogue of ``ParallelHead``: N branches over the
-same input, combined by learned weights, rather than a fixed pipeline.
+nonlinearities", so anything that writes ``ACT2FN[name]`` gets it and the bank
+can be any length. The activation-level analogue of ``ParallelHead``: N branches
+over the same input, combined by learned weights, rather than a fixed pipeline.
 
 THE METHOD. Manessi & Rozza, "Learning Combinations of Activation Functions"
 (arXiv:1801.09403). Given base activations ``F = {f_1 .. f_N}``, learn
@@ -24,70 +9,57 @@ THE METHOD. Manessi & Rozza, "Learning Combinations of Activation Functions"
     conv(F):  sum_i c_i f_i(x),  sum_i c_i = 1, c_i >= 0     (``convex``)
     aff(F):   sum_i c_i f_i(x),  sum_i c_i = 1               (``affine``)
 
-The convex hull is the regularized version of the affine one: it cannot flip a
-base function's sign, so it preserves monotonicity of the basis; the affine hull
-can subtract one branch from another and build non-monotonic shapes the basis
-does not contain. The paper reports +3.01 top-1 for AlexNet on ILSVRC-2012 over
-fixed activations, on a basis of identity / ReLU / tanh.
+The convex hull is the regularized version: it cannot flip a base function's
+sign, so it preserves monotonicity of the basis. The affine hull can subtract
+one branch from another and build non-monotonic shapes the basis does not
+contain. The paper reports +3.01 top-1 for AlexNet on ILSVRC-2012 over fixed
+activations, on a basis of identity / ReLU / tanh.
 
-WHERE THE COEFFICIENTS COME FROM is the only thing that varies across modes,
-which is what makes an ablation between any two of them one variable:
+WHERE THE COEFFICIENTS COME FROM is the only thing that varies across types, so
+an ablation between any two of them is one variable:
 
     mix         learned scalars through a softmax        conv(F)
     mix_affine  learned scalars, sum-to-one, signs free  aff(F)
     mix_gated   per element, read off the input VALUE    ours
-    mix_split   per element, read off an EXTERNAL index  ours (was `act_alt`)
+    mix_split   per element, read off an EXTERNAL index  ours
 
-``mix_split`` is the discrete one and carries no coefficient parameters at all: the
+``mix_split`` is the discrete one and carries no coefficient parameters: the
 caller hands each element a fraction in [0, 1) saying where it sits in whatever
 index space the caller owns, the bank is cut into N equal segments, and the
-element takes the branch its key lands in. PEER passes ``expert / num_experts``,
-which reproduces the old bank split - the function class is a permanent property
-of a bank row, so an expert trains under one activation for the whole run and
-specializes into it. The fraction contract is what generalizes it: a head axis,
-a depth, a codebook slot or a position all normalize the same way.
+element takes the branch its key lands in. PEER passes
+``expert / num_experts``, so the function class is a permanent property of a
+bank row and an expert specializes into it. The fraction contract generalizes:
+a head axis, a depth, a codebook slot or a position all normalize the same way.
 
-THE CONTINUOUS TYPE. ``mix_gated`` makes the coefficients depend on the input:
+``mix_gated`` is the continuous opposite number:
 
     c(x) = softmax(slope * x + bias)   [.., N],  elementwise
     y    = sum_i c_i(x) f_i(x)
 
-so the blend is not one number per model but one distribution per ELEMENT. The
-model learns which function class to use in which input REGIME - a
-non-periodic branch near zero and a periodic one out in the tails, say - rather
-than committing to a single ratio for every activation it will ever see. It is
-``mix_split``'s opposite number and the reason to keep both: that one gives a bank
-ROW a permanent function class chosen at init, ``mix_gated`` gives every FEATURE a
-continuous choice re-decided per token. Which of those a model wants is an
-empirical question, and now it is one experiment with two arms.
+one distribution per ELEMENT, so the model learns which function class to use in
+which input REGIME - a non-periodic branch near zero and a periodic one in the
+tails, say - re-decided per token, rather than one ratio for every activation it
+will ever see.
 
-WHY THE COEFFICIENTS ARE SCALAR AND NOT PER-CHANNEL. The paper parameterizes
-its combination as a 1D convolution with kernel size 1, i.e. one coefficient
-vector per channel. That is only meaningful if the tensor's last axis is a
-feature axis, and here it often is not: PEER applies its activation to
-``[b, n, h, k]``, whose last axis is retrieval RANK. Per-channel weights would
-bind silently to the wrong quantity - the same trap that already catches Serpent
-in that module. Scalar coefficients make this module a pure elementwise
-``R -> R`` function, which is the whole contract: it can stand anywhere an
-activation stands, including inside a lazily-shaped one. ``mix_gated`` recovers
-element-level resolution without needing a feature axis at all, because it reads
-the input VALUE instead of the input POSITION.
+COEFFICIENTS ARE SCALAR, NOT PER-CHANNEL. The paper parameterizes its
+combination as a kernel-size-1 conv, i.e. one coefficient vector per channel.
+That needs the last axis to be a feature axis, and here it often is not: PEER
+applies its activation to ``[b, n, h, k]``, whose last axis is retrieval RANK.
+Scalar coefficients keep this a pure elementwise ``R -> R`` function, which is
+the contract - it can stand anywhere an activation stands, including inside a
+lazily-shaped one. ``mix_gated`` recovers element-level resolution without a
+feature axis, because it reads the input VALUE rather than its POSITION.
 
-INITIALIZATION IS UNIFORM, deliberately. Every other learned-blend module here
-starts as the thing it replaces (Servant is exactly Serpent at init; the
-prismatic field is identity at init), because those wrap a known-good baseline
-and the null hypothesis is "leave it alone". A mixture has no such baseline -
-biasing it toward branch 0 would pre-load the answer to the question it exists
-to ask. Uniform init also puts ``activation_mix_entropy`` at exactly 1.0 on step
-0, so any movement in that chart is signal rather than an offset.
+INITIALIZATION IS UNIFORM. A mixture has no baseline to start as, so biasing it
+toward branch 0 would pre-load the answer to the question it exists to ask.
+Uniform init also puts ``activation_mix_entropy`` at exactly 1.0 on step 0, so
+any movement in that chart is signal rather than an offset.
 
-COST. All N branches are evaluated on the whole tensor - including under
-``mix_split``, where the one-hot selection is ragged (a token's retrieved experts
-are an arbitrary mix of segments, so there is no contiguous slice to hand each
-branch). That is N elementwise
-passes plus the blend, against 1; on a bank of two or three parameter-free
-functions it is negligible next to the matmul that produced the tensor, but it
-is not free and it scales linearly in ``N``.
+COST. All N branches are evaluated on the whole tensor, including under
+``mix_split``, where the one-hot selection is ragged (a token's retrieved
+experts are an arbitrary mix of segments, so there is no contiguous slice to
+hand each branch). N elementwise passes plus the blend, against 1 - negligible
+next to the matmul that produced the tensor, but linear in ``N``.
 """
 
 import math
@@ -251,6 +223,7 @@ class ActivationMixture(nn.Module):
         )
         _declare_share_descriptions(names)
         # Realized gate statistics, stashed on-device during live forwards.
+        self._warm: bool = False
         self._share: Optional[Tensor] = None
         self._routing: Optional[Tensor] = None
 
@@ -264,7 +237,7 @@ class ActivationMixture(nn.Module):
         return self.mode == "keyed"
 
     def _static_coefficients(self) -> Optional[Tensor]:
-        """Scalar mixture weights, or None for the per-element modes."""
+        """Scalar mixture weights, or None for the per-element types."""
         if self.mode == "convex":
             return torch.softmax(self.logits, dim=0)
         if self.mode == "affine":
@@ -306,14 +279,21 @@ class ActivationMixture(nn.Module):
         Args:
             inputs: any shape. The mixture is elementwise, so nothing here
                 depends on which axis is the feature axis.
-            keys: ``keyed`` mode only - a fraction in ``[0, 1)`` per element,
+            keys: ``mix_split`` only - a fraction in ``[0, 1)`` per element,
                 broadcastable against ``inputs``, saying where that element sits
-                in the caller's index space. Ignored by every other mode, and
-                OPTIONAL even in ``keyed``: a caller that has no key (the
-                dashboard's activation-curve probe, say) gets the uniform blend
-                rather than an exception, because the alternative is an
-                activation that vanishes from the chart with no error anywhere.
+                in the caller's index space. Ignored by every other type, and
+                OPTIONAL: a caller with no index to partition on falls back to
+                the FIRST value, which is what makes a model-wide `mix_split`
+                mean "split it where there is something to split, and otherwise
+                run the primary activation". Raising instead would make the
+                declaration unusable anywhere but PEER; blending instead would
+                quietly give every other module a function nobody asked for.
         """
+        if self.mode == "keyed" and keys is None:
+            # Nothing to partition on. See `keys` above.
+            self._materialize_unused(inputs)
+            return self.branches[0](inputs)
+
         weights = self._elementwise_weights(inputs, keys)
         if weights is None:
             coefficients = self._static_coefficients()
@@ -322,13 +302,9 @@ class ActivationMixture(nn.Module):
                 # Accumulated rather than stacked: a `[..., N]` stack of branch
                 # outputs would be N times the activation memory for no reason,
                 # and the blend is a sum either way.
-                term = branch(inputs)
-                if coefficients is not None:
-                    term = coefficients[index] * term
+                term = coefficients[index] * branch(inputs)
                 outputs = term if outputs is None else outputs + term
-            # `keyed` without keys: no coefficients exist, so the uniform blend
-            # is the only honest answer.
-            return outputs if coefficients is not None else outputs / len(self.branches)
+            return outputs
 
         outputs = None
         for index, branch in enumerate(self.branches):
@@ -353,7 +329,28 @@ class ActivationMixture(nn.Module):
             return self._partition(keys).to(inputs.dtype)
         return None
 
-    # -- diagnostics -------------------------------------------------------
+    def _materialize_unused(self, inputs: Tensor) -> None:
+        """Give every branch one forward, once, even ones this call will not use.
+
+        A lazily-shaped activation (Serpent and its variants) builds its
+        parameters on first forward, and the keyless ``mix_split`` path only ever
+        calls branch 0. A later branch would therefore still hold
+        ``UninitializedParameter`` when the optimizer walked
+        ``model.parameters()``, which raises - so a bank whose FIRST value is
+        parameter-free and whose second is not would crash the run, at optimizer
+        construction, for a config that looks entirely reasonable.
+
+        One pass, no grad, output discarded. After that ``_warm`` is set and this
+        costs a boolean.
+        """
+        if self._warm:
+            return
+        self._warm = True
+        with torch.no_grad():
+            for branch in self.branches[1:]:
+                if getattr(branch, "has_uninitialized_params", bool)():
+                    branch(inputs)
+
 
     def _stash(self, weights: Tensor) -> None:
         """Realized gate statistics, on-device (no host sync in the hot path).

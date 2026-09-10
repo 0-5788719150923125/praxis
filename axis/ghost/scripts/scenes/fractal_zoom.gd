@@ -15,19 +15,9 @@ extends GhostScene
 ##   PUSH - inward. The classic, and two rolls in three.
 ##   PULL - outward, opening from a deep point back toward the whole set.
 ##
-## THERE USED TO BE A THIRD, `breathe`, which turned round on its own clock, and it is gone.
-## Reported: "it rolled forward for a bit, before slowing and rolling backwards again... the
-## most interesting part of a fractal zoom is the continuous zoom-in, or continuous zoom-out.
-## Reversing direction just reveals the same patterns we've already seen." That is right, and
-## it is right about the mode as well as about the bug - a reversal is the one camera move
-## that is guaranteed to show you nothing new, because it is the shot you have just watched,
-## played backwards.
-##
-## AND IT WAS A BUG BEFORE IT WAS A MODE. The breathe clock was armed in `build_params` before
-## the direction was even chosen, so every push and every pull turned round after 11-26
-## seconds too. Measured over 240 seeds: ONE HUNDRED PERCENT of scenes reversed inside thirty
-## seconds, the first turn landing at 18 s on average, and the net travel over a whole scene
-## was under two e-folds because the picture kept coming back to where it started.
+## There is deliberately no mode that turns round on its own clock. A reversal is the one
+## camera move guaranteed to show you nothing new, because it is the shot you have just
+## watched, played backwards.
 ##
 ## SPEED IS A JOURNEY TIME, NOT A RATE, and that is what keeps the fall continuous now. What a
 ## family can resolve varies by twenty-fold (see the floors below), so a sampled rate makes a

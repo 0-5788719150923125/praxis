@@ -827,39 +827,31 @@ class MemoryDepthBank(MemoryBase):
     """ONE test-time memory core per recurrent pass, drawn from a bank of N
     function-class regimes - the depth axis IS the router.
 
-    ``MemoryBandSmear`` stacks its bank at every step: each arm runs and the
-    outputs are blended, so the cheap arms cost N memory forwards and N
-    test-time updates per recurrent step (the sparse rules trim the grid arms,
-    but the two cheap ones are always on - never fewer than 2 cores per step).
-    Here the bank is spread ALONG the recurrence instead. Pass p runs core
-    ``p % N`` and nothing else, so step cost is exactly one core no matter how
-    many regimes the bank holds, and each regime specializes to its own station
-    in the recurrence rather than competing for the same one.
+    Where ``MemoryBandSmear`` stacks its bank at every step (each arm runs, the
+    outputs blend, never fewer than 2 cores per step), this spreads the bank ALONG
+    the recurrence. Pass p runs core ``p % N`` and nothing else, so step cost is
+    exactly one core however many regimes the bank holds, and each regime
+    specializes to its own station.
 
     The assignment is keyed to the PASS index (``current_depth // num_layers``)
-    because that is the unit halting can actually cut at: the KL check only
-    fires at loop boundaries (praxis/halting/kl.py:154), and training does not
-    check at all - it samples a loop COUNT up front (kl.py:122-133). So the bank
-    is declared cheapest-first and the pass a core sits at is the price of
-    reaching it:
+    because that is the unit halting can cut at: the KL check fires only at loop
+    boundaries (praxis/halting/kl.py:154), and training samples a loop COUNT up
+    front (kl.py:122-133). So the bank is declared cheapest-first and the pass a
+    core sits at is the price of reaching it:
 
       * pass 0's core runs on every forward - the memory the model always has.
-      * later cores are reached only when the pass budget goes that deep. In
-        training that is the log-normal Poisson's tail; at inference it is
-        inputs whose latent has not converged by then. Either way an easy input
-        never pays for the expensive regimes at all, which is the saving - and
-        the same fact means a late core sees proportionally fewer gradient
-        steps, which is the cost. Read ``*_memory_core_use`` for the actual
-        split; it is the experiment, not a diagnostic.
+      * later cores are reached only when the pass budget goes that deep. An easy
+        input never pays for the expensive regimes, which is the saving; a late
+        core sees proportionally fewer gradient steps, which is the cost. Read
+        ``*_memory_core_use`` for the split - it is the experiment, not a
+        diagnostic.
 
-    There is no bandit and no blend here, deliberately. The band smear's arms
-    are comparable because they forecast the SAME NextLat target from the same
-    stream; these read a different depth's stream each, so an inverse-surprise
-    share between them would be measuring depth, not forecast quality. Routing
-    is therefore a pure function of ``current_depth`` - bit-identical on every
-    forward, which the byte-latent speculative decoder needs (the note at
-    :472 records what a state-mutating blend cost it). Nothing this class
-    tracks feeds the output; it is all diagnostic.
+    No bandit and no blend, deliberately: the band smear's arms forecast the SAME
+    NextLat target from the same stream, where these read a different depth's stream
+    each, so an inverse-surprise share between them would measure depth rather than
+    forecast quality. Routing is a pure function of ``current_depth`` -
+    bit-identical on every forward, which the byte-latent speculative decoder needs.
+    Nothing this class tracks feeds the output; it is all diagnostic.
     """
 
     metric_descriptions = {

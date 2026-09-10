@@ -34,6 +34,28 @@ def _spec_args(run_dir: str) -> dict:
         return {}
 
 
+def _rl_injections(rl_type) -> dict:
+    """``{dataset: weight}`` an ``rl_type`` pulls in on the policy's behalf."""
+    if not rl_type:
+        return {}
+    try:
+        from praxis.data.config import DATASET_COLLECTIONS
+        from praxis.policies import (
+            normalize_rl_types,
+            rl_dataset_collections,
+            rl_dataset_weights,
+        )
+    except Exception:
+        return {}  # torch-free environment: table renders without them
+
+    injected = {}
+    for name in normalize_rl_types(rl_type):
+        for coll in rl_dataset_collections(name):
+            injected.update(DATASET_COLLECTIONS.get(coll, {}))
+        injected.update(rl_dataset_weights(name))
+    return injected
+
+
 def _resolve_rows(args: dict) -> list:
     """[(dataset, type, source, weight)] for one run's training mixture."""
     collections = args.get("train_datasets") or []
@@ -51,18 +73,33 @@ def _resolve_rows(args: dict) -> list:
         DATASET_COLLECTIONS = DATASETS = None
 
     if DATASET_COLLECTIONS is not None:
+        seen = set()
+
+        def emit(name, weight):
+            if name in seen:
+                return
+            seen.add(name)
+            entry = DATASETS.get(name, {})
+            dtype = entry.get("type", "huggingface")
+            if dtype.startswith("synthetic-"):
+                dtype = "synthetic"
+            source = entry.get("path", "") or "--"
+            rows.append((name, dtype, source, weight))
+
         for coll in collections:
             members = DATASET_COLLECTIONS.get(coll)
             if members is None:
                 rows.append((coll, "collection", "(unknown)", None))
                 continue
             for name, weight in members.items():
-                entry = DATASETS.get(name, {})
-                dtype = entry.get("type", "huggingface")
-                if dtype.startswith("synthetic-"):
-                    dtype = "synthetic"
-                source = entry.get("path", "") or "--"
-                rows.append((name, dtype, source, weight))
+                emit(name, weight)
+
+        # An `rl_type` entry injects its own data (praxis/data/utils.py:
+        # get_dataset_configs), so the run trained on more than
+        # `train_datasets` names. Same dedupe order as the loader's
+        # skip_existing: an explicit collection wins the weight.
+        for name, weight in _rl_injections(args.get("rl_type")).items():
+            emit(name, weight)
 
     # --data-path directories: one sampler per path (praxis/data/utils.py),
     # so each is its own row at the directory default weight.

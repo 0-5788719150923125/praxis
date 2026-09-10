@@ -1,58 +1,48 @@
 """SMEAR at the granularity the paper actually uses.
 
-This is NOT a new method. It is Soft Merging of Experts with Adaptive Routing
-(https://arxiv.org/abs/2306.03745) applied the way the paper applies it, because
-``praxis/routers/smear.py`` does not. That file is the same algorithm pointed at
-the wrong object, and every difference here is a step back TOWARD the paper
-rather than past it:
+Soft Merging of Experts with Adaptive Routing (arXiv:2306.03745), applied to
+per-module targets rather than to whole decoder blocks:
 
-                     paper                    smear.py / vear.py      here
-  merged unit        adapters, inserted       an entire decoder       per-module
-                     after self-attention,    block                   targets
-                     FFN and cross-attention
-  coefficients       one router per adapter   one scalar for the      one row per
-                                              whole block             target
-  routing            per example              batch mean              per example
-                                                                      (Linears)
-  balancing          expert dropout           expert dropout 0.1      same, 0.1
+                     paper                        here
+  merged unit        adapters after attention,    per-module targets found by
+                     FFN and cross-attention      walking the module tree
+  coefficients       one router per adapter       one row per target
+  routing            per example                  per example (Linear targets)
+  balancing          expert dropout               same, 0.1
 
-The consequences of that drift were measured, not theorized. Merging a whole
-block under one scalar leaves the router injecting ``num_experts - 1`` free
-numbers per forward - three, at N=4 - while paying for N copies of everything,
-including the ``ffn_type: peer`` feedforward, which is the largest module in the
-model and ALREADY a per-token mixture over its own product-key bank. And the
-batch mean is worse than merely coarse: the loss reaches the routing only
-through ``probs.mean(0)``, so every example receives the identical routing
-gradient ``dL/dw / B``. A constant router is that design's fixed point, which is
-what ``routing_input_dependence`` decaying to ~1e-5 on abstractinator-g, and to
-exactly 0 on the first cut of this file, both were.
+Merging a whole block under one scalar leaves the router injecting
+``num_experts - 1`` free numbers per forward while paying for N copies of
+everything - including a ``ffn_type: peer`` feedforward, the largest module in
+the model and already a per-token mixture over its own product-key bank. A batch
+mean is worse than coarse: the loss reaches the routing only through
+``probs.mean(0)``, so every example receives the identical routing gradient
+``dL/dw / B``, and a constant router is that design's fixed point.
 
 Two things here are not in the paper, and neither is novel:
 
   * BASE PLUS DEVIATIONS instead of N independent expert copies. With
     ``P_e = base + delta_e`` and coefficients summing to one,
     ``base + sum_e w_e delta_e == sum_e w_e P_e``, so this is the paper's merge
-    written in a different basis. It buys exact identity at initialization and a
-    shared trunk that receives full gradient whatever the routing does
-    (``d(merged)/d(base) = sum_e w_e = 1``), so a starved deviation now costs its
+    in a different basis. It buys exact identity at initialization and a shared
+    trunk that receives full gradient whatever the routing does
+    (``d(merged)/d(base) = sum_e w_e = 1``), so a starved deviation costs its
     rank rather than a whole block. Large deviations are additionally
     rank-constrained, which is LoRA.
-  * PEFT-STYLE TARGET DISCOVERY (praxis/routers/targeting.py), so the merge sites
-    are found by walking the module tree instead of being hand-placed. Plumbing.
+  * PEFT-style target discovery (praxis/routers/targeting.py), so merge sites are
+    found rather than hand-placed.
 
-Honest limit. Routing is per EXAMPLE, never per TOKEN. Associativity buys the
-former for Linear targets - see ``MergedLinear`` - but a per-token merge would
-need a distinct geometry per position, which remains the province of the
-fast-weights work in praxis/routers/prismatic.py. Elementwise and indexed
-targets (norms, residual gates, the per-depth table) stay on the batch mean,
-which is also what the paper does: it trains layernorm parameters but never
-treats them as experts.
+Honest limit: routing is per EXAMPLE, never per TOKEN. Associativity buys the
+former for Linear targets - see ``MergedLinear`` - but a per-token merge needs a
+distinct geometry per position, which is the fast-weights work in
+praxis/routers/prismatic.py. Elementwise and indexed targets (norms, residual
+gates, the per-depth table) stay on the batch mean, which is also what the paper
+does: it trains layernorm parameters but never treats them as experts.
 
-Sharpening is OFF by default, unlike VEAR - ``p**4`` drives the losing deviations
-to zero gradient, which is the mechanism behind abstractinator-g's dead experts.
-``ModularVEAR`` re-enables it for the comparison.
+Sharpening is OFF by default: ``p**4`` drives losing deviations to zero
+gradient, which is the dead-expert mechanism. ``VEAR`` re-enables it for the
+comparison.
 
-Companion: praxis/routers/targeting.py, praxis/routers/smear.py.
+Companion: praxis/routers/targeting.py, praxis/routers/vear.py.
 """
 
 from __future__ import annotations

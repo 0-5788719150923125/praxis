@@ -246,38 +246,32 @@ class CALMVAE(nn.Module):
 class PatchVAE(nn.Module):
     """CALM's autoencoder, over patch FEATURES instead of token chunks.
 
-    WHY THIS EXISTS SEPARATELY FROM ``CALMVAE``. ``CALMVAE`` encodes token ids
-    and decodes to K per-token features, because in the reference the VAE is
-    what performs the compression. In the Abstractinator that job is already
-    done - the local encoder has produced one feature vector per patch before
-    the bottleneck is reached - so a second token-chunk VAE would genuinely be
-    redundant. What is NOT redundant is everything else the VAE provides, and
-    dropping it along with the compression is what broke abstractinator-p:
+    ``CALMVAE`` encodes token ids and decodes to K per-token features, because in
+    the reference the VAE performs the compression. In the Abstractinator that job
+    is already done - the local encoder produces one feature vector per patch before
+    the bottleneck - so a second token-chunk VAE would be redundant. What is NOT
+    redundant is everything else the VAE provides:
 
-      1. A CONTINUOUS, KL-REGULARIZED, UNIT-SCALE, STATIONARY latent space. The
-         RVQ gives a discrete codebook lookup whose geometry moves every step,
-         which made the energy score - a DISTANCE - scale with a target the
-         same gradient step was reshaping.
-      2. A PER-PATCH POSTERIOR. The energy score's target draws come from it.
+      1. A CONTINUOUS, KL-REGULARIZED, UNIT-SCALE, STATIONARY latent space. The RVQ
+         gives a discrete codebook lookup whose geometry moves every step, which
+         makes the energy score - a DISTANCE - scale with a target the same gradient
+         step is reshaping.
+      2. A PER-PATCH POSTERIOR, which the energy score's target draws come from.
          Without one the target is a point and the score degenerates into the
-         mean-seeking regression the whole construction exists to avoid.
+         mean-seeking regression the construction exists to avoid.
       3. ITS OWN RECONSTRUCTION OBJECTIVE, which is what makes the latent
-         informative in the first place. The stand-in this replaces was a bare
-         ``nn.Linear(D, 2*D)`` with no reconstruction pressure of its own: the
-         only forces on it were a KL pulling it to the prior and a distant byte
-         CE, so nothing ever required its latent to mean anything.
+         informative. A bare ``nn.Linear(D, 2*D)`` posterior has only a KL pulling
+         it to the prior and a distant byte CE, so nothing requires its latent to
+         mean anything.
 
-    So this is the same autoencoder at the level this architecture actually
-    needs it: ``h -> (mu, logvar) -> z -> h_hat``, trained on its own relative
-    reconstruction error and its own free-bits KL. It shares ``ResidualMLPBlock``
-    with ``CALMVAE`` (the reference's ``AELayer`` shape) and the same
-    ``normalize_latent`` contract, so the two codecs stay one family.
+    So: the same autoencoder at the level this architecture needs it,
+    ``h -> (mu, logvar) -> z -> h_hat``, trained on its own relative reconstruction
+    error and its own free-bits KL. It shares ``ResidualMLPBlock`` with ``CALMVAE``
+    (the reference's ``AELayer`` shape) and the same ``normalize_latent`` contract.
 
-    Running this beside the RVQ is two encoders side by side, sharing one trunk:
-    two independently-optimizable paths onto the same patch features, which is
-    only well-posed because the patching is STATIC - both emit exactly one
-    latent per patch, so ``z_q + z_c`` is an alignable merge rather than two
-    sequences that cannot be reconciled.
+    Running this beside the RVQ is two encoders sharing one trunk, well-posed only
+    because the patching is STATIC - both emit exactly one latent per patch, so
+    ``z_q + z_c`` is an alignable merge.
     """
 
     def __init__(

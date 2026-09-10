@@ -1,106 +1,48 @@
-"""ArcSSOG: the Gaussian field, given a depth axis, a warm gate and a real bank.
+"""ArcSSOG: the SSOG Gaussian field with a depth axis, a warm gate and a small bank.
 
-``SSOGAttention`` next door is the faithful port and stays that way. This is the
-variant we hack on. Three deviations, each with a reason that is a measurement
-from ``abstractinator-r`` or a theorem, not a preference:
+``SSOGAttention`` next door is the faithful port. This is the variant we hack on.
+Three deviations:
 
 1. THE FIELD IS PER-DEPTH. ``raw_mu``, ``raw_sigma``, ``log_lambda``,
-   ``raw_gate`` and the temperature all gain a leading depth axis, indexed by
-   ``current_depth``. This is the FAITHFUL direction, not a liberty: the
-   reference's field is per-LAYER and its README describes the model opening the
-   taps "layer by layer, exactly where steering pays off". A depth-SHARED field
-   was ``-r``'s deviation, and it asks one gate scalar to be simultaneously
-   right for pass 0 (where steering is noise on top of local structure) and pass
-   5 (where it would pay). ``-r`` answered that question with the average, which
-   is shut.
-
-   It also decouples REACH from SMEARING, which is the whole game for retrieval.
-   A shared field can only reach far by cascading, and h hops give mean lag
-   ``h*mu`` with width ``sqrt(h)*sigma`` - ``-r``'s hop 6 lands near lag 51 with
-   a width around 29, which returns the haystack. A depth-5 atom with its own
-   ``mu = 200, sigma = 3`` is a SHARP far read. Diffuse far reads are not
-   retrieval however far they reach.
+   ``raw_gate`` and the temperature all gain a leading depth axis indexed by
+   ``current_depth``. A shared field asks one gate scalar to be right for both
+   pass 0 (where steering is noise on local structure) and pass 5 (where it
+   pays), and the average is shut. It also decouples REACH from SMEARING: a
+   shared field can only reach far by cascading, and h hops give mean lag
+   ``h*mu`` with width ``sqrt(h)*sigma``, which returns the haystack. A depth-5
+   atom with its own ``mu = 200, sigma = 3`` is a sharp far read.
 
 2. THE GATE STARTS WARM (softplus(-2) ~ 0.13, against the reference's
-   softplus(-8) ~ 3e-4). The cold start is doubled in our port: ``steer`` is
-   zero-initialised AND gated, and zero-init alone already gives an exactly
-   frozen field at step 0. The gate is a second multiplicative barrier on top of
-   a sufficient one. ``-r`` measured what that costs - after 11.7k steps the
-   probe had learned hard (``steer.weight`` norm 10.9, absmax 3.34) and every
-   bit of it was being multiplied by 3.4e-4, while ``raw_gate`` drifted from
-   -8.00 to -8.05. The probe was straining against a closed valve. The field is
-   still frozen at initialisation here, by zero-init; the gate now scales
-   steering rather than blocking it.
+   softplus(-8) ~ 3e-4). ``steer`` is zero-initialised, which already gives an
+   exactly frozen field at step 0, so a cold gate is a second multiplicative
+   barrier on top of a sufficient one. The gate now scales steering rather than
+   blocking it.
 
-3. THE BANK CAME BACK DOWN, and this entry is a retraction. It shipped as 12
-   atoms over 0.5 .. 128 on the argument that Zoology/Based tie recall quality
-   to RECURRENT STATE SIZE, so a bigger bank should buy recall, and that R
-   Gaussians on a log ladder are a HiPPO/LMU-style basis projection of history
-   which at R=4 is too sparse to localise anything in lag.
+3. THE BANK IS SMALL: 4 atoms over lag 0.5 .. 32, which puts every atom inside
+   the window at every curriculum tier. Attention weights are the mixture
+   normalised over causal keys, so every atom added takes a share from every
+   other, and atoms centred beyond the live window get truncated and
+   renormalised onto the oldest tokens - a sink the softmax cannot decline. The
+   12-atom / lag-128 configuration is the ``arc_ssog_wide`` registry profile.
 
-   The state-size half of that does not transfer, and I pushed it too hard.
-   Their state is a matrix holding key-value BINDINGS; these atoms are fixed
-   positional filters holding none. More atoms buys a better basis for reading
-   POSITION, not associative capacity.
+WHY THIS COULD WORK. The Zoology line (Arora, Rudra, Re et al) makes the
+decisive property INPUT-DEPENDENCE. A convolution whose kernel does not depend
+on the input provably cannot do associative recall at any width or depth; an
+input-dependent gated convolution can, at poly-log layers. SSOG with the taps
+shut is a pure linear convolution and sits in the incapable class; with them
+open it is a gated convolution and sits in the capable one. Recurrent depth buys
+the layers without buying parameters. Deviations 1 and 2 exist to cross that
+boundary.
 
-   What it did buy was dilution. Attention weights are the mixture NORMALISED
-   over the causal keys, so every atom added takes a share from every other:
-   0.083 per atom against 0.25, cutting the previous-token atom to a third of
-   its mass. Worse, three of the twelve sat centred beyond lag 32 and two
-   beyond 64, so at the x1 curriculum tier their mass was truncated and
-   renormalised onto the OLDEST tokens - a sink, not a long-range read, and the
-   softmax has no way to decline. Measured over 11.8k steps on -r: ``far_mass``
-   decayed at every depth while ``reach`` stayed flat, i.e. the model spent
-   training clawing back toward concentration. (That reading used the old
-   centre-indicator ``far_mass``. It survives the change to the tail integral -
-   the wide bank put five atoms well past 32, so the indicator had real
-   resolution there - but the numbers themselves do not compare.) With the faithful 0.5 .. 32
-   ladder the same knob had gone the other way, lambda moving TOWARD the far
-   atoms.
+Not done here: the null atom, and unbounded mu-steering read as a pointer
+(``MAX_OFFSET`` is inherited at 8 tokens, so steering only nudges). A learned
+null logit scales every real weight by a common factor, so it does not undo
+dilution; the cue for adding one is a per-depth temperature driving to its 0.5
+floor. See ``next/`` for the addressing argument.
 
-   The mechanism is dilution, NOT interference. The mixture is a sum of
-   non-negative densities and cannot cancel; twelve atoms can represent
-   anything four can by zeroing eight weights. An initialisation cost, not a
-   capacity one.
-
-   Default is back to the faithful 4 over 0.5 .. 32, which also puts every atom
-   inside the window at every tier. The 12/128 configuration is preserved as
-   the ``arc_ssog_wide`` registry profile so the measurement can be repeated.
-
-WHY ANY OF THIS COULD WORK AT ALL, stated as the theorem rather than a hope.
-The Zoology line (Arora, Rudra, Re et al) makes the decisive property
-INPUT-DEPENDENCE, not convolution-versus-attention. A convolution whose kernel
-does not depend on the input provably cannot do associative recall at any width
-or depth. An input-dependent gated convolution can: the lower bound is
-Omega(eps log log N) layers, with a construction at poly-log layers and
-parameters linear in sequence length. So SSOG with the taps SHUT is a pure
-linear convolution and is in the provably-incapable class - which is where
-``-r`` has been sitting - while SSOG with the taps open is a gated convolution
-and is in the capable one. Recurrent depth is what makes the poly-log-layer
-route affordable, since it buys layers without buying parameters. That is the
-whole bet, and deviations 1 and 2 exist to get across that class boundary.
-
-NOT DONE HERE, deliberately: the null atom (the field's softmax1), and
-unbounded mu-steering read as a pointer. ``MAX_OFFSET`` is inherited unchanged
-at 8 tokens, so steering here still only nudges - see ``next/`` for the
-addressing argument.
-
-On the null atom specifically, since it is the obvious response to the dilution
-above and is NOT one: a learned null logit scales every real weight by the
-common factor ``Z / (Z + exp(l_0))``, so each real atom keeps exactly its 1/R
-share of what is left. What it would fix is the out-of-window sink - and the
-ladder coming back to 0.5 .. 32 already removes that, since no atom sits
-outside the window at any tier. The field's own cue for a missing outlet is a
-per-depth temperature driving toward its 0.5 floor; on -r it did not, sitting
-at 0.76 - 0.89 against an init of 0.813 for 11.8k steps. Add it when that cue
-fires, and as a LEARNED lambda_0: a fixed logit-0 ghost would take 40-60% of a
-Gaussian field's mass, because a Gaussian log-density integrates to only ~1-2
-over lags.
-
-Bank size and ladder span are ONE decision and both are REGISTRY PROFILE
-arguments, not config fields: behaviour belongs in the registry entry
-(``partial(ArcSSOGAttention, num_atoms=..., mu_init_max=...)``), the way
-``arc_dropoff`` carries its ablation.
+Bank size and ladder span are one decision and both are registry-profile
+arguments (``partial(ArcSSOGAttention, num_atoms=..., mu_init_max=...)``), not
+config fields.
 """
 
 import math

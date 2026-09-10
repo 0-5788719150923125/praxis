@@ -38,11 +38,10 @@ AMPLITUDE_INIT_STD: float = 1.0
 # a scale-free S in [0, 1]: 0 = all mass at f_t=1, ~1/3 = isotropic, 1 = all mass
 # at f_t=F_t.
 #
-# The strength is no longer a fixed weight. A fixed lambda is the wrong shape of
-# constant: it sets the EQUILIBRIUM the prior settles at, but nothing about the
-# problem tells you what value produces the smoothness you want, and if the prior
-# is losing its fight against NLL you cannot tell without re-tuning. So lambda is
-# a Lagrange multiplier on a constraint whose TARGET is measured from the data:
+# The strength is a Lagrange multiplier, not a fixed weight. A fixed lambda sets
+# the EQUILIBRIUM the prior settles at, and nothing about the problem tells you
+# which value produces the smoothness you want. So the constraint's TARGET is
+# measured from the data instead:
 #
 #   S_target = normalized 2nd spectral moment of the hidden states the field
 #              multiplies - the same statistic S, computed on the signal instead
@@ -50,22 +49,16 @@ AMPLITUDE_INIT_STD: float = 1.0
 #              the signal it multiplies does."
 #   lambda  <- softplus(rho),  rho += eta * (S - S_target)     [dual ascent]
 #
-# The two quantities are on one scale by construction, and measurably so: white
-# hidden states give 0.340 against the grid's isotropic 0.341. lambda now rises
-# on its own when the prior is losing and relaxes when it has won, so the run
-# reports where the prior settled rather than being told.
+# The two quantities are on one scale by construction: white hidden states give
+# 0.340 against the grid's isotropic 0.341. lambda rises on its own when the
+# prior is losing and relaxes when it has won.
 #
-# What is left is honestly still three constants, but they are a different KIND
-# of constant: an initial condition (continuity with the fixed-lambda runs), an
-# approach rate, and a safety cap. None of them sets the equilibrium - the data
-# does. The rate is the one that needed care: a controller must be SLOWER than
-# the plant it steers, and an amplitude grid being dragged by a regularizer
-# against NLL is a slow plant. A sweep over dual rate x grid-response time (100x
-# range) puts 0.003 as the only value that never pins against the cap and still
-# reaches the target; 0.3 saturates the cap on half of all steps, and 0.001
-# leaves the constraint unmet. Below 0.003 the prior is simply weak, above it
-# the multiplier outruns the grid and slams the cap - which is a visible
-# failure, not a silent one, because lambda is logged.
+# Three constants remain, but none of them sets the equilibrium: an initial
+# condition, an approach rate and a safety cap. The rate needed care - a
+# controller must be SLOWER than the plant it steers, and an amplitude grid
+# dragged by a regularizer against NLL is a slow plant. Over a 100x sweep of
+# dual rate x grid-response time, 0.003 is the only value that never pins
+# against the cap and still reaches the target.
 SMOOTHNESS_LAMBDA_INIT: float = 0.01  # lambda at step 0 = the old fixed value
 SMOOTHNESS_DUAL_ETA: float = 0.003  # dual ascent rate on rho; see note below
 SMOOTHNESS_LAMBDA_MAX: float = 1.0  # cap: aux = lambda*S <= 1, under byte NLL

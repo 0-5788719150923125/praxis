@@ -20,7 +20,7 @@ num_queries: 1
 encoder_type: byte_latent_conv_small
 tokenizer_type: byte_level
 decoder_type: sequential
-activation: serpent
+activation_type: serpent
 norm_type: sandwich
 halting_type: kl
 strategy: naive

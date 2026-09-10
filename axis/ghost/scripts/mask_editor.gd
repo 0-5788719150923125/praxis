@@ -4789,13 +4789,11 @@ const FT_FACE_RIGHT := 454
 
 
 # --- THE FEATURE STENCIL: the contours, rasterized ------------------------------
-# WHAT THIS REPLACES. The paint sim used to deposit through analytic ellipses -
-# `win(p, centre, radius)` - which is why a nose could only ever be a circle and a
-# mouth an ellipse, however well they were placed. An ellipse has no cheekbone, no
-# eye corner and no cupid's bow, so at best it sat over the feature rather than on
-# it. The landmarks describe the actual outlines, so the deposit now goes through
-# a RASTERIZED STENCIL of those outlines instead: four polygons drawn once per
-# tick into a small texture, one per channel.
+# An analytic ellipse deposit - `win(p, centre, radius)` - can only make a nose a
+# circle and a mouth an ellipse, however well placed: no cheekbone, no eye corner,
+# no cupid's bow. The landmarks describe the actual outlines, so the deposit goes
+# through a RASTERIZED STENCIL of them: four polygons drawn once per tick into a
+# small texture, one per channel.
 #
 #   R  the two eyes      G  the lips      B  the nose      A  the face oval
 #
@@ -7893,47 +7891,30 @@ func _process(_dt: float) -> void:
 	_step_paint_sim()
 	_step_umbra_sim()
 	# Standing A/V drift correction (see _play: video is the master clock).
-	# 0.15s tolerance sits above audio mix-chunk granularity so this never
-	# chatters. Video ahead of audio: seek audio forward (a silent skip -
-	# no artifact). Audio ahead of video: HOLD audio in place (pause, no
-	# seek) until video's decode catches back up, instead of seeking it
-	# backward - a backward seek replays audio just heard, audible as an
-	# echo/glitch (feedback/0012, which is why the backward correction was
-	# dropped entirely). But dropping it left the OTHER direction fully
-	# uncorrected: _maybe_capture_echo's synchronous GPU readback (whisp/
-	# echo/chimera/snow/oracle/serpent) stalls this thread every
-	# _ECHO_INTERVAL and freezes _player.stream_position for the stall's
-	# duration while _audio keeps flowing on its own thread, so audio comes
-	# out ahead after every single capture - uncorrected, that drift only
-	# ever grows over a session (feedback/0025). Holding (not seeking) closes
-	# that gap without ever replaying already-heard audio.
-	# The hold's own exit check has to run OUTSIDE the "_audio.playing" gate:
-	# setting stream_paused = true immediately flips .playing to false (that's
-	# just what a paused AudioStreamPlayer reports), so gating the exit check
-	# on .playing meant a hold could engage but never release - audio stayed
-	# silent, permanently, until a manual pause/play cycle called _play()'s own
-	# "if not _audio.playing: _audio.play(...)" restart (feedback/0027).
-	# ...AND THE HOLD IS BOUNDED. Everything above assumes the video catches up in
-	# a moment, which is true of a readback stall and false of anything that
-	# starves the decode for as long as it runs - a heavy background job, a busy
-	# machine. There the hold engages, never releases, and the editor is simply
-	# SILENT with no error and nothing on screen to say why (reported exactly that
-	# way, of a pose pre-pass eating every core). Past the limit the audio is
-	# seeked back to the video instead: that replays a fraction of a second of
-	# sound, which is the artifact this design has always refused - and it is
-	# still the better of the two, because the alternative it was refusing in
-	# favour of has turned out to be indefinite silence.
-	# GHOST_AV_DEBUG=1 prints both clocks once a second. The audio and the video
-	# are two independent streams corrected against each other here, and every
-	# report about this ("the sound stopped", "the audio is ahead") has been
-	# diagnosed by guessing until this existed - the two positions and the drift
-	# say immediately whether audio is being held, has run out, or was never
-	# started.
-	# ONE LINE, EVERY RUN, once playback has actually started - not behind a flag.
-	# "the sound no longer works" arrived with no way to tell a stopped transport
-	# from a muted bus from a track that is simply very quiet, and answering it
-	# cost a whole round trip to add exactly this and another to read it back.
-	# It is four numbers and it is printed once, so it costs nothing to leave on.
+	# 0.15s tolerance sits above audio mix-chunk granularity so this never chatters.
+	#
+	# Video ahead of audio: seek audio forward - a silent skip, no artifact.
+	#
+	# Audio ahead of video: HOLD audio in place (pause, no seek) until video's decode
+	# catches back up. A backward seek would replay audio just heard, audible as an echo.
+	# This direction is the common one: _maybe_capture_echo's synchronous GPU readback
+	# (whisp/echo/chimera/snow/oracle/serpent) stalls this thread every _ECHO_INTERVAL and
+	# freezes _player.stream_position for the stall's duration while _audio keeps flowing on
+	# its own thread, so audio runs ahead after every capture and the drift only grows.
+	#
+	# The hold's exit check runs OUTSIDE the "_audio.playing" gate: setting
+	# stream_paused = true immediately flips .playing to false, so gating the exit on
+	# .playing would let a hold engage and never release.
+	#
+	# THE HOLD IS BOUNDED. It assumes the video catches up in a moment, which is true of a
+	# readback stall and false of anything that starves the decode for as long as it runs -
+	# a heavy background job, a busy machine. Past the limit the audio is seeked back to the
+	# video instead: that replays a fraction of a second of sound, which is the artifact
+	# this design refuses, and it is still better than indefinite silence.
+	#
+	# GHOST_AV_DEBUG=1 prints both clocks once a second. One line, every run, once playback
+	# has started - four numbers saying immediately whether audio is being held, has run
+	# out, or was never started.
 	if not _av_reported and _playing and _audio != null and _audio.playing 			and _audio.get_playback_position() > 1.0:
 		_av_reported = true
 		var mb := AudioServer.get_bus_index(MASK_BUS)

@@ -172,11 +172,15 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--activation",
+            "--activation-type",
             type=str,
             choices=ACTIVATION_REGISTRY.keys(),
             default="mish",
-            help="The primary activation function to use",
+            help=(
+                "The activation function to use. A bare name here; an experiment "
+                "config may instead give a `{type, values}` mixture or a map of "
+                "slots (gate/value/expert) - see praxis/activations"
+            ),
         )
 
         group.add_argument(

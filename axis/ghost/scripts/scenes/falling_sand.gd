@@ -30,18 +30,15 @@ extends GhostScene
 ## draft and its direction; the wall strata ramp; whether the air behind it all is a
 ## bright ground or a dark one; and HOW LONG IT HAS BEEN RUNNING before you got here.
 ##
-## THAT LAST ONE IS NOT DECORATION. The chamber used to be built out of stone and nothing else,
-## so every session this scene was ever cut to opened on the identical empty room - the same
-## lanes falling from the very top of an untouched floor - and spent its first seconds filling
-## up. A world with rules has been running before anyone looked at it. So its own clock starts
-## somewhere in the middle of its life (`_job.t_sim`), which puts each spout's duty cycle
-## wherever it happens to be rather than all at their beginnings - some lanes pouring, some dry
-## and about to open - and the matter that clock implies is DEPOSITED by [method Grains.prefill]:
-## piles under the spouts shaped by each material's own repose, a thin run on every shelf, and a
-## stream still in the air under whichever lanes are open. Deposited rather than simulated,
-## because a pre-roll long enough to raise a cone is over a second of CPU - which is either a
-## stall at the cut or a second of empty chamber arriving late, the same blank slate either way.
-## Gated by tests/sand_warm_check.gd, which settles the deposit against the automaton itself.
+## THE LAST OF THOSE IS NOT DECORATION. A world with rules has been running before anyone
+## looked at it, so its own clock starts somewhere in the middle of its life (`_job.t_sim`),
+## which puts each spout's duty cycle wherever it happens to be rather than all at their
+## beginnings - some lanes pouring, some dry and about to open. The matter that clock implies
+## is DEPOSITED by [method Grains.prefill]: piles under the spouts shaped by each material's
+## own repose, a thin run on every shelf, and a stream still in the air under whichever lanes
+## are open. Deposited rather than simulated, because a pre-roll long enough to raise a cone
+## is over a second of CPU - either a stall at the cut or a second of empty chamber arriving
+## late. Gated by tests/sand_warm_check.gd, which settles the deposit against the automaton.
 ##
 ## AUDIO. Each spout owns a FIXED band, and its rate in grains per second is its gain times
 ## that band's level, so the pours move against each other rather than throbbing together -

@@ -48,6 +48,9 @@ class ConfigBuilder:
         arg_to_config_mapping = {
             "ffn_type": "expert",
             "encoding_type": "encoding",
+            # `--activation-type` matches the other registry flags; the config
+            # field it feeds keeps the name every module reads.
+            "activation_type": "activation",
         }
 
         # Experiment/environment activator flags should not leak into PraxisConfig.
@@ -57,6 +60,19 @@ class ConfigBuilder:
 
         # Experimental kwargs (from experiment files, not in PraxisConfig signature)
         experimental_kwargs = {}
+
+        # `--activation` became `--activation-type` (every other registry flag
+        # already ended in `-type`). Nothing sets `args.activation` any more, so
+        # its presence means an experiment YAML still carries the old key - and
+        # because both map to the same config field, it would silently outrank
+        # the flag rather than failing. Say so instead.
+        if hasattr(args, "activation"):
+            raise ValueError(
+                "Experiment config uses the removed `activation:` key. Rename it "
+                "to `activation_type:` (matching --activation-type). Its value may "
+                "be a name, a `{type, values}` mixture, or a map of "
+                "gate/value/expert slots."
+            )
 
         # Process all arguments from CLI
         for arg_name in vars(args):

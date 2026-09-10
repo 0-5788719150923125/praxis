@@ -1,38 +1,35 @@
-"""Ghost features: extra weight blocks derived from weights you already have.
+r"""Ghost features: extra weight blocks derived from weights you already have.
 
 A pure function over an assembled model, in the shape ``praxis/routers/smear.py``
 established for target discovery: walk the module tree, apply a named profile of
-include/exclude rules, and transform what matches. Nothing here is site-specific,
-which is the point - moving the experiment to a different tensor is a regex in
+include/exclude rules, and transform what matches. Nothing here is site-specific
+- moving the experiment to a different tensor is a regex in
 ``TRANSFORM_REGISTRY``, not a new implementation.
 
 The mechanism is structured weight tying, not quaternion arithmetic. See
-``praxis/ghost/algebra.py`` for the derivation and for the one guarantee the
-source paper (arXiv:2608.07735) actually offers, and
-``praxis/ghost/parametrization.py`` for why the transform is applied IN PLACE.
+``praxis/transforms/algebra.py`` for the derivation and the one guarantee the
+source paper (arXiv:2608.07735) offers, and ``praxis/transforms/ghost.py`` for
+why the transform is applied IN PLACE.
 
-IT COMPOSES, IT DOES NOT EXCLUDE. Ghosting is a parametrization of a weight, and
+IT COMPOSES, IT DOES NOT EXCLUDE. Ghosting is a parametrization of a weight and
 the parameter-merging routers are a deviation ON a weight, so they stack::
 
     y = expand(real) @ x  +  sum_e c_be B_e (A_e x)
-        \\_______________/     \\______________________/
+        \_______________/     \______________________/
          ghost-derived base     SMEAR's learned deviations, untouched
 
-SMEAR's ``MergedLinear`` is therefore a target like any other, and the fact that
-SMEAR holds its own reference to that module is exactly why the transform must
-mutate rather than wrap.
+SMEAR's ``MergedLinear`` is a target like any other, and the fact that SMEAR
+holds its own reference to that module is why the transform must mutate rather
+than wrap.
 
-WHY THIS DOES NOT REUSE ``discover_targets``. That walker excludes
-``MERGE_OPAQUE`` subtrees, which is a statement about ROUTING GRANULARITY ("this
-already routes per token, so a per-batch merge around it buys nothing") with
-nothing to say about weight tying. PEER sets that flag, and PEER's banks are the
-largest tensor group in the decoder - reusing the flag would make them
-permanently unreachable for a reason that does not apply. ``GHOST_OPAQUE`` is the
-separate flag, and it means something narrower: this module's parameters are
-addressed by a name captured at construction, or rewritten in place by an inner
-loop, so a derived tensor has nowhere to be written back to.
+WHY NOT ``discover_targets``. That walker excludes ``MERGE_OPAQUE`` subtrees,
+which is a statement about ROUTING GRANULARITY with nothing to say about weight
+tying. PEER sets that flag, and PEER's banks are the largest tensor group in the
+decoder. ``GHOST_OPAQUE`` is the separate, narrower flag: this module's
+parameters are addressed by a name captured at construction, or rewritten in
+place by an inner loop, so a derived tensor has nowhere to be written back to.
 
-Tied-by-reference parameters ARE still skipped, by id: ghosting one member of a
+Tied-by-reference parameters are still skipped, by id: ghosting one member of a
 tied pair and not the other silently unties them.
 """
 

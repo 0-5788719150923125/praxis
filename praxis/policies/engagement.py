@@ -1,39 +1,27 @@
 """Forward-path REINFORCE on the engagement-prediction reward (PLAN.md P3).
 
-DISABLED BY DEFAULT. No experiment lists this in ``rl_type``; see next/rl.md for
-the audit that took it out of the abstractinator line. The bounds and the
-persistent baseline below are real fixes, but they do not repair the two
-design-level defects, which are stated here so nobody re-enables this expecting
-a policy gradient:
+Dense (simulated-user) path: over the assistant region of each example, the
+model's predicted answer tokens A_hat are scored against the ground-truth answer
+tokens R by recall - "did the model anticipate its own answer". That recall plus
+the homeostatic energy is the reward, against a slow reward-EMA baseline, and
+the term reweights the LM's own log-probs over the answer tokens. No extra
+parameters and no RL dataset: the reward is computed from labels.
+
+DISABLED BY DEFAULT (see next/rl.md), because of two defects that the bounds and
+persistent baseline below do not repair:
 
 1. THIS IS NOT A POLICY GRADIENT. The reward is computed from
    ``pred_ids = argmax(logits)`` while the log-prob that gets weighted is the
-   GROUND-TRUTH label's. REINFORCE requires ``log pi(a)`` for the action ``a``
-   that earned the reward; these are different objects. Substituting
-   ``logprob = -ce``, the term is really ``+rl_weight * advantage * CE``: a
-   per-row reweighting of the ordinary cross-entropy by how well the row was
-   already predicted. Rows the model gets right are amplified, rows it gets
-   wrong are suppressed - a rich-get-richer ratchet on the current output
-   distribution, which is a mode-collapse operator, not an exploration signal.
-   Making it a real policy gradient requires sampling the action (rollouts),
-   which this forward-path contract has no way to do.
+   GROUND-TRUTH label's. Substituting ``logprob = -ce``, the term is really
+   ``+rl_weight * advantage * CE``: a per-row reweighting of the ordinary
+   cross-entropy by how well the row was already predicted - a rich-get-richer
+   ratchet on the current output distribution. A real policy gradient requires
+   sampling the action, which this forward-path contract cannot do.
 2. THE REWARD IS MAXIMISED BY SAYING LESS. ``recall`` is
    ``|set(pred) & set(target)| / |set(pred)|`` over DISTINCT ids, which is
-   precision, not recall, and its optimum is to emit ONE distinct id that
-   appears in the target. On a ~260-symbol byte alphabet the two sets also
-   nearly always overlap, so the value is near-constant and carries almost no
-   information about whether the answer was right.
-
-Dense (simulated-user) path: over the assistant region of each example, the
-model's predicted answer tokens A_hat are scored against the ground-truth answer
-tokens R (the labels) by recall - "did the model anticipate its own answer". That
-recall plus the homeostatic energy is the reward (against a slow reward-EMA
-baseline); the term reweights the LM's own log-probs over the answer tokens. No
-extra parameters and no RL dataset - the reward is computed from labels, not
-carried in.
-
-This is the teacher-forced dense proxy used to validate that the signal moves a
-small model before the live, generation-time channel (P4/P5) exists.
+   precision, and its optimum is to emit ONE distinct id that appears in the
+   target. On a ~260-symbol byte alphabet the two sets nearly always overlap, so
+   the value is near-constant.
 """
 
 from typing import Optional, Tuple

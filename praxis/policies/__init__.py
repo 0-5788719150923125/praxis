@@ -107,7 +107,7 @@ def resolves_to_weight_controller(name):
 
 
 def rl_dataset_collections(name):
-    """Dataset collections an ``rl_type`` entry needs in ``train_datasets``.
+    """Named collections an ``rl_type`` entry needs in ``train_datasets``.
 
     Every RL policy here is bound to particular data, and the binding used to
     be invisible: ``rl_type`` and ``train_datasets`` are separate config keys,
@@ -125,6 +125,9 @@ def rl_dataset_collections(name):
     Unregistered names (the legacy ``cot-reinforce``) keep the historical
     fail-open mapping rather than resolving to nothing, since loading no data
     is the failure this function exists to prevent.
+
+    A policy that owns its data outright declares ``dataset_weights`` instead;
+    see :func:`rl_dataset_weights`.
     """
     cls = _policy_for(name)
     if cls is None:
@@ -132,6 +135,25 @@ def rl_dataset_collections(name):
     if getattr(cls, "is_weight_controller", False):
         return ()
     return tuple(getattr(cls, "dataset_collections", ()) or ())
+
+
+def rl_dataset_weights(name):
+    """Individual datasets an ``rl_type`` entry injects, as ``{id: weight}``.
+
+    The dataset-level half of the same binding: a policy names DATASETS keys
+    directly rather than a shared collection, which is what a dataset with
+    only one legitimate consumer needs. ``Anthropic/hh-rlhf`` is the case -
+    its card permits preference modeling only, so it cannot sit in a general
+    collection where any experiment picks it up as conversation data. Its
+    entry declares ``requires_rl_type`` and ``add_collection`` refuses it, so
+    the policy's declaration here is the only door in.
+
+    Weight controllers reward from a callback and inject nothing.
+    """
+    cls = _policy_for(name)
+    if cls is None or getattr(cls, "is_weight_controller", False):
+        return {}
+    return dict(getattr(cls, "dataset_weights", {}) or {})
 
 
 def needs_rl_datasets(name):
@@ -159,6 +181,7 @@ __all__ = [
     "resolves_to_weight_controller",
     "needs_rl_datasets",
     "rl_dataset_collections",
+    "rl_dataset_weights",
     "EngagementPolicy",
     "JokePolicy",
 ]

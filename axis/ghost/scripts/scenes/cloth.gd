@@ -8,94 +8,87 @@ extends GhostScene
 ## and a strip peels off and streams away still rippling. By the end the sheet is a set of
 ## ragged ribbons on the same line, still moving.
 ##
-## THIS IS THE FIRST DEFORMABLE SUBJECT IN THE CATALOGUE. Everything else here is rigid, a
-## particle, or a field: [Primitives] is eight field-like forces with no contact and no
-## constraint of any kind. Cloth is a real solver - positions and previous positions in packed
-## arrays, distance constraints relaxed Gauss-Seidel for N iterations, pins as zero-inverse-mass
-## nodes - and it is also the only subject that DESTROYS ITSELF, so a long scene has an arc
-## with no keyframes, no lifecycle scripting and no authored tear time. Whether a seam gives
+## THIS IS THE FIRST DEFORMABLE SUBJECT IN THE CATALOGUE. Everything else is rigid, a
+## particle, or a field. Cloth is a real solver - positions and previous positions in packed
+## arrays, distance constraints relaxed Gauss-Seidel for N iterations, pins as
+## zero-inverse-mass nodes - and it is the only subject that DESTROYS ITSELF, so a long
+## scene has an arc with no keyframes and no authored tear time. Whether a seam gives
 ## depends only on accumulated stress in that seam.
 ##
-## THE SHEET IS SIMULATED IN 3D, drawn in 2D. Two extra floats per node buy the whole look: a
-## fold has a genuine surface normal, so Lambert shading, a translucent glow where light comes
-## through the back, and a specular sheen on the crest of a fold are all real rather than
-## faked from projected area - and a gust can push the cloth TOWARD the viewer and be seen as
-## a bulge instead of a sideways smear. The projection is deliberately weak (a linear
-## `1 + z * persp` scale about frame centre, not a perspective divide) because a hanging sheet
-## is square-on - it wants dimension, not a tumbling-card read. Framing is `plane` for the same
-## reason, which puts the camera in `PLANE_BAG`: centred, occasionally a slow push.
+## THE SHEET IS SIMULATED IN 3D, drawn in 2D. Two extra floats per node buy the whole look:
+## a fold has a genuine surface normal, so Lambert shading, a translucent glow where light
+## comes through the back, and a specular sheen on a fold's crest are all real rather than
+## faked from projected area - and a gust can push the cloth TOWARD the viewer and be seen
+## as a bulge instead of a sideways smear. The projection is deliberately weak (a linear
+## `1 + z * persp` scale about frame centre, not a perspective divide) because a hanging
+## sheet is square-on: it wants dimension, not a tumbling-card read. Framing is `plane`,
+## which puts the camera in `PLANE_BAG`: centred, occasionally a slow push.
 ##
 ## THE TEAR IS CONSTRAINT REMOVAL, AND IT PROPAGATES ALONG THE WEAVE. Every structural
-## constraint carries a yield strain sampled at build (the weave irregularity - where the
-## fabric is weakest is decided by the seed, so a given instance always gives at the same
-## place) and accumulates DAMAGE at a rate proportional to how far past yield it is, so a long
-## quiet passage and a short violent one can both eventually break the same seam. When damage
-## reaches 1 the constraint is removed, and with it the shear diagonals of the two cells it
-## bordered and the single bend constraint that spanned it - otherwise a diagonal would bridge
-## the rip and it would never open.
+## constraint carries a yield strain sampled at build - the weave irregularity, so a given
+## instance always gives at the same place - and accumulates DAMAGE at a rate proportional
+## to how far past yield it is, so a long quiet passage and a short violent one can both
+## eventually break the same seam. When damage reaches 1 the constraint is removed, and with
+## it the shear diagonals of the two cells it bordered and the bend constraint that spanned
+## it - otherwise a diagonal would bridge the rip and it would never open.
 ##
 ## The propagation is the part worth explaining. A break raises a WEAKENING field on the
-## neighbouring edges of the weave grid: strongly on the two edges continuing the run (the same
-## warp/weft line, one step along), weakly on the edges to either side, and weaker still on the
-## crossing edges at the tip - which is stress concentration at a crack tip, written as data.
-## An edge's effective yield is its sampled strength times `1 - weak`. Because the boost along
-## the run is several times the sideways boost, the next thing to give is nearly always the
-## next edge in line, so the tear reads as a RUN rather than as the fabric shredding everywhere
-## at once. The weakening decays a little every tick, so a run that stops finding stress
-## arrests instead of inevitably crossing the whole sheet.
+## neighbouring edges: strongly on the two edges continuing the run (the same warp/weft
+## line, one step along), weakly on the edges to either side, weaker still on the crossing
+## edges at the tip - stress concentration at a crack tip, written as data. An edge's
+## effective yield is its sampled strength times `1 - weak`. Because the boost along the run
+## is several times the sideways boost, the next thing to give is nearly always the next
+## edge in line, so the tear reads as a RUN rather than the fabric shredding everywhere at
+## once. The weakening decays every tick, so a run that stops finding stress arrests.
 ##
-## Which way the runs go is a sampled property of the FABRIC, not a scripted outcome.
-## `weave_bias` is the ratio of weft (vertical thread) yield to warp (horizontal thread) yield:
-## above 1 the warp gives first, so the runs are vertical and the sheet ends as ribbons still
-## hanging from the line; below 1 the weft gives first, so a horizontal seam parts and the whole
-## lower strip peels off and streams away. Both endings live in the same scene.
+## Which way the runs go is a sampled property of the FABRIC. `weave_bias` is the ratio of
+## weft yield to warp yield: above 1 the warp gives first, so the runs are vertical and the
+## sheet ends as ribbons still hanging from the line; below 1 the weft gives first, so a
+## horizontal seam parts and the whole lower strip peels off and streams away.
 ##
 ## WHAT THE SEED DECIDES. The mood ([Scheme]) and the whole palette from it. Node grid and
-## therefore mesh resolution; solver iterations (see [constant SOLVE_BUDGET]); structural,
-## shear and bend stiffness; slack (rest lengths shorter than the grid, so it drapes from the
-## first frame); GATHER, how far the pins are pulled in from the fabric's natural width, which
-## is what makes a curtain buckle into standing folds rather than hanging flat; the initial
-## fold ripple that gives the buckling a direction; the pin pattern (a line of pegs, two
-## corners, a diagonal, or a single point at the centre); mass per node, which sets drape by
-## dividing the wind but not gravity; damping; gravity; the base wind and how much movement
-## adds to it; the wind's direction and turbulence gain; the gust vocabulary; how far the
-## threads give before they simply cannot lengthen (`max_stretch`); tearing on or off and its
-## yield, irregularity, damage rate, crack-tip gains, weakening decay and breaks per tick;
+## mesh resolution; solver iterations (see [constant SOLVE_BUDGET]); structural, shear and
+## bend stiffness; slack (rest lengths shorter than the grid, so it drapes from the first
+## frame); GATHER, how far the pins are pulled in from the fabric's natural width, which
+## makes a curtain buckle into standing folds rather than hanging flat; the initial fold
+## ripple that gives the buckling a direction; the pin pattern (a line of pegs, two corners,
+## a diagonal, or a single point at centre); mass per node, which sets drape by dividing the
+## wind but not gravity; damping; gravity; the base wind and how much movement adds to it;
+## the wind's direction and turbulence gain; the gust vocabulary; how far the threads give
+## before they cannot lengthen (`max_stretch`); tearing on or off and its yield,
+## irregularity, damage rate, crack-tip gains, weakening decay and breaks per tick;
 ## `weave_bias`; opacity, translucency, sheen and shininess; the light direction; the
-## perspective strength; whether the frame is high-key ([method GhostScene.paint_ground]) or a
-## dark [Layer] bed; and whether shed strips settle on a floor at the bottom of frame or simply
-## leave.
+## perspective strength; whether the frame is high-key ([method GhostScene.paint_ground]) or
+## a dark [Layer] bed; and whether shed strips settle on a floor or simply leave.
 ##
-## AUDIO, AND WHY NOTHING HERE MULTIPLIES A SIZE BY LOUDNESS. The wind is a [Flow2D] curl field
-## and its overall speed follows a slow [method Nonlinear.flare] envelope of `f.movement`; its
-## turbulence scale follows `f.flux` (typically 0.01-0.05, so the gain is large and the result
-## is still a modest 1.0-1.7x change in spatial frequency). Loudness never sets an amplitude:
-## the fabric's RESPONSE to the wind is the amplitude, which is exactly why a loud smooth
-## passage and a quiet busy one look different here - something an amplitude mapping cannot do
-## at all. A `f.beat` rising edge releases a GUST, a localized pressure blob that crosses the
-## sheet at its own speed, so the beat is seen as a wave travelling through the fabric and
-## arriving LATE at the far edge; that delay is physical, not scheduled. The gusts come from a
-## vocabulary pre-rolled at build and cycled by a counter, never from a live draw, because the
-## live analyzer and the offline export bake do not produce identical beat streams and the
-## render would diverge from the preview. `f.treble` lifts the specular sheen on folds whose
-## normal faces the light, [Lighting] sweeps hotspots across the sheet, and `chroma_hue()`
-## pulls the fabric's colour toward the music's tonal centre.
+## AUDIO, AND WHY NOTHING MULTIPLIES A SIZE BY LOUDNESS. The wind is a [Flow2D] curl field
+## whose overall speed follows a slow [method Nonlinear.flare] envelope of `f.movement`; its
+## turbulence scale follows `f.flux` (typically 0.01-0.05, so the gain is large and the
+## result is still a modest 1.0-1.7x change in spatial frequency). Loudness never sets an
+## amplitude: the fabric's RESPONSE to the wind is the amplitude, which is why a loud smooth
+## passage and a quiet busy one look different here. A `f.beat` rising edge releases a GUST,
+## a localized pressure blob crossing the sheet at its own speed, so the beat is seen as a
+## wave travelling through the fabric and arriving LATE at the far edge - a physical delay,
+## not a scheduled one. Gusts come from a vocabulary pre-rolled at build and cycled by a
+## counter, never a live draw, because the live analyzer and the offline bake do not produce
+## identical beat streams. `f.treble` lifts the specular sheen on folds facing the light,
+## [Lighting] sweeps hotspots across the sheet, and `chroma_hue()` pulls the fabric's colour
+## toward the music's tonal centre.
 ##
-## COST, AND THE TWO NUMBERS THAT SHAPED IT. Everything is budgeted, because a Gauss-Seidel
-## relaxation is `constraints x iterations` inner steps per tick and that product is the entire
-## frame cost of this scene. [constant SOLVE_BUDGET] caps it, and iterations are clamped DOWN
-## to fit whatever grid the seed rolled - so resolution and stiffness trade against each other
-## instead of multiplying, and a fine mesh is automatically a softer one. The wind field is
-## sampled on a coarse lattice (a handful of [Flow2D] probes per tick) and bilinearly
-## interpolated per node, because wind has a far coarser spatial scale than the mesh and a
-## curl-noise probe is four 3D noise lookups - one per node would cost more than the solver.
+## COST. A Gauss-Seidel relaxation is `constraints x iterations` inner steps per tick and
+## that product is the entire frame cost. [constant SOLVE_BUDGET] caps it, and iterations
+## are clamped DOWN to fit whatever grid the seed rolled, so resolution and stiffness trade
+## against each other instead of multiplying and a fine mesh is automatically a softer one.
+## The wind field is sampled on a coarse lattice (a handful of [Flow2D] probes per tick) and
+## bilinearly interpolated per node, because wind has a far coarser spatial scale than the
+## mesh and a curl-noise probe is four 3D noise lookups.
 ##
-## The whole simulation runs on a [SimClock] at 60 Hz with a two-tick ceiling per call. That is
-## not decoration: the [Director] sub-steps `update()` up to 15 times in one frame, pre-warms
-## every scene with 12 calls before its first frame, and an [Echo] re-localize can fast-forward
-## hundreds of calls. A cloth that advanced once per call would arrive on screen already torn.
-## The pre-warm produces 24 ticks, 0.4 s of simulated time, which is why `tear_delay` is
-## sampled no lower than 1.2 s - the opening frame is a settled, whole sheet, always.
+## The simulation runs on a [SimClock] at 60 Hz with a two-tick ceiling per call. Not
+## decoration: the [Director] sub-steps `update()` up to 15 times in one frame, pre-warms
+## every scene with 12 calls before its first frame, and an [Echo] re-localize can
+## fast-forward hundreds of calls. The pre-warm produces 24 ticks, 0.4 s of simulated time,
+## which is why `tear_delay` is sampled no lower than 1.2 s - the opening frame is a
+## settled, whole sheet, always.
 
 ## Ceiling on constraint solves per tick (constraints x iterations). The solver is the frame
 ## cost, so it is capped rather than hoped for: iterations are clamped down until the product

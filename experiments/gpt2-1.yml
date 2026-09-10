@@ -29,7 +29,7 @@ encoding_type: nope
 embeddings: positional
 norm_type: layer_norm
 ffn_type: mlp
-activation: gelu
+activation_type: gelu
 residual_type: standard
 tie_weights: true
 contrastive_isotropy: false

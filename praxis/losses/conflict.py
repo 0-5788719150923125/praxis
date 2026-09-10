@@ -1,60 +1,46 @@
 """Objective conflict: do this model's several losses pull the trunk apart?
 
-A model here rarely trains on one objective. A typical prismatic run sums a
-main cross-entropy with ``harmonic_kl``, HALO's geometric terms, the crystal
-centers-RMS regularizer, ``contrastive_isotropy``, MTP, router and gate
-penalties, and whatever the trunk itself emits - all backward through the same
-shared representation. Summing them is the default and nothing checks whether
-the terms actually agree about which way that representation should move.
+A typical prismatic run sums a main cross-entropy with ``harmonic_kl``, HALO's
+geometric terms, the crystal centers-RMS regularizer,
+``contrastive_isotropy``, MTP, router and gate penalties, and whatever the trunk
+emits - all backward through the same shared representation. Nothing checks
+whether the terms agree about which way that representation should move.
 
 Stack the per-objective gradients as rows and you have the object multi-task
 learning is written about: a Jacobian with one row per loss and one column per
-shared parameter. Every method in that literature - PCGrad's projection onto
-the conflicting gradient's normal plane, GradNorm's norm equalization, CAGrad,
-Nash-MTL - is a rule for combining those rows by something other than a plain
-sum, and each is motivated by rows that point in opposing directions so one
-objective silently cancels another.
+shared parameter. PCGrad, GradNorm, CAGrad, Nash-MTL are all rules for combining
+those rows by something other than a plain sum, each motivated by rows pointing
+in opposing directions.
 
-WHAT A COSINE ALONE CANNOT SEE, AND WHY EACH SERIES HAS A TWIN. Cosine is
-scale-invariant, so a term contributing nothing and a term contributing a lot
-in an independent direction read identically. "No conflict" and "not
-participating" are the same number. Every ``conflict_<name>`` therefore ships
-with ``conflict_mag_<name>``, the ratio ``||g_term|| / ||g_main||`` at the same
-tensor: a cosine near 0 at a ratio near 0 says the term is inert, while a
-cosine near 0 at a ratio near 1 says two comparable forces are genuinely
-shaping independent directions. Only the second reading is evidence that
-summing them is fine.
+THIS MODULE IS THE MEASUREMENT, NOT THE METHOD. Every one of those rules costs
+compute per step and usually a hyperparameter. Whether one would buy anything is
+answered by the cosine between each objective's gradient and the main loss's:
+persistently negative is conflict and the case for gradient surgery, near 0
+means orthogonal directions and the plain sum is fine, positive means the aux
+term is a reweighting of the main one.
 
-AND WHAT NEITHER SEES. These are LOSS TERMS. A head whose several arms are
-trained by ONE cross-entropy through a mixture has a multi-task problem that
-never appears here at all, because the arms are not separate terms - the
-mixture's posterior responsibility silently weights them instead. That
-measurement lives with the head that owns the arms
-(``ParallelHead.arm_conflict``), not here.
+EACH SERIES HAS A TWIN, because cosine is scale-invariant: a term contributing
+nothing and a term contributing a lot in an independent direction read
+identically. Every ``conflict_<name>`` ships with ``conflict_mag_<name>``, the
+ratio ``||g_term|| / ||g_main||`` at the same tensor. Cosine near 0 at ratio
+near 0 says inert; cosine near 0 at ratio near 1 says two comparable forces are
+shaping independent directions, which is the only reading that licenses the sum.
 
-THIS MODULE IS THE MEASUREMENT, NOT THE METHOD. Adopting any of those rules
-costs compute on every step and, in most cases, a hyperparameter. The question
-of whether it would buy anything is answered by one number per pair: the cosine
-between each objective's gradient and the main loss's. Persistently negative
-cosines are conflict and the case for gradient surgery; cosines hovering near 0
-mean the terms are shaping orthogonal directions and the plain sum is already
-fine; positive cosines mean the aux term is a reweighting of the main one.
+AT THE TRUNK OUTPUT, NOT THE PARAMETERS. The honest Jacobian is w.r.t. shared
+parameters, which needs a full backward per objective - the cost this module
+exists to avoid paying before knowing it is worth paying. Differentiating w.r.t.
+the trunk's output ACTIVATION needs only a backward through the head and answers
+the same question: by the chain rule every shared parameter's gradient factors
+through that tensor. It cannot see conflict arising inside the trunk.
 
-WHY AT THE TRUNK OUTPUT, NOT THE PARAMETERS. The honest Jacobian is with
-respect to shared PARAMETERS, which needs a full backward per objective - the
-cost this module exists to avoid paying before knowing it is worth paying.
-Differentiating with respect to the trunk's output ACTIVATION instead needs
-only a backward through the head, and it answers the same question: by the
-chain rule every shared parameter's gradient factors through this tensor, so
-two objectives whose activation gradients oppose each other oppose each other
-in the trunk as well. It cannot see conflict that arises only inside the trunk,
-and it says nothing about terms that never touch the activation at all.
+A MISSING TERM IS A RESULT. ``centers_rms``, the gate repulsion and the router
+repulsions are parameter-only - no path to the activation, so no series here.
+They do not compete for the shared representation; they shape their own
+parameters only.
 
-WHICH IS WHY A MISSING TERM IS A RESULT. ``centers_rms``, the gate repulsion
-and the router repulsions are parameter-only: they have no path to the
-activation, so they emit no series here. That is the correct reading, not a
-gap. They do not compete with the main loss for the shared representation;
-they only shape their own parameters.
+These are LOSS TERMS. A head whose arms are trained by ONE cross-entropy through
+a mixture has a multi-task problem that never appears here, because the arms are
+not separate terms; that measurement lives on ``ParallelHead.arm_conflict``.
 """
 
 from typing import Any, Dict, Optional

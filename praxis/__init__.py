@@ -1,4 +1,4 @@
-from praxis.activations import ACTIVATION_REGISTRY
+from praxis.activations import ACTIVATION_REGISTRY, ACTIVATION_TYPE_REGISTRY
 from praxis.attention import ATTENTION_REGISTRY
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY

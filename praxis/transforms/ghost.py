@@ -1,54 +1,38 @@
-"""Ghost features: extra weight blocks derived from weights you already have.
+r"""Ghost features: extra weight blocks derived from weights you already have.
 
-THE NAME IS THEIRS. "Ghost features" is the term Vieira Neto & Valle chose in
-"Ghost Features and Spooky Transfer Learning for Hypercomplex-Valued Neural
-Networks" (arXiv:2608.07735, 2026), following GhostNet's ghost feature maps (Han
-et al., CVPR 2020) which they cite in section 3. This module implements their
-construction, so it keeps their word for it - calling it "tying" or "structured
-expansion" would describe the mechanism accurately while quietly dropping the
-attribution, and the mechanism is not the part we contributed. The surrounding
+THE NAME IS THEIRS. Vieira Neto & Valle, "Ghost Features and Spooky Transfer
+Learning for Hypercomplex-Valued Neural Networks" (arXiv:2608.07735, 2026),
+following GhostNet's ghost feature maps (Han et al., CVPR 2020). This module
+implements their construction, so it keeps their word for it. The surrounding
 namespace is ``praxis.transforms`` because a tree-walking parameter rewrite is a
-general shape and ghosting is one instance of it; the operation itself is
-ghosting.
+general shape and ghosting is one instance of it.
 
 Not to be confused with ghostmax (``praxis/attention/causal.py``), a phantom key
-prepended to the softmax denominator so attention can attend to nothing. Nothing
-connects the two but the word.
+prepended to the softmax denominator. Nothing connects the two but the word.
 
-Applied as an IN-PLACE parametrization, not a wrapper.
-
-This replaces four per-type wrapper classes (Linear, Conv1d, Embedding,
-EmbeddingBag) with one mechanism that works on any module owning a ``weight``
-Parameter, and it is the only version that COMPOSES with the parameter-merging
-routers instead of stepping around them.
-
-WHY WRAPPING WAS WRONG. Swapping a module for a wrapper changes the object at
-that qualname, and anything else holding a reference to the original keeps the
-original. SMEAR registers its ``MergedLinear`` in ``self.wrappers`` AND at the
-block qualname (praxis/routers/smear.py), so replacing the qualname would leave
-the router driving a module the block no longer uses. ``register_parametrization``
-mutates in place: same object, same identity, ``isinstance`` unchanged, every
-existing reference still valid. So ghost and SMEAR stack rather than exclude:
+APPLIED AS AN IN-PLACE PARAMETRIZATION, not a wrapper, so it works on any module
+owning a ``weight`` Parameter and COMPOSES with the parameter-merging routers.
+Swapping a module for a wrapper changes the object at that qualname, and
+anything holding a reference to the original keeps the original - SMEAR
+registers its ``MergedLinear`` in ``self.wrappers`` AND at the block qualname,
+so replacing the qualname would leave the router driving a module the block no
+longer uses. ``register_parametrization`` mutates in place: same object, same
+identity, ``isinstance`` unchanged. So ghost and SMEAR stack:
 
     y = expand(real) @ x  +  sum_e c_be B_e (A_e x)
-        \\_______________/     \\______________________/
+        \_______________/     \______________________/
          ghost-derived base     SMEAR's learned deviations, untouched
 
-The base is halved and structured; the per-example low-rank deviations ride on
-top exactly as before. Nothing in SMEAR needs to know.
+WHY ``right_inverse`` MATTERS. PyTorch calls it once at registration to turn the
+module's EXISTING weight into the stored tensor. Our ``P_k`` are involutions, so
+``mean_k P_k(W_k)`` is the least-squares real tensor for an incoming ``W``: the
+ghosted module starts at the closest representable point to whatever init its
+host already chose. Every module keeps its own init convention for free and no
+scale factor is picked here.
 
-WHY ``right_inverse`` MATTERS, and it is not bookkeeping. PyTorch calls it once
-at registration to turn the module's EXISTING weight into the stored tensor. Our
-``P_k`` are involutions, so ``mean_k P_k(W_k)`` is the least-squares real tensor
-for an incoming ``W`` - which means the ghosted module starts at the closest
-representable point to whatever init its host already chose. Every module keeps
-its own init convention for free, and no scale factor is picked here. The wrapper
-version had to reproduce ``kaiming_uniform_(a=sqrt(5))`` by hand and got it wrong
-once already, at 0.045x, which voided a run.
-
-The stored tensor is ``parametrizations.weight.original`` at ``[out // d, in,
-*tail]`` - genuinely smaller, and the only parameter for that weight. Nothing
-dead is retained.
+The stored tensor is ``parametrizations.weight.original`` at
+``[out // d, in, *tail]`` - genuinely smaller, and the only parameter for that
+weight.
 """
 
 from __future__ import annotations

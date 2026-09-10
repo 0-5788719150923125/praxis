@@ -554,38 +554,34 @@ class ExpertBank(nn.Module):
         current_depth: int = 0,
         merge_weights: Optional[torch.Tensor] = None,
     ) -> None:
-        """
-        Store routing metrics for expert convergence tracking.
+        """Store routing metrics for expert convergence tracking.
 
-        WHAT IS MEASURED ON WHAT. Every diagnostic here describes the ROUTER, so
-        it is computed on ``routing_probs`` = the router's own pre-transform,
-        pre-dropout output. The single exception is
-        ``expert_{i}_routing_weight`` / ``routing_merge_entropy``, which describe
-        the MERGE and therefore use the post-transform weights.
+        WHAT IS MEASURED ON WHAT. Every diagnostic here describes the ROUTER, so it is
+        computed on ``routing_probs`` = the router's own pre-transform, pre-dropout
+        output. The exception is ``expert_{i}_routing_weight`` /
+        ``routing_merge_entropy``, which describe the MERGE and use the post-transform
+        weights.
 
         That split exists because VEAR sharpens by ``p**4`` before merging
-        (praxis/routers/vear.py). Measuring the router's diagnostics on the
-        sharpened probabilities made every one of them report VEAR's own
-        exponent rather than anything the router learned: entropy saturated to
-        float-exact one-hot and became insensitive to the weights entirely -
-        bit-identical across models whose losses differed by 5%. A metric that
-        cannot vary with the thing it claims to measure is worse than absent,
-        because it reads as a finding.
+        (praxis/routers/vear.py). On the sharpened probabilities the router's
+        diagnostics report VEAR's own exponent rather than anything the router learned
+        - entropy saturates to float-exact one-hot and goes bit-identical across models
+        whose losses differ by 5%.
 
-        Metrics are stored with layer prefixes to support per-layer visualization
-        when the same router is called at multiple layer positions.
+        Metrics are stored with layer prefixes to support per-layer visualization when
+        the same router is called at multiple layer positions.
 
-        Metrics flow: SMEAR router → Decoder.get_metrics() → Model.get_metrics() →
-                     BackpropagationTrainer.log_dict() → MetricsLoggerCallback →
-                     SQLite → API → Web dashboard
+        Metrics flow: SMEAR router -> Decoder.get_metrics() -> Model.get_metrics() ->
+                      BackpropagationTrainer.log_dict() -> MetricsLoggerCallback ->
+                      SQLite -> API -> Web dashboard
 
         Args:
             expert_weights: Mean routing probability per expert [num_experts]
             routing_probs: The ROUTER's probabilities [batch_size, num_experts],
                 before any subclass transform and before expert dropout
             current_depth: Current layer depth for per-layer metric tracking
-            merge_weights: Batch-mean weights the merge actually used. Differs
-                from the router's own mean whenever a subclass transforms them.
+            merge_weights: Batch-mean weights the merge actually used. Differs from
+                the router's own mean whenever a subclass transforms them.
         """
         try:
             layer_prefix = f"layer_{current_depth}_"

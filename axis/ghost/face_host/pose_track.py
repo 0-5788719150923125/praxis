@@ -2,50 +2,35 @@
 
 Reads a video once, runs MediaPipe's pose landmarker over it at a fixed sample
 rate, and writes a compact binary track the editor reads back BY TIME. Each
-sample carries two things the umbra needs and nothing else could give it:
+sample carries two things:
 
   THE SILHOUETTE  a per-pixel person mask, downsampled to the editor's grid.
-                  This is the ghost's BODY. The effect it replaces grew its
-                  shape out of the footage's own cast shadow, which meant it
-                  only worked when the room happened to have one big soft
-                  shadow on a chromatically uniform wall - and even there it
-                  needed a colour hypothesis, two flood fills and a confidence
-                  gate that drew nothing about a third of the time. A person
-                  mask is the same answer with none of the conditions.
-
-  THE POSE        33 landmarks with visibility. This is the ghost's SKELETON:
-                  where her head is, where her shoulders are, where her eyes
-                  are - so the ghost's own head lands somewhere real at any
-                  size, and its eyes land on that head rather than in the
-                  middle of the mass and hoping.
+                  This is the ghost's BODY.
+  THE POSE        33 landmarks with visibility. This is the ghost's SKELETON -
+                  where her head, shoulders and eyes are, so the ghost's own
+                  head lands somewhere real at any size and its eyes land on
+                  that head.
 
 Same architecture and the same three reasons as face_host/face_track.py: the
 live preview and the export relaunch are separate PROCESSES that must agree
-frame-for-frame and do because they read one cached file; no detection ever
-runs inside the render loop; and because the whole track exists before
-playback, the effect can read the frame she has NOT REACHED YET. That last one
-is the entire point of the umbra - a ghost that moves a beat before she does
-reads as a puppeteer, and no live tracker can ever supply it.
+frame-for-frame and do because they read one cached file; no detection ever runs
+inside the render loop; and because the whole track exists before playback, the
+effect can read the frame she has NOT REACHED YET. That last one is the point of
+the umbra - a ghost that moves a beat before she does reads as a puppeteer, and
+no live tracker can supply it.
 
-THE CAST DIRECTION, and why it is measured over the whole clip
---------------------------------------------------------------
-The ghost is thrown away from her along the direction the room's key light
-throws her real shadow. That is a property of the ROOM, not of the frame, so
-it is measured once here rather than re-derived every tick (re-deriving it per
-frame is exactly how the clown earned its uniform twitch, and the effect this
-replaces EMA'd it at 0.06 for the same reason).
-
-It is measured TEMPORALLY, which needs no colour model at all: her shadow is
-the part of the background that CHANGES AS SHE MOVES. Cells the person mask
-never covers, ranked by their luminance variance over the clip, are her moving
-shadow plus whatever else flickers; the vector from her mean centroid to that
-variance mass is the direction the light throws her. Compare this with asking
-"which side of her is darker", which on the reference clip answers correctly
-for the wrong reason - camera-left is a cream door and camera-right is a teal
-wall, so the luminance question is really a question about paint.
+THE CAST DIRECTION is a property of the ROOM, not of the frame, so it is
+measured once over the whole clip rather than re-derived every tick. It is
+measured TEMPORALLY, needing no colour model: her shadow is the part of the
+background that CHANGES AS SHE MOVES. Cells the person mask never covers, ranked
+by luminance variance over the clip, are her moving shadow plus whatever else
+flickers; the vector from her mean centroid to that variance mass is the
+direction the light throws her. Asking instead "which side of her is darker"
+answers a question about paint - on the reference clip camera-left is a cream
+door and camera-right is a teal wall.
 
 THE FORMAT (little-endian, matches GDScript's FileAccess defaults)
------------------------------------------------------------------
+
     magic     4s    b"GST2"
     version   u32   2
     rate      f32   samples per second
@@ -63,13 +48,12 @@ THE FORMAT (little-endian, matches GDScript's FileAccess defaults)
         vis   f32 * points    visibility 0..1 (a landmark off-frame reads ~0)
         mask  u8  * mask_w*mask_h   silhouette coverage, 0..255
 
-Samples with found = 0 carry a zeroed mask and held coordinates: the flag is
-the truth, the numbers are a convenience.
+Samples with found = 0 carry a zeroed mask and held coordinates: the flag is the
+truth, the numbers are a convenience.
 
-At the default 96x54 / 12 Hz a sample is 5581 bytes, so a ten-minute clip
-caches about 40 MB in user://pose_tracks. That is deliberate - a byte per cell
-keeps the mask soft-edged, and a shadow's edge is the one part of it a viewer
-actually looks at.
+At the default 96x54 / 12 Hz a sample is 5581 bytes, so a ten-minute clip caches
+about 40 MB in user://pose_tracks. A byte per cell keeps the mask soft-edged,
+and a shadow's edge is the part a viewer looks at.
 
 Usage:
     python pose_track.py --video <path> --out <track.bin> --model <model.task>

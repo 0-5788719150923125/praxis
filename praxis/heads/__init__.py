@@ -110,35 +110,23 @@ def _prismatic6_branches(sharpen: Optional[float]) -> list:
     """Three arms over ONE shared field, all reading the same stem.
 
     prismatic2-5 give every arm its own HarmonicField, so three arms cost three
-    field evaluations - measured at ~30% of total compute in abstractinator-j,
-    against 53-69% dormant capacity in each of them. Here the field is the
-    ParallelHead's ``stem``: evaluated once, shared by both readouts, so the
-    arms differ only in HOW they read it. That is the distinction -j's gate
-    actually rewarded (field->crystal 0.736, field->linear 0.234) against the
-    separate-field bias arm it starved to 0.029.
+    field evaluations - ~30% of total compute in abstractinator-j, against 53-69%
+    dormant capacity in each. Here the field is the ParallelHead's ``stem``:
+    evaluated once, shared by both readouts, so the arms differ only in HOW they
+    read it. That is the distinction -j's gate actually rewarded (field->crystal
+    0.736, field->linear 0.234) against the separate-field bias arm it starved to
+    0.029.
 
     - Arm 0, GEOMETRIC: the crystal bank. ``sharpen`` decides whether the bank
       votes (VEAR) or blends (SMEAR).
     - Arm 1, DIRECT: a plain linear readout of the same field. The control that
       says whether the crystal geometry earns its cost.
-    - Arm 2, HALO: ``reads_trunk`` keeps it on the raw hidden states rather
-      than the stem, and it is now ATTACHED (``detach_in_blend=False``) where
-      prismatic5 detached it. It is REQUIRED whenever ``loss_func: halo`` is
-      set - ParallelHead.classifier looks for the ``is_halo`` arm to put
-      HALOLoss in composite mode, and without one the loss silently falls back
-      to its legacy side-loss path where the harmonic and gate machinery see
-      almost no gradient.
-
-      Why attach. Detaching bought a clean verdict on HALO's scoring function,
-      and that verdict came back at 0.00125 gate share over 22k steps in
-      abstractinator-j, never above its init - so the measurement is complete
-      and the detachment now buys a number already known. Attached, CE reaches
-      the arm and the question becomes whether it was CE-trainable all along.
-      The cost is honest: a rising share can no longer distinguish "HALO's
-      geometry is good" from "CE made this a decent CE head." Flip it back
-      (``detach_in_blend=True``, or drop the kwarg) if halo_gamma runs away or
-      halo_mean_radius drifts off halo_shell_radius, which is what CE pulling
-      the geometric calibration would look like.
+    - Arm 2, HALO: ``reads_trunk`` keeps it on the raw hidden states rather than
+      the stem, and it is ATTACHED (``detach_in_blend=False``). Required whenever
+      ``loss_func: halo`` is set - ParallelHead.classifier looks for the ``is_halo``
+      arm to put HALOLoss in composite mode, and without one the loss silently
+      falls back to its legacy side-loss path. See ``HaloHead`` for what attaching
+      trades away and what flips it back.
     """
     return [
         partial(CrystalVearHead, sharpen=sharpen),

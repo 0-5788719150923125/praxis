@@ -104,27 +104,19 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # (query fraction, key fraction) as above, half in (query fraction, LOG
     # LAG). The ratio half spans "attend to the start" and "attend a third of
     # the way back"; the lag half spans "attend one token back" and holds it at
-    # any length. Measured on a one-cell canonical feature: the lag half
-    # resolves lag 1 to WIDTH 1 at T=256 and T=512, where the ratio half smears
-    # the same feature across 16 positions at T=512.
+    # any length - measured, the lag half resolves lag 1 to WIDTH 1 at T=256 and
+    # T=512 where the ratio half smears it across 16 positions. Both rather than
+    # a warped dictionary, because warping all of it swaps the limitation
+    # instead of removing it. `kaleido_lag_share` says whether the lag half
+    # earns its place: the split is even, so 0.5 is parity.
     #
-    # Both, rather than a warped dictionary, because warping all of it swaps
-    # the limitation instead of removing it - a lag mirror cannot express a
-    # ratio any more than a ratio mirror can express a lag. The router picks,
-    # which is the block's own argument one level up. `kaleido_lag_share` says
-    # whether the lag half earns its place: the split is even, so 0.5 is parity.
-    #
-    # NOT RECOMMENDED on the evidence so far. -k ran the split for 16k steps
-    # and `kaleido_lag_share` never left parity (0.46-0.49, r = -0.03 against
-    # the sequence multiplier). That was not a fair test: at `block_size: 64`
-    # the trunk sees T = 9-65 latents against a 64-column dictionary, so the two
-    # coordinate systems address the same handful of positions and cannot be
-    # told apart. The split is UNTESTED, not refuted - retest it only at a
-    # block_size where T > MIRROR_RES is routine. `kaleido`/`kaleido_pink`
-    # above are the ratio-only default, and the uniform grid has an argument of
-    # its own: it is exactly scale-equivariant, so a periodic mirror stays
-    # periodic at every length, where the log warp turns it into a chirp whose
-    # rate depends on T.
+    # UNTESTED, not refuted. -k ran the split for 16k steps at `block_size: 64`,
+    # where the trunk sees T = 9-65 latents against a 64-column dictionary, so
+    # the two coordinate systems address the same handful of positions and
+    # cannot be told apart. Retest only where T > MIRROR_RES is routine.
+    # `kaleido`/`kaleido_pink` are the ratio-only default, and the uniform grid
+    # is exactly scale-equivariant - a periodic mirror stays periodic at every
+    # length, where the log warp turns it into a chirp whose rate depends on T.
     "kaleido_split": partial(KaleidoscopeAttention, coords="split"),
     "kaleido_split_dropoff_always": partial(
         KaleidoscopeAttention, coords="split", dropoff="warp", dropoff_every=True
@@ -141,13 +133,11 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # the expressive capacity the block has, and the default 4 is very few. The
     # merge is linear in N and the block is launch-overhead-bound at this width,
     # so 3x the dictionary measured at hidden_size 111 / num_heads 1 / B=8 cost
-    # 4.88 ms against 4.64 at T=257 (forward+backward) for +8% activations.
-    #
-    # Read `kaleido_turn_modes` against N. On the N=4 runs it settles near 2.4
-    # effective mirrors and DECLINES as sequences get longer, which either means
-    # the router saturates at 2-3 patterns however many it is offered, or that
-    # four iid draws from one distribution are simply redundant. Those two
-    # readings are indistinguishable at N=4 and separate immediately at N=12.
+    # 4.88 ms against 4.64 at T=257 for +8% activations. Read
+    # `kaleido_turn_modes` against N: at N=4 it settles near 2.4 effective
+    # mirrors and DECLINES with sequence length, which could mean the router
+    # saturates at 2-3 patterns however many it is offered, or that four iid
+    # draws are simply redundant. Those readings separate at N=12.
     "kaleido_12_dropoff_always": partial(
         KaleidoscopeAttention, num_mirrors=12, dropoff="warp", dropoff_every=True
     ),
@@ -159,28 +149,18 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     # dictionary opens SHARPER, not merely richer: measured at T=257 over 12
     # seeds, effective attention support falls 181 -> 65 -> 25 positions going
     # N = 4 -> 12 -> 24. Without this, an ablation on N confounds "more
-    # patterns" with "hotter softmax", and `kaleido_turn_modes` reads the same
-    # blend weights the confound lives in.
-    #
-    # `kaleido_norm_dropoff_always` is the N=4 arm and exists to be the matched
-    # control: normalisation is not free (a global constant is absorbed by
-    # `turn_static` but not by the tanh-bounded conditional half, so it also
-    # divides the per-token modulation ceiling), so an N sweep must have it on
-    # in both arms or neither.
+    # patterns" with "hotter softmax". `kaleido_norm_dropoff_always` is the N=4
+    # matched control - normalisation also divides the per-token modulation
+    # ceiling, so an N sweep must have it on in both arms or neither.
     # ... with a per-mirror SPATIAL ZOOM, mirror k read at zoom k+1, so the
     # dictionary spans periods T, T/2, T/3 ... T/n - the harmonic series over
     # relative position. See `zoom_ladder` in kaleidoscope.py for why
-    # granularity and not amplitude: a zoomed mirror is a different function,
-    # where a per-mirror scale is absorbed by the unbounded `turn_static` and
-    # already exists as the pink envelope. The ladder is derived from the group
-    # size, so N and granularity are one axis: a wider dictionary buys finer
-    # rungs rather than more draws. `kaleido_zoom_mean` says which rung the
-    # router buys, as a 0-1 position so it compares across N.
-    #
-    # This is the redundancy fix, not the capacity fix. `kaleido_turn_modes`
-    # settles near 2.4 of 4 and falls as sequences lengthen; N iid draws from
-    # one distribution stay redundant however many you take, so the ladder makes
-    # the mirrors differ by construction rather than by luck of the draw.
+    # granularity and not amplitude. The ladder is derived from the group size,
+    # so N and granularity are one axis: a wider dictionary buys finer rungs
+    # rather than more draws. `kaleido_zoom_mean` says which rung the router
+    # buys, as a 0-1 position so it compares across N. This is the redundancy
+    # fix, not the capacity fix - N iid draws from one distribution stay
+    # redundant however many you take.
     "kaleido_zoom_dropoff_always": partial(
         KaleidoscopeAttention, zoom=True, dropoff="warp", dropoff_every=True
     ),

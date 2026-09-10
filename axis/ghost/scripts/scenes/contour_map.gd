@@ -2,114 +2,94 @@ extends GhostScene
 
 ## Contour map - the terrain from directly above, as a printed survey sheet.
 ##
-## Warm paper, almost white, with thin dark isolines threading it at a fixed interval:
-## the first time in this catalogue that land is seen from straight overhead. Every fifth
-## line is an index contour drawn heavier, the band above the inked index line is ruled
-## with fine diagonal hatching, a graticule of ticks runs the margins with a scale bar in
-## one corner, and small survey crosses sit on local summits, each with a leader line out
-## to a two-glyph label in an invented script. A survey sweep crosses the sheet planting marks
-## as it goes and clearing them when it comes round again.
-##
-## THE LAND EVOLVES, EVERYWHERE, AT DIFFERENT RATES. Ground rises and subsides under the ink and
-## ridges wander - contours crowding up into a new hill here while a mile away the sheet is
-## almost still, and a minute later the still part is the one reorganising - so the map reads as
-## a survey being re-flown rather than as a picture. That is [method _step_tectonics], and it is
-## deliberately NOT the window: moving the window moves every line in the frame at once, by the
-## same vector, which is the crude thing this scene has been reported for twice. It is also not a
-## few bumps on an otherwise frozen sheet, which is what the first repair made of it. The whole
-## subject is written down there and gated in tests/contour_flow_check.gd.
+## Warm paper, almost white, with thin dark isolines at a fixed interval. Every fifth line
+## is an index contour drawn heavier, the band above the inked index line is ruled with
+## fine diagonal hatching, a graticule of ticks runs the margins with a scale bar in one
+## corner, and small survey crosses sit on local summits, each with a leader line out to a
+## two-glyph label in an invented script. A survey sweep crosses the sheet planting marks
+## and clearing them when it comes round again.
 ##
 ## THREE ABSENCES AT ONCE, which is why it exists. Nothing else here is a PLAN VIEW -
 ## every other framing is eye-level horizon, three-quarter isometric or centred abstract.
-## Nothing else is HIGH-KEY. And nothing else is a DIAGRAM: the nearest thing is
-## `projection`, which has no axis, tick, label, legend or rule line anywhere in it. This
-## is the same substance as `terrain` - a [Field] heightfield - rendered as line art on
-## paper, which is a different visual language and not a recolour.
+## Nothing else is HIGH-KEY. And nothing else is a DIAGRAM. It is the same substance as
+## `terrain` - a [Field] heightfield - rendered as line art on paper, which is a different
+## visual language and not a recolour.
 ##
-## A RE-PRINT MUST NOT BE VISIBLE, and almost everything below is in service of that. The
-## sheet is rebuilt a couple of times a second and every difference between one build and
-## the next lands as a step, all over the frame at once - which is what a viewer reads as
-## "the whole scene jumps". So the three things that could differ do not: the sampling
-## window is SNAPPED TO ITS OWN LATTICE, so consecutive extractions read the same points of
-## the land and the sheet only has to be translated (see _kick); the hatching's pitch is
-## fixed by the seed and anchored to the ground rather than to the window (see _kick and
-## [method Contour.hatch]); and the tonal centre every colour here is drawn from is EASED,
-## because the ink of the highlighted contour is baked into the packet (see _ease_audio).
-## With those three, a re-print changes nothing but the strip of new land at the edge.
+## THE LAND EVOLVES, EVERYWHERE, AT DIFFERENT RATES. Ground rises and subsides under the
+## ink and ridges wander - contours crowding into a new hill here while a mile away the
+## sheet is almost still - so the map reads as a survey being re-flown rather than as a
+## picture. That is [method _step_tectonics], and it is deliberately NOT the window:
+## moving the window moves every line in the frame by the same vector. Gated in
+## tests/contour_flow_check.gd.
 ##
-## THE CONTOUR INTERVAL NEVER CHANGES, and that restraint is the whole point. A map with
-## a throbbing contour interval is a lie: an interval is a claim about the land, so it is
-## chosen ONCE, from the land itself (the datum and the interval are solved from the
-## observed elevation range at first sight, then frozen for the session), and no audio
-## feature is allowed anywhere near it. Nothing on this sheet changes SIZE.
+## A RE-PRINT MUST NOT BE VISIBLE, and most of what follows serves that. The sheet is
+## rebuilt a couple of times a second, and every difference between builds lands as a step
+## all over the frame at once. So the three things that could differ do not: the sampling
+## window is SNAPPED TO ITS OWN LATTICE, so consecutive extractions read the same points
+## and the sheet only has to be translated (see _kick); the hatching's pitch is fixed by
+## the seed and anchored to the ground rather than the window (see _kick and
+## [method Contour.hatch]); and the tonal centre is EASED, because the ink of the
+## highlighted contour is baked into the packet (see _ease_audio).
+##
+## THE CONTOUR INTERVAL NEVER CHANGES. An interval is a claim about the land, so it is
+## chosen ONCE from the land itself - datum and interval solved from the observed
+## elevation range at first sight, then frozen for the session - and no audio feature goes
+## near it. Nothing on this sheet changes SIZE.
 ##
 ## WHAT THE MUSIC MOVES INSTEAD.
-##   The INKED INDEX CONTOUR - the one elevation drawn heaviest, in the accent - is
-##   chosen by `chroma_hue().x` mapped across the elevation range, so the harmony picks
-##   which altitude is inked and a chord change re-prints the sheet at a different height.
-##   `f.flux` sets the INK DENSITY of the hatching between index lines - the same ruling,
-##   pressed harder on a busy passage. Flux measures 0.01 to 0.05 in practice, so it is
-##   scaled by 12 to cross its range at all rather than being used as if it reached 1. It
-##   used to set the hatch SPACING, and that was the worst mark on the sheet: see _kick.
-##   The SWEEP advances one sheet width per `f.beat_period` x a sampled [8,32] beats, and
-##   a `f.beat` rising edge stamps the next survey cross - at the summit nearest the
-##   sweep, so marks appear along the line as it passes.
+##   The INKED INDEX CONTOUR - the elevation drawn heaviest, in the accent - is chosen by
+##   `chroma_hue().x` across the elevation range, so a chord change re-prints the sheet at
+##   a different height.
+##   `f.flux` sets the INK DENSITY of the hatching between index lines. Flux measures 0.01
+##   to 0.05 in practice, so it is scaled by 12 to cross its range at all.
+##   The SWEEP advances one sheet width per `f.beat_period` x a sampled [8,32] beats, and a
+##   `f.beat` rising edge stamps the next survey cross at the summit nearest the sweep.
 ##   `f.movement` over a sampled threshold eases the field offset to the next entry of a
-##   pre-rolled ring, over 14 to 30 seconds. The offset is a position in an infinite noise
-##   field, so easing to a new one is a slow flight across a continent. It is the GLOBAL
-##   motion and it is rare on purpose - and because a spoken chapter barely moves that score
-##   at all, there is now a floor under it too (`_warp_gap`, 35 to 75 s), so the window can
-##   never stall for a whole song the way it was reported doing. The continuous evolution is
-##   not this: it is the tectonics, which no audio feature touches.
+##   pre-rolled ring over 14 to 30 seconds - a slow flight across a continent. It is the
+##   GLOBAL motion and it is rare on purpose, with a floor under it (`_warp_gap`, 35 to
+##   75 s) so a spoken chapter cannot stall the window for a whole song.
 ##   `f.high` raises the graticule and annotation ink alpha, so the paperwork layer fades
-##   in on bright passages and the sheet is mostly bare land on quiet ones.
-##   `f.energy` does nothing at all except warm the paper through the tint, because it is
-##   a mean over 64 bands that rarely passes 0.5 and there is nothing here it should move.
+##   in on bright passages.
+##   `f.energy` only warms the paper through the tint: it is a mean over 64 bands that
+##   rarely passes 0.5.
 ##
-## THE COST, AND THE CADENCE. Extraction is the expense: sampling the field onto the grid
-## is one GDScript call per sample and the marching squares pass is another few thousand,
-## which together are tens of milliseconds - a frame budget, not a frame. It does not have
-## to run at 60 Hz, because the land warps over seconds: the whole sheet is re-extracted
-## on a sampled [0.3, 1.0] s cadence inside a [FrameForge] job and the finished packet is
-## re-submitted every frame for microseconds. That also gives the sheet its character - a
-## printed map that RE-PRINTS a couple of times a second rather than animating. The
-## grid is about 128 samples across, which puts a cell near a dozen pixels; two rounds of
-## Chaikin corner cutting in [Contour] turn the resulting faceted polyline into a curve,
-## and a simplify pass hands the points back. That pair is why a grid coarse enough to
-## sample in a worker still draws like a pen - and it is also why the window has to be
-## snapped: on cells that coarse, re-sampling the same land at a different phase moves every
-## line by pixels. In an export the forge builds synchronously, so a render pays the
-## extraction on the main thread - slower to render, identical output.
+## THE COST, AND THE CADENCE. Extraction is the expense - sampling the field onto the grid
+## is one GDScript call per sample, and marching squares another few thousand, together
+## tens of milliseconds. It need not run at 60 Hz, because the land warps over seconds: the
+## sheet is re-extracted on a sampled [0.3, 1.0] s cadence inside a [FrameForge] job and
+## the finished packet is re-submitted every frame for microseconds. That also gives the
+## sheet its character - a printed map that RE-PRINTS rather than animating. The grid is
+## about 128 samples across, so a cell is near a dozen pixels; two rounds of Chaikin corner
+## cutting in [Contour] turn the faceted polyline into a curve and a simplify pass hands
+## the points back. That pair is why a grid coarse enough to sample in a worker still draws
+## like a pen, and also why the window has to be snapped. In an export the forge builds
+## synchronously - slower to render, identical output.
 ##
-## THE HIGH-KEY GROUND fights three separate dark assumptions in this project (the
-## project's clear colour, [Layer]'s bed being a vignette whose brightest pixel is a mid
-## tone, and the veil's alpha cap), so the paper is painted by [method
-## GhostScene.paint_ground] - a flat full-bleed quad through plain `draw_colored_polygon`.
-## Not `fill_aa`: that strokes the outline over the fill, and on a full-frame quad the rim
-## lands exactly on the frame edge as a bright hairline. The margin is then painted back
-## OVER the contours in the same colour, which is what gives the sheet a real neatline and
-## a clean white margin for four quads.
+## THE HIGH-KEY GROUND fights three dark assumptions in this project (the clear colour,
+## [Layer]'s bed being a vignette whose brightest pixel is a mid tone, and the veil's alpha
+## cap), so the paper is painted by [method GhostScene.paint_ground] - a flat full-bleed
+## quad through plain `draw_colored_polygon`. Not `fill_aa`: that strokes the outline over
+## the fill, and on a full-frame quad the rim lands on the frame edge as a bright hairline.
+## The margin is then painted back OVER the contours in the same colour, which gives the
+## sheet a real neatline for four quads.
 ##
-## WHAT THE SEED DECIDES: the two spectral bases the land evolves through - how many waves, how
-## long, how fast, and the per-re-print budget that bounds the whole thing; the field kind
-## (fbm / ridged / billow / cells), its octaves,
-## frequency and whether it is domain-warped; how much of the continent the sheet covers;
-## the number of contour levels and which of them are index lines; the minor and index pen
-## widths; whether the sheet is cream paper with dark ink or a blueprint (a deep blue
-## ground with white ink, roughly one sheet in four); the ink itself from a [Scheme] at a
-## quarter of its nominal saturation, because a survey is drawn in one restrained colour;
-## the hatch angle, and its spacing, which no audio feature may touch; the sea level and
-## whether there is water at all; the graticule divisions and margin; how many survey marks
-## the sheet may carry; the re-extraction cadence; whether a second colour plate prints
-## slightly out of register; the sweep's period in beats; the section-change threshold and
-## how long a warp takes; and the whole invented hand the labels are written in.
+## WHAT THE SEED DECIDES: the two spectral bases the land evolves through - how many waves,
+## how long, how fast, and the per-re-print budget bounding it; the field kind (fbm /
+## ridged / billow / cells), its octaves, frequency and whether it is domain-warped; how
+## much of the continent the sheet covers; the number of contour levels and which are index
+## lines; the minor and index pen widths; whether the sheet is cream paper with dark ink or
+## a blueprint (roughly one in four); the ink itself from a [Scheme] at a quarter of its
+## nominal saturation; the hatch angle and spacing; the sea level and whether there is
+## water; the graticule divisions and margin; how many survey marks the sheet may carry;
+## the re-extraction cadence; whether a second colour plate prints out of register; the
+## sweep's period in beats; the section-change threshold and warp duration; and the whole
+## invented hand the labels are written in.
 ##
 ## HONEST DETERMINISM CAVEAT, the same one `glyphs` carries. The land, the ladder, the
-## palette, the alphabet and the ring of warp offsets are all seed-derived and reproduce
+## palette, the alphabet and the ring of warp offsets are seed-derived and reproduce
 ## exactly. WHICH summits get marked and when does not: the live analyzer and the offline
 ## bake do not produce identical beat streams. No rng is ever drawn on an audio-conditioned
-## event - the warp offsets come from a pre-rolled ring taken by a counter - so nothing
-## else can drift.
+## event - the warp offsets come from a pre-rolled ring taken by a counter.
 
 ## How far past the frame the sampled sheet extends, for camera-drift headroom.
 const SHEET := 1.22
@@ -707,70 +687,58 @@ func _rewarp() -> void:
 	_warp_idle = 0.0
 
 
-## THE LAND'S OWN EVOLUTION - the answer to "the map should slowly evolve, in slow morphing
-## over time rather than in large jumps, and not by shifting every line uniformly".
+## THE LAND'S OWN EVOLUTION - slow morphing over time, everywhere, at rates that differ
+## from place to place.
 ##
-## THREE THINGS HAVE BEEN WRONG HERE, and the third is the one this replaces.
+## Moving the WINDOW cannot do this: a window move is global BY CONSTRUCTION, every line in
+## the frame going at once by the same vector. Nor can a handful of compact BUMPS, which
+## reads as a couple of circles breathing while the rest of the sheet is frozen. The whole
+## sheet has to evolve with the uniformity taken out, which is what erosion and tectonics
+## actually look like: everywhere always changing, and the places changing fastest keep
+## moving.
 ##
-##   First the land never changed at all and the only motion was the WINDOW, gated on a
-##   `f.movement` edge a spoken chapter never produces: the sheet either sat dead still or
-##   lurched as a whole. A window move is global BY CONSTRUCTION - every line in the frame
-##   goes at once, by the same vector - which is exactly the uniform shift being asked against.
-##
-##   Then that was answered with a handful of compact BUMPS on the land, and it answered the
-##   wrong question. It read as reported: a couple of circles of the sheet breathing while the
-##   rest was frozen, and because one bump takes minutes to grow, rest, subside and only THEN
-##   move, the same two circles were the only thing that ever moved for the whole scene. The
-##   request was never "restrict the evolution to a region". It was "do not move the whole
-##   sheet by the same amount at the same instant".
-##
-##   What is here now lets the WHOLE sheet evolve and takes the uniformity out instead, which
-##   is what erosion and tectonics actually look like: everywhere is always changing, at rates
-##   that differ from place to place, and the places that are changing fastest keep moving.
-##
-## THE MECHANISM is a small spectral basis - five to nine travelling waves for uplift, three to
-## five for drift - summed in FIELD coordinates:
+## THE MECHANISM is a small spectral basis - five to nine travelling waves for uplift, three
+## to five for drift - summed in FIELD coordinates:
 ##
 ##   d(q, t) = sum_i a_i sin(k_i . q + w_i t + phi_i)
 ##
-## Nowhere is masked out and nowhere is pinned: every point of the land is inside every wave, so
-## every point evolves. What differs is HOW MUCH and WHEN, because at any instant the sum has
-## crests (ground rising fast), troughs (subsiding) and nodes (holding still) scattered across
-## the sheet - and since the waves travel at different speeds in different directions, those
-## nodes are never in the same place twice. A region that is quiet now is the region visibly
-## reorganising two minutes from now. That is the property a bump field could not have.
+## Nowhere is masked out and nowhere is pinned: every point of the land is inside every
+## wave, so every point evolves. What differs is HOW MUCH and WHEN, because at any instant
+## the sum has crests (ground rising fast), troughs (subsiding) and nodes (holding still)
+## scattered across the sheet - and since the waves travel at different speeds in different
+## directions, those nodes are never in the same place twice. A region quiet now is the
+## region visibly reorganising two minutes from now.
 ##
 ## Four things make it safe:
 ##
-##   A RATE BUDGET, NOT AN AMPLITUDE BUDGET, and this is the whole difference between evolution
+##   A RATE BUDGET, NOT AN AMPLITUDE BUDGET, which is the whole difference between evolution
 ##   and a jump. The sheet is re-printed on a [0.3, 1.0] s cadence, so ANY change lands as a
-##   step at that rate; what the viewer reads as jumpy is not how far the land has moved but how
-##   far it moved BETWEEN TWO PRINTS. So the seed sets `_up_print` - the elevation, in contour
-##   intervals, the land may travel in one re-print, worst case over the whole basis - and the
-##   per-second rate is derived from it by dividing by the cadence. A twentieth of an interval
-##   is a line creeping by about a pixel. Left to accumulate over a scene that same rate carries
-##   the land a couple of contours, which is a hill being born.
+##   step at that rate, and what reads as jumpy is how far the land moved BETWEEN TWO PRINTS.
+##   So the seed sets `_up_print` - the elevation, in contour intervals, the land may travel
+##   in one re-print, worst case over the whole basis - and the per-second rate is derived by
+##   dividing by the cadence. A twentieth of an interval is a line creeping by about a pixel;
+##   accumulated over a scene that same rate carries the land a couple of contours.
 ##
-##   ANCHORED TO THE LAND. The waves are functions of the FIELD coordinate, not of the sheet, so
-##   the window's lattice snap still holds exactly: after a one-cell window move, grid point
-##   (x, y) reads the field point (x-1, y) read - same land, same wave phase, same value. The
-##   sheet is still only translated between prints, which is the property tests/contour_flow_check.gd
-##   exists for. A perturbation defined in sheet coordinates would slide under that snap and
-##   re-wobble every line on the sheet, which is the original fault all over again.
+##   ANCHORED TO THE LAND. The waves are functions of the FIELD coordinate, not of the sheet,
+##   so the window's lattice snap still holds exactly: after a one-cell window move, grid
+##   point (x, y) reads the field point (x-1, y) read - same land, same phase, same value.
+##   The sheet is still only translated between prints, which is what
+##   tests/contour_flow_check.gd exists for. A perturbation defined in sheet coordinates
+##   would slide under that snap and re-wobble every line.
 ##
 ##   PURE IN TIME. Nothing is integrated - both fields are a function of `_tect_t` - so a
-##   pre-warm, an Echo fast-forward and an export reach the same sheet as a live session that
-##   arrived the slow way, and two builds at one instant are identical.
+##   pre-warm, an Echo fast-forward and an export reach the same sheet as a live session
+##   that arrived the slow way, and two builds at one instant are identical.
 ##
 ##   NO AUDIO ANYWHERE NEAR IT. The land is the one thing on this sheet the music does not
-##   touch (see the class doc): a map whose ground breathes on the beat is a graphic, not a
-##   survey. The window warp remains the audio-conditioned motion, and it stays rare.
+##   touch: a map whose ground breathes on the beat is a graphic, not a survey. The window
+##   warp remains the audio-conditioned motion, and it stays rare.
 ##
-## DRIFT is the second field and it is not decoration. Uplift alone can only inflate and deflate
-## the land in place; a drift field displaces the point the land is read at, so ridges wander
-## and - where the displacement converges - contours crowd together, which is the picture of
-## ground being pushed. It is bounded directly in pixels rather than in elevation, since a line
-## displaced by d moves by exactly d whatever the local slope is.
+## DRIFT is the second field and it is not decoration. Uplift alone can only inflate and
+## deflate the land in place; a drift field displaces the point the land is read at, so
+## ridges wander and - where the displacement converges - contours crowd together, which is
+## the picture of ground being pushed. It is bounded directly in pixels rather than in
+## elevation, since a line displaced by d moves by exactly d whatever the local slope is.
 func _step_tectonics(dt: float) -> void:
 	_tect_t += dt
 

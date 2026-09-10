@@ -72,107 +72,87 @@ AbstractinatorHarmonicSerpent = partial(
 
 # Mean-pooled variant. The default "max" pooling (pooling_downsample ->
 # patch_reduce with "amax") carries a systematic length bias: the expectation of
-# a max over n vectors grows like sqrt(2 ln n), so under space patching - where n
-# runs from 1 (a lone "a", a punctuation run, a control byte) to 10+ - the patch
-# vector's magnitude encodes how many bytes happened to fall in the patch,
-# before any content does. HarmonicResidualVQ then RMS-normalizes onto the
-# sphere, which erases that magnitude but not the direction bias it induced, and
-# an information-poor one-byte patch arrives at the shared codebook carrying the
-# same spectral energy as a full word.
+# a max over n vectors grows like sqrt(2 ln n), so under space patching - where
+# n runs from 1 to 10+ - the patch vector's magnitude encodes how many bytes
+# fell in the patch before any content does. HarmonicResidualVQ then
+# RMS-normalizes onto the sphere, erasing the magnitude but not the direction
+# bias it induced.
 #
-# Mean pooling is not magnitude-neutral either - a mean over n shrinks like
-# 1/sqrt(n), so it carries the INVERSE bias (measured on a 6/1/5-byte patch
-# triple: max gives norms 3.93/1.41/3.07, avg gives 1.07/1.41/1.39). The
-# difference that matters is in DIRECTION, and it survives the RMS
-# normalization that discards magnitude. A mean is an unbiased estimate of the
-# patch's content direction at every n; only its variance depends on n. A max
-# is an order statistic, so which coordinates it selects - and therefore the
-# direction it points - shifts systematically as n grows. That is the part the
-# sphere projection cannot undo.
+# Mean pooling is not magnitude-neutral either (a mean over n shrinks like
+# 1/sqrt(n), the INVERSE bias), but the difference that matters is in DIRECTION,
+# which survives the RMS normalization. A mean is an unbiased estimate of the
+# patch's content direction at every n; only its variance depends on n. A max is
+# an order statistic, so which coordinates it selects - and therefore where it
+# points - shifts systematically as n grows.
 #
-# Note the pooling mode is matched by substring in pooling_downsample - the key
-# is "avg", not "mean"; "mean" matches nothing and trips its assert.
-#
-# A separate registry entry rather than a changed default, so the -a..-h
-# lineage keeps building the encoder it was measured with and the A/B stays a
-# one-line encoder_type swap.
+# The pooling mode is matched by substring in pooling_downsample: the key is
+# "avg", not "mean"; "mean" matches nothing and trips its assert.
 AbstractinatorHarmonicSerpentAvg = partial(
     AbstractinatorHarmonicSerpent,
     downsampling_method="avg",
 )
 
-# Codebook sized to the token vocabulary instead of the inherited 16384.
-# `None` selects AbstractinatorEncoder's documented default (config.vocab_size),
-# which the module's docstring always claimed and a hardcoded 1024 was standing
-# in for. MEASURED on -h/-i at step 6k-10k: roughly 470 and 218 effective codes
-# in use at stages 0 and 1 against K=16384, i.e. under 3% utilization, with
-# ~140k cumulative dead-code resets - eight full turnovers of the bank. A bank
-# that large is not giving the model choices, it is giving the reset mechanism
-# something to churn.
+# Codebook sized to the token vocabulary instead of the inherited 16384. `None`
+# selects AbstractinatorEncoder's documented default (config.vocab_size).
+# Measured on -h/-i at step 6k-10k: roughly 470 and 218 effective codes in use
+# at stages 0 and 1 against K=16384 - under 3% utilization, with ~140k
+# cumulative dead-code resets, eight full turnovers of the bank.
 #
 # Not capacity-matched, deliberately: this REMOVES parameters. The codebook is
 # an nn.Parameter (vector_quantizer.py), so the bank costs optimizer state as
 # well as weights.
 #
-# The honest caveat on the rule: tying K to vocab_size is a coincidence of
-# scale, not a principle - the bank indexes patch latents, not tokens. It lands
-# in the right place here because the measurements say ~1k is right AND
-# vocab_size is 1024. If the tokenizer changes (tokenmonster, a wider byte
-# alphabet), K would move for no reason and should be pinned explicitly.
+# Caveat: tying K to vocab_size is a coincidence of scale, not a principle - the
+# bank indexes patch latents, not tokens. It lands right here because the
+# measurements say ~1k AND vocab_size is 1024. If the tokenizer changes, K
+# should be pinned explicitly.
 AbstractinatorHarmonicSerpentVocabBank = partial(
     AbstractinatorHarmonicSerpent,
     vq_codebook_size=None,
 )
 
-# Both VQ-side fixes at once (abstractinator-i). Bundled deliberately: with a
-# fixed compute budget the efficient search is coarse-to-fine, not one variable
-# at a time - group the changes that push the same direction on the same
-# suspected fault, and pay for isolation only when deciding between survivors.
-# The fault here is a bottleneck that is not earning its parameters.
+# Both VQ-side fixes at once (abstractinator-i), bundled because with a fixed
+# compute budget the efficient search is coarse-to-fine: group the changes that
+# push the same direction on the same suspected fault - here, a bottleneck not
+# earning its parameters.
 #
 #   1. K = config.vocab_size (1024) instead of 16384. See the entry above.
 #   2. NO Serpent on the analysis transform (`AbstractinatorHarmonic`, not
-#      ...Serpent). Serpent is PERIODIC, and it sits immediately before
-#      quantization. A periodic map is not injective: two distinct patch latents
-#      can land on the same point, which is a direct attack on the one thing a
+#      ...Serpent). Serpent is PERIODIC and sits immediately before
+#      quantization, and a periodic map is not injective: two distinct patch
+#      latents can land on the same point, which attacks the one thing a
 #      quantizer exists to do. Removing it makes the frame a pure rotation plus
 #      the sphere projection.
 #
-# `bottleneck_ratio` stays 0.5. The coverage argument says a SMALLER codebook
-# wants a smaller latent space (N codes give ~N^(1/d) resolution per axis, so
-# 1024 points in 111 dims is sparser than in 55), and -h's own telemetry
-# exonerates the ratio anyway - dead fraction fell monotonically to 0.27/0.097
-# at ratio 0.5. The starvation appeared only under avg pooling.
+# `bottleneck_ratio` stays 0.5: a smaller codebook wants a smaller latent space
+# (N codes give ~N^(1/d) resolution per axis), and -h's telemetry exonerates the
+# ratio anyway - dead fraction fell monotonically to 0.27/0.097 at ratio 0.5.
 #
 # The bundle stays readable because K's effect is PREDICTABLE. -h used ~470
-# codes at stage 0, so K alone predicts vq_dead_frac_s0 settling near 0.5
-# (470/1024 utilization). Landing meaningfully below 0.5 means dropping Serpent
-# contributed; landing at 0.5 means K did the work and Serpent was neutral.
+# codes at stage 0, so K alone predicts vq_dead_frac_s0 settling near 0.5.
+# Meaningfully below 0.5 means dropping Serpent contributed; at 0.5 means K did
+# the work and Serpent was neutral.
 AbstractinatorHarmonicVocabBank = partial(
     AbstractinatorHarmonic,
     vq_codebook_size=None,
 )
 
 # -i plus a learned compander in place of the fixed RMS normalization
-# (abstractinator-j). The sphere projection is the ISOTROPIC SPECIAL CASE of
-# GDN - gamma_ij = 1/L, beta = 1e-5 - so the module initializes bit-identical to
-# -i and the run measures only whether anisotropy earns anything.
+# (abstractinator-j). The sphere projection is the ISOTROPIC SPECIAL CASE of GDN
+# - gamma_ij = 1/L, beta = 1e-5 - so the module initializes bit-identical to -i
+# and the run measures only whether anisotropy earns anything.
 #
-# Why a compander belongs here specifically. Classical quantization theory says
-# a fixed codebook should spend resolution where the source density is, and a
-# monotonic warp is how you arrange that (mu-law; GDN is the learned
-# multivariate version, and it is what neural image codecs put in front of their
-# quantizer). The measured fault in this stack is that patch directions
-# CONCENTRATE and the bank starves - -i's avg-pooling run drove dead fraction to
-# 0.85 doing exactly that, and max pooling's only virtue is that its order
-# statistic disperses them by accident. A compander does that deliberately.
+# Classical quantization theory says a fixed codebook should spend resolution
+# where the source density is, and a monotonic warp is how you arrange that
+# (mu-law; GDN is the learned multivariate version, and what neural image codecs
+# put in front of their quantizer). The measured fault in this stack is that
+# patch directions CONCENTRATE and the bank starves - -i's avg-pooling run drove
+# dead fraction to 0.85 - and max pooling's only virtue is that its order
+# statistic disperses them by accident. A compander does it deliberately.
 #
-# Curvature, not periodicity. Companding needs INVERTIBILITY, so the warp has to
-# be monotonic; a periodic map is not injective and can alias two distinct patch
-# latents onto one point. That is why Serpent comes out at -i and stays out
-# here. The trunk has periodic structure in abundance (ArcHoPE's Serpent phase
-# warp, Serpent in every expert) - the bottleneck is the one place where telling
-# things apart is the entire job.
+# Curvature, not periodicity: companding needs INVERTIBILITY, so the warp must
+# be monotonic. A periodic map is not injective and can alias two distinct patch
+# latents onto one point, which is why Serpent stays out of the bottleneck.
 AbstractinatorHarmonicGDNVocabBank = partial(
     AbstractinatorHarmonic,
     bottleneck="harmonic_gdn",
@@ -182,21 +162,20 @@ AbstractinatorHarmonicGDNVocabBank = partial(
 # The GDN vocab-bank profile on FIXED-SIZE patches instead of space patching.
 #
 # Static patching is the worst-performing mode in BLT's own ablations, so this
-# is a deliberate contrarian test rather than an expected win. The reason to
-# run it here: a harmonic model builds a PERIODIC latent, and patch-time is a
-# resampling of byte-time. A fixed patch size makes that resampling UNIFORM;
-# space and entropy patching make the sampling lattice depend on the content,
-# which is non-uniform sampling and smears the frequency axis. BLT measured
-# bits-per-byte on a non-periodic transformer, where an irregular lattice costs
-# nothing structural - so their result does not obviously transfer to a model
-# whose representation is built out of frequencies.
+# is a deliberate contrarian test. The reason to run it: a harmonic model builds
+# a PERIODIC latent, and patch-time is a resampling of byte-time. A fixed patch
+# size makes that resampling UNIFORM, where space and entropy patching make the
+# sampling lattice depend on content - non-uniform sampling, which smears the
+# frequency axis. BLT measured bits-per-byte on a non-periodic transformer,
+# where an irregular lattice costs nothing structural.
 #
-# PATCH_SIZE is compute-matched, not chosen for numerology. Space patching on
-# this repo's own source measures a mean patch length of 7.25 bytes (median 6,
-# p25 4, p75 9), so 8 keeps the global decoder's sequence length within ~10% of
-# what the space patcher already produces; 6 would lengthen it by ~21% and
-# confound a patching change with a compute change.
+# PATCH_SIZE is compute-matched: space patching on this repo's own source
+# measures a mean patch length of 7.25 bytes (median 6, p25 4, p75 9), so 8
+# keeps the global decoder's sequence length within ~10% of what the space
+# patcher produces; 6 would lengthen it by ~21% and confound a patching change
+# with a compute change.
 #
+# Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
 # Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
 AbstractinatorHarmonicGDNVocabBankStatic = partial(
     AbstractinatorHarmonic,
@@ -226,24 +205,16 @@ AbstractinatorHarmonicGDNVocabBankStatic = partial(
 # THIS IS ONLY WELL-POSED BECAUSE THE PATCHING IS STATIC. Both codecs emit
 # exactly one latent per patch at `patch_size=8`, so `z_q + z_c` is an alignable
 # merge. Two encoders with different chunking would emit different numbers of
-# latents in different units, and no amount of care would reconcile them into
-# the one sequence the trunk consumes.
+# latents in different units.
 #
-# WHY A REAL VAE AND NOT THE `nn.Linear(D, 2*D)` THIS REPLACES. CALM's VAE does
-# three jobs and the original port checked only one. It compresses K tokens into
-# one vector - which the Abstractinator's local encoder genuinely already did,
-# so that part really was redundant. It also supplies a continuous,
-# KL-regularized, unit-scale, STATIONARY latent space, and a per-patch POSTERIOR
-# for the energy score's target draws. Neither is redundant with an RVQ, and
-# both were dropped along with the compression, then re-derived badly one crisis
-# at a time: as a scale runaway patched with an RMS map at the loss, and as a
-# linear layer with no reconstruction pressure of its own, capped to 0.25%
-# because it destabilized everything it touched.
+# A real VAE and not an `nn.Linear(D, 2*D)`, because CALM's VAE does three jobs.
+# Compressing K tokens into one vector is the one the Abstractinator's local
+# encoder genuinely already does. Supplying a continuous, KL-regularized,
+# unit-scale, STATIONARY latent space and a per-patch POSTERIOR for the energy
+# score's target draws are the two an RVQ does not.
 #
 # Near-silent at step 0, not bit-identical: `arm_gate` starts at sigmoid(-6), so
-# z_c enters at ~0.25% of ||z_q||. `calm_arm_ratio` is the receipt, and unlike
-# before the gate rising now means something - there is a real objective behind
-# the arm for the first time.
+# z_c enters at ~0.25% of ||z_q||. `calm_arm_ratio` is the receipt.
 AbstractinatorHarmonicGDNVocabBankStaticCALM = partial(
     AbstractinatorCALM,
     bottleneck="harmonic_gdn",
@@ -319,22 +290,17 @@ CALMBpe = partial(
 )
 
 # Byte K with a smaller VAE for compact experiments; energy head uses the
-# paper's N/M/blocks so the gradient isn't sample-starved (the original 4/16
-# combo gave high-variance estimates and was the main throttle on the energy
-# head's learning curve). Dims are fractions of hidden_size
-# (0.25/1.0/0.25 == 64/256/64 at hidden=256).
+# paper's N/M/blocks so the gradient isn't sample-starved. Dims are fractions of
+# hidden_size (0.25/1.0/0.25 == 64/256/64 at hidden=256).
 #
-# Two-stage like the reference: train the codec alone until the freeze, with
-# the KL annealed in over the same window so the final latent is smooth, then
-# freeze it and train only the energy head against a stationary target. The
-# freeze is convergence-driven: schedules are left unset, so the codec trains
-# until its reconstruction plateaus (the window's linear trend drops below its
-# own noise), then freezes - capped by ae_max_pretrain_steps as a backstop. Watch
-# calm_recon_ce / calm_pretrain_flatness descend and calm_ae_frozen flip at
-# the boundary. kl_beta/kl_clip/N/M/vote pool match the paper (arXiv 2510.27688):
-# β=1e-3 with free-bits clip 0.5 keeps the latent modelable without
-# over-regularizing; the ~500-sample vote pool is the paper's accuracy-diversity
-# frontier (50 was far too noisy for patch-vote decoding).
+# Two-stage like the reference: train the codec alone until the freeze, with the
+# KL annealed in over the same window, then freeze it and train only the energy
+# head against a stationary target. The freeze is convergence-driven - schedules
+# are left unset, so the codec trains until its reconstruction plateaus (the
+# window's linear trend drops below its own noise), capped by
+# ae_max_pretrain_steps as a backstop. Watch calm_recon_ce /
+# calm_pretrain_flatness descend and calm_ae_frozen flip at the boundary.
+# kl_beta/kl_clip/N/M/vote pool match the paper (arXiv:2510.27688).
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=8,

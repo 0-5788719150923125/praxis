@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.activations import ActivationSpec, build_activation
+from praxis.activations import ActivationSpec, build_activation, linear_activation
 from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -33,10 +33,10 @@ class GatedLinearMLP(BaseDense):
     a periodic value activation and a non-periodic gate, that is a non-periodic
     function steering a periodic one.
 
-    RELATION TO A MIXTURE. This is a second SLOT, not a second entry in one
-    slot, so it is not what ``ActivationMixture`` does and the two compose:
-    either slot can name a mixture, e.g. ``activation={"type": "mix_split",
-    "values": [...]}``. ``Servant`` does a version of the steering idea one
+    RELATION TO A MIXTURE. The gate takes whatever ``{type, values}`` resolves
+    to, mixture or not, so the two compose rather than compete:
+    ``{type: mix_split, values: [servant, swish], linear: gelu}`` is legal and
+    means what it reads like. ``Servant`` does a version of the steering idea one
     level down, modulating a periodic FREQUENCY by a non-periodic ``tanh`` of
     live token energy - and it has a known failure where that signal saturated
     and the modulation silently became a constant. The lesson carried here: a
@@ -47,7 +47,6 @@ class GatedLinearMLP(BaseDense):
         self,
         config: ConfigType,
         activation: Optional[ActivationSpec] = None,
-        activation_value: Optional[ActivationSpec] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -56,16 +55,14 @@ class GatedLinearMLP(BaseDense):
 
         Args:
             config: Configuration object with model parameters
-            activation: the GATE branch's activation - a registry name or a
-                ``{type, values}`` spec. Default: ``config.activation``.
-            activation_value: the VALUE branch's activation. Default: none,
-                i.e. the ordinary GLU's linear branch. Naming one here is the
-                ``dual_act`` arm.
+            activation: overrides the whole spec for this instance. Default:
+                ``config.activation``, from which this takes the gate and the
+                optional ``linear`` half.
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
         """
         super().__init__()
-        activation = activation or config.activation
+        spec = activation or config.activation
 
         # First calculate the target size after chunking (down projection input size)
         down_size = int((4 / 3) * config.hidden_size)
@@ -73,11 +70,10 @@ class GatedLinearMLP(BaseDense):
         up_size = 2 * down_size
 
         self.up: nn.Linear = nn.Linear(config.hidden_size, up_size)
-        self.act: nn.Module = build_activation(activation, **kwargs)
-        # Identity by default, so a plain GLU is byte-for-byte unchanged.
-        self.act_value: nn.Module = (
-            build_activation(activation_value) if activation_value else nn.Identity()
-        )
+        self.act: nn.Module = build_activation(spec, **kwargs)
+        # Identity when `linear` is absent, so a plain GLU is byte-for-byte
+        # unchanged - which is what makes the filled case a one-variable arm.
+        self.act_value: nn.Module = linear_activation(spec) or nn.Identity()
         self.dropout: nn.Dropout = nn.Dropout(config.dropout)
         self.down: nn.Linear = nn.Linear(down_size, config.hidden_size)
 

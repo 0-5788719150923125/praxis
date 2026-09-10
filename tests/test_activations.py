@@ -3,31 +3,32 @@ import itertools
 import pytest
 import torch
 
-from praxis.activations import ACTIVATION_MAP, TYPED_ACTIVATIONS, build_activation
+from praxis.activations import (
+    ACTIVATION_MAP,
+    ACTIVATION_TYPE_REGISTRY,
+    build_activation,
+    linear_activation,
+)
 
-MODULE_NAMES = list(ACTIVATION_MAP)
+# Every concrete activation, plus every combination type over a small bank. Two
+# parameter-free values, so a mixture costs the same to exercise as a plain one.
+TEST_VALUES = ["gelu", "tanh"]
+SPECS = [(name, name) for name in ACTIVATION_MAP] + [
+    (f"type:{name}", {"type": name, "values": TEST_VALUES[: 1 if name == "single" else 2]})
+    for name in ACTIVATION_TYPE_REGISTRY
+]
 
-# A bank for the entries that take `values`. Two parameter-free functions, so a
-# typed entry costs the same to exercise as a plain one.
-TEST_BANK = ["gelu", "tanh"]
 
-
-@pytest.fixture(params=MODULE_NAMES)
+@pytest.fixture(params=[s for _, s in SPECS], ids=[i for i, _ in SPECS])
 def function(request):
-    """Instantiate one registered activation, through the same resolver the
-    model uses.
+    """Build one activation through the same resolver the model uses.
 
-    Typed entries (the mixtures) cannot stand alone - they need `values` - so
-    they are built from the spec form here rather than skipped. Skipping them
-    would leave the registry's most structurally unusual entries untested by
-    every test in this file.
+    Combination types are exercised here too, not just concrete activations:
+    they are the structurally unusual entries, and skipping them would leave
+    every test in this file blind to them.
     """
-    name = request.param
-    spec = (
-        {"type": name, "values": TEST_BANK} if name in TYPED_ACTIVATIONS else name
-    )
     try:
-        return build_activation(spec)
+        return build_activation(request.param)
     except Exception as e:
         pytest.skip(f"Failed to initialize module: {str(e)}")
 
@@ -187,10 +188,9 @@ def test_keyed_mixture_partitions_by_an_external_index():
     assert torch.allclose(out[:, :4], torch.relu(x[:, :4]), atol=1e-6)
     assert torch.allclose(out[:, 4:], torch.tanh(x[:, 4:]), atol=1e-6)
 
-    # A caller with no key gets the uniform blend rather than an exception: the
-    # dashboard's curve probe calls every activation as a bare `act(x)`, and an
-    # activation it cannot sample vanishes from the chart with no error.
-    assert torch.allclose(mixture(x), (torch.relu(x) + torch.tanh(x)) / 2, atol=1e-6)
+    # A caller with no index gets values[0] rather than an exception - see
+    # test_mix_split_without_an_index_is_the_first_value.
+    assert torch.allclose(mixture(x), torch.relu(x), atol=1e-6)
 
 
 def test_keyed_mixture_reports_realized_occupancy():
@@ -214,61 +214,64 @@ def test_keyed_mixture_reports_realized_occupancy():
     assert mixture.training_metrics()["activation_mix_share_relu"] == pytest.approx(0.5)
 
 
-def test_activation_spec_accepts_a_name_or_a_type_and_values():
-    """The two spellings a config may use, and the errors for the ways they go
-    wrong. A typed entry that silently built SOMETHING would be worse than one
-    that refuses: the model would train on a bank nobody chose.
+def test_the_spec_is_always_a_type_over_values():
+    """One shape, with a bare name as shorthand for the single-value case.
+
+    The shorthand is what keeps `activation_type: gelu` the thing anyone would
+    write, so it has to produce exactly what the long form does.
     """
     from praxis.activations.mixture import ActivationMixture
 
-    plain = build_activation("gelu")
-    assert not isinstance(plain, ActivationMixture)
+    assert type(build_activation("gelu")) is type(
+        build_activation({"type": "single", "values": ["gelu"]})
+    )
+    assert not isinstance(build_activation("gelu"), ActivationMixture)
 
-    typed = build_activation({"type": "mix_split", "values": ["servant", "swish"]})
-    assert isinstance(typed, ActivationMixture)
-    assert typed.type_name == "mix_split" and typed.names == ("servant", "swish")
+    split = build_activation({"type": "mix_split", "values": ["servant", "swish"]})
+    assert isinstance(split, ActivationMixture)
+    assert split.type_name == "mix_split" and split.names == ("servant", "swish")
 
-    # A comma-separated string is the same thing, for configs that carry scalars.
+    # A comma-separated string is the same list, for configs carrying scalars.
     assert build_activation({"type": "mix", "values": "gelu, tanh"}).names == (
         "gelu",
         "tanh",
     )
 
     # An already-built module passes through, so a caller can accept either.
-    assert build_activation(typed) is typed
+    assert build_activation(split) is split
 
-    with pytest.raises(ValueError, match="needs a bank"):
-        build_activation("mix_split")
-    with pytest.raises(ValueError, match="needs a `type`"):
-        build_activation({"values": ["gelu", "tanh"]})
+
+def test_bad_specs_say_what_is_wrong():
+    """A misdeclared activation trains something other than what was written and
+    nothing downstream would notice, so every way of getting it wrong raises."""
+    with pytest.raises(ValueError, match="exactly one value"):
+        build_activation({"type": "single", "values": ["gelu", "tanh"]})
+    with pytest.raises(ValueError, match="needs `values`"):
+        build_activation({"type": "mix"})
+    with pytest.raises(ValueError, match="Unknown activation type"):
+        build_activation({"type": "mix_everything", "values": ["gelu", "tanh"]})
+    with pytest.raises(ValueError, match="Unknown activation key"):
+        build_activation({"type": "single", "values": ["gelu"], "gate": "relu"})
     with pytest.raises(KeyError):
         build_activation("no_such_activation")
 
 
-def test_every_typed_entry_is_a_mixture_and_needs_values():
-    """The guard on adding a typed entry. `TYPED_ACTIVATIONS` is what tells
-    consumers (and this file's fixture) that a name cannot stand alone, so an
-    entry that drifts out of it becomes a bare name that raises at model-build
-    time instead of at declaration time."""
-    from praxis.activations.mixture import ActivationMixture
-
-    for name in TYPED_ACTIVATIONS:
-        with pytest.raises(ValueError):
-            build_activation(name)
-        built = build_activation({"type": name, "values": TEST_BANK})
-        assert isinstance(built, ActivationMixture)
-        assert built.type_name == name
-
-    # And every entry NOT in that set does stand alone.
-    for name in ACTIVATION_MAP:
-        if name not in TYPED_ACTIVATIONS:
-            build_activation(name)
+def test_linear_is_the_only_key_that_is_not_a_gate():
+    """`values` are all gate activations; `linear` fills the held-out half a
+    gated feedforward leaves untouched. Absent means absent, not identity - that
+    distinction is what makes the filled case a one-variable arm."""
+    assert linear_activation("servant") is None
+    assert linear_activation({"type": "single", "values": ["servant"]}) is None
+    filled = linear_activation(
+        {"type": "single", "values": ["servant"], "linear": "gelu"}
+    )
+    assert filled is not None and not isinstance(filled, torch.nn.Identity)
 
 
 def test_a_mixture_can_hold_a_mixture():
-    """Bank entries resolve through the same builder, so nesting needs no
-    special case. Worth pinning because the recursion is the only reason the
-    bank is a list of NAMES rather than a list of modules."""
+    """Values resolve through the same builder, so nesting needs no special
+    case. Worth pinning because the recursion is the only reason `values` holds
+    NAMES rather than modules."""
     from praxis.activations.mixture import ActivationMixture
 
     outer = build_activation(
@@ -281,3 +284,36 @@ def test_a_mixture_can_hold_a_mixture():
     assert isinstance(outer.branches[1], ActivationMixture)
     x = torch.randn(2, 8)
     assert outer(x).shape == x.shape
+
+
+def test_mix_split_without_an_index_is_the_first_value():
+    """The fallback that lets `mix_split` be declared model-wide.
+
+    PEER's expert bank is the only place with an index to partition on; the
+    encoder, the heads and the controllers have none. Falling back to values[0]
+    is what makes one line mean "split it where there is something to split, and
+    otherwise run the primary activation" - so an arm that adds the split stays
+    ONE change off the arm that does not.
+    """
+    from praxis.activations.mixture import ActivationMixture
+
+    split = build_activation({"type": "mix_split", "values": ["servant", "swish"]})
+    x = torch.randn(4, 16)
+    assert torch.allclose(split(x), split.branches[0](x))
+
+    # With an index it really does partition.
+    keys = torch.cat([torch.zeros(4, 8), torch.full((4, 8), 0.9)], dim=-1)
+    out = split(x, keys=keys)
+    assert torch.allclose(out[:, :8], split.branches[0](x)[:, :8])
+    assert torch.allclose(out[:, 8:], split.branches[1](x)[:, 8:])
+
+
+def test_unused_branches_are_still_materialized():
+    """A lazily-shaped value that the fallback never calls would still hold
+    UninitializedParameter when the optimizer walked model.parameters(), and
+    raise there. A bank whose first value is parameter-free and whose second is
+    not is a perfectly reasonable config, so it must not crash the run."""
+    split = build_activation({"type": "mix_split", "values": ["gelu", "servant"]})
+    split(torch.randn(4, 16))
+    torch.optim.SGD(split.parameters(), lr=0.1)  # raises if any stayed lazy
+    assert [n for n, _ in split.named_parameters()], "servant should have params"

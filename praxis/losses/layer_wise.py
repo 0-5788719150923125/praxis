@@ -1,35 +1,26 @@
 """Framework-agnostic layer-wise loss helper.
 
-This module provides :func:`compute_layer_wise_loss`, a generic helper that
-any distributed Mono-Forward style trainer can call to compute one layer's
-local loss. It deliberately has no knowledge of Ray, Hivemind,
-``torch.distributed.rpc``, Flower, monarch, or any other framework - it
-takes plain torch tensors and modules, runs the head projection and
-criterion, and folds aux losses via a strategy.
+:func:`compute_layer_wise_loss` computes one layer's local loss for any
+distributed Mono-Forward style trainer. It knows nothing of Ray, Hivemind,
+``torch.distributed.rpc``, Flower or monarch - it takes plain torch tensors and
+modules, runs the head projection and criterion, and folds aux losses via a
+strategy.
 
-The helper has two goals:
+It routes through the model's real criterion, calling
+``criterion(logits=..., embeddings=..., classifier=..., labels=...)`` with the
+same argument shape :meth:`PraxisForCausalLM._compute_loss` uses, so
+``--loss-func cut_cross_entropy`` and its memory win work here too.
 
-1. **Route through the model's real criterion.** Before this helper
-   existed, ``LayerActor.train_batch`` hardcoded ``F.cross_entropy``. That
-   bypassed ``--loss-func cut_cross_entropy`` (and its memory win), plus
-   any other configurable criterion on Praxis's loss side. This helper
-   calls ``criterion(logits=..., embeddings=..., classifier=..., labels=...)``
-   with the same argument shape that :meth:`PraxisForCausalLM._compute_loss`
-   uses, so cut-CE and plain CE both Just Work.
+It also folds auxiliary losses (decision D5). Routers and controllers on a
+``LocalLayer`` can emit scalar aux losses or a ``LossContainer``; with one actor
+per layer those must fold into the owning layer's *local* CE loss or be
+discarded silently. The ``strategy`` callable (a ``praxis.strategies`` module,
+default ``NaiveSummation``) does the fold.
 
-2. **Fold auxiliary losses per decision D5.** Routers and controllers on a
-   ``LocalLayer`` can emit scalar aux losses (or a ``LossContainer``). When
-   a layer-wise trainer is running one actor per layer, those aux losses
-   must fold into the owning layer's *local* CE loss - otherwise they'd
-   be discarded silently. The ``strategy`` callable (typically a
-   ``praxis.strategies`` module, defaulting to ``NaiveSummation``) performs
-   the fold.
-
-Shift convention matches :meth:`PraxisForCausalLM._compute_loss` exactly:
-non-cut-CE criteria see ``logits[..., :-1, :]`` shifted against the
-already-shifted labels the caller supplies (``input_ids[..., 1:]``); cut-CE
-criteria see the *full unshifted* hidden states and do the shift
-internally via ``shift=1``.
+Shift convention matches :meth:`PraxisForCausalLM._compute_loss`: non-cut-CE
+criteria see ``logits[..., :-1, :]`` against the already-shifted labels the
+caller supplies (``input_ids[..., 1:]``); cut-CE criteria see the *full
+unshifted* hidden states and shift internally via ``shift=1``.
 """
 
 from __future__ import annotations

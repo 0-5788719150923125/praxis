@@ -1,38 +1,34 @@
 """PEFT-style target discovery for parameter-merging routers.
 
-SMEAR/VEAR merge the parameters of ``num_experts`` copies of an ENTIRE decoder
-block under one scalar per expert (praxis/routers/smear.py). That granularity is
-the problem this module exists to fix: one coefficient decides the geometry of
-the attention, the feedforward, both norms and both residual gates at once, and
-the copies are paid for whether or not a given submodule has anything to gain
-from being routed.
+SMEAR/VEAR can merge the parameters of ``num_experts`` copies of an ENTIRE
+decoder block under one scalar per expert, so one coefficient decides the
+geometry of the attention, the feedforward, both norms and both residual gates
+at once, and the copies are paid for whether or not a submodule gains from being
+routed.
 
-The alternative here is the one PEFT uses to decide where a LoRA goes: walk the
-module tree, apply a named profile of include/exclude rules, and attach only
-where the rules say to. A router built on this gets one coefficient row PER
-DISCOVERED TARGET rather than one scalar for the block, and pays parameters only
-for what it targeted.
+Instead, the rule PEFT uses to decide where a LoRA goes: walk the module tree,
+apply a named profile of include/exclude rules, and attach only where the rules
+say to. A router built on this gets one coefficient row PER DISCOVERED TARGET
+and pays parameters only for what it targeted.
 
-Two exclusions are structural rather than stylistic, so they apply to every
-profile and cannot be switched off:
+Two exclusions are structural, apply to every profile, and cannot be switched
+off:
 
   * ``MERGE_OPAQUE`` subtrees. A module that already routes its own parameters
-    per token - PEER's product-key bank is the case here - gains nothing from a
-    per-batch merge wrapped around it, and replicating it is the single most
-    expensive thing the old design did. The flag is read off the class, the same
-    "ask the registered class, not a hardcoded name list" idiom
+    per token - PEER's product-key bank - gains nothing from a per-batch merge
+    wrapped around it, and replicating it is expensive. The flag is read off the
+    class, the same "ask the registered class, not a hardcoded name list" idiom
     ``_wants_expert_bank`` uses in praxis/decoders/base.py.
   * Parameters shared BY REFERENCE. The long-term memory is tied across the
-    block (praxis/decoders/base.py), and a tied tensor reached twice must be
-    merged at most once or the two coefficient rows fight over one tensor.
-    Deduplicated by ``id``, which also catches weight tying.
+    block, and a tied tensor reached twice must be merged at most once or two
+    coefficient rows fight over it. Deduplicated by ``id``, which also catches
+    weight tying.
 
-Lazy parameters are skipped, not errored: ``initialize_lazy_modules``
-(praxis/utils/system.py) runs its dummy forward AFTER the model is built, so a
-router constructed at build time cannot see the shapes of anything still
-uninitialized. Everything lazy in this repo today is an activation
-(Serpent/Servant), which is a per-feature nonlinearity rather than a geometry,
-so nothing worth routing is lost. ``discover_targets`` reports what it skipped.
+Lazy parameters are skipped, not errored: ``initialize_lazy_modules`` runs its
+dummy forward AFTER the model is built, so a router constructed at build time
+cannot see the shapes of anything still uninitialized. Everything lazy here
+today is an activation (Serpent/Servant), a per-feature nonlinearity rather than
+a geometry. ``discover_targets`` reports what it skipped.
 """
 
 from __future__ import annotations

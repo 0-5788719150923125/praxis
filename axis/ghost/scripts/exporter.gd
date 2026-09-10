@@ -104,12 +104,11 @@ var _synth_autoplay := false   # UI_TOGGLE_ID checked at export time (synth take
 # silence until the disk fills). It must never fire on a render that is merely
 # SLOW - heavy scenes at 4K can spend minutes on a few seconds of video.
 #
-# The first version measured INTEGER PERCENT and killed a healthy 720p render
-# of a 344 s take: one percent point is 3.4 s of video there, which a heavy
-# scene can easily take longer than a minute to produce. Percent is far too
-# coarse to mean "alive". Liveness is now two independent fine-grained
-# signals - the FRACTIONAL playback position and the movie file GROWING on
-# disk - and either one counts, with a much longer fuse.
+# Liveness is two independent FINE-GRAINED signals - the fractional playback
+# position and the movie file GROWING on disk - and either one counts, with a
+# long fuse. Integer percent is far too coarse to mean "alive": one percent point
+# of a 344 s take is 3.4 s of video, which a heavy scene can spend over a minute
+# producing, and a healthy 720p render was killed for it.
 const STALL_LIMIT := 300.0
 const STALL_MIN_GROWTH := 65536   # bytes; below this the file is not really moving
 

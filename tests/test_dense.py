@@ -42,14 +42,13 @@ def test_forward_pass(module_setup):
     assert output.shape == (batch_size, seq_len, hidden_size)
 
 
-def test_dual_act_multiplies_two_activated_halves():
-    """`dual_act` fills the GLU's empty LINEAR slot, so both halves are
-    nonlinear and they multiply.
+def test_value_slot_activates_the_glus_linear_half():
+    """Filling the `value` slot makes both halves nonlinear, so they multiply.
 
-    It is a parameter on `GatedLinearMLP` rather than a class of its own, so
-    this also pins the thing that makes that legitimate: a plain `glu` must be
-    byte-for-byte unchanged, and the two must match on parameter count so a swap
-    between them is a clean one-variable change.
+    It is a config SLOT rather than a class or a constructor flag, so this pins
+    what makes that legitimate: an unfilled slot must leave `glu` byte-for-byte
+    unchanged, and the two must match on parameter count so a swap between them
+    is a clean one-variable change.
     """
     import torch
     from types import SimpleNamespace
@@ -58,8 +57,14 @@ def test_dual_act_multiplies_two_activated_halves():
     cfg = SimpleNamespace(
         hidden_size=64, activation="serpent", epsilon=1e-5, dropout=0.0
     )
+    dual_cfg = SimpleNamespace(
+        hidden_size=64,
+        activation={"type": "single", "values": ["serpent"], "linear": "gelu"},
+        epsilon=1e-5,
+        dropout=0.0,
+    )
     glu = DENSE_REGISTRY["glu"](cfg)
-    dual = DENSE_REGISTRY["dual_act"](cfg)
+    dual = DENSE_REGISTRY["glu"](dual_cfg)
     x = torch.randn(2, 16, 64)
     with torch.no_grad():  # serpent carries lazy params until first forward
         glu(x)
@@ -78,7 +83,7 @@ def test_dual_act_multiplies_two_activated_halves():
 
 
 def test_peer_glu_value_branch_defaults_to_identity():
-    """`activation_value` is opt-in: without it, peer_glu is byte-for-byte the old
+    """The `value` slot is opt-in: unfilled, peer_glu is byte-for-byte the old
     behaviour, so every config written before it is unaffected."""
     import torch
     from types import SimpleNamespace
@@ -104,19 +109,26 @@ def test_peer_glu_value_branch_defaults_to_identity():
         plain(torch.zeros(1, 4, 64))
     assert isinstance(plain.act_value, torch.nn.Identity)
     torch.manual_seed(0)
-    dual = DENSE_REGISTRY["peer_glu"](cfg, activation_value="gelu")
+    dual = DENSE_REGISTRY["peer_glu"](
+        cfg, activation={"type": "single", "values": [cfg.activation], "linear": "gelu"}
+    )
     with torch.no_grad():
         dual(torch.zeros(1, 4, 64))
     x = torch.randn(2, 16, 64)
     assert not torch.allclose(plain(x), dual(x), atol=1e-6)
 
 
-def _peer_cfg(num_heads=4):
+SPLIT = {"type": "mix_split", "values": ["servant", "swish"]}
+MIX = {"type": "mix_gated", "values": ["serpent", "swish", "linear"]}
+LINEAR = {"type": "single", "values": ["gelu"], "linear": "gelu"}
+
+
+def _peer_cfg(num_heads=4, activation="gelu"):
     from types import SimpleNamespace
 
     return SimpleNamespace(
         hidden_size=64,
-        activation="gelu",
+        activation=activation,
         epsilon=1e-5,
         dropout=0.0,
         num_experts=4,
@@ -146,12 +158,12 @@ def test_peer_split_partitions_the_bank_by_expert():
     torch.manual_seed(0)
     plain = DENSE_REGISTRY["peer_glu"](_peer_cfg())
     torch.manual_seed(0)
-    split = DENSE_REGISTRY["peer_split"](_peer_cfg())
+    split = DENSE_REGISTRY["peer_glu"](
+        _peer_cfg(activation=SPLIT)
+    )
 
     assert isinstance(split.act, ActivationMixture)
     assert split.act.type_name == "mix_split" and split.act.wants_keys
-    # The bank is named by the profile, not inherited from `config.activation`,
-    # so `peer_split` means the same thing under any `--activation`.
     assert split.act.names == ("servant", "swish")
     assert isinstance(split.act_value, torch.nn.Identity)
 
@@ -164,7 +176,9 @@ def test_peer_split_partitions_the_bank_by_expert():
     # The configs in this line run `num_heads: 1`. A head-axis split would be
     # impossible there; an expert-index split is not.
     torch.manual_seed(0)
-    single = DENSE_REGISTRY["peer_split"](_peer_cfg(num_heads=1))
+    single = DENSE_REGISTRY["peer_glu"](
+        _peer_cfg(num_heads=1, activation=SPLIT)
+    )
     single.eval()
     with torch.no_grad():
         assert single(x).shape == (2, 16, 64)
@@ -187,7 +201,9 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
     from praxis.dense import DENSE_REGISTRY
 
     torch.manual_seed(0)
-    m = DENSE_REGISTRY["peer_split"](_peer_cfg())
+    m = DENSE_REGISTRY["peer_glu"](
+        _peer_cfg(activation=SPLIT)
+    )
 
     # The same expert, reached from two different (head, rank) slots, must take
     # the same branch. Constructing indices directly isolates the partition
@@ -229,8 +245,9 @@ def test_peer_mix_routes_through_an_activation_bank():
         torch.manual_seed(0)
         return DENSE_REGISTRY[name](_peer_cfg(num_heads), **kw)
 
+
     plain = build("peer_glu")
-    mixed = build("peer_mix")
+    mixed = build("peer_glu", activation=MIX)
 
     assert isinstance(mixed.act, ActivationMixture)
     # Continuous, not the `keyed` partition `peer_split` runs - that is the one
@@ -246,7 +263,7 @@ def test_peer_mix_routes_through_an_activation_bank():
     with torch.no_grad():
         assert not torch.allclose(plain(x), mixed(x), atol=1e-6)
 
-    single = build("peer_mix", num_heads=1)
+    single = build("peer_glu", num_heads=1, activation=MIX)
     single.eval()
     with torch.no_grad():
         assert single(x).shape == (2, 16, 64)

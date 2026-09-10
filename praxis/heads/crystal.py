@@ -887,39 +887,35 @@ class CrystalSmearHead(CrystalVearHead):
     """prismatic7's bank: SMEAR's mechanism where prismatic6 has the batch mean.
 
     ``CrystalVearHead`` at ``sharpen=1.0`` already blends rather than votes, so
-    prismatic6 is SMEAR in that one respect and nothing else. Two things it does
-    not do, and both are the paper's (arxiv 2306.03745), not new here:
+    prismatic6 is SMEAR in that one respect and nothing else. Two things it does not
+    do, both from the paper (arXiv:2306.03745):
 
-    ROUTING IS PER EXAMPLE. The parent merges on ``sharp.mean(dim=0)`` - one
-    crystal for the whole batch. That is not merely coarse: the loss reaches the
-    coefficients only through the batch mean, so every example contributes the
-    identical routing gradient ``dL/dw / B`` and a CONSTANT router is the
-    design's fixed point rather than a training failure. It is the same defect
-    the decoder's router had, where ``smear_input_dependence`` sat at ~0 through
-    abstractinator-m/n/p. Here each example merges its own center set, which
-    needs no approximation: ``_crystal_logits_perseq`` already consumes a
-    ``[B, V, D]`` center stack, because inference has always routed per position.
-    Training was the odd one out, and this also closes that train/inference gap.
+    ROUTING IS PER EXAMPLE. The parent merges on ``sharp.mean(dim=0)`` - one crystal
+    for the whole batch - so the loss reaches the coefficients only through the
+    batch mean, every example contributes the identical routing gradient
+    ``dL/dw / B``, and a CONSTANT router is the design's fixed point. Here each
+    example merges its own center set, which needs no approximation:
+    ``_crystal_logits_perseq`` already consumes a ``[B, V, D]`` center stack because
+    inference has always routed per position. This also closes that train/inference
+    gap.
 
-    THE BANK IS BASE PLUS DEVIATIONS. The parent holds ``N`` independent
-    ``[V, D]`` center sets. Here there is ONE set plus ``N`` rank-r deviations,
-    which is the same merge written in a different basis
-    (``base + sum_e w_e delta_e``) with two properties the parent lacks: it is
-    EXACTLY the base at initialization (LoRA init, ``b`` zero), so swapping
-    prismatic6 -> prismatic7 is a clean A/B rather than a reroll; and the shared
-    trunk receives full gradient whatever the routing does, since
+    THE BANK IS BASE PLUS DEVIATIONS. The parent holds ``N`` independent ``[V, D]``
+    center sets; here there is ONE set plus ``N`` rank-r deviations, the same merge
+    in a different basis (``base + sum_e w_e delta_e``). It is EXACTLY the base at
+    initialization (LoRA init, ``b`` zero), so prismatic6 -> prismatic7 is a clean
+    A/B, and the shared trunk receives full gradient whatever the routing does since
     ``d(merged)/d(base) = sum_e w_e = 1``. A starved deviation costs its rank
     instead of a whole geometry.
 
-    Repulsion is OFF (``_rep_scale = 0``). It is VEAR's, not the paper's, and it
-    exists to keep independent geometries apart; deviations off a shared base
+    Repulsion is OFF (``_rep_scale = 0``): it is VEAR's, not the paper's, and it
+    exists to keep independent geometries apart, where deviations off a shared base
     are not competing for the same role. Expert dropout stays at the bank's 0.1,
     which IS the paper's balancing mechanism.
 
-    Averaging distinct center sets pulls the result toward the origin - the
-    parent's argument for sharpening - but that argument applies to a convex hull
-    of independently trained shells. A base plus zero-mean deviations has no such
-    interior: the merge stays on the base's shell and the deviations perturb it.
+    Averaging distinct center sets pulls the result toward the origin - the parent's
+    argument for sharpening - but that applies to a convex hull of independently
+    trained shells. A base plus zero-mean deviations has no such interior: the merge
+    stays on the base's shell and the deviations perturb it.
     """
 
     def __init__(

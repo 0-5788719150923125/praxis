@@ -3,101 +3,82 @@ extends GhostScene
 ## Tidepool - sunlight through a hand's depth of moving water.
 ##
 ## Looking STRAIGHT DOWN into a clear pool over rounded stones, sand and weed, in full
-## daylight. Two firsts sit in that sentence. It is the first overhead shot in the
-## catalogue - everything else is seen from the side, from below, or from a camera flying
-## through a world - and it is one of the first bright grounds, where the pale bed IS the
-## subject rather than a luminous thing floating in a dark frame. The surface is a real
-## wave field: a swell arriving from one edge, finer chop crossing it, and ring waves that
-## spread and die where drips land. What you actually watch is the CAUSTIC NET on the bed,
-## a mesh of bright ribs that slides and pinches as the surface curves, with the stones
-## swimming slightly out from under the crests because the image of the bed is refracted
-## too. Now and again the sun catches a steep enough face that glare closes over a patch of
-## bed and then opens again.
+## daylight. It is the first overhead shot in the catalogue and one of the first bright
+## grounds, where the pale bed IS the subject. The surface is a real wave field: a swell
+## arriving from one edge, finer chop crossing it, and ring waves spreading and dying where
+## drips land. What you watch is the CAUSTIC NET on the bed - a mesh of bright ribs that
+## slides and pinches as the surface curves, with the stones swimming slightly out from
+## under the crests because the image of the bed is refracted too.
 ##
-## THE CAUSTICS ARE COMPUTED, NOT DRAWN. This is the distinction worth the whole scene.
-## `Layer.Surface` already has "caustics" and they are hand-placed wavy bright bands; the
-## terrain water is a flat tinted plane with an opacity ramp. Here the light is actually
-## traced: at every node of a grid the local surface normal comes from [WaveField]'s
-## closed-form gradient, the sun vector is refracted through it by Snell's law into the
-## water, the refracted ray is walked down to the bed plane, and its energy is splatted
-## bilinearly into an accumulation buffer. Bright ribs are where many rays landed in the
-## same place - the definition of a caustic - and they pinch, fork and close exactly where
-## the surface curvature says they should, because nothing else decided where they go. A
-## short separable blur afterwards is the only cosmetic step, and it stands in for the
-## sun's half-degree of angular width, which is why a real caustic net has soft edges
-## instead of infinitely thin ones.
+## THE CAUSTICS ARE COMPUTED, NOT DRAWN, and that is the whole scene. At every node of a
+## grid the local surface normal comes from [WaveField]'s closed-form gradient, the sun
+## vector is refracted through it by Snell's law, the refracted ray is walked down to the
+## bed plane, and its energy is splatted bilinearly into an accumulation buffer. Bright
+## ribs are where many rays landed in the same place - the definition of a caustic - and
+## they pinch, fork and close exactly where the surface curvature says. A short separable
+## blur afterwards is the only cosmetic step, standing in for the sun's half-degree of
+## angular width, which is why a real caustic net has soft edges.
 ##
 ## The bed's own IMAGE is refracted separately, through the same normal but along the
-## viewing ray, which points straight down because the camera does. That second refraction
-## is small (the view is near-normal, so the ray bends by only a few degrees) and it is
-## what makes the stones appear to drift out from under a passing crest rather than
-## sitting still under a moving light show. Doing only the caustics and not this is the
-## usual shortcut and it reads instantly as a texture with a projector aimed at it.
+## viewing ray, which points straight down. That second refraction is small - the view is
+## near-normal, so the ray bends by a few degrees - and it is what makes the stones drift
+## out from under a passing crest rather than sitting still under a moving light show.
 ##
-## WHAT THE SEED DECIDES. The pool: its span in world units, its base depth (0.05 to 0.35,
-## a hand's depth), whether one corner rises into a dry shelf and along which diagonal, the
+## WHAT THE SEED DECIDES. The pool: span in world units, base depth (0.05 to 0.35, a
+## hand's depth), whether one corner rises into a dry shelf and along which diagonal, the
 ## turbidity, and the index of refraction (1.30 to 1.36 - real seawater is 1.34, and the
 ## range is wide enough that a caustic net visibly tightens across it). The sun: elevation
-## from 35 to 88 degrees and a free azimuth, which together decide how far the ribs are
-## thrown sideways from the crest that made them. The surface: 6 to 14 Gerstner components
-## with their directions clustered around one swell heading, their wavelengths, their
-## steepnesses, and one tempo scaling the whole dispersion relation. The bed: a composition
-## over cobble, sand, weed and shell, 20 to 90 stones from an ocean or earth [Palette],
-## the sand's grain, the weed's patchiness. And the light: the ambient floor, the caustic
-## contrast, the specular exponent, the glare threshold and the ground value.
+## 35 to 88 degrees and a free azimuth, which decide how far the ribs are thrown sideways
+## from the crest that made them. The surface: 6 to 14 Gerstner components clustered around
+## one swell heading, their wavelengths, steepnesses, and one tempo scaling the dispersion
+## relation. The bed: a composition over cobble, sand, weed and shell, 20 to 90 stones from
+## an ocean or earth [Palette], the sand's grain, the weed's patchiness. The light: ambient
+## floor, caustic contrast, specular exponent, glare threshold and ground value.
 ##
-## AUDIO. Every component owns a FIXED band, assigned by wavelength rank - the longest
-## wave reads the lowest band, the shortest the highest - and its amplitude is a
-## slow-attack envelope on that band. A DRIP RING reads the water it is spreading across
-## rather than ignoring it: the swell carries its front forward over a crest and holds it
-## back in a trough, and chop damps it out, so the two systems read as one body of water
-## instead of a circle stamped over a surface (see [method WaveField.sweep_rings]). So a bass-heavy passage grows long swell while a
-## bright passage grows fine chop, and the two move against each other instead of throbbing
-## together. Nothing anywhere scales with loudness: the wavelengths are fixed at build, and
-## a louder song makes a rougher surface, not a bigger one. `f.movement` raises the global
-## Gerstner steepness, which is physically the thing that pinches caustic ribs into bright
-## knots, so a section change tightens the whole net without moving anything. Rising edges
-## of `f.beat` drop drips at pre-rolled Halton positions - a table walked by an index, never
-## an rng draw, because the live analyzer and the offline export bake do not produce
-## identical feature streams and a draw on an audio-conditioned event would desynchronise
-## an export from its preview for the rest of the song. `chroma_hue()` sets the water's
-## tint and the sky reflection's hue. `f.energy` moves only the glare threshold.
+## AUDIO. Every component owns a FIXED band assigned by wavelength rank - longest wave
+## reads the lowest band - and its amplitude is a slow-attack envelope on that band, so a
+## bass-heavy passage grows long swell while a bright passage grows fine chop and the two
+## move against each other instead of throbbing together. A DRIP RING reads the water it
+## spreads across: the swell carries its front forward over a crest and holds it back in a
+## trough, and chop damps it out (see [method WaveField.sweep_rings]). Nothing scales with
+## loudness - the wavelengths are fixed at build, so a louder song makes a rougher surface,
+## not a bigger one. `f.movement` raises the global Gerstner steepness, physically the
+## thing that pinches caustic ribs into bright knots, so a section change tightens the net
+## without moving anything. Rising edges of `f.beat` drop drips at pre-rolled Halton
+## positions - a table walked by an index, never an rng draw, because the live analyzer and
+## the offline bake do not produce identical feature streams. `chroma_hue()` sets the
+## water's tint and the sky reflection's hue. `f.energy` moves only the glare threshold.
 ##
 ## MEASURED CONSTANTS. `f.energy` is the mean over 64 bands and rarely passes 0.5, and a
-## single band read through `f.sample()` spends most of its time under 0.3, so a component's
-## drive is written `0.22 + 1.7 * level` rather than as something assuming the band reaches
-## 1. The amplitude-to-wavelength ratio is sampled in 0.03 to 0.075 because that is where
-## caustics actually appear: the focusing strength of a wave on a bed goes as
-## depth * amplitude * wavenumber^2 * (1 - 1/ior), and below roughly a fortieth of a
-## wavelength that product stays under one and the bed just gets a gentle mottle instead
-## of a net. `jz` is clamped off zero at 0.15 because a Gerstner surface whose Jacobian
-## goes negative has folded over itself - a breaking wave, on which a normal is undefined.
+## single band through `f.sample()` spends most of its time under 0.3, so a component's
+## drive is `0.22 + 1.7 * level` rather than something assuming the band reaches 1. The
+## amplitude-to-wavelength ratio is sampled in 0.03 to 0.075 because that is where caustics
+## appear: focusing strength goes as depth * amplitude * wavenumber^2 * (1 - 1/ior), and
+## below roughly a fortieth of a wavelength that product stays under one and the bed gets a
+## gentle mottle instead of a net. `jz` is clamped off zero at 0.15 because a Gerstner
+## surface whose Jacobian goes negative has folded over itself - a breaking wave, on which
+## a normal is undefined.
 ##
-## COST, HONESTLY, AND MEASURED. Everything - the sweep, the light cast, the blur, the
-## shading and the batching - runs inside a [FrameForge] job; the scene itself only ships a
-## snapshot and submits a finished packet. A build costs 29 to 36 ms at 1920x1080 on an idle
-## machine and half again that under load, which is a frame or two at 60 fps, so the water is
-## rebuilt at 20-30 Hz and the forge hands the drawn frame whatever is ready. That number is
-## flat in the component count now, which is what the budget is for, and it is below the 51 ms
-## the old model's worst case cost. It is affordable only because the surface is SLOW: the
-## fastest component's period is 1.5-2.7 s, so a 25 Hz rebuild is nowhere near its Nyquist
-## limit. It was not always - the field used to run three times faster and strobed against
-## its own build rate.
+## COST, MEASURED. The sweep, light cast, blur, shading and batching all run inside a
+## [FrameForge] job; the scene ships a snapshot and submits a finished packet. A build
+## costs 29 to 36 ms at 1920x1080 idle and half again under load, so the water is rebuilt
+## at 20-30 Hz and the forge hands the drawn frame whatever is ready. That is flat in the
+## component count, which is what the budget is for. It is affordable only because the
+## surface is SLOW: the fastest component's period is 1.5-2.7 s, so a 25 Hz rebuild is
+## nowhere near its Nyquist limit.
 ##
-## The grid is sized against a budget in [constant SWEEP_BUDGET], and that budget counts the
-## O(nodes) work as well as the sweep, because measurement said the sweep is not the biggest
-## term (see the constant). The mesh is one vertex per NODE plus one per cell centre, with
-## shared indices, so a frame rewrites only the colours - positions and the index buffer are
-## built once. Cells are CROSS-SPLIT into four triangles about that centre rather than two
-## about a diagonal, without which a 25-pixel cell reads as a herringbone of creases rather
-## than as water. Arrays handed to the main thread are never written again; a change
-## allocates a new one, which is the only discipline that makes a pipelined worker safe.
+## The grid is sized against [constant SWEEP_BUDGET], which counts the O(nodes) work as
+## well as the sweep. The mesh is one vertex per NODE plus one per cell centre with shared
+## indices, so a frame rewrites only the colours. Cells are CROSS-SPLIT into four triangles
+## about that centre rather than two about a diagonal, without which a 25-pixel cell reads
+## as a herringbone of creases rather than water. Arrays handed to the main thread are
+## never written again; a change allocates a new one, which is the only discipline that
+## makes a pipelined worker safe.
 ##
-## The wave itself is analytic and needs no integration, but the drips and the amplitude
-## envelopes are STATE, so they advance on a [SimClock]. That is not optional here: the
-## Director sub-steps update() up to fifteen times in one frame, pre-warms a new scene
-## twelve times before it is ever drawn, and an Echo re-localize can fast-forward hundreds
-## of calls - any of which would have every ring expired before the first frame anyone sees.
+## The wave is analytic and needs no integration, but the drips and amplitude envelopes are
+## STATE, so they advance on a [SimClock]. Not optional: the Director sub-steps update() up
+## to fifteen times in one frame, pre-warms a new scene twelve times before it is drawn,
+## and an Echo re-localize can fast-forward hundreds of calls.
 
 ## How far the node grid runs past the frame. Refraction throws light sideways by up to
 ## about 1.1 times the depth, so a pool with a hard edge exactly at the frame would show a
@@ -108,18 +89,15 @@ const OVER := 1.18
 ## one node. The grid is derived from this and the component count, so the two cannot multiply
 ## into an unaffordable frame.
 ##
-## THE BUDGET USED TO BE WRONG, and measurably so: it counted only `nodes * components`, as if
-## the sweep were the whole frame. It is not. Casting the light, blurring the accumulator and
-## shading each node are all O(nodes) with large constants, so a SIX-component surface - which
-## the old budget rewarded with the finest grid - came out the MOST expensive of all. Measured
-## per build at 1920x1080 (tests/tidepool_cost_probe.gd): 7 components over 6588 nodes took
-## 47-51 ms, while 13 components over 3555 nodes took 34 ms. The budget was equalising the one
-## term that was not dominant.
+## It counts the O(nodes) work, not just `nodes * components`. Casting the light, blurring
+## the accumulator and shading each node are all O(nodes) with large constants, so budgeting
+## on the sweep alone rewards a SIX-component surface with the finest grid and makes it the
+## most expensive of all. Measured per build at 1920x1080 (tests/tidepool_cost_probe.gd): 7
+## components over 6588 nodes took 47-51 ms, 13 components over 3555 nodes took 34 ms.
 ##
-## PER_NODE is the rest of the frame expressed in the same unit, measured from those pairs: the
-## fixed work is worth about fourteen components. Budgeting `nodes * (components + PER_NODE)`
-## makes the cost flat in the component count, which is what the budget was always for.
-const SWEEP_BUDGET := 100000
+## PER_NODE is the rest of the frame in the same unit, measured from those pairs: the fixed
+## work is worth about fourteen components. Budgeting `nodes * (components + PER_NODE)` makes
+## the cost flat in the component count.
 const PER_NODE := 14.0
 
 ## Node-count bounds the budget is clamped into, so neither a very simple nor a very busy

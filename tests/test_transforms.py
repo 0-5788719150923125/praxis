@@ -422,7 +422,7 @@ def test_double_ghostify_is_refused_not_stacked():
 # --- the alignment request --------------------------------------------------
 
 
-def _peer(transform_type, profile="peer_split"):
+def _peer(transform_type, profile="peer_glu"):
     from praxis.dense import DENSE_REGISTRY
 
     return DENSE_REGISTRY[profile](

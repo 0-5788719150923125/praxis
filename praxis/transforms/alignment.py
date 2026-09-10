@@ -1,41 +1,34 @@
 """Shape requests a ghost transform makes of modules that size themselves.
 
-Ghosting runs AFTER the model is assembled, which is a problem for any module
-that DERIVES one of its own dimensions rather than reading it off the config: by
-the time the transform walks the tree the shape is already fixed, and the only
-recourse is to skip. The expansion needs ``d`` to divide both axes of the tensor
-it rewrites, so a derived axis that lands one step off a lattice takes the whole
-tensor out of reach.
+Ghosting runs AFTER the model is assembled, so any module that DERIVES a
+dimension rather than reading it off the config has already fixed its shape by
+the time the transform walks the tree. The expansion needs ``d`` to divide both
+axes of the tensor it rewrites, so a derived axis one step off a lattice takes
+the whole tensor out of reach.
 
 PEER is the case in point. Its banks are ``[num_experts * num_sets,
-hidden_size]`` with ``num_experts = num_keys ** 2``, and ``num_keys`` is
-``round(sqrt(budget))``. At hidden_size 272 that rounded to 27 keys - odd by
-0.07 of a rounding step - giving 729 = 3^6 rows against a hidden width of
-2^4 * 17. gcd(729, 272) = 1, so NO d > 1 divided both axes, and the largest
-tensor group in the decoder was permanently unreachable for want of one key.
+hidden_size]`` with ``num_experts = num_keys ** 2`` and ``num_keys =
+round(sqrt(budget))``. At hidden_size 272 that rounds to 27 keys, giving
+729 = 3^6 rows against a hidden width of 2^4 * 17. gcd(729, 272) = 1, so no
+d > 1 divides both axes and the largest tensor group in the decoder is
+unreachable for want of one key.
 
-WHY THIS IS PULLED AND NOT PUSHED. The first fix was a constructor flag,
-``even_keys=True``, plus a second dense-registry profile per arm to pass it
-(``peer_split_even``, ``peer_mix_even``). That is the wrong shape twice over: it
-writes a ghost implementation detail into the signature of every module that
-auto-sizes, and it doubles the registry every time one appears - two profiles per
-arm that differ by nothing an experiment cares about. Here the module asks
-instead. It states which of its dimensions is derived and what axis that
-dimension produces; the answer is the same arithmetic either way, and the arm
-means one thing whether or not a ghost profile is configured.
+THE MODULE ASKS; THE TRANSFORM DOES NOT PUSH. A module states which of its
+dimensions is derived and what axis it produces. The alternative - a constructor
+flag plus a second registry profile per arm to pass it - writes a ghost
+implementation detail into the signature of every auto-sizing module and doubles
+the registry each time one appears.
 
-WHAT A REQUEST DOES NOT BUY. It is not licence to resize whatever the transform
-finds convenient. Only profiles that set ``request_alignment`` are answered, and
-only the broad ones do. A profile that names a single site
+WHAT A REQUEST DOES NOT BUY. Only profiles that set ``request_alignment`` are
+answered, and only the broad ones do. A profile naming a single site
 (``ghost_conv_complex``) must leave every other site's arithmetic exactly as its
-baseline had it, or the run stops being one change off its control - and a bank
+baseline had it, or the run stops being one change off its control - a bank
 quietly shrinking 729 -> 676 in an experiment that never meant to touch PEER is
-precisely the kind of confound that gets discovered in a loss curve instead.
+the kind of confound found in a loss curve instead.
 
-Requests are also advisory. ``align_axis`` returns the unaligned value when no
-lattice near it satisfies ``d``, and the transform then reports the tensor as
-``indivisible`` in the ``[GHOST]`` block. A missed request is visible in the
-build log rather than silent.
+Requests are advisory: ``align_axis`` returns the unaligned value when no lattice
+near it satisfies ``d``, and the transform reports the tensor as ``indivisible``
+in the ``[GHOST]`` block.
 """
 
 from __future__ import annotations

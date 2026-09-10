@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.activations import ActivationSpec, build_activation
+from praxis.activations import ActivationSpec, build_activation, linear_activation
 from praxis.dense.base import BaseDense
 from praxis.transforms import aligned_size
 
@@ -72,7 +72,6 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         offset_heads: bool = False,
         sparse: bool = False,
         activation: Optional[ActivationSpec] = None,
-        activation_value: Optional[ActivationSpec] = None,
         glu: bool = False,
     ):
         """
@@ -92,20 +91,16 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 expert count) - the names collide but the quantities do not.
             num_heads: independent retrieval heads. Default: config.num_heads.
             k: experts retrieved per head. Default: TOP_K, clamped to num_keys.
-            activation: the expert (gate) activation - a registry name or a
-                ``{type, values}`` spec. Default: ``config.activation``. A
-                mixture type here gives every expert a BANK of function classes
-                instead of one (praxis/activations/mixture.py): ``mix_split``
-                partitions the bank by expert index, freezing one class per row;
-                ``mix_gated`` blends them continuously per element. PEER passes
-                the expert's position in the bank to any mixture that asks for
-                it (``wants_keys``); everything else about the choice lives in
-                the activation.
-            activation_value: activation for the GLU expert's linear value
-                branch (``glu`` only). Default: none, i.e. the ordinary gated
-                expert. The same second SLOT ``GatedLinearMLP`` exposes, so
-                ``peer_dual`` and ``dual_act`` are the same change to two
-                different feedforwards.
+            activation: overrides the whole spec for this instance. Default:
+                ``config.activation``, from which this takes the expert gate and
+                the optional ``linear`` half. A mixture type gives every expert
+                a BANK of function classes instead of one
+                (praxis/activations/mixture.py): ``mix_split`` partitions the
+                bank by expert index, freezing one class per row; ``mix_gated``
+                blends them continuously per element. PEER passes the expert's
+                position in the bank to any type that asks for it
+                (``wants_keys``); everything else about the choice lives in the
+                activation.
             glu: if True, every expert is a gated unit rather than a rank-1
                 projection: ``up_e * (act(x . gate_e) * (x . down_e))`` instead
                 of ``up_e * act(x . down_e)``. This is the same change SwiGLU
@@ -198,12 +193,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         self.hidden_size: int = hidden_size
         self.sparse: bool = sparse
-        # Second activation for the GLU value branch (default: identity, i.e.
-        # unchanged behaviour). A SLOT, not a bank - see GatedLinearMLP, which
-        # exposes the same one on the dense path.
-        self.act_value: nn.Module = (
-            build_activation(activation_value) if activation_value else nn.Identity()
-        )
+        # The held-out LINEAR half of a gated expert (default: identity, i.e.
+        # unchanged behaviour). `linear` means the same thing here as it does in
+        # GatedLinearMLP, and the configured feedforward is the one it reaches.
+        spec = activation or config.activation
+        self.act_value: nn.Module = linear_activation(spec) or nn.Identity()
 
         # No parity constraint on hidden_size. Every use of it here is a
         # projection width, never a split: the `2` throughout is the
@@ -278,7 +272,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             if glu
             else None
         )
-        self.act = build_activation(activation or config.activation)
+        self.act = build_activation(spec)
         # THE ACTIVATION MAY WANT THE EXPERT INDEX. An earlier version of this
         # module carried an `act_alt` flag that split the bank in half and gave
         # each half its own activation, keyed on the expert index. That logic
@@ -301,39 +295,28 @@ class ParameterEfficientExpertRetrieval(BaseDense):
     def init_weights(self, keys_std: float = 0.02) -> None:
         """Init the product keys and the expert banks by their TRUE fan-in.
 
-        Neither PEER (arXiv 2407.04153) nor the product-key memory it builds on
-        (arXiv 1907.05242) specifies how to initialize experts; PKM says only
-        that keys are "randomly initialized". So this is derived rather than
-        cited, and the derivation is the point.
+        Neither PEER (arXiv:2407.04153) nor the product-key memory it builds on
+        (arXiv:1907.05242) specifies how to initialize experts, so this is derived
+        rather than cited.
 
-        The banks are lookup tables, not weight matrices. Each row is one
-        expert's vector, and only ``num_heads * k`` of them participate in any
-        token - the other rows are untouched. That makes ``num_experts`` a
-        LOOKUP dimension, not a fan, and it must not appear in a variance
-        formula.
+        The banks are lookup tables, not weight matrices. Each row is one expert's
+        vector, and only ``num_heads * k`` of them participate in any token. That makes
+        ``num_experts`` a LOOKUP dimension, not a fan, and it must not appear in a
+        variance formula - Xavier reads ``fan_out = num_experts`` off the tensor shape,
+        so its init scale falls as the bank grows (0.065x output at a 289-expert bank,
+        ~32x attenuation at a paper-scale 2^20 one) and bank size cannot be varied
+        independently of init scale.
 
-        Xavier was the previous choice and does exactly that: it reads
-        ``fan_out = num_experts`` off the tensor shape, so the init scale falls
-        as the bank grows, for no reason connected to the computation. At a
-        289-expert bank that already attenuates the module's output to 0.065x
-        its input at init; the factor is ~32x at a paper-scale 2^20 bank. A
-        near-silent FFN that has to climb its way back up is a poor starting
-        point, and it made bank size and init scale impossible to vary
-        independently.
+        The fan-in each bank actually has:
 
-        The fan-in that each bank actually has:
+        * ``down`` and ``gate`` project the input onto one expert vector, so their
+          fan-in is ``hidden_size``.
+        * ``up`` is summed over the retrieved experts (an EmbeddingBag in ``sum`` mode
+          weighted by SIGMOID scores, which do not normalize to 1 the way a softmax
+          would), so its fan-in is the retrieval fan-out ``num_heads * k``.
 
-        * ``down`` and ``gate`` project the input onto one expert vector, so
-          their fan-in is ``hidden_size``.
-        * ``up`` is summed over the retrieved experts (an EmbeddingBag in
-          ``sum`` mode weighted by SIGMOID scores, which do not normalize to 1
-          the way a softmax would), so its fan-in is the retrieval fan-out
-          ``num_heads * k``.
-
-        Measured at hidden_size=111, k=8: output/input std goes 0.065 -> 0.59,
-        against 185 for the reference implementation's ``nn.Embedding`` default
-        of N(0, 1). Both alternatives are independent of bank size; only this
-        one is also scale-preserving.
+        Measured at hidden_size=111, k=8: output/input std goes 0.065 -> 0.59, against
+        185 for the reference implementation's ``nn.Embedding`` default of N(0, 1).
         """
         nn.init.normal_(self.keys, std=keys_std)
 

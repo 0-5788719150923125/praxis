@@ -1,52 +1,41 @@
 """Dump every thread's stack when the training loop stops making progress.
 
-A wedged run is the worst kind of bug to chase, because the evidence dies with
-the process: training stops, the inline generation queue stops, the terminal's
-rolling contexts stop, and the API server (which serves several endpoints from
-the training thread's own data) stops answering. From outside all you can say
-is "it froze", and ``py-spy dump`` needs ptrace privileges the process may not
-have.
+A wedged run kills its own evidence: training stops, the generation queue stops,
+the terminal contexts stop, and the API server (served from the training
+thread's data) stops answering. From outside all you can say is "it froze", and
+``py-spy dump`` needs ptrace privileges the process may not have.
 
-``faulthandler.dump_traceback_later`` solves it from inside and for free. It
-arms a timer in a dedicated C thread; if the timer expires before it is
-re-armed, that thread writes every Python thread's stack to a file and lets the
-process carry on. Critically it does NOT need the GIL to fire, so it still
-reports when the interpreter is wedged - which is exactly when nothing else
-can.
+``faulthandler.dump_traceback_later`` arms a timer in a dedicated C thread; if
+the timer expires before it is re-armed, that thread writes every Python thread's
+stack to a file and lets the process carry on. It does NOT need the GIL to fire,
+so it still reports when the interpreter is wedged.
 
-This callback re-arms the timer at each batch start. A step that overruns
-``timeout_s`` therefore dumps the stack of whatever it is stuck in, including
-anything running from the batch-end hooks (the generation queue drains there,
-so a hung generation is covered). ``repeat`` keeps it dumping, which is what
-separates a HANG (the same stack over and over) from something merely SLOW (a
-stack that moves).
-
-The timeout is deliberately generous. A step here is milliseconds, but the
-first compiled step can take minutes and an inference tick is not free, so this
-is a wedge detector, not a performance monitor.
+This callback re-arms the timer at each batch start, so a step overrunning
+``timeout_s`` dumps whatever it is stuck in, including work running from the
+batch-end hooks (the generation queue drains there). ``repeat`` keeps it dumping,
+which separates a HANG (the same stack over and over) from something merely SLOW.
+The timeout is deliberately generous - the first compiled step can take minutes -
+so this is a wedge detector, not a performance monitor.
 
 READING ``stalls.log``
-----------------------
+
 A ``Timeout (0:10:00)!`` block followed by a ``--- priority dump ---`` block is
-the good case: the priority dump names the thread that is stuck.
+the good case: the priority dump names the stuck thread.
 
 A ``Timeout`` block with NO priority dump after it is itself the diagnosis: the
-priority dump needs the GIL, so its absence means the GIL is what is stuck, and
-no in-process tool can report from there. The faulthandler block is not a
-substitute - it caps at 100 threads, newest first, so the ~95 idle pool workers
-this process runs push the main thread off the end every time.
+priority dump needs the GIL, so its absence means the GIL is what is stuck. The
+faulthandler block is not a substitute - it caps at 100 threads, newest first,
+so the ~95 idle pool workers push the main thread off the end.
 
-That case needs an out-of-process sampler. Both threads' real stacks - Python
-AND native, which is where the answer was - come from::
+That case needs an out-of-process sampler. Both Python AND native stacks come
+from::
 
     docker cp .venv/bin/py-spy <container>:/tmp/py-spy
     docker exec --privileged <container> /tmp/py-spy dump --pid 1 --native
 
-``--privileged`` is what grants ptrace; without it py-spy exits on permission
-alone. Use the container's own pid for the training process (``ps`` inside it),
-not the host pid. Dump twice: identical output is a hang, moving output is a
-slow step. That is how the snapshot-producer deadlock (see
-``praxis/web/snapshots.py``) was finally read off a wedged abstractinator-s.
+``--privileged`` grants ptrace; without it py-spy exits on permission alone. Use
+the container's own pid for the training process (``ps`` inside it), not the host
+pid. Dump twice: identical output is a hang, moving output is a slow step.
 """
 
 import faulthandler

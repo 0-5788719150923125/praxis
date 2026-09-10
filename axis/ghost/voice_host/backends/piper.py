@@ -52,28 +52,24 @@ SENTENCE_END = {".", "!", "?"}
 # PAUSE AFTER PUNCTUATION - EXTRA seconds of real silence at `pause_scale` = 1.0, on top of
 # whatever the model already does rather than instead of it.
 #
-# WHY IT EXISTS. A VITS model gets punctuation as a phoneme id and decides for itself how long to
-# dwell. The report was "the model runs through commas and periods, and especially colons, too
-# quickly". The model still SEES the mark, so its intonation is untouched; this only lengthens the
-# rest the mark is asking for.
+# A VITS model gets punctuation as a phoneme id and decides for itself how long to dwell. The
+# model still SEES the mark, so its intonation is untouched; this only lengthens the rest.
 #
-# WHY THESE NUMBERS - measured, not guessed. Span of the token owning the mark,
-# en_US-ljspeech-medium, same sentence throughout:
+# THE NUMBERS ARE MEASURED. Span of the token owning the mark, en_US-ljspeech-medium, same
+# sentence throughout:
 #   no mark 0.279 s | "," 0.430 (+0.151) | ";" 0.465 (+0.186) | ":" 0.580 (+0.301)
-# Piper is NOT skipping these, and the colon already rests twice as long as a comma. So the
-# reported "colons run through" was never the model: ghost was sending every colon to it AS A
-# COMMA (generative_editor.gd collapsed the mark before it left Godot). Fixing that is most of the
-# cure. This table is the seasoning, and it stays small deliberately - an earlier draft added
-# 0.26 s to a colon, making it a ~0.58 s rest, longer than a full stop, which inverts the
-# punctuation hierarchy. The ordering : > ; > , is preserved so the marks stay distinguishable.
+# Piper is not skipping these, and the colon already rests twice as long as a comma. So this
+# table is seasoning, and it stays small deliberately: 0.26 s on a colon would make it a
+# ~0.58 s rest, longer than a full stop, inverting the punctuation hierarchy. The ordering
+# : > ; > , is preserved so the marks stay distinguishable.
 #
-# The three sentence-final marks are 0.32 because that is EXACTLY the `sentence_gap` default this
-# file has always shipped: the table subsumes that parameter rather than stacking on it, so
+# The three sentence-final marks are 0.32 because that is EXACTLY the `sentence_gap` default
+# this file ships: the table subsumes that parameter rather than stacking on it, so
 # `pause_scale` = 1.0 with no explicit `sentence_gap` reproduces the old behaviour sample for
-# sample. A caller still sending `sentence_gap` still wins for . ! ? - it is the same knob.
+# sample. A caller still sending `sentence_gap` still wins for . ! ? - same knob.
 #
 # Anyone wanting more reaches for the Pause slider, which runs to 10x (see
-# generative_editor.MAX_PAUSE_SCALE); the base stays calibrated to what the model actually does.
+# generative_editor.MAX_PAUSE_SCALE); the base stays calibrated to what the model does.
 PAUSE_AFTER: dict[str, float] = {
     ",": 0.10,
     ";": 0.13,
@@ -84,33 +80,24 @@ PAUSE_AFTER: dict[str, float] = {
     "?": 0.32,
 }
 
-# WHAT THE MODEL ALREADY RESTS at each mark, in seconds, measured with its own noise
-# switched off so the number is the model's and not one sample of it. The comma, semicolon
-# and colon figures are the token-span increments recorded above; the sentence-final one is
-# the trailing silence of a rendered sentence (0.138-0.145 s here) plus the leading silence
-# of the one after it (0.044), because with one sentence per request those two are what sit
-# either side of a seam.
+# WHAT THE MODEL ALREADY RESTS at each mark, in seconds, measured with its own noise switched
+# off so the number is the model's and not one sample of it. The comma, semicolon and colon
+# figures are the token-span increments recorded above; the sentence-final one is the trailing
+# silence of a rendered sentence (0.138-0.145 s here) plus the leading silence of the one
+# after it (0.044), because with one sentence per request those two sit either side of a seam.
 #
-# THIS TABLE IS WHY THE PAUSE SLIDER GOT ITS PROPORTIONS BACK. What a reader hears at a mark
-# is the model's rest plus ours, and only the second half was ever being scaled - so turning
-# the dial up did not lengthen the rests, it lengthened the DIFFERENCES between them. At 1.0
-# a full stop rests twice as long as a comma; under a linear scale that was 2.3x by 2.0,
-# 2.8x by 6.0 and 2.9x at the top. Reported exactly that way: "the pause after a comma and
-# the pause after a sentence are very different: the pause after a sentence seems to be much
-# longer... at 6.0 the comma-pauses feel about right, while the period-pauses feel far too
-# slow." Both halves of that sentence are one bug.
+# What a reader hears at a mark is the model's rest plus ours, so the dial has to scale both.
+# Scaling only our half lengthens the DIFFERENCES between marks rather than the rests
+# themselves - at 1.0 a full stop rests twice as long as a comma, and under a linear scale on
+# our half alone that ratio grows to 2.3x by 2.0 and 2.9x at the top of the dial.
 #
 # THESE FIGURES ARE AN ESTIMATE AND ONLY THE SEAM USES THEM. The dwell is a property of the
-# checkpoint, the pace and the sentence, and a table cannot be right about all three: the
-# comma entry here says 0.15 s and en_US-john-medium actually rests 0.41 at the comma in
-# "He waited, and the tide came in." Get it wrong and the dial scales the ERROR instead of
-# the rest - the same bug one level down - so `_splice_pauses` MEASURES it in the waveform
-# and this table is used only where there is no waveform to measure: the seam between two
-# separately rendered sentences, which the editor inserts, and the accounting.
-#
-# The seam is the one place an estimate is safe, because it is the one dwell that does not
-# vary much - the trailing silence of a render plus the leading silence of the next, both
-# measured repeatedly at 0.138-0.145 and 0.044.
+# checkpoint, the pace and the sentence, and a table cannot be right about all three (this
+# comma entry says 0.15 s where en_US-john-medium rests 0.41 at the comma in "He waited, and
+# the tide came in."). Get it wrong and the dial scales the ERROR instead of the rest, so
+# `_splice_pauses` MEASURES it in the waveform and this table is used only where there is no
+# waveform: the seam between two separately rendered sentences, and the accounting. The seam
+# is the one dwell that does not vary much.
 DWELL: dict[str, float] = {
     ",": 0.15,
     ";": 0.19,
@@ -123,22 +110,15 @@ DWELL: dict[str, float] = {
 # THE PAUSE CURVE. The dial multiplies the WHOLE rest - the model's own plus ours - so every
 # mark keeps its share of the reading at every setting.
 #
-# A POWER LAW, not the saturating exponential this was first written as, and the difference
-# is the whole of a report: "even completely maxxed-out at 10x, the pause effect barely seems
-# to work with the Urgent tone... perhaps we need to allow for 100x pause". The instinct was
-# right and the remedy would not have worked - an exponential that reaches 3.2 at the top of
-# the dial reaches 3.28 at 20 and 3.29 at 100, so a bigger number buys nothing whatever. It
-# was the CURVE that topped out, not the dial.
+# A POWER LAW, not a saturating exponential: an exponential that reaches 3.2 at the top of
+# the dial reaches 3.28 at 20 and 3.29 at 100, so raising the dial's ceiling buys nothing.
 #
-# `d ** PAUSE_GAIN` is exactly 1.0 at 1.0 by construction (no normalising constant to round
-# and no default to drift, which the fitted pair before it managed to do), tracks the old
-# curve within 3% up to 3.0 - the part nobody complained about - and then keeps climbing
-# instead of flattening: 5.0x at the top of the dial, where a full stop rests two and a half
-# seconds. The exponent is the reach, said once: log(5)/log(10).
+# `d ** PAUSE_GAIN` is exactly 1.0 at 1.0 by construction (no normalising constant, no
+# default to drift) and keeps climbing instead of flattening: 5.0x at the top of the dial,
+# where a full stop rests two and a half seconds. The exponent is the reach: log(5)/log(10).
 #
-# It is still concave, which is the other half of "the toggle feels very finicky": every unit
-# of dial adds less than the one before it. Reach costs step size and that is the trade being
-# made here - 5.0 to 6.0 moves a rest by 13% where the flatter curve moved it by 6%.
+# It is concave, so every unit of dial adds less than the one before it. Reach costs step
+# size: 5.0 to 6.0 moves a rest by 13% where a flatter curve moved it by 6%.
 PAUSE_GAIN = 0.69897
 
 
@@ -301,51 +281,43 @@ DEPTH_TOP = 2.5
 def _discourse_plan(groups: list, params: dict) -> list[dict]:
     """Per-sentence rate and pitch from DISCOURSE STRUCTURE, not from a clock.
 
-    Piper is a sentence-level model. It declines pitch across a phrase, lengthens
-    finally, and handles a question - all of it well. What it cannot know is that
+    Piper is a sentence-level model: it declines pitch across a phrase, lengthens
+    finally, and handles a question, all of it well. What it cannot know is that
     this is the fourth sentence of a paragraph, because it never sees the
-    paragraph. So every sentence starts from the same register and runs at the
-    same rate, and a chapter is several hundred identical arcs laid end to end.
-    That is the whole of "the delivery remains more or less constant": before
-    this, `length_scale` / `noise_w` were set once per take and every sentence in
-    a forty-minute chapter got the same three numbers.
+    paragraph, so every sentence starts from the same register and a chapter is
+    several hundred identical arcs laid end to end.
 
-    The rules here are the documented ones, not invented shape:
+    The rules here are the documented ones:
 
-      PARATONE (the intonational paragraph). Speakers reset F0 upward at the
-      start of a discourse unit and let it decline across it, and the size of the
-      reset scales with the depth of the boundary. Lehiste (1975) named the
-      intonational paragraph; 't Hart/Collier/Cohen (1990) is the standard
-      treatment of declination; Sluijter & Terken (1993) and Nakajima & Allen
-      (1993) tie reset size to boundary depth. This is why a slow undulation is
-      the right instinct and a slow SINE is not: the wave is real, but its period
-      is the paragraph, so it has to be phase-locked to the text. A fixed-period
-      oscillator drifts against the prose and lands its peaks on whatever happens
-      to be there, which is the one thing a real speaker never does.
+      PARATONE (the intonational paragraph). Speakers reset F0 upward at the start
+      of a discourse unit and let it decline across it, the reset scaling with the
+      depth of the boundary. Lehiste (1975) named the intonational paragraph; 't
+      Hart/Collier/Cohen (1990) is the standard treatment of declination; Sluijter
+      & Terken (1993) and Nakajima & Allen (1993) tie reset size to boundary depth.
+      This is why the wave has to be phase-locked to the text rather than driven by
+      a fixed-period oscillator, which would drift against the prose and land its
+      peaks on whatever happens to be there.
 
-      FINAL LENGTHENING. Material before a prosodic boundary is lengthened, and
-      the amount indexes the strength of that boundary (Klatt 1975; Wightman,
-      Shattuck-Hufnagel, Ostendorf & Price 1992). So the slowing is progressive
-      into the end of the unit rather than a flat rate for every sentence.
+      FINAL LENGTHENING. Material before a prosodic boundary is lengthened, and the
+      amount indexes the strength of that boundary (Klatt 1975; Wightman,
+      Shattuck-Hufnagel, Ostendorf & Price 1992), so the slowing is progressive
+      into the end of the unit rather than a flat rate per sentence.
 
-      LENGTH-CONDITIONED RATE. The longer the utterance, the shorter its
-      segments - speakers compress long stretches and dwell on short ones
-      (Lindblom's anticipatory shortening). A one-clause sentence after a long
-      one genuinely lands harder, which is free emphasis from structure alone.
+      LENGTH-CONDITIONED RATE. The longer the utterance, the shorter its segments -
+      speakers compress long stretches and dwell on short ones (Lindblom's
+      anticipatory shortening). A one-clause sentence after a long one lands
+      harder, which is free emphasis from structure alone.
 
       VOCAL EFFORT, which is not volume. A louder voice has a FLATTER source
-      spectrum - more high-frequency energy, because the glottal pulse is sharper
-      - and a quieter one a steeper tilt. That is why turning a level down reads
-      as "further away" rather than "speaking softly": distance is a filter, and
-      effort is a different filter. Coupling the tilt to the level is what makes
-      the difference read as the speaker easing off rather than the fader moving,
-      and effort declines across a paragraph for the same reason pitch does (both
-      follow subglottal pressure), so it rides the same contour as the arc.
+      spectrum - more high-frequency energy, because the glottal pulse is sharper -
+      and a quieter one a steeper tilt. That is why turning a level down reads as
+      "further away" rather than "speaking softly": distance is a filter, effort is
+      a different filter. Effort declines across a paragraph for the same reason
+      pitch does (both follow subglottal pressure), so it rides the same contour.
 
     `dynamics` (0..1) scales the whole timing half, `prosody_arc` is the paragraph
     pitch arc in SEMITONES peak-to-peak, and `effort` scales the tilt/level
-    contour. All default to 0, so an untouched session synthesizes exactly what it
-    did before.
+    contour. All default to 0.
     """
     depth = max(0.0, float(params.get("dynamics", 0.0)))
     arc = max(0.0, float(params.get("prosody_arc", 0.0)))
@@ -792,41 +764,35 @@ def _lpc_order(sr: int) -> int:
 def _nominal_seconds(frames, ratio: float, sr: int) -> float:
     """How long this sentence WOULD have run at `1/ratio` of the length scale it was given.
 
-    THE BUG THIS ANSWERS. A per-sentence pitch move is bought by rendering `pr` times slower
-    and playing back `pr` times faster, and the two are assumed to cancel in duration. They
-    do not. The duration predictor's output is CEILED to whole frames per phoneme id - pads
-    and BOS/EOS included, which is most of the ids - so a token already at its one-frame
-    floor cannot get shorter, and a sizeable part of every sentence does not respond to
-    length_scale at all. Measured across three voices, that fixed part is 13% to 46% of a
-    sentence, varying with the voice and the sentence both, which is why no constant can
+    A per-sentence pitch move is bought by rendering `pr` times slower and playing
+    back `pr` times faster, and the two do not cancel in duration. The duration
+    predictor's output is CEILED to whole frames per phoneme id - pads and BOS/EOS
+    included, which is most of the ids - so a token already at its one-frame floor
+    cannot get shorter, and a sizeable part of every sentence does not respond to
+    length_scale at all. Measured across three voices, that fixed part is 13% to
+    46% of a sentence, varying with the voice and the sentence, so no constant can
     stand in for it.
 
-    What it sounds like: the paragraph arc opens a unit high (pr > 1, renders long, plays
-    back short) and closes it low (pr < 1, renders short, plays back long), so the reading
-    accelerates into every paragraph and drags out of it - by 5.1% and 2.0% at the top of
-    the Arc dial, on a 3-second sentence. Reported as "the pace grows slower and slower over
-    time, decreasing in speed with the increase in the Arc value", and the report is exact:
-    the tilt is proportional to the arc.
+    Uncorrected, the paragraph arc opens a unit high (pr > 1, renders long, plays
+    back short) and closes it low, so the reading accelerates into every paragraph
+    and drags out of it - by 5.1% and 2.0% at the top of the Arc dial on a
+    3-second sentence, the tilt proportional to the arc.
 
-    The frames are the plan the synthesizer actually used, so the answer is computable rather
-    than remembered: `frames_i = ceil(d_i * L)` bounds each `d_i` to within one frame, its
-    midpoint is the unbiased choice inside that bound, and rescaling that midpoint gives what
-    the other scale would have asked for.
+    The frames are the plan the synthesizer actually used, so the answer is
+    computable: `frames_i = ceil(d_i * L)` bounds each `d_i` to within one frame,
+    its midpoint is the unbiased choice inside that bound, and rescaling that
+    midpoint gives what the other scale would have asked for.
 
-    THE EXPECTATION IS EXACT, not a half-frame rule of thumb. `frames_i = m` says only that
-    `d_i * L` fell in `(m-1, m]`, so at the other scale it falls in `((m-1)/r, m/r]` - an
-    interval whose width is one frame divided by the ratio. Averaging the ceiling over it is
-    the integral of a staircase, which is closed form - and it has to be general in the width,
-    because a PULL-DOWN (ratio under 1) widens the interval past a whole frame and a two-term
-    version that assumed one straddle read 6% long on exactly those, which is the end of every
-    paragraph. Two cruder versions were
-    measured first and both left a systematic tilt behind: ceiling the midpoint counts the
-    rounding twice (+3.1% of a sentence), and adding half a frame back counts it slightly
-    short (-1.1% on one voice, -4.4% on another, because how much a voice floors at one
-    frame varies).
+    THE EXPECTATION IS EXACT, not a half-frame rule of thumb. `frames_i = m` says
+    only that `d_i * L` fell in `(m-1, m]`, so at the other scale it falls in
+    `((m-1)/r, m/r]` - an interval one frame wide divided by the ratio. Averaging
+    the ceiling over it is the integral of a staircase, which is closed form, and
+    it has to be general in the width: a PULL-DOWN (ratio under 1) widens the
+    interval past a whole frame, and a two-term version assuming one straddle reads
+    6% long on exactly those, which is the end of every paragraph.
 
-    Exact at ratio 1 by construction, which is the property worth having: with no arc there
-    is no correction and the render is what it always was, byte for byte.
+    Exact at ratio 1 by construction, so with no arc there is no correction and the
+    render is what it always was, byte for byte.
     """
     import numpy as np
 
@@ -1126,42 +1092,34 @@ REST_FLOOR = 0.12
 def _trim_rests(audio, rests, sr: int):
     """Cut the unplanned pause out of the middle of a clause.
 
-    THE DEFECT. Piper's duration predictor is stochastic - that is what `noise_w` is the
-    noise of - and the thing it predicts a duration FOR includes the blanks between the
-    phonemes. A blank is also where the model puts a pause, so a blank's duration is not
-    scattered around one value, it is bimodal: a few tens of milliseconds nearly always,
-    and a quarter of a second when the sample lands in the other mode. Draw enough of them
-    and every so often one lands there in the middle of a clause, with no punctuation
-    anywhere near it and nothing in the text asking for it.
+    Piper's duration predictor is stochastic - that is what `noise_w` is the noise
+    of - and what it predicts a duration for includes the blanks between the
+    phonemes. A blank is also where the model puts a pause, so a blank's duration
+    is bimodal: a few tens of milliseconds nearly always, and a quarter of a second
+    when the sample lands in the other mode. Draw enough of them and one lands
+    there mid-clause, with no punctuation near it.
 
-    Reported as "weird stuttering in their cadence, around specific words" - the
-    reporter's own opening sentence has one, a 0.29 s hole between `house` and `in it` at
-    -34 dB, in three renders out of eight. Reading in the sentence rather than word by
-    word (see WORD_BREAK) shortened the tail a long way - the 99th percentile of a
-    boundary rest went 0.120 -> 0.104 - but it cannot remove the mode, and on the
-    reporter's own speaker it did not: 0.383 s after `country`, 0.302 s after `it`.
+    It is not fixable at the source. The duration plan and the waveform come out of
+    one ONNX call, so there is nothing to clamp before the audio exists, and the
+    only dial that reaches it is `noise_w` - the rhythmic variety of the whole
+    reading. Reading in the sentence rather than word by word (see WORD_BREAK)
+    shortens the tail (99th percentile of a boundary rest 0.120 -> 0.104) but
+    cannot remove the mode.
 
-    It is not fixable at the source. The duration plan and the waveform come out of one
-    ONNX call, so there is nothing to clamp before the audio exists, and the only dial
-    that reaches it is `noise_w` - which is the rhythmic variety of the whole reading, and
-    turning it down to stop one hole in six hundred boundaries buys a metronome.
+    THE PLAN SAYS WHERE, THE WAVEFORM SAYS HOW LONG. `rests` is [(t0, t1)] from the
+    frame plan, for word boundaries carrying NO punctuation - a marked one is
+    `_splice_pauses`'s to own. But the plan is not the hole: a word tapers into a
+    rest and starts up out of it, and a phone beside the blank can render as
+    silence itself, so the audible gap runs past the plan at both ends (bringing
+    the PLAN back to the ceiling left one boundary with 0.264 s of silence still in
+    it). So the plan finds the boundary, the real silence around it is measured,
+    and the ceiling applies to that.
 
-    THE PLAN SAYS WHERE, THE WAVEFORM SAYS HOW LONG. `rests` is [(t0, t1)] from the frame
-    plan, for word boundaries carrying NO punctuation - a marked one is `_splice_pauses`'s
-    to own, and shortening a full stop because the model was generous with it would be
-    this function arguing with the Pause dial. But the plan is not the hole: a word tapers
-    into a rest and starts up out of it, and a phone beside the blank can render as
-    silence itself, so the audible gap runs past the plan's idea of it at both ends.
-    Measured - bringing the PLAN back to the ceiling left one boundary with 0.264 s of
-    silence still in it. So the plan is used only to find the boundary, the real silence
-    around it is measured, and the ceiling applies to that. Which is the lesson
-    `_splice_pauses` had to learn one dial over, in the other direction.
-
-    The excess comes out of the MIDDLE of the silence, so the ramp that keeps the join
-    from clicking has silence to land on at both ends rather than the last few
-    milliseconds of a word. Returns `(audio, removed)` with `removed` in the form `_shift`
-    takes, the seconds negative. With nothing to cut the input array is returned
-    untouched - byte-identical, not merely equal.
+    The excess comes out of the MIDDLE of the silence, so the ramp that keeps the
+    join from clicking has silence to land on at both ends rather than the last few
+    milliseconds of a word. Returns `(audio, removed)` with `removed` in the form
+    `_shift` takes, the seconds negative. With nothing to cut the input array is
+    returned untouched - byte-identical, not merely equal.
     """
     import numpy as np
 
@@ -1271,45 +1229,39 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
 def _espeak_word(text: str) -> str:
     """A token as eSpeak should SEE it: an internal hyphen is a word boundary.
 
-    A HYPHEN INSIDE A WORD IS NOT PUNCTUATION AND IT IS NOT SILENT EITHER - it is
-    the boundary between two words that are spelled as one, and a reader says
-    "ten-forty" exactly the way they say "ten forty". ghost keeps the hyphen all
-    the way here on purpose (the karaoke line shows the source spelling, so
-    "twenty-five" must not become "twenty five" on screen - see
-    TextNorm._expand_core), which left this the one place that has to turn the
-    spelling back into a boundary.
+    A hyphen inside a word is not punctuation and it is not silent - it is the
+    boundary between two words spelled as one, and a reader says "ten-forty" the
+    way they say "ten forty". ghost keeps the hyphen all the way here on purpose
+    (the karaoke line shows the source spelling, so "twenty-five" must not become
+    "twenty five" on screen - see TextNorm._expand_core), which leaves this the one
+    place that turns the spelling back into a boundary.
 
-    Handing the hyphenated spelling straight to the phonemizer did not, because
-    eSpeak returns the SAME PHONES either way and only the word space differs:
+    eSpeak returns the SAME PHONES either way; only the word space differs:
 
         ten-forty     -> tˈɛnfˈɔːɹɾi        ten forty     -> tˈɛn fˈɔːɹɾi
         forty-second  -> fˈɔːɹɾisˈɛkənd     forty second  -> fˈɔːɹɾi sˈɛkənd
         self-report   -> sˈɛlfɹᵻpˈɔːɹt      self report   -> sˈɛlf ɹᵻpˈɔːɹt
 
-    so this changes no pronunciation anywhere - it restores a boundary that was
-    being dropped. And the model does not ignore that boundary. Two primary
-    stresses welded together with no space between them is a shape the training
-    data does not contain, and en_US-libritts-high answers it by opening a hole
-    in the middle of the word. Measured, longest near-silence INSIDE the token,
-    averaged over three renders, glued vs spaced:
+    so this changes no pronunciation - it restores a boundary that was dropped. The
+    model does not ignore that boundary: two primary stresses welded together with
+    no space between them is a shape the training data does not contain, and
+    en_US-libritts-high answers it by opening a hole in the middle of the word.
+    Longest near-silence INSIDE the token, averaged over three renders, glued vs
+    spaced:
 
         forty-second  0.40 s -> 0.07 s      x-ray        0.30 s -> 0.06 s
         twenty-five   0.25 s -> 0.07 s      night-light  0.23 s -> 0.03 s
 
-    which is the reported "the hyphen forces a pause between each word". The
-    other four installed voices never opened the hole, so this had been sitting
-    under whichever voice was selected.
+    The other four installed voices never opened the hole. A compound eSpeak
+    already reads with ONE primary ("re-enter" -> ɹˌiːˈɛntɚ) is unaffected: same
+    phones, one more space.
 
-    A compound eSpeak already reads with ONE primary ("re-enter" -> ɹˌiːˈɛntɚ)
-    was never affected and is unaffected by this: it gets the same phones and
-    one more space.
-
-    Only the ASCII hyphen, because that is the only one that survives TextNorm -
-    it folds the typographic hyphens to it and an em dash to a comma. A token
-    that is nothing BUT dashes never arrives (phonemes.gd turns a spaced dash
-    into punctuation) but is returned untouched if one ever does, since handing
-    the phonemizer an empty string drops the item and takes the alignment of
-    every later word with it.
+    Only the ASCII hyphen, because that is the only one that survives TextNorm - it
+    folds the typographic hyphens to it and an em dash to a comma. A token that is
+    nothing BUT dashes never arrives (phonemes.gd turns a spaced dash into
+    punctuation) but is returned untouched if one ever does, since handing the
+    phonemizer an empty string drops the item and takes the alignment of every
+    later word with it.
     """
     spoken = " ".join(text.replace("-", " ").split())
     return spoken or text.strip()
@@ -1328,8 +1280,8 @@ LEAD_IN_SPACES = 2
 #
 # eSpeak reads a SENTENCE, and reading a sentence is how it decides which words are
 # stressed. Handed one word at a time it can only give the citation form, and the
-# citation form of a function word carries a primary stress no reader would ever put
-# there. Measured over this chapter's 4148 words, with `_espeak_word` spellings:
+# citation form of a function word carries a primary stress no reader would put there.
+# Measured over one chapter's 4148 words, with `_espeak_word` spellings:
 #
 #     a      ˈeɪ  alone      ɐ    in the sentence     46 times
 #     I      ˈaɪ             aɪ                       37
@@ -1338,28 +1290,23 @@ LEAD_IN_SPACES = 2
 #     that   ðˈæt            ðæt                      22
 #     it     ɪt              ɪɾ                       12
 #
-# `a` is the one to look at twice: ˈeɪ is not a stressed schwa, it is the LETTER A, and
-# ghost was saying it that way 46 times in one chapter. The rest are a rhythm defect
-# rather than a wrong word - a reading in which every preposition, article and modal is
-# stressed is by definition an even one, and an even one is what a listener calls jerky.
+# `a` is the one to look at twice: ˈeɪ is not a stressed schwa, it is the LETTER A. The
+# rest are a rhythm defect - a reading in which every preposition, article and modal is
+# stressed is an even one, and an even one is what a listener calls jerky.
 #
-# Reported as "weird stuttering in their cadence, around specific words... `in` and
-# `in it`", with the delivery generally "jerky/uneven".
+# Phonemizing the whole sentence is not an option, because eSpeak WELDS across word
+# boundaries when it does - "not a" comes back nˌɑːɾə, "in the" as ɪnðə - and ghost cannot
+# use a reading it cannot cut into words: the karaoke line, the per-token timings and every
+# pause placement are keyed to which phones belong to which word. A plain join loses that
+# on 103 of 230 sentences.
 #
-# So why not simply phonemize the sentence? Because eSpeak WELDS across word boundaries
-# when it does - "not a" comes back nˌɑːɾə, "in the" as ɪnðə, "out of" as ˌaʊɾəv - and
-# ghost cannot use a reading it cannot cut into words: the karaoke line, the per-token
-# timings and every pause placement are keyed to knowing which phones belong to which
-# word. Measured on the same chapter, a plain join loses that on 103 of 230 sentences.
-#
-# A zero-width space between the words is the whole fix. It is a word boundary to
-# eSpeak, so nothing welds across it; it has no phones of its own, so nothing leaks into
-# the transcription; and it does not stop eSpeak analysing the sentence, so the stresses
-# stay the sentence's own. Same chapter: 6 sentences of 230 still come back with a
-# different number of pieces than words (2.6%, and those fall back to the old path), and
-# of the 127 sentences a plain join DID align, the zero-width version agrees with it on
-# 124. A pipe and a double bar were measured too; the pipe behaves identically and the
-# double bar disturbs the stresses, so the invisible one wins on nothing but taste.
+# A zero-width space is the whole fix. It is a word boundary to eSpeak, so nothing welds
+# across it; it has no phones of its own, so nothing leaks into the transcription; and it
+# does not stop eSpeak analysing the sentence, so the stresses stay the sentence's own.
+# Same chapter: 6 of 230 sentences still come back with a different number of pieces than
+# words (2.6%, and those fall back to the old path), and of the 127 a plain join DID align,
+# the zero-width version agrees on 124. A pipe behaves identically; a double bar disturbs
+# the stresses.
 WORD_BREAK = "\u200b"
 
 # U+0329 COMBINING VERTICAL LINE BELOW - the IPA "syllabic" mark. eSpeak puts it on a

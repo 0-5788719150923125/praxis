@@ -126,48 +126,35 @@ def speculative_decoding(
        ``generated + candidates[:k]``, and accept up to the first divergence
     4. Carry that same forward's hidden states into the next step
 
-    This works because every stage of the stack is causal, so position ``t``
-    of a long row equals running the prefix ending at ``t`` on its own. That
-    was NOT always true here. The scheme this replaces blamed byte-latent
-    patching ("non-causal within a partial patch") and verified each
-    truncated prefix ``P_k`` in its own re-encoded row, costing ``1 + N``
-    full-prefix forwards per step. The byte-latent core is in fact exactly
-    causal under append: the space patcher is prefix-monotone, the local
-    conv encoder/decoder are causal, and ``decoder_patch_ids_from_lengths``
-    drops patch 0 so byte ``t`` gathers a patch that closed at or before
-    ``t`` - no byte ever reads the open patch. The real contamination was a
-    head that pooled the whole sequence to route (see ``BaseHead.
-    causal_readout``). Heads that still do keep the truncated-prefix
-    verifier, :func:`verify_prefixes_batched`, which remains correct.
+    This works because every stage of the stack is causal under append, so position
+    ``t`` of a long row equals running the prefix ending at ``t`` on its own: the
+    space patcher is prefix-monotone, the local conv encoder/decoder are causal, and
+    ``decoder_patch_ids_from_lengths`` drops patch 0 so no byte reads the open
+    patch. Heads that pool the whole sequence to route (see
+    ``BaseHead.causal_readout``) break that, and keep the truncated-prefix verifier
+    :func:`verify_prefixes_batched`.
 
-    A step always commits one byte past the block it verified - the
-    correction that ended a run, or the bonus that followed a full one - so
-    no forward has ever seen that position and its hidden is supplied by
-    ``mtp.bridge_hidden``. That estimate steers only the NEXT step's drafts;
-    every committed byte is still confirmed against a real read, so a poor
-    bridge costs accept rate and never correctness.
+    A step always commits one byte past the block it verified - the correction that
+    ended a run, or the bonus that followed a full one - so no forward has seen that
+    position and its hidden comes from ``mtp.bridge_hidden``. That estimate steers
+    only the NEXT step's drafts; every committed byte is confirmed against a real
+    read, so a poor bridge costs accept rate and never correctness.
 
-    Greedy is lossless (up to floating-point argmax ties, where greedy is
-    itself ill-defined). With ``do_sample`` acceptance stays equality-based,
-    so sampling remains approximate; greedy is the guarantee. Candidate 0 is
-    exempt from re-verification only when it was drawn from a MEASURED
-    hidden, where accepting it is distribution-exact; when it came from the
-    bridge it is verified like any other candidate.
+    Greedy is lossless (up to floating-point argmax ties, where greedy is itself
+    ill-defined). With ``do_sample`` acceptance stays equality-based, so sampling
+    remains approximate. Candidate 0 is exempt from re-verification only when drawn
+    from a MEASURED hidden, where accepting it is distribution-exact.
 
     HALTING is delegated whole to the prepared criteria. A step commits several
-    bytes at once, so a boundary - an EOS, a chat format's stop string, the
-    positional cap - can complete in the MIDDLE of a run and the criteria only
-    report that it completed somewhere; :func:`first_halt` recovers the
-    position and everything drafted past it is dropped, because it belongs to a
-    turn this model does not get to write. A deadline is deliberately not
-    positional: it ends the loop but keeps what was produced, which extracts
-    normally because ``reply_start`` is the runtime's own offset rather than
-    something recovered from a clean stop.
+    bytes at once, so a boundary - an EOS, a stop string, the positional cap - can
+    complete in the MIDDLE of a run and the criteria only report that it completed;
+    :func:`first_halt` recovers the position and everything drafted past it is
+    dropped. A deadline is deliberately not positional: it ends the loop but keeps
+    what was produced.
 
     ``tokenizer`` and ``streamer`` arrive because
     ``PraxisForCausalLM._extract_generation_mode_kwargs`` puts them back -
-    transformers drops both for a callable decoding method. See that override
-    for why.
+    transformers drops both for a callable decoding method.
     """
     max_new_tokens = getattr(generation_config, "max_new_tokens", None) or 100
     do_sample = bool(getattr(generation_config, "do_sample", False))

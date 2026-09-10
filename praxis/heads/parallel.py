@@ -963,32 +963,27 @@ class SurgicalParallelHead(ParallelHead):
     arm_surgery = True
 
     # Give every objective an EQUAL VOTE in the DIRECTION of the trunk update.
+    # Normalize each Jacobian row to unit norm before combining, then rescale
+    # the result to the norm the plain sum would have had: nothing to tune, and
+    # the effective step size is unchanged.
     #
-    # Not GradNorm. GradNorm equalizes training RATES via learned loss weights
-    # and an `alpha` restoring exponent - a hyperparameter, and an assumption
-    # (that all objectives should converge together) that is wrong for a
-    # geometric constraint which has already reached its target. This is far
-    # smaller: normalize each Jacobian row to unit norm before combining, then
-    # rescale the result to the norm the plain sum would have had. Nothing to
-    # tune, and the effective step size is unchanged.
+    # Not GradNorm, which equalizes training RATES via learned loss weights and
+    # an `alpha` restoring exponent - a hyperparameter, and an assumption (that
+    # all objectives converge together) that is wrong for a geometric constraint
+    # already at its target.
     #
-    # WHY IT IS NEEDED, measured. PCGrad only acts where rows CONFLICT. When a
-    # row is 20-65x its neighbours and merely ORTHOGONAL to them, there is
-    # nothing to project and the small rows are not opposed - they are drowned.
+    # PCGrad alone is not enough: it acts only where rows CONFLICT, and when a
+    # row is 20-65x its neighbours and merely ORTHOGONAL to them there is
+    # nothing to project - the small rows are drowned, not opposed.
     # `arm_override_*` on a smoke model read 0.465 / 0.506 / 0.000 before and
-    # 0.467 / 0.493 / 0.001 after PCGrad: the projection bought nothing,
-    # because the problem was never conflict.
+    # 0.467 / 0.493 / 0.001 after PCGrad. And 0.5 IS the null for an orthogonal
+    # row against a dominant one, so those numbers say the crystal arm has no
+    # vote, not that it is being fought.
     #
-    # And 0.5 IS THE NULL for an orthogonal row against a dominant one - the
-    # small row's sign agrees with the sum by coin-flip. So those numbers do
-    # not say the crystal arm is being fought. They say it has no vote.
-    #
-    # This is also the combination most consistent with the rest of the system:
-    # LionGeo's sign and spectral arms discard gradient magnitude anyway, and
-    # research/body.tex argues magnitude is the wrong readout for significance
-    # (a boundary flip is silent in norm). Equalizing rows says the DIRECTION
-    # of the update is an unweighted consensus of the objectives, and leaves
-    # magnitude out of a decision it was never a good instrument for.
+    # Consistent with the rest of the system: LionGeo's sign and spectral arms
+    # discard gradient magnitude anyway, and research/body.tex argues magnitude
+    # is the wrong readout for significance (a boundary flip is silent in norm).
+    equalize_rows = True
     equalize_rows = True
 
     # The gate reads a DETACHED trunk. Its cross-entropy would otherwise be a

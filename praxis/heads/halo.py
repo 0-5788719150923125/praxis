@@ -163,36 +163,28 @@ class HaloClassifier(nn.Module):
 class HaloHead(BaseHead):
     """LM head emitting HALO distance logits; the honest HALO arm.
 
-    ``detach_in_blend`` decides what trains this arm, and it is a measurement
-    choice rather than a correctness one.
+    ``detach_in_blend`` decides what trains this arm, and it is a measurement choice
+    rather than a correctness one.
 
-    DETACHED (the default, prismatic5): the mixture CE trains the gate's
-    opinion of the arm and the other arms, while this arm's parameters train
-    purely under HALOLoss's geometric objective. The gate share is then an
-    uncontaminated verdict on whether HALO's SCORING FUNCTION earns mass
-    against CE-trained arms - a high share cannot be explained away as "CE
-    dragged this arm into being a decent CE head."
+    DETACHED (prismatic5): the mixture CE trains the gate's opinion of the arm and
+    the other arms, while this arm's parameters train purely under HALOLoss's
+    geometric objective. The gate share is then an uncontaminated verdict on whether
+    HALO's SCORING FUNCTION earns mass against CE-trained arms.
 
-    ATTACHED (prismatic6): CE also reaches the arm, so it trains under both
-    objectives. The verdict is given up; the arm gets a chance to be useful.
+    ATTACHED (the prismatic6 default): CE also reaches the arm, so it trains under
+    both objectives. The verdict is given up; the arm gets a chance to be useful.
+    That trade is worth making because the detached measurement came back at 0.00125
+    gate share over 22k steps on abstractinator-j, never once above its
+    initialization.
 
-    The reason prismatic6 attaches: the detached measurement has been made and
-    it came back at 0.00125 gate share over 22k steps in abstractinator-j,
-    never once above its initialization. Continuing to detach buys a number
-    already known. Attaching asks the different question - whether the arm was
-    CE-trainable all along and the pure-instrument framing was costing a
-    working arm.
+    What flips it back: if `halo_gamma` runs away or `halo_mean_radius` drifts off
+    `halo_shell_radius`, CE is pulling the calibration - it wants a sharp mixture,
+    the geometric objective wants tokens settled on a shell at a specific radius -
+    and the arm should go back to being a pure instrument.
 
-    What flips it back: if `halo_gamma` runs away or `halo_mean_radius` drifts
-    off `halo_shell_radius`, CE is pulling the calibration (it wants a sharp
-    mixture; the geometric objective wants tokens settled on a shell at a
-    specific radius) and the arm should go back to being a pure instrument.
-
-    Either way the arm STAYS. ParallelHead.classifier finds it by ``is_halo``
-    to put HALOLoss in composite mode, and without one the loss falls back to
-    its legacy side-loss path where the harmonic and gate machinery see almost
-    no gradient. Detachment governs the arm's training signal, not whether the
-    objective runs.
+    Either way the arm STAYS. ParallelHead.classifier finds it by ``is_halo`` to put
+    HALOLoss in composite mode; without one the loss falls back to its legacy
+    side-loss path where the harmonic and gate machinery see almost no gradient.
     """
 
     # Centers must keep their unit-std init (the calibration ground truth);

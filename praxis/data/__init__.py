@@ -146,6 +146,7 @@ from praxis.data.formatters import (  # Base utilities; Format functions; Utilit
 # Utility functions
 from praxis.data.utils import (
     add_collection,
+    add_datasets,
     get_datamodules,
     get_dataset,
     get_dataset_configs,
@@ -206,5 +207,6 @@ __all__ = [
     "get_datamodules",
     "get_dataset",
     "add_collection",
+    "add_datasets",
     "get_dataset_configs",
 ]

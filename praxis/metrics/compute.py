@@ -1,55 +1,46 @@
 """Per-module compute-time attribution: where does a training step actually go?
 
-Answers "why is this experiment slow" by attributing measured GPU time to the
-``nn.Module`` that caused it, forward *and* backward, then rolling the result up
-by module class. The dashboard renders it as a qdirstat-style treemap (area =
-share of the step) over a ranked table.
+Attributes measured GPU time to the ``nn.Module`` that caused it, forward *and*
+backward, then rolls the result up by module class. The dashboard renders it as
+a qdirstat-style treemap (area = share of the step) over a ranked table.
 
-Three facts about this repo and this hardware shaped the design; each was
-measured, not assumed.
+Three measured facts shaped the design:
 
 1. **Wall-clock in a forward hook is meaningless.** CUDA is asynchronous, so
-   ``perf_counter`` around a submodule times the kernel *launch*. Measured: hooks
-   claimed 10.3 ms of a 106.7 ms step.
+   ``perf_counter`` around a submodule times the kernel *launch* - hooks claimed
+   10.3 ms of a 106.7 ms step.
 
 2. **``torch.profiler`` reports zero device time on this box.** Kineto's CUPTI
    backend fails to initialise on the RTX 5060 Ti (sm_120) with
-   ``CUPTI_ERROR_INVALID_DEVICE``; every ``self_device_time_total`` comes back
-   0.000 ms. The *legacy* ``torch.autograd.profiler`` works, because it times
-   with CUDA events rather than CUPTI - measured 40.36 ms against a 40.1 ms wall
-   step. That is why this module uses the legacy profiler.
+   ``CUPTI_ERROR_INVALID_DEVICE``. The *legacy* ``torch.autograd.profiler`` times
+   with CUDA events rather than CUPTI and works - 40.36 ms against a 40.1 ms
+   wall step - so this module uses it.
 
 3. **Backward cannot be timed with module backward hooks.**
-   ``register_full_backward_hook`` spans go *negative* for residual blocks (the
-   parent's span comes back shorter than its children's). Instead each backward
-   autograd node is linked to the forward op that created it via ``sequence_nr``
-   - measured 1894/1910 linked on a real model - and the node's whole subtree is
-   credited to that forward op's module, because the kernels are children of the
-   node, not the node itself.
+   ``register_full_backward_hook`` spans go *negative* for residual blocks.
+   Instead each backward autograd node is linked to the forward op that created
+   it via ``sequence_nr`` (1894/1910 linked on a real model), and the node's
+   whole subtree is credited to that forward op's module, because the kernels
+   are children of the node, not the node itself.
 
 Attribution uses ``self_device_time_total``, which already excludes child
-events, so per-module numbers are *exclusive* and sum to the total with no
-inclusive-minus-children arithmetic (and therefore no negative entries).
+events, so per-module numbers are *exclusive* and sum to the total.
 
 Cost is paid on sampled steps only, and the sampled window is ONE microbatch,
 not a whole accumulation cycle - every microbatch runs the same graph, so the
-extra ones cost the accumulation factor and tell you nothing. Getting that wrong
-turned a ~4x profiled step into a ~35x one and burned 9% of a real 123-minute
-run in 16-55s stalls. With the window right, a profiled step is ~4x normal
-(recording ~2.3x, plus profiler teardown and the attribution walk over ~18k
+extra ones cost the accumulation factor and tell you nothing. A profiled step is
+~4x normal (recording ~2.3x, plus teardown and the attribution walk over ~18k
 events), so at one step in 100 the run pays around 3%.
 
-libkineto also writes ``profiler_start``/``profiler_stop`` and its CUPTI
-warnings directly to file descriptors 1 and 2, below anything Python can
-capture; :func:`_quiet_native_logs` silences that around the enter/exit calls so
-it cannot land on top of the terminal dashboard.
+libkineto writes ``profiler_start``/``profiler_stop`` and CUPTI warnings
+directly to file descriptors 1 and 2, below anything Python can capture;
+:func:`_quiet_native_logs` silences that around the enter/exit calls so it
+cannot land on top of the terminal dashboard.
 
-Sampling makes the raw numbers jumpy - halting samples a different depth each
-pass, the sequence-length curriculum changes shape, and the profiler's own
-overhead is not uniform across ops. Every reported value is therefore an EMA
-across samples (:data:`COMPUTE_DEFAULTS`), so the card settles instead of
-flickering. A component absent from a sample is observed as zero and decays out
-rather than vanishing.
+Sampling makes raw numbers jumpy - halting samples a different depth each pass,
+the curriculum changes shape, and profiler overhead is not uniform across ops -
+so every reported value is an EMA across samples (:data:`COMPUTE_DEFAULTS`). A
+component absent from a sample is observed as zero and decays out.
 """
 
 from __future__ import annotations
