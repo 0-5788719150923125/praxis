@@ -282,6 +282,50 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # mag_energy_stitch + a GATED WRITE. Energy mode has no per-token write
+    # gate at all: the learned theta_t head is standard-mode only, so `lr` is
+    # 1.0 at every real token and - because the Adam step is sign-like and the
+    # step scale is fixed - a boring token writes exactly as hard as a
+    # surprising one. What the memory stores converges on a mean over the
+    # stream rather than over the part worth storing.
+    #
+    # `threshold` writes a token whose surprise exceeds `write_gate_ratio` times
+    # the causal running mean of the sequence so far, tilted by a slow-over-fast
+    # surprise EMA carried across passes. The running mean is what keeps the bar
+    # inside a distribution this narrow (CV 0.09, and the gate's whole range
+    # lives in a 10% band); the tilt is what lets it CLOSE, since a purely
+    # within-sequence bar is scale-invariant. It is the mode that can decline to
+    # write ANYTHING: a chunk where nothing clears the bar holds its weights,
+    # the "already well-conditioned" case the dense write cannot express. `topk`
+    # is the fixed-capacity alternative (expert-choice MoD over the same score)
+    # and the arm to run if the variable capacity turns out to be the confound.
+    #
+    # A surviving token's step is not diluted - _step_scale fixes the per-chunk
+    # magnitude - but a chunk where nothing clears the bar contributes zero, and
+    # on this profile's 4-token update grid that is common: `memory_write` reads
+    # 0.0151 ungated against 0.0101 gated at init, with `memory_gain` unmoved at
+    # 0.357. So the arm trades write volume for selectivity rather than holding
+    # volume fixed. It is not a compute saving either - the surprise is scored
+    # for every token either way. Read `memory_write_share` (how much of the
+    # stream got through) beside `memory_write_selectivity` (whether the gate
+    # picked on content at all).
+    "mag_energy_stitch_gated": dict(
+        surfacing="mag",
+        passes=[0],
+        stitch=True,
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        segment_block=4,
+        momentum=True,
+        activation="swish",
+        use_energy=True,
+        segment=True,
+        parallel_scan=True,
+        write_objective="predictive",
+        write_gate="threshold",
+    ),
     # Stitched writes AND a differentiable update - the only pairing in which a
     # Stitched writes AND a differentiable update - the only pairing in which a
     # longer write span can pay. In energy mode the state handed between rows of
@@ -435,6 +479,18 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "state along such a run makes the write span the run's total length "
         "while the trunk still sees only one row, decoupling the memory's "
         "horizon from the sequence length the model can afford to train on."
+    ),
+    "mag_energy_stitch_gated": (
+        "mag_energy_stitch with the test-time write GATED per token. Energy "
+        "mode carries no learned write gate, so every real token writes the "
+        "same fixed-magnitude step and the stored association flattens toward a "
+        "mean over the stream. Here a token writes only if its own surprise "
+        "exceeds a ratio of the sequence's running mean - itself tilted by a "
+        "slow-over-fast surprise EMA - so a memory already "
+        "forecasting the stream well can decline to write at all - down to a "
+        "chunk that writes nothing and holds its weights exactly. Costs one "
+        "extra memory-net forward to score, and saves no compute: what it "
+        "changes is which associations the write lands on."
     ),
     "mag_standard_stitch": (
         "mag_standard with writes stitched across linked batch rows - the only "

@@ -34,6 +34,7 @@ mode cannot dominate the energy.
 
 import contextlib
 import logging
+import math
 from contextlib import contextmanager
 from typing import Any, Dict, NamedTuple, Optional, Tuple, TypeVar
 
@@ -73,6 +74,20 @@ _DECODE_COMPILE_KWARGS = dict(mode="default", fullgraph=False, dynamic=False)
 # judgement call, but the direction is not - a gate that erases by default
 # inverts what the paper's alpha means.
 _DECAY_GATE_BIAS: float = -5.0
+
+# Decays for the write gate's (slow, fast) surprise EMAs. Both fold once per
+# store pass, so these are roughly 100-pass and 10-pass horizons. Their RATIO is
+# the signal - a single reference on the raw scale does not work, because the
+# driver's own level drifts faster than any decay slow enough to be a reference:
+# measured on abstractinator-v the pass mean moved 10% in two forwards, which
+# put a fixed bar outside the distribution entirely and turned the gate into a
+# switch (17% share to the 3% cold-start floor, in one step).
+_GATE_REF_DECAY: Tuple[float, float] = (0.99, 0.9)
+
+# Bound on the tilt (see _gate_tilt). Wide enough that the gate can shut almost
+# completely at the top of the range - a bar 1.5x the running mean clears ~0% of
+# this driver - and bounded so an early transient cannot latch it there.
+_GATE_TILT_RANGE: Tuple[float, float] = (0.5, 1.5)
 
 
 @contextmanager
@@ -210,6 +225,9 @@ class NeuralMemory(nn.Module):
         weight_decay: float = 0.0,
         parallel_scan: bool = True,
         write_objective: str = "recon",
+        write_gate: str = "none",
+        write_capacity: float = 0.125,
+        write_gate_ratio: float = 1.0,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -234,6 +252,77 @@ class NeuralMemory(nn.Module):
         assert write_objective in ("recon", "predictive"), write_objective
         self.write_objective = write_objective
         self.predictive = write_objective == "predictive"
+        # Which tokens are allowed into the test-time write. "none" is the
+        # paper's arrangement: in energy mode `lr` is 1.0 at every real token
+        # (the learned theta_t head exists only in standard mode), so the write
+        # is unconditional - and because the Adam step is sign-like and
+        # _step_scale fixes its magnitude, every token writes the SAME amount.
+        # The association stored is then a mean over the whole stream rather
+        # than over the part worth storing.
+        #
+        # The gate multiplies into `lr`, the only per-token term in the surprise
+        # sum, so a zero removes a token from the write entirely - the path
+        # _valid_grid already uses for the pad, which is why nothing downstream
+        # changes.
+        #
+        # The score is the memory's OWN per-token surprise, not a learned
+        # router. In energy mode the update runs under no_grad and the state is
+        # detached across segments, so a learned gate would see gradient only
+        # from retrieval inside the same pass: it would learn "does writing this
+        # help me now", never "does this help 400 tokens later". The surprise is
+        # endogenous, already computed, and needs no gradient.
+        #
+        #   "topk"      expert-choice per chunk: the `write_capacity` fraction
+        #               with the highest surprise. Fixed capacity, so the write
+        #               is never degenerate. Causal by the same argument the
+        #               chunked update already relies on - a chunk's write is
+        #               read only by LATER chunks, so a within-chunk top-k
+        #               leaks nothing into any retrieval that can see it.
+        #   "threshold" a token writes when its surprise exceeds
+        #               `write_gate_ratio` times a reference level. The only
+        #               mode that can write NOTHING: a chunk where nothing
+        #               clears the bar holds its weights (weight_decay is 0; the
+        #               Adam moments just decay). That is the "already
+        #               well-conditioned, stop writing" case.
+        #
+        # NOT a compute saving - the surprise is scored for every token either
+        # way, which is what the gate reads. It buys selectivity.
+        #
+        # What it does to the write BUDGET depends on the update grid, and the
+        # two halves are worth separating. A surviving token's step is not
+        # diluted: _step_scale fixes the per-chunk magnitude, so a chunk that
+        # writes at all writes as hard as it would have ungated. But a chunk
+        # where nothing clears the gate contributes exactly zero, so the pass
+        # total falls with the fraction of chunks that go silent - which is a
+        # function of how many tokens a chunk holds. On a 16-token grid at ~15%
+        # share the total is within 2% of ungated; on the 4-token grid the mag
+        # profiles run it drops about a third (0.0151 -> 0.0101, measured on
+        # abstractinator-v at init, with memory_gain unmoved at 0.357).
+        assert write_gate in ("none", "topk", "threshold"), write_gate
+        self.write_gate = write_gate
+        self.write_capacity = write_capacity
+        # The sigma multiple for "threshold", mirroring segment_gamma's role one
+        # granularity up. A shape choice, not a tuned value: 1.0 means "above one
+        # standard deviation of what this sequence has looked like so far", the
+        # definition of surprising the segmenter already uses.
+        # A RATIO against a reference level, not a sigma multiple, and this is
+        # the difference between a gate and a switch. The driver is a Huber loss
+        # on RMS-normalized vectors, so it is bounded and tightly concentrated:
+        # measured on abstractinator-v the pass mean is ~0.70 with a std of
+        # ~0.03, and a mu + 1*sigma bar therefore sits above nearly the whole
+        # distribution. A 4% drop in mean surprise closed that gate completely -
+        # from a 17% write share to the cold-start floor of 3% - which is a
+        # switch tripping, not a gate responding. A ratio is scale-free and
+        # degrades smoothly, the same reason KL halting compares against
+        # convergence_ratio * EMA rather than against a spread.
+        self.write_gate_ratio = write_gate_ratio
+        # (slow, fast) EMAs of the per-pass mean driver, carried ACROSS passes,
+        # plus a readiness flag so the first pass has something to fall back on.
+        # Buffers rather than the Python floats the KL halting uses, because
+        # this module is traced: a host-side float mutated inside the graph
+        # guards on its value and recompiles.
+        self.register_buffer("_gate_ref", torch.zeros(2), persistent=True)
+        self.register_buffer("_gate_ref_ready", torch.zeros(1), persistent=True)
         # True: differentiate every chunk in one batched pass and collapse the
         # per-chunk recurrence to a parallel scan (fast, materializes the full
         # (b, nc, *p) trajectory). False: a sequential loop carrying running
@@ -327,6 +416,16 @@ class NeuralMemory(nn.Module):
         self._warned_single_chunk: bool = False
         # -1 so the very first call probes, rather than PROBE_EVERY calls in.
         self._probe_tick: int = -1
+        # Write-gate stats from the last store pass: the fraction of real
+        # tokens whose write survived, and how much more surprising those
+        # tokens were than the average one (1.0 = the gate is not selecting on
+        # content, which is the null this experiment has to beat).
+        self.last_write_share: Optional[Tensor] = None
+        self.last_write_selectivity: Optional[Tensor] = None
+        # The tilt (threshold mode): above 1 = the memory's forecasting is
+        # improving and the gate is backing off, below 1 = it is losing ground
+        # and writing more. Reads the gate's motive apart from its share.
+        self.last_write_tilt: Optional[Tensor] = None
         # Event-size stats from the last segmented store pass (tokens per event).
         self.last_event_mean: Optional[Tensor] = None
         self.last_event_min: Optional[Tensor] = None
@@ -363,6 +462,7 @@ class NeuralMemory(nn.Module):
             f"activation={self._activation_name()}, momentum={self.use_momentum}, "
             f"energy={self.use_energy}, segment={self.segment}, "
             f"write_objective={self.write_objective}, "
+            f"write_gate={self.write_gate}, "
             f"parallel_scan={self.parallel_scan})"
         )
 
@@ -473,6 +573,134 @@ class NeuralMemory(nn.Module):
             run = torch.where(is_b, torch.ones_like(run), run + 1)
             t_event[:, j] = run
         return reset, t_event
+
+    # --- write gating --------------------------------------------------------
+
+    def _write_scores(self, weights: Weights, keys: Tensor, values: Tensor) -> Tensor:
+        """Per-token surprise at the frozen segment-start weights, forward-only.
+
+        The gate needs a score BEFORE the gradient pass, and the per-token loss
+        does not depend on ``lr`` at all - ``lr`` only weights the sum the
+        gradient is taken of - so this is exactly the driver ``_surprise_grads``
+        reports, for one extra memory-net forward and no autograd. That forward
+        is the gate's whole cost, and it is why gating buys selectivity rather
+        than FLOPs.
+        """
+        with torch.no_grad():
+            pred = vmap(lambda w, k: functional_call(self.memory_model, w, (k,)))(
+                weights, keys
+            )
+            return self._recon_per_token(pred, values, self.use_energy)
+
+    def _threshold_mask(
+        self, s: Tensor, v: Tensor, prior: Optional[Tuple[Tensor, ...]] = None
+    ) -> Tuple[Tensor, Tuple[Tensor, ...]]:
+        """Ratio write gate over a ``(b, N)`` score row: a token writes when its
+        surprise exceeds ``write_gate_ratio * tilt`` times the causal running
+        mean of the surprise seen so far in this sequence.
+
+        Two parts, and they answer different questions. The RUNNING MEAN is the
+        centre: it tracks whatever scale the driver currently has, so the bar
+        always sits inside the distribution and the share moves smoothly.
+        Measured on abstractinator-v, tokens above 1.00x the mean are 61% of
+        the stream, above 1.05x are 24%, above 1.10x are 2.4% - so the ratio
+        spans the whole range over a narrow band, which is only usable because
+        the centre moves with the data.
+
+        The TILT is what lets the gate close. A purely within-sequence bar is
+        scale-invariant: halve every surprise and the mean halves with it, so
+        the same fraction clears and the gate can say which tokens here are
+        worth writing but never that none of them are. ``tilt`` is a slow EMA
+        over a fast one, both from COMPLETED prior passes, so it reads above 1
+        while the memory's forecasting is improving and the bar lifts off the
+        local mean. Same dual-EMA shape the dissonance multiplier uses.
+
+        ``prior`` is the ``(sum, count)`` over REAL tokens before this row, so
+        the sequential path can walk chunk by chunk and land on the mask the
+        parallel path computes in one pass. Tokens with no history write by
+        default - the memory cannot know what is surprising until it has seen
+        something - which is also the floor the write share cannot fall below.
+        """
+        s = s * v
+        if prior is None:
+            z = s.new_zeros(s.shape[0])
+            prior = (z, z)
+        psum, pcnt = prior
+        cnt = pcnt.unsqueeze(1) + (v.cumsum(1) - v)
+        csum = psum.unsqueeze(1) + (s.cumsum(1) - s)
+        local = csum / cnt.clamp(min=1.0)
+        keep = (s > self._gate_tilt() * self.write_gate_ratio * local) | (cnt == 0)
+        nxt = (psum + s.sum(1), pcnt + v.sum(1))
+        return keep.to(s.dtype) * v, nxt
+
+    def _gate_tilt(self) -> Tensor:
+        """Slow surprise EMA over the fast one: above 1 while the memory's
+        forecasting improves, below 1 while it loses ground, 1.0 before either
+        EMA exists. Clamped because early in a run the fast EMA can be a long
+        way from the slow one and an unbounded bar would gate the whole batch
+        off on a transient - a guard, not a setting."""
+        tilt = self._gate_ref[0] / (self._gate_ref[1] + self.eps)
+        return torch.where(
+            self._gate_ref_ready > 0, tilt, torch.ones_like(tilt)
+        ).clamp(_GATE_TILT_RANGE[0], _GATE_TILT_RANGE[1])
+
+    def _write_gate_mask(
+        self,
+        scores: Tensor,
+        valid: Tensor,
+        prior: Optional[Tuple[Tensor, ...]] = None,
+    ) -> Tuple[Tensor, Optional[Tuple[Tensor, ...]]]:
+        """Which of the ``(b, nc, c)`` grid positions may write. ``valid`` is
+        ``_valid_grid``'s pad mask, broadcastable; ``prior`` threads the running
+        statistics for the ``threshold`` mode."""
+        b, nc, c = scores.shape
+        v = valid.expand(b, nc, c)
+        if self.write_gate == "topk":
+            k = max(1, min(c, math.ceil(c * self.write_capacity)))
+            # The pad can never be picked. A chunk holding fewer than k real
+            # tokens - only ever the trailing one - takes surplus picks off the
+            # pad, which the mask multiply then zeroes.
+            ranked = scores.masked_fill(v == 0, torch.finfo(scores.dtype).min)
+            idx = ranked.topk(k, dim=-1).indices
+            return torch.zeros_like(scores).scatter(-1, idx, 1.0) * v, prior
+        mask, nxt = self._threshold_mask(
+            scores.reshape(b, -1), v.reshape(b, -1), prior
+        )
+        return mask.reshape(b, nc, c), nxt
+
+    def _note_gate(self, scores: Tensor, valid: Tensor, mask: Tensor) -> None:
+        """Write-gate metrics for a whole store pass, and - in threshold mode -
+        the fold of this pass's surprise into the cross-pass reference.
+
+        Called exactly once per forward by either path, which is why the
+        reference advances per PASS rather than per chunk."""
+        with torch.no_grad():
+            v = valid.expand_as(mask)
+            vs = v.sum().clamp(min=1.0)
+            kept = mask.sum()
+            self.last_write_share = kept / vs
+            all_mean = (scores * v).sum() / vs
+            kept_mean = (scores * mask).sum() / kept.clamp(min=1.0)
+            self.last_write_selectivity = kept_mean / (all_mean + self.eps)
+            if self.write_gate != "threshold":
+                return
+            # Fold, then report, so the tilt on the chart is the one in force
+            # from here on rather than the one this pass was gated by - they
+            # differ only on the first pass, where no reference existed yet.
+            # Training only: at eval the gate applies the EMAs training left it,
+            # rather than ones eval moved for itself.
+            if self.training:
+                d = self._gate_ref.new_tensor(_GATE_REF_DECAY)
+                stat = all_mean.expand(2)
+                self._gate_ref.copy_(
+                    torch.where(
+                        self._gate_ref_ready > 0,
+                        d * self._gate_ref + (1.0 - d) * stat,
+                        stat,
+                    )
+                )
+                self._gate_ref_ready.fill_(1.0)
+            self.last_write_tilt = self._gate_tilt()
 
     def _step_scale(
         self, w0: Weights, name: str, ndim: int, b: int, num_chunks: int = 1
@@ -766,6 +994,17 @@ class NeuralMemory(nn.Module):
             w0_rep = {
                 k: v.repeat_interleave(num_chunks, dim=0) for k, v in weights.items()
             }
+            if self.write_gate != "none":
+                # Score every token, then keep only the writes that earn it.
+                # This lands on `lr`, which multiplies each token's contribution
+                # to the surprise sum, so a zero is a full opt-out rather than a
+                # small step.
+                gate_scores = self._write_scores(
+                    w0_rep, keys.reshape(bn, c, d), values.reshape(bn, c, d)
+                ).reshape(b, num_chunks, c)
+                gate, _ = self._write_gate_mask(gate_scores, valid)
+                self._note_gate(gate_scores, valid, gate)
+                lr = lr * gate
             grads, per_token, per_token_raw, per_token_norm = self._surprise_grads(
                 w0_rep,
                 keys.reshape(bn, c, d),
@@ -912,6 +1151,11 @@ class NeuralMemory(nn.Module):
                 pred_target = self._shift_targets(sn, n)
 
         retrieved_chunks, reset_list = [], []
+        # Write-gate state: `gate_prior` carries the causal statistics across
+        # chunks so the threshold mode matches the parallel path's single-pass
+        # cumsum; the score/mask lists feed the pass-level metrics.
+        gate_prior = None
+        gate_score_chunks, gate_mask_chunks = [], []
         raw_sum = drv_sum = seq.new_zeros(())
         raw_cnt = drv_cnt = 0
         if self.segment:
@@ -944,6 +1188,15 @@ class NeuralMemory(nn.Module):
                     * self.max_lr
                     * valid[i]
                 )
+                if self.write_gate != "none":
+                    sc_i = self._write_scores(W0, k_i, val_i)  # (b, c)
+                    g_i, gate_prior = self._write_gate_mask(
+                        sc_i.unsqueeze(1), valid[i].reshape(1, 1, -1), gate_prior
+                    )
+                    g_i = g_i.squeeze(1)
+                    lr_i = lr_i * g_i
+                    gate_score_chunks.append(sc_i)
+                    gate_mask_chunks.append(g_i)
                 grads, driver, raw, normed = self._surprise_grads(W0, k_i, val_i, lr_i)
                 surprise = {k: -g for k, g in grads.items()}
                 # Real positions only, matching the parallel path: the pad is
@@ -993,6 +1246,13 @@ class NeuralMemory(nn.Module):
 
         retrieved = torch.cat(retrieved_chunks, dim=1)
         retrieved = self.combine(self.out_norm(retrieved))[:, :n]
+
+        if self.write_gate != "none":
+            self._note_gate(
+                torch.stack(gate_score_chunks, dim=1),
+                valid.unsqueeze(0),
+                torch.stack(gate_mask_chunks, dim=1),
+            )
 
         with torch.no_grad():
             self.last_surprise = raw_sum / max(raw_cnt, 1)

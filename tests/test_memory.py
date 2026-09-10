@@ -14,6 +14,7 @@ from praxis.memory import (
 )
 from praxis.memory.surfacings import MemorySurfacing
 from praxis.memory.neural_memory import _affine_scan
+from torch.func import functional_call, vmap
 from praxis.modeling import PraxisForCausalLM
 
 
@@ -507,6 +508,222 @@ def test_single_chunk_cannot_adapt():
     assert float(mem2.last_adapt) > 0.0
 
 
+# --- write gating -----------------------------------------------------------
+
+
+def _gate_mem(gate, **kw):
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(32, 32), nn.GELU(), nn.Linear(32, 32))
+    base = dict(
+        dim=32,
+        model=model,
+        chunk_size=16,
+        segment_block=16,
+        use_energy=True,
+        write_objective="predictive",
+        write_gate=gate,
+    )
+    base.update(kw)
+    return NeuralMemory(**base)
+
+
+def test_write_gate_is_off_by_default():
+    """The gate is opt-in: an unconfigured memory writes every real token, and
+    emits none of the gate metrics."""
+    mem = _gate_mem("none")
+    assert mem.write_gate == "none"
+    mem(torch.randn(2, 64, 32))
+    assert mem.last_write_share is None
+    assert mem.last_write_selectivity is None
+    assert mem.last_write_tilt is None
+
+
+@pytest.mark.parametrize("capacity,expected_k", [(0.125, 2), (0.25, 4), (0.5, 8)])
+def test_topk_gate_writes_exactly_its_capacity(capacity, expected_k):
+    """Expert-choice capacity is exact, so the sparse arm is never degenerate
+    and its write share is a constant rather than a measurement."""
+    mem = _gate_mem("topk", write_capacity=capacity)
+    mem(torch.randn(2, 128, 32))  # 8 chunks of 16, no pad
+    assert float(mem.last_write_share) == pytest.approx(expected_k / 16)
+
+
+def test_topk_gate_keeps_the_highest_scoring_tokens():
+    """The mask IS the top-k of the score, per chunk - the router is the
+    surprise, not a learned head."""
+    scores = torch.tensor([[[0.1, 0.9, 0.3, 0.7, 0.2, 0.8, 0.4, 0.6]]])
+    ones = torch.ones_like(scores)
+    # 8 positions at capacity 0.25 -> k=2: the 0.9 and the 0.8.
+    mask, _ = _gate_mem("topk", write_capacity=0.25)._write_gate_mask(scores, ones)
+    assert mask.flatten().tolist() == [0, 1, 0, 0, 0, 1, 0, 0]
+    # Capacity rounds UP, so a fraction that lands between token counts still
+    # writes rather than dropping the chunk: 8 * 0.3 -> k=3.
+    mask, _ = _gate_mem("topk", write_capacity=0.3)._write_gate_mask(scores, ones)
+    assert mask.flatten().tolist() == [0, 1, 0, 1, 0, 1, 0, 0]
+    # The pad is never picked, even when it outranks every real token.
+    valid = torch.tensor([[[1.0, 1, 1, 1, 0, 0, 0, 0]]])
+    high = torch.tensor([[[0.1, 0.9, 0.3, 0.2, 9.0, 9.0, 9.0, 9.0]]])
+    mask, _ = _gate_mem("topk", write_capacity=0.25)._write_gate_mask(high, valid)
+    assert mask.flatten().tolist() == [0, 1, 1, 0, 0, 0, 0, 0]
+
+
+def _repeat_shares(tilted, passes=8):
+    """Write shares from re-presenting one stream to a memory that keeps its
+    state, with the cross-pass tilt either live or pinned at 1.0."""
+    mem = _gate_mem("threshold")
+    if not tilted:
+        mem._gate_tilt = lambda: torch.ones(1)
+    torch.manual_seed(100)
+    seq = torch.randn(1, 128, 32)
+    state = mem.init_state(1)
+    out = []
+    for _ in range(passes):
+        _, state = mem(seq, state)  # same stream, threaded state
+        out.append(float(mem.last_write_share))
+    return out
+
+
+def test_threshold_gate_closes_as_the_memory_learns():
+    """The property the gate exists for: re-presenting a stream the memory
+    already forecasts must write LESS of it each time. Nothing in the dense
+    write can express this - it writes every token at a fixed step forever.
+
+    Not asserted monotone. The bar rides a causal running mean that moves with
+    the data, so the share wanders within a pass-to-pass band; the claim is the
+    trend, and a monotonicity assertion here would be pinning noise.
+    """
+    shares = _repeat_shares(tilted=True)
+    assert shares[-1] < shares[0] * 0.9, shares
+
+
+def test_only_the_cross_pass_tilt_can_close_the_gate():
+    """Why the bar carries state across passes at all. A purely within-sequence
+    bar is scale-invariant - halve every surprise and the running mean halves
+    with it, so the same fraction still clears - which means it can say which
+    tokens here are worth writing but never that none of them are. Pinning the
+    tilt at 1.0 reduces the gate to exactly that, and the decline disappears.
+    """
+    tilted, flat = _repeat_shares(True), _repeat_shares(False)
+    assert tilted[-1] < flat[-1], (tilted, flat)
+    assert flat[-1] >= flat[0] * 0.95, flat
+
+
+def test_the_tilt_reads_above_one_while_the_memory_improves():
+    """The tilt is the gate's motive, reported apart from its share: a slow
+    surprise EMA over a fast one, so it lifts off 1.0 exactly when the fast EMA
+    is leading the slow one down."""
+    mem = _gate_mem("threshold")
+    torch.manual_seed(100)
+    seq = torch.randn(1, 128, 32)
+    state = mem.init_state(1)
+    _, state = mem(seq, state)
+    assert float(mem.last_write_tilt) == pytest.approx(1.0)  # both EMAs seeded
+    for _ in range(7):
+        _, state = mem(seq, state)
+    assert float(mem.last_write_tilt) > 1.0
+
+
+def test_eval_does_not_move_the_gate_reference():
+    """The bar in force at eval is the one training left, not one eval moved for
+    itself - otherwise validation would re-centre the gate on its own data."""
+    mem = _gate_mem("threshold")
+    seq = torch.randn(2, 64, 32)
+    mem(seq)
+    before = mem._gate_ref.clone()
+    mem.eval()
+    mem(torch.randn(2, 64, 32) * 10.0)
+    assert torch.equal(before, mem._gate_ref)
+
+
+def test_the_gate_reference_survives_a_checkpoint():
+    """It is state the run accumulates, so it has to round-trip: a reloaded
+    model that forgot its bar would re-open the gate and write everything."""
+    mem = _gate_mem("threshold")
+    mem(torch.randn(2, 64, 32))
+    fresh = _gate_mem("threshold")
+    assert not torch.equal(fresh._gate_ref, mem._gate_ref)
+    fresh.load_state_dict(mem.state_dict())
+    assert torch.equal(fresh._gate_ref, mem._gate_ref)
+    assert torch.equal(fresh._gate_ref_ready, mem._gate_ref_ready)
+
+
+@pytest.mark.parametrize("parallel", [True, False])
+def test_a_fully_gated_pass_holds_the_weights_exactly(parallel):
+    """The opt-out has to be a real zero, not a small step. With no token
+    cleared to write, the surprise gradient is exactly zero, weight_decay is 0
+    and the Adam moments only decay - so the state must come back bit-identical
+    on BOTH paths."""
+    mem = _gate_mem("threshold", parallel_scan=parallel)
+    mem._write_gate_mask = lambda sc, v, prior=None: (torch.zeros_like(sc), prior)
+    seq = torch.randn(2, 64, 32)
+    cold = mem.init_state(2)
+    _, warm = mem(seq, cold)
+    for k in cold.weights:
+        assert torch.equal(warm.weights[k], cold.weights[k]), k
+        assert torch.equal(warm.momentum[k], cold.momentum[k]), k
+    assert float(mem.last_write) == 0.0
+
+
+@pytest.mark.parametrize("gate", ["topk", "threshold"])
+def test_the_gate_never_lets_the_pad_write(monkeypatch, gate):
+    """Same statement as the ungated pad test, on the gate: the tail pad's
+    CONTENTS cannot reach the fast weights. A gate scored on surprise is the way
+    a junk pad would get in - it is the most surprising thing in the sequence.
+    """
+    import praxis.memory.neural_memory as nm
+
+    seq = torch.randn(2, 47, 64)
+
+    def run(fill):
+        real_pad = torch.nn.functional.pad
+        monkeypatch.setattr(
+            nm.F,
+            "pad",
+            real_pad if fill is None else (lambda t, p, **kw: real_pad(t, p, value=fill)),
+        )
+        mem = _pad_mem(write_objective="predictive", write_gate=gate)
+        _, st = mem(seq)
+        return st, float(mem.last_write_share)
+
+    zero_pad, share_z = run(None)
+    junk_pad, share_j = run(7.5)
+    for k in zero_pad.weights:
+        assert torch.equal(zero_pad.weights[k], junk_pad.weights[k]), k
+    assert share_z == share_j
+
+
+@pytest.mark.parametrize("gate", ["topk", "threshold"])
+def test_the_gate_selects_on_content(gate):
+    """The null this whole arm has to beat: a gate that kept tokens at random
+    would report a selectivity of 1.0. Kept tokens must be measurably more
+    surprising than the average one."""
+    mem = _gate_mem(gate)
+    mem(torch.randn(2, 128, 32))
+    assert float(mem.last_write_selectivity) > 1.0
+
+
+@pytest.mark.parametrize("gate", ["topk", "threshold"])
+def test_gating_still_memorizes_at_test_time(gate):
+    """The defining Titans property has to survive the gate: storing a sequence
+    still has to lower the memory's loss on it, from a fraction of the writes.
+    """
+    mem = _gate_mem(gate)
+    seq = torch.randn(2, 128, 32)
+    cold = mem.init_state(2)
+    _, warm = mem(seq, cold)
+
+    def loss(weights):
+        stored = mem.store_norm(seq)
+        keys = mem.to_keys(stored)
+        target = torch.cat([stored[:, 1:], stored[:, -1:]], dim=1)
+        pred = vmap(lambda w, k: functional_call(mem.memory_model, w, (k,)))(
+            weights, keys
+        )
+        return float(mem._recon_per_token(pred, target, True).mean().detach())
+
+    assert loss(warm.weights) < loss(cold.weights)
+    assert float(mem.last_write_share) < 1.0
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
 SURFACINGS = [
@@ -518,6 +735,7 @@ SURFACINGS = [
     "mag_energy_static",
     "mag_standard",
     "mag_energy_stitch",
+    "mag_energy_stitch_gated",
     "mag_standard_stitch",
 ]
 
@@ -528,6 +746,7 @@ _ENERGY_SURFACINGS = {
     "mag_energy",
     "mag_energy_static",
     "mag_energy_stitch",
+    "mag_energy_stitch_gated",
 }
 
 
@@ -650,6 +869,17 @@ def test_surprise_metric_surfaced(memory_type):
     assert "memory_surprise_norm" in descriptions
     assert all(key in descriptions for key in event_keys)
 
+    # Gate metrics are gate-only: an ungated profile must not put an empty
+    # series on the card.
+    gate_keys = ("memory_write_share", "memory_write_selectivity")
+    if memory_type == "mag_energy_stitch_gated":
+        for key in gate_keys + ("memory_write_tilt",):
+            assert torch.isfinite(torch.as_tensor(metrics[key])), key
+        assert 0.0 < metrics["memory_write_share"] <= 1.0
+    else:
+        assert all(key not in metrics for key in gate_keys)
+    assert all(key in descriptions for key in gate_keys)
+
     plain = PraxisForCausalLM(_block_config("none"))
     plain(input_ids=torch.randint(0, 256, (2, 16)))
     assert MemoryBase.collect_training_metrics(plain) == {}
@@ -663,6 +893,8 @@ def test_surprise_metric_surfaced(memory_type):
         dict(use_energy=True, segment=False),
         dict(use_energy=False, momentum=True),  # standard, differentiable update
         dict(use_energy=False, momentum=False),
+        dict(use_energy=True, segment=True, write_gate="topk"),
+        dict(use_energy=True, segment=True, write_gate="threshold"),
     ],
 )
 def test_sequential_matches_parallel_scan(kwargs):
@@ -676,7 +908,15 @@ def test_sequential_matches_parallel_scan(kwargs):
     # sequential path carried a relative tolerance the parallel one lacked.
     seq = torch.randn(2, 100, 32)
 
+    # The threshold gate's bar is an EMA the store pass folds into, so the two
+    # runs have to START from the same reference or the second one is gated
+    # against a bar the first one moved. Restoring it is what keeps this a test
+    # of the two paths rather than of the reference.
+    ref = (mem._gate_ref.clone(), mem._gate_ref_ready.clone())
+
     def run(parallel):
+        mem._gate_ref.copy_(ref[0])
+        mem._gate_ref_ready.copy_(ref[1])
         mem.parallel_scan = parallel
         return mem(seq, mem.init_state(2))
 

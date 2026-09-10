@@ -150,6 +150,49 @@ class MemorySurfacing(MemoryBase):
                 "order": 13,
             },
         },
+        "memory_write_share": {
+            "description": (
+                "Fraction of real tokens whose write survived the gate. 1.0 = "
+                "ungated. Falling = the memory is declining to write, which is the "
+                "gate working, not the memory dying - read it beside Memory Gain."
+            ),
+            "chart": {
+                "title": "Memory Write Share",
+                "y_label": "written / real tokens",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 18,
+            },
+        },
+        "memory_write_selectivity": {
+            "description": (
+                "Mean surprise of written tokens over mean surprise of all of them. "
+                "1.0 = the gate is picking at random and buys nothing; above 1 = it "
+                "is selecting on content. This is the null the gate has to beat."
+            ),
+            "chart": {
+                "title": "Memory Write Selectivity",
+                "y_label": "kept surprise / all surprise",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 19,
+            },
+        },
+        "memory_write_tilt": {
+            "description": (
+                "How far the threshold gate has lifted its bar off the local mean: a "
+                "slow surprise EMA over a fast one. Above 1 = the memory is "
+                "forecasting better than its long-run average and the gate is backing "
+                "off; below 1 = it is losing ground and writing more; 1.0 = neither."
+            ),
+            "chart": {
+                "title": "Memory Write Tilt",
+                "y_label": "slow / fast EMA",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 20,
+            },
+        },
         "memory_adapt": {
             "description": (
                 "The write Memory Write measures, in function space: how far the "
@@ -266,6 +309,14 @@ class MemorySurfacing(MemoryBase):
             segment_block=spec.get("segment_block", 16),
             parallel_scan=spec.get("parallel_scan", True),
             write_objective=spec.get("write_objective", "recon"),
+            # Which tokens are allowed into the test-time write: "none" writes
+            # every token (the paper's arrangement), "topk" keeps a fixed
+            # per-chunk fraction by surprise, "threshold" keeps whatever exceeds
+            # write_gate_ratio times a running reference level, and can decline
+            # to write at all.
+            write_gate=spec.get("write_gate", "none"),
+            write_capacity=spec.get("write_capacity", 0.125),
+            write_gate_ratio=spec.get("write_gate_ratio", 1.0),
         )
         # Which recurrent passes run the memory. None = every pass, the old
         # behaviour. A list keys the memory to the PASS index
@@ -426,6 +477,11 @@ class MemorySurfacing(MemoryBase):
             out["memory_write"] = float(m.last_write)
         if m.last_adapt is not None:
             out["memory_adapt"] = float(m.last_adapt)
+        if m.last_write_share is not None:
+            out["memory_write_share"] = float(m.last_write_share)
+            out["memory_write_selectivity"] = float(m.last_write_selectivity)
+        if m.last_write_tilt is not None:
+            out["memory_write_tilt"] = float(m.last_write_tilt)
         if m.last_num_chunks is not None:
             out["memory_chunks"] = float(m.last_num_chunks)
         if self.last_run_length is not None:
@@ -638,6 +694,13 @@ class MemoryBandSmear(MemoryBase):
                 segment_block=s.get("segment_block", 16),
                 parallel_scan=s.get("parallel_scan", True),
                 write_objective=s.get("write_objective", "recon"),
+                # Each core gets its own gate and its own surprise reference:
+                # the arms are different function classes, so their surprise
+                # scales are not comparable and one shared bar would gate the
+                # bank by whichever core happens to run hottest.
+                write_gate=s.get("write_gate", "none"),
+                write_capacity=s.get("write_capacity", 0.125),
+                write_gate_ratio=s.get("write_gate_ratio", 1.0),
             )
 
         self.mems = nn.ModuleList([_core(d) for d in denses])
@@ -982,6 +1045,13 @@ class MemoryDepthBank(MemoryBase):
                 segment_block=s.get("segment_block", 16),
                 parallel_scan=s.get("parallel_scan", True),
                 write_objective=s.get("write_objective", "recon"),
+                # Each core gets its own gate and its own surprise reference:
+                # the arms are different function classes, so their surprise
+                # scales are not comparable and one shared bar would gate the
+                # bank by whichever core happens to run hottest.
+                write_gate=s.get("write_gate", "none"),
+                write_capacity=s.get("write_capacity", 0.125),
+                write_gate_ratio=s.get("write_gate_ratio", 1.0),
             )
 
         self.mems = nn.ModuleList([_core(d) for d in denses])
