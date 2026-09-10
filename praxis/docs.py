@@ -86,6 +86,16 @@ def _registries() -> List[Tuple]:
             praxis.data.SAMPLER_DESCRIPTIONS,
         ),
         (
+            "curriculum",
+            "Sequence-length curriculum",
+            praxis.SEQ_CURRICULUM_REGISTRY,
+            "How the per-batch sequence-length multiplier is chosen. Every batch "
+            "trades batch size for sequence length at constant attention cost; "
+            "this picks the mix. Set with ``--seq-curriculum``; default is "
+            "``fixed``.",
+            praxis.data.SEQ_CURRICULUM_DESCRIPTIONS,
+        ),
+        (
             "decoders",
             "Block-stacking decoders",
             praxis.DECODER_REGISTRY,
@@ -171,6 +181,14 @@ def _registries() -> List[Tuple]:
             praxis.MONO_DESCRIPTIONS,
         ),
         (
+            "mixing",
+            "Expert mixing",
+            praxis.MIXING_REGISTRY,
+            "How a remote-expert pool combines its members at inference. Named by "
+            "the chosen orchestration profile, not by a flag of its own.",
+            praxis.orchestration.MIXING_DESCRIPTIONS,
+        ),
+        (
             "normalization",
             "Normalization layers",
             praxis.NORMALIZATION_REGISTRY,
@@ -214,10 +232,25 @@ def _registries() -> List[Tuple]:
             },
         ),
         (
+            "orchestration",
+            "Remote-expert orchestration",
+            praxis.ORCHESTRATION_REGISTRY,
+            "Pool profiles for the distributed swarm: how many local experts the "
+            "backend sidecar starts and which mixing strategy the pool uses. The "
+            "expert block types a pool member can wrap are the feedforward "
+            "experts (``praxis.EXPERT_REGISTRY`` mirrors ``DENSE_REGISTRY``). "
+            "Selected with ``--orchestration-type``; default is ``none``.",
+        ),
+        (
             "policies",
             "RL policies",
-            praxis.RL_POLICIES_REGISTRY,
-            "Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.",
+            # Profiles first: a profile sharing a policy's key is that
+            # policy's default config, so the class entry is the better page.
+            {**praxis.RL_PROFILES, **praxis.RL_POLICIES_REGISTRY},
+            "Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for "
+            "post-training, plus the weight-editing controller profiles that "
+            "bundle a policy with its edit mode and selector. Both are selected "
+            "with ``--rl-type``.",
         ),
         (
             "recurrent",
@@ -225,6 +258,16 @@ def _registries() -> List[Tuple]:
             praxis.RECURRENT_REGISTRY,
             "Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block "
             "types and as a sequence mixer inside the byte-latent encoder.",
+        ),
+        (
+            "regularizers",
+            "Regularizers",
+            praxis.REGULARIZER_REGISTRY,
+            "Additive representation-shaping losses layered on top of the main "
+            "criterion. Set with ``--regularizers`` (space-separated; pass with "
+            "no values to disable all); default is ``contrastive_isotropy``. The "
+            "``*_probe`` variants observe only - they log their metric without "
+            "contributing to the loss.",
         ),
         (
             "residuals",
@@ -245,10 +288,28 @@ def _registries() -> List[Tuple]:
             "Optional reordering operations applied to the sequence.",
         ),
         (
+            "spider",
+            "Web-spider profiles",
+            praxis.SPIDER_REGISTRY,
+            "Pacing presets for the background crawler that grounds the knowledge "
+            "base in a watchlist of sites. Enabled with ``--spider``; bare use "
+            "takes ``gentle``, and ``KEY=VALUE`` entries override any field.",
+        ),
+        (
             "strategies",
             "Training strategies",
             praxis.STRATEGIES_REGISTRY,
             "Multi-task / task-weighting strategies used by the trainer.",
+        ),
+        (
+            "transforms",
+            "Model transforms",
+            praxis.TRANSFORM_REGISTRY,
+            "Ghost features: profiles that walk the assembled module tree and "
+            "rewrite matched parameters in place, storing 1/d of a weight and "
+            "deriving the rest by a fixed signed permutation. Each profile is a "
+            "target regex plus an algebra. Selected with ``--transform-type``; "
+            "default is ``none``.",
         ),
     ]
 
@@ -275,6 +336,11 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
     ("generation", "Text-generation entry point (``Generator``)."),
     ("integrations", "Pluggable third-party integrations (Discord, hivemind, ...)."),
     ("interface", "Terminal dashboard."),
+    (
+        "kb",
+        "Knowledge base: sources emit normalized items, ``KBIndex`` answers "
+        "ranked queries per keystroke. Backed by the spider's page store.",
+    ),
     ("layers", "Shared low-level layer building blocks."),
     ("logging", "Logging utilities and formatters."),
     ("metrics", "Metrics descriptions and bookkeeping for the dashboards."),
@@ -283,11 +349,21 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
         "``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.",
     ),
     (
+        "optimization",
+        "Optimizer construction: named profiles, composite (per-parameter-group) "
+        "optimizers, and the wrapper stack.",
+    ),
+    (
         "pillars",
         "Living research paper: builds ``research/`` from the current run via "
         "``python -m praxis.pillars.build``. Subpackages: ``framing`` (config-gated "
         "prose), ``proofs`` (consistency-checked lemmas, some verifiable computations), "
         "``inlines`` (single-value edits); plus runs/geometries/halting/ghostmax figures.",
+    ),
+    (
+        "registry",
+        "Registry discovery - AST-walks the package to count the ``*_REGISTRY`` "
+        "dicts, and the eventual home of a unified ``Registry`` type.",
     ),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
@@ -574,7 +650,8 @@ def _render_registry(
         "",
         description,
         "",
-        f"Registry: ``praxis.{_registry_attr(slug)}`` ({len(registry)} entries)",
+        f"Registry: ``praxis.{_registry_attr(slug, registry)}`` "
+        f"({len(registry)} entries)",
         "",
     ]
     for entry in _grouped_entries(registry):
@@ -1289,38 +1366,55 @@ def _extract_summary(cls: type) -> str:
     return ""
 
 
-def _registry_attr(slug: str) -> str:
-    """Map a doc slug back to the registry variable name in ``praxis``."""
-    return {
-        "activations": "ACTIVATION_REGISTRY",
-        "attention": "ATTENTION_REGISTRY",
-        "blocks": "BLOCK_REGISTRY",
-        "compression": "COMPRESSION_REGISTRY",
-        "controllers": "CONTROLLER_REGISTRY",
-        "data": "SAMPLER_REGISTRY",
-        "decoders": "DECODER_REGISTRY",
-        "activation-types": "ACTIVATION_TYPE_REGISTRY",
-        "dense": "DENSE_REGISTRY",
-        "embeddings": "EMBEDDING_REGISTRY",
-        "encoders": "ENCODER_REGISTRY",
-        "encoding": "ENCODING_REGISTRY",
-        "governors": "GOVERNOR_REGISTRY",
-        "halting": "HALTING_REGISTRY",
-        "heads": "HEAD_REGISTRY + MTP_REGISTRY",
-        "losses": "LOSS_REGISTRY",
-        "memory": "MEMORY_REGISTRY",
-        "mono": "MONO_REGISTRY",
-        "normalization": "NORMALIZATION_REGISTRY",
-        "optimizers": "OPTIMIZER_PROFILES",
-        "wrappers": "WRAPPER_REGISTRY",
-        "policies": "RL_POLICIES_REGISTRY",
-        "recurrent": "RECURRENT_REGISTRY",
-        "residuals": "RESIDUAL_REGISTRY",
-        "routers": "ROUTER_REGISTRY",
-        "sorting": "SORTING_REGISTRY",
-        "strategies": "STRATEGIES_REGISTRY",
-        "width": "WIDTH_REGISTRY",
-    }[slug]
+def _registry_attr(slug: str, registry: Dict[str, Any]) -> str:
+    """Name the registry variable a doc page was rendered from.
+
+    Resolved by identity against the ``praxis`` namespace, so a new registry
+    needs no bookkeeping here. Pages that merge several registries can't be
+    resolved that way and are named explicitly."""
+    if slug in _MERGED_REGISTRY_ATTRS:
+        return _MERGED_REGISTRY_ATTRS[slug]
+    for name, value in vars(praxis).items():
+        if name.isupper() and value is registry:
+            return name
+    return "(unnamed)"
+
+
+# Doc pages built from more than one registry, which identity can't name.
+_MERGED_REGISTRY_ATTRS: Dict[str, str] = {
+    "heads": "HEAD_REGISTRY + MTP_REGISTRY",
+    "policies": "RL_POLICIES_REGISTRY + RL_PROFILES",
+}
+
+
+# Registries that are deliberately not their own doc page, and why.
+_REGISTRY_WAIVERS: Dict[str, str] = {
+    "EXPERT_REGISTRY": "a mirror of DENSE_REGISTRY; see docs/dense.md",
+}
+
+
+def undocumented_registries() -> List[str]:
+    """Registries exported from ``praxis`` that no doc page renders.
+
+    The drift guard behind ``tests/test_docs.py``: adding a namespace to
+    ``praxis/__init__.py`` without wiring it into ``_registries()`` (or waiving
+    it in ``_REGISTRY_WAIVERS``) fails that test."""
+    rendered = {id(entry[2]) for entry in _registries()}
+    for entry in _registries():
+        rendered.update(id(getattr(praxis, n, None)) for n in _merged_sources(entry[0]))
+    missing = []
+    for name, value in sorted(vars(praxis).items()):
+        if not (name.endswith("_REGISTRY") or name.endswith("_PROFILES")):
+            continue
+        if name in _REGISTRY_WAIVERS or id(value) in rendered:
+            continue
+        missing.append(name)
+    return missing
+
+
+def _merged_sources(slug: str) -> List[str]:
+    """The registry variable names a merged doc page was built from."""
+    return re.findall(r"[A-Z_]+", _MERGED_REGISTRY_ATTRS.get(slug, ""))
 
 
 def _write_if_changed(path: Path, content: str) -> None:

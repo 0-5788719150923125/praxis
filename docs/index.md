@@ -11,6 +11,7 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (6) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
+- [Expert mixing](mixing.md) (6) - How a remote-expert pool combines its members at inference. Named by the chosen orchestration profile, not by a flag of its own.
 - [Feedforward experts](dense.md) (10) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (3) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (27) - Front-end encoders, including the byte-latent and abstractinator variants.
@@ -18,6 +19,7 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Long-term memory](memory.md) (15) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (11) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Mixture-of-widths](width.md) (7) - Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
+- [Model transforms](transforms.md) (10) - Ghost features: profiles that walk the assembled module tree and rewrite matched parameters in place, storing 1/d of a weight and deriving the rest by a fixed signed permutation. Each profile is a target regex plus an algebra. Selected with ``--transform-type``; default is ``none``.
 - [Mono-forward graph cutting](mono.md) (3) - Sequential-decoder graph cutting: detach hidden states on a cut schedule and train each segment from a local goodness score (vocab CE for token models, next-patch-embedding prediction for encoder models). Selected with ``--mono-type``; default is off.
 - [Normalization layers](normalization.md) (8) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Optimizer profiles](optimizers.md) (7) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
@@ -25,14 +27,18 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Output heads](heads.md) (18) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
+- [Regularizers](regularizers.md) (7) - Additive representation-shaping losses layered on top of the main criterion. Set with ``--regularizers`` (space-separated; pass with no values to disable all); default is ``contrastive_isotropy``. The ``*_probe`` variants observe only - they log their metric without contributing to the loss.
+- [Remote-expert orchestration](orchestration.md) (6) - Pool profiles for the distributed swarm: how many local experts the backend sidecar starts and which mixing strategy the pool uses. The expert block types a pool member can wrap are the feedforward experts (``praxis.EXPERT_REGISTRY`` mirrors ``DENSE_REGISTRY``). Selected with ``--orchestration-type``; default is ``none``.
 - [Residual connections](residuals.md) (4) - Standard residuals vs. hyper-connections.
-- [RL policies](policies.md) (7) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [RL policies](policies.md) (9) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training, plus the weight-editing controller profiles that bundle a policy with its edit mode and selector. Both are selected with ``--rl-type``.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
+- [Sequence-length curriculum](curriculum.md) (2) - How the per-batch sequence-length multiplier is chosen. Every batch trades batch size for sequence length at constant attention cost; this picks the mix. Set with ``--seq-curriculum``; default is ``fixed``.
 - [Token embeddings](embeddings.md) (15) - Input embedding layers, paired with the corresponding block type.
 - [Token routers](routers.md) (15) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (5) - Multi-task / task-weighting strategies used by the trainer.
 - [Training-loop governors](governors.md) (1) - Feedback controllers over loop-level knobs, driven by endogenous signals - e.g. ``gns_batch`` governs the gradient-accumulation factor by tracking the measured gradient noise scale.
+- [Web-spider profiles](spider.md) (2) - Pacing presets for the background crawler that grounds the knowledge base in a watchlist of sites. Enabled with ``--spider``; bare use takes ``gentle``, and ``KEY=VALUE`` entries override any field.
 
 ## Subsystems
 
@@ -77,11 +83,14 @@ the package directory for details.
 - `praxis/generation/` - Text-generation entry point (``Generator``).
 - `praxis/integrations/` - Pluggable third-party integrations (Discord, hivemind, ...).
 - `praxis/interface/` - Terminal dashboard.
+- `praxis/kb/` - Knowledge base: sources emit normalized items, ``KBIndex`` answers ranked queries per keystroke. Backed by the spider's page store.
 - `praxis/layers/` - Shared low-level layer building blocks.
 - `praxis/logging/` - Logging utilities and formatters.
 - `praxis/metrics/` - Metrics descriptions and bookkeeping for the dashboards.
 - `praxis/modeling/` - ``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.
+- `praxis/optimization/` - Optimizer construction: named profiles, composite (per-parameter-group) optimizers, and the wrapper stack.
 - `praxis/pillars/` - Living research paper: builds ``research/`` from the current run via ``python -m praxis.pillars.build``. Subpackages: ``framing`` (config-gated prose), ``proofs`` (consistency-checked lemmas, some verifiable computations), ``inlines`` (single-value edits); plus runs/geometries/halting/ghostmax figures.
+- `praxis/registry/` - Registry discovery - AST-walks the package to count the ``*_REGISTRY`` dicts, and the eventual home of a unified ``Registry`` type.
 - `praxis/schedulers/` - Learning-rate schedulers.
 - `praxis/tasks/` - Training task abstractions used by ``strategies``.
 - `praxis/tokenizers/` - Tokenizer creation and registry, plus ``CHAT_FORMAT_REGISTRY`` (``--chat-format``): each entry pairs a chat template with the turn boundaries, assistant mask, halting contract and tool-call layout that have to agree with it. ``default`` is ChatML with control tokens; ``prose`` uses plain-text role boundaries and halts on stop strings.
