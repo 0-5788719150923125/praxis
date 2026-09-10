@@ -77,8 +77,8 @@ def test_value_slot_activates_the_glus_linear_half():
     assert y.shape == x.shape
     assert all(p.grad is not None for p in dual.parameters())
     # The value half is genuinely activated, unlike a GLU's linear branch.
-    assert isinstance(glu.act_value, torch.nn.Identity)
-    assert not isinstance(dual.act_value, torch.nn.Identity)
+    assert glu.act_value is None
+    assert dual.act_value is not None
     assert type(dual.act_value) is not type(dual.act)
 
 
@@ -107,7 +107,7 @@ def test_peer_glu_value_branch_defaults_to_identity():
     plain = DENSE_REGISTRY["peer_glu"](cfg)
     with torch.no_grad():
         plain(torch.zeros(1, 4, 64))
-    assert isinstance(plain.act_value, torch.nn.Identity)
+    assert plain.act_value is None
     torch.manual_seed(0)
     dual = DENSE_REGISTRY["peer_glu"](
         cfg, activation={"type": "single", "values": [cfg.activation], "linear": "gelu"}
@@ -163,7 +163,7 @@ def test_peer_split_partitions_the_bank_by_expert():
     assert isinstance(split.act, ActivationMixture)
     assert split.act.type_name == "mix_split" and split.act.wants_keys
     assert split.act.names == ("servant", "swish")
-    assert isinstance(split.act_value, torch.nn.Identity)
+    assert split.act_value is None
 
     x = torch.randn(2, 16, 64)
     plain.eval()
@@ -248,7 +248,7 @@ def test_peer_mix_routes_through_an_activation_bank():
     assert mixed.act.type_name == "mix_gated" and not mixed.act.wants_keys
     # The GLU's linear value branch is untouched: nonlinear DEPTH is unchanged,
     # only the function class in the existing slot.
-    assert isinstance(mixed.act_value, torch.nn.Identity)
+    assert mixed.act_value is None
 
     x = torch.randn(2, 16, 64)
     plain.eval()

@@ -71,9 +71,11 @@ class GatedLinearMLP(BaseDense):
 
         self.up: nn.Linear = nn.Linear(config.hidden_size, up_size)
         self.act: nn.Module = build_activation(spec, **kwargs)
-        # Identity when `linear` is absent, so a plain GLU is byte-for-byte
-        # unchanged - which is what makes the filled case a one-variable arm.
-        self.act_value: nn.Module = linear_activation(spec) or nn.Identity()
+        # None when `linear` is absent, so a plain GLU is byte-for-byte unchanged
+        # - which is what makes the filled case a one-variable arm. None rather
+        # than Identity because `linear_activation` draws that distinction on
+        # purpose, and because a no-op child is noise in the model repr.
+        self.act_value: Optional[nn.Module] = linear_activation(spec)
         self.dropout: nn.Dropout = nn.Dropout(config.dropout)
         self.down: nn.Linear = nn.Linear(down_size, config.hidden_size)
 
@@ -90,4 +92,6 @@ class GatedLinearMLP(BaseDense):
             Output tensor after GLU processing
         """
         a, b = self.up(inputs).chunk(2, dim=-1)
-        return self.down(self.dropout(self.act_value(a) * self.act(b)))
+        if self.act_value is not None:
+            a = self.act_value(a)
+        return self.down(self.dropout(a * self.act(b)))

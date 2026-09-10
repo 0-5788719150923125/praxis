@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import torch
 import torch.nn.functional as F
@@ -10,12 +10,47 @@ from praxis.halting.base import BaseHalting
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
+# How the training prior's centre `r_bar` scales with the depth budget. This is
+# the one knob that decides the SHAPE of the loop-count distribution, because the
+# family beneath it (log-normal Poisson) ties mode and tail to a single rate: a
+# small centre gives a low mode AND a super-exponentially dying tail, a large one
+# spreads mass flat across the whole range.
+#
+#   linear - the paper's setting, `(max_loops - 1) / 2`, which puts the centre in
+#       the middle of the budget. At max_loops 6 that is a round curve peaking at
+#       r=2 with 7% reaching full depth. At max_loops 18 the SAME rule slides the
+#       whole distribution right: mode 7, mean 8.6, and 37% of forwards run 10
+#       loops or more. That is close to uniform over the range, which is the wrong
+#       prior for a model this size - most of the budget gets spent on inputs that
+#       needed three loops.
+#
+#   log - the centre grows with the LOGARITHM of the budget instead. Deepening
+#       the model then buys a little more expected compute and a much longer thin
+#       tail, rather than sliding the mode along with the depth. At max_loops 18:
+#       mode 3, mean 3.9, P(1)=11.0% < P(2)=19.6% so the ramp toward multiple
+#       steps survives, P(r>=10)=2.5%, and full depth lands under 0.02% of
+#       forwards against the linear rule's 1.6%.
+#
+# The tail is deliberately thin rather than zero. At inference `get_depth` returns
+# the FULL depth and KL convergence is the only thing that stops the loop, so a
+# prior that never samples the deep end would leave the model uncalibrated exactly
+# where the halting signal fails to fire.
+LOOP_PRIORS: Dict[str, Callable[[int], float]] = {
+    "linear": lambda max_loops: (max_loops - 1) / 2,
+    "log": lambda max_loops: math.log(max_loops),
+}
+
+
 class KLDivergenceHalting(BaseHalting):
     """Randomized depth during training, KL-based halting at inference.
 
     Training: each forward gets a random number of recurrence loops sampled from a
     log-normal Poisson distribution, forcing the model to front-load useful
-    computation since it never knows how many loops it will receive.
+    computation since it never knows how many loops it will receive. ``prior``
+    picks how that distribution's centre scales with the depth budget - see
+    ``LOOP_PRIORS``, which is the whole difference between a curve that stays
+    concentrated on the first few loops as the model deepens and one that slides
+    its mode along with the depth.
 
     Inference: runs up to full depth but monitors KL-divergence between hidden
     states at successive loop boundaries, halting once the latent has stopped
@@ -50,6 +85,7 @@ class KLDivergenceHalting(BaseHalting):
         convergence_ratio: float = 0.1,
         sigma: float = 0.5,
         r_bar: Optional[float] = None,
+        prior: str = "linear",
         peak_ema_decay: float = 0.95,
     ) -> None:
         super().__init__(config)
@@ -57,8 +93,17 @@ class KLDivergenceHalting(BaseHalting):
         self.sigma = sigma
         self.peak_ema_decay = peak_ema_decay
         self.max_loops = self.depth // self.num_layers
+        if prior not in LOOP_PRIORS:
+            raise ValueError(
+                f"Unknown loop prior {prior!r}; known: {sorted(LOOP_PRIORS)}"
+            )
+        self.prior = prior
+        # Derived from the depth budget, never swept. An explicit `r_bar` is for
+        # a test pinning a specific curve, not for an experiment.
         self.r_bar = (
-            float(r_bar) if r_bar is not None else max(1.0, (self.max_loops - 1) / 2)
+            float(r_bar)
+            if r_bar is not None
+            else max(1.0, LOOP_PRIORS[prior](self.max_loops))
         )
         self._prev_log_probs: Optional[Tensor] = None
         # Global scale the inference floor is measured against: a slow EMA of

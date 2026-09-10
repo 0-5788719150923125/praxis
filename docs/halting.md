@@ -3,21 +3,24 @@
 
 Per-token mechanisms for early exit from recurrent depth loops.
 
-Registry: ``praxis.HALTING_REGISTRY`` (2 entries)
+Registry: ``praxis.HALTING_REGISTRY`` (3 entries)
 
-## `kl` - KLDivergenceHalting
+## `kl`, `kl_log` - KLDivergenceHalting
 
 Randomized depth during training, KL-based halting at inference.
 
 Training: each forward gets a random number of recurrence loops sampled from a log-
 normal Poisson distribution, forcing the model to front-load useful computation since it
-never knows how many loops it will receive.
+never knows how many loops it will receive. ``prior`` picks how that distribution's
+centre scales with the depth budget - see ``LOOP_PRIORS``, which is the whole difference
+between a curve that stays concentrated on the first few loops as the model deepens and
+...
 
-Inference: runs up to full depth but monitors KL-divergence between hidden states at
-successive loop boundaries, halting once the latent has stopped moving. The floor it
-must drop below is ``convergence_ratio`` times ...
+Source: [praxis/halting/kl.py:44](../praxis/halting/kl.py#L44)
 
-Source: [praxis/halting/kl.py:13](../praxis/halting/kl.py#L13)
+Presets:
+- `kl` - class defaults
+- `kl_log` - `prior='log'`
 
 ## `none` - BaseHalting
 

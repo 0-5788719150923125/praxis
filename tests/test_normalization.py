@@ -40,7 +40,16 @@ def test_forward_pass(norm_module):
 
 def test_registry_keys():
     """Test that all expected keys are present in the registry."""
-    expected_keys = {"layer_norm", "rms_norm", "none", "post_rms_norm", "sandwich"}
+    expected_keys = {
+        "layer_norm",
+        "rms_norm",
+        "none",
+        "post_rms_norm",
+        "sandwich",
+        "sandwich_untied",
+        "hero",
+        "hero_inverted",
+    }
     actual_keys = set(NORMALIZATION_REGISTRY.keys())
 
     assert (
@@ -239,3 +248,94 @@ def test_sandwich_norm_behavior():
     normalized = sandwich_norm(x, mode="direct")
     rms = torch.sqrt(torch.mean(normalized**2, dim=-1))
     assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4)
+
+
+def test_hero_norm_positions_differ():
+    """Hero centers on the read and only rescales on the write."""
+    hidden_size = 64
+    torch.manual_seed(0)
+    x = torch.randn(10, 20, hidden_size)
+
+    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+
+    assert hero.pre_norm == True
+    assert hero.post_norm == True
+
+    # Pre position is a LayerNorm: mean is removed.
+    pre_output = hero(x, mode="pre")
+    pre_mean = pre_output.mean(dim=-1)
+    assert torch.allclose(pre_mean, torch.zeros_like(pre_mean), atol=1e-5)
+
+    # Post position is an RMSNorm: unit RMS, but the mean survives.
+    post_output = hero(x, mode="post")
+    post_rms = torch.sqrt(torch.mean(post_output**2, dim=-1))
+    post_mean = post_output.mean(dim=-1)
+    assert torch.allclose(post_rms, torch.ones_like(post_rms), atol=1e-4)
+    assert not torch.allclose(post_mean, torch.zeros_like(post_mean), atol=1e-5)
+
+    # The two positions therefore disagree.
+    assert not torch.equal(pre_output, post_output)
+
+    # "none" stays a no-op, "direct" falls to the read norm.
+    assert torch.equal(hero(x, mode="none"), x)
+    assert torch.equal(hero(x, mode="direct"), pre_output)
+
+
+def test_hero_inverted_mirrors_hero():
+    """The inverted hero swaps which position centers."""
+    hidden_size = 64
+    torch.manual_seed(0)
+    x = torch.randn(10, 20, hidden_size)
+
+    inverted = NORMALIZATION_REGISTRY["hero_inverted"](hidden_size)
+
+    post_mean = inverted(x, mode="post").mean(dim=-1)
+    pre_mean = inverted(x, mode="pre").mean(dim=-1)
+
+    assert torch.allclose(post_mean, torch.zeros_like(post_mean), atol=1e-5)
+    assert not torch.allclose(pre_mean, torch.zeros_like(pre_mean), atol=1e-5)
+
+
+def test_sandwich_weight_tying():
+    """`sandwich` shares one weight across both positions; the paired variants do not."""
+    hidden_size = 64
+
+    tied = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
+    untied = NORMALIZATION_REGISTRY["sandwich_untied"](hidden_size)
+    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+
+    # One RMSNorm weight, reused at both positions.
+    assert len(list(tied.parameters())) == 1
+
+    # Two independent RMSNorm weights: the control for `hero` that changes only
+    # the tying, so hero-vs-untied isolates the LayerNorm/RMSNorm swap.
+    assert len(list(untied.parameters())) == 2
+    assert untied.pre.weight is not untied.post.weight
+
+    # LayerNorm (weight + bias) on the read, RMSNorm (weight) on the write.
+    assert len(list(hero.parameters())) == 3
+
+
+def test_paired_norm_post_is_unused_at_direct_only_sites():
+    """A direct-only call site never reaches the post norm.
+
+    Blocks call pre then post, but the MTP heads call `mode="direct"` only, so
+    the post norm's weight gets no gradient there. Pinned because it decides
+    whether a paired norm is free to drop into every site in the registry.
+    """
+    hidden_size = 64
+    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+
+    x = torch.randn(4, 8, hidden_size)
+    hero(x, mode="direct").sum().backward()
+
+    assert hero.pre.weight.grad is not None
+    assert hero.post.weight.grad is None
+
+    # Both positions do receive gradient when a site actually sandwiches.
+    hero.zero_grad(set_to_none=True)
+    h = hero(x, mode="pre")
+    hero(h, mode="post").sum().backward()
+
+    assert hero.pre.weight.grad is not None
+    assert hero.post.weight.grad is not None

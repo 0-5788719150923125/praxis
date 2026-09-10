@@ -61,7 +61,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline) |
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
-| `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
+| `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl, kl_log) |
 | `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
 | `--head-size` | int | `None` | Specify the inner head dimension |
 | `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7, prismatic8, prismatic9) |

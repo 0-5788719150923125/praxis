@@ -5,7 +5,13 @@ from typing import Any, Dict
 from praxis.normalization.base import BaseNorm, NoNorm
 from praxis.normalization.layer_norm import LayerNorm
 from praxis.normalization.rms_norm import PostRMSNorm, RMSNorm
-from praxis.normalization.sandwich_norm import SandwichNorm
+from praxis.normalization.sandwich_norm import (
+    HeroNorm,
+    InvertedHeroNorm,
+    PairedNorm,
+    SandwichNorm,
+    UntiedSandwichNorm,
+)
 
 # Base normalization types
 NORMALIZATION_REGISTRY: Dict[str, Any] = {
@@ -14,6 +20,9 @@ NORMALIZATION_REGISTRY: Dict[str, Any] = {
     "rms_norm": RMSNorm,
     "post_rms_norm": PostRMSNorm,
     "sandwich": SandwichNorm,
+    "sandwich_untied": UntiedSandwichNorm,
+    "hero": HeroNorm,
+    "hero_inverted": InvertedHeroNorm,
 }
 
 __all__ = [
@@ -23,5 +32,9 @@ __all__ = [
     "RMSNorm",
     "PostRMSNorm",
     "SandwichNorm",
+    "PairedNorm",
+    "UntiedSandwichNorm",
+    "HeroNorm",
+    "InvertedHeroNorm",
     "NORMALIZATION_REGISTRY",
 ]

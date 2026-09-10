@@ -197,7 +197,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # unchanged behaviour). `linear` means the same thing here as it does in
         # GatedLinearMLP, and the configured feedforward is the one it reaches.
         spec = activation or config.activation
-        self.act_value: nn.Module = linear_activation(spec) or nn.Identity()
+        # None, not Identity. `linear_activation` returns None precisely to keep
+        # "unfilled" distinguishable from "filled with something that does
+        # nothing", and collapsing that to an Identity threw the distinction away
+        # AND hung a no-op child on every blueprint that never set `linear`.
+        self.act_value: Optional[nn.Module] = linear_activation(spec)
 
         # No parity constraint on hidden_size. Every use of it here is a
         # projection width, never a split: the `2` throughout is the
@@ -469,7 +473,8 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             # one - otherwise it stays linear and this is the ordinary GLU
             # expert. Two multiplied function classes, rather than one steering
             # a linear half; see GatedLinearMLP for the argument.
-            outputs = self.act_value(outputs)
+            if self.act_value is not None:
+                outputs = self.act_value(outputs)
             outputs = (
                 self._activate(self._project(inputs, self.gate, indices), indices)
                 * outputs
