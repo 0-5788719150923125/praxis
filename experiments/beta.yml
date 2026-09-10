@@ -21,7 +21,10 @@ encoder_type: byte_latent_conv_small
 tokenizer_type: byte_level
 decoder_type: sequential
 activation_type: serpent
-norm_type: sandwich
+# `sandwich` became untied on 2026-09-09; every arm on this chain ran the tied
+# version, and their checkpoints only load under it. Move to `sandwich` as a
+# deliberate one-key arm, not by inheriting the rename.
+norm_type: sandwich_tied
 halting_type: kl
 strategy: naive
 optimizer_wrappers: [schedule_free]

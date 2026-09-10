@@ -9,20 +9,6 @@ from praxis.normalization.layer_norm import LayerNorm
 from praxis.normalization.rms_norm import RMSNorm
 
 
-class SandwichNorm(RMSNorm):
-    """One RMSNorm at both positions, sharing a single weight between them."""
-
-    def __init__(
-        self,
-        normalized_shape: Any,
-        eps: float = 1e-05,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            normalized_shape, eps=eps, pre_norm=True, post_norm=True, **kwargs
-        )
-
-
 class PairedNorm(nn.Module):
     """A sandwich built from two independent norms, one per position.
 
@@ -58,8 +44,27 @@ class PairedNorm(nn.Module):
             return self.pre(input, mode="direct")
 
 
-class UntiedSandwichNorm(PairedNorm):
-    """SandwichNorm with a separate RMSNorm weight at each position."""
+class SandwichNorm(PairedNorm):
+    """An RMSNorm at each position, with a separate weight for each."""
+
+
+class TiedSandwichNorm(RMSNorm):
+    """One RMSNorm at both positions, sharing a single weight between them.
+
+    Every arm before 2026-09-09 ran this under the name ``sandwich``; a
+    checkpoint from one of those loads here and not under ``SandwichNorm``,
+    whose weights live at ``.pre`` and ``.post``.
+    """
+
+    def __init__(
+        self,
+        normalized_shape: Any,
+        eps: float = 1e-05,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            normalized_shape, eps=eps, pre_norm=True, post_norm=True, **kwargs
+        )
 
 
 class HeroNorm(PairedNorm):

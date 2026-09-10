@@ -87,7 +87,7 @@ MODEL_ARCHITECTURE = """PraxisForCausalLM(
       (0): LocalLayer(
         (block): TransformerBlock(
           (attn_res): ResidualConnection()
-          (attn_norm): SandwichNorm((96,), eps=1e-05, elementwise_affine=True)
+          (attn_norm): TiedSandwichNorm((96,), eps=1e-05, elementwise_affine=True)
           (attn): ArcAttention(
             (encoding): ArcHoPE()
             (qkv): Linear(in_features=96, out_features=288, bias=True)
@@ -98,7 +98,7 @@ MODEL_ARCHITECTURE = """PraxisForCausalLM(
           )
           (memory): MemoryBase()
           (ffn_res): ResidualConnection()
-          (ffn_norm): SandwichNorm((96,), eps=1e-05, elementwise_affine=True)
+          (ffn_norm): TiedSandwichNorm((96,), eps=1e-05, elementwise_affine=True)
           (ffn): ArcGLU(
             (up): Linear(in_features=96, out_features=256, bias=True)
             (act): ModuleList(
@@ -132,7 +132,7 @@ SPEC_ARGS = {
     "ffn_type": "arc_glu",
     "activation": "serpent",
     "halting_type": "kl_divergence",
-    "norm_type": "sandwich",
+    "norm_type": "sandwich_tied",
     "optimizer": "Lion",
     "sampler": "novelty",
     "depth": 3,

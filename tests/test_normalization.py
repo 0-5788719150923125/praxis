@@ -46,7 +46,7 @@ def test_registry_keys():
         "none",
         "post_rms_norm",
         "sandwich",
-        "sandwich_untied",
+        "sandwich_tied",
         "hero",
         "hero_inverted",
     }
@@ -127,7 +127,7 @@ def test_pre_post_norm_flags():
     layer_norm = NORMALIZATION_REGISTRY["layer_norm"](hidden_size)
     rms_norm = NORMALIZATION_REGISTRY["rms_norm"](hidden_size)
     post_rms_norm = NORMALIZATION_REGISTRY["post_rms_norm"](hidden_size)
-    sandwich_norm = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
+    sandwich_norm = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
 
     # Check default flags (pre_norm=True, post_norm=False)
     assert layer_norm.pre_norm == True
@@ -218,7 +218,7 @@ def test_sandwich_norm_behavior():
     hidden_size = 64
     x = torch.randn(10, 20, hidden_size)
 
-    sandwich_norm = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
+    sandwich_norm = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
 
     # Verify flags are set correctly
     assert sandwich_norm.pre_norm == True
@@ -297,20 +297,20 @@ def test_hero_inverted_mirrors_hero():
 
 
 def test_sandwich_weight_tying():
-    """`sandwich` shares one weight across both positions; the paired variants do not."""
+    """`sandwich` gives each position its own weight; `sandwich_tied` shares one."""
     hidden_size = 64
 
-    tied = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
-    untied = NORMALIZATION_REGISTRY["sandwich_untied"](hidden_size)
+    untied = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
+    tied = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
     hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
 
-    # One RMSNorm weight, reused at both positions.
-    assert len(list(tied.parameters())) == 1
-
-    # Two independent RMSNorm weights: the control for `hero` that changes only
-    # the tying, so hero-vs-untied isolates the LayerNorm/RMSNorm swap.
+    # Default: two independent RMSNorm weights. Also the control for `hero`,
+    # since hero-vs-sandwich then isolates the LayerNorm/RMSNorm swap alone.
     assert len(list(untied.parameters())) == 2
     assert untied.pre.weight is not untied.post.weight
+
+    # The pre-2026-09-09 behaviour: one weight, reused at both positions.
+    assert len(list(tied.parameters())) == 1
 
     # LayerNorm (weight + bias) on the read, RMSNorm (weight) on the write.
     assert len(list(hero.parameters())) == 3

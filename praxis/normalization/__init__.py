@@ -10,7 +10,7 @@ from praxis.normalization.sandwich_norm import (
     InvertedHeroNorm,
     PairedNorm,
     SandwichNorm,
-    UntiedSandwichNorm,
+    TiedSandwichNorm,
 )
 
 # Base normalization types
@@ -20,7 +20,7 @@ NORMALIZATION_REGISTRY: Dict[str, Any] = {
     "rms_norm": RMSNorm,
     "post_rms_norm": PostRMSNorm,
     "sandwich": SandwichNorm,
-    "sandwich_untied": UntiedSandwichNorm,
+    "sandwich_tied": TiedSandwichNorm,
     "hero": HeroNorm,
     "hero_inverted": InvertedHeroNorm,
 }
@@ -31,9 +31,9 @@ __all__ = [
     "LayerNorm",
     "RMSNorm",
     "PostRMSNorm",
-    "SandwichNorm",
     "PairedNorm",
-    "UntiedSandwichNorm",
+    "SandwichNorm",
+    "TiedSandwichNorm",
     "HeroNorm",
     "InvertedHeroNorm",
     "NORMALIZATION_REGISTRY",
