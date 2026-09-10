@@ -410,19 +410,35 @@ def _declare_share_descriptions(names: Iterable[str]) -> None:
     these have to exist before the first collection. They are class-level
     because ``collect_activation_descriptions`` reads ``type(module)``.
     """
-    for order, name in enumerate(names):
+    for name in names:
         key = f"activation_mix_share_{re.sub(r'[^0-9a-zA-Z]+', '_', name)}"
         if key in ActivationMixture.metric_descriptions:
             continue
+        # Declaration order across every bank, so a second bank's branches
+        # append lines to the one card instead of tying with the first bank's.
+        # The card's title/axis belongs to whichever branch is declared first.
+        order = sum(
+            k.startswith("activation_mix_share_")
+            for k in ActivationMixture.metric_descriptions
+        )
+        leads = order == 0
         ActivationMixture.metric_descriptions[key] = {
             "description": (
-                f"Share of the bank carried by `{name}`. Under `gated` it is a mean "
-                "over elements, so a flat line with nonzero routing means it is "
-                "used only in some input regimes."
+                (
+                    "Share of the bank carried by each branch"
+                    if leads
+                    else f"Share of the bank carried by `{name}`"
+                )
+                + ". Under `gated` it is a mean over elements, so a flat line "
+                "with nonzero routing means it is used only in some input regimes."
             ),
             "chart": {
-                "title": f"Activation Share ({name})",
-                "y_label": "c",
+                # One card for the whole bank: the branches share a scale and
+                # only mean anything against each other, and the bank grows.
+                "series_group": "activation_mix_share",
+                "series_label": name,
+                "title": "Activation Share" if leads else None,
+                "y_label": "c" if leads else None,
                 "y_scale": "linear",
                 "group": "activation_mix",
                 "order": 100 + order,
