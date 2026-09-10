@@ -6,6 +6,7 @@ from praxis.losses.activation import ActivationRegularizer
 from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
 from praxis.losses.harmonic_kl import HarmonicKLRegularizer
 from praxis.losses.ouroboros_budget import OuroborosBudget
+from praxis.losses.dissonance import Dissonance
 from functools import partial
 
 # Additive representation-shaping losses. Add an option here (not a new CLI
@@ -28,6 +29,16 @@ REGULARIZER_REGISTRY = {
     # Pairs with `activation: ouroboros`; a no-op without it. See
     # praxis/activations/ouroboros.py and next/ouroboros.md.
     "ouroboros_budget": OuroborosBudget,
+    # The counterweight to the field's own smoothness prior: reward Plomp-Levelt
+    # roughness between the harmonic field's temporal modes, held by a dual
+    # variable against whatever the language-modelling task will still pay.
+    # Needs a harmonic field under the head; inert otherwise. See
+    # praxis/losses/dissonance.py.
+    "dissonance": Dissonance,
+    # The same spectrum readings with ZERO gradient - what the field is doing
+    # before deciding to push on it. Pair it with a config that drops
+    # `dissonance` when the question is what the roughness term was doing.
+    "dissonance_probe": partial(Dissonance, observe_only=True),
 }
 
 # Resolves config.regularizers when left unset (None). Empty list disables all.

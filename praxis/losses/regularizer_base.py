@@ -17,9 +17,14 @@ class BaseRegularizer(nn.Module):
     ``training_metrics`` to surface per-step diagnostics.
 
     ``**ctx`` carries optional extras the model can supply that not every
-    regularizer wants (currently ``classifier``, the output readout). Accept and
-    ignore what you don't use - the model passes the same context to all of
-    them, so a regularizer that needs nothing extra keeps working unchanged.
+    regularizer wants: ``classifier`` (the output readout), ``head`` (the whole
+    head, for a term that targets something inside it), and ``main_loss`` (this
+    step's main term, for a term that balances itself against what the task
+    will pay). Accept and ignore what you don't use - the model passes the same
+    context to all of them, so a regularizer that needs nothing extra keeps
+    working unchanged. None of them may be STORED: holding a reference to a
+    module the model already owns duplicates its parameters in state_dict and
+    the optimizer.
     """
 
     name = "regularizer"

@@ -1049,8 +1049,8 @@ class HarmonicField(nn.Module):
         return e_t.unsqueeze(-1) * e_d.unsqueeze(-2)
 
     def _envelope(self) -> Optional[Tensor]:
-        """``[F_t]`` amplitude envelope over the temporal-frequency axis, or
-        None when modulation is off. For "pure" this is the last batch's
+        """``[F_t, F_d]`` amplitude envelope over the frequency grid, or None
+        when modulation is off. For "pure" this is the last batch's
         conditional envelope (zero before any forward)."""
         if self.amp_modulation == "off":
             return None
@@ -1069,6 +1069,20 @@ class HarmonicField(nn.Module):
         if self.fast_weights:
             amps = amps + self._fast_repr.detach()
         return amps
+
+    def amplitude_energy(self) -> Tensor:
+        """Differentiable per-cell energy ``[F_t, F_d]`` of the learned grid.
+
+        The gradient-carrying counterpart of :meth:`effective_amplitudes`,
+        which detaches for the heatmap. Fast weights are excluded: they are
+        per-token state rebuilt every forward, not the standing spectrum an
+        objective on the amplitudes is about.
+        """
+        amps = self.amplitudes
+        env = self._envelope()
+        if env is not None:
+            amps = amps * env
+        return amps.pow(2)
 
     def envelope_depth(self) -> float:
         """Peak-to-trough of the f_t envelope; 0 when modulation is off."""

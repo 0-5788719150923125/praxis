@@ -1098,7 +1098,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # duplicate its parameters in state_dict and the optimizer.
         for reg in self.criterion.regularizers():
             outputs.losses.add_loss(
-                reg.name, reg(hidden_states, input_ids, classifier=classifier)
+                reg.name,
+                reg(
+                    hidden_states,
+                    input_ids,
+                    classifier=classifier,
+                    head=self.head,
+                    # The main term, already in the container - _main_loss runs
+                    # before this. A regularizer that balances itself against
+                    # what the task will pay needs to see what the task paid.
+                    main_loss=outputs.losses.loss_dict.get("main"),
+                ),
             )
 
         # Last, so the sampler sees every objective this step actually carries.

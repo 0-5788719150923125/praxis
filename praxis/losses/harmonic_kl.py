@@ -27,6 +27,15 @@ failure this codebase suffers is collapse onto a few high-probability
 continuations, which mode-seeking KL(live || ema) would reward. Only the live
 term carries gradient; the teacher is detached.
 
+WHAT IT WATCHES, AND WHY THE NAME MISLEADS. The target is whatever
+``head.classifier`` returns - the READOUT - and on a multi-arm head that is not
+the harmonic field. ``ParallelHead.classifier`` prefers a HALO arm, so under
+``head_type: prismatic5`` this term EMAs ``HaloClassifier``'s ``centers`` and
+``gamma`` and says nothing at all about the field, which sits upstream as the
+stem. The module logs the exact class and parameter names it seeded on, once,
+so a run never has to guess. For the field's own spectrum use the
+``dissonance`` / ``dissonance_probe`` terms (praxis/losses/dissonance.py).
+
 WHAT IT DOES NOT DO. It bounds drift of the READOUT, not the trunk - two
 different trunks feeding the same classifier are indistinguishable to it. A full
 trust region needs an EMA of the whole model and a second forward pass.
@@ -126,6 +135,8 @@ class HarmonicKLRegularizer(BaseRegularizer):
         super().__init__()
         self.pad_id = pad_id
         self.decay = float(decay)
+        # The readout under the EMA, resolved on the first forward.
+        self._target = "readout"
         # (param_name, buffer_name) pairs for the teacher's parameter copies.
         self._ema_keys: list = []
         # Set if the readout raises when called; the penalty then stays off for
@@ -143,6 +154,9 @@ class HarmonicKLRegularizer(BaseRegularizer):
         # the identity is safe; cold-starting to an arbitrary constant is not.)
         self._ema_ready = False
         self._metrics: dict = {}
+
+    def extra_repr(self) -> str:
+        return f"target={self._target}"
 
     @staticmethod
     def _buffer_name(param_name: str) -> str:
@@ -168,6 +182,15 @@ class HarmonicKLRegularizer(BaseRegularizer):
             self._ema_keys.append((name, buf))
         self._sig = self._signature(classifier)
         self._ema_ready = bool(self._ema_keys)
+        # Say what is under the EMA. The term is named for a claim about the
+        # harmonic basis but its target is whatever the head hands over as its
+        # readout, and reading the chart without knowing which module that was
+        # is how a near-zero drift gets mistaken for "the field has converged".
+        self._target = "{}({})".format(
+            type(classifier).__name__, ", ".join(n for n, _ in self._ema_keys)
+        )
+        if self._ema_keys:
+            print(f"[harmonic_kl] watching {self._target}")
 
     def _ema_state(self) -> dict:
         """The teacher's parameter override for ``functional_call``."""
