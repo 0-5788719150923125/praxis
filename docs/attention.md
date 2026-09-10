@@ -39,7 +39,7 @@ Everything else - the per-depth biases, the segment memory, ghostmax, the cached
 path, the dropoff ablation - is inherited unchanged. Only the three subclass hooks and
 the tensors whose shapes depend on the head count are replaced.
 
-Source: [praxis/attention/single.py:87](../praxis/attention/single.py#L87)
+Source: [praxis/attention/single.py:74](../praxis/attention/single.py#L74)
 
 Presets:
 - `arc_single` - class defaults
@@ -50,7 +50,7 @@ Presets:
 SingleHeadArcAttention with the compressive memory removed. See
 :class:`~praxis.attention.infini.NoCompressiveMemory`.
 
-Source: [praxis/attention/single.py:243](../praxis/attention/single.py#L243)
+Source: [praxis/attention/single.py:230](../praxis/attention/single.py#L230)
 
 Presets:
 - `arc_single_dropoff_always_nomem` - `dropoff='warp', dropoff_every=True`
@@ -61,7 +61,7 @@ Presets:
 
 SSOG with a per-depth field (see module docstring).
 
-Source: [praxis/attention/arc_ssog.py:195](../praxis/attention/arc_ssog.py#L195)
+Source: [praxis/attention/arc_ssog.py:137](../praxis/attention/arc_ssog.py#L137)
 
 Presets:
 - `arc_ssog` - class defaults
@@ -91,7 +91,7 @@ Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
 N frozen ``[T, T]`` mixing matrices, blended per token by a router.
 
-Source: [praxis/attention/kaleidoscope.py:382](../praxis/attention/kaleidoscope.py#L382)
+Source: [praxis/attention/kaleidoscope.py:200](../praxis/attention/kaleidoscope.py#L200)
 
 Presets:
 - `kaleido` - class defaults

@@ -38,7 +38,7 @@ choice and not part of the model's identity: `--generation-mode` is excluded fro
 run hash, and the same checkpoint can be read out either way. That is the whole reason
 this ...
 
-Source: [praxis/encoders/abstractinator/calm.py:183](../praxis/encoders/abstractinator/calm.py#L183)
+Source: [praxis/encoders/abstractinator/calm.py:159](../praxis/encoders/abstractinator/calm.py#L159)
 
 Presets:
 - `abstractinator_harmonic_gdn_vocab_bank_static_calm` - `bottleneck='harmonic_gdn', patch_size=8, patching_mode='static', vq_codebook_size=None`

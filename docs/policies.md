@@ -38,7 +38,7 @@ nn.Conv2d(20, 20, 5)
 
 def ...
 
-Source: [praxis/policies/engagement.py:51](../praxis/policies/engagement.py#L51)
+Source: [praxis/policies/engagement.py:39](../praxis/policies/engagement.py#L39)
 
 ## `grpo` - GRPO
 
@@ -72,7 +72,7 @@ grounding comes from quality-filtered (well-rated) jokes in the data mix; the li
 human-approval channel folds into the energy via ``ingest_live``. The model is rewarded
 for producing jokes a human approves - "the model seeks our approval".
 
-Source: [praxis/policies/engagement.py:266](../praxis/policies/engagement.py#L266)
+Source: [praxis/policies/engagement.py:254](../praxis/policies/engagement.py#L254)
 
 ## `preference` - PreferencePolicy
 
@@ -91,7 +91,7 @@ nn.Conv2d(20, 20, 5)
 
 def ...
 
-Source: [praxis/policies/preference.py:50](../praxis/policies/preference.py#L50)
+Source: [praxis/policies/preference.py:43](../praxis/policies/preference.py#L43)
 
 ## `reinforce` - REINFORCE
 
