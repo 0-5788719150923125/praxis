@@ -31,7 +31,7 @@ Praxis is organized as 54 pluggable registries. The feature categories below lin
 - [Halting / early exit](docs/halting.md) (3)
 - [Input encoders](docs/encoders.md) (27)
 - [Layer-routing controllers](docs/controllers.md) (8)
-- [Long-term memory](docs/memory.md) (15)
+- [Long-term memory](docs/memory.md) (16)
 - [Loss functions](docs/losses.md) (11)
 - [Mixture-of-widths](docs/width.md) (7)
 - [Model transforms](docs/transforms.md) (10)

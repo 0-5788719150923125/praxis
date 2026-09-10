@@ -82,12 +82,14 @@ _DECAY_GATE_BIAS: float = -5.0
 # measured on abstractinator-v the pass mean moved 10% in two forwards, which
 # put a fixed bar outside the distribution entirely and turned the gate into a
 # switch (17% share to the 3% cold-start floor, in one step).
-_GATE_REF_DECAY: Tuple[float, float] = (0.99, 0.9)
+_GATE_REF_DECAY: Tuple[float, float] = (0.999, 0.99)
 
-# Bound on the tilt (see _gate_tilt). Wide enough that the gate can shut almost
-# completely at the top of the range - a bar 1.5x the running mean clears ~0% of
-# this driver - and bounded so an early transient cannot latch it there.
-_GATE_TILT_RANGE: Tuple[float, float] = (0.5, 1.5)
+# Bound on the tilt (see _gate_tilt). The top of the range is 2.0 because the
+# adaptive gate's target is ``capacity * (2 - tilt)``, so a tilt of 2 is exactly
+# where the write closes completely; the bottom bounds how far a struggling
+# memory can open it. Asymmetric on purpose - closing is the direction under
+# test - and bounded so an early transient cannot latch either end.
+_GATE_TILT_RANGE: Tuple[float, float] = (0.5, 2.0)
 
 
 @contextmanager
@@ -279,11 +281,22 @@ class NeuralMemory(nn.Module):
         #               read only by LATER chunks, so a within-chunk top-k
         #               leaks nothing into any retrieval that can see it.
         #   "threshold" a token writes when its surprise exceeds
-        #               `write_gate_ratio` times a reference level. The only
-        #               mode that can write NOTHING: a chunk where nothing
-        #               clears the bar holds its weights (weight_decay is 0; the
-        #               Adam moments just decay). That is the "already
-        #               well-conditioned, stop writing" case.
+        #               `write_gate_ratio * tilt` times the sequence's causal
+        #               running mean. MEASURED AND SUPERSEDED: the driver is
+        #               right-skewed once trained (its mean sits at the 82nd
+        #               percentile) and spans only +-10% around that mean, which
+        #               is narrower than the tilt's own range - so the tilt
+        #               alone sweeps the gate between writing everything and
+        #               writing nothing. Kept because a run used it.
+        #   "adaptive"  the shipped shape. A token writes when its score sits
+        #               in the top TARGET fraction of the real tokens at or
+        #               before it, and the tilt moves that target. A causal rank
+        #               depends on nothing about the score's distribution - not
+        #               its location, width, skew or scale - which is what the
+        #               level-based shapes could not manage. Still the mode that
+        #               can write NOTHING: at tilt 2.0 the target is 0, no token
+        #               qualifies, and the chunk holds its weights (weight_decay
+        #               is 0; the Adam moments just decay).
         #
         # NOT a compute saving - the surprise is scored for every token either
         # way, which is what the gate reads. It buys selectivity.
@@ -298,7 +311,7 @@ class NeuralMemory(nn.Module):
         # share the total is within 2% of ungated; on the 4-token grid the mag
         # profiles run it drops about a third (0.0151 -> 0.0101, measured on
         # abstractinator-v at init, with memory_gain unmoved at 0.357).
-        assert write_gate in ("none", "topk", "threshold"), write_gate
+        assert write_gate in ("none", "topk", "threshold", "adaptive"), write_gate
         self.write_gate = write_gate
         self.write_capacity = write_capacity
         # The sigma multiple for "threshold", mirroring segment_gamma's role one
@@ -422,10 +435,13 @@ class NeuralMemory(nn.Module):
         # content, which is the null this experiment has to beat).
         self.last_write_share: Optional[Tensor] = None
         self.last_write_selectivity: Optional[Tensor] = None
-        # The tilt (threshold mode): above 1 = the memory's forecasting is
-        # improving and the gate is backing off, below 1 = it is losing ground
-        # and writing more. Reads the gate's motive apart from its share.
+        # The tilt: above 1 = the memory's forecasting is improving and the
+        # gate is backing off, below 1 = it is losing ground and writing more.
+        # Reads the gate's motive apart from its share. The target is what the
+        # adaptive gate's controller is aiming the share AT, so the two read
+        # together: share tracking target = the controller is converged.
         self.last_write_tilt: Optional[Tensor] = None
+        self.last_write_target: Optional[Tensor] = None
         # Event-size stats from the last segmented store pass (tokens per event).
         self.last_event_mean: Optional[Tensor] = None
         self.last_event_min: Optional[Tensor] = None
@@ -644,6 +660,58 @@ class NeuralMemory(nn.Module):
             _GATE_TILT_RANGE[0], _GATE_TILT_RANGE[1]
         )
 
+    def _gate_target(self) -> Tensor:
+        """Target write share for this pass: the base capacity, scaled down as
+        the memory's forecasting improves. ``2 - tilt`` puts the closed point at
+        a tilt of 2.0 (the fast EMA at half the slow one - a large, sustained
+        improvement) and opens to 1.5x the base at the other clamp."""
+        return (self.write_capacity * (2.0 - self._gate_tilt())).clamp(0.0, 1.0)
+
+    def _adaptive_mask(
+        self, s: Tensor, v: Tensor, prior: Optional[Tuple[Tensor, ...]] = None
+    ) -> Tuple[Tensor, Tuple[Tensor, ...]]:
+        """Causal-rank gate: a token writes when its score sits in the top
+        ``_gate_target()`` fraction of the REAL tokens at or before it.
+
+        Two level-based shapes were built, run and abandoned before this one - a
+        bar at a multiple of the sequence's running mean, then a bar tracked to a
+        target share - and both failed the same way. The driver's LOCATION moves
+        from pass to pass by about as much as the distribution's own width, so
+        any bar carried between passes is somewhere different inside the
+        distribution each time, and the share swings end to end. On a stream with
+        a 9% spread and 10% per-pass location drift, the tracked bar gave a share
+        of 0.22 +- 0.25 against a 0.125 target (excursions to 0.00 and 0.96); the
+        rank below gives 0.113 +- 0.017, and is bit-identical with the drift
+        removed - as a rank must be.
+
+        Ranking against the causal PREFIX rather than the whole sequence is what
+        keeps it legal: a chunk's write is only ever read by later chunks, so
+        token t may be compared against tokens up to t and no further.
+
+        Costs a ``(b, tokens, prefix)`` comparison. That is quadratic in the
+        LATENT length, not the byte length, and the sequential path pays it a
+        chunk at a time; ``prior`` carries the earlier scores, which are the size
+        of the sequence rather than of the weight trajectory.
+        """
+        if prior is not None:
+            s_all = torch.cat([prior[0], s], dim=1)
+            v_all = torch.cat([prior[1], v], dim=1)
+        else:
+            s_all, v_all = s, v
+        head = s_all.shape[1] - s.shape[1]
+        idx = torch.arange(s_all.shape[1], device=s.device)
+        # (t, j): is prefix position j at or before token t?
+        causal = (idx.unsqueeze(0) <= idx[head:].unsqueeze(1)).to(s.dtype)
+        m = causal.unsqueeze(0) * v_all.unsqueeze(1)
+        # (b, t, j): does prefix token j score at or below token t?
+        below = (s.unsqueeze(2) >= s_all.unsqueeze(1)).to(s.dtype)
+        cnt = m.sum(-1).clamp(min=1.0)
+        rank = (below * m).sum(-1)  # how many of the prefix it is at least as big as
+        top_fraction = 1.0 - (rank - 1.0) / cnt
+        # cnt <= 1 is the first real token, which has no prefix to rank against.
+        keep = (top_fraction <= self._gate_target()) | (cnt <= 1.0)
+        return keep.to(s.dtype) * v, (s_all, v_all)
+
     def _write_gate_mask(
         self,
         scores: Tensor,
@@ -663,12 +731,17 @@ class NeuralMemory(nn.Module):
             ranked = scores.masked_fill(v == 0, torch.finfo(scores.dtype).min)
             idx = ranked.topk(k, dim=-1).indices
             return torch.zeros_like(scores).scatter(-1, idx, 1.0) * v, prior
-        mask, nxt = self._threshold_mask(scores.reshape(b, -1), v.reshape(b, -1), prior)
+        fn = (
+            self._adaptive_mask
+            if self.write_gate == "adaptive"
+            else self._threshold_mask
+        )
+        mask, nxt = fn(scores.reshape(b, -1), v.reshape(b, -1), prior)
         return mask.reshape(b, nc, c), nxt
 
     def _note_gate(self, scores: Tensor, valid: Tensor, mask: Tensor) -> None:
-        """Write-gate metrics for a whole store pass, and - in threshold mode -
-        the fold of this pass's surprise into the cross-pass reference.
+        """Write-gate metrics for a whole store pass, and - for the carried
+        modes - the fold of this pass into the tilt EMAs and the bar controller.
 
         Called exactly once per forward by either path, which is why the
         reference advances per PASS rather than per chunk."""
@@ -680,13 +753,10 @@ class NeuralMemory(nn.Module):
             all_mean = (scores * v).sum() / vs
             kept_mean = (scores * mask).sum() / kept.clamp(min=1.0)
             self.last_write_selectivity = kept_mean / (all_mean + self.eps)
-            if self.write_gate != "threshold":
+            if self.write_gate not in ("threshold", "adaptive"):
                 return
-            # Fold, then report, so the tilt on the chart is the one in force
-            # from here on rather than the one this pass was gated by - they
-            # differ only on the first pass, where no reference existed yet.
-            # Training only: at eval the gate applies the EMAs training left it,
-            # rather than ones eval moved for itself.
+            # Training only: at eval the gate applies the EMAs and bar training
+            # left it, rather than ones eval moved for itself.
             if self.training:
                 d = self._gate_ref.new_tensor(_GATE_REF_DECAY)
                 stat = all_mean.expand(2)
@@ -698,7 +768,12 @@ class NeuralMemory(nn.Module):
                     )
                 )
                 self._gate_ref_ready.fill_(1.0)
+            # Fold, then report, so the tilt on the chart is the one in force
+            # from here on rather than the one this pass was gated by - they
+            # differ only on the first pass, where no reference existed yet.
             self.last_write_tilt = self._gate_tilt()
+            if self.write_gate == "adaptive":
+                self.last_write_target = self._gate_target()
 
     def _step_scale(
         self, w0: Weights, name: str, ndim: int, b: int, num_chunks: int = 1

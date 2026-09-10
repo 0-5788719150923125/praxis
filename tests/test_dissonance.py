@@ -6,6 +6,13 @@ so a near-zero drift there says nothing about the field. These tests pin what
 each term actually watches, pin the roughness kernel to the published
 Plomp-Levelt curve, and pin the dual to the one thing that is supposed to bound
 it: whether the task is still improving.
+
+The dual tests below carry the -v postmortem. A controller stepping on
+`sign(ce_fast < ce_slow)` is stationary only where that sign is right 80% of the
+time, which is a property of the loss's noise and not of the constraint, so it
+fell to its clamp and stayed. The replacements pin the two properties that
+failure needed: no drift under a trendless loss, and a floor that a run can
+climb back out of.
 """
 
 import math
@@ -204,21 +211,79 @@ def test_the_multiplier_climbs_while_the_task_improves():
 
 def test_the_multiplier_retreats_faster_than_it_climbs():
     """A run that starts to break has to pull the term off itself faster than
-    it put it on, or the retreat arrives after the damage."""
+    it put it on, or the retreat arrives after the damage.
+
+    Mirror-image traces, so the t-statistic has the same magnitude in both
+    directions and only the eta differs.
+    """
+    falling = [10.0 - 0.02 * i for i in range(400)]
     up = Dissonance()
-    for value in (5.0, 4.0, 3.0, 2.0, 1.0):
+    for value in falling:
         up._step_dual(torch.tensor(value))
     gained = float(up.rho) - RHO_INIT
 
     down = Dissonance()
-    for value in (1.0, 2.0, 3.0, 4.0, 5.0):
+    down.rho.fill_(10.0)  # off the floor, so the retreat has room to show
+    for value in reversed(falling):
         down._step_dual(torch.tensor(value))
-    lost = RHO_INIT - float(down.rho)
+    lost = 10.0 - float(down.rho)
 
     assert gained > 0 and lost > 0
-    # float32 accumulation around rho = -5, so a loose tolerance on a ratio
-    # that is exact by construction.
-    assert lost == pytest.approx(4.0 * gained, rel=1e-3)
+    assert lost == pytest.approx(4.0 * gained, rel=0.05)
+
+
+def test_a_trendless_loss_does_not_drive_the_multiplier_to_its_floor():
+    """The -v failure. Noise with no trend must leave the dual where it is:
+    a controller whose resting point is set by the up/down ratio rather than by
+    the constraint collapses on every real run, because the sign of a fast-vs-
+    slow EMA comparison is noise long before the loss stops improving.
+    """
+    rng = torch.Generator().manual_seed(0)
+    term = Dissonance()
+    term.rho.fill_(0.0)
+    for _ in range(3000):
+        value = 10.0 * torch.exp(0.25 * torch.randn((), generator=rng))
+        term._step_dual(value)
+    # Free to wander; what it must not do is walk to the floor and stay.
+    assert float(term.rho) > RHO_INIT + 1.0
+
+
+def test_a_genuinely_improving_run_engages_the_term():
+    """The other half of the -v postmortem. Backing off under noise is only
+    correct if a real trend still gets through: a loss that halves under 25%
+    per-step noise has to move the multiplier well off its floor, or the term
+    is just off with extra steps.
+    """
+    rng = torch.Generator().manual_seed(0)
+    term = Dissonance()
+    for i in range(20000):
+        clean = 12.0 * math.exp(-i / 15000)
+        noise = torch.exp(0.25 * torch.randn((), generator=rng))
+        term._step_dual(clean * noise)
+    assert term._lambda() > 0.5
+
+
+def test_the_controller_is_indifferent_to_the_loss_scale():
+    """Same trend, two scales. Dividing by the gap's own spread is what makes
+    the signal dimensionless; without it the step size would track how large
+    the loss happens to be."""
+
+    def final_rho(scale):
+        term = Dissonance()
+        for i in range(400):
+            term._step_dual(torch.tensor(scale * (10.0 - 0.02 * i)))
+        return float(term.rho)
+
+    assert final_rho(1.0) == pytest.approx(final_rho(100.0), rel=1e-3)
+
+
+def test_the_floor_is_recoverable():
+    """A collapsed multiplier lands back where it started, not somewhere it
+    needs a run's worth of steps to climb out of."""
+    term = Dissonance()
+    for i in range(2000):  # a loss that only rises
+        term._step_dual(torch.tensor(1.0 + 0.01 * i))
+    assert float(term.rho) == pytest.approx(RHO_INIT)
 
 
 def test_the_multiplier_is_capped():

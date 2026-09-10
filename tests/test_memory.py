@@ -566,7 +566,7 @@ def test_topk_gate_keeps_the_highest_scoring_tokens():
     assert mask.flatten().tolist() == [0, 1, 1, 0, 0, 0, 0, 0]
 
 
-def _repeat_shares(tilted, passes=8):
+def _repeat_shares(tilted, passes=30):
     """Write shares from re-presenting one stream to a memory that keeps its
     state, with the cross-pass tilt either live or pinned at 1.0."""
     mem = _gate_mem("threshold")
@@ -592,7 +592,9 @@ def test_threshold_gate_closes_as_the_memory_learns():
     trend, and a monotonicity assertion here would be pinning noise.
     """
     shares = _repeat_shares(tilted=True)
-    assert shares[-1] < shares[0] * 0.9, shares
+    head = sum(shares[:10]) / 10
+    tail = sum(shares[-10:]) / 10
+    assert tail < head * 0.95, shares
 
 
 def test_only_the_cross_pass_tilt_can_close_the_gate():
@@ -602,9 +604,12 @@ def test_only_the_cross_pass_tilt_can_close_the_gate():
     tokens here are worth writing but never that none of them are. Pinning the
     tilt at 1.0 reduces the gate to exactly that, and the decline disappears.
     """
+    def tail(x):
+        return sum(x[-10:]) / 10
+
     tilted, flat = _repeat_shares(True), _repeat_shares(False)
-    assert tilted[-1] < flat[-1], (tilted, flat)
-    assert flat[-1] >= flat[0] * 0.95, flat
+    assert tail(tilted) < tail(flat), (tilted, flat)
+    assert tail(flat) >= sum(flat[:10]) / 10 * 0.98, flat
 
 
 def test_the_tilt_reads_above_one_while_the_memory_improves():
@@ -728,6 +733,113 @@ def test_gating_still_memorizes_at_test_time(gate):
     assert float(mem.last_write_share) < 1.0
 
 
+def _converge(mem, passes=60, b=2, n=128, seed=7):
+    """Run the gate to convergence on fresh data and return the trailing share."""
+    torch.manual_seed(seed)
+    shares = []
+    for _ in range(passes):
+        mem(torch.randn(b, n, 32), mem.init_state(b))
+        shares.append(float(mem.last_write_share))
+    return sum(shares[-10:]) / 10
+
+
+@pytest.mark.parametrize("capacity", [0.125, 0.25, 0.5])
+def test_adaptive_share_lands_on_its_target(capacity):
+    """A causal rank writes the top ``target`` fraction of the prefix, so the
+    realized share is the target with no convergence period to wait through."""
+    mem = _gate_mem("adaptive", write_capacity=capacity)
+    assert _converge(mem) == pytest.approx(capacity, abs=0.03)
+    assert float(mem.last_write_target) == pytest.approx(capacity, abs=0.01)
+
+
+@pytest.mark.parametrize("transform", ["scale", "shift", "square"])
+def test_adaptive_gate_ignores_the_score_distribution(transform):
+    """Why a rank and not a level. Every level-based bar depends on where the
+    distribution sits and how wide it is, and both move pass to pass by about as
+    much as each other. A rank depends on the ORDER only, so any monotone
+    transform of the score must leave the mask bit-identical."""
+    fns = {
+        "scale": lambda x: x * 100.0,
+        "shift": lambda x: x + 5.0,
+        "square": lambda x: x**2,
+    }
+    out = {}
+    for label, f in (("raw", lambda x: x), (transform, fns[transform])):
+        mem = _gate_mem("adaptive")
+        base = mem._write_scores
+        mem._write_scores = lambda w, k, v, g=f: g(base(w, k, v))
+        out[label] = _converge(mem)
+    assert out["raw"] == pytest.approx(out[transform], abs=1e-9)
+
+
+def test_adaptive_share_is_quiet_under_a_drifting_score():
+    """The failure both level-based shapes had. When the score's location moves
+    pass to pass by about as much as the distribution's own width - the regime
+    measured on the real model - a carried bar sits somewhere different inside
+    the distribution each time and the share swings end to end. A rank cannot.
+    """
+    mem = _gate_mem("adaptive")
+    torch.manual_seed(5)
+    shares = []
+    for _ in range(40):
+        loc = 1.0 + 0.10 * torch.randn(1).item()
+        base = mem._write_scores
+        mem._write_scores = lambda w, k, v, s=loc: base(w, k, v) * s
+        mem(torch.randn(4, 128, 32), mem.init_state(4))
+        shares.append(float(mem.last_write_share))
+        mem._write_scores = base
+    tail = shares[-20:]
+    target = float(mem.last_write_target)
+    assert max(tail) - min(tail) < 0.15, (target, tail)
+    assert sum(tail) / len(tail) == pytest.approx(target, abs=0.05), (target, tail)
+
+
+def test_adaptive_target_closes_at_the_tilt_ceiling():
+    """The opt-out has to stay reachable. ``2 - tilt`` puts the closed point at
+    the tilt clamp, so a memory whose fast surprise EMA has halved against its
+    slow one targets no writes at all."""
+    mem = _gate_mem("adaptive")
+    mem._gate_ref_ready.fill_(1.0)
+    mem._gate_ref.copy_(torch.tensor([1.0, 1.0]))
+    assert float(mem._gate_target()) == pytest.approx(mem.write_capacity)
+    mem._gate_ref.copy_(torch.tensor([1.0, 0.4]))  # fast well below slow
+    assert float(mem._gate_tilt()) == pytest.approx(2.0)  # at the clamp
+    assert float(mem._gate_target()) == 0.0
+    mem._gate_ref.copy_(torch.tensor([1.0, 2.0]))  # losing ground
+    assert float(mem._gate_target()) > mem.write_capacity
+
+
+def test_a_causal_prefix_rank_writes_early_under_a_falling_score():
+    """The one property a causal-prefix rank has that a level bar does not,
+    stated so it is not a surprise later.
+
+    Ranking token t against tokens up to t is what keeps the gate legal - a
+    chunk's write is only read by later chunks - but it also means that if the
+    score TRENDS DOWN along a sequence, later tokens can never reach the top
+    fraction of their own prefix, and the realized share falls below the target.
+
+    That is by construction and not a defect: a falling surprise IS the memory
+    learning as it goes. It matters only if the trend is real, and on the
+    trained abstractinator-v checkpoint it is not - the per-quarter score means
+    are 0.6115 / 0.6131 / 0.6104 / 0.6147, flat to 0.5%. If a future change
+    introduces a trend, the share will read below the target and this is why.
+    """
+    mem = _gate_mem("adaptive", write_capacity=0.25)
+    n = 128
+    # A score that falls monotonically across the sequence, nothing else.
+    ramp = torch.linspace(2.0, 1.0, n).reshape(1, 1, n)
+    mask, _ = mem._write_gate_mask(ramp, torch.ones_like(ramp))
+    kept = mask.flatten().nonzero().flatten()
+    assert float(mask.mean()) < 0.25, "a falling score must undershoot the target"
+    assert kept.max() < n // 2, "everything written must come from the prefix"
+
+    # Flat-in-expectation scores hit the target instead.
+    torch.manual_seed(0)
+    flat = torch.rand(1, 1, n) + 1.0
+    mask, _ = mem._write_gate_mask(flat, torch.ones_like(flat))
+    assert float(mask.mean()) == pytest.approx(0.25, abs=0.05)
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
 SURFACINGS = [
@@ -740,6 +852,7 @@ SURFACINGS = [
     "mag_standard",
     "mag_energy_stitch",
     "mag_energy_stitch_gated",
+    "mag_energy_stitch_adaptive",
     "mag_standard_stitch",
 ]
 
@@ -751,6 +864,7 @@ _ENERGY_SURFACINGS = {
     "mag_energy_static",
     "mag_energy_stitch",
     "mag_energy_stitch_gated",
+    "mag_energy_stitch_adaptive",
 }
 
 
@@ -876,10 +990,13 @@ def test_surprise_metric_surfaced(memory_type):
     # Gate metrics are gate-only: an ungated profile must not put an empty
     # series on the card.
     gate_keys = ("memory_write_share", "memory_write_selectivity")
-    if memory_type == "mag_energy_stitch_gated":
+    if memory_type in ("mag_energy_stitch_gated", "mag_energy_stitch_adaptive"):
         for key in gate_keys + ("memory_write_tilt",):
             assert torch.isfinite(torch.as_tensor(metrics[key])), key
         assert 0.0 < metrics["memory_write_share"] <= 1.0
+        # The target is adaptive-only; nothing else has one to report.
+        has_target = "memory_write_target" in metrics
+        assert has_target == (memory_type == "mag_energy_stitch_adaptive")
     else:
         assert all(key not in metrics for key in gate_keys)
     assert all(key in descriptions for key in gate_keys)
@@ -899,6 +1016,7 @@ def test_surprise_metric_surfaced(memory_type):
         dict(use_energy=False, momentum=False),
         dict(use_energy=True, segment=True, write_gate="topk"),
         dict(use_energy=True, segment=True, write_gate="threshold"),
+        dict(use_energy=True, segment=True, write_gate="adaptive"),
     ],
 )
 def test_sequential_matches_parallel_scan(kwargs):

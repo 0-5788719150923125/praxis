@@ -161,7 +161,9 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "written / real tokens",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 18,
+                "order": 17,
+                "series_group": "memory_write_gate",
+                "series_label": "share",
             },
         },
         "memory_write_selectivity": {
@@ -190,6 +192,22 @@ class MemorySurfacing(MemoryBase):
                 "y_scale": "linear",
                 "group": "memory",
                 "order": 20,
+            },
+        },
+        "memory_write_target": {
+            "description": (
+                "Share the adaptive gate is aiming for, moved by the tilt. Share "
+                "should sit on it; persistently below means the score is trending "
+                "down within the sequence."
+            ),
+            "chart": {
+                "title": "Memory Write Share",
+                "y_label": "written / real tokens",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 18,
+                "series_group": "memory_write_gate",
+                "series_label": "target",
             },
         },
         "memory_adapt": {
@@ -308,11 +326,12 @@ class MemorySurfacing(MemoryBase):
             segment_block=spec.get("segment_block", 16),
             parallel_scan=spec.get("parallel_scan", True),
             write_objective=spec.get("write_objective", "recon"),
-            # Which tokens are allowed into the test-time write: "none" writes
-            # every token (the paper's arrangement), "topk" keeps a fixed
-            # per-chunk fraction by surprise, "threshold" keeps whatever exceeds
-            # write_gate_ratio times a running reference level, and can decline
-            # to write at all.
+            # Which tokens are allowed into the test-time write: "none"
+            # writes every token (the paper's arrangement), "topk" keeps a fixed
+            # per-chunk fraction by surprise, "adaptive" writes the top
+            # target fraction of the causal prefix by rank with a cross-pass
+            # tilt moving that target, and "threshold" is the superseded
+            # mean-relative bar.
             write_gate=spec.get("write_gate", "none"),
             write_capacity=spec.get("write_capacity", 0.125),
             write_gate_ratio=spec.get("write_gate_ratio", 1.0),
@@ -481,6 +500,8 @@ class MemorySurfacing(MemoryBase):
             out["memory_write_selectivity"] = float(m.last_write_selectivity)
         if m.last_write_tilt is not None:
             out["memory_write_tilt"] = float(m.last_write_tilt)
+        if m.last_write_target is not None:
+            out["memory_write_target"] = float(m.last_write_target)
         if m.last_num_chunks is not None:
             out["memory_chunks"] = float(m.last_num_chunks)
         if self.last_run_length is not None:

@@ -34,20 +34,46 @@ summed over ``f_d`` first.
 THE BALANCE IS A DUAL VARIABLE, NOT A WEIGHT. A fixed coefficient on "be
 rougher" is the experiment rather than a setting, so the strength is a
 multiplier moved by whether the task is still improving: a fast and a slow EMA
-of the main loss, ratcheting UP while the fast one leads and falling back FASTER
-when it does not. The equilibrium is where roughness costs as much progress as
-it buys, which is the balance the term exists to find. Asymmetric on purpose - a
+of the main loss, climbing while the fast one leads and falling back FASTER when
+it does not. The equilibrium is where roughness costs as much progress as it
+buys, which is the balance the term exists to find. Asymmetric on purpose - a
 slow climb and a quick retreat mean a run that starts to break pulls the term
 off itself. The step counts microbatches rather than optimizer steps, so under
-gradient accumulation the ratchet moves that much faster - the same convention
-the field's own smoothness dual uses.
+gradient accumulation the controller moves that much faster - the same
+convention the field's own smoothness dual uses.
+
+THE SIGNAL IS A T-STATISTIC, NOT A SIGN. What the controller steps on is the
+EMA gap between the two loss averages divided by its own standard deviation,
+clipped to [-1, 1]: how large the trend is against how much the gap moves
+anyway. Stepping on ``sign(gap)`` instead - which this did until the -v run
+measured it - makes the asymmetry set the fixed point rather than guard it. A
++eta/-4eta ratchet on a boolean is stationary only where the fast EMA leads on
+80% of MICROBATCHES, which no language-modelling run delivers: the fast average
+carries an order of magnitude more variance than the slow one, so the sign is
+noise even while the loss falls. -v measured 51-65% and the multiplier fell from
+its cap to the clamp in ~2k steps and stayed there for the remaining 89% of the
+run, contributing an exact zero. Dividing by the gap's own spread fixes it in
+the way that matters: under symmetric noise the numerator averages to zero, so
+there is no drift to a floor, and a real trend saturates the clip whatever the
+loss scale or the noise level. Measured on that run's trace, the controller's
+resting point moves by 0.3 in rho across a 12x sweep in microbatch noise, where
+the boolean version was determined by nothing else.
+
+The floor is ``RHO_INIT``, not an arbitrary bound. A multiplier driven all the
+way down should land back where it started - effectively off, and ~500 improving
+steps from being useful again - rather than somewhere it needs a run's worth of
+them to climb out of. Clamping at rho = -20 made the collapse ABSORBING: at the
+climb rate, returning to a lambda of 0.1 would have taken ~355k microbatches.
 
 READ IT HONESTLY. Loss progress is confounded: a learning-rate schedule, the
 batch governor and the data mix all move it, and none of them know about this
-term. So the multiplier climbing is NOT evidence the roughness is helping. The
-falsifier is the multiplier pinning at its cap early - the constraint never
-bound and this was a fixed weight after all. ``dissonance_probe`` is the same
-measurement with no gradient, for reading the spectrum before pushing on it.
+term. So the multiplier climbing is NOT evidence the roughness is helping. Two
+falsifiers, and they read in opposite directions: pinned at the CAP means the
+constraint never bound and this was a fixed weight after all; resting at the
+FLOOR means the task was never clearly enough ahead to pay for roughness, and
+the honest report is that the term declined to act - not that it broke.
+``dissonance_probe`` is the same measurement with no gradient, for reading the
+spectrum before pushing on it.
 """
 
 import math
@@ -83,14 +109,28 @@ CRITICAL_BAND = 0.2
 
 # Dual step sizes on the log-multiplier. Up while the task is still improving,
 # down four times as fast when it is not. Fixed and model-agnostic: they are a
-# rate on a dimensionless signed signal, not a scale on any tensor.
+# rate on a dimensionless signed signal, not a scale on any tensor. The ratio
+# only guards the retreat here - it does not set the resting point, because the
+# signal they multiply averages to zero under noise rather than to a sign.
 DUAL_ETA_UP = 0.01
 DUAL_ETA_DOWN = 0.04
 
-# Where the log-multiplier starts: softplus(-5) ~ 0.007, so the term is
-# effectively off at step 0 and has to earn its strength. Starting at rho = 0
-# would hand it softplus(0) = 0.69 - most of the cap - before a single step of
-# evidence.
+# Horizon for the mean and variance of the loss gap that form the t-statistic.
+# An order of magnitude beyond CE_SLOW, and that gap is the point: consecutive
+# gaps are differences of EMAs and so are correlated over CE_SLOW's own horizon,
+# which means a window that matches it holds barely one independent excursion
+# and charges the trend to the variance it is being divided by. At ~1000 steps
+# the mean averages ten or so of them and the ratio separates. Measured on -v's
+# trace: at 0.99 the controller could not distinguish a run halving its loss
+# from a flat one; at 0.999 the resting multiplier is unchanged across a 12x
+# sweep in microbatch noise.
+GAP_EMA = 0.999
+
+# Where the log-multiplier starts, and the floor it returns to: softplus(-5) ~
+# 0.007, so the term is effectively off at step 0 and has to earn its strength.
+# Starting at rho = 0 would hand it softplus(0) = 0.69 - most of the cap -
+# before a single step of evidence. Doubling as the floor is what keeps a
+# collapse recoverable; see the module docstring.
 RHO_INIT = -5.0
 
 # Cap on the multiplier. Bounds the term's influence no matter how long the
@@ -203,9 +243,11 @@ class Dissonance(BaseRegularizer):
         },
         "dissonance_lambda": {
             "description": (
-                "The dual multiplier: climbs while the main loss improves, retreats "
-                "four times as fast when it does not. Pinned at its cap means the "
-                "constraint never bound."
+                "The dual multiplier: climbs while the main loss is improving by more "
+                "than it fluctuates, retreats four times as fast when it is not. "
+                "Pinned at its cap means the constraint never bound; resting at its "
+                "softplus(-5) floor means the task was never clearly enough ahead to "
+                "pay for roughness."
             ),
             "chart": {
                 "title": "Dissonance Multiplier",
@@ -238,11 +280,22 @@ class Dissonance(BaseRegularizer):
         # helped, and they must not live only on the path that pushes.
         self.observe_only = observe_only
         # Dual state and the two loss EMAs. Persistent: a multiplier that reset
-        # to zero on resume would restart the ratchet from scratch every time
-        # the run is picked up. -1 marks "no observation yet".
+        # to zero on resume would restart the controller from scratch every time
+        # the run is picked up. ``seen`` carries "has an observation" as its own
+        # flag rather than as a negative sentinel on ce_slow - a loss that goes
+        # negative (any objective with an entropy bonus or a signed auxiliary
+        # term) would otherwise re-seed the EMAs on every step and hold the gap
+        # at exactly zero for as long as it stayed there.
         self.register_buffer("rho", torch.full((1,), RHO_INIT))
-        self.register_buffer("ce_fast", torch.full((1,), -1.0))
-        self.register_buffer("ce_slow", torch.full((1,), -1.0))
+        self.register_buffer("seen", torch.zeros(1))
+        self.register_buffer("ce_fast", torch.zeros(1))
+        self.register_buffer("ce_slow", torch.zeros(1))
+        # Mean and variance of the gap between them, for the t-statistic the
+        # controller steps on. Persistent for the same reason rho is: rebuilding
+        # the spread estimate on resume would make the first few hundred steps
+        # after a pickup read as high confidence on almost no evidence.
+        self.register_buffer("gap_mean", torch.zeros(1))
+        self.register_buffer("gap_var", torch.zeros(1))
         # Built on the first forward, once F_t is known, and non-persistent:
         # it is a constant of the mode count, so a checkpoint carrying it would
         # only be a way to load a stale one.
@@ -257,6 +310,28 @@ class Dissonance(BaseRegularizer):
 
     def extra_repr(self) -> str:
         return "observe_only=True" if self.observe_only else ""
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs) -> None:
+        """Resume a checkpoint written before the t-statistic controller.
+
+        Those carry rho and the two loss EMAs but none of the gap statistics,
+        and marked "no observation yet" as a NEGATIVE ce_slow rather than with
+        a flag - so the flag is reconstructed from that convention and the
+        statistics start empty, which reads as a cold controller for the first
+        few hundred steps and then converges. Without this the missing buffers
+        are a strict-load failure and the run cannot be picked up at all.
+        """
+        for name in ("seen", "gap_mean", "gap_var"):
+            key = prefix + name
+            if key in state_dict:
+                continue
+            if name == "seen":
+                stale = state_dict.get(prefix + "ce_slow")
+                observed = stale is not None and float(stale.reshape(-1)[0]) >= 0.0
+                state_dict[key] = torch.full((1,), 1.0 if observed else 0.0)
+            else:
+                state_dict[key] = torch.zeros(1)
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def _lambda(self) -> float:
         """softplus(rho), capped. A float: it is a coefficient on the term, not
@@ -275,15 +350,26 @@ class Dissonance(BaseRegularizer):
         value = main_loss.detach().float().reshape(-1)[0]
         if not torch.isfinite(value):
             return
-        if float(self.ce_slow) < 0.0:  # first observation seeds both EMAs
+        if float(self.seen) == 0.0:  # first observation seeds both EMAs
+            self.seen.fill_(1.0)
             self.ce_fast.fill_(float(value))
             self.ce_slow.fill_(float(value))
             return
         self.ce_fast.mul_(CE_FAST).add_(value, alpha=1.0 - CE_FAST)
         self.ce_slow.mul_(CE_SLOW).add_(value, alpha=1.0 - CE_SLOW)
-        improving = float(self.ce_fast) < float(self.ce_slow)
-        step = DUAL_ETA_UP if improving else -DUAL_ETA_DOWN
-        self.rho.add_(step).clamp_(-20.0, 20.0)
+        # Positive while the fast average leads, and by how much.
+        gap = self.ce_slow - self.ce_fast
+        self.gap_mean.mul_(GAP_EMA).add_(gap, alpha=1.0 - GAP_EMA)
+        self.gap_var.mul_(GAP_EMA).add_(
+            (gap - self.gap_mean).pow(2), alpha=1.0 - GAP_EMA
+        )
+        # Trend over its own spread: zero under symmetric noise whatever the
+        # loss scale, saturating at 1 once the trend is reliable.
+        signal = float(
+            (self.gap_mean / self.gap_var.clamp_min(1e-24).sqrt()).clamp(-1.0, 1.0)
+        )
+        eta = DUAL_ETA_UP if signal > 0.0 else DUAL_ETA_DOWN
+        self.rho.add_(eta * signal).clamp_(RHO_INIT, 20.0)
 
     def _roughness(self, p: Tensor) -> Tensor:
         """Share of the kernel's maximum roughness carried by ``p``.

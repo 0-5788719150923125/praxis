@@ -33,7 +33,7 @@ Presets:
 
 Reward beating between the field's temporal modes, held by a dual.
 
-Source: [praxis/losses/dissonance.py:141](../praxis/losses/dissonance.py#L141)
+Source: [praxis/losses/dissonance.py:181](../praxis/losses/dissonance.py#L181)
 
 Presets:
 - `dissonance` - class defaults

@@ -309,6 +309,45 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
     # for every token either way. Read `memory_write_share` (how much of the
     # stream got through) beside `memory_write_selectivity` (whether the gate
     # picked on content at all).
+    # mag_energy_stitch_gated with the bar tracked to a TARGET SHARE instead of
+    # keyed to the score's mean. The mean-relative bar was measured on the run
+    # that used it and does not work: once trained the driver is right-skewed
+    # (its mean sits at the 82nd percentile) and spans about +-10% around that
+    # mean, which is narrower than the tilt's own range - so the tilt alone
+    # swept the gate between writing everything and writing nothing. 19% of
+    # steps wrote >=99% of the stream, 10% wrote <2%.
+    #
+    # A causal RANK has no dependence on the score's distribution at all - a
+    # token writes when it sits in the top target fraction of the real tokens at
+    # or before it, which depends on their order and nothing else. A tracked
+    # quantile bar was tried in between and failed the same way: on a stream with
+    # a 9% spread and 10% per-pass location drift it gave 0.22 +- 0.25 against a
+    # 0.125 target, where the rank gives 0.113 +- 0.017. The tilt then moves the
+    # TARGET, bounded in [0, 1], so a noisy tilt cannot swing the gate end to
+    # end. Ranking against the prefix rather than the sequence is what keeps it
+    # causal.
+    #
+    # Read `memory_write_share` against `memory_write_target` on the same card:
+    # they should track. `memory_write_selectivity` is still the falsifier, and
+    # its ceiling is low - on the trained checkpoint the best any selector can
+    # do at this capacity is about 1.06, and the gate measured 1.05.
+    "mag_energy_stitch_adaptive": dict(
+        surfacing="mag",
+        passes=[0],
+        stitch=True,
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        segment_block=4,
+        momentum=True,
+        activation="swish",
+        use_energy=True,
+        segment=True,
+        parallel_scan=True,
+        write_objective="predictive",
+        write_gate="adaptive",
+    ),
     "mag_energy_stitch_gated": dict(
         surfacing="mag",
         passes=[0],
@@ -479,6 +518,15 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "state along such a run makes the write span the run's total length "
         "while the trunk still sees only one row, decoupling the memory's "
         "horizon from the sequence length the model can afford to train on."
+    ),
+    "mag_energy_stitch_adaptive": (
+        "mag_energy_stitch with the test-time write gated to a TARGET SHARE. A "
+        "token writes when its surprise ranks in the top target fraction of the "
+        "sequence so far, and a slow-over-fast surprise EMA moves that target "
+        "down as the memory's forecasting improves - so a memory already "
+        "predicting the stream writes less of it, and at the extreme writes "
+        "nothing and holds its weights. A rank rather than a level is what makes "
+        "it immune to a surprise distribution that moves as much as it is wide."
     ),
     "mag_energy_stitch_gated": (
         "mag_energy_stitch with the test-time write GATED per token. Energy "
