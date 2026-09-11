@@ -60,7 +60,7 @@ registry.declare(
             (
                 "Holds the harmonic field's Plomp-Levelt roughness at or above that of "
                 "the signal it multiplies, by a dual variable. Needs a harmonic field "
-                "under the head; a no-op otherwise."
+                "under the classifier; a no-op otherwise."
             ),
         ),
         "dissonance_probe": Entry(

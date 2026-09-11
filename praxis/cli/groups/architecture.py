@@ -171,11 +171,11 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--head-type",
+            "--classifier-type",
             type=str,
-            registry="heads",
+            registry="classifiers",
             default="forward",
-            help="The type of language modeling head to use",
+            help="The type of classifier to use",
         )
 
         group.add_argument(
@@ -296,7 +296,7 @@ class ArchitectureGroup:
             help="The size of the model's hidden dimensions",
             doc=(
                 "Width of the residual stream every block reads and writes. When "
-                "--embed-size differs, the embedding and the tied head add a "
+                "--embed-size differs, the embedding and the tied classifier add a "
                 "projection between the two."
             ),
         )

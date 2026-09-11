@@ -3,7 +3,7 @@
 section: constructor
 order: 20
 requires:
-  head_type: [prismatic]
+  classifier_type: [prismatic]
 body: >
   Praxis implements this literally with prismatic attention: two streams, two
   embedding modules, processing the same sequence under different positional

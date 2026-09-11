@@ -3,7 +3,7 @@
 Covers the vanilla path (gpt2-1.yml), the Infini/Arc memory-state cache, and
 the safe fallback for cache-less attentions (CausalAttention). The head-side
 cache state of the harmonic heads is checked logit for logit in
-tests/heads/test_harmonic.py.
+tests/classifiers/test_harmonic.py.
 """
 
 import pytest

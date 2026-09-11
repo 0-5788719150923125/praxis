@@ -3,7 +3,7 @@
 > Status: **noted** (2026-06-07). A design intuition from the platformer's
 > sequential-walk idea, carried over to the dashboard. Companion to
 > [symbolic_chunks.md](symbolic_chunks.md) and the linear-solve lineage in
-> praxis/heads/energy.py (LinearPrior).
+> praxis/generators/energy.py (LinearPrior).
 
 Over in `../platformer` there is a notion of walking an architecture's
 lifecycle sequentially - forward modes and recovery modes, stepped through

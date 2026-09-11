@@ -257,7 +257,7 @@ the same classifier are indistinguishable to it.
 
 The first measurement says this limitation is the whole story, and it is worth
 knowing before reading the charts. Over 40 AdamW steps at lr 1e-3 on the -g stack
-shape (`head_type: prismatic5`, random byte data):
+shape (`classifier_type: prismatic5`, random byte data):
 
 | step | main loss | `harmonic_drift` | `harmonic_kl_loss` | `harmonic_live_entropy` |
 |---|---|---|---|---|
@@ -309,10 +309,10 @@ Dynamics manifest.
 ### The bug that a read-through could not have caught
 
 The first version duck-typed `classifier.weight` and `classifier.bias`. On this
-model family that attribute does not exist: `head_type: prismatic5` resolves to a
-`ParallelHead` whose classifier is a `HaloClassifier`, and `prismatic4` gives a
-`CrystalClassifier`. Both are distance-based readouts over per-vocabulary
-`centers` (`praxis/heads/crystal.py`), with no weight matrix at all. The guard hit
+model family that attribute does not exist: `classifier_type: prismatic5` resolves to a
+`ParallelClassifier` whose scorer is a `HaloGeometry`, and `prismatic4` gives a
+`CrystalGeometry`. Both are distance-based readouts over per-vocabulary
+`centers` (`praxis/classifiers/crystal.py`), with no weight matrix at all. The guard hit
 `weight is None` and returned zero on **every single step** - the regularizer was
 a silent no-op on precisely the config it was written for, and the tests passed
 because they used `nn.Linear`.
@@ -321,10 +321,10 @@ The fix is to EMA the classifier's `named_parameters()` generically and evaluate
 the teacher through `torch.func.functional_call(..., tie_weights=False)`. Verified
 across all three readouts:
 
-| `head_type` | classifier | EMA'd parameters |
+| `classifier_type` | scorer | EMA'd parameters |
 |---|---|---|
-| `prismatic5` (what -g runs) | `HaloClassifier` | `centers`, `gamma` |
-| `prismatic4` | `CrystalClassifier` | `centers` |
+| `prismatic5` (what -g runs) | `HaloGeometry` | `centers`, `gamma` |
+| `prismatic4` | `CrystalGeometry` | `centers` |
 | `forward` | `Linear` | `weight` |
 
 This is a better target than the original design, not just a repair: those
@@ -557,7 +557,7 @@ specialization.
   amplification arithmetic in §1.4 is worked from the formula, not measured.
 - **Register the preference metrics** (§2).
 - Note that the rolling contexts in the web app are **self-conditioned**
-  (`praxis/generation/context_blocks.py:123-124` feeds output back as prompt over
+  (`praxis/inference/context_blocks.py:123-124` feeds output back as prompt over
   a 512-char window, seeded from one random character, with the "Focused" block at
   temperature 1/3). Any attractor amplifies itself there. It is a weaker piece of
   evidence than it looks, and worth cross-checking against a fresh prompt at

@@ -33,7 +33,7 @@ def _trunk_forward(model, ids):
 
 def test_layer_mode_cuts_graph_and_scores():
     """The flat regime: every expert call ends in a detach, so the decoder
-    output carries NO graph (the head trains alone), while the accumulated
+    output carries NO graph (the classifier trains alone), while the accumulated
     goodness loss carries gradient into every trunk layer."""
     torch.manual_seed(0)
     model = PraxisForCausalLM(_config("layer")).train()
@@ -111,7 +111,7 @@ def test_byte_latent_latent_goodness():
         decoder_type="sequential",
         activation="serpent",
         byte_level=True,
-        head_type="prismatic4",
+        classifier_type="prismatic4",
         mono_type="layer",
     )
     model = PraxisForCausalLM(config).train()
@@ -140,9 +140,9 @@ def test_byte_latent_latent_goodness():
 # Every loss a run carries is registered in one container.
 #
 # The model used to declare its objectives in three different ways: a ``criterion``
-# module, a ``reg`` list, and bare ``F.cross_entropy`` calls inside the heads and the
-# MTP stack that appeared in neither. These tests pin the collapsed arrangement - one
-# container, one entry per term, each owned exactly once.
+# module, a ``reg`` list, and bare ``F.cross_entropy`` calls inside the classifiers and
+# the MTP stack that appeared in neither. These tests pin the collapsed arrangement -
+# one container, one entry per term, each owned exactly once.
 
 
 # ── the model wiring ───────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ def _model(**overrides):
         encoder_type="abstractinator_v0",
         tokenizer_type="byte_level",
         decoder_type="sequential",
-        head_type="prismatic5",
+        classifier_type="prismatic5",
         residual_type="smear",
         byte_level=True,
         loss_func="halo",
@@ -179,7 +179,7 @@ def test_the_mono_cut_declares_its_goodness_term():
     used to do so with a functional call nothing could see."""
     from praxis.losses.regression import SmoothL1Loss
 
-    m = _model(encoder_type=None, mono_type="layer", head_type="prismatic5")
+    m = _model(encoder_type=None, mono_type="layer", classifier_type="prismatic5")
     assert isinstance(m.criterion.mono, CrossEntropyLoss)
     assert m.decoder.mono.criterion is m.criterion.mono
     # The latent (encoder) path scores against the encoder's own stream.

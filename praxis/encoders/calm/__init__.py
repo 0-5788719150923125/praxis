@@ -1,4 +1,4 @@
-"""CALM encoder package: token-chunk VAE + energy head.
+"""CALM encoder package: token-chunk VAE + energy generator.
 
 Paper: Continuous Autoregressive Language Models (arXiv 2510.27688).
 See ``README.md`` for the high-level design and how each piece maps onto

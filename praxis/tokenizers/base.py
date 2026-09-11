@@ -27,7 +27,7 @@ class PraxisToolTokensMixin:
     calls out as ordinary turns (``tool_style="roles"``, i.e. ``prose``) never
     renders these strings, and registering them anyway is not free: on the
     byte- and char-level tokenizers they occupy real ids past the alphabet,
-    ``byte_alphabet_size`` counts them, and the model's output head is sized
+    ``byte_alphabet_size`` counts them, and the model's classifier is sized
     from that. Four logits the training data can never make a target are still
     four logits sampling can pick, which is exactly how ``[TOOL_CALL]`` shows
     up in a ``prose`` run's generations. Pass ``chat_format`` and they are

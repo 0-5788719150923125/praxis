@@ -17,18 +17,18 @@ def test_cut_cross_entropy_with_tied_weights():
     hidden_size, vocab_size, batch_size, seq_len = 128, 1024, 4, 16
     device = torch.device("cuda")
 
-    class TiedClassifier(nn.Module):
+    class TiedProjection(nn.Module):
         def __init__(self, weight):
             super().__init__()
             self.weight = weight
 
-    classifier = TiedClassifier(torch.randn(vocab_size, hidden_size, device=device))
+    scorer = TiedProjection(torch.randn(vocab_size, hidden_size, device=device))
     embeddings = torch.randn(batch_size, seq_len, hidden_size, device=device)
     labels = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
 
     # Full unshifted tensors: the kernel shifts internally (shift=1).
     loss = CutCrossEntropyLoss()(
-        embeddings=embeddings, classifier=classifier, labels=labels, input_ids=labels
+        embeddings=embeddings, scorer=scorer, labels=labels, input_ids=labels
     )
     assert torch.is_tensor(loss)
     assert torch.isfinite(loss)

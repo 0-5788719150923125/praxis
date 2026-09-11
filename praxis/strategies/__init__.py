@@ -1,8 +1,8 @@
 """How a run's several loss terms fold into one scalar.
 
 A strategy receives every registered objective for the step. Those that need to
-tell the terms apart also receive their NAMES and the trunk activation the head
-classified, because the two questions a fold can be wrong about - which term is
+tell the terms apart also receive their NAMES and the trunk activation the
+classifier classified, because the two questions a fold can be wrong about - which term is
 this, and how hard is it pulling - are answerable from nothing else.
 """
 

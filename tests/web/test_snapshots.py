@@ -18,7 +18,7 @@ from praxis.web.snapshots import (
     SnapshotProducer,
     SnapshotStore,
     _as_recipe,
-    _recipe_head_snapshots,
+    _recipe_classifier_snapshots,
 )
 
 
@@ -74,7 +74,7 @@ def test_bare_tuple_recipes_default_to_the_safe_side():
 
 def test_model_probing_defaults_are_marked_on_trainer():
     assert DEFAULT_RECIPES["activation_curves"].on_trainer is True
-    assert DEFAULT_RECIPES["head_snapshots"].on_trainer is True
+    assert DEFAULT_RECIPES["classifier_snapshots"].on_trainer is True
     # git-derived, no tensors: keeps running off the training loop
     assert DEFAULT_RECIPES["evolution"].on_trainer is False
 
@@ -210,15 +210,15 @@ def test_attach_pump_waits_out_a_recipe_already_in_flight(make_producer):
     assert attached.wait(5)
 
 
-def test_head_snapshots_recipe_is_quiet_without_the_profiler(bare_model):
-    assert "compute_profile" not in _recipe_head_snapshots(bare_model).get(
+def test_classifier_snapshots_recipe_is_quiet_without_the_profiler(bare_model):
+    assert "compute_profile" not in _recipe_classifier_snapshots(bare_model).get(
         "snapshots", {}
     )
 
 
-def test_head_snapshots_recipe_merges_a_stashed_landscape(bare_model):
-    """No head, criterion or encoder, and the stashed RLCT grid still shows."""
+def test_classifier_snapshots_recipe_merges_a_stashed_landscape(bare_model):
+    """No classifier, criterion or encoder, and the stashed RLCT grid still shows."""
     bare_model._rlct_landscape = {"rlct_landscape": {"grid": [[0.0]], "status": "ok"}}
-    out = _recipe_head_snapshots(bare_model)
+    out = _recipe_classifier_snapshots(bare_model)
     assert out["status"] == "ok"
     assert "rlct_landscape" in out["snapshots"]

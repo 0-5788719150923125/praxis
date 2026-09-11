@@ -72,8 +72,8 @@ class KLDivergenceHalting(BaseHalting):
     Two details keep the signal honest across models and training: the hidden state
     is standardized (shift/scale invariant) before the softmax, so the measure does
     not drift as residual norms grow; and KL is averaged per position, so it does
-    not scale with sequence length. No LM head required - works uniformly for head-
-    and encoder-based models.
+    not scale with sequence length. No classifier required - works uniformly for
+    standard and encoder-based models.
 
     Reference: Geiping et al., "Scaling up Test-Time Compute with Latent Reasoning:
     A Recurrent Depth Approach" (arXiv:2502.05171)

@@ -110,7 +110,7 @@ def test_byte_latent_forward_with_mode_criterion():
         decoder_type="sequential",
         activation="serpent",
         byte_level=True,
-        head_type="prismatic4",
+        classifier_type="prismatic4",
         residual_type="smear",
         loss_func="mode_cross_entropy",
     )

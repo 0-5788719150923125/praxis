@@ -6,7 +6,7 @@
 section: scaling
 order: 35
 requires:
-  head_type: [prismatic]
+  classifier_type: [prismatic]
 proofs: [lemma-xor-circle]
 body: >
   \subsection{The watch held still: parity in parallel}

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from praxis.generation.generator import Generator
+from praxis.inference.generator import Generator
 from tests.stubs import _SlowBackend
 
 

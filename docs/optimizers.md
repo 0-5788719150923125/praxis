@@ -24,8 +24,8 @@ LionGeo computes all three normalizations of one shared Lion momentum and blends
 per matrix with a SMEAR-style softmax whose logits adapt online by hypergradient
 descent, floored so no geometry is extinguished. Every branch is RMS-matched to 1, so
 one Lion-scale lr bounds the step wherever the blend settles. Weight decay is zero, as
-in MuonGeo; embeddings, the head, norms and biases go to a plain Lion secondary. Read
-opt_geo_share and opt_geo_share_spread.
+in MuonGeo; embeddings, the classifier, norms and biases go to a plain Lion secondary.
+Read opt_geo_share and opt_geo_share_spread.
 
 ## `MARS`
 
@@ -37,11 +37,11 @@ and weight decay.
 
 Muon over the interior >=2D matrices: each momentum update is orthogonalized by Newton-
 Schulz, a bounded step, and ``use_adjusted_lr`` scales the LR per matrix shape
-(Moonlight), which is automatic and robust to variable latent shapes. Embeddings, the LM
-head, norms and biases never reach Muon, since orthogonalizing an embedding matrix is
-the classic instability; they go to a Lion secondary through CompositeOptimizer, whose
-sign signal suits token-frequency geometry beside Muon's full-spectrum signal in the
-interior. The lr is conservative for small-model LM; warmup ramps it in.
+(Moonlight), which is automatic and robust to variable latent shapes. Embeddings, the
+classifier, norms and biases never reach Muon, since orthogonalizing an embedding matrix
+is the classic instability; they go to a Lion secondary through CompositeOptimizer,
+whose sign signal suits token-frequency geometry beside Muon's full-spectrum signal in
+the interior. The lr is conservative for small-model LM; warmup ramps it in.
 
 ## `MuonGeo`
 

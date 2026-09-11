@@ -15,9 +15,10 @@ recurrent depth step, so backprop spans a single recurrence cycle and no further
 ## `final`
 
 Detach once after the whole stack: the decoder trains from a single goodness score at
-the top, and the head trains alone beyond it.
+the top, and the classifier trains alone beyond it.
 
 ## `layer`
 
-Detach after every expert call, the totally flat regime of the paper: the main head loss
-trains only the head, and every layer trains from its own goodness score.
+Detach after every expert call, the totally flat regime of the paper: the main
+classifier loss trains only the classifier, and every layer trains from its own goodness
+score.

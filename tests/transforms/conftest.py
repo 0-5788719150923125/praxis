@@ -36,7 +36,7 @@ class _Toy(nn.Module):
             self.mtp.bank.depths.append(d)
         self.embeds = nn.Embedding(64, 128)
         self.bag = nn.EmbeddingBag(64, 128, mode="sum")
-        self.lm_head = nn.Linear(64, 100)  # vocab-dimensioned
+        self.scorer = nn.Linear(64, 100)  # vocab-dimensioned
         self.tiny = nn.Linear(8, 8)  # under MIN_TARGET_NUMEL
         self.odd = nn.Linear(128, 63)  # indivisible on the output axis
 

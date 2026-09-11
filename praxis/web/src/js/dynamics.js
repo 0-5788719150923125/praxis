@@ -564,8 +564,8 @@ function mountManifestCharts(manifest, dynamics) {
 //
 // Snapshot entries in ``descriptions`` carry a ``snapshot`` hint that picks
 // a renderer from SNAPSHOT_RENDERERS. Backend payloads come from a single
-// /api/head_snapshots fetch, keyed by metric name. New snapshot types add
-// one entry to SNAPSHOT_RENDERERS and one entry to the head's
+// /api/classifier_snapshots fetch, keyed by metric name. New snapshot types add
+// one entry to SNAPSHOT_RENDERERS and one entry to the classifier's
 // ``dashboard_snapshots()``.
 
 function snapshotEntries(descriptions) {
@@ -668,7 +668,7 @@ async function mountSnapshotCharts(descriptions) {
 
     let snapshots;
     try {
-        const response = await fetch('/api/head_snapshots');
+        const response = await fetch('/api/classifier_snapshots');
         if (!response.ok) throw new Error(`API returned ${response.status}`);
         const data = await response.json();
         if (data.status !== 'ok') return;
@@ -776,7 +776,7 @@ function renderDynamicsCharts(runData, container) {
         container.dataset.dynamicsFingerprint !== fingerprint;
 
     // ── Chart cards ─────────────────────────────────────────────────────
-    // Families ordered before the head-metric sections (gradient flow,
+    // Families ordered before the classifier-metric sections (gradient flow,
     // expert charts, task weights), rendered straight from the registry.
     // Layer-aware families carry their own inline layer filter.
     let chartsHTML = familyConfigs
@@ -784,13 +784,13 @@ function renderDynamicsCharts(runData, container) {
         .map(c => buildDynamicsFamilyCard(c, desc, allLayers))
         .join('');
 
-    // Head-driven metrics (harmonic, crystal, halo, future producers): scalar
+    // Classifier-driven metrics (harmonic, crystal, halo, future producers): scalar
     // charts and their non-scalar snapshots, clustered by group and ordered by
     // each group's declared group_order. New producers opt in just by tagging
     // metric_descriptions (set group_order on one chart to place the section).
     chartsHTML += buildManifestSectionsHTML(manifest, desc);
 
-    // Families ordered after the head sections (e.g. halting distribution).
+    // Families ordered after the classifier sections (e.g. halting distribution).
     chartsHTML += familyConfigs
         .filter(c => c.order >= 100)
         .map(c => buildDynamicsFamilyCard(c, desc, allLayers))
@@ -892,7 +892,7 @@ function rebuildAllCharts() {
     // simply refresh.
     (dynamicsLayerState.familyConfigs || []).forEach(c => mountDynamicsFamily(c, dynamics));
 
-    // Head scalar metrics (independent of layer selection). Source of
+    // Classifier scalar metrics (independent of layer selection). Source of
     // truth is the descriptions manifest in the run payload.
     const descriptions = state.dynamics.data?.descriptions || {};
     mountManifestCharts(buildMetricManifest(descriptions), dynamics);
@@ -1078,7 +1078,7 @@ function createSeqMixChart(canvasId, dynamics, keys) {
     renderChart(canvasId, datasets, 'Sampling Probability', 'linear');
 }
 
-// ─── Harmonic head diagnostics (conditional) ────────────────────────────────
+// ─── Harmonic classifier diagnostics (conditional) ───────────────────────────
 
 /**
  * Generic 2D heatmap renderer for non-scalar snapshots.
@@ -1208,7 +1208,7 @@ function readAccentColor() {
 
 /**
  * Harmonic spiral renderer: the real signal behind the old fake "correlation"
- * animation. The head sends the field's top-2 PCA cross-section (x, y) with
+ * animation. The classifier sends the field's top-2 PCA cross-section (x, y) with
  * position as the third axis (z), so the periodic loop unrolls into a rising
  * spiral; ``band`` is the energy left outside the plane, drawn as ribbon width
  * projected radially ("planes from the center"). The only motion is real - a
@@ -1351,7 +1351,7 @@ function renderHarmonicSpiral(canvas, data) {
 }
 
 /**
- * Harmonic epicycle renderer: a second lens on the field. The head sends the
+ * Harmonic epicycle renderer: a second lens on the field. The classifier sends the
  * top-2 PCA loop plus its dominant Fourier modes; we redraw it as nested
  * rotating vectors whose tip traces the curve. The spinning arms are generic
  * Fourier scaffolding (true of any closed curve); the loop shape and the arm
@@ -1466,7 +1466,7 @@ function renderHarmonicCurve(canvas, data) {
 }
 
 /**
- * Field traces renderer: the time-domain view. The head sends b(t, d) sampled
+ * Field traces renderer: the time-domain view. The classifier sends b(t, d) sampled
  * over one period as per-feature lines; we overlay them (hue ramped around the
  * brand accent) so the harmonics' interference reads as a moiré. Static data,
  * so it draws once - the tick loop only re-renders on resize or theme change.
@@ -1622,7 +1622,7 @@ function convexHull2D(pts) {
 
 /**
  * Harmonic staircase renderer: the frequency-domain sibling of the spiral. The
- * head sends one block per harmonic (amplitude + Weyl phase); we stack them by
+ * classifier sends one block per harmonic (amplitude + Weyl phase); we stack them by
  * energy rank, fan them around a column by phase, size them by amplitude, and
  * draw shaded 3D boxes. A faint silhouette under each block keeps it from
  * blinking out edge-on. Slow camera spin for depth; no fake data motion.
@@ -2272,7 +2272,7 @@ function terrainMesh(canvas, spec) {
 /**
  * Parameter manifold renderer: the PCA terrain of a structured weight's rows.
  * Height = row density (the cloud's shape: a Gaussian hill for an unstructured
- * layer, rings/arms for a harmonic or crystal head), color = mean row amplitude.
+ * layer, rings/arms for a harmonic or crystal classifier), color = mean row amplitude.
  */
 function renderParamManifold(canvas, data) {
     const density = data && data.density, tint = data && data.tint;

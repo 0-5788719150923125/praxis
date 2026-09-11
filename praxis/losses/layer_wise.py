@@ -3,11 +3,11 @@
 :func:`compute_layer_wise_loss` computes one layer's local loss for any
 distributed Mono-Forward style trainer. It knows nothing of Ray, Hivemind,
 ``torch.distributed.rpc``, Flower or monarch - it takes plain torch tensors and
-modules, runs the head projection and criterion, and folds aux losses via a
+modules, runs the classifier and criterion, and folds aux losses via a
 strategy.
 
 It routes through the model's real criterion, calling
-``criterion(logits=..., embeddings=..., classifier=..., labels=...)`` with the
+``criterion(logits=..., embeddings=..., scorer=..., labels=...)`` with the
 same argument shape :meth:`PraxisForCausalLM._compute_loss` uses, so
 ``--loss-func cut_cross_entropy`` and its memory win work here too.
 
@@ -86,7 +86,7 @@ def _extract_aux_scalars(aux_losses: List[Any]) -> List[Tensor]:
 def compute_layer_wise_loss(
     hidden_states: Tensor,
     labels: Tensor,
-    head: nn.Module,
+    classifier: nn.Module,
     criterion: nn.Module,
     strategy: Optional[Callable[[List[Tensor]], Tensor]] = None,
     aux_losses: Optional[List[Any]] = None,
@@ -102,11 +102,11 @@ def compute_layer_wise_loss(
         labels: Next-token labels, **already shifted**
             (``input_ids[..., 1:]``). Same convention as
             ``_compute_loss``.
-        head: The per-layer replicated head module. Must expose both
-            ``head(hidden_states)`` (to produce logits) and
-            ``head.classifier`` (for the cut-CE fast path).
+        classifier: The per-layer replicated classifier module. Must
+            expose both ``classifier(hidden_states)`` (to produce logits)
+            and ``classifier.scorer`` (for the cut-CE fast path).
         criterion: A Praxis loss module with the signature
-            ``forward(logits, embeddings, classifier, labels, input_ids, ...)``.
+            ``forward(logits, embeddings, scorer, labels, input_ids, ...)``.
             ``CutCrossEntropyLoss`` is detected by class name and given
             the full unshifted ``hidden_states`` plus the full
             unshifted ``input_ids``; everything else receives
@@ -136,24 +136,24 @@ def compute_layer_wise_loss(
     is_cut_ce = _is_cut_cross_entropy(criterion)
 
     if is_cut_ce:
-        # Cut-CE wants the full unshifted embeddings + the classifier
+        # Cut-CE wants the full unshifted embeddings + the scorer's
         # weight; it handles shifting internally via ``shift=1``. We pass
         # a dummy logits tensor (it's ignored on the cut-CE code path).
         # Matching _compute_loss exactly, including "input_ids" keyword.
-        classifier = head.classifier
+        scorer = classifier.scorer
         local_input_ids = input_ids if input_ids is not None else labels
         local_loss = criterion(
             logits=hidden_states,  # ignored by cut-CE
             embeddings=hidden_states,
-            classifier=classifier,
+            scorer=scorer,
             labels=labels,
             input_ids=local_input_ids,
         )
     else:
-        logits = head(hidden_states)
+        logits = classifier(hidden_states)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_embeddings = hidden_states[..., :-1, :].contiguous()
-        classifier = head.classifier if hasattr(head, "classifier") else None
+        scorer = getattr(classifier, "scorer", None)
         # ``input_ids`` passthrough mirrors _compute_loss: if the caller
         # didn't supply it, fall back to the shifted labels which at
         # least lets the dedup criterion see *some* token stream.
@@ -161,7 +161,7 @@ def compute_layer_wise_loss(
         local_loss = criterion(
             logits=shift_logits,
             embeddings=shift_embeddings,
-            classifier=classifier,
+            scorer=scorer,
             labels=labels,
             input_ids=local_input_ids,
         )

@@ -100,7 +100,7 @@ registry.declare(
                 "HALO (Hyperspherical Active Learning Objective) adapted for language "
                 "modeling. A loss-owning encoder may reroute it: CALM treats ``halo`` "
                 "as its geometric mode, where reconstruction stays CE and HALO steers "
-                "the energy head through the frozen codec, keeping HALO off the "
+                "the energy generator through the frozen codec, keeping HALO off the "
                 "centroid-shaping reconstruction path."
             ),
         ),
@@ -115,7 +115,7 @@ def get_loss_function(name, vocab_size):
 def build_objectives(config, encoder=None) -> Objectives:
     """The model's loss terms: the main criterion plus its regularizers.
 
-    Producers that own a term (MTP, a parallel head's arms) register theirs
+    Producers that own a term (MTP, a parallel classifier's arms) register theirs
     on the returned container as they are built. An encoder that owns the
     loss (CALM) leaves ``main`` unregistered - there is no criterion for the
     model to call.

@@ -33,15 +33,15 @@ def test_broad_profile_spares_vocab_small_and_indivisible(toy_model):
     stats = apply_transform(model, "ghost_all_complex")
     names = [n for n, _, _, _ in stats.targets]
     for attr, reason in (
-        ("lm_head", "vocab"),
+        ("scorer", "vocab"),
         ("tiny", "too_small"),
         ("odd", "indivisible"),
     ):
         assert attr not in names
         assert attr in stats.missed[reason]
-    assert isinstance(model.lm_head, nn.Linear)
+    assert isinstance(model.scorer, nn.Linear)
     greedy = apply_transform(toy_model(), "ghost_all_greedy_complex")
-    assert "lm_head" in [n for n, _, _, _ in greedy.targets]
+    assert "scorer" in [n for n, _, _, _ in greedy.targets]
 
 
 def test_ghost_opaque_subtrees_are_skipped_and_reported(toy_model):

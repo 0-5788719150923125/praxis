@@ -158,7 +158,7 @@ class LocalLayerWorker:
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
-            head=self.projection,
+            classifier=self.projection,
             criterion=self.criterion,
             strategy=self.strategy,
             aux_losses=[aux_loss] if aux_loss is not None else None,
@@ -235,7 +235,7 @@ class LocalLayerWorker:
             loss = compute_layer_wise_loss(
                 hidden_states=h_detached,
                 labels=labels_dev,
-                head=self.projection,
+                classifier=self.projection,
                 criterion=self.criterion,
                 strategy=self.strategy,
                 aux_losses=[aux_loss] if aux_loss is not None else None,

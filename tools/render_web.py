@@ -111,7 +111,7 @@ MODEL_ARCHITECTURE = """PraxisForCausalLM(
       )
     )
   )
-  (head): ForwardHead(hidden_size=64, vocab_size=264)
+  (classifier): LinearClassifier(hidden_size=64, vocab_size=264)
   (recall_policies): ModuleDict()
   (criterion): CrossEntropyLoss()
   (tasker): DifficultyTaskLossWeighter()
@@ -228,7 +228,7 @@ INFO = {
     "vram": "1.6GB/8.0GB",  # driver-level actual_used/total for the run's GPU
     "optimizer": "Lion",
     "strategy": "naive",  # loss-combination strategy: NaiveSummation in the tree
-    "vocab_size": 264,  # byte-level: ByteEmbedding/ForwardHead vocab in the tree
+    "vocab_size": 264,  # byte-level: ByteEmbedding/LinearClassifier vocab in the tree
     "block_size": 256,  # sequence length of the training batch
     "batch_size": 16,
     "target_batch": 256,

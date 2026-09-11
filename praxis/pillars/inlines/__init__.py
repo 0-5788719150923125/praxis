@@ -145,8 +145,8 @@ def _license_epoch() -> Optional[str]:
     return match.group(1) if match else None
 
 
-# Display names for ``heads`` keys whose prose noun isn't just the key.
-_HEAD_DISPLAY = {
+# Display names for ``classifiers`` keys whose prose noun isn't just the key.
+_CLASSIFIER_DISPLAY = {
     "prismatic3": "three-arm prismatic",
     "crystal_harmonic": "harmonic-crystal",
     "crystal_harmonic_static": "harmonic-crystal",
@@ -155,18 +155,19 @@ _HEAD_DISPLAY = {
 
 @provider("head_name")
 def _head_name() -> Optional[str]:
-    """The current run's head as a prose noun phrase ("harmonic head",
+    """The current run's classifier as a prose noun phrase ("harmonic head",
     "prismatic head", ...), derived from its resolved config rather than
-    hardcoded into the body. ``None`` when no run exists."""
+    hardcoded into the body. ``None`` when no run exists. The phrase keeps the
+    paper's own noun (``\\paperHeadName`` in research/body.tex)."""
     from praxis.pillars.framing import newest_experiment, resolve_config
 
     experiment = newest_experiment()
     if not experiment:
         return None
-    head = str(resolve_config(experiment).get("head_type", "")).strip()
-    if not head:
+    classifier = str(resolve_config(experiment).get("classifier_type", "")).strip()
+    if not classifier:
         return None
-    return _HEAD_DISPLAY.get(head, head.replace("_", " ")) + " head"
+    return _CLASSIFIER_DISPLAY.get(classifier, classifier.replace("_", " ")) + " head"
 
 
 def _latest_metric(metric_name: str) -> Optional[float]:
@@ -192,7 +193,7 @@ def _latest_metric(metric_name: str) -> Optional[float]:
 @provider("harmonic_concentration")
 def _harmonic_concentration() -> Optional[float]:
     """Latest Hoyer sparsity of the harmonic amplitude grid for the current run
-    (a harmonic head only)."""
+    (a harmonic classifier only)."""
     return _latest_metric("harmonic_concentration")
 
 

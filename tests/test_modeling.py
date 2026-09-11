@@ -2,7 +2,7 @@
 
 Construction and forward (with and without an encoder), the labelled loss,
 generation plumbing (input preparation, the speculative dispatch, what a custom
-decoding method receives), RL policy and surgical-head wiring, and the
+decoding method receives), RL policy and surgical-classifier wiring, and the
 registry-wide causality sweep.
 """
 
@@ -17,7 +17,7 @@ from transformers.generation.stopping_criteria import StopStringCriteria
 
 from praxis import PraxisConfig, registry
 from praxis.attention.cache import PraxisCache
-from praxis.generation import speculative
+from praxis.inference import speculative
 from praxis.modeling import PraxisForCausalLM, PraxisModel, build_rl_policies
 from praxis.policies.preference import PreferencePolicy
 from praxis.tasks import TaskType
@@ -70,7 +70,7 @@ def test_praxis_model_forward(small_config, input_ids, attention_mask):
 
 def test_praxis_causal_lm_with_labels(small_config, input_ids, attention_mask):
     """Labels arrive pre-shifted (``input_ids[:, 1:]``): training gives a finite
-    scalar loss whose gradient reaches the head, and eval logits cover every
+    scalar loss whose gradient reaches the classifier, and eval logits cover every
     position."""
     model = PraxisForCausalLM(small_config)
     assert small_config.causal is True
@@ -92,7 +92,8 @@ def test_praxis_causal_lm_with_labels(small_config, input_ids, attention_mask):
     assert torch.isfinite(outputs.loss)
     outputs.loss.backward()
     assert any(
-        p.grad is not None and p.grad.abs().sum() > 0 for p in model.head.parameters()
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.classifier.parameters()
     )
 
 
@@ -141,10 +142,10 @@ def test_praxis_model_with_encoder_forward(encoder_config, byte_encoder_input_id
 
 
 def test_praxis_causal_lm_with_encoder_forward(encoder_config, byte_encoder_input_ids):
-    """The head owns the classifier in every mode, so it exists with an
-    encoder too; the encoder produces features, the head classifies them."""
+    """The classifier owns its scorer in every mode, so it exists with an
+    encoder too; the encoder produces features, the classifier classifies them."""
     model = PraxisForCausalLM(encoder_config).eval()
-    assert model.head.lm_head is not None
+    assert model.classifier.scorer is not None
     assert model.criterion is not None and model.strategy is not None
 
     with torch.no_grad():
@@ -213,7 +214,7 @@ def test_generate_dispatches_to_speculative_by_default():
         getattr(GenerationConfig(), "num_beams", 1) != 1
     ), "sanity: this test is only meaningful while an unset num_beams is not 1"
 
-    # Byte-latent + prismatic4 head + dual memory + VEAR MTP: the drafting stack.
+    # Byte-latent + prismatic4 classifier + dual memory + VEAR MTP: the drafting stack.
     config = PraxisConfig(
         vocab_size=1024,
         hidden_size=32,
@@ -225,7 +226,7 @@ def test_generate_dispatches_to_speculative_by_default():
         tokenizer_type="byte_level",
         decoder_type="sequential",
         activation="serpent",
-        head_type="prismatic4",
+        classifier_type="prismatic4",
         memory_type="mal_energy_dual",
         mtp_type="vear",
         mtp_depth=4,
@@ -261,7 +262,7 @@ def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
         depth=2,
         max_length=512,
         decoder_type="sequential",
-        head_type="forward",
+        classifier_type="forward",
         encoder_type="abstractinator_v1",
         tokenizer_type="byte_level",
         codebook_size=256,
@@ -431,7 +432,7 @@ def test_byte_latent_forward_with_preference():
         tokenizer_type="byte_level",
         decoder_type="sequential",
         activation="serpent",
-        head_type="prismatic4",
+        classifier_type="prismatic4",
         residual_type="smear",
         rl_type=["preference"],
     )
@@ -457,15 +458,15 @@ def test_byte_latent_forward_with_preference():
 
 
 # ------------------------------------------------------------------------------
-# surgical heads
+# surgical classifiers
 # ------------------------------------------------------------------------------
 # prismatic9 trains each arm on its own objective and hands the trunk one
 # PCGrad-combined gradient. The model has to wire around that: HALO's geometric
-# term moves from the criterion to the head, and MTP must still reach the head's
-# input through the detached arms.
+# term moves from the criterion to the classifier, and MTP must still reach the
+# classifier's input through the detached arms.
 
 
-def _halo_config(head_type, **overrides):
+def _halo_config(classifier_type, **overrides):
     return PraxisConfig(
         vocab_size=1000,
         hidden_size=32,
@@ -475,7 +476,7 @@ def _halo_config(head_type, **overrides):
         max_length=128,
         decoder_type="sequential",
         encoder_type=None,
-        head_type=head_type,
+        classifier_type=classifier_type,
         loss_func="halo",
         **overrides,
     )
@@ -498,13 +499,13 @@ def test_full_model_survives_the_lazy_init_pass():
 
 def test_validation_loss_stays_comparable_to_prismatic8():
     """prismatic9 flips `composite_geometry` off so HALO's geometric term is
-    not double-counted (the head owns it as a Jacobian row). That suppression
+    not double-counted (the classifier owns it as a Jacobian row). That suppression
     must be TRAINING-ONLY: at eval nothing replaces the term, so zeroing it
     there just deletes a component of val_loss."""
 
-    def val_loss(head):
+    def val_loss(classifier_type):
         torch.manual_seed(0)
-        m = PraxisForCausalLM(_halo_config(head)).eval()
+        m = PraxisForCausalLM(_halo_config(classifier_type)).eval()
         ids = torch.arange(16).remainder(900).unsqueeze(0).repeat(2, 1)
         with torch.no_grad():
             out = m(input_ids=ids, labels=ids[:, 1:].contiguous())
@@ -521,15 +522,15 @@ def test_validation_loss_stays_comparable_to_prismatic8():
     ), f"val loss diverged: prismatic8 {eight}, prismatic9 {nine}"
 
 
-def test_mtp_still_trains_under_a_surgical_head():
-    """Detaching every arm in the blend severs the path from the head's OUTPUT
-    back to its INPUT - and MTP classifies its draft states with that same
-    head, so its loss reached nothing, not even MTP's own bank."""
+def test_mtp_still_trains_under_a_surgical_classifier():
+    """Detaching every arm in the blend severs the path from the classifier's
+    OUTPUT back to its INPUT - and MTP classifies its draft states with that
+    same classifier, so its loss reached nothing, not even MTP's own bank."""
 
-    def run(head):
+    def run(classifier_type):
         torch.manual_seed(0)
         m = PraxisForCausalLM(
-            _halo_config(head, mtp_depth=3, mtp_type="per_depth")
+            _halo_config(classifier_type, mtp_depth=3, mtp_type="per_depth")
         ).train()
         ids = torch.randint(0, 1000, (2, 16))
         m(input_ids=ids, labels=ids[:, 1:].contiguous()).loss.backward()
@@ -545,16 +546,16 @@ def test_mtp_still_trains_under_a_surgical_head():
     assert len(live8) == total, "baseline broke; the comparison is meaningless"
     assert len(live9) == total, f"MTP starved under prismatic9: {len(live9)}/{total}"
 
-    # The fallback path, for a head with no undetached() at all.
+    # The fallback path, for a classifier with no undetached() at all.
     m, live, total = run("forward")
-    assert not hasattr(m.head, "undetached")
+    assert not hasattr(m.classifier, "undetached")
     assert len(live) == total
 
 
 # ------------------------------------------------------------------------------
 # causality
 # ------------------------------------------------------------------------------
-# Every router, head, block and encoder in the registries is causal, in training
+# Every router, classifier, block and encoder in the registries is causal, in training
 # and in inference.
 #
 # One token changes in one row; no logit at an earlier position of that row, and
@@ -583,7 +584,7 @@ BASE = dict(
 OVERRIDES = {
     "router": {"attention_type": "causal"},
     ("router", "arc_mixture"): {"num_layers": 2, "depth": 4},  # a layer under 1.0
-    ("head", "tied"): {"tie_weights": True},
+    ("classifier", "tied"): {"tie_weights": True},
     ("block", "mru"): {"hidden_size": 64, "embed_size": 64},  # square head size
     "encoder": {"hidden_size": 64, "embed_size": 64, "num_heads": 2},
 }
@@ -610,7 +611,7 @@ TOLERANCE = 1e-5
 
 CASES = (
     [("router", key) for key in sorted(registry.namespace("routers"))]
-    + [("head", key) for key in sorted(registry.namespace("heads"))]
+    + [("classifier", key) for key in sorted(registry.namespace("classifiers"))]
     + [("block", key) for key in sorted(registry.namespace("blocks"))]
     + [("encoder", key) for key in sorted(registry.namespace("encoders"))]
     # Unlisted names that carry a profile of their own, not a listed one's.

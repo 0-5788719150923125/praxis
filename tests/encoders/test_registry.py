@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from praxis import registry
-from praxis.modeling import resolve_head_type
+from praxis.modeling import resolve_classifier_type
 
 ENCODER_KEYS = sorted(registry.namespace("encoders"))
 
@@ -21,14 +21,14 @@ def module_setup(request, config):
             registry.lookup("embeddings", profile)(config, encoder=module)
         )
     # Mirror PraxisForCausalLM again: loss-owning encoders (CALM) do not own a
-    # token classifier, they borrow the LM head and apply it internally, so
-    # decode() cannot classify until the head is injected.
-    if hasattr(module, "set_head"):
-        head_type = resolve_head_type(config, has_encoder=True)
-        head_cls = registry.namespace("heads").get(
-            head_type, registry.lookup("heads", "forward")
+    # classifier, they borrow the model's and apply it internally, so
+    # decode() cannot classify until the classifier is injected.
+    if hasattr(module, "set_classifier"):
+        classifier_type = resolve_classifier_type(config, has_encoder=True)
+        classifier_cls = registry.namespace("classifiers").get(
+            classifier_type, registry.lookup("classifiers", "forward")
         )
-        module.set_head(head_cls(config, encoder=module))
+        module.set_classifier(classifier_cls(config, encoder=module))
     return module, config
 
 
@@ -58,7 +58,7 @@ def test_forward_pass(module_setup):
         local_decoder_tokens,
     )
 
-    # ByteLatent decode now returns features only (the LM head owns
+    # ByteLatent decode now returns features only (the classifier owns
     # classification, so logits is None); its features are dim_token_emb.
     # Encoders that own their output (CALM, etc.) still emit aligned logits.
     if hasattr(module, "byte_config"):

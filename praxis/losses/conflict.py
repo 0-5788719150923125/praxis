@@ -19,7 +19,7 @@ persistently negative is conflict and the case for gradient surgery, near 0
 means orthogonal directions and the plain sum is fine, positive means the aux
 term is a reweighting of the anchor.
 
-THE ANCHOR IS NOT ALWAYS ``main``. Under a surgical head the mixture CE trains
+THE ANCHOR IS NOT ALWAYS ``main``. Under a surgical classifier the mixture CE trains
 only the gate and has no path to the trunk, so anchoring on it measured
 nothing at all - see praxis.losses.trunk_grads, which resolves this and owns
 the row extraction both this module and the blending strategies use.
@@ -34,7 +34,7 @@ shaping independent directions, which is the only reading that licenses the sum.
 AT THE TRUNK OUTPUT, NOT THE PARAMETERS. The honest Jacobian is w.r.t. shared
 parameters, which needs a full backward per objective - the cost this module
 exists to avoid paying before knowing it is worth paying. Differentiating w.r.t.
-the trunk's output ACTIVATION needs only a backward through the head and answers
+the trunk's output ACTIVATION needs only a backward through the classifier and answers
 the same question: by the chain rule every shared parameter's gradient factors
 through that tensor. It cannot see conflict arising inside the trunk.
 
@@ -43,9 +43,9 @@ repulsions are parameter-only - no path to the activation, so no series here.
 They do not compete for the shared representation; they shape their own
 parameters only.
 
-These are LOSS TERMS. A head whose arms are trained by ONE cross-entropy through
+These are LOSS TERMS. A classifier whose arms are trained by ONE cross-entropy through
 a mixture has a multi-task problem that never appears here, because the arms are
-not separate terms; that measurement lives on ``ParallelHead.arm_conflict``.
+not separate terms; that measurement lives on ``ParallelClassifier.arm_conflict``.
 """
 
 from typing import Any, Dict, Optional
@@ -60,7 +60,7 @@ from praxis.losses.trunk_grads import (
     usable,
 )
 
-# Steps between measurements. Each one costs one head-sized backward per live
+# Steps between measurements. Each one costs one classifier-sized backward per live
 # objective, so it is sampled rather than run every step - the same stance the
 # compute profiler takes. Baked, model-agnostic: this is a diagnostic, not a
 # knob an experiment is supposed to tune.
@@ -100,7 +100,7 @@ class ObjectiveConflict:
     def measure(self, loss_dict: Dict[str, Any], wrt: Tensor) -> Dict[str, float]:
         """Update and return ``{conflict_<name>: cosine}`` for the live terms.
 
-        ``wrt`` is the trunk output the head classifies. Returns the standing
+        ``wrt`` is the trunk output the classifier reads. Returns the standing
         measurement unchanged on steps that are not sampled, so the chart holds
         its value between samples rather than going sparse.
         """

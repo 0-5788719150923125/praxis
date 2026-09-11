@@ -53,7 +53,7 @@ No syncs in the step path; the share accessors sync only when the metrics
 interval reads them.
 
 Intended for interior >=2D matrices only (the MuonGeo split): embeddings, the
-head, norms and biases route to a plain Lion secondary via CompositeOptimizer.
+classifier, norms and biases route to a plain Lion secondary via CompositeOptimizer.
 """
 
 import math

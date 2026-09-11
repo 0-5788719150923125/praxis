@@ -6,6 +6,8 @@ from typing import Optional
 
 import yaml
 
+from praxis.renames import rename_legacy_config
+
 EXTENDS_KEY = "extends"
 
 
@@ -51,6 +53,8 @@ def load_rendered_config(
 
     if not isinstance(raw, dict):
         raise ValueError(f"Experiment config must be a mapping: {config_path}")
+    # A renamed key would otherwise set an attribute nothing reads.
+    rename_legacy_config(raw)
 
     extends = raw.pop(EXTENDS_KEY, None)
     if extends is None:

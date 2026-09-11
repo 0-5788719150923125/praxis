@@ -35,8 +35,8 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
     Tool-control tokens (see ``PraxisToolTokensMixin``) are appended
     past the byte range so existing byte ids stay valid in saved
     checkpoints. They are registered only when the chat format actually
-    renders them, because ``byte_alphabet_size`` sizes the model's output
-    head: an unused control token is a sampleable logit with no training
+    renders them, because ``byte_alphabet_size`` sizes the model's
+    classifier: an unused control token is a sampleable logit with no training
     signal behind it.
 
     The four NAMED specials below the byte range follow the same rule, and
@@ -516,7 +516,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
 
         Counts the live tool map rather than the class-level string list, so a
         format that skips the tool tokens gets a 260-wide alphabet - and the
-        output head shrinks with it (praxis/encoders/byte_latent/config.py)."""
+        classifier shrinks with it (praxis/encoders/byte_latent/config.py)."""
         return self.vocab_size_unit_1 + self._offset + len(self._tool_special_id_map)
 
     @property

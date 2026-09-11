@@ -27,7 +27,7 @@ weighting scheme:
     left to say ends up shouting, and there is no upper bound on how loudly.
     The degenerate case is already in the tree: ``arm_surgery`` is a surrogate
     whose VALUE is identically 0.0 by construction while its gradient is the
-    only task signal the trunk gets under a surgical head. Kendall's
+    only task signal the trunk gets under a surgical classifier. Kendall's
     ``exp(-s) L + s`` at ``L = 0`` has gradient ``+1`` in ``s`` forever, so
     ``s`` runs to minus infinity and its weight diverges. A gradient norm has
     no such pathology: a term that stops pulling stops being clipped, which is
@@ -43,7 +43,7 @@ UPSTREAM of it (an encoder's VQ commitment losses) have no gradient there and
 pass through at weight 1. That is correct for the first kind - they do not
 compete for the shared representation - and a real blind spot for the second.
 
-COST. One head-sized backward per live term, on the sampling cadence rather
+COST. One classifier-sized backward per live term, on the sampling cadence rather
 than every step, with the weights held between refreshes. A cap is a slowly
 moving quantity; measuring it every step would pay a per-step price for
 resolution nothing needs.

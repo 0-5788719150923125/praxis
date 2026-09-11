@@ -4,7 +4,7 @@ Status: deferred. Gated on the shipped version proving out first.
 
 ## What shipped (2026-06-06)
 
-`LinearPrior` (praxis/heads/energy.py): a closed-form streaming-ridge readout
+`LinearPrior` (praxis/generators/energy.py): a closed-form streaming-ridge readout
 beside the CALM energy head's MLP. `z = W*h + f(h, noise)`; W is solved from
 EMA sufficient statistics during the post-freeze warmup window, then frozen.
 Backprop runs in parallel the whole time and trains only the residual. W never

@@ -1,4 +1,4 @@
-"""CALM encoder: VAE + energy head, exposed via the Praxis encoder interface.
+"""CALM encoder: VAE + energy generator, exposed via the Praxis encoder interface.
 
 Architecture (matches the reference at github.com/shaochenze/calm):
 
@@ -12,10 +12,10 @@ Architecture (matches the reference at github.com/shaochenze/calm):
    frozen during LM training and only emits targets). With
    ``ae_freeze_steps`` set, this freezing is real and two-staged: stage
    1 trains only the codec, then the codec freezes and stage 2 trains
-   only the LM/energy head against a now-stationary latent target.
+   only the LM/energy generator against a now-stationary latent target.
 2. The global transformer autoregresses over patch embeddings.
 3. ``decode`` uses the LM hidden state at position ``p`` to drive an
-   energy head that produces proposals for latent ``p+1``; those are
+   energy generator that produces proposals for latent ``p+1``; those are
    compared against the posterior samples of ``p+1`` under the
    energy-score loss. The reconstructed-token logits are returned for
    sanity checking but do not participate in the main loss (the encoder
@@ -35,14 +35,14 @@ from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from praxis import registry
 from praxis.activations import build_activation
-from praxis.generation.decoding import (
+from praxis.inference.decoding import (
     first_halt,
     is_halted,
     stream_end,
     stream_put,
     trunk_hooks,
 )
-from praxis.heads.energy import EnergyHead
+from praxis.generators.energy import EnergyGenerator
 from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
@@ -84,15 +84,15 @@ PRETRAIN_EMA_ALPHA = 0.1
 # this is what carries stage 1 through the low points a raw plateau hides.
 PRETRAIN_BEST_REL_TOL = 0.01
 
-# Conditioning-anchor weight for the energy head. The energy score alone is a
-# weak, high-variance signal: at small scale the head learns the right marginal
+# Conditioning-anchor weight for the energy generator. The energy score alone is
+# a weak, high-variance signal: at small scale the generator learns the right marginal
 # latent scale but a condition-weak, high-variance conditional (verified: given
 # real context, cross-sample patch agreement ~0, correct-next-patch rate ~0), so
 # generation samples the marginal (low T repeats the mode, high T is gibberish).
 # A direct MSE from the conditioning onto the next posterior mean gives the
 # strong gradient the score lacks. Weighted comparable-to / above the energy
 # term (~O(5)) so it dominates the early steering - the score alone never
-# concentrated the head over thousands of steps - then fades as the MSE -> 0.
+# concentrated the generator over thousands of steps - then fades as the MSE -> 0.
 # Deviates from the paper (justified by the scale gap the paper never faces);
 # set 0.0 for paper-pure behavior. Watch calm_energy_anchor descend.
 ENERGY_ANCHOR_WEIGHT = 5.0
@@ -136,7 +136,7 @@ class CALMEncoder(BaseEncoder):
     generation_modes = ("vote",)
     default_generation_mode = "vote"
 
-    """CALM autoencoder + energy head, plugged into the encoder slot.
+    """CALM autoencoder + energy generator, plugged into the encoder slot.
 
     The encoder owns its loss bookkeeping; see ``handles_loss``.
     """
@@ -214,8 +214,9 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_energy_anchor": {
             "description": (
-                "MSE of the head's zero-noise prediction against the next posterior "
-                "mean. Staying high = the head isn't learning next-patch direction."
+                "MSE of the generator's zero-noise prediction against the next "
+                "posterior mean. Staying high = the generator isn't learning "
+                "next-patch direction."
             ),
             "chart": {
                 "title": "Energy Conditioning Anchor (MSE)",
@@ -227,7 +228,7 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_prior_r2": {
             "description": (
-                "R² of the energy head's closed-form linear prior - how much "
+                "R² of the energy generator's closed-form linear prior - how much "
                 "next-latent variance a ridge solve explains from the backbone state."
             ),
             "chart": {
@@ -307,7 +308,7 @@ class CALMEncoder(BaseEncoder):
         "calm_energy_cond_gap": {
             "description": (
                 "Energy of context-mismatched targets minus matched ones. >0 = the "
-                "head uses its conditioning; ~0 = it is ignoring context."
+                "generator uses its conditioning; ~0 = it is ignoring context."
             ),
             "chart": {
                 "title": "Energy Conditioning Gap",
@@ -320,11 +321,11 @@ class CALMEncoder(BaseEncoder):
         "calm_head_token_acc": {
             "description": (
                 "Teacher-forced next-patch token accuracy of the zero-noise "
-                "prediction, decoded through the frozen codec. Comparable across head "
-                "kinds."
+                "prediction, decoded through the frozen codec. Comparable across "
+                "generator types."
             ),
             "chart": {
-                "title": "Head Next-Patch Token Acc",
+                "title": "Generator Next-Patch Token Acc",
                 "y_label": "accuracy",
                 "y_scale": "linear",
                 "group": "calm",
@@ -333,7 +334,7 @@ class CALMEncoder(BaseEncoder):
         },
         "calm_ae_frozen": {
             "description": (
-                "1 once the codec is frozen and the energy-head stage begins; 0 during "
+                "1 once the codec is frozen and the generator stage begins; 0 during "
                 "codec training. Flat 0 = two-stage training is off."
             ),
             "chart": {
@@ -426,7 +427,7 @@ class CALMEncoder(BaseEncoder):
         vote_temperature: float = 0.5,
         energy_prior: str = "linear",
         energy_anchor_weight: float = ENERGY_ANCHOR_WEIGHT,
-        head_kind: str = "energy",
+        generator_type: str = "energy",
         codec_kind: str = "vae",
     ) -> None:
         super().__init__()
@@ -468,7 +469,7 @@ class CALMEncoder(BaseEncoder):
         self.energy_anchor_weight = float(energy_anchor_weight)
         self.energy_warmup_steps = int(energy_warmup_steps)
         # Two-stage boundary (optimizer steps): trains the codec alone until
-        # this step, then freezes it and trains only the LM/energy head. None
+        # this step, then freezes it and trains only the LM/energy generator. None
         # locks it to the warmup boundary (co-terminating with the KL anneal);
         # 0 = legacy joint training.
         # When True (default), the codec trains until its reconstruction
@@ -547,7 +548,7 @@ class CALMEncoder(BaseEncoder):
         # Codec reconstruction obeys config.loss_func like every other path,
         # with one reroute: "halo" selects the trinary geometric mode. Recon
         # stays plain CE (HALO in the recon loss shapes the centroids and
-        # collapses downstream harmonies); HALO instead steers the energy head
+        # collapses downstream harmonies); HALO instead steers the generator
         # through the FROZEN codec, plus a radial norm term - see
         # _register_energy_loss. Built over the codec's true output vocab.
         loss_func = str(getattr(config, "loss_func", "cross_entropy"))
@@ -580,11 +581,12 @@ class CALMEncoder(BaseEncoder):
             activation=config.activation,
         )
 
-        # The token classifier (forward/crystal/...) is built from
-        # the ``heads`` registry and injected via set_head(); CALM applies it to the
-        # VAE decoder features. Stored as a bare ref (in a list) so the head
-        # stays owned by the model and isn't double-registered here.
-        self._head: list = []
+        # The token classifier (forward/crystal/...) is built from the
+        # ``classifiers`` registry and injected via set_classifier(); CALM
+        # applies it to the VAE decoder features. Stored as a bare ref (in a
+        # list) so the classifier stays owned by the model and isn't
+        # double-registered here.
+        self._classifier: list = []
 
         # LM input path (independent of the VAE, matching the reference):
         # K token embeddings → embed_proj → one hidden_size vector per patch.
@@ -600,11 +602,11 @@ class CALMEncoder(BaseEncoder):
 
         # energy = implicit generator + energy score; flow = flow-matching
         # velocity field. Same slot, same sample/forward surface - the loss
-        # branches in _register_head_loss. Attribute stays `energy_head` so
-        # generation/diagnostic call sites are head-agnostic.
-        self.head_kind = head_kind
-        head_cls = registry.lookup("latent_heads", head_kind)
-        self.energy_head = head_cls(
+        # branches in _register_generator_loss, so generation/diagnostic call
+        # sites are generator-agnostic.
+        self.generator_type = generator_type
+        generator_cls = registry.lookup("generators", generator_type)
+        self.generator = generator_cls(
             cond_dim=config.hidden_size,
             noise_dim=self.noise_dim,
             latent_dim=self.latent_dim,
@@ -614,11 +616,11 @@ class CALMEncoder(BaseEncoder):
         # Closed-form linear prior (reservoir-style readout): solved from EMA
         # sufficient statistics over a post-freeze window, then frozen; the
         # MLP learns only the residual. See the ``energy_priors`` registry for options
-        # ("none" = paper-pure ablation). Energy head only; flow has none.
+        # ("none" = paper-pure ablation). Energy generator only; flow has none.
         prior_factory = registry.lookup("energy_priors", energy_prior)
-        if prior_factory is not None and head_kind not in ("flow", "harmonic"):
+        if prior_factory is not None and generator_type not in ("flow", "harmonic"):
             period = max(2, int(getattr(config, "block_size", 512)) // self.K)
-            self.energy_head.set_prior(
+            self.generator.set_prior(
                 prior_factory(
                     feature_dim=config.hidden_size,
                     latent_dim=self.latent_dim,
@@ -642,7 +644,7 @@ class CALMEncoder(BaseEncoder):
         return (
             f"{self.__class__.__name__}("
             f"K={self.K}, "
-            f"head={self.head_kind}, "
+            f"generator={self.generator_type}, "
             f"latent={self.latent_dim}, "
             f"ae_hidden={self.ae_hidden}, "
             f"energy_blocks={self.energy_blocks}, "
@@ -654,7 +656,7 @@ class CALMEncoder(BaseEncoder):
     # Encoder-interface surface
     # ------------------------------------------------------------------
 
-    # Output layout the injected LM head sizes its classifier to: the VAE
+    # Output layout the injected classifier sizes its scorer to: the VAE
     # decoder emits features at ae_hidden over the true token vocabulary.
     @property
     def output_dim(self) -> int:
@@ -664,23 +666,25 @@ class CALMEncoder(BaseEncoder):
     def output_vocab_size(self) -> int:
         return self._output_vocab_size
 
-    def set_head(self, head: nn.Module) -> None:
-        """Receive the LM head built from the ``heads`` registry. Held as a bare ref
-        (the model owns the parameters); CALM applies it to decoder features."""
-        self._head = [head]
+    def set_classifier(self, classifier: nn.Module) -> None:
+        """Receive the classifier built from the ``classifiers`` registry. Held
+        as a bare ref (the model owns the parameters); CALM applies it to
+        decoder features."""
+        self._classifier = [classifier]
 
     def _classify(self, hidden: torch.Tensor) -> torch.Tensor:
-        """Project VAE decoder features to token logits via the injected head."""
-        if not self._head:
+        """Project VAE decoder features to token logits via the injected
+        classifier."""
+        if not self._classifier:
             raise RuntimeError(
-                "CALMEncoder has no LM head; the model must call set_head()."
+                "CALMEncoder has no classifier; the model must call set_classifier()."
             )
-        return self._head[0](hidden)
+        return self._classifier[0](hidden)
 
     @property
-    def classifier(self) -> Optional[nn.Module]:
-        """Projection module of the injected head (used by cut-CE paths)."""
-        return self._head[0].classifier if self._head else None
+    def scorer(self) -> Optional[nn.Module]:
+        """Scorer of the injected classifier (used by cut-CE paths)."""
+        return self._classifier[0].scorer if self._classifier else None
 
     @property
     def outputs_are_aligned(self) -> bool:
@@ -715,19 +719,20 @@ class CALMEncoder(BaseEncoder):
         return self.requires_pretraining and not bool(self._pretrain_done.item())
 
     def _codec_parameters(self):
-        """The full autoencoder: VAE + the head's reconstruction-path params
-        (token classifier, and any feature field like crystal_harmonic).
+        """The full autoencoder: VAE + the classifier's reconstruction-path
+        params (its scorer, and any feature field like crystal_harmonic).
 
         These train during AE pretraining and ONLY then - in phase 2 the recon
-        CE is zeroed, so a classifier left at random init here would stay there
-        and emit garbage tokens forever. The head's own params are included, but
-        the LM-side encoder modules (energy head, embed_proj, lm_tok_emb) are
-        excluded by id so a head->encoder back-ref can't drag them in (see
-        reference_head_encoder_backref); iterating head.parameters() can recurse
-        into this encoder, so we filter rather than trust the boundary.
+        CE is zeroed, so a scorer left at random init here would stay there
+        and emit garbage tokens forever. The classifier's own params are
+        included, but the LM-side encoder modules (generator, embed_proj,
+        lm_tok_emb) are excluded by id so the classifier's encoder back-ref
+        (BaseClassifier holds the encoder as a submodule) can't drag them in;
+        iterating classifier.parameters() can recurse into this encoder, so we
+        filter rather than trust the boundary.
         """
         exclude = set()
-        for m in (self.energy_head, self.embed_proj, self.lm_tok_emb):
+        for m in (self.generator, self.embed_proj, self.lm_tok_emb):
             for p in m.parameters():
                 exclude.add(id(p))
         seen = set()
@@ -735,8 +740,8 @@ class CALMEncoder(BaseEncoder):
             if id(p) not in seen:
                 seen.add(id(p))
                 yield p
-        if self._head:
-            for p in self._head[0].parameters():
+        if self._classifier:
+            for p in self._classifier[0].parameters():
                 if id(p) in exclude or id(p) in seen:
                     continue
                 seen.add(id(p))
@@ -749,7 +754,7 @@ class CALMEncoder(BaseEncoder):
 
     def stage_warmup_anchor(self) -> int:
         """The codec-freeze step (stage 1 -> 2 boundary) in optimizer steps, or
-        -1 until it happens. The trunk and head are gated off during stage 1, so
+        -1 until it happens. The trunk and classifier are gated off during stage 1, so
         they enter stage 2 cold; reporting this lets the scheduler re-warm them
         from the freeze rather than at the full LR. ``_freeze_opt_step`` is a
         persistent buffer, so the anchor survives checkpoint resume."""
@@ -757,14 +762,14 @@ class CALMEncoder(BaseEncoder):
         return fs if fs >= 0 else -1
 
     def pretraining_parameters(self):
-        """Codec params (VAE + head recon path) train during the AE warmup."""
+        """Codec params (VAE + classifier recon path) train during the AE warmup."""
         return self._codec_parameters()
 
     def freeze_after_pretraining(self) -> None:
         """One-shot codec freeze at the phase transition. ``_set_codec_mode``
         re-applies the VAE freeze every step in phase 2 (surviving Lightning's
         per-step train() and checkpoint resume). We eval() only the VAE (the
-        recon-path dropout lives there); calling head.eval() would recurse into
+        recon-path dropout lives there); calling classifier.eval() would recurse into
         this encoder via the back-ref and wrongly eval the global transformer."""
         self.vae.eval()
         for p in self._codec_parameters():
@@ -782,19 +787,19 @@ class CALMEncoder(BaseEncoder):
         Pad positions map to -100 (the registry losses' ignore index), which
         reproduces the old ``ignore_index=pad_token_id`` behavior for CE.
         Centroid losses (HALO) also get the decoder features as ``embeddings``
-        and the head's classifier centroids.
+        and the classifier's scorer centroids.
         """
         V = self.vae.vocab_size
         flat_logits = recon_logits.reshape(-1, V)
         flat_labels = padded.reshape(-1).clone()
         flat_labels[flat_labels == self.pad_token_id] = -100
         flat_emb = recon_hidden.reshape(-1, recon_hidden.shape[-1])
-        classifier = self._head[0].classifier if self._head else None
+        scorer = self._classifier[0].scorer if self._classifier else None
         return self.recon_loss_fn(
             logits=flat_logits,
             labels=flat_labels,
             embeddings=flat_emb,
-            classifier=classifier,
+            scorer=scorer,
             input_ids=flat_labels,
         )
 
@@ -813,7 +818,7 @@ class CALMEncoder(BaseEncoder):
 
     def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Codec-only objective: K-scaled reconstruction CE + annealed
-        free-bits KL. The global transformer and energy head are not run."""
+        free-bits KL. The global transformer and generator are not run."""
         padded = self._pad_to_chunk(input_ids)
         mean, logvar = self.vae.encode(padded)
         z = self.vae.reparameterize(mean, logvar)
@@ -959,7 +964,7 @@ class CALMEncoder(BaseEncoder):
         N = L // self.K
 
         # Stage gate: in two-stage mode the codec freezes after stage 1 so
-        # the energy head trains against a stationary target.
+        # the generator trains against a stationary target.
         frozen = self._set_codec_mode() if self.training else self._ae_is_frozen()
 
         mean, logvar = self.vae.encode(padded)  # [B, N, latent_dim]
@@ -976,7 +981,7 @@ class CALMEncoder(BaseEncoder):
         # effective β at K=4 is ~4x harder, biasing toward posterior collapse.
         if frozen:
             # Stage 2: codec is read-only; contribute nothing to the loss so
-            # only the LM/energy head trains.
+            # only the LM/energy generator trains.
             encoder_loss = recon_logits.new_zeros(())
         else:
             encoder_loss = self.K * recon_loss + beta_t * kl
@@ -1040,19 +1045,20 @@ class CALMEncoder(BaseEncoder):
         recon_hidden = self.vae.decode(z)
         recon_logits = self._classify(recon_hidden)
 
-        # Unconditional call: gating (and the energy/flow head branch) happens
-        # inside the dynamo-disabled body. Gating *here* puts the graph-break
-        # under a Python branch and produces SpeculationLogDivergence on retries.
-        self._register_head_loss(h)
+        # Unconditional call: gating (and the energy/flow generator branch)
+        # happens inside the dynamo-disabled body. Gating *here* puts the
+        # graph-break under a Python branch and produces
+        # SpeculationLogDivergence on retries.
+        self._register_generator_loss(h)
 
         return recon_logits, recon_hidden
 
     @dynamo.disable()
-    def _register_head_loss(self, h: torch.Tensor) -> None:
-        """Dispatch the stage-2 latent objective by head kind."""
-        # Harmonic is a flow head over a coefficient space - same flow_loss
+    def _register_generator_loss(self, h: torch.Tensor) -> None:
+        """Dispatch the stage-2 latent objective by generator type."""
+        # Harmonic is a flow generator over a coefficient space - same flow_loss
         # surface, so it shares the flow path (it projects internally).
-        if self.head_kind in ("flow", "harmonic"):
+        if self.generator_type in ("flow", "harmonic"):
             self._register_flow_loss(h)
         else:
             self._register_energy_loss(h)
@@ -1077,7 +1083,7 @@ class CALMEncoder(BaseEncoder):
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return
-        # Skip energy loss until the codec is ready, so the energy head isn't
+        # Skip energy loss until the codec is ready, so the generator isn't
         # chasing a wildly-moving target. Two-stage: active once the codec is
         # frozen (stage 2). Legacy joint mode: after energy_warmup. Both gates
         # read the _train_step buffer directly (not a stashed flag) so the gate
@@ -1099,7 +1105,7 @@ class CALMEncoder(BaseEncoder):
         # Linear-solve prior maintenance: accumulate (h, z_next) statistics
         # and re-solve W during the post-freeze warmup window, then freeze.
         # The prior is computed, never trained - see LinearPrior.
-        prior = self.energy_head.prior
+        prior = self.generator.prior
         if prior is not None and self.training:
             if int(self._freeze_opt_step.item()) < 0:
                 self._freeze_opt_step.fill_(self._opt_step())
@@ -1127,7 +1133,7 @@ class CALMEncoder(BaseEncoder):
         std_t = (0.5 * logvar_t).exp()
         eps_t = torch.randn(M, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype)
         # Normalize each posterior draw to the same fixed latent geometry the
-        # decoder consumes, so the energy head learns to predict in that space
+        # decoder consumes, so the generator learns to predict in that space
         # (no-op unless latent_norm is on).
         target_samples = self.vae.normalize_latent(
             mean_t.unsqueeze(0) + std_t.unsqueeze(0) * eps_t
@@ -1135,19 +1141,19 @@ class CALMEncoder(BaseEncoder):
         # [M, B, N-1, L] -> [B, N-1, M, L]
         target_samples = target_samples.permute(1, 2, 0, 3)
 
-        # Model samples: N draws from energy head. Same reshape.
+        # Model samples: N draws from the generator. Same reshape.
         N_samples = self.energy_samples_n
         # [N, B, N-1, L] -> [B, N-1, N, L]
-        model_raw = self.energy_head.sample(
+        model_raw = self.generator.sample(
             h_cond, num_samples=N_samples, t=t_cond
         ).permute(1, 2, 0, 3)
 
         loss = energy_score_loss(model_raw, target_samples)
 
-        # Diagnostic: does the head actually USE the conditioning? Re-score the
+        # Diagnostic: does the generator actually USE the conditioning? Re-score the
         # same model samples against targets rolled one position out of
         # alignment. If this mismatched energy is no higher than the matched
-        # one, the head is ignoring context - modeling the marginal, not the
+        # one, the generator is ignoring context - modeling the marginal, not the
         # sequence (i.e. "not learning sequences"). Detached; no grad effect.
         if N > 2:
             mismatched = energy_score_loss(
@@ -1158,30 +1164,30 @@ class CALMEncoder(BaseEncoder):
         total = self.energy_alpha * loss
         # Anchor / radial targets live in the decoder's latent geometry too.
         mean_next = self.vae.normalize_latent(self._last_mean[:, 1:, :].detach())
-        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
+        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.generator.noise_dim)
 
         if self.geometric_mode and self._ae_is_frozen():
             # Trinary decomposition of the anchor (sun / torus point / radial):
             # the energy score above is the distributional term; the angular
-            # HALO CE - the head's zero-noise prediction decoded through the
+            # HALO CE - the generator's zero-noise prediction decoded through the
             # FROZEN codec, scored against the true next-patch tokens - names
             # which centroid cell the prediction must land in (per-token, the
             # signal the score lacks); the radial term matches latent norms.
-            # Gradient reaches only the energy head (+ HALO's own gamma): the
+            # Gradient reaches only the generator (+ HALO's own gamma): the
             # codec and centroids are frozen measuring instruments here, so
             # this cannot collapse the downstream harmonies.
-            z_hat = self.energy_head(h_cond, zero_noise, t=t_cond)  # [B, N-1, latent]
+            z_hat = self.generator(h_cond, zero_noise, t=t_cond)  # [B, N-1, latent]
             feats = self.vae.decode(z_hat)  # [B, (N-1)*K, H]
             logits = self._classify(feats)
             labels = self._last_padded[:, self.K :].clone()
             labels[labels == self.pad_token_id] = -100
             V = logits.shape[-1]
-            classifier = self._head[0].classifier if self._head else None
+            scorer = self._classifier[0].scorer if self._classifier else None
             angular = self.geo_loss_fn(
                 logits=logits.reshape(-1, V),
                 labels=labels.reshape(-1),
                 embeddings=feats.reshape(-1, feats.shape[-1]),
-                classifier=classifier,
+                scorer=scorer,
                 input_ids=labels.reshape(-1),
             )
             radial = torch.nn.functional.mse_loss(
@@ -1195,13 +1201,13 @@ class CALMEncoder(BaseEncoder):
             self._diag["calm_halo_angular"] = float(angular.detach())
             self._diag["calm_radial"] = float(radial.detach())
         elif self.energy_anchor_weight > 0.0:
-            # Conditioning anchor (standard CALM mode): regress the head's
+            # Conditioning anchor (standard CALM mode): regress the generator's
             # zero-noise (mean) prediction onto the next posterior mean. A
             # strong, low-variance gradient that forces the conditional to
             # concentrate on the correct next latent - the energy score alone
             # leaves it at the (marginal) scale only.
             anchor = torch.nn.functional.mse_loss(
-                self.energy_head(h_cond, zero_noise, t=t_cond), mean_next
+                self.generator(h_cond, zero_noise, t=t_cond), mean_next
             )
             total = total + self.energy_anchor_weight * anchor
             self._diag["calm_energy_anchor"] = float(anchor.detach())
@@ -1209,7 +1215,7 @@ class CALMEncoder(BaseEncoder):
         # Detach in eval: val_loss only needs the scalar, never a backward graph.
         self._pending_losses["energy"] = total if self.training else total.detach()
         self._diag["calm_energy_loss"] = float((self.energy_alpha * loss).detach())
-        self._stash_head_token_acc(h_cond)
+        self._stash_generator_token_acc(h_cond)
 
         # Post-freeze prior re-solve: milestone-gated by cond_gap, kept only if
         # the energy-loss EMA does not regress (see LinearPrior.update_resolve).
@@ -1224,11 +1230,11 @@ class CALMEncoder(BaseEncoder):
 
     @dynamo.disable()
     def _register_flow_loss(self, h: torch.Tensor) -> None:
-        """Flow-matching loss between the head's velocity field and the
+        """Flow-matching loss between the generator's velocity field and the
         posterior targets. Same stage-2 gate and target construction as the
         energy path, but a dense regression objective (lower variance than the
         sample-based score). Reuses calm_energy_loss / calm_energy_cond_gap so
-        the dashboard and probe stay head-agnostic.
+        the dashboard and probe stay generator-agnostic.
         """
         B, N = h.shape[0], h.shape[1]
         if N < 2:
@@ -1244,7 +1250,7 @@ class CALMEncoder(BaseEncoder):
         mean_t = self._last_mean[:, 1:, :].detach()
         logvar_t = self._last_logvar[:, 1:, :].detach()
         # S posterior draws per position (reference flow num_samples == 8);
-        # the dense FM target makes the energy head's M=100 pool unnecessary.
+        # the dense FM target makes the energy generator's M=100 pool unnecessary.
         S = self.energy_samples_n
         std_t = (0.5 * logvar_t).exp()
         eps_t = torch.randn(S, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype)
@@ -1256,12 +1262,12 @@ class CALMEncoder(BaseEncoder):
         # Shared flow noise/time so matched vs mismatched is apples-to-apples.
         x0 = torch.randn_like(target)
         tau = torch.rand(target.shape[:-1], device=target.device, dtype=target.dtype)
-        loss = self.energy_head.flow_loss(target, cond, x0=x0, t=tau).mean()
+        loss = self.generator.flow_loss(target, cond, x0=x0, t=tau).mean()
 
         # cond_gap: re-score against targets rolled one patch out of alignment.
         # No drop = the field ignores context (marginal, not sequence).
         if N > 2:
-            mismatched = self.energy_head.flow_loss(
+            mismatched = self.generator.flow_loss(
                 target.roll(1, dims=2), cond, x0=x0, t=tau
             ).mean()
             self._diag["calm_energy_cond_gap"] = float((mismatched - loss).detach())
@@ -1269,19 +1275,19 @@ class CALMEncoder(BaseEncoder):
         total = self.energy_alpha * loss
         self._pending_losses["energy"] = total if self.training else total.detach()
         self._diag["calm_energy_loss"] = float(total.detach())
-        self._stash_head_token_acc(h_cond)
+        self._stash_generator_token_acc(h_cond)
 
     @torch.no_grad()
-    def _stash_head_token_acc(self, h_cond: torch.Tensor) -> None:
-        """Teacher-forced next-patch token accuracy of the head's best-guess.
+    def _stash_generator_token_acc(self, h_cond: torch.Tensor) -> None:
+        """Teacher-forced next-patch token accuracy of the generator's best-guess.
 
-        Decode the head's zero-noise prediction through the frozen codec and
-        match argmax tokens against the true next patches - the live,
-        head-agnostic, absolute view of the probe's make-or-break signal.
+        Decode the generator's zero-noise prediction through the frozen codec
+        and match argmax tokens against the true next patches - the live,
+        generator-agnostic, absolute view of the probe's make-or-break signal.
         """
         t_cond = torch.arange(h_cond.shape[1], device=h_cond.device)
-        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
-        z_hat = self.energy_head(h_cond, zero_noise, t=t_cond)
+        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.generator.noise_dim)
+        z_hat = self.generator(h_cond, zero_noise, t=t_cond)
         pred = self._classify(self.vae.decode(z_hat)).argmax(dim=-1)
         labels = self._last_padded[:, self.K :]
         mask = labels != self.pad_token_id
@@ -1307,7 +1313,7 @@ class CALMEncoder(BaseEncoder):
         decode them back), NOT generation quality - it is near-zero for a
         working codec regardless of whether the LM can generate. The trainer
         surfaces it as ``val_codec_bpb``; trust ``val_brierlm`` for the
-        generative path. An energy-based head has no closed-form per-byte
+        generative path. An energy-based generator has no closed-form per-byte
         likelihood, so CALM intentionally does not report a bits-per-byte.
         """
         return getattr(self, "_last_recon_loss", None)
@@ -1348,20 +1354,20 @@ class CALMEncoder(BaseEncoder):
         frozen = self._ae_is_frozen()
         if not frozen:
             return False
-        # eval() the VAE each step: kills codec dropout so the energy head's
+        # eval() the VAE each step: kills codec dropout so the generator's
         # targets (the posterior mean/logvar) stop jittering. requires_grad_
         # (False) means no optimizer updates, so the target distribution is
-        # stationary. Only the VAE is touched: the injected head holds a
+        # stationary. Only the VAE is touched: the injected classifier holds a
         # back-reference to this encoder as a submodule, so iterating its
         # parameters() or calling its eval() would recurse back into the
-        # encoder and freeze the energy head too. The head needs no explicit
-        # freeze anyway - its sole gradient source (the recon CE) is zeroed
-        # out in stage 2, so it already stops learning.
+        # encoder and freeze the generator too. The classifier needs no
+        # explicit freeze anyway - its sole gradient source (the recon CE) is
+        # zeroed out in stage 2, so it already stops learning.
         self.vae.eval()
         for p in self.vae.parameters():
             p.requires_grad_(False)
         # Record the stage-1 -> 2 boundary the first time we freeze, for ALL
-        # head kinds (the prior-window set below only runs for the energy head).
+        # generator types (the prior-window set below only runs for energy).
         # This is the convergence/cap moment the codec actually froze, which
         # stage_warmup_anchor() reports to re-warm the LR. The <0 guard keeps it
         # at the true freeze step across checkpoint resume.
@@ -1370,7 +1376,7 @@ class CALMEncoder(BaseEncoder):
         if not self._ae_frozen_logged:
             print(
                 f"[CALM] codec frozen at optimizer step {self._opt_step()}; "
-                f"stage 2 (energy head only) begins."
+                f"stage 2 (generator only) begins."
             )
             self._ae_frozen_logged = True
         return True
@@ -1473,16 +1479,16 @@ class CALMEncoder(BaseEncoder):
             temperature: T in (0, 1]. Exact only at T = 1/integer; other
                 values snap to the nearest reciprocal.
             num_samples: pool size for voting.
-            noise_scale: NON-paper diagnostic knob. <1 shrinks the head's
+            noise_scale: NON-paper diagnostic knob. <1 shrinks the generator's
                 noise toward its conditional-mean (best-guess) prediction;
-                useful to peek at a weakly-trained head, but it bypasses the
+                useful to peek at a weakly-trained generator, but it bypasses the
                 rigorous count-based temperature. Default 1.0 = paper-faithful.
 
         Returns:
             ``[K]`` selected token ids.
         """
         if temperature >= 1.0:
-            z = self.energy_head.sample(
+            z = self.generator.sample(
                 h_last, num_samples=1, noise_scale=noise_scale, t=t
             )
             z = z.view(1, 1, -1)
@@ -1507,9 +1513,9 @@ class CALMEncoder(BaseEncoder):
 
         # Pool of candidate patches: decode each candidate latent and take
         # argmax tokens. Stochasticity lives in the latent draws; voting then
-        # concentrates on the patches the head agrees on most often (paper
+        # concentrates on the patches the generator agrees on most often (paper
         # Algorithm 2). noise_scale stays 1.0 for paper-faithful sampling.
-        z_pool = self.energy_head.sample(
+        z_pool = self.generator.sample(
             h_last, num_samples=num_samples, noise_scale=noise_scale, t=t
         )
         z_pool = z_pool.view(num_samples, 1, -1)
@@ -1552,7 +1558,7 @@ class CALMEncoder(BaseEncoder):
         base_forward=None,
         **model_kwargs: Any,
     ):
-        """CALM generation: latent LM -> energy head -> VAE decode.
+        """CALM generation: latent LM -> energy generator -> VAE decode.
 
         A transformers decoding method (see ``BaseEncoder.decoding_method``), so
         ``stopping_criteria`` arrives prepared and carries the EOS ids, the chat
@@ -1591,14 +1597,15 @@ class CALMEncoder(BaseEncoder):
             getattr(generation_config, "calm_num_samples", None)
             or self.vote_num_samples
         )
-        # Non-paper diagnostic: <1 shrinks the head's noise toward its mean
-        # prediction (peek at a weakly-trained head). Default 1.0 = paper-faithful.
+        # Non-paper diagnostic: <1 shrinks the generator's noise toward its mean
+        # prediction (peek at a weakly-trained generator). Default 1.0 =
+        # paper-faithful.
         noise_scale = float(getattr(generation_config, "calm_noise_scale", None) or 1.0)
         return_dict = bool(getattr(generation_config, "return_dict_in_generate", False))
 
         # Left-pad the prompt to a multiple of K. The codec compresses K tokens
         # into one latent, so a non-aligned prompt would make _pad_to_chunk
-        # right-pad the TAIL - i.e. the conditioning patch the head predicts from
+        # right-pad the TAIL - i.e. the conditioning patch the generator predicts from
         # - leaving it mostly pad on every step. Left-padding keeps the trailing
         # patch full of real tokens; only the leading patch carries pads, and we
         # strip them from the returned sequence. (The reference pads here too,

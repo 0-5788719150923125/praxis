@@ -52,7 +52,7 @@ undefined, not merely untrained.
 Checked 2026-08-23, and it is further along than expected:
 
 - `HarmonicField._eval_field(scaled, seq_len, device, offset=0)`
-  (`praxis/heads/harmonic.py:814`) already evaluates the field at
+  (`praxis/classifiers/harmonic.py:814`) already evaluates the field at
   `offset .. offset+seq_len-1`. The field is anchored to ABSOLUTE position;
   the offset exists for cached-decode continuation.
 - `_phase_table` (`harmonic.py:833`) slices a precomputed `[T, F_t]` buffer,
@@ -67,7 +67,7 @@ Checked 2026-08-23, and it is further along than expected:
 ## The build
 
 **0. The gate (no new code).** Unroll the existing serpent cell past $K$:
-`praxis/heads/mtp/rnn.py` is one gated cell, and `depth_embed`
+`praxis/classifiers/mtp/rnn.py` is one gated cell, and `depth_embed`
 (`rnn.py:57`) is `torch.zeros(num_depths, ...)`, so holding the signature at
 zero beyond the trained window is the cell's own default rather than an
 invention. Score against true bytes at $k \in [K{+}1, 2K]$, plot accuracy
@@ -78,12 +78,12 @@ means stop and demote the address language in the paper.
 explicit position tensor instead of deriving `arange(offset, offset+seq_len)`.
 One signature change; fractional $\tau$ comes with it for free.
 
-**2. `praxis/heads/mtp/field.py`.** One readout, `(trunk state, offset τ) ->
+**2. `praxis/classifiers/mtp/field.py`.** One readout, `(trunk state, offset τ) ->
 logits`, parameters $O(1)$ in $K$ and strictly fewer than any per-depth bank.
 It slots into the existing bank contract (`prepare_inputs`,
 `training_metrics`, per-depth losses) the same way vear and serpent_rnn do.
 Note the wart while you are in there: `MTP_REGISTRY`
-(`praxis/heads/mtp/__init__.py:27`) holds only the per-depth module types -
+(`praxis/classifiers/mtp/__init__.py:27`) holds only the per-depth module types -
 bank types are branched by string at `__init__.py:129-141` and appended by
 hand to the CLI choices at `praxis/cli/groups/architecture.py:426`. A third
 bank is the moment to make the registry hold banks too, rather than the fourth.

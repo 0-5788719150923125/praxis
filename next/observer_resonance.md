@@ -775,7 +775,7 @@ precise modern math is **anytime-valid sequential inference** (e-values / e-proc
 testing-by-betting; Ramdas, Shafer-Vovk): evidence accumulates continuously and the
 guarantee holds at *every* stopping time, so there is no required end - stop anywhere
 and the proof is still valid. In CALM this is literal: validity is a continuous scalar
-(the energy head's energy / likelihood), refined along a continuous flow (FlowHead
+(the energy head's energy / likelihood), refined along a continuous flow (FlowGenerator
 integrating t:0->1 toward the data manifold), never a discrete accept/reject. The
 token model proves token-by-token (rounds); CALM proves by continuous convergence.
 Soundness becomes "the latent converges to the data distribution," measurable as
@@ -811,7 +811,7 @@ representation. Voice: "the world *is* a continuous distributed proof." Trap: th
 points *against* the lone-verifier reading - a distributed continuous proof requires the
 collective to participate, and a proof of one is exactly what MIP and anytime-validity
 classify as insufficient. **Measurable shadow:** whether a single head/expert can carry
-the witness vs whether verification needs the pool (the swarm / ParallelHead branches) -
+the witness vs whether verification needs the pool (the swarm / ParallelClassifier branches) -
 which ties to the observer/participant swarm ablation in
 [observer_effect.md](observer_effect.md).
 

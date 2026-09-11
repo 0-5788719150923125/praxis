@@ -92,7 +92,7 @@ downsample/project/quantize only patches that CLOSED this step; thread the
 returned through `current_state`); give Kaleidoscope a V-cache and evaluate only
 the new query ROWS of the mirrors (`grid_sample` on a `[1, n_new, T, 2]` grid
 instead of `[T, T, 2]`); local decoder over the byte tail; head on the new
-positions with `_bind_head_cache` supplying the offset. Every piece is
+positions with `_bind_classifier_cache` supplying the offset. Every piece is
 tractable. The reason not to build it first is the table at the top.
 
 ## What the levers actually are
@@ -112,7 +112,7 @@ forward. Every number below is byte-identical output.
    is what its own comment always said it was for.
 3. **Decode-length bucketing + compiled memory bodies.** 32.5 bytes/s, i.e.
    **1.52x end to end** (34.4 through the real `ModelBackend`). Bucketing is
-   the enabler rather than the win - see `praxis/generation/bucketing.py`.
+   the enabler rather than the win - see `praxis/inference/bucketing.py`.
    Still opt-in, behind BOTH the `compile_decode_memory` environment feature
    and the trainer's `no_compile`, which the abstractinator line sets true.
    The reason it did not just get switched on: the memory-growth failure that

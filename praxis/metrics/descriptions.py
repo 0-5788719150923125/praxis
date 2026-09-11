@@ -13,7 +13,7 @@ The ``chart`` sub-dict may contain:
 * ``title``: chart title text
 * ``y_label``: y-axis label
 * ``y_scale``: ``"linear"`` (default) or ``"logarithmic"``
-* ``group``: a stable section key (e.g., ``"harmonic_head"``) used to
+* ``group``: a stable section key (e.g., ``"harmonic_classifier"``) used to
   cluster related metrics into a single dashboard section
 * ``order``: integer ordering within the group (default 0)
 * ``series_group``: optional key; metrics sharing it render as multiple
@@ -55,7 +55,7 @@ def _normalize(value: Any) -> Optional[Dict[str, Any]]:
             "chart": chart if isinstance(chart, dict) else None,
             "snapshot": snapshot if isinstance(snapshot, dict) else None,
         }
-        # A producer may pin its own caller (e.g. ParallelHead's namespaced
+        # A producer may pin its own caller (e.g. ParallelClassifier's namespaced
         # per-branch keys, which the model walk in _stamp_callers can't reach).
         caller = value.get("caller")
         if isinstance(caller, str):
@@ -78,9 +78,9 @@ def _collect_from(descriptions: Any) -> Dict[str, Dict[str, Any]]:
 
 def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
     """Raw description dicts contributed by live-model components."""
-    head = getattr(model, "head", None)
-    if head is not None and hasattr(head, "all_metric_descriptions"):
-        yield head.all_metric_descriptions()
+    classifier = getattr(model, "classifier", None)
+    if classifier is not None and hasattr(classifier, "all_metric_descriptions"):
+        yield classifier.all_metric_descriptions()
 
     weighter = getattr(model, "tasker", None)
     if weighter is not None and getattr(weighter, "is_dynamic", False):
@@ -151,8 +151,8 @@ def resolve_callers(root: Any) -> Dict[str, str]:
     """Map each metric key to the class name of the module that declares it.
 
     Walks ``root.modules()`` parents-first, first declarer wins. Used to stamp
-    the live model and, by ``ParallelHead``, to attribute its per-branch keys
-    to the owning leaf class (e.g. ``HarmonicField``, not its head wrapper).
+    the live model and, by ``ParallelClassifier``, to attribute its per-branch keys
+    to the owning leaf class (e.g. ``HarmonicField``, not its classifier wrapper).
     """
     out: Dict[str, str] = {}
     if not hasattr(root, "modules"):
@@ -171,7 +171,7 @@ def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
     Lets the dashboard show which component owns a metric. We walk the live
     model (parents before children, first declarer wins) then fill in the
     non-module sources. Entries that already carry a pinned ``caller`` (e.g.
-    ParallelHead's namespaced keys) are left untouched; unowned keys stay bare.
+    ParallelClassifier's namespaced keys) are left untouched; unowned keys stay bare.
     """
 
     def claim(key: str, caller: str) -> None:

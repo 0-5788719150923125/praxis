@@ -8,12 +8,14 @@ from typing import List, Optional, Union
 
 from transformers import PretrainedConfig
 
+from praxis.renames import pop_legacy_config_keys
+
 
 class PraxisConfig(PretrainedConfig):
     """All of Praxis's architecture knobs in one HuggingFace config object.
 
     The string-valued fields (`block_type`, `attention_type`, `encoder_type`,
-    `head_type`, ...) are registry keys: each names an implementation that
+    `classifier_type`, ...) are registry keys: each names an implementation that
     `modeling.py` looks up in the matching `*_REGISTRY` to build the model, so
     swapping an architecture is a config change, not a code change. `model_type
     = "praxis"` registers it with the HF `Auto*` classes.
@@ -67,7 +69,7 @@ class PraxisConfig(PretrainedConfig):
         compression_type: str = "none",
         sorting_type: str = "none",
         norm_type: str = "rms_norm",
-        head_type: str = "forward",
+        classifier_type: str = "forward",
         # Ghost features: derive part of the model's weight shape from a
         # smaller real tensor by fixed signed permutation, instead of
         # storing it. A registry profile names BOTH the target regex and
@@ -126,8 +128,14 @@ class PraxisConfig(PretrainedConfig):
         grad_accumulation: int = 1,
         **kwargs,
     ):
+        # Configs saved before a rename (a checkpoint's config.json) carry the
+        # old key, which would otherwise land in kwargs and be ignored.
+        legacy = pop_legacy_config_keys(kwargs)
+
         # Snapshot the declared arguments so each can be assigned automatically.
         declared = dict(locals())
+        del declared["legacy"]
+        declared.update(legacy)
 
         super().__init__(
             pad_token_id=pad_token_id,

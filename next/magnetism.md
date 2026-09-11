@@ -189,7 +189,7 @@ Narrower than the pitch, and none of it is called magnetism.
   `spec_real`/`spec_imag` are frozen buffers and `self.amplitudes` is a **real**
   parameter, so per-cell phase can only flip by pi, discretely. There is no
   continuous phase DOF anywhere in the harmonic machinery. Separately,
-  `grep current_depth praxis/heads/` returns **zero**: the field is never inside
+  `grep current_depth praxis/classifiers/` returns **zero**: the field is never inside
   the loop. Both would have to be built, and the frozen basis is a claim
   `research/body.tex` currently rests on.
 - **The dual text+pixel stream, on this config.** `H(pixels | text) = 0` at

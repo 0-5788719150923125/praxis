@@ -31,7 +31,7 @@ from praxis.encoders.quantization import (
     LearnedQueryAttention,
     MultiStageResidualVQ,
 )
-from praxis.heads.halo import HaloClassifier
+from praxis.classifiers.halo import HaloGeometry
 from praxis.losses.halo import HALOLoss
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -149,7 +149,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             raise ValueError(f"Unknown abstractinator bottleneck: {bottleneck!r}")
 
         # Scored with HALO: per stage, a projection of the normalized trunk
-        # output feeds a HaloClassifier over that stage's K codes. The projection
+        # output feeds a HaloGeometry over that stage's K codes. The projection
         # starts on the unit per-coordinate scale HALO's calibration assumes,
         # and is left unnormalized after that, as in the reference.
         if next_code not in NEXT_CODE_OBJECTIVES:
@@ -169,8 +169,8 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             )
             for proj in self.next_code_proj:
                 nn.init.normal_(proj.weight, std=D**-0.5)
-            self.next_code_heads = nn.ModuleList(
-                [HaloClassifier(D, codes) for _ in range(depth)]
+            self.next_code_classifiers = nn.ModuleList(
+                [HaloGeometry(D, codes) for _ in range(depth)]
             )
             self.next_code_loss = HALOLoss(vocab_size=codes, learn_gamma=False)
 
@@ -232,18 +232,20 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             return
         x = self.next_code_norm(h[:, :-1, :])
         total, correct, abstain, stages = None, [], [], 0
-        for s, (proj, head) in enumerate(zip(self.next_code_proj, self.next_code_heads)):
+        for s, (proj, geometry) in enumerate(
+            zip(self.next_code_proj, self.next_code_classifiers)
+        ):
             if s >= len(digits) or tuple(digits[s].shape) != tuple(h.shape[:2]):
                 break
             target = digits[s][:, 1:].reshape(-1)
             feats = proj(x).reshape(-1, x.shape[-1]).float()
-            loss = self.next_code_loss.on_features(feats, target, head)
+            loss = self.next_code_loss.on_features(feats, target, geometry)
             total = loss if total is None else total + loss
             stages += 1
             with torch.no_grad():
                 # Nearest centroid on the features as scored, not through the
-                # classifier's RMS-normalized inference path.
-                cen = head.centroids()
+                # geometry's RMS-normalized inference path.
+                cen = geometry.centroids()
                 score = 2.0 * feats.detach() @ cen.T - cen.pow(2).sum(-1)
                 correct.append((score.argmax(-1) == target).float().mean())
                 stats = self.next_code_loss._last_stats or {}
@@ -253,7 +255,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         # Divided by log K, as CALM's code loss is, so the term's size does not
         # grow with the codebook. HALO's distance logits start sharper than a
         # chance classifier, so it opens at 2-3x this scale, not at 1.0.
-        chance = math.log(max(2, self.next_code_heads[0].vocab_size))
+        chance = math.log(max(2, self.next_code_classifiers[0].vocab_size))
         self._pending["next_code_halo"] = total / stages / chance
         self._next_code_diag = {
             "next_code_acc": torch.stack(correct).mean(),

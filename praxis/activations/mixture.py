@@ -1,6 +1,6 @@
 """A bank of activations, blended into one. The wrapper form of "use two
 nonlinearities", so anything that writes ``ACT2FN[name]`` gets it and the bank
-can be any length. The activation-level analogue of ``ParallelHead``: N branches
+can be any length. The activation-level analogue of ``ParallelClassifier``: N branches
 over the same input, combined by learned weights, rather than a fixed pipeline.
 
 THE METHOD. Manessi & Rozza, "Learning Combinations of Activation Functions"

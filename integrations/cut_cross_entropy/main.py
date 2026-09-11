@@ -18,7 +18,7 @@ class CutCrossEntropyLoss(nn.Module):
     def forward(
         self,
         embeddings: Tensor,
-        classifier: nn.Linear,
+        scorer: nn.Linear,
         labels: Tensor,
         *args: Any,
         **kwargs: Any,
@@ -28,7 +28,7 @@ class CutCrossEntropyLoss(nn.Module):
 
         Args:
             embeddings: FULL UNSHIFTED embeddings from model (all sequence positions)
-            classifier: Linear classifier layer
+            scorer: The classifier's linear projection (holds ``weight``)
             labels: FULL UNSHIFTED labels (input_ids, not pre-shifted)
             **kwargs: Must contain 'input_ids' for unshifted targets
 
@@ -44,16 +44,13 @@ class CutCrossEntropyLoss(nn.Module):
         # The shift=1 parameter will handle the shifting internally
         targets = kwargs.get("input_ids", labels)
 
-        # Apply pre-projection if the classifier has one (e.g., TiedClassifier with different hidden/embed sizes)
-        if (
-            hasattr(classifier, "pre_projection")
-            and classifier.pre_projection is not None
-        ):
-            embeddings = classifier.pre_projection(embeddings)
+        # Apply pre-projection if the scorer has one (e.g., TiedProjection with different hidden/embed sizes)
+        if hasattr(scorer, "pre_projection") and scorer.pre_projection is not None:
+            embeddings = scorer.pre_projection(embeddings)
 
         return linear_cross_entropy(
             embeddings,
-            classifier.weight,
+            scorer.weight,
             targets,
             impl="cce",
             shift=1,

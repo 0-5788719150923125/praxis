@@ -11,7 +11,7 @@ profiled step's cost by the accumulation factor.
 
 Results are stashed on the uncompiled model as ``_compute_metrics`` (scalars,
 drained by DynamicsLoggerCallback) and ``_compute_profile`` (the treemap
-snapshot, served by ``/api/head_snapshots``), matching the RLCT probe's
+snapshot, served by ``/api/classifier_snapshots``), matching the RLCT probe's
 stash-and-drain pattern: the profiler runs on a slow cadence while the dashboard
 re-reads the standing value every tick.
 
@@ -51,7 +51,7 @@ def _log_quietly(message: str) -> None:
 _MAX_WINDOW_BATCHES = 64
 
 # Scope depth used under torch.compile: 0 = the model's direct children only
-# (encoder / decoder / head / embeddings / criterion). Measured on the real
+# (encoder / decoder / classifier / embeddings / criterion). Measured on the real
 # model: 8 hooks cost nothing (-6.5%, i.e. noise) and the forward shares track
 # eager to within 2.5%. Depth 1 keeps the right ORDER but distorts magnitudes
 # badly (decoder 91.7% -> 44.1%), and every module costs +103%/step. So coarse

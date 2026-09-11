@@ -224,7 +224,7 @@ class APIServer:
         # merely racy).
         self.snapshot_store = SnapshotStore()
         # Broadcast snapshot changes so clients refresh model-probe cards
-        # (activation curves, head snapshots, evolution) on change, not on a
+        # (activation curves, classifier snapshots, evolution) on change, not on a
         # polling timer. Unchanged recomputes are filtered in the store.
         self.snapshot_store.notify = lambda name, version: socketio.emit(
             "invalidate",

@@ -4,7 +4,7 @@ import logging
 
 from lightning.pytorch.callbacks import Callback
 
-_log = logging.getLogger("praxis.generation")
+_log = logging.getLogger("praxis.inference")
 
 
 class GenerationQueueCallback(Callback):

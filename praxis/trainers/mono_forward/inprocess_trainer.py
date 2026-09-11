@@ -286,19 +286,21 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     build_scheduler,
                 )
 
-                # Include the head: it now owns the byte classifier (moved
-                # off the encoder), so the decode pass below must train it
-                # alongside encoder.decoder.
+                # Include the classifier: it owns the byte scorer (not the
+                # encoder), so the decode pass below must train it alongside
+                # encoder.decoder.
                 class _EncoderShim(torch.nn.Module):
                     def __init__(
-                        self, enc: torch.nn.Module, head: Optional[torch.nn.Module]
+                        self,
+                        enc: torch.nn.Module,
+                        classifier: Optional[torch.nn.Module],
                     ) -> None:
                         super().__init__()
                         self.encoder = enc
-                        if head is not None:
-                            self.head = head
+                        if classifier is not None:
+                            self.classifier = classifier
 
-                encoder_shim = _EncoderShim(encoder, getattr(model, "head", None))
+                encoder_shim = _EncoderShim(encoder, getattr(model, "classifier", None))
                 self._encoder_optimizer = build_optimizer(
                     shim=encoder_shim,
                     optimizer_config=self.optimizer_config,
@@ -407,7 +409,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         where ``decode_aux`` is ``None`` for the embeds path or a dict
         ``{h_encoder, patch_lengths, local_decoder_tokens}`` for the
         encoder path (so the trainer can run a separate decode-pass to
-        train the encoder's output head).
+        train the encoder-attached classifier).
         """
         if encoder is not None:
             token_block_ids = create_block_ids(input_ids_dev, config.eos_token_id)
@@ -598,10 +600,10 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             if last_softmax_collapse is not None:
                 state["last_softmax_collapse"] = last_softmax_collapse
 
-            # Train the encoder's decode head + classifier. The MF
+            # Train the encoder's decoder + the classifier. The MF
             # depth chain only updates per-layer projections M_i, so
             # encoder.decoder (the byte-level output transformer) and
-            # encoder.classifier never see a gradient signal otherwise.
+            # the classifier never see a gradient signal otherwise.
             # We feed the last MF layer's hidden state (already detached
             # by the worker, preserving MF isolation) into the encoder's
             # decode pipeline, take the byte-level next-token CE loss,
@@ -614,7 +616,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
                 final_hidden = current_activations.detach()
                 h_encoder_detached = decode_aux["h_encoder"].detach()
-                # decode() returns features; the head owns classification.
+                # decode() returns features; the classifier classifies them.
                 _, decode_embeds = encoder.decode(
                     final_hidden,
                     h_encoder_detached,
@@ -623,7 +625,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     decode_aux["local_decoder_tokens"],
                     block_ids=decode_aux.get("token_block_ids"),
                 )
-                decode_logits = model_host.head(decode_embeds)
+                decode_logits = model_host.classifier(decode_embeds)
                 decode_targets = input_ids_dev[..., 1:].reshape(-1)
                 decode_logits_flat = (
                     decode_logits[..., :-1, :]
@@ -637,8 +639,8 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             # Encoder optimizer step at accum boundary. Layer 0's
             # worker has already accumulated encoder grads via the
             # input-grad path; aux_loss (when present) added more;
-            # the decode pass above contributes grads to the decode
-            # head + classifier. Mirror the worker's accumulation
+            # the decode pass above contributes grads to the encoder's
+            # decoder + the classifier. Mirror the worker's accumulation
             # cadence so encoder updates land in lockstep.
             if self._encoder_optimizer is not None:
                 is_accum_boundary = (
@@ -1033,7 +1035,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         try:
             # Encoders that own their decoding loop (CALM) must NOT be sampled
             # token-by-token from a logits projection: CALM predicts the next
-            # latent via the energy head and decodes K tokens through the frozen
+            # latent via the energy generator and decodes K tokens through the frozen
             # VAE (patch-vote). Run the encoder's own decoding method, feeding
             # it a base_forward that hops the MF worker route and returns the
             # per-patch hidden state - the same signal trunk_hooks builds for
@@ -1321,18 +1323,18 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             model_host.decoder.locals[i].load_state_dict(layer_state)
 
         last_proj = projection_states[-1]
-        head_mapped = {"lm_head." + k: v for k, v in last_proj.items()}
-        # Encoder-based models don't have a top-level ``model.head`` -
+        classifier_mapped = {"scorer." + k: v for k, v in last_proj.items()}
+        # Encoder-based models don't have a top-level ``model.classifier`` -
         # the encoder owns its own decode projection. In that case the
         # MF projection M_i is the source of truth on the per-layer
-        # side; we just save it and skip the head overwrite.
-        if getattr(model_host, "head", None) is not None:
+        # side; we just save it and skip the classifier overwrite.
+        if getattr(model_host, "classifier", None) is not None:
             try:
-                model_host.head.load_state_dict(head_mapped)
+                model_host.classifier.load_state_dict(classifier_mapped)
             except Exception:
-                # Model heads that don't share the ``lm_head.`` key shape
+                # Classifiers that don't share the ``scorer.`` key shape
                 # (tied weights, custom projections) can't be reconstructed
-                # from M_i. We skip the head overwrite instead of crashing
+                # from M_i. We skip the classifier overwrite instead of crashing
                 # the save - the per-worker projection_states are still
                 # the source of truth for MF resume.
                 pass

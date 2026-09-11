@@ -455,18 +455,18 @@ class SMEAR(nn.Module):
         row. Under cached decode the sum continues from the state carried for
         this depth when it lines up with the depth's cached length, and falls
         back to the suffix alone when it does not (a rollback, a batch change),
-        which is the crystal head's rule (``_route_causal``).
+        which is the crystal classifier's rule (``_route_causal``).
         """
         x = inputs.float()
         batch, length = x.shape[0], x.shape[1]
         total = x.cumsum(dim=1)
         count = torch.arange(1, length + 1, device=x.device, dtype=x.dtype)
         count = count.view(1, -1, 1).expand(batch, -1, 1)
-        if hasattr(cache, "get_head_state") and hasattr(cache, "get_seq_length"):
+        if hasattr(cache, "get_classifier_state") and hasattr(cache, "get_seq_length"):
             depth = int(current_depth)
             key = f"{type(self).__name__}-prefix:{id(self)}:{depth}"
             cached = int(cache.get_seq_length(depth))
-            state = cache.get_head_state(key)
+            state = cache.get_classifier_state(key)
             if (
                 state is not None
                 and state["pos"] == cached
@@ -474,7 +474,7 @@ class SMEAR(nn.Module):
             ):
                 total = total + state["sum"].to(x.device).unsqueeze(1)
                 count = count + state["count"].to(x.device).view(batch, 1, 1)
-            cache.set_head_state(
+            cache.set_classifier_state(
                 key,
                 {
                     "sum": total[:, -1].detach(),

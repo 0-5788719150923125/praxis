@@ -457,19 +457,19 @@ def test_activation_curves_route_preserves_training_mode():
     assert seen_training and all(seen_training), "model left train mode mid-sample"
 
 
-def _head_snapshots(model):
-    """GET /api/head_snapshots through the live fallback (no snapshot store)."""
+def _classifier_snapshots(model):
+    """GET /api/classifier_snapshots through the live fallback (no snapshot store)."""
     app = Flask(__name__)
     app.register_blueprint(dynamics_bp)
     app.config["snapshot_store"] = None
     app.config["generator"] = type("G", (), {"model": model})()
     with app.test_client() as c:
-        return json.loads(c.get("/api/head_snapshots").data)
+        return json.loads(c.get("/api/classifier_snapshots").data)
 
 
 def test_route_serves_the_stashed_profile(bare_model, compute_profile):
     bare_model._compute_profile = compute_profile
-    body = _head_snapshots(bare_model)
+    body = _classifier_snapshots(bare_model)
 
     assert body["status"] == "ok"
     profile = body["snapshots"]["compute_profile"]
@@ -483,16 +483,18 @@ def test_route_is_quiet_without_a_profile(bare_model, stash):
     """A run that never profiled (e.g. torch.compile) grows no compute card."""
     if stash is not None:
         bare_model._compute_profile = stash
-    assert "compute_profile" not in _head_snapshots(bare_model).get("snapshots", {})
+    assert "compute_profile" not in _classifier_snapshots(bare_model).get(
+        "snapshots", {}
+    )
 
 
 def test_recipe_and_route_agree_on_the_compute_key(bare_model, compute_profile):
     """Two implementations of the same payload; keep them from drifting."""
-    from praxis.web.snapshots import _recipe_head_snapshots
+    from praxis.web.snapshots import _recipe_classifier_snapshots
 
     bare_model._compute_profile = compute_profile
-    recipe_out = _recipe_head_snapshots(bare_model)["snapshots"]
-    route_out = _head_snapshots(bare_model)["snapshots"]
+    recipe_out = _recipe_classifier_snapshots(bare_model)["snapshots"]
+    route_out = _classifier_snapshots(bare_model)["snapshots"]
     assert recipe_out["compute_profile"] == route_out["compute_profile"]
 
 

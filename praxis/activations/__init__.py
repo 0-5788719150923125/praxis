@@ -83,7 +83,7 @@ registry.declare(
     title="Activation functions",
     doc=(
         (
-            "Pointwise nonlinearities used inside blocks and heads. Concrete "
+            "Pointwise nonlinearities used inside blocks and classifiers. Concrete "
             "nonlinearities only: how several combine at a gate is a separate axis "
             "(``activation_types``), so every entry here is something you can put in "
             "``values``. In a config file the value is a bare name or a mapping, ``{type, "

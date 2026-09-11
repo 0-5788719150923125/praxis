@@ -14,7 +14,7 @@ TINY_MODEL = dict(
     depth=2,
     tokenizer_type="byte_level",
     decoder_type="sequential",
-    head_type="prismatic5",
+    classifier_type="prismatic5",
     residual_type="smear",
     loss_func="halo",
 )

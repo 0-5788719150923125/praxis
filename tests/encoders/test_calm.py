@@ -1,4 +1,4 @@
-"""CALM encoder + energy head + LF-temperature sanity tests.
+"""CALM encoder + energy generator + LF-temperature sanity tests.
 
 These are shape / plumbing checks rather than training-quality
 assertions. The smoke-test in the CALM README covers the latter.
@@ -31,7 +31,7 @@ def test_calm_forward_backward():
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.train()
-    # Force joint mode so the energy head trains from step 0. The default is
+    # Force joint mode so the generator trains from step 0. The default is
     # now an AE pretraining phase, where energy is gated until the codec
     # freezes (see test_calm_pretraining_phase_freezes_on_cap).
     model.encoder.requires_pretraining = False
@@ -40,14 +40,14 @@ def test_calm_forward_backward():
     out = model(input_ids=input_ids, labels=labels)
     assert out.loss.requires_grad
     out.loss.backward()
-    # Energy head and VAE both get gradients.
+    # Generator and VAE both get gradients.
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
         for p in model.encoder.vae.parameters()
     )
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
-        for p in model.encoder.energy_head.parameters()
+        for p in model.encoder.generator.parameters()
     )
 
 
@@ -123,35 +123,35 @@ def test_calm_generate_aligns_unaligned_prompt():
     assert new % K == 0 and new == 2 * K
 
 
-def test_calm_with_crystal_head():
-    # CALM borrows a ``heads`` registry head as its token classifier. Crystal
+def test_calm_with_crystal_classifier():
+    # CALM borrows a ``classifiers`` registry entry as its token classifier. Crystal
     # (which previously refused loss-owning encoders) now sizes to the VAE
     # decoder layout and trains through the reconstruction path.
-    cfg = _tiny_config(head_type="crystal")
+    cfg = _tiny_config(classifier_type="crystal")
     model = PraxisForCausalLM(cfg)
     model.train()
     input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
     out.loss.backward()
-    centers = model.head.lm_head.centers
+    centers = model.classifier.scorer.centers
     assert centers.shape == (model.encoder.output_vocab_size, model.encoder.output_dim)
     assert centers.grad is not None and centers.grad.abs().sum() > 0
 
 
-def test_calm_harmonic_head_trains():
-    # CALM with head_kind="harmonic": the harmonic head trains through the
+def test_calm_harmonic_generator_trains():
+    # CALM with generator_type="harmonic": the harmonic generator trains through the
     # shared flow loss path.
     cfg = _tiny_config(encoder_type="calm_byte_harmonic", tokenizer_type="byte_level")
     model = PraxisForCausalLM(cfg)
     model.train()
-    model.encoder.requires_pretraining = False  # joint mode: head trains now
-    assert type(model.encoder.energy_head).__name__ == "HarmonicLatentHead"
+    model.encoder.requires_pretraining = False  # joint mode: generator trains now
+    assert type(model.encoder.generator).__name__ == "HarmonicLatentGenerator"
     ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
     out.loss.backward()
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
-        for p in model.encoder.energy_head.net.parameters()
+        for p in model.encoder.generator.net.parameters()
     )
 
 
@@ -270,7 +270,7 @@ def test_hybrid_codec_residual_learns():
 def test_calm_two_stage_freezes_codec_and_enables_energy():
     """Legacy two-stage (ae_freeze_steps > 0, no AE pretraining phase): codec
     and LM train jointly in stage 1, then the codec freezes while the energy
-    head takes over in stage 2 (against a stationary target). The default mode
+    generator takes over in stage 2 (against a stationary target). The default mode
     is now convergence-driven pretraining; see
     test_calm_pretraining_phase_freezes_on_cap."""
     cfg = _tiny_config()
@@ -303,12 +303,12 @@ def test_calm_two_stage_freezes_codec_and_enables_energy():
     assert enc._ae_is_frozen()
     assert all(not p.requires_grad for p in enc.vae.parameters())
 
-    # Stage 2: energy head still learns; frozen codec gets no gradient.
+    # Stage 2: generator still learns; frozen codec gets no gradient.
     out = model(input_ids=input_ids, labels=labels)
     out.loss.backward()
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
-        for p in enc.energy_head.parameters()
+        for p in enc.generator.parameters()
     )
     assert all(p.grad is None for p in enc.vae.parameters())
 
@@ -335,7 +335,7 @@ def test_calm_legacy_joint_mode_trains_codec_throughout():
 def test_calm_pretraining_phase_freezes_on_cap():
     """Default mode: the codec trains alone in an AE pretraining phase (energy
     gated off), then freezes once convergence - or the max-steps cap - is hit,
-    after which the energy head activates."""
+    after which the energy generator activates."""
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.train()
@@ -367,12 +367,12 @@ def test_calm_pretraining_phase_freezes_on_cap():
     assert not enc.in_pretraining()
     assert all(not p.requires_grad for p in enc.vae.parameters())
 
-    # Phase 2: energy head now learns against the frozen codec.
+    # Phase 2: generator now learns against the frozen codec.
     out = model(input_ids=input_ids, labels=labels)
     out.loss.backward()
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
-        for p in enc.energy_head.parameters()
+        for p in enc.generator.parameters()
     )
 
 
@@ -454,43 +454,44 @@ def test_calm_pretrain_floor_covers_warmup_plus_window():
     assert enc._pretrain_min_steps == 100 + PRETRAIN_WINDOW
 
 
-def test_calm_with_stacked_crystal_harmonic_head():
+def test_calm_with_stacked_crystal_harmonic_classifier():
     # crystal_harmonic stacks the harmonic field in front of the crystal
     # classifier; both mechanisms train through CALM's reconstruction path.
-    cfg = _tiny_config(head_type="crystal_harmonic")
+    cfg = _tiny_config(classifier_type="crystal_harmonic")
     model = PraxisForCausalLM(cfg)
     model.train()
     input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
     out.loss.backward()
 
-    head = model.head  # SequentialHead([HarmonicHead(transform-only), CrystalHead])
-    harmonic, crystal = head.heads[0], head.heads[1]
-    centers = crystal.lm_head.centers
+    # SequentialClassifier([HarmonicClassifier(transform-only), CrystalClassifier])
+    classifier = model.classifier
+    harmonic, crystal = classifier.stages[0], classifier.stages[1]
+    centers = crystal.scorer.centers
     amps = harmonic.field.amplitudes
     assert centers.shape == (
         model.encoder.output_vocab_size,
         model.encoder.output_dim,
     )
-    # The transform-only harmonic stage builds no classifier of its own.
-    assert harmonic.lm_head is None
+    # The transform-only harmonic stage builds no scorer of its own.
+    assert harmonic.scorer is None
     # Both mechanisms receive gradient (field modulates features, crystal
     # classifies them - the recon path trains both).
     assert centers.grad is not None and centers.grad.abs().sum() > 0
     assert amps.grad is not None and amps.grad.abs().sum() > 0
     # Both auxiliary losses are exposed and merged.
-    aux = head.aux_losses()
+    aux = classifier.aux_losses()
     assert "centers_rms" in aux and "harmonic_smoothness" in aux
 
 
-def test_calm_with_prismatic_head_learns_envelope():
-    # prismatic = ParallelHead([Sequential(field+linear), Sequential(field, crystal)]):
-    # a top-level gate balances the two arms' logits per token. Both envelopes and
+def test_calm_with_prismatic_classifier_learns_envelope():
+    # prismatic = ParallelClassifier([Sequential(field+linear),
+    # Sequential(field, crystal)]): a top-level gate balances the two arms' logits per token. Both envelopes and
     # the gate train through CALM's reconstruction path.
-    cfg = _tiny_config(head_type="prismatic")
+    cfg = _tiny_config(classifier_type="prismatic")
     model = PraxisForCausalLM(cfg)
-    parallel = model.head  # ParallelHead is the top head
-    fields = [arm.heads[0].field for arm in parallel.branches]
+    parallel = model.classifier  # ParallelClassifier is the top classifier
+    fields = [arm.stages[0].field for arm in parallel.branches]
     assert len(fields) == 2
     # Branch 0 (bias arm) learns a static envelope; branch 1 (variance arm)
     # conditions its envelope on the input.
@@ -550,7 +551,7 @@ def test_calm_vae_reference_dropouts():
 def test_patch_vae_perturbs_both_reference_sites_in_training_only():
     """PatchVAE (AbstractinatorCALM's codec) drops input features in encode and
     the sampled latent in decode, the reference's ae_dropout, so the decoder
-    learns to map a NEIGHBOURHOOD of z - the latent the energy head predicts at
+    learns to map a NEIGHBOURHOOD of z - the latent the generator predicts at
     generation - to the right features. Eval applies neither."""
     from praxis.encoders.calm.vae import PatchVAE
 
@@ -567,12 +568,12 @@ def test_patch_vae_perturbs_both_reference_sites_in_training_only():
 
 def test_calm_halo_geometric_mode():
     """loss_func=halo selects CALM's trinary geometric mode: recon stays CE,
-    and once the codec freezes the energy head trains under the angular HALO +
-    radial terms with gradient reaching only the head (codec/centroids are
+    and once the codec freezes the generator trains under the angular HALO +
+    radial terms with gradient reaching only the generator (codec/centroids are
     frozen instruments)."""
     from praxis.losses.cross_entropy import CrossEntropyLoss
 
-    cfg = _tiny_config(loss_func="halo", head_type="crystal")
+    cfg = _tiny_config(loss_func="halo", classifier_type="crystal")
     model = PraxisForCausalLM(cfg)
     model.train()
     enc = model.encoder
@@ -592,32 +593,32 @@ def test_calm_halo_geometric_mode():
     assert "calm_halo_angular" in enc._diag
     assert "calm_radial" in enc._diag
     assert "calm_energy_anchor" not in enc._diag  # anchor replaced
-    # Gradient reaches the energy head...
+    # Gradient reaches the generator...
     assert any(
         p.grad is not None and p.grad.abs().sum() > 0
-        for p in enc.energy_head.parameters()
+        for p in enc.generator.parameters()
     )
     # ...but not the frozen codec.
     assert all(p.grad is None or p.grad.abs().sum() == 0 for p in enc.vae.parameters())
 
 
 def test_calm_geometric_mode_off_by_default():
-    cfg = _tiny_config(head_type="crystal")
+    cfg = _tiny_config(classifier_type="crystal")
     enc = PraxisForCausalLM(cfg).encoder
     assert not enc.geometric_mode
     assert not hasattr(enc, "geo_loss_fn")
 
 
 def test_energy_prior_registry_and_default():
-    """linear is the default wherever the energy head is used; none disables;
+    """linear is the default wherever the energy generator is used; none disables;
     harmonic augments features with the sin/cos basis."""
-    from praxis.heads.energy import PRIOR_HARMONIC_FREQS
+    from praxis.generators.energy import PRIOR_HARMONIC_FREQS
 
     assert set(registry.namespace("energy_priors")) == {"none", "linear", "harmonic"}
 
     enc = PraxisForCausalLM(_tiny_config()).encoder
-    assert enc.energy_head.prior is not None  # default = linear
-    assert enc.energy_head.prior.mode == "linear"
+    assert enc.generator.prior is not None  # default = linear
+    assert enc.generator.prior.mode == "linear"
 
     harm = registry.lookup("energy_priors", "harmonic")(
         feature_dim=8, latent_dim=4, period=16
@@ -642,7 +643,7 @@ def test_calm_prior_solves_then_freezes_in_stage2():
     model(input_ids=input_ids, labels=labels)  # step 1: cross the boundary
 
     model(input_ids=input_ids, labels=labels)  # stage 2: observe + solve
-    prior = enc.energy_head.prior
+    prior = enc.generator.prior
     assert "calm_prior_r2" in enc._diag
     assert "calm_prior_norm" in enc._diag
     assert prior.W.abs().sum() > 0

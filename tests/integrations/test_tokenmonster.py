@@ -164,7 +164,7 @@ def test_generator_terminates_on_partial_loop(tokenizer):
     import torch
 
     from praxis import PraxisConfig
-    from praxis.generation.generator import Generator
+    from praxis.inference.generator import Generator
     from praxis.modeling import PraxisForCausalLM
 
     partial_id = next(

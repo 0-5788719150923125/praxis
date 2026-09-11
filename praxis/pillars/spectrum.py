@@ -1,8 +1,8 @@
-"""The harmonic head's static amplitude spectrum, rendered for the paper.
+"""The harmonic classifier's static amplitude spectrum, rendered for the paper.
 
 The dashboard's Dynamics tab shows a live ``Harmonic Spectrum`` snapshot: the
 ``|amp[f_t, f_d]|`` magnitude grid of a harmonic field, routed through the
-generic ``heatmap_2d`` renderer (see :meth:`HarmonicHead.dashboard_snapshots`).
+generic ``heatmap_2d`` renderer (see :meth:`HarmonicClassifier.dashboard_snapshots`).
 This module reproduces that view offline for the newest harmonic-bearing run and
 tiles its fields into a figure for the paper's ``Bias is the static spectrum``
 paragraph (Section~\\ref{sec:manifold}) - the heatmap the prose promises, the
@@ -16,6 +16,8 @@ these amplitudes, so ``|amplitudes|`` is exactly what the live card draws and
 exactly what :meth:`HarmonicField.concentration` measures - the Hoyer sparsity
 reported per panel is therefore the same number the dashboard logs, computed
 from the same tensor. A prismatic (multi-branch) run yields one panel per arm.
+Checkpoints written before the heads -> classifiers rename are read through
+:func:`praxis.renames.rename_legacy_state_dict`, so their branch labels match.
 
 Output (all generated, none committed):
 - ``research/figures/spectrum_N.png`` - one magnitude heatmap per field.
@@ -38,11 +40,12 @@ from praxis.pillars.geometries import (
     latest_checkpoint,
     runs_newest_first,
 )
+from praxis.renames import rename_legacy_state_dict
 
 OUT_TEX = os.path.join(RESEARCH_DIR, "spectrum.tex")
 # A harmonic field's learned amplitude grid is always `...field.amplitudes`
 # (HarmonicField.amplitudes, an [F_t, F_d] nn.Parameter). Prismatic/parallel
-# heads expose one per branch (`...branches.<i>.heads.0.field.amplitudes`).
+# classifiers expose one per branch (`...branches.<i>.stages.0.field.amplitudes`).
 AMPLITUDES_SUFFIX = "field.amplitudes"
 
 
@@ -68,7 +71,7 @@ def collect_spectra(limit, scan):
 
     Scans runs newest-first up to ``scan``; the first run carrying any
     ``field.amplitudes`` tensor wins, and we render up to ``limit`` of *its own*
-    fields (one per branch for a prismatic head). A single run keeps the panels
+    fields (one per branch for a prismatic classifier). A single run keeps the panels
     comparable - different runs use different ``F_t``/``F_d`` and amplitude
     scales, so a cross-run mix would not share an axis.
 
@@ -84,6 +87,8 @@ def collect_spectra(limit, scan):
         except Exception:
             continue
         sd = sd.get("state_dict", sd) if isinstance(sd, dict) else sd
+        if isinstance(sd, dict):
+            rename_legacy_state_dict(sd)
         keys = [
             k
             for k in sorted(sd)

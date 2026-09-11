@@ -69,7 +69,7 @@ horizon once generation has run, and stays silent before that.
 
 **Residual work - the experiment that closes this entry:**
 
-The $k > K$ unroll. `praxis/heads/mtp/rnn.py` is one gated cell
+The $k > K$ unroll. `praxis/classifiers/mtp/rnn.py` is one gated cell
 unrolled $K$ times; the only per-depth parameter is a zero-initialized
 signature. Continue the unroll to $k = 2K$ holding the signature at zero,
 score against the true bytes, and plot accuracy against $k$. Two outcomes,

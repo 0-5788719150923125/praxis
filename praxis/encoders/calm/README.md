@@ -13,27 +13,28 @@ Flow inside a single optimizer step:
 2. **Latent autoregression** (outer praxis decoder): the global
    transformer runs over `z_0, z_1, ..., z_P` and predicts
    representations for `z_1, ..., z_{P+1}`.
-3. **Energy-score matching** (`../../heads/energy.py` +
-   `../../losses/energy_score.py`): a noise-conditioned head proposes
+3. **Energy-score matching** (`../../generators/energy.py` +
+   `../../losses/energy_score.py`): a noise-conditioned generator proposes
    latent candidates; pairwise distances against posterior samples of
    the next latent give an implicit generative loss. Stop-gradient on
    the posterior samples keeps the VAE's objective pure.
 4. **Sampling** (`CALMEncoder.custom_generate` +
    `_patch_vote_sample`): approximate count-based temperature sampling
    (the authors' `temperature_sampling`) draws a pool of latent
-   candidates from the energy head, decodes each to an argmax K-token
+   candidates from the energy generator, decodes each to an argmax K-token
    patch, and selects by combinatorial voting on exact patch matches.
 
-## LM head
+## Classifier
 
 CALM does not own its token classifier. It declares its output layout
 (`output_dim` = the VAE decoder feature width, `output_vocab_size` = the
-tokenizer's true vocab), the model builds a head from the `heads` registry
-sized to that, and injects it via `set_head()`. CALM applies the head to
-the decoder features for both reconstruction and generation. So
-`head_type: forward | crystal | harmonic` all work; `calm-a.yml` uses
-`crystal`. (The energy head is separate - it is a latent sampler, not an
-LM head, and stays out of the registry.)
+tokenizer's true vocab), the model builds a classifier from the `classifiers`
+registry sized to that, and injects it via `set_classifier()`. CALM applies
+the classifier to the decoder features for both reconstruction and
+generation. So `classifier_type: forward | crystal | harmonic` all work;
+`calm-a.yml` uses `crystal`. (The energy generator is separate - it samples
+latents rather than classifying tokens, and lives in the `generators`
+registry, chosen by the encoder profile's `generator_type`.)
 
 ## Vocabulary
 
@@ -77,5 +78,5 @@ Pair with `--tokenizer-type char_level|byte_level|bpe` as appropriate.
 ## Smoke-test experiment
 
 `experiments/calm-a.yml` trains a compact CALM model with the
-`calm_byte_small` profile, the byte tokenizer, and the crystal head. Run
+`calm_byte_small` profile, the byte tokenizer, and the crystal classifier. Run
 with `--calm-a`.

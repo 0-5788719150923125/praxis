@@ -66,7 +66,7 @@ RLCT_DEFAULTS: Dict[str, float] = {
     "field_max_points": 16000,  # subsample chunks above this before PCA
 }
 
-# Substrings that flag a structured-head weight worth projecting (harmonic
+# Substrings that flag a structured-classifier weight worth projecting (harmonic
 # spectra, crystal/geometry centers, fields) - preferred over a plain FFN matrix
 # when picking the manifold's target, since that is where geometry lives.
 _STRUCTURED_HINTS = ("amplitud", "harmonic", "crystal", "center", "field", "spectr")
@@ -336,7 +336,7 @@ def compute_param_manifold(
     Each row of the chosen weight is a point in feature space; PCA lays the
     cloud out along its two highest-variance axes, so the terrain's *shape* is
     the weight geometry (a Gaussian blob for an unstructured layer, rings/arms
-    for a structured head). Height = row density (where parameters cluster);
+    for a structured classifier). Height = row density (where parameters cluster);
     color tint = mean row amplitude (||row||). Pure weight analysis - no forward
     passes, no perturbation.
     """
@@ -433,7 +433,7 @@ def compute_param_field(
     trainable parameter, cut the vector into fixed-length ``chunk`` windows (each
     a point), PCA the chunks to 2D, bin into a density grid, and Gaussian-blur it.
     The bulk of the (near-Gaussian) weights forms a central mass; structured
-    regions (harmonic/crystal heads) pull out as distinct features. Low vertex
+    regions (harmonic/crystal classifiers) pull out as distinct features. Low vertex
     count (grid^2) and smooth, independent of model size.
 
     Height = chunk density (where weight-chunks cluster in PCA space); color tint

@@ -4,7 +4,7 @@ Roughness is Plomp-Levelt dissonance between the field's temporal modes: two
 partials close enough to share a critical band, but not to fuse, beat. It
 depends on WHICH frequencies coexist, not how many, so it is not a spread
 penalty. It is the counterweight to the smoothness prior
-(``praxis/heads/harmonic.py``), since adjacent modes only beat partway up the
+(``praxis/classifiers/harmonic.py``), since adjacent modes only beat partway up the
 frequency axis.
 
 The kernel is Sethares' fit to the Plomp-Levelt curve,
@@ -34,7 +34,7 @@ from praxis.losses.regularizer_base import BaseRegularizer
 
 try:
     # This forward mutates buffers (the dual state) and reads a module found by
-    # walking the head, neither of which belongs in a traced graph. Same
+    # walking the classifier, neither of which belongs in a traced graph. Same
     # reasoning as praxis/losses/harmonic_kl.py.
     from torch._dynamo import disable as _no_compile
 except Exception:  # pragma: no cover
@@ -56,7 +56,7 @@ CRITICAL_BAND = 0.2
 
 # Dual ascent rate on rho, per microbatch. The plant is the same amplitude grid
 # the smoothness dual steers, whose rate was measured over a 100x sweep of dual
-# rate x grid-response time (praxis/heads/harmonic.py, SMOOTHNESS_DUAL_ETA).
+# rate x grid-response time (praxis/classifiers/harmonic.py, SMOOTHNESS_DUAL_ETA).
 DUAL_ETA = 0.003
 
 # Where the log-multiplier starts, and the floor it returns to: softplus(-5) ~
@@ -128,17 +128,18 @@ def roughness_ceiling(n_modes: int) -> float:
     return max(best, 1e-12)
 
 
-def _find_field(head) -> Optional[nn.Module]:
-    """The harmonic field under ``head``, or None.
+def _find_field(classifier) -> Optional[nn.Module]:
+    """The harmonic field under ``classifier``, or None.
 
     Located by the method an objective on the spectrum needs
     (``amplitude_energy``) rather than by class, so this file imports nothing
-    from ``praxis.heads`` and keeps working wherever the field is mounted -
-    a parallel head's stem, a sequential stage, or a bare HarmonicHead.
+    from ``praxis.classifiers`` and keeps working wherever the field is mounted -
+    a parallel classifier's stem, a sequential stage, or a bare
+    HarmonicClassifier.
     """
-    if head is None or not hasattr(head, "modules"):
+    if classifier is None or not hasattr(classifier, "modules"):
         return None
-    for module in head.modules():
+    for module in classifier.modules():
         if callable(getattr(module, "amplitude_energy", None)):
             return module
     return None
@@ -355,12 +356,12 @@ class Dissonance(BaseRegularizer):
     @_no_compile
     def forward(self, hidden_states: Tensor, input_ids: Tensor, **ctx) -> Tensor:
         zero = hidden_states.new_zeros(())
-        field = _find_field(ctx.get("head"))
+        field = _find_field(ctx.get("classifier"))
         if field is None:
             if not self._reported:
                 self._reported = True
                 print(
-                    "[dissonance] no harmonic field under this head; "
+                    "[dissonance] no harmonic field under this classifier; "
                     "the term is inert for this run."
                 )
             self._metrics = {}

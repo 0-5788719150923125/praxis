@@ -30,11 +30,11 @@ def test_the_dissonance_term_watches_the_field_wherever_it_is_mounted(tiny_model
     """Located by the method it needs, not by a fixed path: the field sits at
     the stem on some profiles and inside a sequential arm on others."""
     m = tiny_model()
-    field = _find_field(m.head)
+    field = _find_field(m.classifier)
     assert field is not None
-    assert any(mod is field for mod in m.head.modules())
+    assert any(mod is field for mod in m.classifier.modules())
     # Not the readout - which is the whole distinction harmonic_kl blurs.
-    assert field is not m.head.classifier
+    assert field is not m.classifier.scorer
     assert _find_field(None) is None
     assert _find_field(torch.nn.Linear(4, 4)) is None
 
@@ -79,7 +79,7 @@ def test_roughness_is_scale_free_and_needs_two_modes(tiny_model, train_step):
     can, or the cheapest response is to turn the field off. And one mode alone
     has nothing to beat against."""
     m = tiny_model(regularizers=["dissonance"])
-    field = _find_field(m.head)
+    field = _find_field(m.classifier)
     term = m.criterion.dissonance
     train_step(m)
     before = term.training_metrics()["dissonance"]
@@ -135,11 +135,11 @@ def test_the_penalty_is_bounded_and_reaches_the_amplitudes(tiny_model):
     term = m.criterion.dissonance
     with torch.no_grad():
         term.rho.fill_(RHO_MAX)
-    penalty = term(torch.randn(2, 24, 32), None, head=m.head)
+    penalty = term(torch.randn(2, 24, 32), None, classifier=m.classifier)
     assert 0.0 <= penalty.item() <= LAMBDA_MAX
     assert penalty.item() == pytest.approx(term.training_metrics()["dissonance_loss"])
     penalty.backward()
-    grad = _find_field(m.head).amplitudes.grad
+    grad = _find_field(m.classifier).amplitudes.grad
     assert grad is not None and grad.abs().sum() > 0
 
 
@@ -278,15 +278,15 @@ def test_the_probe_measures_without_pushing(tiny_model, train_step):
     assert metrics["dissonance_loss"] == 0.0
     # The field still receives the main loss's gradient - it is on the forward
     # path - so the check that matters is that THIS term contributes no graph.
-    penalty = term(torch.randn(2, 5, 32), None, head=m.head)
+    penalty = term(torch.randn(2, 5, 32), None, classifier=m.classifier)
     assert float(penalty) == 0.0 and penalty.grad_fn is None
 
 
-# ── a head with no field ───────────────────────────────────────────────────
+# ── a classifier with no field ─────────────────────────────────────────────
 
 
 def test_the_term_is_inert_without_a_harmonic_field(tiny_model, train_step, capsys):
-    m = tiny_model(head_type="forward", regularizers=["dissonance"])
+    m = tiny_model(classifier_type="forward", regularizers=["dissonance"])
     out = train_step(m)
     assert torch.isfinite(out.loss)
     assert m.criterion.dissonance.training_metrics() == {}

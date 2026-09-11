@@ -56,15 +56,15 @@ def _promote_tasker_lr(optimizer, model) -> None:
 
 def _split_muon_params(model):
     """Partition params for Muon: only interior >=2D matrices get
-    orthogonalized; embeddings, the LM head, norms, biases and scalars go to
+    orthogonalized; embeddings, the classifier, norms, biases and scalars go to
     Muon's internal AdamW.
 
     Muon's library routing is purely ``ndim >= 2`` - it does NOT detect
-    embeddings/heads despite the docstring, so without this split it would
+    embeddings/classifiers despite the docstring, so without this split it would
     orthogonalize the embedding and output matrices (the classic instability).
-    A ``vocab_size`` dimension in the shape flags embeddings, the head, and any
+    A ``vocab_size`` dimension in the shape flags embeddings, the classifier, and any
     tied weight at once; ``nn.Embedding`` membership is the belt-and-suspenders.
-    The config's size is not the only vocabulary, though: a byte-latent head
+    The config's size is not the only vocabulary, though: a byte-latent classifier
     classifies the encoder's byte vocabulary, so every module that declares its
     own ``vocab_size`` also flags the parameters under it that carry that size.
     Shapes are read LOGICALLY: a parametrized weight (a ghost transform) stores
@@ -100,7 +100,7 @@ def _split_muon_params(model):
     # period, a rank) on the matrix path.
     config = getattr(model, "config", None)
     widths = {getattr(config, k, None) for k in ("hidden_size", "embed_size")}
-    head_ids = set()
+    classifier_ids = set()
     for m in model.modules():
         size = getattr(m, "vocab_size", None)
         if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
@@ -109,12 +109,12 @@ def _split_muon_params(model):
         for p in m.parameters():
             s = shape(p)
             if len(s) == 2 and size in s and (s[0] in own or s[1] in own):
-                head_ids.add(id(p))
+                classifier_ids.add(id(p))
     muon_params, adamw_params = [], []
     for p in model.parameters():
         if not p.requires_grad:
             continue
-        is_vocab = (vocab is not None and vocab in shape(p)) or id(p) in head_ids
+        is_vocab = (vocab is not None and vocab in shape(p)) or id(p) in classifier_ids
         if p.ndim < 2 or is_vocab or id(p) in emb_ids:
             adamw_params.append(p)
         else:
@@ -153,20 +153,20 @@ def _build_muon(muon_params, adamw_params, profile):
 
 
 def _create_muon(model, **profile):
-    """Build Muon over interior >=2D matrices, routing embeddings/head/norms/
+    """Build Muon over interior >=2D matrices, routing embeddings/classifier/norms/
     biases elsewhere.
 
     With ``secondary_optimizer`` set (e.g. "Lion"), those params get their own
     optimizer via :class:`CompositeOptimizer`; otherwise they use Muon's
     internal AdamW. Weight decay (decoupled) applies only to the orthogonalized
     matrices - the vocab-facing group stays undecayed except for its 2D members
-    (embeddings/head).
+    (embeddings/classifier).
     """
     from pytorch_optimizer import Muon
 
     secondary_name = profile.pop("secondary_optimizer", None)
     # Optional override for the secondary's weight decay, so a Muon profile can
-    # set the decay on the vocab-facing group (embeddings/head/crystal centers)
+    # set the decay on the vocab-facing group (embeddings/classifier/crystal centers)
     # independently of the borrowed secondary profile's default.
     secondary_wd = profile.pop("secondary_weight_decay", None)
     profile = {
@@ -179,7 +179,7 @@ def _create_muon(model, **profile):
     if not secondary_name:
         print(
             f"[Optimizer] Muon: {len(muon_params)} matrices orthogonalized, "
-            f"{len(adamw_params)} params (embeddings/head/norms/biases) on AdamW."
+            f"{len(adamw_params)} params (embeddings/classifier/norms/biases) on AdamW."
         )
         return _build_muon(muon_params, adamw_params, profile)
 
@@ -200,7 +200,7 @@ def _create_muon(model, **profile):
 
 def _create_lion_geo(model, **profile):
     """Build LionGeo over the interior >=2D matrices, with the vocab-facing
-    params (embeddings/head/norms/biases) on a plain secondary via
+    params (embeddings/classifier/norms/biases) on a plain secondary via
     :class:`CompositeOptimizer` - the same split as Muon, because the spectral
     branch shares Muon's constraint (never orthogonalize an embedding)."""
     from praxis.optimization.lion_geo import GEOMETRIES, LionGeo
@@ -229,7 +229,7 @@ def _create_lion_geo(model, **profile):
 
 def _build_secondary(name, params, wd_override=None):
     """Build the composite's secondary optimizer over ``params``, with weight
-    decay only on its >=2D members (embeddings/head), not norms/biases.
+    decay only on its >=2D members (embeddings/classifier), not norms/biases.
     ``wd_override`` (when not None) replaces the borrowed profile's weight decay.
     Returns ``(optimizer, base_lr)``."""
     from pytorch_optimizer import load_optimizer
@@ -325,7 +325,7 @@ def build_optimizer_and_scheduler(
     from praxis.schedulers import get_scheduler_func
 
     # Let a multi-stage model re-warm the LR when a later stage activates cold
-    # params (e.g. CALM's trunk/head at the codec freeze). Reads the boundary
+    # params (e.g. CALM's trunk/classifier at the codec freeze). Reads the boundary
     # live each step; -1 until/unless one is reported.
     stage_anchor = getattr(model, "stage_warmup_anchor", None)
     scheduler_func = get_scheduler_func(
@@ -427,9 +427,9 @@ registry.declare(
                 "Muon over the interior >=2D matrices: each momentum update is "
                 "orthogonalized by Newton-Schulz, a bounded step, and "
                 "``use_adjusted_lr`` scales the LR per matrix shape (Moonlight), which "
-                "is automatic and robust to variable latent shapes. Embeddings, the LM "
-                "head, norms and biases never reach Muon, since orthogonalizing an "
-                "embedding matrix is the classic instability; they go to a Lion "
+                "is automatic and robust to variable latent shapes. Embeddings, the "
+                "classifier, norms and biases never reach Muon, since orthogonalizing "
+                "an embedding matrix is the classic instability; they go to a Lion "
                 "secondary through CompositeOptimizer, whose sign signal suits "
                 "token-frequency geometry beside Muon's full-spectrum signal in the "
                 "interior. The lr is conservative for small-model LM; warmup ramps it "
@@ -481,8 +481,8 @@ registry.declare(
                 "hypergradient descent, floored so no geometry is extinguished. Every "
                 "branch is RMS-matched to 1, so one Lion-scale lr bounds the step "
                 "wherever the blend settles. Weight decay is zero, as in MuonGeo; "
-                "embeddings, the head, norms and biases go to a plain Lion secondary. "
-                "Read opt_geo_share and opt_geo_share_spread."
+                "embeddings, the classifier, norms and biases go to a plain Lion "
+                "secondary. Read opt_geo_share and opt_geo_share_spread."
             ),
         ),
         "Prodigy": Entry(

@@ -9,7 +9,7 @@ Three terrain cards on the Dynamics tab, one `rlct` group, all fed by
 `period` steps on the TRAINING thread (never a snapshot recipe - SGLD needs a
 grad-bearing forward that would race the eval-mode guard), stashes onto the
 uncompiled model (`_orig_mod`), and is drained by `DynamicsLoggerCallback` (scalars)
-+ merged into `/api/head_snapshots` (grids). Compute core: `praxis/metrics/rlct.py`
++ merged into `/api/classifier_snapshots` (grids). Compute core: `praxis/metrics/rlct.py`
 (owns the universal `RLCT_METRIC_DESCRIPTIONS`). Tests: `tests/test_rlct_landscape.py`
 (10, green).
 

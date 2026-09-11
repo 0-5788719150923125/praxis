@@ -53,15 +53,17 @@ def test_pages_boilerplate_dedup(tmp_path, monkeypatch):
 
 
 def test_code_source_indexes_package_files_and_skips_secrets(tmp_path, monkeypatch):
-    pkg = tmp_path / "praxis" / "heads"
+    pkg = tmp_path / "praxis" / "classifiers"
     pkg.mkdir(parents=True)
-    (pkg / "ok.py").write_text('"""An energy head."""\n\nclass Head:\n    pass\n')
+    (pkg / "ok.py").write_text(
+        '"""A linear classifier."""\n\nclass Classifier:\n    pass\n'
+    )
     (pkg / "bad.py").write_text('API_KEY = "abcdef123456789"\n')
     (tmp_path / "outside.py").write_text("x = 1\n")
     monkeypatch.setattr(sources, "REPO_ROOT", tmp_path)
 
     items = {i.id: i for i in sources.CodeSource().iter_items()}
-    assert set(items) == {"code:praxis/heads/ok.py"}
-    item = items["code:praxis/heads/ok.py"]
-    assert item.type == "code" and "class Head" in item.body
-    assert item.summary == "An energy head."
+    assert set(items) == {"code:praxis/classifiers/ok.py"}
+    item = items["code:praxis/classifiers/ok.py"]
+    assert item.type == "code" and "class Classifier" in item.body
+    assert item.summary == "A linear classifier."

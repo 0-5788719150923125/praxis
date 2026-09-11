@@ -8,7 +8,7 @@ at different points on the bias-variance codec axis:
   - ``FixedCodec`` (pure bias): a deterministic, non-learned encoder (frozen
     orthonormal byte embedding + orthonormal mix, RMS-normalized) with only the
     decoder learned. The hypothesis: the VAE's two-stage freeze exists only
-    because the head needs a *stationary* target and the codec is learned-and-
+    because the generator needs a *stationary* target and the codec is learned-and-
     moving; a fixed encoder gives a stationary target from step 0, so no freeze
     is needed (pair with ``ae_freeze_steps=0`` for single-stage). The codec is a
     fixed mathematical object, not a learned tokenizer.
@@ -44,7 +44,7 @@ from praxis.registry import Entry
 
 # Deterministic build seed for the frozen bases (reproducible, resume-stable).
 FIXED_CODEC_SEED = 1234
-# Fixed posterior std: a tight ball around the deterministic mean so the head
+# Fixed posterior std: a tight ball around the deterministic mean so the generator
 # has a near-point target without a degenerate (zero-variance) one.
 FIXED_CODEC_STD = 0.1
 
@@ -123,7 +123,7 @@ class FixedCodec(nn.Module):
 
     def normalize_latent(self, x: torch.Tensor) -> torch.Tensor:
         """No-op: ``encode`` already RMS-normalizes the latent. Present for
-        interface parity (decode and the head's target both call it)."""
+        interface parity (decode and the generator's target both call it)."""
         return x
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
@@ -159,7 +159,7 @@ class HybridCodec(FixedCodec):
     smooth latent is the dominant term, and a gain-bounded learned MLP adds a
     slow correction on top (driven by reconstruction). Zero-initialised, so the
     codec starts *identical* to FixedCodec and drifts from there - the latent is
-    mostly stationary (head still trains fast) but the encoder is never frozen
+    mostly stationary (generator still trains fast) but the encoder is never frozen
     and can slowly organize toward a better-conditioned latent over a long run.
     Reclaims the learned-encoder feature without two-stage training or KL.
     Single-stage (pair with ae_freeze_steps=0). The "slowness" is the fixed gain

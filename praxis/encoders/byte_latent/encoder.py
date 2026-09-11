@@ -240,12 +240,12 @@ class ByteLatentEncoder(BaseEncoder):
 
     @property
     def output_dim(self) -> int:
-        """Feature dim the LM head classifies (the decoder's output features)."""
+        """Feature dim the classifier classifies (the decoder's output features)."""
         return self.byte_config.dim_token_emb
 
     @property
     def output_vocab_size(self) -> int:
-        """Vocab the LM head targets (local byte vocab, not the global vocab)."""
+        """Vocab the classifier targets (local byte vocab, not the global vocab)."""
         return self.byte_config.local_vocab_size
 
     @property
@@ -553,7 +553,7 @@ class ByteLatentEncoder(BaseEncoder):
             ), f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
             h = h_aligned
 
-        # Local decoder forward pass. Returns features only; the LM head
+        # Local decoder forward pass. Returns features only; the classifier
         # owns classification, so there are no encoder-side logits.
         decoder_embeds = self.decoder(
             tokens=local_decoder_tokens,
@@ -1242,7 +1242,7 @@ class RecurrentDecoder(nn.Module):
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
         self.dim = config.dim_token_emb
 
-        # Final feature norm. The LM head owns classification, so the
+        # Final feature norm. The classifier owns classification, so the
         # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 
@@ -1534,7 +1534,7 @@ class ConvDecoder(nn.Module):
         self.cross_attn_decoder = config.cross_attn_decoder
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
 
-        # Final feature norm. The LM head owns classification, so the
+        # Final feature norm. The classifier owns classification, so the
         # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 
@@ -1873,7 +1873,7 @@ class TransformerDecoder(nn.Module):
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
         self.dim = config.dim_token_emb
 
-        # Final feature norm. The LM head owns classification, so the
+        # Final feature norm. The classifier owns classification, so the
         # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 

@@ -1,7 +1,7 @@
 """Run two optimizers over disjoint parameter sets as one.
 
 Muon orthogonalizes interior >=2D matrices; a secondary optimizer (e.g.
-Lion) drives the vocab-facing params - embeddings, the LM head, norms,
+Lion) drives the vocab-facing params - embeddings, the classifier, norms,
 biases. This composite presents a single optimizer interface (param_groups,
 state, step, state_dict) so the scheduler, the wrapper stack
 (low_rank_moment/half_lion), and the optimizer-metrics dashboard all see

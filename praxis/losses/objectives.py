@@ -12,14 +12,14 @@ class Objectives(nn.Module):
 
     The model used to hold two of these - ``criterion`` for the main loss and
     ``reg`` for the representation-shaping regularizers - while the terms
-    computed inside heads and the MTP stack were bare ``F.cross_entropy``
+    computed inside classifiers and the MTP stack were bare ``F.cross_entropy``
     calls that appeared in neither. They are all the same kind of thing: a
     term the strategy sums into the objective. Registering them here under
     that tag puts every one in a single place, so the blueprint says what a
     run is actually optimizing.
 
     Terms are OWNED here. A producer that computes its own term (the MTP
-    stack, a parallel head's per-arm CE) reads it back out of this container
+    stack, a parallel classifier's per-arm CE) reads it back out of this container
     instead of holding it as a child, so no term is printed - or
     checkpointed - twice.
     """

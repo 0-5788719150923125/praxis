@@ -1,0 +1,227 @@
+"""Base class for classifiers: modules that turn features into logits."""
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional, Tuple, TypeVar
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
+
+def decode_context(module: nn.Module, hidden_states: Tensor):
+    """``(offset, state, commit)`` for a cache-aware classifier module under
+    cached decode; ``(0, None, None)`` whenever no ``PraxisCache`` is bound.
+
+    The model binds the live cache onto every module declaring
+    ``accepts_decode_cache`` (as ``module.decode_cache``) around the classifier
+    call and clears it after - see ``modeling._bind_classifier_cache``.
+    ``offset`` is the absolute position of the chunk's first token: the trunk
+    has already written this chunk by the time the classifier runs, so it is
+    ``past_length() - seq_len``; zero for the prefill and for cache-less
+    attentions (their past_length stays 0 and the classifier sees the full
+    sequence every call, so full recompute is right). ``state`` is this
+    module's own carried context when the cache holds one that lines up with
+    ``offset`` (a mismatch - a batch change, a rollback - degrades to
+    suffix-only rather than faulting). ``commit(state)`` stores the context for
+    the next call.
+    """
+    cache = getattr(module, "decode_cache", None)
+    if cache is None or not hasattr(cache, "past_length"):
+        return 0, None, None
+    seq_len = hidden_states.shape[-2]
+    batch = hidden_states.shape[0]
+    offset = max(int(cache.past_length()) - seq_len, 0)
+    key = f"{type(module).__name__}:{id(module)}"
+    state = cache.get_classifier_state(key) if offset > 0 else None
+    if state is not None and (
+        state.get("pos") != offset or state.get("batch") != batch
+    ):
+        state = None
+
+    def commit(new_state: dict) -> None:
+        new_state["pos"] = offset + seq_len
+        new_state["batch"] = batch
+        cache.set_classifier_state(key, new_state)
+
+    return offset, state, commit
+
+
+class BaseClassifier(nn.Module, ABC):
+    """Abstract base class for classifiers.
+
+    A classifier produces logits from features via ``forward(hidden_states)``
+    and exposes its ``scorer``: the module that maps features to logits (a
+    linear projection, a crystal or HALO geometry), which cut-CE and the
+    centroid losses read directly. A leaf classifier assigns it as an
+    attribute (``None`` when it builds none); a composition exposes its
+    terminal's as a property. The only difference between standalone and
+    encoder-attached modes is the scorer's size: standalone uses
+    ``(hidden_size, vocab_size)``; with an encoder the classifier sizes itself
+    to the encoder's declared output layout (see :meth:`output_dims`), so
+    byte-latent decode produces *features* and the classifier classifies
+    them - same as the standalone path.
+    """
+
+    scorer: Optional[nn.Module]
+
+    # True if the classifier ties its own output weights in ``tie_weights()``
+    # (e.g. crystal shares its centers with the input embedding). Such
+    # classifiers keep their type under ``tie_word_embeddings`` instead of being
+    # swapped for the generic TiedClassifier. Compositions inherit it from
+    # their terminal.
+    self_ties: bool = False
+
+    # True if position ``t``'s logits depend only on positions ``0..t``, so
+    # reading position ``t`` out of a longer row equals running the prefix
+    # ending at ``t`` on its own. Classifiers that pool the whole sequence to
+    # route or normalize (SMEAR-style ``mean(dim=1)``) must declare False: the
+    # speculative decoder reads a whole candidate block out of ONE forward and
+    # falls back to re-encoding a row per candidate when this is False.
+    causal_readout: bool = True
+
+    def __init__(self, config: ConfigType, encoder: Optional[nn.Module] = None) -> None:
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.vocab_size = config.vocab_size
+        self._encoder = encoder
+
+    @property
+    def has_encoder(self) -> bool:
+        return self._encoder is not None
+
+    def output_dims(self) -> Optional[Tuple[int, int]]:
+        """Resolve ``(feature_dim, vocab_size)`` for this classifier's scorer.
+
+        Standalone: ``(hidden_size, vocab_size)`` from config. Encoder
+        mode: the encoder declares its output layout via ``output_dim`` /
+        ``output_vocab_size`` and the classifier sizes to it - this holds even
+        when the encoder owns its loss but borrows the classifier (CALM
+        injects it). Returns ``None`` only when the encoder declares no
+        layout, in which case the classifier builds no scorer.
+        """
+        enc = self._encoder
+        if enc is None:
+            return (self.hidden_size, self.vocab_size)
+        out_dim = getattr(enc, "output_dim", None)
+        out_vocab = getattr(enc, "output_vocab_size", None)
+        if out_dim is not None and out_vocab is not None:
+            # Report what the scorer is actually sized to (e.g. CALM's 264
+            # byte vocab), not the config's overloaded vocab_size.
+            self.hidden_size, self.vocab_size = int(out_dim), int(out_vocab)
+            return (self.hidden_size, self.vocab_size)
+        return None
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(hidden_size={self.hidden_size}, vocab_size={self.vocab_size})"
+
+    def compose_repr(self) -> str:
+        """Short structural label used when a classifier appears inside a
+        composed classifier's repr (e.g. ``Parallel(Sequential(HarmonicField),
+        ...)``). Wrappers override to nest; leaves to name their function."""
+        return type(self).__name__
+
+    @abstractmethod
+    def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
+        """Standalone forward pass (no encoder).
+
+        Args:
+            hidden_states: Hidden states from the model [batch, seq_len, hidden_size]
+
+        Returns:
+            Logits tensor [batch, seq_len, vocab_size]
+        """
+        pass
+
+    def transform(self, hidden_states: Tensor) -> Tensor:
+        """Feature-space contribution when this classifier is a non-terminal
+        stage of a :class:`SequentialClassifier`.
+
+        Default is identity: a pure classifier passes features through
+        untouched, so only the terminal stage's ``forward`` produces logits.
+        Classifiers that reshape features (e.g. the harmonic field's
+        multiplicative modulation) override this to apply their transform.
+        """
+        return hidden_states
+
+    def arm_loss(
+        self, inp: Tensor, labels: Tensor, objectives: Optional[nn.Module] = None
+    ) -> Optional[Tensor]:
+        """This classifier's OWN objective, when it is one arm among several.
+
+        A parallel classifier that trains its arms independently needs one row
+        per arm in its Jacobian, and a row is any objective's gradient with
+        respect to the shared representation - it does NOT have to be a
+        cross-entropy. The default is CE because for most classifiers that IS
+        the objective; one trained by something else (HaloClassifier, under
+        HALOLoss's geometry) overrides this and returns its real one.
+
+        ``objectives`` is the model's :class:`~praxis.losses.Objectives`
+        container. The CE below comes from it (registered as ``arm_ce``)
+        rather than being built here, so an arm's objective is declared where
+        every other one is.
+
+        Returning None drops the arm from the Jacobian, which the caller must
+        treat as a gap rather than as a zero: an objective that reaches the
+        shared representation but sits outside the arbitration is worse than
+        no arbitration at all.
+        """
+        logits = self(inp)
+        if logits.shape[-2] != labels.shape[-1]:
+            logits = logits[..., :-1, :]
+        return objectives.require("arm_ce")(logits=logits.float(), labels=labels)
+
+    def aux_losses(self) -> Dict[str, Tensor]:
+        """Named auxiliary losses to fold into the main objective.
+
+        Each entry's key becomes the loss name in the model's loss
+        container (and surfaces as a dashboard metric), so use stable,
+        descriptive keys.
+
+        Default: no aux losses.
+        """
+        return {}
+
+    def training_metrics(self) -> Dict[str, float]:
+        """Diagnostic scalars to surface each logging step.
+
+        Called from the dynamics callback before the optimizer step, so
+        parameter gradients are still available - classifiers that report
+        grad-derived metrics (e.g., grad-ratio against a downstream
+        scorer) can read ``param.grad`` directly. Default: no
+        metrics.
+        """
+        return {}
+
+    def dashboard_snapshots(self) -> Dict[str, Any]:
+        """Non-scalar live snapshots for dashboard visualizations
+        (heatmaps, scatters, etc.).
+
+        Served by ``/api/classifier_snapshots``, keyed by a stable snapshot
+        name so the frontend can dispatch on the key. Scalars belong in
+        ``training_metrics()``; this is the place for matrices, PCA
+        projections, and similar non-scalar shapes.
+
+        Default: no snapshots.
+        """
+        return {}
+
+    def all_metric_descriptions(self) -> Dict[str, Any]:
+        """Collect ``metric_descriptions`` from the classifier and its submodules.
+
+        Each module class may declare a ``metric_descriptions`` dict whose
+        values are either plain strings or rich descriptors with chart
+        rendering hints (see :mod:`praxis.metrics.descriptions`). The
+        walk picks up the classifier's own dict plus any contribution from
+        children like the harmonic field or the crystal geometry, so
+        the frontend can render classifier-specific charts without
+        ``modeling.py`` knowing about them.
+        """
+        out: Dict[str, Any] = {}
+        for mod in self.modules():
+            descs = getattr(type(mod), "metric_descriptions", None)
+            if isinstance(descs, dict):
+                out.update(descs)
+        return out

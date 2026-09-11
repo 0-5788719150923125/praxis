@@ -15,28 +15,28 @@ def test_every_loss_is_a_differentiable_scalar(name):
     """Built the way get_loss_function builds it, on pre-shifted inputs."""
     torch.manual_seed(0)
     loss_function = registry.lookup("losses", name)(vocab_size=VOCAB)
-    classifier = nn.Linear(HIDDEN, VOCAB)
+    scorer = nn.Linear(HIDDEN, VOCAB)
     embeddings = torch.randn(4, 16, HIDDEN)
     labels = torch.randint(0, VOCAB, (4, 16))
 
     loss = loss_function(
-        logits=classifier(embeddings)[..., :-1, :].contiguous(),
+        logits=scorer(embeddings)[..., :-1, :].contiguous(),
         embeddings=embeddings[..., :-1, :].contiguous(),
-        classifier=classifier,
+        scorer=scorer,
         labels=labels[..., 1:].contiguous(),
         input_ids=labels,
     )
 
     assert loss.ndim == 0 and torch.isfinite(loss)
     loss.backward()
-    assert classifier.weight.grad is not None
-    assert torch.isfinite(classifier.weight.grad).all()
+    assert scorer.weight.grad is not None
+    assert torch.isfinite(scorer.weight.grad).all()
 
 
 @pytest.mark.parametrize("name", list(registry.namespace("regularizers").keys()))
 def test_every_regularizer_builds_and_tolerates_the_bare_call(name):
     """Every entry builds with ``pad_id``, reports through training_metrics(),
-    and - handed no classifier, head or activation to act on - returns a finite
+    and - handed no scorer, classifier or activation to act on - returns a finite
     scalar rather than raising. A ``*_probe`` entry is an instrument: observe
     only, and never a graph."""
     drain_step_counts()  # ouroboros_budget reads a module-global stack

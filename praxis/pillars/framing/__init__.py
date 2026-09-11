@@ -12,7 +12,7 @@ A fragment file::
     section: harmonic           # paper anchor it slots into
     order: 20                   # sort within the section
     requires:                   # AND across keys, OR (fnmatch) within a key
-      head_type: [crystal, prismatic]
+      classifier_type: [crystal, prismatic]
     body: >                     # folded: wrap lines freely, blank line = new para
       \\subsection{...}
 
@@ -42,6 +42,7 @@ import yaml
 from praxis.cli.loaders.experiments import load_rendered_config
 from praxis.pillars.proofs import PROOFS, render_proof
 from praxis.pillars.runs import experiment_name, experiment_stems
+from praxis.renames import rename_legacy_config
 
 # Fragment definitions live in this package's own directory, beside this file.
 FRAMING_DIR = Path(__file__).parent
@@ -158,12 +159,14 @@ def newest_experiment() -> Optional[str]:
 
 
 def resolve_config(experiment: str) -> Dict:
-    """Flat config dict for an experiment (extends chain resolved), augmented
-    with derived keys that fragments can gate on."""
+    """Flat config dict for an experiment (extends chain resolved, legacy keys
+    such as ``head_type`` translated), augmented with derived keys that
+    fragments can gate on."""
     path = EXP_DIR / f"{experiment}.yml"
     if not path.exists():
         raise FileNotFoundError(f"no experiment '{experiment}' at {path}")
-    return _augment(load_rendered_config(path, experiments_dir=EXP_DIR))
+    config = rename_legacy_config(load_rendered_config(path, experiments_dir=EXP_DIR))
+    return _augment(config)
 
 
 def _encoder_traits(encoder: str) -> Dict[str, bool]:
@@ -202,16 +205,17 @@ def _augment(config: Dict) -> Dict:
         or config.get("orchestration_type") == "swarm"
     )
 
-    # Harmonic latent space = a harmonic/crystal-bearing head OR the CALM codec.
-    head = str(config.get("head_type", ""))
+    # Harmonic latent space = a harmonic/crystal-bearing classifier OR the CALM
+    # codec.
+    classifier = str(config.get("classifier_type", ""))
     encoder = str(config.get("encoder_type", ""))
     traits = _encoder_traits(encoder)
     # prismatic is prefix-matched: prismatic3/prismatic4 carry the same
-    # harmonic fields as the base head. The harmonic-bottleneck Abstractinator
+    # harmonic fields as the base classifier. The harmonic-bottleneck Abstractinator
     # counts too - its latent is quantized harmonic amplitudes.
     derived["uses_harmonic_latent"] = (
-        head in ("harmonic", "crystal", "crystal_harmonic")
-        or head.startswith("prismatic")
+        classifier in ("harmonic", "crystal", "crystal_harmonic")
+        or classifier.startswith("prismatic")
         or encoder.startswith("calm")
         or traits["harmonic_bottleneck"]
     )

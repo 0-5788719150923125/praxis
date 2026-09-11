@@ -133,7 +133,7 @@ def test_state_dict_roundtrip():
 
 
 class _TinyLM(nn.Module):
-    """Embedding + interior matrices + vocab head, with the config attr the
+    """Embedding + interior matrices + vocab classifier, with the config attr the
     Muon-style split reads."""
 
     def __init__(self, vocab=16, dim=8):
@@ -141,10 +141,10 @@ class _TinyLM(nn.Module):
         self.config = types.SimpleNamespace(vocab_size=vocab)
         self.emb = nn.Embedding(vocab, dim)
         self.body = nn.Linear(dim, dim)
-        self.head = nn.Linear(dim, vocab, bias=False)
+        self.classifier = nn.Linear(dim, vocab, bias=False)
 
     def forward(self, ids):
-        return self.head(self.body(self.emb(ids)))
+        return self.classifier(self.body(self.emb(ids)))
 
 
 def test_composite_build_split_and_metrics():
@@ -156,10 +156,10 @@ def test_composite_build_split_and_metrics():
     assert isinstance(opt.primary, LionGeo)
 
     primary_ids = {id(p) for g in opt.primary.param_groups for p in g["params"]}
-    # Interior matrix on the smear; embedding and vocab head on the secondary.
+    # Interior matrix on the smear; embedding and vocab classifier on the secondary.
     assert id(model.body.weight) in primary_ids
     assert id(model.emb.weight) not in primary_ids
-    assert id(model.head.weight) not in primary_ids
+    assert id(model.classifier.weight) not in primary_ids
 
     ids = torch.randint(0, 16, (4, 6))
     loss = model(ids).sum()

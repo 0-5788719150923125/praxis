@@ -222,7 +222,7 @@ def test_byte_nll_bits_is_emitted_for_every_byte_level_family(tag, over):
         depth=2,
         max_length=512,
         decoder_type="sequential",
-        head_type="forward",
+        classifier_type="forward",
         tokenizer_type="byte_level",
         encoder_type=None,
     )

@@ -1,6 +1,6 @@
 """Message formatting utilities.
 
-Reply extraction moved to :mod:`praxis.generation.reply` - it is a property of
+Reply extraction moved to :mod:`praxis.inference.reply` - it is a property of
 the chat format and the generation result, not of HTTP, and the streamer needs
 it too. Re-exported here so the existing call sites keep working.
 """
@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from praxis.generation.reply import (  # noqa: F401  (re-exported)
+from praxis.inference.reply import (  # noqa: F401  (re-exported)
     EMPTY_REPLY_PLACEHOLDER,
     extract_assistant_reply,
 )

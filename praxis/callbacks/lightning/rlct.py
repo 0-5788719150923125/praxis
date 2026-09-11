@@ -9,9 +9,9 @@ background dashboard probes are bound by (see ``praxis/web/snapshots.py``).
 
 Results are stashed on the (uncompiled) model:
 
-* ``model._rlct_landscape`` - the grid payload, merged into ``/api/head_snapshots``
-  by the snapshot recipe/route and rendered by the ``rlct_mesh`` frontend
-  renderer.
+* ``model._rlct_landscape`` - the grid payload, merged into
+  ``/api/classifier_snapshots`` by the snapshot recipe/route and rendered by
+  the ``rlct_mesh`` frontend renderer.
 * ``model._rlct_metrics`` - the scalar cards (lambda-hat + LLC mean/max/min/std),
   drained into ``dynamics.db`` by :class:`DynamicsLoggerCallback`.
 

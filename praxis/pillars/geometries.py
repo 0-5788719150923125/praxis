@@ -1,17 +1,19 @@
-"""Recent crystal-head ``Center PCA Density`` geometries, rendered for the paper.
+"""Recent crystal-classifier ``Center PCA Density`` geometries, rendered for the paper.
 
 The dashboard's Dynamics tab shows a live ``crystal_centers_pca`` snapshot: the
-top-2 PCA projection of a crystal head's vocabulary centers, binned to a density
-grid (see :func:`praxis.heads.crystal._pca_density_grid`). This module reproduces
+top-2 PCA projection of a crystal classifier's vocabulary centers, binned to a density
+grid (see :func:`praxis.classifiers.crystal._pca_density_grid`). This module reproduces
 that view offline for the most recent runs and tiles them into a figure for the
 paper's ``Geometry that looks like nature`` section - an ablation of the
-geometries different heads/runs converge to.
+geometries different classifiers/runs converge to.
 
-A geometry is detected straight from the checkpoint: any parameter whose key
-ends in ``lm_head.centers`` is a set of crystal centers. A run contributes one
-geometry per such tensor, so prismatic/stacked heads yield several and a run
-with no crystal head yields none. Runs are scanned newest-first until ``limit``
-geometries are collected.
+A geometry is detected straight from the checkpoint: any [V, D] parameter whose
+key ends in ``.centers`` (and has no HALO ``gamma`` sibling) is a set of crystal
+centers. A run contributes one geometry per such tensor, so prismatic/sequential
+classifiers yield several and a run with no crystal classifier yields none. Runs
+are scanned newest-first until ``limit`` geometries are collected. Checkpoints
+written before the heads -> classifiers rename are read through
+:func:`praxis.renames.rename_legacy_state_dict`, so their keys match too.
 
 Output (all generated, none committed):
 - ``research/figures/geometry_N.png`` - one density heatmap per panel.
@@ -28,6 +30,7 @@ import json
 import os
 
 from praxis.pillars.runs import experiment_name, experiment_stems
+from praxis.renames import rename_legacy_config, rename_legacy_state_dict
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RUNS_DIR = os.path.join(REPO_ROOT, "build", "runs")
@@ -35,22 +38,22 @@ RESEARCH_DIR = os.path.join(REPO_ROOT, "research")
 FIG_DIR = os.path.join(RESEARCH_DIR, "figures")
 OUT_TEX = os.path.join(RESEARCH_DIR, "geometries.tex")
 GRID_SIZE = 64
-# Match any CrystalClassifier centers tensor (its param is always `.centers`):
-# CrystalHead exposes it as `...lm_head.centers`, while a VEAR crystal bank
-# (CrystalVearHead) exposes N of them as `...bank.experts.<i>.centers`. Matching
+# Match any CrystalGeometry centers tensor (its param is always `.centers`):
+# CrystalClassifier exposes it as `...scorer.centers`, while a VEAR crystal bank
+# (CrystalVearClassifier) exposes N of them as `...bank.experts.<i>.centers`. Matching
 # the bare suffix catches both; the [V, D] shape guard in collect_geometries
 # rejects anything else that happens to end in `.centers`.
 CENTERS_SUFFIX = ".centers"
 
-# ...except HaloClassifier (praxis/heads/halo.py:96) ALSO names its parameter
-# `centers`, and prismatic5/6 carry a HaloHead arm, so the bare suffix silently
+# ...except HaloGeometry (praxis/classifiers/halo.py:96) ALSO names its parameter
+# `centers`, and prismatic5/6 carry a HaloClassifier arm, so the bare suffix silently
 # swept HALO's hyperspherical prototypes in as though they were a crystal
 # geometry. They are neither: they live on a sphere, not in the crystal's
 # Euclidean center space, and HALO's gate share is near zero, so the panel is a
 # raw `randn` init - a featureless blob captioned as a settled geometry.
 #
-# The two are told apart structurally, not by name: HaloClassifier owns a
-# learnable `gamma` temperature beside its centers, CrystalClassifier owns
+# The two are told apart structurally, not by name: HaloGeometry owns a
+# learnable `gamma` temperature beside its centers, CrystalGeometry owns
 # nothing beside them.
 HALO_SIBLING = "gamma"
 # Shared with the web dashboard (praxis/web/src/js/colormaps.js is generated from
@@ -60,7 +63,7 @@ COLORMAP_NAME = "praxis_heat"
 
 
 def is_crystal_centers(sd, key):
-    """True if ``key`` is a CrystalClassifier's centers, not HALO's prototypes.
+    """True if ``key`` is a CrystalGeometry's centers, not HALO's prototypes.
 
     Both parameters are called ``centers`` and both are [vocab, dim], so shape
     cannot separate them; the sibling ``gamma`` can.
@@ -69,16 +72,18 @@ def is_crystal_centers(sd, key):
     return f"{prefix}{HALO_SIBLING}" not in sd
 
 
-def head_type_of(run_dir):
-    """The run's resolved ``head_type``, or None if it never wrote a spec.
+def classifier_type_of(run_dir):
+    """The run's resolved ``classifier_type``, or None if it never wrote a spec.
 
-    Read rather than assumed: the caption used to hardcode one head name, so it
-    kept asserting ``prismatic4`` long after the runs had moved to ``prismatic6``.
+    Read rather than assumed: the caption used to hardcode one classifier name,
+    so it kept asserting ``prismatic4`` long after the runs had moved to
+    ``prismatic6``. Specs written before the rename store ``head_type``.
     """
     try:
         with open(os.path.join(run_dir, "spec.json")) as fh:
-            return json.load(fh).get("args", {}).get("head_type") or None
-    except (OSError, ValueError, AttributeError):
+            args = dict(json.load(fh).get("args", {}))
+        return rename_legacy_config(args).get("classifier_type") or None
+    except (OSError, ValueError, AttributeError, TypeError):
         return None
 
 
@@ -112,7 +117,7 @@ def latest_checkpoint(run_dir):
 
 
 def pca_density_grid(W, grid_size=GRID_SIZE):
-    """Top-2 PCA density grid of row vectors. Mirrors the crystal head's
+    """Top-2 PCA density grid of row vectors. Mirrors the crystal classifier's
     snapshot so the paper figure matches the dashboard card."""
     import torch
 
@@ -147,13 +152,13 @@ def pca_density_grid(W, grid_size=GRID_SIZE):
 
 
 def branch_label(key):
-    """Short human tag for which head produced a centers tensor, e.g.
-    ``...branches.1.heads.1.lm_head.centers`` -> ``branch 1``, and a prismatic4
+    """Short human tag for which arm produced a centers tensor, e.g.
+    ``...branches.1.stages.1.scorer.centers`` -> ``branch 1``, and a prismatic4
     VEAR crystal bank ``...branches.1...bank.experts.2.centers`` ->
     ``branch 1 · expert 2`` (so the bank's N crystals get distinct panels)."""
     parts = key.split(".")
     branch = ""
-    for marker in ("branches", "branch", "heads"):
+    for marker in ("branches", "branch", "stages"):
         if marker in parts:
             i = parts.index(marker)
             if i + 1 < len(parts) and parts[i + 1].isdigit():
@@ -171,18 +176,18 @@ def collect_geometries(limit, scan):
     """Geometry dicts for the figure. Two modes, decided by the newest
     crystal-bearing run:
 
-    * INTRA-RUN - if that run is MULTI-HEAD (e.g. prismatic4's VEAR crystal
-      bank), render *its own* heads and stop. The bank's experts are the natural
-      comparison set; other runs carry a single, differently-shaped head, so a
-      cross-run mix would be apples-to-oranges (and the bank is THIS model's
-      story anyway).
+    * INTRA-RUN - if that run carries SEVERAL geometries (e.g. prismatic4's
+      VEAR crystal bank), render *its own* geometries and stop. The bank's
+      experts are the natural comparison set; other runs carry a single,
+      differently-shaped classifier, so a cross-run mix would be
+      apples-to-oranges (and the bank is THIS model's story anyway).
     * CROSS-RUN - otherwise, one-or-few panels per run, newest-first up to
-      ``limit`` (the original behaviour, for single-head runs).
+      ``limit`` (the original behaviour, for single-geometry runs).
 
     Each dict: {name, hash, label, grid, var_explained, n_points, intra_run}."""
     import torch
 
-    def _panels(sd, name, run_hash, head_type, keys, multi):
+    def _panels(sd, name, run_hash, classifier_type, keys, multi):
         out = []
         for key in keys:
             grid, ve = pca_density_grid(sd[key])
@@ -190,7 +195,7 @@ def collect_geometries(limit, scan):
                 {
                     "name": name,
                     "hash": run_hash,
-                    "head_type": head_type,
+                    "classifier_type": classifier_type,
                     "label": branch_label(key) if multi else "",
                     "grid": grid,
                     "var_explained": ve,
@@ -212,6 +217,8 @@ def collect_geometries(limit, scan):
         except Exception:
             continue
         sd = sd.get("state_dict", sd) if isinstance(sd, dict) else sd
+        if isinstance(sd, dict):
+            rename_legacy_state_dict(sd)
         keys = [
             k
             for k in sorted(sd)
@@ -224,9 +231,9 @@ def collect_geometries(limit, scan):
         if not keys:
             continue
         multi = len(keys) > 1
-        head_type = head_type_of(run_dir)
-        run_geos = _panels(sd, name, run_hash, head_type, keys, multi)
-        # Newest crystal run is a multi-head bank: render its own heads, done.
+        classifier_type = classifier_type_of(run_dir)
+        run_geos = _panels(sd, name, run_hash, classifier_type, keys, multi)
+        # Newest crystal run is a multi-geometry bank: render its own, done.
         # Truncated to `limit` like the cross-run path - a bank wider than the
         # budget used to return every expert and overflow the float page.
         if multi and not cross_run:
@@ -290,7 +297,7 @@ def render_png(geo, index):
 
 # Float-page height budget, all in \linewidth units so the arithmetic is
 # resolution- and paper-independent. A fixed 0.46 panel width overflowed as soon
-# as the bank produced 5 heads: three rows plus a seven-line caption ran past
+# as the bank produced 5 geometries: three rows plus a seven-line caption ran past
 # \textheight and the caption printed over the page number. The grid now shrinks
 # to fit instead, which leaves the common 1-2 row case untouched.
 _PANEL_ASPECT = 1.08  # rendered panel height / width (3x3in axes + title strip)
@@ -332,13 +339,18 @@ def figure_tex(paths, geometries):
         "snapshot the dashboard renders live."
     )
     if geometries and all(g.get("intra_run") for g in geometries):
-        # Single multi-head model (a crystal bank): the panels are its OWN heads.
+        # Single multi-geometry model (a crystal bank): the panels are its OWN
+        # geometries.
         run = geometries[0]["name"]
         labels = ", ".join(g["label"] for g in geometries if g["label"])
-        # Never name a head the run did not use. This clause hardcoded
-        # "prismatic4" and went on asserting it through every later head.
-        head = geometries[0].get("head_type")
-        bank = f"{head}'s VEAR crystal bank" if head else "a VEAR crystal bank"
+        # Never name a classifier the run did not use. This clause hardcoded
+        # "prismatic4" and went on asserting it through every later one.
+        classifier_type = geometries[0].get("classifier_type")
+        bank = (
+            f"{classifier_type}'s VEAR crystal bank"
+            if classifier_type
+            else "a VEAR crystal bank"
+        )
         caption = (
             f"Center PCA density for the {len(geometries)} crystal heads of "
             f"{run} - a single multi-head model ({bank}), "

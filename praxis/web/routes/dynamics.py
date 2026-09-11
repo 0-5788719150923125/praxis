@@ -924,14 +924,14 @@ def get_evolution():
         return jsonify({"status": "error", "message": str(e), "data": None}), 500
 
 
-@dynamics_bp.route("/api/head_snapshots", methods=["GET"])
-def get_head_snapshots():
-    """Live non-scalar snapshots from the active model's LM head.
+@dynamics_bp.route("/api/classifier_snapshots", methods=["GET"])
+def get_classifier_snapshots():
+    """Live non-scalar snapshots from the active model's classifier.
 
-    Delegates to ``head.dashboard_snapshots()``; returns a dict keyed by
+    Delegates to ``classifier.dashboard_snapshots()``; returns a dict keyed by
     snapshot name (e.g. ``harmonic_spectrum``, ``crystal_pca``) so the
     frontend can dispatch on the key. Each value's inner shape is the
-    head's own contract with whatever renderer consumes it.
+    classifier's own contract with whatever renderer consumes it.
     """
 
     def _live():
@@ -940,17 +940,17 @@ def get_head_snapshots():
         # slot), and while it held a second copy the two drifted: the recipe
         # grew a memory-surfacings walk this one never got, and a snapshot
         # added here alone would render nowhere once the producer took over.
-        from praxis.web.snapshots import _recipe_head_snapshots
+        from praxis.web.snapshots import _recipe_classifier_snapshots
 
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
-        return _recipe_head_snapshots(model)
+        return _recipe_classifier_snapshots(model)
 
     try:
-        return serve_snapshot("head_snapshots", _live, touches_model=True)
+        return serve_snapshot("classifier_snapshots", _live, touches_model=True)
 
     except Exception as e:
-        api_logger.error(f"Error in get_head_snapshots: {e}")
+        api_logger.error(f"Error in get_classifier_snapshots: {e}")
         traceback.print_exc()
         return (
             jsonify({"status": "error", "message": str(e), "snapshots": {}}),

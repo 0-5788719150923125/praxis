@@ -109,7 +109,7 @@ def assemble_trainer(
     Keeps the create_trainer_with_module kwarg contract that the
     mono_forward trainers document; non-MF trainers ignore the Ray knobs.
     """
-    from praxis.generation import bos_prompt, swap_inference_generator
+    from praxis.inference import bos_prompt, swap_inference_generator
     from praxis.trainers.factory import create_trainer_with_module
 
     api_server = services.api_server

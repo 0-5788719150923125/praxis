@@ -34,7 +34,7 @@ class PositionalEmbedding(nn.Sequential):
             ]
         )
         super().__init__(layers)
-        # GPT-2 style init; default N(0,1) embeddings explode tied-head logits
+        # GPT-2 style init; default N(0,1) embeddings explode tied-classifier logits
         nn.init.normal_(self.wte.weight, std=0.02)
         nn.init.normal_(self.wpe.weight, std=0.02)
 

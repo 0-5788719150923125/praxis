@@ -4,7 +4,7 @@ The paper argues that the geometry a model is allowed to represent decides what
 it can learn. That argument has an optimizer-side half the document had been
 leaving out: an update rule is *also* a choice of geometry - the norm under
 which a step is steepest descent - and the framework treats it as swappable for
-the same reason it treats attention and heads as swappable.
+the same reason it treats attention and classifiers as swappable.
 
 This module renders that choice for the run being written up, so a reader knows
 what trained the model rather than having to assume Adam. Two kinds of content,

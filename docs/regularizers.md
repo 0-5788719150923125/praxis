@@ -35,10 +35,10 @@ Presets:
 
 Hold the field's roughness at or above its input's, by a dual.
 
-Source: [praxis/losses/dissonance.py:147](../praxis/losses/dissonance.py#L147)
+Source: [praxis/losses/dissonance.py:148](../praxis/losses/dissonance.py#L148)
 
 Presets:
-- `dissonance` - Holds the harmonic field's Plomp-Levelt roughness at or above that of the signal it multiplies, by a dual variable. Needs a harmonic field under the head; a no-op otherwise.
+- `dissonance` - Holds the harmonic field's Plomp-Levelt roughness at or above that of the signal it multiplies, by a dual variable. Needs a harmonic field under the classifier; a no-op otherwise.
 - `dissonance_probe` (`observe_only=True`) - dissonance's spectrum readings with zero gradient: what the field does before deciding to push on it. Pair it with a config that drops ``dissonance`` when the question is what the roughness term does.
 
 ## `harmonic_kl` - HarmonicKLRegularizer

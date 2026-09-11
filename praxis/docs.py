@@ -68,7 +68,7 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
     ("environments", "Per-environment feature flags layered on top of experiments."),
     ("experimental", "Modules that are not yet promoted to a registry."),
     ("functional", "Stateless functional ops."),
-    ("generation", "Text-generation entry point (``Generator``)."),
+    ("inference", "Text-generation entry point (``Generator``)."),
     ("integrations", "Pluggable third-party integrations (Discord, hivemind, ...)."),
     ("interface", "Terminal dashboard."),
     (

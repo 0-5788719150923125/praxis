@@ -113,7 +113,7 @@ class RunsSource(KBSource):
 
     A bare run config carries only a hash and a command, which says nothing
     about what the run actually built. We resolve the run's experiment to its
-    flat config and list the modules it instantiated (encoder, attention, head,
+    flat config and list the modules it instantiated (encoder, attention, classifier,
     ...) - the run-history analogue of the Dynamics tab's caller labels, so a
     run is findable and legible by what it did, not just its hash.
     """
@@ -439,7 +439,7 @@ class PagesSource(KBSource):
 def _module_chart_metrics() -> List[tuple]:
     """(key, title, description) for every module-emitted chart/snapshot metric.
 
-    Modules (encoders, heads, ...) declare a ``metric_descriptions`` class attr
+    Modules (encoders, classifiers, ...) declare a ``metric_descriptions`` class attr
     that renders on the Dynamics tab via the scalar/snapshot manifest - they're
     not in the central registries. Discover them statically by walking every
     registry namespace and reading each registered class's attribute (no model
@@ -541,7 +541,7 @@ _RUN_MODULE_KEYS = [
     ("attention_type", "attention"),
     ("encoding", "encoding"),
     ("ffn_type", "ffn"),
-    ("head_type", "head"),
+    ("classifier_type", "classifier"),
     ("memory_type", "memory"),
     ("norm_type", "norm"),
     ("optimizer_wrappers", "optimizer"),
@@ -565,13 +565,16 @@ def _run_experiment(config_json: str) -> str:
 
 def _run_modules(experiment: str) -> str:
     """A one-line module summary for an experiment, e.g.
-    ``encoder: calm_byte_small · attention: arc · head: prismatic``."""
+    ``encoder: calm_byte_small · attention: arc · classifier: prismatic``."""
     try:
         from praxis.cli.loaders.experiments import load_rendered_config
+        from praxis.renames import rename_legacy_config
 
-        config = load_rendered_config(
-            REPO_ROOT / "experiments" / f"{experiment}.yml",
-            experiments_dir=REPO_ROOT / "experiments",
+        config = rename_legacy_config(
+            load_rendered_config(
+                REPO_ROOT / "experiments" / f"{experiment}.yml",
+                experiments_dir=REPO_ROOT / "experiments",
+            )
         )
     except Exception:
         return ""

@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-"""Isolate the CALM bottleneck: codec round-trip vs energy-head prediction.
+"""Isolate the CALM bottleneck: codec round-trip vs generator prediction.
 
 Three decode paths over the same real text, all teacher-forced (no
 compounding error), so a failure points at one component:
 
   A. Codec round-trip   - encode text -> latent -> decode. Upper bound on
-     anything the head could achieve. If this is mush, the codec is lossy.
-  B. Head best-guess    - the head's zero-noise (mean) next-latent prediction,
-     conditioned on the TRUE prefix hidden state, decoded. If A is clean but
-     this is mush, the energy head is the bottleneck.
-  C. Head sample / vote - the actual inference sampler (single natural draw and
+     anything the generator could achieve. If this is mush, the codec is lossy.
+  B. Generator best-guess    - the generator's zero-noise (mean) next-latent
+     prediction, conditioned on the TRUE prefix hidden state, decoded. If A is
+     clean but this is mush, the generator is the bottleneck.
+  C. Generator sample / vote - the actual inference sampler (single natural draw and
      the patch-vote), to see how much sampling noise costs on top of B.
 
 Runs on CPU by default so it never touches a training GPU.
@@ -148,7 +148,7 @@ def main():
     )
     print("-" * 72)
 
-    # --- B/C: head prediction under teacher forcing --------------------------
+    # --- B/C: generator prediction under teacher forcing ---------------------
     from praxis.modeling import PraxisModel
 
     out = PraxisModel.forward(model, input_ids=input_ids)
@@ -162,12 +162,12 @@ def main():
     target = padded[:, enc.K :]  # true patches 1..N-1
     tgt_render = render(tokenizer, target[0], pad_id)
 
-    # B: head zero-noise best guess
-    zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], enc.energy_head.noise_dim)
-    z_hat = enc.energy_head(h_cond, zero_noise, t=t_cond)
+    # B: generator zero-noise best guess
+    zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], enc.generator.noise_dim)
+    z_hat = enc.generator(h_cond, zero_noise, t=t_cond)
     b_mean = decode_latents(z_hat)
     # C1: single natural sample
-    z_one = enc.energy_head.sample(h_cond, num_samples=1, noise_scale=1.0, t=t_cond)[0]
+    z_one = enc.generator.sample(h_cond, num_samples=1, noise_scale=1.0, t=t_cond)[0]
     c_samp = decode_latents(z_one)
     # C2: patch-vote per position (the real inference sampler)
     voted = []
@@ -185,11 +185,11 @@ def main():
     print("TARGET (true next patches 1..N-1):")
     print("     " + tgt_render)
     print()
-    print("B. HEAD BEST-GUESS (zero-noise mean, true conditioning)")
+    print("B. GENERATOR BEST-GUESS (zero-noise mean, true conditioning)")
     print(f"   acc={token_acc(b_mean[0], target[0], pad_id):.3f}")
     print("     " + render(tokenizer, b_mean[0], pad_id))
     print()
-    print("C. HEAD SAMPLERS (true conditioning)")
+    print("C. GENERATOR SAMPLERS (true conditioning)")
     print(f"   single draw    acc={token_acc(c_samp[0], target[0], pad_id):.3f}")
     print("     " + render(tokenizer, c_samp[0], pad_id))
     print(
@@ -199,9 +199,9 @@ def main():
     print("     " + render(tokenizer, c_vote[0], pad_id))
     print("=" * 72)
     print(
-        "Read: if A is clean but B/C are mush -> the energy HEAD is the\n"
+        "Read: if A is clean but B/C are mush -> the GENERATOR is the\n"
         "bottleneck (target brittle / objective too noisy). If A is mush ->\n"
-        "the CODEC is lossy and no head swap helps."
+        "the CODEC is lossy and no generator swap helps."
     )
 
 

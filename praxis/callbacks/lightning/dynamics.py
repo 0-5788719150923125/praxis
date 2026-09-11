@@ -106,9 +106,10 @@ class DynamicsLoggerCallback(Callback):
             # Expert dynamics: per-expert gradients (only when routers exist)
             dynamics.update(self._extract_expert_dynamics(model))
 
-            # Head-specific diagnostics (harmonic field, crystal centers,
-            # etc.). Each BaseHead may opt in via training_metrics().
-            dynamics.update(self._extract_head_dynamics(model))
+            # Classifier-specific diagnostics (harmonic field, crystal
+            # centers, etc.). Each BaseClassifier may opt in via
+            # training_metrics().
+            dynamics.update(self._extract_classifier_dynamics(model))
 
             # Titans memory diagnostics (surprise), averaged across layers.
             dynamics.update(self._extract_memory_dynamics(model))
@@ -160,7 +161,7 @@ class DynamicsLoggerCallback(Callback):
             # ...and what did the fold do about it?
             dynamics.update(self._extract_strategy_dynamics(model))
 
-            # Do the head's several ARMS agree about the shared trunk?
+            # Do the classifier's several ARMS agree about the shared trunk?
             dynamics.update(self._extract_arm_dynamics(model))
 
             # Per-module compute-time attribution (coverage, dominant share),
@@ -323,20 +324,20 @@ class DynamicsLoggerCallback(Callback):
 
         return all_dynamics
 
-    def _extract_head_dynamics(self, model) -> dict:
-        """Delegate to the LM head's own diagnostics.
+    def _extract_classifier_dynamics(self, model) -> dict:
+        """Delegate to the classifier's own diagnostics.
 
-        Heads opt in by overriding ``BaseHead.training_metrics``; we
-        wrap the call in a try/except so a buggy metric in one head
+        Classifiers opt in by overriding ``BaseClassifier.training_metrics``;
+        we wrap the call in a try/except so a buggy metric in one classifier
         doesn't kill the whole dynamics log.
         """
-        head = getattr(model, "head", None)
-        if head is None:
+        classifier = getattr(model, "classifier", None)
+        if classifier is None:
             return {}
         try:
-            return head.training_metrics()
+            return classifier.training_metrics()
         except Exception as e:
-            _report("head.training_metrics()", e)
+            _report("classifier.training_metrics()", e)
             return {}
 
     def _extract_mtp_dynamics(self, model) -> dict:
@@ -456,9 +457,9 @@ class DynamicsLoggerCallback(Callback):
     def _extract_arm_dynamics(self, model) -> dict:
         """Drain the per-arm Jacobian diagnostics stashed by the model.
 
-        ObjectiveConflict compares loss TERMS; this compares the head's arms,
-        which are not loss terms - one cross-entropy reaches all of them
-        through the gate's mixture. Sampled on the head's own interval and held
+        ObjectiveConflict compares loss TERMS; this compares the classifier's
+        arms, which are not loss terms - one cross-entropy reaches all of them
+        through the gate's mixture. Sampled on the classifier's own interval and held
         between samples, like the other stashes. Empty under torch.compile.
         """
         core = getattr(model, "_orig_mod", model)

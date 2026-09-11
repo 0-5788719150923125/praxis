@@ -2,7 +2,7 @@
 
 Compresses K contiguous tokens into a single continuous latent of size
 ``latent_dim``, and decodes latents back to K per-token feature vectors
-(an external LM head turns those into logits). This is the autoencoder
+(an external classifier turns those into logits). This is the autoencoder
 described in section 3.2 of the CALM paper (arXiv 2510.27688).
 
 The VAE is token-agnostic: it just sees token ids and vocab size, so
@@ -90,13 +90,13 @@ class CALMVAE(nn.Module):
         latent_norm: Fix the latent to unit per-dim RMS (norm = sqrt(D))
             before it is decoded. Pins the latent geometry so it can't drift
             into the large-norm / tiny-variance brittleness that makes the
-            energy head's target unreachably precise. Parameter-free, so the
+            generator's target unreachably precise. Parameter-free, so the
             geometry is stationary across the stage-1 -> stage-2 freeze.
         dropout: Dropout rate, applied at three sites as in the reference:
             input token ids (zeroed), the sampled latent z, and inside the
             encoder / decoder blocks. The first two are load-bearing for
             generation: they train the decoder to map a NEIGHBORHOOD of z
-            to the right tokens, so the LM head's imperfect latent
+            to the right tokens, so the generator's imperfect latent
             predictions still decode to text.
     """
 
@@ -207,12 +207,12 @@ class CALMVAE(nn.Module):
             ``[B, N*K, hidden_dim]`` decoder hidden states in patch-major
             order (all K tokens of patch 0, then patch 1, ...). The token
             classifier that turns these into logits is owned externally
-            (the injected LM head), so CALM can swap forward/crystal/etc.
+            (the injected classifier), so CALM can swap forward/crystal/etc.
         """
         B, N, _ = z.shape
         K = self.chunk_size
         # Single source of truth for "the decoder consumes a normalized
-        # latent": covers teacher-forced recon, the energy head's zero-noise
+        # latent": covers teacher-forced recon, the generator's zero-noise
         # decode, and generation, all of which route through here.
         z = self.normalize_latent(z)
         # Latent dropout (reference-faithful): the decoder learns to decode
@@ -329,7 +329,7 @@ class PatchVAE(nn.Module):
     def normalize_latent(self, x: torch.Tensor) -> torch.Tensor:
         """Unit per-dim RMS. Same contract as ``CALMVAE.normalize_latent``: one
         source of truth for "the decoder consumes a normalized latent", so the
-        geometry the energy head predicts into is stationary by construction
+        geometry the generator predicts into is stationary by construction
         rather than by a correction applied at the loss."""
         if not self.latent_norm:
             return x
@@ -340,7 +340,7 @@ class PatchVAE(nn.Module):
 
         LATENT DROPOUT, and it is the whole answer to the train/test gap this
         codec otherwise has. At generation the decoder is handed a latent the
-        energy head PREDICTED; in training it would only ever see one the
+        generator PREDICTED; in training it would only ever see one the
         encoder produced from real bytes. Dropping the latent teaches the
         decoder to map a NEIGHBOURHOOD of z to the right features, so an
         imperfect prediction still decodes. The reference does exactly this

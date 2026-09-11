@@ -5,7 +5,7 @@ discrete RVQ arm. The thesis is that the DISCRETE arm can pay for the
 CONTINUOUS one. CALM's energy score is a weak, high-variance signal that needs
 far more tokens than this line can afford; an RVQ code is a dense,
 low-variance, mode-seeking target, and predicting the next code from the same
-conditioning hidden the energy head reads is what should concentrate its
+conditioning hidden the energy generator reads is what should concentrate its
 conditional. These tests pin the mechanics, not the thesis - the run decides
 that.
 """
@@ -32,7 +32,7 @@ def _config(encoder=PROFILE, d=64):
         depth=2,
         max_length=512,
         decoder_type="sequential",
-        head_type="forward",
+        classifier_type="forward",
         encoder_type=encoder,
         tokenizer_type="byte_level",
         codebook_size=256,
@@ -120,8 +120,8 @@ def test_every_new_component_receives_gradient():
     for name, mod in (
         ("vae", enc.vae),
         ("vae.dec_blocks", enc.vae.dec_blocks),
-        ("energy_head", enc.energy_head),
-        ("code_heads", enc.code_heads),
+        ("generator", enc.generator),
+        ("code_classifiers", enc.code_classifiers),
     ):
         live = [
             p for p in mod.parameters() if p.grad is not None and p.grad.abs().sum() > 0
@@ -163,10 +163,10 @@ def test_the_two_codecs_emit_one_latent_per_patch():
 def test_the_reference_constants():
     """Fidelity to github.com/shaochenze/calm. The noise is narrower than the
     latent (reference: noise_size 64 against latent_size 128), since noise as
-    wide as the target lets the head satisfy the score without the
+    wide as the target lets the generator satisfy the score without the
     conditioning; the codec carries the reference's ae_dropout."""
     m = _build()
-    assert m.encoder.energy_head.noise_dim < m.encoder.energy_head.latent_dim
+    assert m.encoder.generator.noise_dim < m.encoder.generator.latent_dim
     assert calm.ENERGY_SAMPLES_N == 8  # config.num_samples
     assert calm.ENERGY_SAMPLES_M == 100  # n_y, hardcoded in energy_score()
     assert calm.FREE_BITS == 0.5  # kl_clamp
@@ -199,7 +199,7 @@ def test_the_vote_codes_each_decoded_proposal(monkeypatch, samples, temperature)
 
         monkeypatch.setattr(owner, name, wrapped)
 
-    spy(enc.energy_head, "sample")
+    spy(enc.generator, "sample")
     spy(enc.vae, "decode")
     spy(enc, "_quantize_to_codes")
 
@@ -259,7 +259,7 @@ def test_the_winner_is_a_real_proposal_not_an_average():
     h = torch.randn(4, 64)
     # Force a spread-out, non-degenerate proposal cloud.
     with torch.no_grad():
-        enc.energy_head.final_layer.linears[-1].weight.normal_(0, 0.5)
+        enc.generator.final_layer.linears[-1].weight.normal_(0, 0.5)
     torch.manual_seed(7)
     z = enc.vote_next_latent(h)
 
@@ -267,7 +267,7 @@ def test_the_winner_is_a_real_proposal_not_an_average():
     # re-seeding replays the same pool exactly.
     torch.manual_seed(7)
     with torch.no_grad():
-        pool = enc.energy_head.sample(h, num_samples=enc.vote_samples)
+        pool = enc.generator.sample(h, num_samples=enc.vote_samples)
     nearest = (pool.permute(1, 0, 2) - z.unsqueeze(1)).norm(dim=-1).min(dim=1).values
     assert torch.all(nearest < 1e-5), nearest
 
@@ -380,7 +380,7 @@ def test_the_kl_does_not_leak_into_validation():
 def test_code_ce_is_normalized_by_chance():
     """Dividing by ln(K) makes the term dimensionless - 1.0 is chance - so its
     scale stops being an accident of codebook size (unnormalized, an untrained
-    head sits at ln 256 = 5.5)."""
+    code classifier sits at ln 256 = 5.5)."""
     m = _build()
     _registered(m)
     ce = m.encoder._pending.get("calm_code_ce")
@@ -408,8 +408,8 @@ def test_the_kl_is_not_a_thousand_nats_at_init():
     assert float(wide._pending["calm_kl"]) == pytest.approx(kl, rel=0.1)
 
 
-def test_training_draws_go_through_the_heads_sampler(monkeypatch):
-    """The energy score's model draws come from `EnergyHead.sample`, the
+def test_training_draws_go_through_the_generators_sampler(monkeypatch):
+    """The energy score's model draws come from `EnergyGenerator.sample`, the
     reference's uniform [-0.5, 0.5] noise, at the reference's N."""
     m = _build()
     enc = m.encoder
@@ -417,13 +417,13 @@ def test_training_draws_go_through_the_heads_sampler(monkeypatch):
     h = torch.randn(2, 8, m.config.hidden_size)
     enc._post_downsample(h, torch.zeros(()))
     calls = []
-    real = enc.energy_head.sample
+    real = enc.generator.sample
 
     def sample(h_cond, num_samples, **kwargs):
         calls.append(num_samples)
         return real(h_cond, num_samples, **kwargs)
 
-    monkeypatch.setattr(enc.energy_head, "sample", sample)
+    monkeypatch.setattr(enc.generator, "sample", sample)
     enc._register_calm_losses(h)
     assert calls == [calm.ENERGY_SAMPLES_N]
 
@@ -542,7 +542,7 @@ def test_vote_generation_never_mutates_the_codebook():
 
 def test_vote_generation_requires_the_latent_and_logits_seams():
     """A patch the model just PREDICTED has no bytes behind it, so
-    `base_forward` cannot reach it; and the head belongs to the model, not the
+    `base_forward` cannot reach it; and the classifier belongs to the model, not the
     encoder. Both arrive per call - derived from `model` via `trunk_hooks`, or
     supplied explicitly by a non-standard driver - rather than as stored
     back-references, so the loop cannot run with neither."""

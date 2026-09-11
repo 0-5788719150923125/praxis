@@ -1,7 +1,7 @@
 """Praxis models, exposed through HuggingFace's `PreTrainedModel` interface.
 
 Two classes matter to most readers: `PraxisModel` (the backbone that turns input
-ids into hidden states) and `PraxisForCausalLM` (adds the LM head + `.generate()`,
+ids into hidden states) and `PraxisForCausalLM` (adds the classifier + `.generate()`,
 and is what `AutoModelForCausalLM.from_pretrained(...)` returns). Both assemble
 themselves from the `PraxisConfig` by looking implementations up in the registries.
 """
@@ -26,6 +26,7 @@ from praxis.containers import LossContainer
 from praxis.losses import build_objectives
 from praxis.losses.conflict import ObjectiveConflict
 from praxis.memory import MemoryBase
+from praxis.renames import rename_legacy_state_dict
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
 from praxis.utils import create_block_ids
 
@@ -46,7 +47,7 @@ class PraxisModelOutput(BaseModelOutputWithPast):
 
 
 class PraxisModel(PreTrainedModel):
-    """The backbone: input ids (or bytes) -> hidden states, no LM head.
+    """The backbone: input ids (or bytes) -> hidden states, no classifier.
 
     A standard HF `PreTrainedModel`, so it carries the usual `.from_pretrained` /
     `.save_pretrained` / device + dtype machinery. `__init__` reads the config and
@@ -74,7 +75,7 @@ class PraxisModel(PreTrainedModel):
             )
             # Encoders that name an embedding profile get their input
             # embeddings built from the registry and injected, mirroring how
-            # heads classify encoder-declared output dims. Encoders that own
+            # classifiers classify encoder-declared output dims. Encoders that own
             # their embeddings (e.g. CALM) name no profile.
             profile = self.encoder.embedding_profile
             if profile:
@@ -103,7 +104,7 @@ class PraxisModel(PreTrainedModel):
         """Optimizer step at which a new LR warmup should begin, or -1 if none.
 
         The scheduler/stage contract: a multi-stage model (e.g. CALM, whose
-        trunk and head sit idle until the codec freezes) reports the boundary
+        trunk and classifier sit idle until the codec freezes) reports the boundary
         step here so the scheduler can re-warm the newly-activated params
         instead of slamming them with the full post-warmup LR cold. Default
         -1 = single-stage; nothing to re-warm."""
@@ -243,10 +244,10 @@ class PraxisModel(PreTrainedModel):
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):
-    """`PraxisModel` plus an LM head and HF `GenerationMixin` (`.generate()`).
+    """`PraxisModel` plus a classifier and HF `GenerationMixin` (`.generate()`).
 
     This is the causal-LM entry point - what `AutoModelForCausalLM` loads. It wraps
-    the backbone with an output head (from the ``heads`` registry); `forward` returns
+    the backbone with a classifier (from the ``classifiers`` registry); `forward` returns
     next-token logits and, when `labels` are given, the training loss.
     """
 
@@ -256,30 +257,33 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         config.causal = True
         super().__init__(config)
 
-        # Build the LM head, passing the encoder reference so heads that
-        # participate in encoder-mode forward (harmonic, crystal) can
-        # size their own submodules. Encoder-agnostic heads (forward,
-        # tied) ignore the reference and skip allocating an lm_head.
+        # Build the classifier, passing the encoder reference so classifiers
+        # that participate in encoder-mode forward (harmonic, crystal) can
+        # size their own submodules. Encoder-agnostic classifiers (forward,
+        # tied) ignore the reference.
         encoder_ref = self.encoder if self.encoder else None
-        head_type = resolve_head_type(config, has_encoder=encoder_ref is not None)
-        head_cls = registry.namespace("heads").get(
-            head_type, registry.lookup("heads", "forward")
+        classifier_type = resolve_classifier_type(
+            config, has_encoder=encoder_ref is not None
         )
-        self.head = head_cls(config, encoder=encoder_ref)
+        classifier_cls = registry.namespace("classifiers").get(
+            classifier_type, registry.lookup("classifiers", "forward")
+        )
+        self.classifier = classifier_cls(config, encoder=encoder_ref)
 
-        # Loss-owning encoders that borrow the head as their token classifier
-        # (e.g. CALM) take a reference to it; they apply it internally.
-        if self.encoder and hasattr(self.encoder, "set_head"):
-            self.encoder.set_head(self.head)
+        # Loss-owning encoders that borrow the classifier as their token
+        # classifier (e.g. CALM) take a reference to it; they apply it
+        # internally.
+        if self.encoder and hasattr(self.encoder, "set_classifier"):
+            self.encoder.set_classifier(self.classifier)
 
-        # Initialize separate backward head if requested
+        # Initialize separate backward classifier if requested
         if config.bidirectional and config.encoder_type is None:
-            backward_cls = registry.namespace("heads").get(
-                config.head_type, registry.lookup("heads", "forward")
+            backward_cls = registry.namespace("classifiers").get(
+                config.classifier_type, registry.lookup("classifiers", "forward")
             )
-            self.backward_head = backward_cls(config, encoder=None)
+            self.backward_classifier = backward_cls(config, encoder=None)
         else:
-            self.backward_head = None
+            self.backward_classifier = None
 
         # Initialize MTP if requested
         # Two execution paths:
@@ -291,7 +295,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if getattr(config, "mtp_type", None) is not None:
             if config.bidirectional:
                 raise ValueError("MTP cannot be combined with --bidirectional")
-            from praxis.heads.mtp import MultiTokenPrediction
+            from praxis.classifiers.mtp import MultiTokenPrediction
 
             self.mtp = MultiTokenPrediction(config)
 
@@ -315,6 +319,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Checkpoints written before the terms were collapsed into one
         # container carry the regularizers at the model's own top level.
         self._register_load_state_dict_pre_hook(self.criterion.migrate_regularizer_keys)
+        # Checkpoints written before the heads -> classifiers rename.
+        self._register_load_state_dict_pre_hook(_rename_legacy_keys)
 
         # Per-task loss weighting. Identity (no-op) unless --task-weights
         # is set; the assistant mask from the chat template is always
@@ -339,17 +345,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self._strategy_metrics: Dict[str, float] = {}
         # Per-arm Jacobian diagnostics, stashed by _collect_aux_losses.
         self._arm_metrics: Dict[str, float] = {}
-        # A head that owns its arms' objectives takes the HALO geometric term
+        # A classifier that owns its arms' objectives takes the HALO geometric term
         # as that arm's Jacobian row, so the criterion must stop also adding it
         # - otherwise it is double-counted AND reaches the trunk uncorrected,
         # bypassing the arbitration it is supposed to be subject to.
-        if getattr(self.head, "arm_surgery", False) and hasattr(
+        if getattr(self.classifier, "arm_surgery", False) and hasattr(
             self.criterion.main, "composite_geometry"
         ):
             self.criterion.main.composite_geometry = False
 
         # Tie weights if requested
-        if config.tie_word_embeddings and self.head is not None:
+        if config.tie_word_embeddings and self.classifier is not None:
             self.tie_weights()
 
     def get_metrics(self) -> dict:
@@ -380,7 +386,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         Convenience wrapper for callers that have a live ``PraxisForCausalLM``
         reference and want to compute a single layer's local loss using
-        the model's own criterion / strategy / head. The module-level
+        the model's own criterion / strategy / classifier. The module-level
         :func:`compute_layer_wise_loss` stays canonical for
         framework-agnostic code paths (Ray actors, Hivemind peers,
         ``torch.distributed.rpc`` nodes); this method is purely sugar for
@@ -393,7 +399,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 (``input_ids[..., 1:]``).
             layer_idx: Optional layer index - currently unused by the
                 helper but accepted for future per-layer dispatching
-                (different heads per depth, etc.).
+                (different classifiers per depth, etc.).
             aux_losses: Optional list of router/controller aux losses
                 to fold into the local objective via
                 ``self.strategy`` (D5).
@@ -403,15 +409,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         from praxis.losses.layer_wise import compute_layer_wise_loss
 
         del layer_idx  # reserved for future use
-        # Like MTP, this classifies with the SHARED head and needs its ordinary
-        # gradient path; a surgical head's blend detaching would otherwise leave
-        # the loss unable to reach anything. See ParallelHead.undetached.
-        undetach = getattr(self.head, "undetached", None)
+        # Like MTP, this classifies with the SHARED classifier and needs its
+        # ordinary gradient path; a surgical classifier's blend detaching would
+        # otherwise leave the loss unable to reach anything. See
+        # ParallelClassifier.undetached.
+        undetach = getattr(self.classifier, "undetached", None)
         with undetach() if undetach else contextlib.nullcontext():
             return compute_layer_wise_loss(
                 hidden_states=hidden_states,
                 labels=labels,
-                head=self.head,
+                classifier=self.classifier,
                 criterion=self.criterion.main,
                 strategy=self.strategy,
                 aux_losses=aux_losses,
@@ -472,7 +479,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         logits: torch.Tensor,
         labels: torch.Tensor,
         embeddings: torch.Tensor,
-        classifier: Optional[nn.Module],
+        scorer: Optional[nn.Module],
         input_ids: torch.Tensor,
         loss_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -486,7 +493,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return self.criterion.main(
                 logits=logits.contiguous(),
                 embeddings=embeddings if is_cut_ce else embeddings,
-                classifier=classifier,
+                scorer=scorer,
                 labels=labels,
                 input_ids=input_ids,
                 loss_weights=loss_weights,
@@ -497,7 +504,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 embeddings=(
                     embeddings if is_cut_ce else embeddings[..., :-1, :].contiguous()
                 ),
-                classifier=classifier,
+                scorer=scorer,
                 labels=labels,
                 input_ids=input_ids,
                 loss_weights=loss_weights,
@@ -508,7 +515,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         logits: torch.Tensor,
         labels: torch.Tensor,
         embeddings: torch.Tensor,
-        classifier: Optional[nn.Module],
+        scorer: Optional[nn.Module],
         input_ids: torch.Tensor,
         backward_logits: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -517,33 +524,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         Note: labels are already shifted right (input_ids[..., 1:]) when passed in.
         """
         # Forward loss: predict next token (standard causal LM)
-        forward_loss = self._compute_loss(
-            logits, labels, embeddings, classifier, input_ids
-        )
+        forward_loss = self._compute_loss(logits, labels, embeddings, scorer, input_ids)
 
         # Backward loss: predict previous token
         # For backward prediction, we want logits[1:] to predict input_ids[:-1]
         backward_labels = input_ids[..., :-1].contiguous()
 
-        # Select appropriate logits and classifier for backward prediction
+        # Select appropriate logits and scorer for backward prediction
         if backward_logits is not None:
-            # Use separate backward head
+            # Use separate backward classifier
             back_logits = backward_logits[..., 1:, :].contiguous()
-            back_classifier = (
-                self.backward_head.classifier
-                if hasattr(self.backward_head, "classifier")
-                else None
-            )
+            back_scorer = getattr(self.backward_classifier, "scorer", None)
         else:
-            # Reuse forward head
+            # Reuse forward classifier
             back_logits = logits[..., 1:, :].contiguous()
-            back_classifier = classifier
+            back_scorer = scorer
 
         # Compute backward loss
         backward_loss = self.criterion.main(
             logits=back_logits,
             embeddings=embeddings[..., 1:, :].contiguous(),
-            classifier=back_classifier,
+            scorer=back_scorer,
             labels=backward_labels,
             input_ids=input_ids,
         )
@@ -565,7 +566,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     ) -> dict:
         # NB: this path is HF's generate() loop. Byte-latent models with MTP
         # never reach it - generate() resolves the speculative decoding method
-        # first (praxis/generation/speculative.py) - so the encoder branch here
+        # first (praxis/inference/speculative.py) - so the encoder branch here
         # only covers encoder models decoding without MTP.
         #
         # Why the encoder cannot cache: NOT "the prefix isn't stable" (the old
@@ -665,12 +666,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Encoder-owned self-supervised warmup (e.g. CALM's autoencoder). While
         # active, train ONLY the encoder's objective and skip the global
-        # transformer + head entirely; the rest of the model stays locked. This
+        # transformer + classifier entirely; the rest of the model stays locked. This
         # is what makes "train the codec first, then freeze it" real - without
         # it the transformer trains alongside the codec.
         #
         # Skipped while any parameter is still lazy: the lazy-init dummy forward
-        # must run the FULL path so the transformer/head materialize. Locking
+        # must run the FULL path so the transformer/classifier materialize. Locking
         # (requires_grad_) an UninitializedParameter raises; deferring also
         # leaves the trunk uninitialized. Once materialized this is a no-op.
         # torch.is_grad_enabled() guards the no-grad dummy forward in
@@ -678,7 +679,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # is built, and on models with no lazy params it used to engage the
         # lock right there - get_optimizer then filtered out every non-codec
         # param, so stage 2 could never train (flat energy loss, zero trunk
-        # grads, the energy head's zero-init final layer frozen at 0 forever).
+        # grads, the energy generator's zero-init final layer frozen at 0 forever).
         if (
             self.training
             and torch.is_grad_enabled()
@@ -691,11 +692,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.training and self.encoder:
             self._set_pretraining_lock(False)
 
-        # Decode-length bucketing (praxis/generation/bucketing.py). Inert
+        # Decode-length bucketing (praxis/inference/bucketing.py). Inert
         # unless a generation opened the context AND this is a label-free
         # inference forward, so training and validation never see a padded
         # row. Everything downstream of here - the encoder, the trunk, the
-        # head, the losses - runs on the padded length and stays internally
+        # classifier, the losses - runs on the padded length and stays internally
         # consistent; only what leaves this method is trimmed back, because
         # `_sample` reads `logits[:, -1]` and that has to be the caller's last
         # real position.
@@ -710,11 +711,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # the same set of paths bucketing is for.
         true_len = None
         if labels is None and past_key_values is None and not self.training:
-            # Imported here, not at module scope: `praxis.generation` pulls in
+            # Imported here, not at module scope: `praxis.inference` pulls in
             # the Generator, which imports this module back. The lookup is a
             # sys.modules hit and it is behind the training guard, so a
             # training step never reaches it at all.
-            from praxis.generation.bucketing import active_buckets, pad_for_decode
+            from praxis.inference.bucketing import active_buckets, pad_for_decode
 
             if active_buckets():
                 input_ids, attention_mask, true_len = pad_for_decode(
@@ -734,11 +735,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
         # Under cut-CE training, full logits are never materialized; the loss
-        # projects internally from embeddings + classifier.
+        # projects internally from embeddings + scorer.
         is_cut_ce = type(self.criterion.main).__name__ == "CutCrossEntropyLoss"
         skip_logits = is_cut_ce and self.training and labels is not None
 
-        logits, classifier, hidden_states, backward_logits = self._compute_logits(
+        logits, scorer, hidden_states, backward_logits = self._compute_logits(
             outputs, input_ids, skip_logits, attention_mask
         )
 
@@ -760,7 +761,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             logits,
             labels,
             hidden_states,
-            classifier,
+            scorer,
             input_ids,
             backward_logits,
             task_type_ids,
@@ -775,7 +776,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             attention_mask,
             skip_logits,
             assistant_mask,
-            classifier,
+            scorer,
         )
         loss = self._finalize_loss(loss, outputs.losses, labels, hidden_states)
 
@@ -799,24 +800,24 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     ) -> Tuple[torch.Tensor, Optional[nn.Module], torch.Tensor, Optional[torch.Tensor]]:
         """Turn trunk hidden states into logits.
 
-        Returns ``(logits, classifier, hidden_states, backward_logits)``.
-        Three paths: encoder-owned decode (e.g. CALM), head projection, or
+        Returns ``(logits, scorer, hidden_states, backward_logits)``.
+        Three paths: encoder-owned decode (e.g. CALM), classifier projection, or
         passthrough when the trunk already emits vocab-width states. With
         ``skip_logits`` (cut-CE training) the projection is left to the loss
         and ``logits`` stays at the embedding width.
         """
         hidden_states = outputs.last_hidden_state
-        # Cached decode hands the head only the new suffix, so any head module
+        # Cached decode hands the classifier only the new suffix, so any module
         # anchored to absolute position or carrying context (the harmonic
         # field's phase, prefix mean and fast bank) needs the cache to continue
-        # from - the head-side twin of `self.embeds(input_ids, offset=...)`.
-        _bind_head_cache(self.head, outputs.past_key_values)
+        # from - the classifier-side twin of `self.embeds(input_ids, offset=...)`.
+        _bind_classifier_cache(self.classifier, outputs.past_key_values)
         try:
             return self._compute_logits_inner(
                 outputs, input_ids, skip_logits, attention_mask, hidden_states
             )
         finally:
-            _bind_head_cache(self.head, None)
+            _bind_classifier_cache(self.classifier, None)
 
     def _compute_logits_inner(
         self,
@@ -827,7 +828,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         hidden_states: torch.Tensor,
     ):
         logits = hidden_states
-        classifier = None
+        scorer = None
         backward_logits = None
 
         if self.encoder:
@@ -841,18 +842,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             if enc_logits is not None:
                 # Encoder owns its full output pipeline (e.g. CALM): use its
-                # logits and classifier directly.
+                # logits and scorer directly.
                 logits = enc_logits
-                classifier = self.encoder.classifier
+                scorer = self.encoder.scorer
             else:
-                # Encoder produced features; the head classifies them - the
-                # same path as standalone mode.
+                # Encoder produced features; the classifier classifies them -
+                # the same path as standalone mode.
                 if not skip_logits:
-                    logits = self.head(
+                    logits = self.classifier(
                         decoder_embeds,
-                        **_head_mask_kwargs(self.head, attention_mask),
+                        **_classifier_mask_kwargs(self.classifier, attention_mask),
                     )
-                classifier = self.head.classifier
+                scorer = self.classifier.scorer
             hidden_states = decoder_embeds
 
             # Encoders that manage their own losses (e.g. CALM) may emit
@@ -862,15 +863,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.losses.add_loss(key, value)
         elif hidden_states.size(-1) != self.config.vocab_size:
             if not skip_logits:
-                logits = self.head(
-                    hidden_states, **_head_mask_kwargs(self.head, attention_mask)
+                logits = self.classifier(
+                    hidden_states,
+                    **_classifier_mask_kwargs(self.classifier, attention_mask),
                 )
-            # Always keep the classifier reference (needed for cut-CE).
-            classifier = self.head.classifier
-            if self.backward_head is not None and not skip_logits:
-                backward_logits = self.backward_head(hidden_states)
+            # Always keep the scorer reference (needed for cut-CE).
+            scorer = self.classifier.scorer
+            if self.backward_classifier is not None and not skip_logits:
+                backward_logits = self.backward_classifier(hidden_states)
 
-        return logits, classifier, hidden_states, backward_logits
+        return logits, scorer, hidden_states, backward_logits
 
     def _apply_recall_policies(
         self,
@@ -958,7 +960,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         logits: torch.Tensor,
         labels: Optional[torch.Tensor],
         hidden_states: torch.Tensor,
-        classifier: Optional[nn.Module],
+        scorer: Optional[nn.Module],
         input_ids: torch.Tensor,
         backward_logits: Optional[torch.Tensor],
         task_type_ids: Optional[torch.Tensor],
@@ -992,7 +994,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 logits=logits,
                 labels=labels,
                 embeddings=hidden_states,
-                classifier=classifier,
+                scorer=scorer,
                 input_ids=input_ids,
                 backward_logits=backward_logits,
             )
@@ -1001,7 +1003,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             logits=logits,
             labels=labels,
             embeddings=hidden_states,
-            classifier=classifier,
+            scorer=scorer,
             input_ids=input_ids,
             loss_weights=loss_weights,
         )
@@ -1017,10 +1019,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         attention_mask: Optional[torch.Tensor],
         skip_logits: bool,
         assistant_mask: Optional[torch.Tensor] = None,
-        classifier: Optional[nn.Module] = None,
+        scorer: Optional[nn.Module] = None,
     ) -> None:
         """Accumulate training-only auxiliary losses into the container:
-        task-weight anchor, head aux losses, MTP, and the regularizers."""
+        task-weight anchor, classifier aux losses, MTP, and the regularizers."""
         if not self.training or labels is None:
             return
 
@@ -1029,23 +1031,24 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if anchor is not None:
             outputs.losses.add_loss("task_weight_anchor", anchor)
 
-        # Heads can emit named aux losses (e.g., HarmonicHead's forward-shift
-        # smoothness loss, CrystalHead's centers-RMS regularizer).
-        if self.head is not None:
-            for name, value in self.head.aux_losses().items():
+        # Classifiers can emit named aux losses (e.g., HarmonicClassifier's
+        # forward-shift smoothness loss, CrystalClassifier's centers-RMS
+        # regularizer).
+        if self.classifier is not None:
+            for name, value in self.classifier.aux_losses().items():
                 outputs.losses.add_loss(name, value)
 
-        # Multi-arm heads get the labels here rather than in forward, because
-        # this is the first place both the labels and the head's own input
-        # exist. `hidden_states` is exactly what the head classified.
-        #   arm_conflict()   - diagnostic, sampled, on every ParallelHead
+        # Multi-arm classifiers get the labels here rather than in forward,
+        # because this is the first place both the labels and the classifier's
+        # own input exist. `hidden_states` is exactly what it classified.
+        #   arm_conflict()   - diagnostic, sampled, on every ParallelClassifier
         #   arm_objectives() - per-arm CE + the PCGrad trunk gradient, empty
         #                      unless the profile opts in (prismatic9)
-        if self.head is not None and hasattr(self.head, "arm_objectives"):
-            self._arm_metrics = self.head.arm_conflict(
+        if self.classifier is not None and hasattr(self.classifier, "arm_objectives"):
+            self._arm_metrics = self.classifier.arm_conflict(
                 hidden_states, labels, self.criterion
             )
-            for name, value in self.head.arm_objectives(
+            for name, value in self.classifier.arm_objectives(
                 hidden_states, labels, self.criterion
             ).items():
                 outputs.losses.add_loss(name, value)
@@ -1067,43 +1070,45 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if getattr(self.mtp, "byte_level", False)
                 else self.get_input_embeddings()
             )
-            # MTP consumes UNDETACHED hidden states and the shared head, so its
-            # loss trains the trunk and the head like any other objective. Left
+            # MTP consumes UNDETACHED hidden states and the shared classifier, so
+            # its loss trains the trunk and the classifier like any other
+            # objective. Left
             # unweighted it does that at every position, including the ones
             # assistant_mask zeroes - prompt text would keep shaping the trunk
             # through the auxiliary path no matter what the mask said. Only the
             # prompt mask is passed on: task weights are the main objective's
-            # difficulty curriculum and coupling the draft head to the tasker
+            # difficulty curriculum and coupling the draft module to the tasker
             # would be a separate decision.
             mtp_weights = (
                 None
                 if getattr(self.config, "no_mask_prompts", False)
                 else assistant_mask
             )
-            # MTP classifies its draft states with the SHARED head, so it needs
-            # that head's ordinary gradient path. A surgical head (prismatic9)
+            # MTP classifies its draft states with the SHARED classifier, so it
+            # needs that classifier's ordinary gradient path. A surgical
+            # classifier (prismatic9)
             # detaches every arm in the blend so the main CE trains only the
             # gate - and detaching an arm's output severs the route back to the
-            # head's input, which is where MTP's draft states enter. Left alone,
+            # classifier's input, which is where MTP's draft states enter. Left alone,
             # MTP's loss reaches nothing: 0 of 9 MTP parameters received a
             # gradient under prismatic9 against 9 of 9 under prismatic8, and
             # every mtp_field_* series sat frozen at its initialization.
-            undetach = getattr(self.head, "undetached", None)
+            undetach = getattr(self.classifier, "undetached", None)
             with undetach() if undetach else contextlib.nullcontext():
                 mtp_inputs = self.mtp.prepare_inputs(
                     hidden_states=hidden_states,
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     embed_fn=mtp_embed_fn,
-                    head=self.head,
+                    classifier=self.classifier,
                     patch_embeds=outputs.patch_embeds if self.encoder else None,
                     loss_weights=mtp_weights,
                 )
                 outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
         # Additive representation-shaping regularizers (the ``regularizers`` registry).
-        # `classifier` is passed as optional context, not stored: a regularizer
-        # holding a reference to the readout would register it a second time and
+        # `scorer` is passed as optional context, not stored: a regularizer
+        # holding a reference to it would register it a second time and
         # duplicate its parameters in state_dict and the optimizer.
         for reg in self.criterion.regularizers():
             outputs.losses.add_loss(
@@ -1111,8 +1116,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 reg(
                     hidden_states,
                     input_ids,
-                    classifier=classifier,
-                    head=self.head,
+                    scorer=scorer,
+                    classifier=self.classifier,
                     # The main term, already in the container - _main_loss runs
                     # before this. A regularizer that balances itself against
                     # what the task will pay needs to see what the task paid.
@@ -1223,7 +1228,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             and (not self.encoder or getattr(self.mtp, "byte_level", False))
         )
         if spec_ok:
-            from praxis.generation.speculative import speculative_decoding
+            from praxis.inference.speculative import speculative_decoding
 
             return speculative_decoding
         return None
@@ -1296,15 +1301,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return None
 
     def get_output_embeddings(self) -> nn.Module:
-        """Get the output embeddings (lm_head) module."""
-        if self.head is not None:
-            if hasattr(self.head, "lm_head"):
-                return self.head.lm_head
-            return self.head
+        """Get the output embeddings module: a leaf classifier's own scorer,
+        else the classifier itself."""
+        if self.classifier is not None:
+            if _owns_scorer(self.classifier):
+                return self.classifier.scorer
+            return self.classifier
         return None
 
     def _tieable_input_weight(self) -> Optional[torch.Tensor]:
-        """Input-embedding weight to share with a tying-capable output head.
+        """Input-embedding weight to share with a tying-capable classifier.
 
         Standard mode exposes it via ``get_input_embeddings()``; encoder
         (byte-latent) mode keeps the byte table in the injected embedding
@@ -1322,22 +1328,22 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
     def tie_weights(self) -> None:
         """Tie the input and output embedding weights."""
-        if not (self.config.tie_word_embeddings and self.head is not None):
+        if not (self.config.tie_word_embeddings and self.classifier is not None):
             return
         weight = self._tieable_input_weight()
         if weight is None:
             return
-        if hasattr(self.head, "embedding_weight"):
-            # TiedWeights head: hold the reference; it projects internally.
-            self.head.embedding_weight = weight
-        elif hasattr(self.head, "lm_head"):
-            lm = self.head.lm_head
+        if hasattr(self.classifier, "embedding_weight"):
+            # TiedClassifier: hold the reference; it projects internally.
+            self.classifier.embedding_weight = weight
+        elif _owns_scorer(self.classifier):
+            scorer = self.classifier.scorer
             # Crystal stores centers (not weight); both are [vocab, dim].
             # Only share when shapes line up so a misconfig fails loud-free.
-            attr = "centers" if hasattr(lm, "centers") else "weight"
-            target = getattr(lm, attr, None)
+            attr = "centers" if hasattr(scorer, "centers") else "weight"
+            target = getattr(scorer, attr, None)
             if target is not None and target.shape == weight.shape:
-                setattr(lm, attr, weight)
+                setattr(scorer, attr, weight)
 
     def state_dict(self, *args, **kwargs):
         """Override to ensure only tensors are in the state dict for HuggingFace compatibility."""
@@ -1370,22 +1376,22 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 # ---------------------------------------------------------------------------
 
 
-def resolve_head_type(config, has_encoder: bool) -> str:
-    """Pick the head registry key for a model.
+def resolve_classifier_type(config, has_encoder: bool) -> str:
+    """Pick the classifier registry key for a model.
 
-    Standard-mode weight tying routes to the dedicated "tied" head - unless
-    the configured head ties its own weights (crystal, and compositions
+    Standard-mode weight tying routes to the dedicated "tied" classifier -
+    unless the configured one ties its own weights (crystal, and compositions
     ending in it), which keeps its type and ties itself in tie_weights().
     The flag is read off the registered class, unwrapping any
     functools.partial variant. Encoder mode always keeps the configured type.
     """
-    head_cls = registry.namespace("heads").get(config.head_type)
-    while isinstance(head_cls, functools.partial):
-        head_cls = head_cls.func
-    self_ties = bool(getattr(head_cls, "self_ties", False))
+    classifier_cls = registry.namespace("classifiers").get(config.classifier_type)
+    while isinstance(classifier_cls, functools.partial):
+        classifier_cls = classifier_cls.func
+    self_ties = bool(getattr(classifier_cls, "self_ties", False))
     if not has_encoder and config.tie_word_embeddings and not self_ties:
         return "tied"
-    return config.head_type
+    return config.classifier_type
 
 
 def build_rl_policies(config):
@@ -1429,14 +1435,15 @@ def build_rl_policies(config):
 
 
 @functools.lru_cache(maxsize=None)
-def _head_accepts_mask(head_type: type) -> bool:
-    """Whether a head's ``forward`` takes an ``attention_mask`` (named or via
-    ``**kwargs``). Composed heads (Parallel/Sequential) and the crystal router
-    do; simple terminals (linear/harmonic/flow) take only hidden states."""
+def _classifier_accepts_mask(classifier_cls: type) -> bool:
+    """Whether a classifier's ``forward`` takes an ``attention_mask`` (named or
+    via ``**kwargs``). Composed classifiers (Parallel/Sequential) and the
+    crystal router do; simple terminals (linear/harmonic) take only hidden
+    states."""
     import inspect
 
     try:
-        params = inspect.signature(head_type.forward).parameters
+        params = inspect.signature(classifier_cls.forward).parameters
     except (ValueError, TypeError):
         return True
     return any(
@@ -1445,26 +1452,39 @@ def _head_accepts_mask(head_type: type) -> bool:
     )
 
 
-def _bind_head_cache(head: nn.Module, cache) -> None:
-    """Point every cache-aware module inside ``head`` at the live decode cache
-    (or clear it with None). Modules opt in with ``accepts_decode_cache`` and
-    read ``decode_cache`` in their forward; nothing else is touched. Only a
-    ``PraxisCache`` counts - a bare HF cache carries no head-side state and no
-    trunk-consistent ``past_length``."""
+def _bind_classifier_cache(classifier: nn.Module, cache) -> None:
+    """Point every cache-aware module inside ``classifier`` at the live decode
+    cache (or clear it with None). Modules opt in with ``accepts_decode_cache``
+    and read ``decode_cache`` in their forward; nothing else is touched. Only a
+    ``PraxisCache`` counts - a bare HF cache carries no classifier-side state
+    and no trunk-consistent ``past_length``."""
     if cache is not None and not isinstance(cache, PraxisCache):
         cache = None
-    for module in head.modules():
+    for module in classifier.modules():
         if getattr(module, "accepts_decode_cache", False):
             module.decode_cache = cache
 
 
-def _head_mask_kwargs(head: nn.Module, attention_mask) -> dict:
-    """``{attention_mask: ...}`` only when the head accepts it - the mask reaches
-    the crystal router for per-sequence pad-masked routing (lossless batched
-    multi-token decode) without breaking heads that don't take one."""
-    if attention_mask is None:
+def _classifier_mask_kwargs(classifier: nn.Module, attention_mask) -> dict:
+    """``{attention_mask: ...}`` only when the classifier accepts it - the mask
+    reaches the crystal router for per-sequence pad-masked routing (lossless
+    batched multi-token decode) without breaking classifiers that don't take
+    one."""
+    if attention_mask is None or not _classifier_accepts_mask(type(classifier)):
         return {}
-    return {"attention_mask": attention_mask} if _head_accepts_mask(type(head)) else {}
+    return {"attention_mask": attention_mask}
+
+
+def _owns_scorer(classifier: nn.Module) -> bool:
+    """True for a leaf classifier, whose ``scorer`` is its own attribute;
+    False for a composition, whose ``scorer`` property resolves into a stage
+    or arm (or, for TiedClassifier, wraps the embedding matrix)."""
+    return not isinstance(getattr(type(classifier), "scorer", None), property)
+
+
+def _rename_legacy_keys(state_dict, prefix, *args) -> None:
+    """Load-state-dict pre-hook: translate pre-rename parameter paths."""
+    rename_legacy_state_dict(state_dict, prefix)
 
 
 def sample_token(

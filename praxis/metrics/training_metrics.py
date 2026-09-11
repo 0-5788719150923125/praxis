@@ -8,7 +8,7 @@ from this registry. Adding a new training metric is a one-entry change
 here plus an emit at the trainer; no JS, SQL, or backfill edits.
 
 Schema mirrors :data:`praxis.metrics.descriptions` for the dashboard's
-head-side metrics. Each entry's ``chart`` hint may carry:
+classifier-side metrics. Each entry's ``chart`` hint may carry:
 
 * ``title``: chart title text
 * ``y_label``: y-axis label
@@ -1271,7 +1271,7 @@ DYNAMICS_CHART_REGISTRY: list = [
             "(log-normal Poisson); inference = where KL-halting actually fired."
         ),
         "key_pattern": r"^halting/(train|eval)_r_\d+$",
-        # Rendered after the head-metric sections (manifest + snapshots).
+        # Rendered after the classifier-metric sections (manifest + snapshots).
         "order": 110,
         "caller": "Halting",
     },

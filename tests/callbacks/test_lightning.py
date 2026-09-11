@@ -30,7 +30,7 @@ from praxis.callbacks.lightning.terminal import TerminalInterface
 from praxis.data.batch_schedule import BatchSchedule, plan_cycle
 from praxis.data.seq_probe import SequenceProbe
 from praxis.environments import EnvironmentFeatures
-from praxis.generation.decode_backend import ModelBackend
+from praxis.inference.decode_backend import ModelBackend
 from praxis.governors.gns import GradientNoiseEstimator
 from praxis.policies import EngagementPolicy, JokePolicy
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
@@ -490,7 +490,7 @@ class Tiny(nn.Module):
 class Stack(nn.Module):
     """Two levels deep with EXECUTING direct children.
 
-    Shaped like the real model (encoder / decoder / head are called directly)
+    Shaped like the real model (encoder / decoder / classifier are called directly)
     rather than a bare ModuleList, which never executes and so would never fire
     a depth-0 hook.
     """
@@ -499,10 +499,10 @@ class Stack(nn.Module):
         super().__init__()
         self.encoder = Tiny(d)
         self.decoder = Tiny(d)
-        self.head = nn.Linear(d, d)
+        self.classifier = nn.Linear(d, d)
 
     def forward(self, x):
-        return self.head(self.decoder(self.encoder(x)))
+        return self.classifier(self.decoder(self.encoder(x)))
 
 
 class FakeCompiled(nn.Module):
@@ -564,7 +564,7 @@ def test_compiled_model_gets_a_coarse_forward_only_profile():
         for _, m in inner.named_modules()
         if hasattr(m, "_praxis_scope")
     }
-    assert hooked == {"encoder", "decoder", "head"}
+    assert hooked == {"encoder", "decoder", "classifier"}
 
 
 def test_eager_model_gets_the_full_profile():
@@ -1362,7 +1362,7 @@ def test_callback_disarms_loudly_without_validation_data(capsys, seq_probe_reset
 # ------------------------------------------------------------------------------
 # ``torch.compile`` is stubbed: compiling for real would take minutes and test
 # Inductor rather than this wiring. The compile itself is covered in
-# tests/generation/test_decode_backend.py.
+# tests/inference/test_decode_backend.py.
 
 
 @pytest.fixture

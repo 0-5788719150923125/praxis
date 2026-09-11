@@ -139,10 +139,11 @@ def emitted(monkeypatch):
 
 
 class _BareModel:
-    """Stands in for the live model the generator holds: no head, criterion
-    or encoder, so only what a test stashes on it shows up in a snapshot."""
+    """Stands in for the live model the generator holds: no classifier,
+    criterion or encoder, so only what a test stashes on it shows up in a
+    snapshot."""
 
-    head = None
+    classifier = None
     criterion = None
     encoder = None
 
@@ -154,7 +155,7 @@ def bare_model():
 
 @pytest.fixture
 def compute_profile():
-    """A `ComputeProfiler` stash as `/api/head_snapshots` serves it."""
+    """A `ComputeProfiler` stash as `/api/classifier_snapshots` serves it."""
     return {
         "compute_profile": {
             "total_ms": 100.0,

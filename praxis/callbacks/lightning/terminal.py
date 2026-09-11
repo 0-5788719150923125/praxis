@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 from lightning.pytorch.callbacks import Callback
 
-from praxis.generation.context_blocks import ContextStreams
-from praxis.generation.streaming import (
+from praxis.inference.context_blocks import ContextStreams
+from praxis.inference.streaming import (
     StreamingContext,
     random_char_seed,
     random_text_seed,

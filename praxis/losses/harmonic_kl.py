@@ -8,18 +8,18 @@ regularizer writes that sentence as a loss, so the claim becomes falsifiable: if
 the basis really is constitutive the penalty sits near zero without being paid
 for, and switching it on costs almost nothing.
 
-WHAT IT DOES. Keeps a non-trainable EMA copy of the output classifier's
-PARAMETERS, runs the SAME live hidden states through both the live classifier and
-a functional call of it under the EMA parameters, and penalises the divergence.
+WHAT IT DOES. Keeps a non-trainable EMA copy of the classifier's scorer
+PARAMETERS, runs the SAME live hidden states through both the live scorer and a
+functional call of it under the EMA parameters, and penalises the divergence.
 Two readout evaluations, no second trunk pass, no second model, nothing new for
 the optimizer to own.
 
-The EMA is generic over the classifier's parameters rather than assuming a
+The EMA is generic over the scorer's parameters rather than assuming a
 ``weight``/``bias`` linear, because the abstractinator line runs
-``head_type: prismatic4``, whose readout is ``CrystalClassifier`` - its only
+``classifier_type: prismatic4``, whose readout is ``CrystalGeometry`` - its only
 parameter is ``centers``, the per-vocabulary prototypes
-(praxis/heads/crystal.py). Those centers ARE the geometry the crystal claim is
-about.
+(praxis/classifiers/crystal.py). Those centers ARE the geometry the crystal
+claim is about.
 
 DIRECTION. KL(ema || live): the EMA is the teacher and the live model is charged
 for mass the teacher assigned and it dropped. Mass-covering, chosen because the
@@ -28,16 +28,16 @@ continuations, which mode-seeking KL(live || ema) would reward. Only the live
 term carries gradient; the teacher is detached.
 
 WHAT IT WATCHES, AND WHY THE NAME MISLEADS. The target is whatever
-``head.classifier`` returns - the READOUT - and on a multi-arm head that is not
-the harmonic field. ``ParallelHead.classifier`` prefers a HALO arm, so under
-``head_type: prismatic5`` this term EMAs ``HaloClassifier``'s ``centers`` and
-``gamma`` and says nothing at all about the field, which sits upstream as the
-stem. The module logs the exact class and parameter names it seeded on, once,
-so a run never has to guess. For the field's own spectrum use the
-``dissonance`` / ``dissonance_probe`` terms (praxis/losses/dissonance.py).
+``classifier.scorer`` returns - the READOUT - and on a multi-arm classifier that
+is not the harmonic field. ``ParallelClassifier.scorer`` prefers a HALO arm, so
+under ``classifier_type: prismatic5`` this term EMAs ``HaloGeometry``'s
+``centers`` and ``gamma`` and says nothing at all about the field, which sits
+upstream as the stem. The module logs the exact class and parameter names it
+seeded on, once, so a run never has to guess. For the field's own spectrum use
+the ``dissonance`` / ``dissonance_probe`` terms (praxis/losses/dissonance.py).
 
 WHAT IT DOES NOT DO. It bounds drift of the READOUT, not the trunk - two
-different trunks feeding the same classifier are indistinguishable to it. A full
+different trunks feeding the same scorer are indistinguishable to it. A full
 trust region needs an EMA of the whole model and a second forward pass.
 
 Opt-in: not in DEFAULT_REGULARIZERS, select it by name in a config's
@@ -144,9 +144,9 @@ class HarmonicKLRegularizer(BaseRegularizer):
         # loudly - a silent no-op is what made the first version of this file
         # useless on the very config it was written for.
         self._disabled = False
-        # Buffers are allocated on the first forward, once the classifier's
+        # Buffers are allocated on the first forward, once the scorer's
         # shape is known, and are NON-PERSISTENT on purpose. Re-seeding the
-        # teacher from the live classifier on resume makes the penalty exactly
+        # teacher from the live scorer on resume makes the penalty exactly
         # zero at that instant and lets it re-converge - a no-op, not a
         # transient. (Contrast praxis/policies/engagement.py, where a
         # non-checkpointed baseline re-zeroed to a value the reward was nowhere
@@ -164,30 +164,29 @@ class HarmonicKLRegularizer(BaseRegularizer):
         return "ema__" + param_name.replace(".", "__")
 
     @staticmethod
-    def _signature(classifier) -> tuple:
+    def _signature(scorer) -> tuple:
         """(name, shape) per parameter - what a re-seed is keyed on."""
-        return tuple(
-            (n, tuple(p.shape)) for n, p in sorted(classifier.named_parameters())
-        )
+        return tuple((n, tuple(p.shape)) for n, p in sorted(scorer.named_parameters()))
 
     @torch.no_grad()
-    def _seed(self, classifier) -> None:
+    def _seed(self, scorer) -> None:
         for _, buf in self._ema_keys:  # drop a previous teacher's buffers
             self._buffers.pop(buf, None)
             self._non_persistent_buffers_set.discard(buf)
         self._ema_keys = []
-        for name, param in sorted(classifier.named_parameters()):
+        for name, param in sorted(scorer.named_parameters()):
             buf = self._buffer_name(name)
             self.register_buffer(buf, param.detach().clone(), persistent=False)
             self._ema_keys.append((name, buf))
-        self._sig = self._signature(classifier)
+        self._sig = self._signature(scorer)
         self._ema_ready = bool(self._ema_keys)
         # Say what is under the EMA. The term is named for a claim about the
-        # harmonic basis but its target is whatever the head hands over as its
-        # readout, and reading the chart without knowing which module that was
-        # is how a near-zero drift gets mistaken for "the field has converged".
+        # harmonic basis but its target is whatever the classifier hands over as
+        # its scorer, and reading the chart without knowing which module that
+        # was is how a near-zero drift gets mistaken for "the field has
+        # converged".
         self._target = "{}({})".format(
-            type(classifier).__name__, ", ".join(n for n, _ in self._ema_keys)
+            type(scorer).__name__, ", ".join(n for n, _ in self._ema_keys)
         )
         if self._ema_keys:
             print(f"[harmonic_kl] watching {self._target}")
@@ -197,31 +196,31 @@ class HarmonicKLRegularizer(BaseRegularizer):
         return {name: getattr(self, buf) for name, buf in self._ema_keys}
 
     @torch.no_grad()
-    def _update(self, classifier) -> None:
+    def _update(self, scorer) -> None:
         # Name/shape compatibility is established by the re-seed guard in
         # forward(), which runs before the readout is evaluated.
         d = self.decay
-        live = dict(classifier.named_parameters())
+        live = dict(scorer.named_parameters())
         for name, buf in self._ema_keys:
             getattr(self, buf).mul_(d).add_(live[name].detach(), alpha=1.0 - d)
 
     @_no_compile
     def forward(self, hidden_states: Tensor, input_ids: Tensor, **ctx) -> Tensor:
         zero = hidden_states.new_zeros(())
-        classifier = ctx.get("classifier")
-        if self._disabled or classifier is None or hidden_states.dim() != 3:
+        scorer = ctx.get("scorer")
+        if self._disabled or scorer is None or hidden_states.dim() != 3:
             self._metrics = {}
             return zero
-        if not hasattr(classifier, "named_parameters"):
+        if not hasattr(scorer, "named_parameters"):
             self._metrics = {}
             return zero
 
         # Seed, or re-seed when the readout has been swapped or resized. This has
         # to happen BEFORE the readout is evaluated: a teacher whose parameters
         # no longer match would either raise or silently compare the wrong thing.
-        sig = self._signature(classifier)
+        sig = self._signature(scorer)
         if not self._ema_ready or sig != getattr(self, "_sig", None):
-            self._seed(classifier)
+            self._seed(scorer)
             # A parameter-free readout has nothing to drift; stay off.
             if not self._ema_ready:
                 self._disabled = True
@@ -250,8 +249,8 @@ class HarmonicKLRegularizer(BaseRegularizer):
             flat = flat[idx]
 
         # Both sides go through the SAME readout so the comparison isolates its
-        # drift. Deliberately not reusing the model's own logits: a head may
-        # apply a norm or projection before its classifier, and that extra
+        # drift. Deliberately not reusing the model's own logits: a classifier
+        # may apply a norm or projection before its scorer, and that extra
         # structure would show up as drift it is not responsible for.
         #
         # tie_weights=False because a tied readout would otherwise have the
@@ -259,16 +258,16 @@ class HarmonicKLRegularizer(BaseRegularizer):
         # the functional state, which is not what "score the same inputs under
         # the old readout" means.
         try:
-            live_logits = classifier(flat)
+            live_logits = scorer(flat)
             with torch.no_grad():
                 ema_logits = torch.func.functional_call(
-                    classifier, self._ema_state(), (flat,), tie_weights=False
+                    scorer, self._ema_state(), (flat,), tie_weights=False
                 )
         except Exception as exc:  # readout shape/signature we cannot drive
             self._disabled = True
             self._metrics = {}
             print(
-                f"[harmonic_kl] readout {type(classifier).__name__} could not be "
+                f"[harmonic_kl] readout {type(scorer).__name__} could not be "
                 f"evaluated ({exc}); drift penalty disabled for this run."
             )
             return zero
@@ -295,7 +294,7 @@ class HarmonicKLRegularizer(BaseRegularizer):
 
         # Advance the teacher after scoring, so the penalty never measures a
         # step against a teacher that has already absorbed it.
-        self._update(classifier)
+        self._update(scorer)
         return loss
 
     def training_metrics(self) -> dict:

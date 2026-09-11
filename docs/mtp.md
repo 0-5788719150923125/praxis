@@ -3,7 +3,7 @@
 
 Depth modules for multi-token prediction in DeepSeek-V3's sequential form: depth k takes the previous depth's hidden and the ground-truth embedding and predicts the token at offset k+2, as an auxiliary loss in training and as speculative drafts at inference. Unset, no MTP runs; ``--mtp-depth`` sets the depth count. These entries build one independent module per depth. ``--mtp-type`` also accepts three bank types, each one module owning every depth: ``vear`` (a shared pool of light harmonic experts, sliding-window merged per depth), ``serpent_rnn`` (one shared gated serpent cell unrolled K times) and ``per_depth`` (K independent light harmonic transforms, nothing shared). The entries here are context-dependent, so byte-latent encoders, which draft one position at a time with no cache, require a bank type.
 
-Namespace: ``registry.namespace("mtp")``, declared in ``praxis.heads.mtp`` (2 entries)
+Namespace: ``registry.namespace("mtp")``, declared in ``praxis.classifiers.mtp`` (2 entries)
 
 Selected with ``--mtp-type`` (default: unset).
 
@@ -15,7 +15,7 @@ Same front-end as TransformerMTPModule (norm + concat + project), but replaces t
 transformer block with 2 stacked dilated causal conv layers (dilation 1 and 2,
 kernel_size=3) for a ~7-position receptive field.
 
-Source: [praxis/heads/mtp/conv.py:37](../praxis/heads/mtp/conv.py#L37)
+Source: [praxis/classifiers/mtp/conv.py:37](../praxis/classifiers/mtp/conv.py#L37)
 
 ## `transformer` - TransformerMTPModule
 
@@ -25,4 +25,4 @@ Takes hidden states from the previous depth and ground-truth position embeddings
 normalizes both, concatenates, projects back to hidden_size, and runs through a
 transformer block.
 
-Source: [praxis/heads/mtp/transformer.py:12](../praxis/heads/mtp/transformer.py#L12)
+Source: [praxis/classifiers/mtp/transformer.py:12](../praxis/classifiers/mtp/transformer.py#L12)

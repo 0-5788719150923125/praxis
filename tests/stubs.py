@@ -19,7 +19,7 @@ import torch.nn as nn
 from torch.utils.data import IterableDataset
 
 from praxis import PraxisConfig, PraxisForCausalLM
-from praxis.generation.decoding import first_halt
+from praxis.inference.decoding import first_halt
 from praxis.memory.neural_memory import NeuralMemory
 from praxis.tokenizers import create_tokenizer
 from praxis.trainers.mono_forward import MonoForwardTrainer  # noqa: F401 (re-exported)
@@ -62,7 +62,7 @@ def neural_memories(model):
 
 
 class Cfg:
-    """The config fields a head and its criterion read, at toy sizes."""
+    """The config fields a classifier and its criterion read, at toy sizes."""
 
     hidden_size = 48
     embed_size = 48
@@ -215,7 +215,7 @@ class _StubTrainer:
 
 
 def _stub_generator(trainer=None):
-    from praxis.generation import MonoForwardGenerator
+    from praxis.inference import MonoForwardGenerator
 
     return MonoForwardGenerator(
         trainer=trainer or _StubTrainer(), tokenizer=_ToyTokenizer()

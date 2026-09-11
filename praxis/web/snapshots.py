@@ -1,6 +1,6 @@
 """Precomputed API snapshots: one producer, many cheap readers.
 
-The expensive dashboard endpoints (activation curves, head snapshots, evolution)
+The expensive dashboard endpoints (activation curves, classifier snapshots, evolution)
 probe the live model. Computing them per-request means every client stampedes
 the model and races its train/eval mode. Instead each snapshot is computed on a
 fixed cadence and stashed here; the routes read the latest, so concurrent
@@ -181,16 +181,16 @@ def _recipe_activation_curves(model):
     }
 
 
-def _recipe_head_snapshots(model):
+def _recipe_classifier_snapshots(model):
     if model is None:
         return {"status": "no_data", "snapshots": {}}
-    head = getattr(model, "head", None)
+    classifier = getattr(model, "classifier", None)
     criterion = getattr(model, "criterion", None)
     encoder = getattr(model, "encoder", None)
 
     snapshots = {}
-    if head is not None:
-        snapshots.update(head.dashboard_snapshots() or {})
+    if classifier is not None:
+        snapshots.update(classifier.dashboard_snapshots() or {})
     if criterion is not None and hasattr(criterion, "dashboard_snapshots"):
         snapshots.update(criterion.dashboard_snapshots() or {})
     if encoder and hasattr(encoder, "dashboard_snapshots"):
@@ -208,7 +208,7 @@ def _recipe_head_snapshots(model):
                     break
     # Attention mechanisms with their own geometry to draw (SSOG's field).
     # A walk, because attention is not an attribute of the model the way the
-    # head and the encoder are, and unlike the memory surfacings above we want
+    # classifier and the encoder are, and unlike the memory surfacings above we want
     # every one of them, not the first.
     if hasattr(model, "modules"):
         from praxis.metrics.specialization import collect_attention_snapshots
@@ -239,7 +239,7 @@ def _recipe_evolution(model):
 # git-derived and only changes on commit, so it idles slow.
 DEFAULT_RECIPES = {
     "activation_curves": Recipe(_recipe_activation_curves, DEFAULT_INTERVAL),
-    "head_snapshots": Recipe(_recipe_head_snapshots, DEFAULT_INTERVAL),
+    "classifier_snapshots": Recipe(_recipe_classifier_snapshots, DEFAULT_INTERVAL),
     # Reads git history, never the model.
     "evolution": Recipe(_recipe_evolution, 60.0, on_trainer=False),
 }

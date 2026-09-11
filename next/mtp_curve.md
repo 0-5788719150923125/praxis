@@ -19,7 +19,7 @@ estimate per position. The MTP bank emits a short **curve**: four future
 bytes read off one shared trunk state, through four sliding-window-merged
 harmonic depth-transforms (depth k = uniform merge of experts [k, k+1, k+2],
 cyclic; adjacent depths share two of three experts; repulsion keeps the
-geometries distinct - `praxis/heads/mtp/vear.py`).
+geometries distinct - `praxis/classifiers/mtp/vear.py`).
 
 Because all K losses land on the same trunk state, supervision propagates
 **backwards** within the window: the loss at position t+3 shapes the
@@ -198,7 +198,7 @@ next word.
 ## Pointers
 
 - `experiments/abstractinator-b.yml` - the run config and its MTP comment block
-- `praxis/heads/mtp/vear.py` - the sliding-window bank
+- `praxis/classifiers/mtp/vear.py` - the sliding-window bank
 - `praxis/pillars/inlines/mtp-field-concentration.yml` - the Serpent-spectrum
   Hoyer inline that already fed the paper
 - [information_density.md](information_density.md) - the parent reading

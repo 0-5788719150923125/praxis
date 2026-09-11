@@ -3,11 +3,11 @@
 
 Splits the pipeline at the latent boundary: encode real text, decode at
 increasing posterior-noise scales, and print what comes back. Separates
-"codec froze undertrained" from "energy head can't hit the manifold":
+"codec froze undertrained" from "generator can't hit the manifold":
 
     sigma=0   decode the posterior mean - the codec's ceiling
     sigma=1   a true posterior sample - what recon training sees
-    sigma>1   off-manifold stress - what the LM head's imperfect
+    sigma>1   off-manifold stress - what the generator's imperfect
               predictions look like to the decoder
 
 Usage (pass the same experiment flags as main.py, plus probe flags):
@@ -125,7 +125,7 @@ def main():
     print(
         "\n[probe] reading: acc@0 is the codec ceiling (must be ~100% for any"
         "\n        fluent generation); the falloff rate vs sigma is the latent"
-        "\n        robustness the LM head depends on."
+        "\n        robustness the generator depends on."
     )
 
 

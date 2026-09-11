@@ -3,7 +3,7 @@
 One ``LayerActor`` per ``LocalLayer``: each actor owns its layer, its own
 projection matrix ``M_i`` (Mono-Forward paper, section 3.1) and a local
 optimizer, and trains against the same next-token objective as the backprop
-path. There is no shared output head. Activation memory is O(1) in depth because
+path. There is no shared classifier. Activation memory is O(1) in depth because
 gradients never cross a layer boundary, and the driver pipelines batches across
 layers so steady-state throughput tracks the slowest layer rather than the sum.
 
@@ -41,7 +41,7 @@ from transformers import (
     TopKLogitsWarper,
 )
 
-from praxis.generation.decoding import pick_next
+from praxis.inference.decoding import pick_next
 from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
 from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
 from praxis.utils import create_block_ids
@@ -85,7 +85,7 @@ class MonoForwardTrainer:
 
     - ``router_type in {smear, distance, prismatic, scatter}`` - shared LocalLayer
       instances (decision D4)
-    - ``tie_word_embeddings=True`` - unregistered parameter in the TiedWeights head;
+    - ``tie_word_embeddings=True`` - unregistered parameter in the TiedClassifier;
       deepcopy orphans it
     - ``rl_type`` set - needs ``model.generate`` + reward rollouts on the driver,
       which under MF would run against untrained weights
@@ -131,7 +131,7 @@ class MonoForwardTrainer:
         )
         # ray_head_sync_every is no longer used - each layer has its
         # own independent projection matrix M_i per the paper, so
-        # there is no shared head to synchronise. Kept as a silent
+        # there is no shared classifier to synchronise. Kept as a silent
         # no-op so old compose files that pass the flag don't crash.
         _ = trainer_params.get("ray_head_sync_every")
         self.ray_pipeline_api: str = str(
@@ -185,7 +185,7 @@ class MonoForwardTrainer:
         # ``get_optimizer_profile`` + CLI flags), and we forward them
         # into every LayerActor's constructor so each actor rebuilds
         # the full ``get_optimizer(...) / get_scheduler_func(...)``
-        # pipeline against its own (layer, head) params. ``None``
+        # pipeline against its own (layer, classifier) params. ``None``
         # defaults mean the actor falls back to vanilla Adam(lr=1e-3),
         # which is the Phase 2/3 behaviour and what unit tests that
         # instantiate the trainer directly (without main.py) rely on.
@@ -336,27 +336,27 @@ class MonoForwardTrainer:
             )
 
         # Tied weights issue, discovered during Phase 2 end-to-end run:
-        # the TiedWeights head stores ``self.embedding_weight`` as a plain
+        # the TiedClassifier stores ``self.embedding_weight`` as a plain
         # instance attribute (not via ``register_parameter`` or ``nn.Parameter``
-        # registration), so when we ``copy.deepcopy(head)`` into each Ray
-        # actor the resulting tensor is not in ``head.parameters()`` and
+        # registration), so when we ``copy.deepcopy(classifier)`` into each Ray
+        # actor the resulting tensor is not in ``classifier.parameters()`` and
         # therefore never trains. The driver's embedding and the actors'
-        # replicated heads then drift apart silently, producing
+        # replicated classifiers then drift apart silently, producing
         # absurdly-large initial losses and non-monotonic training
-        # dynamics. Proper tied-head support needs driver<->actor head
-        # synchronization, which is Phase 4+ work. Until then, hard-error
+        # dynamics. Proper tied-classifier support needs driver<->actor
+        # classifier synchronization, which is Phase 4+ work. Until then, hard-error
         # with a clear pointer at the fix: flip ``tie_weights: false``.
         if getattr(config, "tie_word_embeddings", False):
             raise RuntimeError(
                 "mono_forward does not support tied output embeddings "
                 "in Phase 3 (config.tie_word_embeddings is True). The tied "
-                "head stores its projection weight as an unregistered "
+                "classifier stores its projection weight as an unregistered "
                 "instance attribute, which becomes an orphan tensor in the "
-                "actor's replicated head copy and never trains. Set "
+                "actor's replicated classifier copy and never trains. Set "
                 "'tie_weights: false' in your experiment YAML (or pass "
                 "--no-tie-weights on the CLI). Proper tied-weight support "
                 "is deferred to Phase 4+, which will wire driver<->actor "
-                "head synchronization."
+                "classifier synchronization."
             )
 
         # Sanity check the decoder surface we are about to drive.
@@ -381,16 +381,16 @@ class MonoForwardTrainer:
                 "mono_forward expected model to expose either model.embeds "
                 "(token embedding) or model.encoder (encoder-based model)."
             )
-        # Encoder-based models do not allocate a top-level ``model.head``
+        # Encoder-based models do not allocate a top-level ``model.classifier``
         # (the encoder owns its own decode() projection). The MF
         # per-layer projection M_i replaces that for the local loss, so
-        # we don't actually need ``model.head`` either way - only
+        # we don't actually need ``model.classifier`` either way - only
         # require it for the embeds path so checkpoint round-trip into a
         # vanilla model still works.
-        if has_embeds and (not hasattr(model, "head") or model.head is None):
+        if has_embeds and getattr(model, "classifier", None) is None:
             raise RuntimeError(
-                "mono_forward expected model.head to be set "
-                "(shared-head projection D2b needs a real head module)."
+                "mono_forward expected model.classifier to be set "
+                "(shared-classifier projection D2b needs a real classifier module)."
             )
 
     # ------------------------------------------------------------------
@@ -731,9 +731,10 @@ class MonoForwardTrainer:
         averaged metric when the final layer reports its loss for that
         batch.
 
-        The completion handler is factored into a closure so the head-
-        sync drain path (which walks partially-complete batches all the
-        way through the pipeline before the head average happens) uses
+        The completion handler is factored into a closure so the
+        classifier-sync drain path (which walks partially-complete batches
+        all the way through the pipeline before the classifier average
+        happens) uses
         the same "batch done" bookkeeping - otherwise a drain-time
         final-layer hop would silently skip the finalize path and drop
         a completed batch from ``completed_batches`` / metrics.
@@ -1086,7 +1087,7 @@ class MonoForwardTrainer:
             if is_final_hop:
                 # Periodic validation sweep. Uses a threshold check
                 # (``>=``) rather than modulo (``%``) because the
-                # head-sync drain above can process multiple batches
+                # classifier-sync drain above can process multiple batches
                 # in one go, jumping ``completed_batches`` over a
                 # validation boundary. A modulo check would miss that
                 # boundary entirely; the threshold catches any
@@ -1122,9 +1123,9 @@ class MonoForwardTrainer:
                         metrics_logger=metrics_logger,
                     )
 
-                # Periodic-inference demo hook. Fire after any head sync
-                # so the generated sample reflects the canonical averaged
-                # head rather than an arbitrary actor's drifted copy.
+                # Periodic-inference demo hook. Fire after any classifier
+                # sync so the generated sample reflects the canonical averaged
+                # classifier rather than an arbitrary actor's drifted copy.
                 self._maybe_run_inference_hook(
                     completed_batches=state["completed_batches"],
                     config=config,
@@ -1192,7 +1193,7 @@ class MonoForwardTrainer:
         """``ray.get`` wrapper that returns ``None`` on shutdown errors.
 
         Every ``ray.get`` in the trainer goes through this so a Ctrl+C
-        or worker death during any phase (head sync, validation,
+        or worker death during any phase (classifier sync, validation,
         checkpoint save, inference) exits cleanly instead of crashing
         with a C++ stack trace.
         """
@@ -1211,7 +1212,7 @@ class MonoForwardTrainer:
             return None
 
     # ------------------------------------------------------------------
-    # head synchronization
+    # classifier synchronization
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
@@ -1680,7 +1681,7 @@ class MonoForwardTrainer:
                 actor.infer_batch.remote(hidden, step_idx, block_ids, None)
             )
 
-        # Project through the final depth step's actor head.
+        # Project through the final depth step's actor classifier.
         return ray.get(self._actors[route[-1]].project_logits.remote(hidden))
 
     def generate(
@@ -1752,7 +1753,7 @@ class MonoForwardTrainer:
         # mean on the served path. Suppression is not optional: the chat format
         # declares ids its data never makes a target
         # (`ChatFormat.suppressed_token_ids`), and under prose `[BOS]`/`[SEP]`
-        # hold ids 1 and 3 of a 260-wide byte head, so leaving them reachable
+        # hold ids 1 and 3 of a 260-wide byte classifier, so leaving them reachable
         # puts a bracketed token the model was forbidden from learning into
         # generations. Warpers are sampling-only, exactly as transformers
         # gates them.
@@ -1907,7 +1908,7 @@ class MonoForwardTrainer:
             self._live_metrics.contexts = contexts
         # display_text, not text: the CLI and the browser break on different
         # character sets, so the shown copy is normalized (see
-        # praxis/generation/streaming.py::normalize_display_breaks).
+        # praxis/inference/streaming.py::normalize_display_breaks).
         self._push_live_metrics_status(streams.primary.display_text)
 
     def _ensure_context_streams(self):
@@ -1923,8 +1924,8 @@ class MonoForwardTrainer:
         if self.tokenizer is None:
             return None
 
-        from praxis.generation import ContextStreams, StreamingContext
-        from praxis.generation.streaming import random_char_seed, random_text_seed
+        from praxis.inference import ContextStreams, StreamingContext
+        from praxis.inference.streaming import random_char_seed, random_text_seed
         from praxis.trainers.setup import _encoder_patch_size
 
         # Patch-compressing encoders (CALM) need a full patch of K real chars as
@@ -2131,7 +2132,7 @@ class MonoForwardTrainer:
         """Gather actor state and save a structured checkpoint.
 
         The checkpoint contains:
-        - ``model_state_dict``: full model weights (layers + head) in
+        - ``model_state_dict``: full model weights (layers + classifier) in
           the standard ``PraxisForCausalLM`` layout so the checkpoint
           loads for vanilla inference.
         - ``projection_states``: per-actor projection matrix M_i state
@@ -2176,11 +2177,11 @@ class MonoForwardTrainer:
         # model_state_dict (needed for vanilla inference loading).
         for i, layer_state in enumerate(layer_states):
             model_host.decoder.locals[i].load_state_dict(layer_state)
-        # Use the last layer's projection as the checkpoint's output
-        # head - same rationale as before (closest to backprop's head).
+        # Use the last layer's projection as the checkpoint's classifier -
+        # same rationale as before (closest to backprop's classifier).
         last_proj = projection_states[-1]
-        head_mapped = {"lm_head." + k: v for k, v in last_proj.items()}
-        model_host.head.load_state_dict(head_mapped)
+        classifier_mapped = {"scorer." + k: v for k, v in last_proj.items()}
+        model_host.classifier.load_state_dict(classifier_mapped)
 
         # Datamodule state (dataset positions).
         datamodule_state = None

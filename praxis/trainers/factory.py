@@ -238,7 +238,7 @@ def create_trainer_with_module(
         trainer = trainer_class(**merged)
         # Return the raw PraxisForCausalLM as the training module - the
         # MonoForwardTrainer's ``fit`` method reaches into
-        # ``model.decoder.locals``, ``model.embeds``, and ``model.head``
+        # ``model.decoder.locals``, ``model.embeds``, and ``model.classifier``
         # directly, so it wants the unwrapped model, not a Lightning
         # wrapper around it.
         return trainer, model

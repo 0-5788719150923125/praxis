@@ -9,7 +9,7 @@ swarm, generation, the metrics websocket), which are gated behind an offline
 banner and greyed-out controls.
 
 The export runs *in-process* against the live Flask app's test client, so the
-model-dependent endpoints (activation curves, head snapshots, dynamics) dump
+model-dependent endpoints (activation curves, classifier snapshots, dynamics) dump
 with real data straight from the already-warm snapshot store - no model
 plumbing, no re-implemented route logic. Every read-only route is reused as-is;
 only a small client-side shim (static_mode.js) is injected into the exported
@@ -100,7 +100,7 @@ DUMP_ENDPOINTS: List[Tuple[str, str, str]] = [
         "json",
     ),
     ("/api/dynamics?since=0&limit=1000", "dynamics.json", "json"),
-    ("/api/head_snapshots", "head_snapshots.json", "json"),
+    ("/api/classifier_snapshots", "classifier_snapshots.json", "json"),
     ("/api/activation_curves", "activation_curves.json", "json"),
     ("/api/evolution", "evolution.json", "json"),
     ("/api/spider", "spider.json", "json"),

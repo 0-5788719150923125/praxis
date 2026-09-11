@@ -482,13 +482,13 @@ class _Cache:
     """The two lookups SMEAR makes on a PraxisCache, with a settable length."""
 
     def __init__(self):
-        self.head_states, self.length = {}, 0
+        self.classifier_states, self.length = {}, 0
 
-    def get_head_state(self, key):
-        return self.head_states.get(key)
+    def get_classifier_state(self, key):
+        return self.classifier_states.get(key)
 
-    def set_head_state(self, key, state):
-        self.head_states[key] = state
+    def set_classifier_state(self, key, state):
+        self.classifier_states[key] = state
 
     def get_seq_length(self, layer_idx=0):
         return self.length

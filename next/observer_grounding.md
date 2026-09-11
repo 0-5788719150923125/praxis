@@ -212,7 +212,7 @@ exactly what the epicycle / PCA cross-section views of `HarmonicField` do. So:
 - Observers are different **projections (charts)** of one shared torus (the
   harmonic field's Weyl 2-torus is the literal object).
 - **Archetypes = the K dominant projections** - the buckets most observers fall
-  into. This is the CrystalHead one level up: crystal *centers* are K prototype
+  into. This is the CrystalClassifier one level up: crystal *centers* are K prototype
   geometries in token-space; archetypes are K prototype geometries in
   *observer*-space. Jung's "collective" prior = the bias / static spectrum; the
   archetype is a basis mode of it.

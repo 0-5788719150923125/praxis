@@ -7,7 +7,7 @@
 // verified against finite differences (see __tests__/gradcheck.js).
 //
 // Two training modes:
-//   * trainGlobal()    - end-to-end backprop through the last layer's head.
+//   * trainGlobal()    - end-to-end backprop through the last layer's classifier.
 //   * trainLayerWise() - Mono-Forward: each layer owns a projection M_i and a
 //                        local optimizer, trains its own next-token loss, and
 //                        gradients never cross a layer boundary (the property

@@ -2,7 +2,7 @@
 
 The model used to declare its objectives in three different ways: a
 ``criterion`` module, a ``reg`` list, and bare ``F.cross_entropy`` calls
-inside the heads and the MTP stack that appeared in neither. These tests pin
+inside the classifiers and the MTP stack that appeared in neither. These tests pin
 the collapsed arrangement - one container, one entry per term, each owned
 exactly once.
 """
@@ -88,7 +88,7 @@ def test_metrics_and_descriptions_come_from_every_term():
 # ── the model wiring ───────────────────────────────────────────────────────
 
 
-# An abstractinator encoder plus MTP on the shared tiny model, so heads and the
+# An abstractinator encoder plus MTP on the shared tiny model, so classifiers and the
 # MTP stack both declare terms of their own.
 _ENCODER_AND_MTP = dict(
     encoder_type="abstractinator_v0",

@@ -15,12 +15,13 @@ Cut schedules (``--mono-type``), chosen to plan ahead rather than hard-code
 the flat layout:
 
 - ``layer``: detach after EVERY expert call - the totally flat regime; the
-  main head loss trains only the head, every layer lives on its goodness.
+  main classifier loss trains only the classifier, every layer lives on its
+  goodness.
 - ``cycle``: detach after each full pass through the ``num_layers`` physical
   experts - one cut per recurrent depth step, so backprop spans a single
   recurrence cycle and no further.
 - ``final``: one cut after the whole stack - the decoder trains from a single
-  goodness score at the top, and the head trains alone beyond it.
+  goodness score at the top, and the classifier trains alone beyond it.
 
 Goodness is path-aware:
 
@@ -69,8 +70,8 @@ registry.declare(
             dict(),
             (
                 "Detach after every expert call, the totally flat regime of the paper: "
-                "the main head loss trains only the head, and every layer trains from "
-                "its own goodness score."
+                "the main classifier loss trains only the classifier, and every layer "
+                "trains from its own goodness score."
             ),
         ),
         "cycle": Entry(
@@ -85,7 +86,8 @@ registry.declare(
             dict(),
             (
                 "Detach once after the whole stack: the decoder trains from a single "
-                "goodness score at the top, and the head trains alone beyond it."
+                "goodness score at the top, and the classifier trains alone beyond "
+                "it."
             ),
         ),
     },

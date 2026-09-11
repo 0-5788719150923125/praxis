@@ -33,7 +33,7 @@ including chat template support.
 Tool-control tokens (see ``PraxisToolTokensMixin``) are appended past the byte range so
 existing byte ids stay valid in saved checkpoints. They are registered only when the
 chat format actually renders them, because ``byte_alphabet_size`` sizes the model's
-output head: an unused control token is a sampleable logit with no ...
+classifier: an unused control token is a sampleable logit with no ...
 
 Source: [praxis/tokenizers/byte_level.py:28](../praxis/tokenizers/byte_level.py#L28)
 

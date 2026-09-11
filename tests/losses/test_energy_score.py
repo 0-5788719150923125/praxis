@@ -6,7 +6,7 @@ from praxis.losses.energy_score import energy_score_loss
 # ------------------------------------------------------------------------------
 # calm
 # ------------------------------------------------------------------------------
-# CALM encoder + energy head + LF-temperature sanity tests.
+# CALM encoder + energy generator + LF-temperature sanity tests.
 #
 # These are shape / plumbing checks rather than training-quality assertions. The smoke-
 # test in the CALM README covers the latter.
@@ -43,8 +43,8 @@ def test_energy_score_loss_lower_when_distributions_match():
 # The thesis under test is that the DISCRETE arm can pay for the CONTINUOUS one. CALM's
 # energy score is a weak, high-variance signal that needs far more tokens than this line
 # can afford; an RVQ code is a dense, low-variance, mode-seeking target, and predicting
-# the next code from the same conditioning hidden the energy head reads is what should
-# concentrate its conditional.
+# the next code from the same conditioning hidden the energy generator reads is what
+# should concentrate its conditional.
 #
 # These tests pin the mechanics, not the thesis - the run decides that.
 

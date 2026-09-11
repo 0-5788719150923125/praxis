@@ -3,7 +3,7 @@
 CALM (arXiv:2510.27688) autoregresses over *continuous* latents and resolves
 each step by a count-based vote over many draws rather than an argmax over a
 categorical - temperature realized as a draw count, ``n = round(1/T)``. Its cost
-is that the energy head must learn a full continuous conditional
+is that the energy generator must learn a full continuous conditional
 ``p(z_{t+1} | context)`` from an energy score, a weak high-variance signal
 (measured here at correct-next-patch 0.003, cross-sample agreement 0.000): an
 optimization needing far more tokens than this line can afford.
@@ -24,7 +24,7 @@ discrete arm pay for the continuous one:
         |
     global transformer
         |
-        +--> EnergyHead: propose z_{t+1}         CALM's generative path
+        +--> EnergyGenerator: propose z_{t+1}    CALM's generative path
         +--> code CE:    predict code_{t+1}      the dense signal that
                                                  concentrates the conditional
 
@@ -38,7 +38,7 @@ and is guaranteed sufficient to reconstruct.
 JOINT, SINGLE-STAGE, ALWAYS. No pretraining phase, no frozen codec, no stage
 boundary. That is also the honest risk: CALM's reference gets its clean
 conditional partly BECAUSE its codec is frozen and near-lossless before the
-energy head starts, and here the head chases a moving target. The bet is that
+energy generator starts, and here the generator chases a moving target. The bet is that
 the code CE is dense enough to make that tractable, and ``calm_code_acc`` is
 where it settles.
 
@@ -58,7 +58,7 @@ from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from praxis.encoders.abstractinator.encoder import AbstractinatorEncoder
 from praxis.encoders.calm.vae import PatchVAE
-from praxis.generation.decoding import (
+from praxis.inference.decoding import (
     first_halt,
     is_halted,
     pick_next,
@@ -66,7 +66,7 @@ from praxis.generation.decoding import (
     stream_put,
     trunk_hooks,
 )
-from praxis.heads.energy import EnergyHead
+from praxis.generators.energy import EnergyGenerator
 from praxis.losses.energy_score import energy_score_loss
 from praxis.losses.uncertainty import UncertaintyWeighting
 
@@ -87,7 +87,7 @@ VOTE_TEMPERATURE: float = 0.5
 # training. Both are the reference's: `config.num_samples = 8` for the model
 # term, and `n_y = 100` hardcoded inside `EnergyTransformer.energy_score`. M was
 # 16 here, which is 6x more variance on the attractive term - and that variance
-# goes straight into the trunk. The target draws cost no head forward (they are
+# goes straight into the trunk. The target draws cost no generator forward (they are
 # `mean + eps * std`), only the N x M distance matrix, so the reference's number
 # is affordable.
 ENERGY_SAMPLES_N: int = 8
@@ -101,7 +101,7 @@ ENERGY_SAMPLES_M: int = 100
 FREE_BITS: float = 0.5
 
 # Codec dropout, the reference's `ae_dropout`. NOT a regularization knob: it is
-# what makes the decoder tolerant of a latent the energy head PREDICTED rather
+# what makes the decoder tolerant of a latent the generator PREDICTED rather
 # than one the encoder produced, which is the only train/test gap CALM's design
 # actually has. Applied to the encoder's input features and to the sampled
 # latent before reconstruction, so the decoder learns to map a NEIGHBOURHOOD of
@@ -141,7 +141,7 @@ VAE_DROPOUT: float = 0.15
 # THE KL COULD NOT HOLD IT. Every objective whose cost grows with ||z_c|| is
 # detached from the posterior by design - the energy score's target is
 # `z.detach()` and its draws use `mu.detach()`, correct because the score must
-# train the head, not the posterior. That leaves the KL at 1e-3 against a
+# train the generator, not the posterior. That leaves the KL at 1e-3 against a
 # fully-connected decoder CE that prefers an unbottlenecked channel.
 #
 # So the bound is STRUCTURAL, and parity is the principled place for it: at
@@ -161,7 +161,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
     """Abstractinator with a continuous CALM codec and a count-based vote.
 
     Everything the parent does is unchanged; this adds a VAE beside the
-    quantizer, an energy head over the trunk output, and the dense code
+    quantizer, an energy generator over the trunk output, and the dense code
     objective that pays for it.
 
     BOTH DECODING PATHS ARE TRAINED AT ONCE, so which one a run generates with
@@ -221,10 +221,11 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         hidden = max(1, int(D * energy_hidden_ratio))
         # `noise_dim` is the reference's `noise_size = 64` against
         # `latent_size = 128` - the noise is deliberately NARROWER than the
-        # latent it has to cover, so the head is forced to use the conditioning
-        # to fill the rest. It was D here, i.e. noise as wide as the target,
-        # which lets the head satisfy the score from noise alone.
-        self.energy_head = EnergyHead(
+        # latent it has to cover, so the generator is forced to use the
+        # conditioning to fill the rest. It was D here, i.e. noise as wide as
+        # the target, which lets the generator satisfy the score from noise
+        # alone.
+        self.generator = EnergyGenerator(
             cond_dim=D,
             noise_dim=max(1, D // 2),
             latent_dim=D,
@@ -232,14 +233,14 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             num_blocks=energy_blocks,
         )
         # Predicts WHICH CODE comes next from the same conditioning hidden the
-        # energy head reads, so its gradient sharpens the very representation
-        # the head conditions on. One head per residual stage: the composed
+        # generator reads, so its gradient sharpens the very representation
+        # the generator conditions on. One classifier per residual stage: the composed
         # index is a product space and a single softmax over K**depth would be
         # both huge and badly conditioned.
         core = getattr(self.quantizer, "quantizer", self.quantizer)
         self.vq_depth = int(getattr(core, "depth", 1))
         self.vq_K = int(getattr(core, "K", 0))
-        self.code_heads = nn.ModuleList(
+        self.code_classifiers = nn.ModuleList(
             [nn.Linear(D, self.vq_K) for _ in range(self.vq_depth)]
         )
 
@@ -285,7 +286,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             kl = self.vae.kl_divergence(mu, logvar, per_dim_clip=FREE_BITS)
             self._pending["calm_kl"] = self.loss_balance("calm_kl", kl)
 
-        # The latent the energy head predicts, in the VAE's OWN geometry. Unit
+        # The latent the generator predicts, in the VAE's OWN geometry. Unit
         # per-dim RMS by the codec's contract, so the target space is stationary
         # by construction - not by an RMS map applied at the loss to correct for
         # an unbounded quantizer output, which is what this was before.
@@ -331,17 +332,17 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         if digits is not None:
             ce = h.new_zeros(())
             acc = 0.0
-            for s, head in enumerate(self.code_heads):
+            for s, classifier in enumerate(self.code_classifiers):
                 if s >= len(digits):
                     break
                 target = digits[s][:, 1:].reshape(-1)
-                logits = head(h_cond).reshape(-1, self.vq_K)
+                logits = classifier(h_cond).reshape(-1, self.vq_K)
                 ce = ce + F.cross_entropy(logits.float(), target)
                 acc += float((logits.detach().argmax(-1) == target).float().mean())
-            n = max(1, min(len(digits), len(self.code_heads)))
+            n = max(1, min(len(digits), len(self.code_classifiers)))
             # Normalize by the chance level so the term is dimensionless: 1.0 is
             # chance, 0 is perfect. Without this the objective's magnitude was
-            # an accident of codebook size - at K=512 a head sitting at chance
+            # an accident of codebook size - at K=512 a classifier sitting at chance
             # parked ~31 nats in the total loss forever, and pushed 5x-amplified
             # noise into the trunk while the codebook was thrashing.
             chance = math.log(max(2, self.vq_K))
@@ -351,8 +352,8 @@ class AbstractinatorCALM(AbstractinatorEncoder):
             self._calm_diag["calm_code_acc"] = acc / n
 
         # ── the continuous arm: CALM's energy score ────────────────────────
-        # The head now predicts the next VAE LATENT, which is what CALM's head
-        # predicts. That target is KL-regularized and unit per-dim RMS by the
+        # The generator now predicts the next VAE LATENT, which is what CALM's
+        # generator predicts. That target is KL-regularized and unit per-dim RMS by the
         # codec's own contract, so the space is stationary by construction. It
         # used to be `z_q + z_c` - the raw quantizer output, unnormalized and
         # reshaped by the same gradient step - with an RMS map bolted on at the
@@ -361,9 +362,9 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         if code is None or self._last_posterior is None:
             return
         B, P, D = code[:, 1:, :].shape
-        proposals = self.energy_head.sample(
-            h_cond, num_samples=ENERGY_SAMPLES_N
-        ).permute(1, 2, 0, 3)
+        proposals = self.generator.sample(h_cond, num_samples=ENERGY_SAMPLES_N).permute(
+            1, 2, 0, 3
+        )
 
         # Target draws from the NEXT patch's posterior - the reference's
         # `mean + eps * std`, at its `n_y = 100`. Centred on the MEAN, never on
@@ -383,7 +384,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         self._pending["calm_energy"] = self.loss_balance("calm_energy", loss)
 
         with torch.no_grad():
-            # Is the head USING the conditioning, or has it collapsed onto the
+            # Is the generator USING the conditioning, or has it collapsed onto the
             # marginal? Re-score the same draws against targets rolled one
             # position out of alignment. Near 0 means it is modelling the
             # marginal and charging the trunk for it.
@@ -393,7 +394,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
                 )
                 self._calm_diag["calm_energy_cond_gap"] = float(mismatched - loss)
 
-            # Does the head CONCENTRATE? Decode each proposal through the VAE
+            # Does the generator CONCENTRATE? Decode each proposal through the VAE
             # and quantize the RECONSTRUCTED FEATURE, which is the space the
             # codebook actually indexes - `_quantize_to_codes` applies the
             # analysis rotation, and that is defined on patch features, not on
@@ -487,12 +488,10 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         """
         B, _ = h_cond.shape
         n_draws = self.vote_samples
-        # Through the head's own sampler, so generation draws the same uniform
-        # [-0.5, 0.5] noise training does - and so the noise width stays the
-        # head's, not the latent's. [n, B, D] -> [B, n, D].
-        proposals = self.energy_head.sample(h_cond, num_samples=n_draws).permute(
-            1, 0, 2
-        )
+        # Through the generator's own sampler, so generation draws the same
+        # uniform [-0.5, 0.5] noise training does - and so the noise width
+        # stays the generator's, not the latent's. [n, B, D] -> [B, n, D].
+        proposals = self.generator.sample(h_cond, num_samples=n_draws).permute(1, 0, 2)
         D = proposals.shape[-1]
         # The reference votes by DECODING every candidate and comparing the
         # tokens. Same thing here: decode the latent through the VAE, then read
@@ -610,7 +609,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
 
           1. run the trunk over the bytes so far;
           2. VOTE the next latent from the last patch's hidden - draw
-             ``vote_samples`` proposals from the energy head, quantize each
+             ``vote_samples`` proposals from the energy generator, quantize each
              through the VAE decoder to get its RVQ cell, and pick by the
              reference's C(count, n) cascade;
           3. decode the winner to a patch feature, put it back on the trunk as
@@ -700,7 +699,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         "calm_code_acc": {
             "description": (
                 "Next-patch RVQ code accuracy from the conditioning hidden - "
-                "the dense signal paying for the energy head. Climbing WITH "
+                "the dense signal paying for the generator. Climbing WITH "
                 "calm_sample_agreement is the thesis; alone means decoupled."
             ),
             "chart": {
@@ -713,7 +712,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         },
         "calm_sample_agreement": {
             "description": (
-                "Share of energy-head draws landing on the first draw's code. "
+                "Share of generator draws landing on the first draw's code. "
                 "Expect a U: the 1.0 at step 0 is degenerate; only the rise "
                 "after the fall counts. Sustained ~0 = marginal collapse."
             ),
@@ -774,7 +773,7 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         "calm_energy_cond_gap": {
             "description": (
                 "Energy score on misaligned targets minus the aligned one. "
-                "Near 0 means the head ignores its conditioning and models "
+                "Near 0 means the generator ignores its conditioning and models "
                 "the marginal."
             ),
             "chart": {

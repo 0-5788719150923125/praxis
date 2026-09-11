@@ -1,6 +1,6 @@
 """compute_layer_wise_loss: one layer's local loss for a layer-wise trainer.
 
-Built on a real ForwardHead and CrossEntropyLoss with synthetic hidden states:
+Built on a real LinearClassifier and CrossEntropyLoss with synthetic hidden states:
 the shift convention matches a hand-written step, the cut-CE branch receives
 unshifted inputs, and aux losses fold in through the strategy.
 """
@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from praxis import PraxisConfig
 from praxis.containers.loss import LossContainer
-from praxis.heads.forward import ForwardHead
+from praxis.classifiers.linear import LinearClassifier
 from praxis.losses import compute_layer_wise_loss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.strategies.naive import NaiveSummation
@@ -27,7 +27,7 @@ VOCAB, HIDDEN, BATCH, SEQ = 32, 16, 2, 8
 
 @pytest.fixture
 def layer():
-    """A ForwardHead plus a batch of hidden states and next-token labels."""
+    """A LinearClassifier plus a batch of hidden states and next-token labels."""
     torch.manual_seed(0)
     config = PraxisConfig(
         vocab_size=VOCAB,
@@ -44,7 +44,7 @@ def layer():
     )
     input_ids = torch.randint(0, VOCAB, (BATCH, SEQ))
     return SimpleNamespace(
-        head=ForwardHead(config),
+        classifier=LinearClassifier(config),
         hidden_states=torch.randn(BATCH, SEQ, HIDDEN, requires_grad=True),
         input_ids=input_ids,
         labels=input_ids[..., 1:].contiguous(),
@@ -55,7 +55,7 @@ def _loss(layer, criterion, **kwargs):
     return compute_layer_wise_loss(
         hidden_states=layer.hidden_states,
         labels=layer.labels,
-        head=layer.head,
+        classifier=layer.classifier,
         criterion=criterion,
         input_ids=layer.input_ids,
         **kwargs,
@@ -64,17 +64,17 @@ def _loss(layer, criterion, **kwargs):
 
 def test_shift_convention_matches_manual_cross_entropy(layer):
     """The helper's loss equals shift-then-CE by hand, and it backprops into
-    both the hidden states (the layer boundary) and the head each layer owns."""
+    both the hidden states (the layer boundary) and the classifier each layer owns."""
     loss = _loss(layer, CrossEntropyLoss())
 
-    logits = layer.head(layer.hidden_states)[..., :-1, :]
+    logits = layer.classifier(layer.hidden_states)[..., :-1, :]
     manual = F.cross_entropy(logits.reshape(-1, VOCAB), layer.labels.reshape(-1))
     assert loss.dim() == 0
     assert loss.item() == pytest.approx(manual.item(), rel=1e-5)
 
     loss.backward()
     assert layer.hidden_states.grad.abs().sum().item() > 0
-    assert layer.head.lm_head.weight.grad.abs().sum().item() > 0
+    assert layer.classifier.scorer.weight.grad.abs().sum().item() > 0
 
 
 class _StubCutCrossEntropyLoss(nn.Module):
@@ -85,16 +85,16 @@ class _StubCutCrossEntropyLoss(nn.Module):
         super().__init__()
         self.calls: List[dict] = []
 
-    def forward(self, logits, embeddings, classifier, labels, input_ids, **kwargs):
+    def forward(self, logits, embeddings, scorer, labels, input_ids, **kwargs):
         self.calls.append(
             dict(
                 embeddings_shape=tuple(embeddings.shape),
                 input_ids_shape=tuple(input_ids.shape),
-                classifier=classifier,
+                scorer=scorer,
             )
         )
         flat = embeddings.reshape(-1, embeddings.shape[-1])
-        return (flat @ classifier.weight.t()).pow(2).mean()
+        return (flat @ scorer.weight.t()).pow(2).mean()
 
 
 # The helper's ``_is_cut_cross_entropy`` matches ``criterion.__class__.__name__``.
@@ -103,7 +103,7 @@ _StubCutCrossEntropyLoss.__name__ = "CutCrossEntropyLoss"
 
 def test_compute_layer_wise_loss_cut_ce_fast_path_fires(layer):
     """Cut-CE shifts internally, so it gets the full unshifted hidden states
-    and input_ids, and the head's ``classifier`` as its linear layer."""
+    and input_ids, and the classifier's ``scorer`` as its linear layer."""
     criterion = _StubCutCrossEntropyLoss()
 
     loss = _loss(layer, criterion)
@@ -111,10 +111,10 @@ def test_compute_layer_wise_loss_cut_ce_fast_path_fires(layer):
     (call,) = criterion.calls
     assert call["embeddings_shape"] == (BATCH, SEQ, HIDDEN)
     assert call["input_ids_shape"] == (BATCH, SEQ)
-    assert call["classifier"] is layer.head.classifier
+    assert call["scorer"] is layer.classifier.scorer
     loss.backward()
     assert layer.hidden_states.grad is not None
-    assert layer.head.lm_head.weight.grad is not None
+    assert layer.classifier.scorer.weight.grad is not None
 
 
 class _RecordingSum(NaiveSummation):

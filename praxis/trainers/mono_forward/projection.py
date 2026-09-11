@@ -17,10 +17,10 @@ There is no weight sharing or synchronisation between layers'
 projections - each layer optimises its own projection as part of its
 local loss ``L_i = CE(softmax(G_i), labels)``.
 
-This module exposes a ``.classifier`` property so it can be used as
-a drop-in for the ``head`` parameter in
+This module exposes a ``.scorer`` property so it can be used as
+a drop-in for the ``classifier`` parameter in
 :func:`praxis.losses.compute_layer_wise_loss`, which reads
-``head(hidden_states)`` for logits and ``head.classifier.weight``
+``classifier(hidden_states)`` for logits and ``classifier.scorer.weight``
 for the cut-cross-entropy fast path.
 """
 
@@ -51,13 +51,13 @@ class ProjectionMatrix(nn.Module):
         return F.linear(activations, self.weight)
 
     @property
-    def classifier(self) -> "ProjectionMatrix":
-        """Return self as the classifier for cut-CE compatibility.
+    def scorer(self) -> "ProjectionMatrix":
+        """Return self as the scorer for cut-CE compatibility.
 
         :func:`praxis.losses.compute_layer_wise_loss` reads
-        ``head.classifier.weight`` for the cut-cross-entropy fast
+        ``classifier.scorer.weight`` for the cut-cross-entropy fast
         path. Since ``ProjectionMatrix`` stores its weight directly
         as ``self.weight``, returning ``self`` satisfies
-        ``classifier.weight`` without an extra indirection.
+        ``scorer.weight`` without an extra indirection.
         """
         return self

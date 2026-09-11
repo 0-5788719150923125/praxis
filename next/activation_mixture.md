@@ -54,7 +54,7 @@ one variable.
 
 `ActivationMixture(activations, mode)` - a module that occupies an activation
 slot and holds a bank of them. Anything that writes `ACT2FN[name]` gets it,
-which is the whole point: it is the activation-level analogue of `ParallelHead`.
+which is the whole point: it is the activation-level analogue of `ParallelClassifier`.
 
 Types differ ONLY in where the coefficients come from:
 

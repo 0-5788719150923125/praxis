@@ -133,11 +133,11 @@ def build_training_callbacks(
     )
 
     # Sample-based proper scoring rule at validation. Only meaningful for
-    # likelihood-free models (CALM's energy head): a standard-logits model
+    # likelihood-free models (CALM's energy generator): a standard-logits model
     # already has exact likelihood via val_loss, which is cheaper and far
     # less noisy than a sampled Brier estimate.
     encoder = getattr(model, "encoder", None)
-    if encoder and hasattr(encoder, "energy_head"):
+    if encoder and hasattr(encoder, "generator"):
         callbacks.append(BrierLMCallback(tokenizer=tokenizer))
 
     # Weight-editing RL controllers. rl_type is a list; each profile entry
@@ -254,7 +254,7 @@ def build_training_callbacks(
             )
         )
 
-    # Dashboard model probes (activation curves, head snapshots) run HERE, not
+    # Dashboard model probes (activation curves, classifier snapshots) run HERE, not
     # on the API server's producer thread: a torch op on the live model from
     # any other thread can deadlock the process on (GIL, AutogradMeta.mutex_).
     # See praxis/web/snapshots.py.

@@ -1,7 +1,7 @@
-"""Muon param-splitting + CompositeOptimizer (Muon body / secondary head).
+"""Muon param-splitting + CompositeOptimizer (Muon body / secondary classifier).
 
 The invariants here guard the two things that historically broke Muon: it
-must never orthogonalize an embedding or the LM head (the vocab-facing
+must never orthogonalize an embedding or the classifier (the vocab-facing
 params route to the secondary/AdamW), and the secondary's learning rate must
 survive the cosine scheduler's per-group flattening as a fixed ratio.
 """
@@ -20,7 +20,7 @@ from praxis.optimization import (
 
 
 class TinyLM(nn.Module):
-    """Minimal LM-shaped model: an embedding and head share a vocab dimension;
+    """Minimal LM-shaped model: an embedding and classifier share a vocab dimension;
     the two interior linears are the only Muon-eligible matrices."""
 
     def __init__(self, vocab=50, hidden=16, tie=False):
@@ -30,12 +30,12 @@ class TinyLM(nn.Module):
         self.h1 = nn.Linear(hidden, hidden)
         self.h2 = nn.Linear(hidden, hidden)
         self.norm = nn.LayerNorm(hidden)
-        self.lm_head = nn.Linear(hidden, vocab, bias=False)
+        self.classifier = nn.Linear(hidden, vocab, bias=False)
         if tie:
-            self.lm_head.weight = self.embed.weight
+            self.classifier.weight = self.embed.weight
 
     def forward(self, x):
-        return self.lm_head(self.norm(self.h2(self.h1(self.embed(x)))))
+        return self.classifier(self.norm(self.h2(self.h1(self.embed(x)))))
 
 
 def _names(model, params):
@@ -48,35 +48,35 @@ def _names(model, params):
 # --------------------------------------------------------------------------
 
 
-def test_split_keeps_embeddings_and_head_off_muon():
+def test_split_keeps_embeddings_and_classifier_off_muon():
     model = TinyLM()
     muon, adamw = _split_muon_params(model)
     assert _names(model, muon) == ["h1.weight", "h2.weight"]
-    # embeddings, head (vocab dim), norm weight/bias, and linear biases all go
+    # embeddings, classifier (vocab dim), norm weight/bias, and linear biases all go
     # to the secondary/AdamW group.
     adamw_names = _names(model, adamw)
-    for n in ("embed.weight", "lm_head.weight", "norm.weight", "norm.bias"):
+    for n in ("embed.weight", "classifier.weight", "norm.weight", "norm.bias"):
         assert n in adamw_names
 
 
 def test_split_routes_tied_weight_to_adamw():
-    # A tied embed/head shares one tensor with a vocab dimension: it must land
+    # A tied embed/classifier shares one tensor with a vocab dimension: it must land
     # on AdamW, never Muon.
     model = TinyLM(tie=True)
     muon, adamw = _split_muon_params(model)
     assert "embed.weight" in _names(model, adamw)
-    assert all("embed" not in n and "lm_head" not in n for n in _names(model, muon))
+    assert all("embed" not in n and "classifier" not in n for n in _names(model, muon))
 
 
-class ByteHead(nn.Module):
-    """A head sized to its own vocabulary, as a byte-latent encoder's head is."""
+class ByteClassifier(nn.Module):
+    """A classifier sized to its own vocabulary, as a byte-latent encoder's is."""
 
     def __init__(self, vocab=24, hidden=16, period=24):
         super().__init__()
         self.vocab_size = vocab
         self.hidden_size = hidden
         self.centers = nn.Parameter(torch.randn(vocab, hidden))
-        self.lm_head = nn.Linear(hidden, vocab, bias=False)
+        self.scorer = nn.Linear(hidden, vocab, bias=False)
         # Shares the vocabulary's size without facing it (a sequence period).
         self.field = nn.Parameter(torch.randn(period, 4))
 
@@ -88,18 +88,23 @@ class ByteLM(nn.Module):
         self.embed = nn.Embedding(vocab, hidden)
         self.bank = nn.EmbeddingBag(32, hidden)
         self.h1 = nn.Linear(hidden, hidden)
-        self.head = ByteHead(vocab, hidden)
+        self.classifier = ByteClassifier(vocab, hidden)
 
 
-def test_split_finds_a_head_sized_to_its_own_vocabulary():
-    """The config's vocab_size is not the byte head's: its classifiers still
+def test_split_finds_a_classifier_sized_to_its_own_vocabulary():
+    """The config's vocab_size is not the byte classifier's: its scorers still
     leave the matrix path, and a tensor that merely shares the size stays."""
     model = ByteLM()
     muon, adamw = _split_muon_params(model)
     adamw_names = _names(model, adamw)
-    for n in ("head.centers", "head.lm_head.weight", "embed.weight", "bank.weight"):
+    for n in (
+        "classifier.centers",
+        "classifier.scorer.weight",
+        "embed.weight",
+        "bank.weight",
+    ):
         assert n in adamw_names, n
-    assert _names(model, muon) == ["h1.weight", "head.field"]
+    assert _names(model, muon) == ["classifier.field", "h1.weight"]
 
 
 class _Halve(nn.Module):
@@ -116,13 +121,13 @@ def test_split_reads_parametrized_weights_by_their_logical_shape():
     from torch.nn.utils import parametrize
 
     model = ByteLM()
-    parametrize.register_parametrization(model.head.lm_head, "weight", _Halve())
+    parametrize.register_parametrization(model.classifier.scorer, "weight", _Halve())
     parametrize.register_parametrization(model.embed, "weight", _Halve())
     muon, adamw = _split_muon_params(model)
     adamw_names = _names(model, adamw)
-    assert "head.lm_head.parametrizations.weight.original" in adamw_names
+    assert "classifier.scorer.parametrizations.weight.original" in adamw_names
     assert "embed.parametrizations.weight.original" in adamw_names
-    assert _names(model, muon) == ["h1.weight", "head.field"]
+    assert _names(model, muon) == ["classifier.field", "h1.weight"]
 
 
 # --------------------------------------------------------------------------

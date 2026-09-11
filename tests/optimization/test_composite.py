@@ -1,7 +1,7 @@
-"""Muon param-splitting + CompositeOptimizer (Muon body / secondary head).
+"""Muon param-splitting + CompositeOptimizer (Muon body / secondary classifier).
 
 The invariants here guard the two things that historically broke Muon: it
-must never orthogonalize an embedding or the LM head (the vocab-facing
+must never orthogonalize an embedding or the classifier (the vocab-facing
 params route to the secondary/AdamW), and the secondary's learning rate must
 survive the cosine scheduler's per-group flattening as a fixed ratio.
 """
@@ -21,7 +21,7 @@ from praxis.schedulers import get_scheduler_func
 
 
 class TinyLM(nn.Module):
-    """Minimal LM-shaped model: an embedding and head share a vocab dimension;
+    """Minimal LM-shaped model: an embedding and classifier share a vocab dimension;
     the two interior linears are the only Muon-eligible matrices."""
 
     def __init__(self, vocab=50, hidden=16, tie=False):
@@ -31,12 +31,12 @@ class TinyLM(nn.Module):
         self.h1 = nn.Linear(hidden, hidden)
         self.h2 = nn.Linear(hidden, hidden)
         self.norm = nn.LayerNorm(hidden)
-        self.lm_head = nn.Linear(hidden, vocab, bias=False)
+        self.classifier = nn.Linear(hidden, vocab, bias=False)
         if tie:
-            self.lm_head.weight = self.embed.weight
+            self.classifier.weight = self.embed.weight
 
     def forward(self, x):
-        return self.lm_head(self.norm(self.h2(self.h1(self.embed(x)))))
+        return self.classifier(self.norm(self.h2(self.h1(self.embed(x)))))
 
 
 def _find_composite(opt):
@@ -78,10 +78,10 @@ def test_composite_lr_ratio_survives_cosine_scheduler():
         # the rates each sub-optimizer ACTUALLY used this step, before the
         # scheduler re-flattens them:
         body = comp.primary.param_groups[0]["lr"]
-        head = comp.secondary.param_groups[0]["lr"]
+        secondary = comp.secondary.param_groups[0]["lr"]
         sched.step()
     assert body > 0
-    assert abs(head / body - expected) < 1e-6
+    assert abs(secondary / body - expected) < 1e-6
 
 
 # --------------------------------------------------------------------------

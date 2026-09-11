@@ -83,7 +83,7 @@
     '/api/metrics': DATA + 'metrics.json',
     '/api/data-metrics': DATA + 'data-metrics.json',
     '/api/dynamics': DATA + 'dynamics.json',
-    '/api/head_snapshots': DATA + 'head_snapshots.json',
+    '/api/classifier_snapshots': DATA + 'classifier_snapshots.json',
     '/api/activation_curves': DATA + 'activation_curves.json',
     '/api/evolution': DATA + 'evolution.json',
     '/api/spider': DATA + 'spider.json',

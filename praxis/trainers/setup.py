@@ -187,7 +187,7 @@ def assemble_model(cfg, config) -> ModelBundle:
 def _encoder_patch_size(encoder_type) -> int:
     """Tokens-per-latent (K) for patch-compressing encoders (CALM); 1 otherwise.
     The Terminal seeds a full patch so the first conditioning patch is real, not
-    mostly pad (see praxis.generation.streaming.random_text_seed)."""
+    mostly pad (see praxis.inference.streaming.random_text_seed)."""
     import functools
 
     f = registry.namespace("encoders").get(encoder_type)

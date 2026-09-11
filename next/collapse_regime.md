@@ -159,7 +159,7 @@ That is a fourth independent instrument on which -e is the outlier.
 
 **The phase-locking intuition is real, but it lives one module over.**
 `harmonic_capacity_dormant` is literally "share of spectral capacity sitting
-dormant" (`praxis/heads/harmonic.py:365`) and it **rises to 0.57 on -a**. That
+dormant" (`praxis/classifiers/harmonic.py:365`) and it **rises to 0.57 on -a**. That
 is mode death in the harmonic basis - features collapsing onto a shared periodic
 shape and leaving the rest of the spectrum unused. It is the thing an
 interference/repulsion term would fight, and it is already measured.

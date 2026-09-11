@@ -1,6 +1,6 @@
 # Harmonic Head: Stabilization Notes
 
-Working notes on the 2D irrational-rotation harmonic head (`praxis/heads/harmonic.py`). Each section captures a hypothesis, the change made (if any), and what to look for next. Added in chronological order; older sections stay as-is for reference.
+Working notes on the 2D irrational-rotation harmonic head (`praxis/classifiers/harmonic.py`). Each section captures a hypothesis, the change made (if any), and what to look for next. Added in chronological order; older sections stay as-is for reference.
 
 ---
 

@@ -40,7 +40,7 @@ density network failure mode (Bishop, 1994): if the target is bimodal, the mean
 lands between the modes. The mean of "swerve left" and "swerve right" is "hit
 the obstacle."
 
-ParallelHead and SMEAR are worth calling out separately, because in both cases
+ParallelClassifier and SMEAR are worth calling out separately, because in both cases
 the collapse is **deliberate and well-motivated**, not an oversight. SMEAR
 merges expert parameters by a softmax specifically so that routing is
 differentiable without sampling - that is the paper's entire contribution. The
@@ -248,7 +248,7 @@ the stack.
 
 ### Where it would live
 
-- `praxis/heads/harmonic.py` - the `kappa` grid, the `A(kappa)` damping applied
+- `praxis/classifiers/harmonic.py` - the `kappa` grid, the `A(kappa)` damping applied
   to the existing amplitude-times-phase product, and a variance-field branch.
 - Registry, not a CLI flag - a head profile (per
   [feedback_registry_over_cli_args]), so the arm is selectable the way

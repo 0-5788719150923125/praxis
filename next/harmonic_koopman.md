@@ -119,8 +119,8 @@ diagnostic.
 - index `i` = patch / latent-autoregression step
 - signal = the latent vector trajectory
 - task-relevant = yes (it _is_ the generative target)
-- equal-budget comparison = `HarmonicLatentHead` (flow in fixed harmonic coeff
-  space `z = c @ Qᵀ`, already in `praxis/heads/harmonic_latent.py`) vs the plain
+- equal-budget comparison = `HarmonicLatentGenerator` (flow in fixed harmonic coeff
+  space `z = c @ Qᵀ`, already in `praxis/generators/harmonic_latent.py`) vs the plain
   `flow` head calm-d currently uses. Read the bias/variance energy split and
   whether the latent spectrum is interpretable.
 

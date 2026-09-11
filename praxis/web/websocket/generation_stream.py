@@ -65,7 +65,7 @@ def stream_callbacks(
     ``on_reset`` means "drop what you have" and fires once per tool call - the
     runtime's turn anchor moves past each spliced tool result, so the reply is
     only what the model writes after it (see
-    :class:`praxis.generation.streamers.ReplyStreamer`).
+    :class:`praxis.inference.streamers.ReplyStreamer`).
 
     ``on_tool`` names each tool as it runs. It is deliberately NOT undone by
     the reset that follows it: the reset retracts the model's pre-call chatter,

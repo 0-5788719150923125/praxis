@@ -2,7 +2,7 @@
 
 The measurement multi-task gradient surgery (PCGrad, GradNorm, CAGrad, Nash-MTL)
 is motivated by, taken cheaply: one backward per objective to the trunk output
-the head classifies. The cases below pin the readings that matter - a term that
+the classifier reads. The cases below pin the readings that matter - a term that
 opposes the anchor, one that agrees with it, one that pulls in an independent
 direction, and one with no path to the shared representation at all.
 """
@@ -112,7 +112,7 @@ def test_no_anchor_or_frozen_input_is_a_no_op():
 
 
 def test_conflict_reports_once_the_anchor_resolves():
-    """Without a live main term the anchor falls back to the surgical head's
+    """Without a live main term the anchor falls back to the surgical classifier's
     arm_surgery row, and the cosines are taken against it."""
     conflict = ObjectiveConflict(interval=1)
     h = torch.randn(8, requires_grad=True)
@@ -153,13 +153,13 @@ def test_descriptions_cover_the_live_series_only():
     assert descs["conflict_mag_mtp"]["chart"]["series_group"] == "conflict_mag"
 
 
-def _head_terms(name):
-    """A registered head's main CE and an entropy term over the same logits."""
+def _classifier_terms(name):
+    """A registered classifier's main CE and an entropy term over the same logits."""
     torch.manual_seed(0)
-    head = registry.lookup("heads", name)(Cfg(), encoder=Enc())
-    head.train()
+    classifier = registry.lookup("classifiers", name)(Cfg(), encoder=Enc())
+    classifier.train()
     h = torch.randn(2, 5, 48, requires_grad=True)
-    logits = head(h)
+    logits = classifier(h)
     labels = torch.randint(0, 32, (2, 5))
     ce = F.cross_entropy(logits.reshape(-1, 32), labels.reshape(-1))
     entropy = -(logits.exp() * logits).sum(-1).mean()
@@ -167,20 +167,20 @@ def _head_terms(name):
 
 
 @pytest.mark.parametrize("name", ["prismatic7", "prismatic8"])
-def test_head_gradients_are_the_real_shape(name):
-    """On an ordinary parallel head the mixture CE reaches the trunk output, so
+def test_classifier_gradients_are_the_real_shape(name):
+    """On an ordinary parallel classifier the mixture CE reaches the trunk output, so
     it anchors the measurement and the cosine is finite."""
-    terms, h = _head_terms(name)
+    terms, h = _classifier_terms(name)
     out = ObjectiveConflict(interval=1).measure(terms, h)
     assert "conflict_entropy" in out
     assert math.isfinite(out["conflict_entropy"])
     assert -1.0 <= out["conflict_entropy"] <= 1.0
 
 
-def test_a_surgical_head_leaves_main_without_a_trunk_row():
+def test_a_surgical_classifier_leaves_main_without_a_trunk_row():
     """prismatic9 detaches every arm and the gate's input in training, so the
     mixture CE has no path to the trunk and anchoring on it measures nothing;
     the task reaches the trunk only through the arm_surgery row."""
-    terms, h = _head_terms("prismatic9")
+    terms, h = _classifier_terms("prismatic9")
     assert "main" not in trunk_gradients(terms, h)
     assert ObjectiveConflict(interval=1).measure(terms, h) == {}

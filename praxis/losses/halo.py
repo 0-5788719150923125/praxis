@@ -9,7 +9,7 @@ from torch import Tensor
 from praxis.losses.reduction import weighted_reduce
 
 # The one label-smoothing constant shared by the loss's distillation targets
-# and the HaloClassifier's abstain calibration (praxis/heads/halo.py imports
+# and the HaloGeometry's abstain calibration (praxis/classifiers/halo.py imports
 # it). The two derivations must agree or the abstain equilibrium is computed
 # for a target distribution the loss never produces.
 HALO_LABEL_SMOOTHING: float = 0.1
@@ -29,29 +29,29 @@ class HALOLoss(nn.Module):
     - Geometric regularizer encouraging embeddings toward the hyperspherical shell
     - Distillation-based label smoothing using margin-aware soft targets
 
-    Two operating modes, keyed off the classifier:
+    Two operating modes, keyed off the scorer:
 
-    1. **Honest mode** (classifier exposes ``is_halo``, i.e. a
-       :class:`~praxis.heads.halo.HaloClassifier` - the prismatic5 arm).
-       The classifier owns centroids/gamma/abstain; the loss delegates to it
+    1. **Honest mode** (scorer exposes ``is_halo``, i.e. a
+       :class:`~praxis.classifiers.halo.HaloGeometry` - the prismatic5 arm).
+       The scorer owns centroids/gamma/abstain; the loss delegates to it
        so training and inference share ONE scoring function. The total loss
        is composite: standard CE on the model's emitted logits (training the
        gate and the non-HALO arms) PLUS the HALO geometric objective on the
        trunk embeddings. No relative weight knob: 1:1. Whether the CE term
-       also reaches the HALO arm is set by ``HaloHead.detach_in_blend`` -
+       also reaches the HALO arm is set by ``HaloClassifier.detach_in_blend`` -
        detached, the geometric term is that arm's sole teacher and its gate
        share is an uncontaminated verdict on HALO's scoring; attached, the
        arm trains under both and the verdict is traded for the chance that
        the arm becomes useful.
 
-    2. **Legacy side-loss mode** (any other centroid matrix: a Linear head's
-       ``weight``, a crystal head's ``centers`` - e.g. CALM's geometric
+    2. **Legacy side-loss mode** (any other centroid matrix: a linear
+       scorer's ``weight``, a crystal geometry's ``centers`` - e.g. CALM's geometric
        mode). Pure HALO on (embeddings, centroids), as before, with the
        official mean-centering applied when the centroids are trainable
        (frozen instruments like CALM's codec are measured as-is), and gamma
        calibrated from the MEASURED first-batch geometry instead of the
        official ``r_sq_init = 2.0`` guess (which assumes randn centroids -
-       false for LM head inits like std 1/sqrt(D)).
+       false for classifier inits like std 1/sqrt(D)).
     """
 
     def __init__(
@@ -90,7 +90,7 @@ class HALOLoss(nn.Module):
 
     def _calibrate(self, D: float, r_sq_init: float) -> None:
         """Initialize gamma and the abstain bias from the measured initial
-        geometry (legacy mode only; the HaloClassifier calibrates itself).
+        geometry (legacy mode only; the HaloGeometry calibrates itself).
 
         The official formula assumes ``r_sq_init = 2.0`` (randn centroids,
         unit-RMS embeddings). Here ``r_sq_init`` is the measured first-batch
@@ -131,14 +131,14 @@ class HALOLoss(nn.Module):
         logits: Tensor = None,
         labels: Tensor = None,
         embeddings: Tensor = None,
-        classifier: nn.Module = None,
+        scorer: nn.Module = None,
         loss_weights: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
     ) -> Tensor:
-        if embeddings is None or classifier is None:
+        if embeddings is None or scorer is None:
             raise RuntimeError(
-                "HALOLoss requires both `embeddings` and `classifier` kwargs. "
+                "HALOLoss requires both `embeddings` and `scorer` kwargs. "
                 "It cannot operate on logits alone."
             )
 
@@ -151,7 +151,7 @@ class HALOLoss(nn.Module):
         flat_emb = embeddings.contiguous().view(-1, emb_dims)
         flat_weights = loss_weights.reshape(-1) if loss_weights is not None else None
 
-        is_halo_head = bool(getattr(classifier, "is_halo", False))
+        is_halo_scorer = bool(getattr(scorer, "is_halo", False))
 
         # Normalize inputs to unit per-coordinate scale (RMS), matching the
         # shell target 1 - 2/D. HALO is hyperspherical: without this its r_sq,
@@ -160,7 +160,7 @@ class HALOLoss(nn.Module):
         # (and its gradient) track that norm - destabilizing training and any
         # loss-delta RL reward downstream. Normalizing decouples HALO from
         # upstream scale and is the geometry the objective assumes. The
-        # HaloClassifier applies the IDENTICAL normalization at inference.
+        # HaloGeometry applies the IDENTICAL normalization at inference.
         pos = flat_emb.to(torch.float32)
         pos = pos * torch.rsqrt(pos.pow(2).mean(dim=-1, keepdim=True).clamp_min(1e-6))
 
@@ -176,22 +176,22 @@ class HALOLoss(nn.Module):
         if flat_weights is not None:
             flat_weights = flat_weights[valid_mask]
 
-        if is_halo_head:
-            # Honest mode: the classifier owns the geometry. Its centroids()
+        if is_halo_scorer:
+            # Honest mode: the scorer owns the geometry. Its centroids()
             # are already mean-centered (official HALOModel behavior) and its
             # gamma/abstain were calibrated exactly at construction.
-            cen = classifier.centroids()
-            gamma = classifier.gamma_value()
-            abstain_bias = float(classifier.abstain_bias)
+            cen = scorer.centroids()
+            gamma = scorer.gamma_value()
+            abstain_bias = float(scorer.abstain_bias)
         else:
-            # Legacy mode: borrowed centroid matrix. A Linear head exposes its
-            # centroids as ``weight``, the crystal head as ``centers``.
-            centroids = getattr(classifier, "weight", None)
+            # Legacy mode: borrowed centroid matrix. A linear scorer exposes
+            # its centroids as ``weight``, the crystal geometry as ``centers``.
+            centroids = getattr(scorer, "weight", None)
             if centroids is None:
-                centroids = getattr(classifier, "centers", None)
+                centroids = getattr(scorer, "centers", None)
             if centroids is None:
                 raise RuntimeError(
-                    "HALOLoss needs a centroid matrix on the classifier "
+                    "HALOLoss needs a centroid matrix on the scorer "
                     "(`weight` or `centers`)."
                 )
             cen = centroids.to(torch.float32)
@@ -213,14 +213,14 @@ class HALOLoss(nn.Module):
         halo_loss = self._halo_terms(
             pos, target, cen, gamma, abstain_bias, flat_weights
         )
-        if not is_halo_head:
+        if not is_halo_scorer:
             return halo_loss
         if not self.composite_geometry and self.training:
-            # A head owns the arm objectives and has already taken this term as
+            # A classifier owns the arm objectives and has already taken this term as
             # the HALO arm's Jacobian row. Emit CE only; adding the geometry
             # here would double it and give it an uncorrected path to the trunk.
             #
-            # TRAINING ONLY, and the gate is the whole point. At eval the head's
+            # TRAINING ONLY, and the gate is the whole point. At eval the classifier's
             # arm_objectives returns {} (they are training-only) and
             # _finalize_loss drops aux losses anyway, so there is nothing to
             # double-count - suppressing the term there does not prevent a
@@ -236,7 +236,7 @@ class HALOLoss(nn.Module):
         # Honest-mode composite: standard CE on the model's emitted logits.
         # This is the gate's and the non-HALO arms' training signal. Whether it
         # ALSO reaches the HALO arm is the arm's own choice, not this loss's:
-        # HaloHead.detach_in_blend decides, and the two settings ask different
+        # HaloClassifier.detach_in_blend decides, and the two settings ask different
         # questions (see that class). Detached (prismatic5) the geometric term
         # above is the arm's only teacher and its gate share is a clean verdict
         # on HALO's scoring; attached (prismatic6) the arm trains under both.
@@ -256,35 +256,35 @@ class HALOLoss(nn.Module):
         )
         return ce_loss + halo_loss
 
-    # When a head owns the per-arm objectives (SurgicalParallelHead), the
-    # geometric term is that arm's Jacobian ROW and the head applies it through
-    # the surgery. Leaving it here as well would double-count it AND route it
-    # around the very arbitration it is supposed to be subject to, which is
-    # what made an earlier prismatic9 incoherent. PraxisForCausalLM flips this
-    # off at build time when it sees such a head.
+    # When a classifier owns the per-arm objectives (SurgicalParallelClassifier),
+    # the geometric term is that arm's Jacobian ROW and the classifier applies
+    # it through the surgery. Leaving it here as well would double-count it AND
+    # route it around the very arbitration it is supposed to be subject to,
+    # which is what made an earlier prismatic9 incoherent. PraxisForCausalLM
+    # flips this off at build time when it sees such a classifier.
     composite_geometry: bool = True
 
     def geometry_only(
         self,
         embeddings: Tensor,
         labels: Tensor,
-        classifier: nn.Module,
+        scorer: nn.Module,
         loss_weights: Optional[Tensor] = None,
     ) -> Optional[Tensor]:
         """The HALO objective alone, with no cross-entropy attached.
 
-        The HALO arm's row in a head's arm Jacobian. A Jacobian row is any
+        The HALO arm's row in a classifier's arm Jacobian. A Jacobian row is any
         objective's gradient with respect to the shared representation - it
         does NOT have to be a cross-entropy, and inventing one for this arm
         both fights its real objective and reads on a different scale (~25 nats
         against the other arms' ~7, because distance scores are not calibrated
         as CE logits).
 
-        Honest mode only: the classifier must own the geometry (``is_halo``),
+        Honest mode only: the scorer must own the geometry (``is_halo``),
         which is the case this exists for. Returns None otherwise, and the
         caller drops the row rather than substituting something wrong.
         """
-        if not bool(getattr(classifier, "is_halo", False)):
+        if not bool(getattr(scorer, "is_halo", False)):
             return None
         # ``forward`` is handed embeddings the caller already sliced to [:-1];
         # an arm hands over its raw input, so align here instead of requiring
@@ -308,14 +308,14 @@ class HALOLoss(nn.Module):
         return self._halo_terms(
             pos,
             target,
-            classifier.centroids(),
-            classifier.gamma_value(),
-            float(classifier.abstain_bias),
+            scorer.centroids(),
+            scorer.gamma_value(),
+            float(scorer.abstain_bias),
             weights,
         )
 
     def on_features(
-        self, features: Tensor, targets: Tensor, classifier: nn.Module
+        self, features: Tensor, targets: Tensor, scorer: nn.Module
     ) -> Tensor:
         """The HALO objective on ``[N, D]`` features used as they are.
 
@@ -329,9 +329,9 @@ class HALOLoss(nn.Module):
         return self._halo_terms(
             features.float(),
             targets,
-            classifier.centroids(),
-            classifier.gamma_value(),
-            float(classifier.abstain_bias),
+            scorer.centroids(),
+            scorer.gamma_value(),
+            float(scorer.abstain_bias),
         )
 
     def _halo_terms(

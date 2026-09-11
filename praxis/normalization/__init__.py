@@ -22,7 +22,7 @@ registry.declare(
             "recurrent-depth bias). Each transformer sublayer (attention, feedforward) has "
             "two norm positions: pre, on its input, and post, on its output before it "
             "joins the residual. An entry decides which positions are filled and with "
-            "what. There is no final norm before the head."
+            "what. There is no final norm before the classifier."
         )
     ),
     entries={

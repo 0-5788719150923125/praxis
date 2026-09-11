@@ -21,7 +21,7 @@ from praxis.callbacks import build_training_callbacks, create_printing_progress_
 from praxis.cli import RunConfig, create_praxis_config, integration_loader, parse_cli
 from praxis.data import get_datamodules
 from praxis.data.runs import print_runs, setup_training_run
-from praxis.generation import Generator
+from praxis.inference import Generator
 from praxis.optimization import build_optimizer_and_scheduler, safe_parameter_stats
 from praxis.tokenizers import create_tokenizer
 from praxis.tokenizers.train import run_train_tokenizer_cli

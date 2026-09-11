@@ -254,7 +254,7 @@ method, the opposite of "one step, no drifting.")
 
 **Where this points**: the one place in this repo where the exact solve is
 well-posed is the one place we already built it. `LinearPrior`
-(`praxis/heads/energy.py:48`) solves for a *latent* under squared loss. That is not
+(`praxis/generators/energy.py:48`) solves for a *latent* under squared loss. That is not
 a coincidence, it is the structure of the problem choosing its own home.
 
 ### 5.2 Damping is not a detail, it is the method

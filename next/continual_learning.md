@@ -194,11 +194,11 @@ cousin, and the machinery for parameters that update inside forward under
 calibrated write threshold (a slot fires only on genuine match, not baseline
 overlap), and it is independent of the delta rule.
 
-### 3. The delta-rule readout as a `ParallelHead` arm
+### 3. The delta-rule readout as a `ParallelClassifier` arm
 
 If we want to test their claim rather than reason about it: a linear CMP readout
 as a second branch, updated under `no_grad` by the delta rule, blended
-detach-in-blend against the backprop head - the same contract as `HaloHead` in
+detach-in-blend against the backprop head - the same contract as `HaloClassifier` in
 prismatic5. The gate share is the verdict. If the delta arm carries meaningful
 weight after a domain switch that is evidence; if it collapses to zero that is
 also an answer. This is the only version that yields a signal without betting

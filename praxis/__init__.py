@@ -3,6 +3,7 @@
 import praxis.activations  # noqa: F401
 import praxis.attention  # noqa: F401
 import praxis.blocks  # noqa: F401
+import praxis.classifiers  # noqa: F401
 import praxis.compression  # noqa: F401
 import praxis.controllers  # noqa: F401
 import praxis.data  # noqa: F401
@@ -12,9 +13,9 @@ import praxis.dense  # noqa: F401
 import praxis.embeddings  # noqa: F401
 import praxis.encoders  # noqa: F401
 import praxis.encoding  # noqa: F401
+import praxis.generators  # noqa: F401
 import praxis.governors  # noqa: F401
 import praxis.halting  # noqa: F401
-import praxis.heads  # noqa: F401
 import praxis.losses  # noqa: F401
 import praxis.memory  # noqa: F401
 import praxis.normalization  # noqa: F401

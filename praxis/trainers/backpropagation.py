@@ -504,7 +504,7 @@ class BackpropagationTrainer(LightningModule):
         if self.byte_level:
             # Codec encoders (CALM) reconstruct tokens through an autoencoder.
             # That recon CE is codec fidelity, NOT generation quality, and an
-            # energy-based head has no closed-form per-byte likelihood - so we
+            # energy-based generator has no closed-form per-byte likelihood - so we
             # report it as its own val_codec_bpb and do not let it masquerade
             # as a generation metric (trust val_brierlm for that path).
             encoder = getattr(self.model, "encoder", None)
@@ -669,7 +669,7 @@ class BackpropagationTrainer(LightningModule):
         number a property of the curriculum rather than of the model.
 
         Returns None rather than raising when logits were never materialized
-        (cut-cross-entropy) or the head emits a non-vocab space; a missing
+        (cut-cross-entropy) or the classifier emits a non-vocab space; a missing
         series is a readable failure, an exception in a validation loop is not.
         """
         logits = getattr(outputs, "logits", None)

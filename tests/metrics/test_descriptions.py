@@ -121,7 +121,7 @@ def test_no_metric_description_becomes_an_essay():
 
 def test_dynamically_built_descriptions_respect_the_length_cap():
     """The static scan reads `metric_descriptions` class attrs, so cards built
-    at runtime (ParallelHead's per-arm set, ObjectiveConflict's per-term set)
+    at runtime (ParallelClassifier's per-arm set, ObjectiveConflict's per-term set)
     slip past it entirely - and every one of them was 190-612 chars when first
     written. Same 180-char cap, checked where the scan cannot reach."""
     import torch
@@ -131,7 +131,9 @@ def test_dynamically_built_descriptions_respect_the_length_cap():
 
     torch.manual_seed(0)
     built = dict(
-        registry.lookup("heads", "prismatic9")(Cfg(), encoder=Enc())._arm_descriptions()
+        registry.lookup("classifiers", "prismatic9")(
+            Cfg(), encoder=Enc()
+        )._arm_descriptions()
     )
     built.update(
         conflict_metric_descriptions(
@@ -192,8 +194,8 @@ def test_descriptions_stamp_producing_caller():
     class Field(nn.Module):
         metric_descriptions = {"field_amp": "amplitude"}
 
-    class Head(nn.Module):
-        metric_descriptions = {"head_loss": "aux loss"}
+    class Classifier(nn.Module):
+        metric_descriptions = {"classifier_loss": "aux loss"}
 
         def __init__(self):
             super().__init__()
@@ -210,11 +212,11 @@ def test_descriptions_stamp_producing_caller():
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
-            self.head = Head()
+            self.classifier = Classifier()
 
     descs = get_metric_descriptions(Model())
     assert descs["field_amp"]["caller"] == "Field"
-    assert descs["head_loss"]["caller"] == "Head"
+    assert descs["classifier_loss"]["caller"] == "Classifier"
     # Optimizer telemetry is universal and attributed generically.
     for k in OPTIMIZER_METRIC_DESCRIPTIONS:
         assert descs[k]["caller"] == "Optimizer"

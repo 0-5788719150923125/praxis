@@ -3,7 +3,7 @@
 Each entry is a factory ``(optimizer) -> wrapped optimizer``; wrappers compose
 by nesting (each one *is* an optimizer exposing ``.optimizer``), so
 ``SequentialWrapper`` just folds them on in order - the optimizer-side analog of
-how ``SequentialHead`` composes heads. A factory may carry a
+how ``SequentialClassifier`` composes classifiers. A factory may carry a
 ``disables_schedule`` attribute (the schedule-free family runs without an LR
 schedule and boosts lr / moves weight decay to ``z``); ``SequentialWrapper``
 surfaces that so the scheduler can be built accordingly.

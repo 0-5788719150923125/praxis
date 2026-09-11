@@ -11,7 +11,7 @@ free, instead of a second sampling loop that has to re-implement each of them
 and drift.
 
 That second loop is what this replaces. ``MonoForwardBackend`` used to sit
-beside ``ModelBackend`` in ``praxis/generation/decode_backend.py`` and carry its
+beside ``ModelBackend`` in ``praxis/inference/decode_backend.py`` and carry its
 own halt set, its own stop-string scan, its own deadline check and its own
 sampler; the served Mono-Forward path is now the SAME ``ModelBackend`` every
 other run uses, pointed at this.

@@ -26,7 +26,7 @@ class LossContainer:
 
         The values alone are what ``get_loss_values`` returns, and a strategy
         that weights per objective cannot use them: the key set is conditional
-        (policies, MTP, the encoder's pending losses, a head's arm objectives),
+        (policies, MTP, the encoder's pending losses, a classifier's arm objectives),
         so position is not a stable identity for a term across steps.
         """
         return list(self.loss_dict.keys()), list(self.loss_dict.values())

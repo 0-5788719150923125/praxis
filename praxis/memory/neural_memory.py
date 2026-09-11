@@ -975,7 +975,7 @@ class NeuralMemory(nn.Module):
 
         Dispatches to a compiled copy of the body during generation, when one
         has been installed (see ``decode_compiled`` and
-        ``praxis.generation.decode_backend``). Training and validation always
+        ``praxis.inference.decode_backend``). Training and validation always
         take the eager body: the trainer already compiles the whole model, and
         a nested compiled region inside that is a different and unmeasured
         proposition.

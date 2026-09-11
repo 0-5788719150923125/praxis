@@ -7,7 +7,7 @@ over them, and merge their parameters into a single executing copy.
 The paper's experts are adapters inserted after self-attention and the
 feed-forward, and the consumers here are that size: a bank of min-GRU cells
 (praxis/blocks/recurrent.py) and a bank of CrystalClassifiers
-(praxis/heads/crystal.py). Whole blocks are merged by praxis/routers/smear.py.
+(praxis/classifiers/crystal.py). Whole blocks are merged by praxis/routers/smear.py.
 
 The merge is one geometry per forward, shared by every position and every row.
 In a causal model a geometry every position shares cannot read any position

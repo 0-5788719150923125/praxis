@@ -1,7 +1,7 @@
-"""Render the prismatic head's bias/variance strand fields into the paper.
+"""Render the prismatic classifier's bias/variance strand fields into the paper.
 
 A 1-to-1 still of the dashboard's "Bias/Variance Strands" card, for the arms
-of the prismatic (ParallelHead) head side by side: the bias arm (a static field,
+of the prismatic classifier (ParallelClassifier) side by side: the bias arm (a static field,
 its feature-hairs pure bias = blue, the fan still shut), the variance arm (an
 input-conditional field, its hairs spanning the blue-to-red spectrum as the
 spiral opens beneath it), and - with prismatic3 - a pure-variance arm (no static
@@ -45,16 +45,16 @@ def _cmap(name: str):
 
 def _branch_fields(model):
     """(branch, harmonic field) per prismatic branch, in order (bias arm first)."""
-    head = getattr(model, "head", None)
-    branches = getattr(head, "branches", None)
+    classifier = getattr(model, "classifier", None)
+    branches = getattr(classifier, "branches", None)
     if branches is None:
         return []
     out = []
     for b in branches:
         fld = None
-        heads = getattr(b, "heads", None)
-        if heads is not None and len(heads):
-            fld = getattr(heads[0], "field", None)
+        stages = getattr(b, "stages", None)
+        if stages is not None and len(stages):
+            fld = getattr(stages[0], "field", None)
         if fld is None or not hasattr(fld, "field_strands"):
             for m in b.modules():  # fallback: first submodule that can produce strands
                 cand = m if hasattr(m, "field_strands") else getattr(m, "field", None)
@@ -67,7 +67,7 @@ def _branch_fields(model):
 
 
 def _stack_label(branch) -> str:
-    """The branch's head stack as ``A -> B``, from its compose_repr
+    """The branch's stage stack as ``A -> B``, from its compose_repr
     (``Sequential(HarmonicField, CrystalClassifier)`` -> ``HarmonicField ->
     CrystalClassifier``)."""
     try:
@@ -157,7 +157,7 @@ def _render_panel(ax, data, title_main, title_sub):
 
     built = _segments_and_colors(data)
     # Light title on the dark facecolor (matplotlib's default black title was
-    # invisible here). Head tag on top, the branch's head stack beneath.
+    # invisible here). Panel tag on top, the branch's stage stack beneath.
     ax.set_title(title_main, color="#e6e9f0", fontsize=10, fontweight="bold", pad=12)
     if title_sub:
         ax.text(
@@ -202,8 +202,8 @@ def _render_panel(ax, data, title_main, title_sub):
 
 
 def export_strands(model=None) -> dict:
-    """Render the prismatic head's strand fields. Needs a live model with a
-    prismatic (>=2 branch) head; otherwise writes an empty macro."""
+    """Render the prismatic classifier's strand fields. Needs a live model with
+    a prismatic (>=2 branch) classifier; otherwise writes an empty macro."""
     pairs = _branch_fields(model) if model is not None else []
     if len(pairs) < 2:
         with open(OUT_TEX, "w") as fh:

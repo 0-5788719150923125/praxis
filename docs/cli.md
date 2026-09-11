@@ -48,6 +48,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet) |
+| `--classifier-type` | str | `forward` | The type of classifier to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7, prismatic8, prismatic9, prismatic10) |
 | `--codebook-size` | int | `None` | Entries in the encoder's VQ codebook (abstractinator bottleneck). Defaults to vocab_size when unset |
 | `--compression-type` | str | `none` | The type of sequence compression to use (choices: none, linear, nearest) |
 | `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention, neural) |
@@ -56,7 +57,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--differential` | bool | `False` | Use a Differential Attention mechanism |
 | `--dropout` | float | `0.0` | The percentage of neurons to drop-out during training |
 | `--embed-size` | int | `192` | The size of the model's embedding dimension (if applicable) |
-| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator_rvq, abstractinator_v0, abstractinator_v1, abstractinator_v1_calm, abstractinator_v2, abstractinator_v2_additive, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_byte_harmonic, calm_byte_fixed, calm_byte_hybrid, calm_byte_harmonic_codec, calm_byte_harmonic_serpent, calm_tm_ref, calm_bpe) |
+| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator_rvq, abstractinator_v0, abstractinator_v1, abstractinator_v1_calm, abstractinator_v2, abstractinator_v3, abstractinator_v2_additive, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_byte_harmonic, calm_byte_fixed, calm_byte_hybrid, calm_byte_harmonic_codec, calm_byte_harmonic_serpent, calm_tm_ref, calm_bpe) |
 | `--encoding-type` | str | `rope` | The positional encoding to use for sequence length extrapolation (choices: nope, alibi, rope, hope, arc) |
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline) |
@@ -64,7 +65,6 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl, kl_log, kl_log_reinject) |
 | `--hash-buckets` | int | `None` | Buckets per n-gram hash table in the byte-latent input embedding: one value, or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows). Independent of vocab_size, which under a byte tokenizer is a constant 256. Defaults to vocab_size when unset |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4, prismatic5, prismatic6, prismatic6_vear, prismatic7, prismatic8, prismatic9) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |

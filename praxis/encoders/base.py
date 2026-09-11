@@ -103,8 +103,8 @@ class BaseEncoder(nn.Module, ABC):
         return False
 
     @property
-    def classifier(self) -> Optional[nn.Module]:
-        """Classifier used by cut-cross-entropy paths, if the encoder owns one."""
+    def scorer(self) -> Optional[nn.Module]:
+        """Scorer used by cut-cross-entropy paths, if the encoder owns one."""
         return None
 
     @property
@@ -183,7 +183,7 @@ class BaseEncoder(nn.Module, ABC):
         used rather than re-derived from ``generation_config``.
 
         ``model`` is the ``PraxisForCausalLM``, which is how the loop reaches
-        the trunk: :func:`praxis.generation.decoding.trunk_hooks` turns it into
+        the trunk: :func:`praxis.inference.decoding.trunk_hooks` turns it into
         the three closures an encoder-owned loop needs. Passing them as
         overrides instead is what lets a non-standard driver (the Mono-Forward
         in-process trainer, whose trunk is a chain of workers) reuse the same

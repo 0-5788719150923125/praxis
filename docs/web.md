@@ -52,9 +52,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Dynamics
 
 - **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the live model, using their actual (learned) parameters. ([source](../praxis/web/routes/dynamics.py#L594))
+- **GET** `/api/classifier_snapshots` - Live non-scalar snapshots from the active model's classifier. ([source](../praxis/web/routes/dynamics.py#L927))
 - **GET** `/api/dynamics` - Get learning dynamics data for expert learning visualization. ([source](../praxis/web/routes/dynamics.py#L24))
 - **GET** `/api/evolution` - Per-subsystem git-churn evolution data - the SAME source the LaTeX figure renders from (praxis.pillars.evolution.evolution_data), so the web card and the paper figure are one computation, two output formats. ([source](../praxis/web/routes/dynamics.py#L908))
-- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L927))
 - **GET** `/api/paper.pdf` - Serve the living research paper (research/main.pdf) as a download. ([source](../praxis/web/routes/dynamics.py#L888))
 
 ### Generation

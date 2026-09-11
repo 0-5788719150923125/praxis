@@ -6,7 +6,7 @@ from praxis.losses.trunk_grads import resolve_anchor, trunk_gradients, usable
 
 
 def test_resolve_anchor_preference():
-    """main whenever it is live; the surgical head's arm_surgery row when main
+    """main whenever it is live; the surgical classifier's arm_surgery row when main
     cannot reach the trunk; nothing when neither can."""
     h = torch.randn(4, requires_grad=True)
     both = {"main": (h * 2).sum(), "arm_surgery": (h * 3).sum()}

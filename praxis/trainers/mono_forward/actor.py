@@ -1,7 +1,7 @@
 """LayerActor - a stateful Ray worker that owns one Mono-Forward layer.
 
 Each actor owns exactly one ``LocalLayer`` plus a replicated copy of the
-shared output head, its own optimizer over (layer + head) params, and
+shared classifier, its own optimizer over (layer + classifier) params, and
 entry points for training (``train_batch``) and inference
 (``infer_batch``) over that layer.
 
@@ -53,10 +53,10 @@ from praxis.trainers.mono_forward.projection import ProjectionMatrix
 
 @ray.remote(num_cpus=1, max_restarts=0)
 class LayerActor:
-    """Stateful Ray actor owning one LocalLayer + replicated head copy.
+    """Stateful Ray actor owning one LocalLayer + replicated classifier copy.
 
     The driver constructs actors by deep-copying the corresponding
-    ``LocalLayer`` and ``head`` instances from the host-side model, so
+    ``LocalLayer`` and ``classifier`` instances from the host-side model, so
     every actor has its own independent params from initialisation. Ray
     pickles those objects when passing them into ``.remote(...)``, which
     is equivalent to a second deepcopy on the worker side - the host
@@ -133,7 +133,7 @@ class LayerActor:
         # weight sharing or synchronisation between layers. The
         # goodness score is G_i = a_i @ M_i^T and the layer loss is
         # L_i = CE(softmax(G_i), labels). This is a fresh random
-        # init, not a copy of the model's output head.
+        # init, not a copy of the model's classifier.
         self.projection = ProjectionMatrix(hidden_size, vocab_size).to(self.device)
         self.layer.train()
         self.projection.train()
@@ -251,7 +251,7 @@ class LayerActor:
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
-            head=self.projection,
+            classifier=self.projection,
             criterion=self.criterion,
             strategy=self.strategy,
             aux_losses=aux if aux else None,
@@ -286,7 +286,7 @@ class LayerActor:
         # (5) Final-layer softmax collapse. Only the last actor
         # computes this, matching the backprop trainer where
         # ``outputs.logits`` is the final layer's projection. For
-        # non-cut-CE we re-project (one extra head() call on the last
+        # non-cut-CE we re-project (one extra projection call on the last
         # layer only, amortized across the full pipeline). For cut-CE
         # the logits are never materialized by the loss helper so
         # this is the only place they exist.
@@ -347,7 +347,7 @@ class LayerActor:
             loss = compute_layer_wise_loss(
                 hidden_states=h_detached,
                 labels=labels_dev,
-                head=self.projection,
+                classifier=self.projection,
                 criterion=self.criterion,
                 strategy=self.strategy,
                 aux_losses=[aux_loss] if aux_loss is not None else None,
@@ -469,12 +469,12 @@ class LayerActor:
         return h_out.detach().cpu(), new_kv
 
     def project_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Project hidden states through this actor's replicated head.
+        """Project hidden states through this actor's replicated classifier.
 
         Used by the driver's ``generate`` method to turn the final
         layer's post-forward hidden state into token logits. Lives on
-        the actor rather than the driver because the head weights
-        may have drifted between sync boundaries (per the D2b head
+        the actor rather than the driver because the classifier weights
+        may have drifted between sync boundaries (per the D2b classifier
         replication decision) and we want to use *this actor's*
         canonical copy for consistency with what it trained on.
         """

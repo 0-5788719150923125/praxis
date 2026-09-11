@@ -32,17 +32,17 @@ class AmplitudeFieldSort(DecayBiasSort):
     see ``DecayBiasSort`` for why. The wavelength spectrum is in positions
     rather than cycles-per-window for the same reason: cycles-per-window makes
     feature ``d``'s phase at a given token a function of how long that token's
-    batch happened to be, so the per-feature gain fed to the head changes with
+    batch happened to be, so the per-feature gain fed to the classifier changes with
     batch shape. The spectrum stays FROZEN (and independent of any config knob,
     which would re-scramble the basis across configs); the learnable amplitudes
     are what select which bands matter.
 
     ``v``, the per-feature amplitudes ``a``, and the decay length ``tau`` are
     learnable; ``v`` and ``a`` are zero-init, so the module starts as identity
-    and grows only if it helps. NB: on a head that already carries a harmonic
+    and grows only if it helps. NB: on a classifier that already carries a harmonic
     field (prismatic), the multiplicative part overlaps that field - distinct
-    value is clearest on non-harmonic heads or applied at the input side. Note
-    also that a distance-based head (``CrystalClassifier``) is sensitive to
+    value is clearest on non-harmonic classifiers or applied at the input side.
+    Note also that a distance-based classifier (``CrystalClassifier``) is sensitive to
     ``||x||``, not only to direction, so the multiplicative part reaches its
     logits directly rather than being normalized away.
     """

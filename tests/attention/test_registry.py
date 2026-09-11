@@ -175,7 +175,7 @@ def test_metrics_reach_the_dashboard(key):
     (dynamics.db), declarations (a logged key with no ``metric_descriptions``
     entry is written and then dropped, since the manifest is built from
     declarations), and live snapshots - through the precompute recipe too, as
-    the /api/head_snapshots route is only the cold-start fallback. Arc has a walk
+    the /api/classifier_snapshots route is only the cold-start fallback. Arc has a walk
     of its own, so each value is counted once."""
     from praxis.metrics.descriptions import get_metric_descriptions
     from praxis.metrics.specialization import (
@@ -183,7 +183,7 @@ def test_metrics_reach_the_dashboard(key):
         collect_attention_metrics,
         collect_attention_snapshots,
     )
-    from praxis.web.snapshots import _recipe_head_snapshots
+    from praxis.web.snapshots import _recipe_classifier_snapshots
 
     module = _build(key).train()
     module(torch.randn(2, 16, HIDDEN))
@@ -208,6 +208,6 @@ def test_metrics_reach_the_dashboard(key):
         assert descriptions[name]["caller"] == type(module).__name__
 
     if snapshots:
-        payload = _recipe_head_snapshots(model)
+        payload = _recipe_classifier_snapshots(model)
         assert payload["status"] == "ok"
         assert set(snapshots) <= set(payload["snapshots"])

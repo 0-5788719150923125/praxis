@@ -2,18 +2,18 @@
 
 Shared by :mod:`praxis.losses.conflict` (which measures) and
 :mod:`praxis.strategies` (which acts). Both need the same two things: one row
-per loss term at the activation the head classifies, and agreement on which row
+per loss term at the activation the classifier reads, and agreement on which row
 is the task.
 
 WHY THE TRUNK OUTPUT AND NOT THE PARAMETERS. The honest Jacobian is w.r.t.
 shared parameters and needs a full backward per objective. Differentiating
-w.r.t. the trunk's output ACTIVATION needs only a backward through the head and
+w.r.t. the trunk's output ACTIVATION needs only a backward through the classifier and
 answers the same question: by the chain rule every shared parameter's gradient
 factors through that tensor. What it cannot see is conflict arising INSIDE the
 trunk, or between terms that act upstream of it - an encoder's VQ commitment
 loss has no path to this tensor and gets no row.
 
-WHY THE ANCHOR IS NOT ALWAYS "main". Under a surgical head (prismatic9) the
+WHY THE ANCHOR IS NOT ALWAYS "main". Under a surgical classifier (prismatic9) the
 mixture cross-entropy trains only the gate: every arm is detached in the blend
 and the gate's input is detached too, so ``main`` has NO path to the trunk at
 all. Measured on prismatic7/8 the mixture reaches the trunk; on prismatic9
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from torch import Tensor
 
-# Preference order for the anchor: the task objective, then the surgical head's
+# Preference order for the anchor: the task objective, then the surgical classifier's
 # single row into the trunk when the mixture CE has been detached from it by
 # design. First one with a live gradient wins.
 ANCHOR_PREFERENCE: Tuple[str, ...] = ("main", "arm_surgery")

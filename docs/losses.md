@@ -68,7 +68,7 @@ the vocabulary.
 
 HALO (Hyperspherical Active Learning Objective) adapted for language modeling. A loss-
 owning encoder may reroute it: CALM treats ``halo`` as its geometric mode, where
-reconstruction stays CE and HALO steers the energy head through the frozen codec,
+reconstruction stays CE and HALO steers the energy generator through the frozen codec,
 keeping HALO off the centroid-shaping reconstruction path.
 
 Source: [praxis/losses/halo.py:18](../praxis/losses/halo.py#L18)

@@ -187,14 +187,14 @@ CALMByteRef = partial(
 
 CALMByteFlow = partial(
     CALMByteRef,
-    head_kind="flow",
+    generator_type="flow",
     chunk_size=4,
     ae_max_pretrain_steps=3000,
 )
 
 CALMByteHarmonic = partial(
     CALMByteFlow,
-    head_kind="harmonic",
+    generator_type="harmonic",
 )
 
 CALMByteFixed = partial(
@@ -267,11 +267,11 @@ registry.declare(
             "Front-end encoders between the tokenizer and the decoder: the byte-latent "
             "(BLT) family, the Abstractinator (BLT plus a residual VQ bottleneck on the "
             "patch vectors, versioned v0 to v2), and CALM (a token-chunk VAE plus a "
-            "next-latent head; K, the tokens per latent, scales with tokenizer "
+            "next-latent generator; K, the tokens per latent, scales with tokenizer "
             "granularity: BPE 4, char 8, byte 16). Unset, tokens are embedded directly. "
             "Set, an encoder turns the input into the sequence the decoder sees, maps the "
             "decoder's output back and adds its own term to the loss; runs with an encoder "
-            "skip the KV cache and cannot use the tied head. The byte-latent and "
+            "skip the KV cache and cannot use the tied classifier. The byte-latent and "
             "Abstractinator encoders read raw bytes, so they switch the tokenizer to "
             "``byte_level`` on their own. Descriptive Abstractinator names resolve to the "
             "versioned profiles."
@@ -335,9 +335,9 @@ registry.declare(
             (
                 "abstractinator_v1 with a continuous CALM arm beside the discrete "
                 "codec: a patch VAE over the same patch features feeds z = z_q + gate "
-                "* z_c into the trunk, with an energy head on the next VAE latent and "
-                "a cross-entropy on the next code. Static patching is what aligns the "
-                "two codecs' latents one per patch."
+                "* z_c into the trunk, with an energy generator on the next VAE latent "
+                "and a cross-entropy on the next code. Static patching is what aligns "
+                "the two codecs' latents one per patch."
             ),
         ),
         "abstractinator_v2": Entry(
@@ -356,7 +356,7 @@ registry.declare(
                 "abstractinator_v1 with an objective of its own on the trunk, as "
                 "the reference's top model has: the trunk output at each patch "
                 "classifies the next patch's code at every residual stage, scored "
-                "by HALO (a projection per stage feeding a HaloClassifier over that "
+                "by HALO (a projection per stage feeding a HaloGeometry over that "
                 "stage's codes, lengths left free so the abstain class can act)."
             ),
         ),
@@ -371,9 +371,9 @@ registry.declare(
         "calm": Entry(
             CALM,
             (
-                "CALM (arXiv 2510.27688): a token-chunk VAE plus an energy head that "
-                "predicts the next latent, at the paper's defaults and K=8 tokens per "
-                "latent."
+                "CALM (arXiv 2510.27688): a token-chunk VAE plus an energy generator "
+                "that predicts the next latent, at the paper's defaults and K=8 tokens "
+                "per latent."
             ),
         ),
         "calm_small": Entry(
@@ -391,10 +391,10 @@ registry.declare(
             CALMByteSmall,
             (
                 "Byte-level CALM at K=8 with a smaller VAE sized from --hidden-size "
-                "and the paper's energy-head sampling. Trains in two stages like the "
-                "reference: the codec alone, with the KL annealed in, until its "
+                "and the paper's energy-generator sampling. Trains in two stages like "
+                "the reference: the codec alone, with the KL annealed in, until its "
                 "reconstruction plateaus (capped by ae_max_pretrain_steps), then the "
-                "energy head against the frozen codec. Watch calm_recon_ce, "
+                "energy generator against the frozen codec. Watch calm_recon_ce, "
                 "calm_pretrain_flatness and calm_ae_frozen."
             ),
         ),
@@ -410,7 +410,7 @@ registry.declare(
             CALMByteRef,
             (
                 "The published CALM repo's dimensions (at hidden_size 256: latent 128, "
-                "AE hidden 512, noise 64, 4 head blocks, dropout 0.15) with one "
+                "AE hidden 512, noise 64, 4 generator blocks, dropout 0.15) with one "
                 "departure, a deeper residual codec (vae_depth=4), at the byte-level K "
                 "of 16. The baseline the other CALM byte profiles vary."
             ),
@@ -418,20 +418,21 @@ registry.declare(
         "calm_byte_flow": Entry(
             CALMByteFlow,
             (
-                "calm_byte_ref with a flow-matching head in place of the energy head, "
-                "whose dense, low-variance objective learns the conditional at small "
-                "scale where the energy head does not, and K=4, where the codec "
-                "manifold is a target the head can reach. The codec's pretraining "
-                "stage is capped at 3000 steps."
+                "calm_byte_ref with a flow-matching generator in place of the energy "
+                "generator, whose dense, low-variance objective learns the conditional "
+                "at small scale where the energy generator does not, and K=4, where "
+                "the codec manifold is a target the generator can reach. The codec's "
+                "pretraining stage is capped at 3000 steps."
             ),
         ),
         "calm_byte_harmonic": Entry(
             CALMByteHarmonic,
             (
-                "calm_byte_flow with the harmonic latent head: the same flow-matching "
-                "objective, run in a compact harmonic coefficient space so each next "
-                "latent is a smooth low-frequency superposition. Fewer effective "
-                "output dimensions lower the head's variance at small scale."
+                "calm_byte_flow with the harmonic latent generator: the same "
+                "flow-matching objective, run in a compact harmonic coefficient space "
+                "so each next latent is a smooth low-frequency superposition. Fewer "
+                "effective output dimensions lower the generator's variance at small "
+                "scale."
             ),
         ),
         "calm_byte_fixed": Entry(
@@ -440,7 +441,7 @@ registry.declare(
                 "calm_byte_flow with a fixed deterministic codec: the encoder is a "
                 "frozen orthonormal byte transform and only the decoder learns. The "
                 "latent target is stationary from step 0, so training is single-stage, "
-                "with the head active immediately."
+                "with the generator active immediately."
             ),
         ),
         "calm_byte_hybrid": Entry(

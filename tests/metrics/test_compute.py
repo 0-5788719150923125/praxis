@@ -120,7 +120,7 @@ def test_attribute_links_backward_subtree_by_sequence_nr():
 def test_attribute_leaves_unscoped_time_unattributed():
     prof = ComputeProfiler()
     prof._device = "cpu"
-    scope = FakeEvent("@head|Linear")
+    scope = FakeEvent("@classifier|Linear")
     inside = FakeEvent("aten::addmm", self_us=1000, parent=scope)
     outside = FakeEvent("aten::nll_loss", self_us=500)
 
@@ -481,7 +481,7 @@ def test_quiet_native_logs_restores_descriptors_on_error():
 # ------------------------------------------------------------------------------
 # compute_profiler_route
 # ------------------------------------------------------------------------------
-# /api/head_snapshots must serve the compute treemap stashed on the model.
+# /api/classifier_snapshots must serve the compute treemap stashed on the model.
 
 
 def test_payload_is_json_serialisable_end_to_end():

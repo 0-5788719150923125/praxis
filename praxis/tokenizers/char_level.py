@@ -1,7 +1,7 @@
 """Character-level tokenizer with lazy Unicode vocab.
 
 - Vocab is pre-allocated to the full Unicode BMP (65,536) so embedding /
-  output-head row counts are fixed at init. This keeps shapes stable
+  classifier row counts are fixed at init. This keeps shapes stable
   under torch.compile and avoids resize-embedding logic.
 - Special token IDs come from ``PraxisConfig`` defaults (or explicit
   constructor kwargs); the character offset is ``max(special_ids) + 1``
@@ -158,7 +158,7 @@ class CharLevelTokenizer(
             }
         # Which tool tokens exist is a property of the SAVED vocab, not of the
         # caller: reloading with a different answer changes vocab_size, and the
-        # output head is sized from it. An explicit chat_format still wins, so a
+        # classifier is sized from it. An explicit chat_format still wins, so a
         # deliberate format change is possible; silence defers to the file.
         if chat_format is not None or not persisted_ids:
             wants_tool_tokens = self._wants_tool_tokens(chat_format)
@@ -203,7 +203,7 @@ class CharLevelTokenizer(
     def vocab_size(self) -> int:
         # Counts the tool tokens actually registered, not the class-level list:
         # a format that skips them must not leave a hole in the vocab that the
-        # output head still allocates logits for.
+        # classifier still allocates logits for.
         return BMP_SIZE + self._offset + len(self._tool_special_id_map)
 
     @property
