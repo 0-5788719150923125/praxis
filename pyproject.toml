@@ -46,6 +46,13 @@ ray = ["ray[default]>=2.30"]
 packages = ["praxis"]
 
 [tool.pytest.ini_options]
+# tests/ mirrors praxis/: tests/<namespace>/test_<module>.py covers praxis/<namespace>/<module>.
+testpaths = ["tests"]
 # Exclude staging directory from test collection (manual demonstration scripts)
 norecursedirs = ["staging", ".git", ".venv", "build", "dist"]
-testpaths = ["tests"]
+# Slow end-to-end runs are opt-in: `pytest -m slow`.
+addopts = "-m 'not slow'"
+markers = [
+    "slow: end-to-end runs of main.py; deselected unless -m slow is given",
+    "network: needs the Hugging Face hub",
+]

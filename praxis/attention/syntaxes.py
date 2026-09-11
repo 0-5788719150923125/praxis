@@ -144,13 +144,6 @@ class SyntaxesAttention(nn.Module):
         # Causal mask: can only attend to positions <= query position
         causal_mask = context_positions <= query_positions  # [seq_len, context_size]
 
-        # Special handling: queries before the context window need at least one valid attention target
-        # to avoid NaN. We'll let them attend to the first position in the context.
-        queries_before_context = query_positions.squeeze(1) < context_start
-        if queries_before_context.any():
-            # Allow these queries to attend to the first context position
-            causal_mask[queries_before_context, 0] = True
-
         causal_mask = causal_mask.unsqueeze(0).unsqueeze(
             0
         )  # [1, 1, seq_len, context_size]
@@ -167,8 +160,13 @@ class SyntaxesAttention(nn.Module):
             )  # [batch, 1, 1, context_size]
             scores = scores.masked_fill(context_mask == 0, -torch.inf)
 
+        # A query with no past target (one before the context window) attends to
+        # nothing: its row is zeroed rather than softmaxed over all -inf (NaN).
+        has_target = torch.isfinite(scores).any(dim=-1, keepdim=True)
+        scores = scores.masked_fill(~has_target, 0.0)
+
         # Softmax and dropout
-        weights = F.softmax(scores, dim=-1)  # [batch, heads, seq_len, context_size]
+        weights = F.softmax(scores, dim=-1) * has_target
         weights = self.dropout(weights)
 
         # Apply attention to values

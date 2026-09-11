@@ -76,7 +76,7 @@ AbstractinatorV2 = partial(
     vq_codebook_size=None,
     patching_mode="static",
     patch_size=8,
-    merge="gated",
+    merge="normalized",
 )
 
 AbstractinatorV0Avg = partial(AbstractinatorV0, downsampling_method="avg")
@@ -342,8 +342,8 @@ registry.declare(
                 "abstractinator_v1 with plain RMS normalization in front of the "
                 "quantizer instead of the GDN compander, since a fixed normalization "
                 "leaves the commitment loss no scale to shrink, and with the byte path "
-                "and the trunk blended by a gate over RMS-normalized streams instead "
-                "of added."
+                "and the trunk each RMS-normalized before they are added, so neither "
+                "can outgrow the other."
             ),
         ),
         "calm": Entry(

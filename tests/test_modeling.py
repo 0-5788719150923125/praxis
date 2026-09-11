@@ -1,14 +1,36 @@
+"""Tests for praxis/modeling.py: PraxisModel and PraxisForCausalLM.
+
+Construction and forward (with and without an encoder), the labelled loss,
+generation plumbing (input preparation, the speculative dispatch, what a custom
+decoding method receives), RL policy and surgical-head wiring, and the
+registry-wide causality sweep.
+"""
+
 import copy
+import functools
+
 import pytest
 import torch
+from torch.nn.parameter import UninitializedParameter
+from transformers import GenerationConfig
+from transformers.generation.stopping_criteria import StopStringCriteria
 
-from praxis import PraxisConfig
-from praxis.modeling import PraxisForCausalLM, PraxisModel
+from praxis import PraxisConfig, registry
+from praxis.attention.cache import PraxisCache
+from praxis.generation import speculative
+from praxis.modeling import PraxisForCausalLM, PraxisModel, build_rl_policies
+from praxis.policies.preference import PreferencePolicy
+from praxis.tasks import TaskType
+from praxis.tokenizers.byte_level import ByteLevelTokenizer
+from praxis.tokenizers.chat_templates import chat_format_of
+
+# ------------------------------------------------------------------------------
+# forward and loss
+# ------------------------------------------------------------------------------
 
 
 @pytest.fixture
 def small_config():
-    """Create a small configuration for testing."""
     return PraxisConfig(
         vocab_size=1000,
         hidden_size=32,
@@ -16,120 +38,130 @@ def small_config():
         num_heads=4,
         depth=2,
         max_length=128,
-        decoder_type="sequential",  # Using sequential decoder by default
-        encoder_type=None,  # No encoder by default
+        decoder_type="sequential",
+        encoder_type=None,
     )
 
 
 @pytest.fixture
 def input_ids():
-    """Generate random input IDs for testing."""
-    batch_size = 2
-    seq_length = 16
-    return torch.randint(0, 1000, (batch_size, seq_length))
+    return torch.randint(0, 1000, (2, 16))
 
 
 @pytest.fixture
 def attention_mask(input_ids):
-    """Generate attention mask matching input_ids."""
     return torch.ones_like(input_ids)
 
 
-def test_praxis_model_init(small_config):
-    """Test initialization of PraxisModel."""
-    model = PraxisModel(small_config)
-
-    # Check model attributes
-    assert model.encoder is False
-    assert model.embeds is not None
-    assert model.decoder is not None
-
-
-def test_praxis_causal_lm_init(small_config):
-    """Test initialization of PraxisForCausalLM."""
-    model = PraxisForCausalLM(small_config)
-
-    # Check model attributes
-    assert model.encoder is False
-    assert model.embeds is not None
-    assert model.decoder is not None
-    assert model.head is not None
-    assert model.criterion is not None
-    assert model.strategy is not None
-    assert small_config.causal is True  # Check that causal flag is set
-
-
 def test_praxis_model_forward(small_config, input_ids, attention_mask):
-    """Test forward pass of PraxisModel."""
     model = PraxisModel(small_config)
+    assert model.encoder is False
+    assert model.embeds is not None and model.decoder is not None
+
     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 
-    # Check outputs
-    assert outputs.last_hidden_state is not None
-    assert outputs.last_hidden_state.shape == (
-        input_ids.shape[0],
-        input_ids.shape[1],
-        small_config.hidden_size,
-    )
-    assert outputs.h_encoder is None  # Should be None without encoder
-    assert outputs.patch_lengths is None  # Should be None without encoder
-
-
-def test_praxis_causal_lm_forward(small_config, input_ids, attention_mask):
-    """Test forward pass of PraxisForCausalLM."""
-    model = PraxisForCausalLM(small_config)
-
-    # Set model to evaluation mode to disable training-specific behavior
-    model.eval()
-
-    with torch.no_grad():
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-
-    # Check outputs
-    assert outputs.logits is not None
-    assert outputs.logits.shape == (
-        input_ids.shape[0],
-        input_ids.shape[1],
-        small_config.vocab_size,
-    )
-
-    # Note: The model might return a scalar or tensor loss
-    # For a scalar, we don't need to do additional checks
-    if outputs.loss is not None and not isinstance(outputs.loss, (int, float)):
-        assert torch.is_tensor(outputs.loss)
+    assert outputs.last_hidden_state.shape == (*input_ids.shape, small_config.hidden_size)
+    assert outputs.h_encoder is None
+    assert outputs.patch_lengths is None
 
 
 def test_praxis_causal_lm_with_labels(small_config, input_ids, attention_mask):
-    """Test forward pass of PraxisForCausalLM with labels."""
+    """Labels arrive pre-shifted (``input_ids[:, 1:]``): training gives a finite
+    scalar loss whose gradient reaches the head, and eval logits cover every
+    position."""
     model = PraxisForCausalLM(small_config)
+    assert small_config.causal is True
+    assert model.encoder is False
+    assert model.criterion is not None and model.strategy is not None
 
-    # Note: The model does complex shape handling in the loss calculation:
-    # 1. It truncates logits with logits[..., :-1, :].contiguous()
-    # 2. The CrossEntropyLoss module reshapes these with shift_logits = logits.view(-1, logits.shape[-1])
-    # 3. It also reshapes labels with shift_labels = labels.view(-1)
-    #
-    # This creates a mismatch when we try to pass standard shifted labels
-    # A proper test would require more detailed knowledge of the exact tensor shapes expected
-
-    # For simplified testing, we just verify the forward pass works without labels
     model.eval()
     with torch.no_grad():
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+    assert logits.shape == (*input_ids.shape, small_config.vocab_size)
 
-    # Check outputs
-    assert outputs.logits is not None
-    assert outputs.logits.shape == (
-        input_ids.shape[0],
-        input_ids.shape[1],
-        small_config.vocab_size,
+    model.train()
+    outputs = model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        labels=input_ids[:, 1:].contiguous(),
+    )
+    assert outputs.loss.ndim == 0
+    assert torch.isfinite(outputs.loss)
+    outputs.loss.backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0 for p in model.head.parameters()
     )
 
 
+def test_an_unknown_strategy_falls_back_to_naive(small_config):
+    small_config.strategy = "no_such_strategy"
+    model = PraxisForCausalLM(small_config)
+    assert type(model.strategy) is registry.lookup("strategies", "naive")
+
+
+@pytest.fixture
+def encoder_config():
+    return PraxisConfig(
+        vocab_size=256,
+        hidden_size=32,
+        embed_size=32,
+        num_heads=4,
+        depth=2,
+        max_length=128,
+        decoder_type="sequential",
+        encoder_type="byte_latent",
+    )
+
+
+@pytest.fixture
+def byte_encoder_input_ids():
+    """Two copies of one short ASCII text, right-padded to 16 bytes."""
+    tokenizer = ByteLevelTokenizer()
+    tokens = tokenizer.encode("Hello, world! 123", add_special_tokens=True)
+    padded = tokens + [tokenizer.pad_token_id] * (16 - len(tokens))
+    return torch.tensor([padded] * 2, dtype=torch.long)
+
+
+def test_praxis_model_with_encoder_forward(encoder_config, byte_encoder_input_ids):
+    model = PraxisModel(encoder_config).eval()
+    assert hasattr(model.encoder, "encode")
+    assert model.decoder is not None
+
+    with torch.no_grad():
+        outputs = model(
+            input_ids=byte_encoder_input_ids,
+            attention_mask=torch.ones_like(byte_encoder_input_ids),
+        )
+
+    assert outputs.last_hidden_state.shape[0] == byte_encoder_input_ids.shape[0]
+    assert outputs.last_hidden_state.shape[-1] == encoder_config.hidden_size
+
+
+def test_praxis_causal_lm_with_encoder_forward(encoder_config, byte_encoder_input_ids):
+    """The head owns the classifier in every mode, so it exists with an
+    encoder too; the encoder produces features, the head classifies them."""
+    model = PraxisForCausalLM(encoder_config).eval()
+    assert model.head.lm_head is not None
+    assert model.criterion is not None and model.strategy is not None
+
+    with torch.no_grad():
+        outputs = model(
+            input_ids=byte_encoder_input_ids,
+            attention_mask=torch.ones_like(byte_encoder_input_ids),
+        )
+
+    assert outputs.logits.shape[0] == byte_encoder_input_ids.shape[0]
+    assert outputs.logits.shape[-1] >= encoder_config.vocab_size
+
+
+# ------------------------------------------------------------------------------
+# generation
+# ------------------------------------------------------------------------------
+
+
 def test_prepare_inputs_for_generation(small_config, input_ids, attention_mask):
-    """Test prepare_inputs_for_generation method."""
     model = PraxisForCausalLM(small_config)
 
-    # Test without use_cache
     inputs = model.prepare_inputs_for_generation(
         input_ids=input_ids, attention_mask=attention_mask, use_cache=False
     )
@@ -137,16 +169,13 @@ def test_prepare_inputs_for_generation(small_config, input_ids, attention_mask):
     assert "attention_mask" in inputs
     assert "past_key_values" not in inputs
 
-    # Test with use_cache: an empty cache means prefill - the full prompt
-    # must pass through (no blind last-token slicing).
+    # An empty cache means prefill: the full prompt passes through.
     inputs = model.prepare_inputs_for_generation(
         input_ids=input_ids,
         attention_mask=attention_mask,
         current_state="dummy_state",
         use_cache=True,
     )
-    from praxis.attention.cache import PraxisCache
-
     assert inputs["input_ids"].shape == input_ids.shape
     assert isinstance(inputs["past_key_values"], PraxisCache)
     assert inputs["current_state"] == "dummy_state"
@@ -169,174 +198,20 @@ def test_prepare_inputs_for_generation(small_config, input_ids, attention_mask):
     assert inputs["past_key_values"] is cache
 
 
-def test_training_vs_inference_mode(small_config, input_ids, attention_mask):
-    """Test that the model behaves differently in training vs. inference mode."""
-    model = PraxisForCausalLM(small_config)
+def test_generate_dispatches_to_speculative_by_default():
+    """A DEFAULT GenerationConfig must reach the speculative path.
 
-    # Training mode
-    model.train()
-    with torch.no_grad():
-        outputs_train = model(input_ids=input_ids, attention_mask=attention_mask)
+    On transformers>=5 a default GenerationConfig leaves ``num_beams`` as None,
+    so a ``getattr(..., "num_beams", 1) == 1`` check is False and every real
+    generation silently took the plain HF loop - no drafting, and
+    ``mtp_accept_run``/``mtp_draft_width`` never reached the dashboard.
+    """
+    assert (
+        getattr(GenerationConfig(), "num_beams", 1) != 1
+    ), "sanity: this test is only meaningful while an unset num_beams is not 1"
 
-    # Inference mode
-    model.eval()
-    with torch.no_grad():
-        outputs_eval = model(input_ids=input_ids, attention_mask=attention_mask)
-
-    # Verify both produce valid outputs
-    assert outputs_train.logits is not None
-    assert outputs_eval.logits is not None
-
-    # Verify output shapes match expectations
-    assert outputs_train.logits.shape == (
-        input_ids.shape[0],
-        input_ids.shape[1],
-        small_config.vocab_size,
-    )
-    assert outputs_eval.logits.shape == (
-        input_ids.shape[0],
-        input_ids.shape[1],
-        small_config.vocab_size,
-    )
-
-    # Note: A more comprehensive test would verify differences in behavior
-    # between training and inference modes with proper loss calculation
-
-
-@pytest.fixture
-def encoder_config():
-    """Create a configuration suitable for the ByteLatent encoder."""
+    # Byte-latent + prismatic4 head + dual memory + VEAR MTP: the drafting stack.
     config = PraxisConfig(
-        vocab_size=256,  # ByteLevel has a 256 vocab size
-        hidden_size=32,
-        embed_size=32,
-        num_heads=4,
-        depth=2,
-        max_length=128,
-        decoder_type="sequential",
-        encoder_type="byte_latent",  # Set encoder type
-        byte_latent=True,  # This is important
-    )
-    return config
-
-
-@pytest.fixture
-def byte_tokenizer():
-    """Create a ByteLevelTokenizer instance for testing with the encoder."""
-    from praxis.tokenizers.byte_level import ByteLevelTokenizer
-
-    return ByteLevelTokenizer()
-
-
-@pytest.fixture
-def byte_encoder_input_ids(byte_tokenizer):
-    """Generate compatible input IDs for the byte encoder."""
-    batch_size = 2
-    seq_length = 16
-    # Use simple ASCII text that will convert to bytes easily
-    text = "Hello, world! 123"
-    tokens = byte_tokenizer.encode(text, add_special_tokens=True)
-    # Duplicate and pad to create a batch
-    padded_tokens = tokens + [byte_tokenizer.pad_token_id] * (seq_length - len(tokens))
-    batch = torch.tensor([padded_tokens] * batch_size, dtype=torch.long)
-    return batch
-
-
-def test_praxis_model_with_encoder_init(encoder_config):
-    """Test initialization of PraxisModel with encoder."""
-    model = PraxisModel(encoder_config)
-
-    # Check model attributes
-    assert model.encoder is not False
-    assert model.decoder is not None
-    assert hasattr(model.encoder, "encode")
-
-
-def test_praxis_causal_lm_with_encoder_init(encoder_config):
-    """Test initialization of PraxisForCausalLM with encoder."""
-    model = PraxisForCausalLM(encoder_config)
-
-    # Check model attributes
-    assert model.encoder is not False
-    assert model.decoder is not None
-    # The head owns the classifier in every mode now (the encoder produces
-    # features; the head classifies them), so it exists even with an encoder.
-    assert model.head is not None
-    assert model.head.lm_head is not None
-    assert model.criterion is not None
-    assert model.strategy is not None
-    assert encoder_config.causal is True
-
-
-def test_praxis_model_with_encoder_forward(encoder_config, byte_encoder_input_ids):
-    """Test forward pass of PraxisModel with encoder."""
-    model = PraxisModel(encoder_config)
-    attention_mask = torch.ones_like(byte_encoder_input_ids)
-
-    # Set model to evaluation mode and disable gradients for testing
-    model.eval()
-    with torch.no_grad():
-        outputs = model(input_ids=byte_encoder_input_ids, attention_mask=attention_mask)
-
-    # Check outputs
-    assert outputs.last_hidden_state is not None
-    # Note: The shapes and specific values will vary based on the ByteLatent encoder's implementation
-    # We just verify that the expected outputs are present and have reasonable shapes
-    assert (
-        outputs.last_hidden_state.shape[0] == byte_encoder_input_ids.shape[0]
-    )  # Batch size matches
-    assert (
-        outputs.last_hidden_state.shape[-1] == encoder_config.hidden_size
-    )  # Hidden dimension matches
-
-
-def test_praxis_causal_lm_with_encoder_forward(encoder_config, byte_encoder_input_ids):
-    """Test forward pass of PraxisForCausalLM with encoder."""
-    model = PraxisForCausalLM(encoder_config)
-    attention_mask = torch.ones_like(byte_encoder_input_ids)
-
-    # Set model to evaluation mode and disable gradients for testing
-    model.eval()
-    with torch.no_grad():
-        outputs = model(input_ids=byte_encoder_input_ids, attention_mask=attention_mask)
-
-    # Check outputs
-    assert outputs.logits is not None
-
-    # Validate basic shape properties - batch size should match
-    assert outputs.logits.shape[0] == byte_encoder_input_ids.shape[0]
-
-    # Check that the output has a reasonable vocabulary dimension
-    # Note: The actual vocab size may be different from what's in the config
-    # as the ByteLatent encoder might adjust it
-    vocab_size = outputs.logits.shape[-1]
-    assert vocab_size > 0  # Ensure we have a valid vocabulary dimension
-    assert (
-        vocab_size >= encoder_config.vocab_size
-    )  # Should be at least as large as the config
-
-
-# --------------------------------------------------------------------------- #
-# Lossless multi-token (speculative) inference for the byte-latent stack.
-#
-# The byte-latent core patches non-causally within a partial patch, so a single
-# verify forward over ``committed + drafts`` reads contaminated earlier
-# positions. The fix reads each truncated prefix at its OWN last real position
-# (causal) and batches them behind an attention mask. Two properties make that
-# lossless, and these tests pin both so a regression in either is caught:
-#   1. padding invariance - a right-padded, mask-gated prefix predicts the same
-#      last-real-position token as its unpadded form (incl. the prismatic4
-#      CrystalVearHead router, which must route per-sequence and mask pads);
-#   2. greedy speculative decoding reproduces byte-by-byte greedy exactly, up to
-#      floating-point argmax ties (batched-GEMM reduction order) where greedy is
-#      itself ill-defined.
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def spec_config():
-    """Byte-latent + prismatic4 head + dual memory + VEAR MTP (drafting stack)."""
-    return PraxisConfig(
         vocab_size=1024,
         hidden_size=32,
         embed_size=96,
@@ -347,334 +222,13 @@ def spec_config():
         tokenizer_type="byte_level",
         decoder_type="sequential",
         activation="serpent",
-        byte_level=True,
         head_type="prismatic4",
         memory_type="mal_energy_dual",
         mtp_type="vear",
         mtp_depth=4,
     )
-
-
-@pytest.fixture
-def deep_spec_config(spec_config):
-    """The drafting stack at abstractinator-c's width, where the cost of
-    drafting/verifying candidates acceptance never reaches actually bites."""
-    spec_config.mtp_depth = 16
-    return spec_config
-
-
-def test_byte_latent_padding_invariance(spec_config):
-    """Right-padded + masked prefixes read identically to their unpadded form.
-
-    This is the causal-read property batched-prefix verification rides on. It
-    exercises the full prismatic4 + dual-memory stack, so a router that pooled
-    over pad positions (the old ``mean(dim=1)``) would break it.
-    """
     torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    torch.manual_seed(123)
-    mismatches = 0
-    for length, k in ((16, 4), (28, 6)):
-        seq = torch.randint(4, 260, (1, length))
-        drafts = torch.randint(4, 260, (1, k))
-        with torch.no_grad():
-            for i in range(k + 1):
-                prefix = torch.cat([seq, drafts[:, :i]], dim=1)
-                last = prefix.shape[1] - 1
-                unpadded = model(input_ids=prefix).logits[0, last].argmax().item()
-                pad = (length + k) - prefix.shape[1]
-                if pad == 0:
-                    continue
-                padded_ids = torch.cat(
-                    [prefix, torch.zeros(1, pad, dtype=torch.long)], dim=1
-                )
-                mask = torch.cat(
-                    [torch.ones(1, prefix.shape[1]), torch.zeros(1, pad)], dim=1
-                ).long()
-                padded = (
-                    model(input_ids=padded_ids, attention_mask=mask)
-                    .logits[0, last]
-                    .argmax()
-                    .item()
-                )
-                mismatches += padded != unpadded
-    assert mismatches == 0, f"byte-latent not padding-invariant: {mismatches} flips"
-
-
-def test_batched_verify_matches_single_row(spec_config):
-    """The batched truncated-prefix verifier reads each prefix's last real
-    position identically to running that prefix alone - up to float noise.
-
-    This is the deterministic core invariant behind lossless multi-token
-    decode. A genuine routing/contamination bug (e.g. the old batch-mean crystal
-    merge) shifts these logits by O(0.1-1); float reordering (amplified by the
-    crystal head's ``-n*log(dist^2)``) stays well under 5e-2. The gap cleanly
-    separates the two.
-    """
-    from praxis.generation.speculative import verify_prefixes_batched
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    torch.manual_seed(500)
-    max_diff = 0.0
-    for length, k in ((24, 6), (12, 4)):
-        gen = torch.randint(4, 260, (1, length))
-        cand = torch.randint(4, 260, (1, k))
-        batched = verify_prefixes_batched(model, gen, cand)  # [k, vocab]
-        for j in range(1, k + 1):
-            prefix = torch.cat([gen, cand[:, :j]], dim=1)
-            with torch.no_grad():
-                single = model(input_ids=prefix).logits[0, -1]
-            max_diff = max(max_diff, (batched[j - 1] - single).abs().max().item())
-    assert max_diff < 5e-2, f"batched verify diverges from single-row by {max_diff:.2e}"
-
-
-def test_readout_is_causal_under_append(spec_config):
-    """Appending bytes must not move ANY earlier logit.
-
-    This is the property the one-forward speculative step rests on: a whole
-    candidate block is verified by reading positions gen_len-1+k out of a
-    single row, which is only lossless if each of those positions equals the
-    prefix ending there run on its own. Every stage of the byte-latent stack
-    is already causal (prefix-monotone space patching, causal conv local
-    encoder/decoder, and decoder_patch_ids never gathering the open patch);
-    the head is the piece that had to be fixed, because a SMEAR-style
-    ``mean(dim=1)`` route let a draft byte reach back and re-route every
-    earlier position. A head that reintroduces sequence pooling must set
-    ``causal_readout = False`` rather than break this.
-    """
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    assert model.head.causal_readout, "spec_config's head must declare causal readout"
-    base = torch.randint(4, 260, (1, 24))
-
-    # Information test: two rows of the SAME length differing only in the tail.
-    # Both tails are alphanumeric bytes ('x' / 'y'), which the space patcher
-    # never cuts on, so the two rows patch to the same number of patches and
-    # every kernel sees identical shapes. Anything above zero here is then a
-    # genuine future read rather than reduction-order noise.
-    from praxis.encoders.byte_latent.constants import OFFSET
-
-    x_id, y_id = OFFSET + ord("x"), OFFSET + ord("y")
-    with torch.no_grad():
-        a = model(input_ids=torch.cat([base, torch.full((1, 3), x_id)], 1)).logits
-        b = model(input_ids=torch.cat([base, torch.full((1, 3), y_id)], 1)).logits
-    leak = (a[:, :24] - b[:, :24]).abs().max().item()
-    assert leak == 0.0, f"tail bytes moved earlier logits by {leak:.2e}"
-
-    # Length test: a longer row vs the prefix run alone. Shapes differ here, so
-    # batched-GEMM reduction order moves the last bits; only float noise should
-    # remain, and the argmax must not move at all.
-    with torch.no_grad():
-        short = model(input_ids=base).logits
-    drift = (a[:, :24] - short).abs().max().item()
-    assert drift < 1e-4, f"lengthening the row moved earlier logits by {drift:.2e}"
-    flips = (a[0, :24].argmax(-1) != short[0].argmax(-1)).sum().item()
-    assert flips == 0, f"{flips} argmax flips from lengthening the row"
-
-
-def test_speculative_uses_one_forward_per_step(spec_config):
-    """A causal-readout head decodes with ONE model forward per step.
-
-    The scheme this replaced ran a main forward plus a verify forward whose
-    batch held one re-encoded row PER candidate, so a step cost 1 + n
-    full-prefix forwards. Now the single verify row carries both the
-    verification and the next step's drafting hidden, so total forwards must
-    not exceed the number of speculative steps (plus the one that primes the
-    loop).
-    """
-    from transformers import GenerationConfig
-
-    from praxis.generation import speculative
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    ids = torch.randint(4, 260, (1, 16))
-
-    seen = []
-    original = speculative.spec_logits_and_hidden
-
-    def counting(model_, generated, attention_mask=None):
-        seen.append(generated.shape)
-        return original(model_, generated, attention_mask)
-
-    speculative.spec_logits_and_hidden = counting
-    try:
-        out = model.generate(
-            ids,
-            generation_config=GenerationConfig(
-                max_new_tokens=24, do_sample=False, num_beams=1
-            ),
-        )
-    finally:
-        speculative.spec_logits_and_hidden = original
-
-    produced = out.shape[1] - ids.shape[1]
-    assert produced > 0
-    # Every forward is a single row: no per-candidate re-encode survives.
-    assert all(s[0] == 1 for s in seen), f"batched verify rows leaked back in: {seen}"
-    # At worst one forward per committed byte, plus the priming forward.
-    assert len(seen) <= produced + 1, f"{len(seen)} forwards for {produced} bytes"
-
-
-def test_speculative_matches_byte_by_byte_greedy(spec_config):
-    """Greedy speculative decoding == byte-by-byte greedy, up to float ties.
-
-    Any divergence must sit at an argmax tie (top1/top2 logit gap below a small
-    threshold); a mismatch at a real margin would signal a genuine correctness
-    bug in the batched-prefix verifier, not float nondeterminism.
-    """
-    from transformers import GenerationConfig
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    assert model.mtp is not None and getattr(model.mtp, "byte_level", False)
-
-    def byte_by_byte_greedy(ids, n):
-        g = ids.clone()
-        gaps = []
-        for _ in range(n):
-            with torch.no_grad():
-                logits = model(input_ids=g).logits[0, -1]
-            top2 = logits.topk(2).values
-            gaps.append((top2[0] - top2[1]).item())
-            g = torch.cat([g, logits.argmax().view(1, 1)], dim=1)
-        return g, gaps
-
-    torch.manual_seed(321)
-    n_new = 20
-    # Divergences must sit at argmax ties. The threshold is generous because the
-    # crystal head's -n*log(dist^2) amplifies sub-1e-3 hidden-state float noise
-    # into ~1e-2 logit noise; a real correctness bug shifts logits by O(0.1-1),
-    # far above this, so the guard still catches genuine regressions.
-    tie_threshold = 3e-2
-    for length in (10, 22):
-        ids = torch.randint(4, 260, (1, length))
-        ref, gaps = byte_by_byte_greedy(ids, n_new)
-        gen_cfg = GenerationConfig(max_new_tokens=n_new, do_sample=False, num_beams=1)
-        spec = model.generate(ids, generation_config=gen_cfg)
-        ref_bytes = ref[0, length : length + n_new].tolist()
-        spec_bytes = spec[0, length : length + n_new].tolist()
-        for i in range(min(len(ref_bytes), len(spec_bytes))):
-            if ref_bytes[i] != spec_bytes[i]:
-                assert gaps[i] < tie_threshold, (
-                    f"speculative diverged from greedy at a non-tie "
-                    f"(len={length}, pos={i}, gap={gaps[i]:.2e})"
-                )
-                break  # first divergence resyncs; downstream is a fresh context
-
-
-def test_speculative_honors_repetition_penalty(spec_config):
-    """The spec sampler applies ``repetition_penalty`` per-prefix, so greedy
-    output still equals byte-by-byte greedy-WITH-penalty (up to float ties).
-
-    The terminal passes repetition_penalty to keep rolling contexts from
-    degenerating; before the fix the spec sampler dropped it entirely.
-    """
-    from transformers import GenerationConfig
-
-    from transformers import LogitsProcessorList, RepetitionPenaltyLogitsProcessor
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    penalty = 1.3
-    proc = LogitsProcessorList([RepetitionPenaltyLogitsProcessor(penalty=penalty)])
-
-    def greedy_with_penalty(ids, n):
-        g = ids.clone()
-        gaps = []
-        for _ in range(n):
-            with torch.no_grad():
-                raw = model(input_ids=g).logits[0, -1:].clone()  # [1, vocab]
-            scored = proc(g, raw)[0]  # penalized over the running prefix
-            top2 = scored.topk(2).values
-            gaps.append((top2[0] - top2[1]).item())
-            g = torch.cat([g, scored.argmax().view(1, 1)], dim=1)
-        return g, gaps
-
-    torch.manual_seed(321)
-    n_new = 18
-    for length in (10, 20):
-        ids = torch.randint(4, 260, (1, length))
-        ref, gaps = greedy_with_penalty(ids, n_new)
-        gen_cfg = GenerationConfig(
-            max_new_tokens=n_new,
-            do_sample=False,
-            num_beams=1,
-            repetition_penalty=penalty,
-        )
-        spec = model.generate(ids, generation_config=gen_cfg)
-        ref_bytes = ref[0, length : length + n_new].tolist()
-        spec_bytes = spec[0, length : length + n_new].tolist()
-        for i in range(min(len(ref_bytes), len(spec_bytes))):
-            if ref_bytes[i] != spec_bytes[i]:
-                assert gaps[i] < 3e-2, (
-                    f"rep-penalty spec diverged at a non-tie "
-                    f"(len={length}, pos={i}, gap={gaps[i]:.2e})"
-                )
-                break
-
-
-def test_speculative_sampled_always_commits(spec_config):
-    """Under sampling every step commits at least one byte, drawn from a REAL
-    conditional, and the realized-throughput metrics stay in range.
-
-    Candidate 0 is auto-accepted only when it was sampled from a MEASURED
-    hidden: re-drawing from the same distribution adds no correctness, only
-    spurious rejections. When it came from ``mtp.bridge_hidden`` instead (the
-    common case - every step commits one byte past the block its forward read)
-    it is an approximate draw, so it is verified like any other candidate and
-    the step falls back to committing the verify's own sample. That byte is
-    still exact, so progress is guaranteed and no committed byte ever comes
-    from the bridge.
-
-    The accept EMA therefore MAY sit below 1 under sampling, and that is the
-    honest reading: equality-based acceptance of a sampled draft succeeds with
-    probability ~sum(p^2), so drafts genuinely rarely survive. The old
-    invariant (EMA >= 1 always) was an artifact of auto-accepting candidate 0
-    unconditionally, which counted a byte the drafts had not earned.
-    """
-    from transformers import GenerationConfig
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    ids = torch.randint(4, 260, (1, 12))
-    gen_cfg = GenerationConfig(
-        max_new_tokens=24,
-        do_sample=True,
-        temperature=1.0,
-        num_beams=1,
-        repetition_penalty=1.15,
-    )
-    torch.manual_seed(7)
-    out = model.generate(ids, generation_config=gen_cfg)
-    assert out.shape[1] >= ids.shape[1] + 24  # sampled steps still commit
-    assert model.mtp._accept_seen > 0
-    assert model.mtp._accept_ema >= 0.0
-
-    metrics = model.mtp.training_metrics()
-    assert metrics["mtp_accept_run"] >= 0.0
-    assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
-
-
-def test_generate_dispatches_to_speculative_by_default(spec_config):
-    """A DEFAULT GenerationConfig must reach the speculative path.
-
-    Every other spec test builds its config with `num_beams=1` spelled out, so
-    they all exercised a path production never took: on transformers>=5 a
-    default GenerationConfig leaves `num_beams` as None, `getattr` finds the
-    attribute so its fallback never applies, and `None == 1` is False. That
-    silently routed every real generation through the plain HF loop - no
-    drafting, and `mtp_accept_run`/`mtp_draft_width` permanently absent from
-    the dashboard because `_accept_seen` never left zero. Pin the DEFAULT.
-    """
-    from transformers import GenerationConfig
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    assert (
-        getattr(GenerationConfig(), "num_beams", 1) != 1
-    ), "sanity: this test is only meaningful while an unset num_beams is not 1"
+    model = PraxisForCausalLM(config).eval()
 
     ids = torch.randint(4, 260, (1, 12))
     with torch.no_grad():
@@ -684,289 +238,19 @@ def test_generate_dispatches_to_speculative_by_default(spec_config):
 
     assert out.shape[1] > ids.shape[1]
     assert model.mtp._accept_seen > 0, "speculative decoding did not run"
-
     # ...which is what puts the two realized-throughput metrics on the wire.
     metrics = model.mtp.training_metrics()
     assert "mtp_accept_run" in metrics
-    assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
-
-
-def test_mtp_honors_the_prompt_mask(spec_config):
-    """MTP takes UNDETACHED hidden states and the SHARED head, so an unweighted
-    auxiliary CE trains the trunk on positions `assistant_mask` zeroes - prompt
-    text keeps shaping the model no matter what the mask says. Passing the mask
-    through is what makes `--no-mask-prompts` mean something."""
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config)
-    mtp = model.mtp
-    # The vear bank routes stochastically while training, so two identical
-    # calls do not agree; eval mode is what makes these comparisons about the
-    # weights rather than about the sampling.
-    model.eval()
-
-    ids = torch.randint(4, 260, (2, 24))
-    hidden = torch.randn(2, 24, spec_config.embed_size)
-
-    # Mask keeping only the back half - a prompt/answer split.
-    mask = torch.zeros(2, 24, dtype=torch.uint8)
-    mask[:, 12:] = 1
-
-    unmasked = mtp(mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head))
-    masked = mtp(
-        mtp.prepare_inputs(
-            hidden, ids, None, model.embeds, model.head, loss_weights=mask
-        )
-    )
-    assert torch.isfinite(masked.get_loss("mtp"))
-    # Different positions -> a different loss. Equality would mean the weights
-    # were accepted and then dropped on the floor.
-    assert not torch.allclose(masked.get_loss("mtp"), unmasked.get_loss("mtp"))
-
-    # An all-ones mask must reproduce the unweighted loss exactly, so masking
-    # changes WHICH positions train without rescaling the gradient.
-    ones = torch.ones(2, 24, dtype=torch.uint8)
-    all_on = mtp(
-        mtp.prepare_inputs(
-            hidden, ids, None, model.embeds, model.head, loss_weights=ones
-        )
-    )
-    assert torch.allclose(all_on.get_loss("mtp"), unmasked.get_loss("mtp"), atol=1e-6)
-
-    # An all-zero mask contributes nothing rather than dividing by zero.
-    zeros = torch.zeros(2, 24, dtype=torch.uint8)
-    none_on = mtp(
-        mtp.prepare_inputs(
-            hidden, ids, None, model.embeds, model.head, loss_weights=zeros
-        )
-    )
-    assert torch.isfinite(none_on.get_loss("mtp"))
-    assert none_on.get_loss("mtp").detach().item() == pytest.approx(0.0, abs=1e-6)
-
-
-def test_serpent_rnn_mtp_bank(spec_config):
-    """serpent_rnn: one shared gated cell owns every depth. Builds inside the
-    byte-latent stack, produces the mtp loss and on-device draft-acc capture,
-    drafts at the adaptive width, and its parameter count is O(1) in depth
-    (only the K x (H+E) depth-embedding table grows with the unroll)."""
-    import copy
-
-    spec_config.mtp_type = "serpent_rnn"
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config)
-    mtp = model.mtp
-    assert mtp.bank is not None and mtp.depths is None
-
-    # Training path: byte-level loss + per-depth draft-acc kept as tensors
-    # (the sync happens once in training_metrics, not per depth per step).
-    ids = torch.randint(4, 260, (2, 24))
-    hidden = torch.randn(2, 24, spec_config.embed_size)
-    inputs = mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head)
-    losses = mtp(inputs)
-    assert torch.isfinite(losses.get_loss("mtp"))
-    assert mtp._draft_accs and all(torch.is_tensor(a) for a in mtp._draft_accs)
-    metrics = mtp.training_metrics()
-    assert isinstance(metrics["mtp_draft_acc"], float)
-    assert isinstance(metrics["mtp_rnn_gate_d0"], float)
-    assert metrics["mtp_rnn_depth_embed_d0"] == 0.0  # zero-init specialization
-
-    # Draft path: adaptive width, same cell.
-    with torch.no_grad():
-        drafted = mtp.draft_next_tokens(
-            hidden[:1, -1:, :], ids[:1, :1], model.embeds, model.head
-        )
-    assert drafted.shape == (1, mtp.draft_width)
-
-    # O(1) in depth: a 4x deeper unroll adds only depth-embedding rows.
-    from praxis.heads.mtp.rnn import SerpentRNNMTPBank
-
-    view = copy.copy(spec_config)
-    view.hidden_size = spec_config.embed_size  # byte-level depth space
-    n4 = sum(p.numel() for p in SerpentRNNMTPBank(view, 4).parameters())
-    n16 = sum(p.numel() for p in SerpentRNNMTPBank(view, 16).parameters())
-    assert n16 - n4 == 12 * (view.hidden_size + view.embed_size)
-
-
-def test_per_depth_mtp_bank(spec_config):
-    """per_depth: K independent light harmonic transforms, chained by hidden.
-
-    The DeepSeek shape - nothing shared between depths, no forced blend back
-    toward the previous state - with a POINTWISE transform, which is what keeps
-    the drafted function equal to the trained one. Grows linearly in depth (the
-    price of independence) and its depths are instrumented for the failure the
-    shared cell cannot have: converging on one transform anyway.
-    """
-    import copy
-
-    spec_config.mtp_type = "per_depth"
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config)
-    mtp = model.mtp
-    assert mtp.bank is not None and mtp.depths is None
-
-    ids = torch.randint(4, 260, (2, 24))
-    hidden = torch.randn(2, 24, spec_config.embed_size)
-    losses = mtp(mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head))
-    assert torch.isfinite(losses.get_loss("mtp"))
-    # No repulsion term: distinctness is measured here, not enforced.
-    assert "mtp_vear_repulsion" not in losses.loss_dict
-
-    metrics = mtp.training_metrics()
-    assert isinstance(metrics["mtp_field_distinctness"], float)
-    for k in range(spec_config.mtp_depth):
-        assert metrics[f"mtp_depth_weight_d{k}"] > 0.0
-    # Every metric this bank emits must reach a chart, or it is invisible.
-    described = mtp.field_metric_descriptions()
-    assert not [
-        k for k in metrics if k not in described and not k.startswith("mtp_draft_acc")
-    ]
-
-    with torch.no_grad():
-        drafted = mtp.draft_next_tokens(
-            hidden[:1, -1:, :], ids[:1, :1], model.embeds, model.head
-        )
-    assert drafted.shape == (1, mtp.draft_width)
-
-    # Linear in depth: independence is exactly what costs K transforms.
-    from praxis.heads.mtp.independent import PerDepthMTPBank
-
-    view = copy.copy(spec_config)
-    view.hidden_size = spec_config.embed_size  # byte-level depth space
-    n2 = sum(p.numel() for p in PerDepthMTPBank(view, 2).parameters())
-    n4 = sum(p.numel() for p in PerDepthMTPBank(view, 4).parameters())
-    assert n4 == 2 * n2
-
-
-def test_pointwise_banks_draft_what_they_trained(spec_config):
-    """A depth transform is run over the whole sequence at training time and
-    over a SINGLE position at draft time, with no cache. Any transform that
-    reads context is therefore a different function in the two settings - the
-    silent failure that makes drafts garbage while the aux loss still falls.
-
-    The pointwise banks agree to float noise, and the context-dependent
-    registry modules are refused outright on the drafting path rather than
-    allowed to build.
-    """
-    from praxis.heads.mtp import MultiTokenPrediction
-
-    ids_h = torch.randn(2, 16, spec_config.embed_size)
-    ids_e = torch.randn(2, 16, spec_config.embed_size)
-    for mtp_type in ("per_depth", "vear", "serpent_rnn"):
-        cfg = copy.copy(spec_config)
-        cfg.mtp_type = mtp_type
-        torch.manual_seed(0)
-        mtp = MultiTokenPrediction(cfg).eval()
-        with torch.no_grad():
-            full = mtp._run_depth(0, ids_h, ids_e, None)
-            one = mtp._run_depth(0, ids_h[:, -1:], ids_e[:, -1:], None)
-        assert torch.allclose(full[:, -1:], one, atol=1e-5), mtp_type
-
-    for mtp_type in ("transformer", "conv"):
-        cfg = copy.copy(spec_config)
-        cfg.mtp_type = mtp_type
-        with pytest.raises(ValueError, match="context-dependent"):
-            MultiTokenPrediction(cfg)
-
-
-def test_draft_window_from_mtp_depth(spec_config):
-    """The terminal sizes its per-step budget off the ADAPTIVE draft window, so a
-    step exercises MTP without over-drafting; without live MTP it collapses to a
-    single token."""
-    from praxis.generation.generator import Generator
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(spec_config).eval()
-    gen = Generator(model=model, tokenizer=None, device="cpu")
-    # The window tracks the adaptive width (draft_width + 1), which starts
-    # conservative: a fresh model drafts narrowly and widens only as runs land,
-    # so a large mtp_depth costs nothing extra until acceptance earns it.
-    assert gen.draft_window == model.mtp.draft_width + 1
-    assert model.mtp.draft_width < spec_config.mtp_depth  # conservative at init
-
-    saved = model.mtp
-    model.mtp = None
-    try:
-        assert gen.draft_window == 1  # no MTP -> single-token throttle
-    finally:
-        model.mtp = saved
-
-
-def test_draft_width_tracks_accepted_runs(deep_spec_config):
-    """Speculative width follows the accepted-run length, not the trained depth.
-
-    Every candidate past the first divergence is discarded but still costs a
-    sequential draft and (byte-latent) its own verify row, so a wide mtp_depth
-    whose drafts rarely land would make each step pay O(depth) to commit a byte
-    or two. The width starts CONSERVATIVE and only climbs toward the trained
-    depth as acceptance actually delivers longer runs.
-    """
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(deep_spec_config).eval()
-    mtp = model.mtp
-    depth = deep_spec_config.mtp_depth
-
-    assert mtp.draft_width < depth  # conservative at init, not the full depth
-    assert mtp.draft_width >= 1
-
-    for _ in range(60):
-        mtp.note_accepted(1)  # short runs keep the window closed in
-    narrow = mtp.draft_width
-    assert narrow < depth
-    assert narrow >= 1  # never switches drafting off
-
-    for _ in range(120):
-        mtp.note_accepted(depth)  # drafts land again -> widen toward the depth
-    assert mtp.draft_width > narrow
-    assert mtp.draft_width <= depth  # bounded by trained depth
-
-
-def test_narrow_width_still_matches_byte_by_byte_greedy(deep_spec_config):
-    """Truncating the draft width changes only how much work is thrown away.
-
-    Acceptance stops at the first divergence either way, so a narrowed window
-    must still emit exactly what byte-by-byte greedy emits (up to argmax ties).
-    """
-    from transformers import GenerationConfig
-
-    torch.manual_seed(0)
-    model = PraxisForCausalLM(deep_spec_config).eval()
-    for _ in range(60):
-        model.mtp.note_accepted(1)  # force a narrow window
-    assert model.mtp.draft_width < deep_spec_config.mtp_depth
-
-    torch.manual_seed(7)
-    prompt = torch.randint(4, 260, (1, 24))
-    n_new = 6
-    gc = GenerationConfig(max_new_tokens=n_new, do_sample=False)
-
-    with torch.no_grad():
-        # A commit lands a whole accepted run, so the spec path may overshoot
-        # the budget; compare over the bytes that were actually requested.
-        spec = model.generate(prompt, generation_config=gc)[0, prompt.size(1) :][:n_new]
-        greedy = prompt
-        for _ in range(n_new):
-            step = model(input_ids=greedy).logits[0, -1]
-            nxt = step.argmax().view(1, 1)
-            greedy = torch.cat([greedy, nxt], dim=1)
-        greedy = greedy[0, prompt.size(1) :]
-
-    assert spec.tolist() == greedy.tolist()
+    assert 1 <= metrics["mtp_draft_width"] <= config.mtp_depth
 
 
 def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
     """Speculative decoding verifies ONE growing prefix - its batch axis
-    carries the n truncated prefixes, not n sequences - so `generated[0]` and
-    `seq[0]` are hard-coded. Handed a real batch it died on a `.item()` over a
-    per-row tensor ("a Tensor with B elements cannot be converted to Scalar"),
-    which is what broke BrierLMCallback: that callback generates two
-    continuations for each of a batch of prompts. Not byte-latent or CALM
-    specific - any MTP model generating with B > 1."""
-    import torch
-    from transformers import GenerationConfig
-
-    from praxis import PraxisConfig
-    from praxis.modeling import PraxisForCausalLM
-
-    cfg = PraxisConfig(
+    carries the n truncated prefixes, not n sequences. Handed a real batch it
+    died on a ``.item()`` over a per-row tensor, which broke BrierLMCallback
+    (two continuations per prompt, for a batch of prompts). Any MTP model
+    generating with B > 1 hits it."""
+    config = PraxisConfig(
         vocab_size=1024,
         hidden_size=64,
         embed_size=64,
@@ -982,8 +266,447 @@ def test_speculative_decode_defers_to_the_standard_loop_on_a_batch():
         mtp_type="per_depth",
     )
     torch.manual_seed(0)
-    m = PraxisForCausalLM(cfg).eval()
+    model = PraxisForCausalLM(config).eval()
     gc = GenerationConfig(max_new_tokens=16, temperature=1.0, do_sample=True)
     for b in (1, 2, 5):
-        out = m.generate(torch.randint(0, 256, (b, 32)), generation_config=gc)
+        out = model.generate(torch.randint(0, 256, (b, 32)), generation_config=gc)
         assert out.shape[0] == b, (b, out.shape)
+
+
+# What transformers hands a CALLABLE decoding method (MTP speculative decoding,
+# CALM's patch vote). `_extract_generation_mode_kwargs` (transformers 5.2.0)
+# pops `tokenizer` out of kwargs, then - for a callable custom_generate -
+# rebuilds the dict from kwargs, where `tokenizer` no longer is; `streamer` is
+# lost separately, by being in `_sample`'s signature. Losing the tokenizer made
+# `_get_stopping_criteria` RAISE before the method was called, so every request
+# under a stop-strings chat format failed with "we could not locate a tokenizer".
+
+
+@pytest.fixture(scope="module")
+def spec_model():
+    torch.manual_seed(0)
+    config = PraxisConfig(
+        vocab_size=1024,
+        hidden_size=64,
+        embed_size=64,
+        num_heads=2,
+        depth=2,
+        max_length=512,
+        mtp_type="vear",
+        mtp_depth=4,
+    )
+    model = PraxisForCausalLM(config).eval()
+    assert model._resolve_decoding_method(torch.zeros(1, 4, dtype=torch.long), None)
+    return model
+
+
+class _Recorder:
+    def __init__(self):
+        self.puts = []
+        self.ended = False
+
+    def put(self, value):
+        self.puts.append(value)
+
+    def end(self):
+        self.ended = True
+
+
+def _prose_prompt(tokenizer):
+    return torch.tensor([tokenizer.encode("user\n\nhi\n\nassistant\n\n")])
+
+
+def test_the_method_receives_the_tokenizer_and_the_prepared_stop_criteria(
+    spec_model, prose_tokenizer, monkeypatch
+):
+    """...and it arrives as a real StopStringCriteria, not as a `stop_strings`
+    the method would have to re-derive."""
+    seen = {}
+
+    def capture(model, input_ids, **kwargs):
+        seen.update(kwargs)
+        return input_ids
+
+    monkeypatch.setattr(speculative, "speculative_decoding", capture)
+    spec_model.generate(
+        _prose_prompt(prose_tokenizer),
+        generation_config=GenerationConfig(
+            max_new_tokens=4,
+            do_sample=False,
+            stop_strings=list(chat_format_of(prose_tokenizer).stop_strings()),
+        ),
+        tokenizer=prose_tokenizer,
+    )
+
+    assert seen["tokenizer"] is prose_tokenizer
+    assert any(
+        isinstance(c, StopStringCriteria) for c in seen["stopping_criteria"]
+    ), "the format's boundaries never became a criterion"
+
+
+def test_the_streamer_reaches_a_custom_decoding_method(spec_model, prose_tokenizer):
+    """Under its own name - the methods stay signature-compatible with
+    `_sample` rather than taking it under a private alias."""
+    rec = _Recorder()
+    spec_model.generate(
+        _prose_prompt(prose_tokenizer),
+        generation_config=GenerationConfig(max_new_tokens=5, do_sample=False),
+        tokenizer=prose_tokenizer,
+        streamer=rec,
+    )
+    # One put for the prompt (transformers) plus one per committed token (ours).
+    assert len(rec.puts) > 1
+    assert rec.ended is True
+
+
+def test_the_standard_path_is_untouched(spec_model, prose_tokenizer):
+    """The override only restores kwargs for a CALLABLE method; when none is
+    resolved, transformers' own behaviour has to be exactly what it was."""
+    mode_kwargs = spec_model._extract_generation_mode_kwargs(
+        None, {"tokenizer": prose_tokenizer}, None, None, None
+    )
+    assert mode_kwargs.get("tokenizer") is prose_tokenizer
+    assert "streamer" not in mode_kwargs
+
+
+# ------------------------------------------------------------------------------
+# RL policy wiring
+# ------------------------------------------------------------------------------
+# The forward-path preference policy (praxis/policies/preference.py) as the model
+# builds and weights it.
+
+CHOSEN = int(TaskType.PREF_CHOSEN)
+REJECTED = int(TaskType.PREF_REJECTED)
+
+
+def _policy_config(**kwargs):
+    return PraxisConfig(
+        vocab_size=64,
+        hidden_size=32,
+        embed_size=32,
+        num_heads=4,
+        depth=2,
+        decoder_type="sequential",
+        **kwargs,
+    )
+
+
+def test_rejected_tokens_excluded_from_main_ce():
+    """_build_loss_weights zeroes PREF_REJECTED positions regardless of the
+    weighter profile - the card's no-SFT contract for the rejected side."""
+    model = PraxisForCausalLM(_policy_config())
+    labels = torch.randint(0, 64, (1, 8))
+    task = torch.full((1, 8), CHOSEN, dtype=torch.long)
+    task[0, 4:] = REJECTED
+    weights = model._build_loss_weights(
+        labels=labels, task_type_ids=task, assistant_mask=None
+    )
+    assert (weights[0, 4:] == 0).all()
+    assert (weights[0, :4] > 0).all()
+
+
+def test_build_rl_policies_recall_family():
+    cfg = _policy_config(rl_type=["engagement", "joke", "preference"])
+    policy, policy_type, recall = build_rl_policies(cfg)
+    assert policy is None and policy_type is None
+    assert set(recall) == {"engagement", "joke", "preference"}
+    assert isinstance(recall["preference"], PreferencePolicy)
+
+
+def test_byte_latent_forward_with_preference():
+    """The full -d-shaped stack trains a step with the preference loss landing
+    in the container and finite gradients."""
+    torch.manual_seed(0)
+    cfg = PraxisConfig(
+        vocab_size=1024,
+        hidden_size=32,
+        embed_size=96,
+        num_heads=4,
+        num_layers=2,
+        depth=4,
+        encoder_type="abstractinator_v0",
+        tokenizer_type="byte_level",
+        decoder_type="sequential",
+        activation="serpent",
+        head_type="prismatic4",
+        residual_type="smear",
+        rl_type=["preference"],
+    )
+    model = PraxisForCausalLM(cfg).train()
+    # Long enough that each side clears MIN_SIDE_TOKENS after byte-level
+    # patching and repadding.
+    ids = torch.randint(4, 260, (2, 128))
+    task = torch.full((2, 128), CHOSEN, dtype=torch.long)
+    task[1] = REJECTED
+    mask = torch.ones(2, 128, dtype=torch.uint8)
+    out = model(
+        input_ids=ids,
+        labels=ids[..., 1:].contiguous(),
+        task_type_ids=task,
+        assistant_mask=mask,
+    )
+    assert torch.isfinite(out.loss)
+    metrics = model.policies["preference"].get_metrics()
+    assert "preference_margin" in metrics
+    out.loss.backward()
+    grads = [p.grad for p in model.decoder.parameters() if p.requires_grad]
+    assert any(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+# ------------------------------------------------------------------------------
+# surgical heads
+# ------------------------------------------------------------------------------
+# prismatic9 trains each arm on its own objective and hands the trunk one
+# PCGrad-combined gradient. The model has to wire around that: HALO's geometric
+# term moves from the criterion to the head, and MTP must still reach the head's
+# input through the detached arms.
+
+
+def _halo_config(head_type, **overrides):
+    return PraxisConfig(
+        vocab_size=1000,
+        hidden_size=32,
+        embed_size=32,
+        num_heads=4,
+        depth=2,
+        max_length=128,
+        decoder_type="sequential",
+        encoder_type=None,
+        head_type=head_type,
+        loss_func="halo",
+        **overrides,
+    )
+
+
+def test_full_model_survives_the_lazy_init_pass():
+    """End-to-end reproduction of the -o startup crash: train() + no_grad."""
+    torch.manual_seed(0)
+    m = PraxisForCausalLM(_halo_config("prismatic9"))
+    m.train()
+    ids = torch.ones((2, 16), dtype=torch.long)
+    with torch.no_grad():
+        out = m(input_ids=ids, labels=ids[..., 1:].contiguous())
+    assert out.loss is not None
+    # The real training step still works afterwards.
+    out = m(input_ids=ids, labels=ids[..., 1:].contiguous())
+    out.loss.backward()
+    assert any(p.grad is not None for p in m.parameters())
+
+
+def test_validation_loss_stays_comparable_to_prismatic8():
+    """prismatic9 flips `composite_geometry` off so HALO's geometric term is
+    not double-counted (the head owns it as a Jacobian row). That suppression
+    must be TRAINING-ONLY: at eval nothing replaces the term, so zeroing it
+    there just deletes a component of val_loss."""
+
+    def val_loss(head):
+        torch.manual_seed(0)
+        m = PraxisForCausalLM(_halo_config(head)).eval()
+        ids = torch.arange(16).remainder(900).unsqueeze(0).repeat(2, 1)
+        with torch.no_grad():
+            out = m(input_ids=ids, labels=ids[:, 1:].contiguous())
+        return float(out.loss), m
+
+    eight, m8 = val_loss("prismatic8")
+    nine, m9 = val_loss("prismatic9")
+    # The criterion is configured differently...
+    assert m8.criterion.main.composite_geometry is True
+    assert m9.criterion.main.composite_geometry is False
+    # ...but at EVAL both must score the same composite objective.
+    assert nine == pytest.approx(
+        eight, rel=1e-4
+    ), f"val loss diverged: prismatic8 {eight}, prismatic9 {nine}"
+
+
+def test_mtp_still_trains_under_a_surgical_head():
+    """Detaching every arm in the blend severs the path from the head's OUTPUT
+    back to its INPUT - and MTP classifies its draft states with that same
+    head, so its loss reached nothing, not even MTP's own bank."""
+
+    def run(head):
+        torch.manual_seed(0)
+        m = PraxisForCausalLM(
+            _halo_config(head, mtp_depth=3, mtp_type="per_depth")
+        ).train()
+        ids = torch.randint(0, 1000, (2, 16))
+        m(input_ids=ids, labels=ids[:, 1:].contiguous()).loss.backward()
+        live = [
+            n
+            for n, p in m.mtp.named_parameters()
+            if p.grad is not None and p.grad.abs().sum() > 0
+        ]
+        return m, live, sum(1 for _ in m.mtp.named_parameters())
+
+    _, live8, total = run("prismatic8")
+    _, live9, _ = run("prismatic9")
+    assert len(live8) == total, "baseline broke; the comparison is meaningless"
+    assert len(live9) == total, f"MTP starved under prismatic9: {len(live9)}/{total}"
+
+    # The fallback path, for a head with no undetached() at all.
+    m, live, total = run("forward")
+    assert not hasattr(m.head, "undetached")
+    assert len(live) == total
+
+
+# ------------------------------------------------------------------------------
+# causality
+# ------------------------------------------------------------------------------
+# Every router, head, block and encoder in the registries is causal, in training
+# and in inference.
+#
+# One token changes in one row; no logit at an earlier position of that row, and
+# none in any other row, may move. CALM's logits reconstruct each K-token chunk
+# from that chunk's own latent, so for it "earlier" means an earlier chunk. Each
+# forward runs on a fresh copy of the model with the same RNG, because
+# training-mode forwards mutate state (EMA buffers, dual variables) and reusing
+# one model would show movement that is not a leak. Every parameter is first
+# moved off its initialization, because zero-initialized deviations (LoRA B,
+# SMEAR banks) make routing invisible at init and would hide a leak there.
+
+BASE = dict(
+    vocab_size=1024,
+    hidden_size=32,
+    embed_size=32,
+    num_heads=4,
+    num_layers=1,
+    depth=3,
+    num_experts=4,
+    tokenizer_type="byte_level",
+    decoder_type="sequential",
+)
+
+# What a component needs to build, or to reach the code path under test. The
+# default attention has no working shape at this width under a merge router.
+OVERRIDES = {
+    "router": {"attention_type": "causal"},
+    ("router", "arc_mixture"): {"num_layers": 2, "depth": 4},  # a layer under 1.0
+    ("head", "tied"): {"tie_weights": True},
+    ("block", "mru"): {"hidden_size": 64, "embed_size": 64},  # square head size
+    "encoder": {"hidden_size": 64, "embed_size": 64, "num_heads": 2},
+}
+
+# Expert-choice top-k decides a token's route from the tokens after it. The
+# Mixture-of-Depths paper trains with it anyway and routes causally only at
+# inference (arXiv:2404.02258, Sec. 3.5); praxis/routers/mixture_of_depths.py
+# follows the paper, so training here is non-causal by design.
+MOD_TRAINING = pytest.mark.xfail(
+    strict=True,
+    reason="Mixture-of-Depths trains on non-causal expert-choice top-k, as the paper does",
+)
+
+SEQ, EDITS = 16, (5, 9, 13)
+
+# Encoders pool 8-byte patches or 4-16 token chunks: a longer row of byte ids
+# puts each edit in its own patch, with whole patches before and after it.
+BYTE_SEQ, BYTE_EDITS = 48, (12, 27, 41)
+
+# Float noise, not a leak: a batch-dependent kernel shape (inference MoD pads
+# every row to the batch's widest selection) moves logits by ~1e-7, where a
+# leak moves them by 1e-3 or more.
+TOLERANCE = 1e-5
+
+CASES = (
+    [("router", key) for key in sorted(registry.namespace("routers"))]
+    + [("head", key) for key in sorted(registry.namespace("heads"))]
+    + [("block", key) for key in sorted(registry.namespace("blocks"))]
+    + [("encoder", key) for key in sorted(registry.namespace("encoders"))]
+    # Unlisted names that carry a profile of their own, not a listed one's.
+    + [("encoder", key) for key in sorted(registry.namespace("encoders").unlisted())]
+)
+
+
+def _is_mod(kind: str, key: str) -> bool:
+    return kind == "router" and (
+        key.startswith("mixture_of_depths") or key == "arc_mixture"
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _model(kind: str, key: str) -> PraxisForCausalLM:
+    cfg = dict(BASE)
+    cfg.update(OVERRIDES.get(kind, {}))
+    cfg.update(OVERRIDES.get((kind, key), {}))
+    cfg[f"{kind}_type"] = key
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(PraxisConfig(**cfg))
+    with torch.no_grad():
+        if any(isinstance(p, UninitializedParameter) for p in model.parameters()):
+            ids = torch.zeros(1, BYTE_SEQ, dtype=torch.long)
+            model(input_ids=ids, labels=ids[:, 1:].contiguous())  # size lazy params
+        for p in model.parameters():
+            if p.is_floating_point():
+                p.add_(0.05 * torch.randn_like(p))
+    return model
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _release_causality_models():
+    """The sweep builds each model once for both tests; drop them afterwards."""
+    yield
+    _model.cache_clear()
+
+
+def _movement(kind: str, key: str, train: bool):
+    """Worst logit change before an edited position, and in the other row, over
+    several edits - a single edit can miss a data-dependent leak such as a
+    top-k whose membership it happens not to flip - and the largest change the
+    edits made where they may. Not every edit must reach the logits: training
+    dropout can swallow one (CALM's codec drops input tokens)."""
+    pristine = _model(kind, key)
+    byte = kind == "encoder"
+    seq, edits = (BYTE_SEQ, BYTE_EDITS) if byte else (SEQ, EDITS)
+    low, high = (0, 256) if byte else (4, 900)
+    encoder = getattr(pristine, "encoder", None)
+    chunk = encoder.K if getattr(encoder, "handles_loss", False) else 1
+    torch.manual_seed(1)
+    ids = torch.randint(low, high, (2, seq))
+
+    def logits(inputs):
+        model = copy.deepcopy(pristine)
+        model.train(train)
+        torch.manual_seed(0)
+        with torch.no_grad():
+            out = model(input_ids=inputs, labels=inputs[:, 1:].contiguous())
+        return out.logits.float()
+
+    base = logits(ids)
+    before = other_row = reached = 0.0
+    for position in edits:
+        edited = ids.clone()
+        edited[0, position] = (edited[0, position] + 17) % (high - low) + low
+        delta = (logits(edited) - base).abs().amax(dim=-1)
+        start = position // chunk * chunk
+        if start:
+            before = max(before, delta[0, :start].max().item())
+        other_row = max(other_row, delta[1].max().item())
+        reached = max(reached, delta[0, start:].max().item())
+    return before, other_row, reached
+
+
+def _ids(case):
+    return f"{case[0]}={case[1]}"
+
+
+def _assert_causal(before, other_row, reached):
+    assert reached > 0, "no edit moved anything, so the check cannot see a leak"
+    assert (
+        before <= TOLERANCE
+    ), f"a logit before the edited position moved by {before:.3e}"
+    assert other_row <= TOLERANCE, f"a logit in another row moved by {other_row:.3e}"
+
+
+@pytest.mark.parametrize("case", CASES, ids=_ids)
+def test_inference_is_causal(case):
+    _assert_causal(*_movement(*case, train=False))
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(case, marks=MOD_TRAINING) if _is_mod(*case) else case
+        for case in CASES
+    ],
+    ids=_ids,
+)
+def test_training_is_causal(case):
+    _assert_causal(*_movement(*case, train=True))

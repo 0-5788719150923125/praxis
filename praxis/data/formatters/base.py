@@ -84,7 +84,7 @@ def text_formatter(text):
     )
 
     # What can start a new paragraph (optional quotes + uppercase letter)
-    para_start = r"([\"'" + "'']*[A-Z])"
+    para_start = r"([\"'" + "\u201c\u201d\u2018\u2019]*[A-Z])"
 
     # Define what should NOT trigger paragraph breaks in the next line
     # (indentation, list markers, code keywords)
@@ -99,13 +99,19 @@ def text_formatter(text):
     # Pattern 1: Lines ending with sentence-ending punctuation (., !, ?)
     # Captures: (1) punctuation with quotes/brackets, (2) newline, (3) next line start
     pattern_punctuation = (
-        r"([.!?][\"\'" + "'']*[)\\]]*)(\n)" + no_break_lookahead_basic + para_start
+        r"([.!?][\"\'"
+        + "\u201c\u201d\u2018\u2019]*[)\\]]*)(\n)"
+        + no_break_lookahead_basic
+        + para_start
     )
 
     # Pattern 2: Lines ending with colons (but exclude structured data like "Key: Value")
     # Captures: (1) colon with quotes/brackets, (2) newline, (3) next line start
     pattern_colon = (
-        r"(:[\"\'" + "'']*[)\\]]*)(\n)" + no_break_lookahead_colon + para_start
+        r"(:[\"\'"
+        + "\u201c\u201d\u2018\u2019]*[)\\]]*)(\n)"
+        + no_break_lookahead_colon
+        + para_start
     )
 
     # Pattern 3: Lines ending with letters/numbers (for headers/titles without punctuation)

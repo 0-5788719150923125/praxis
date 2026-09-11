@@ -89,7 +89,7 @@ class ByteLatentEncoder(BaseEncoder):
             cross_attn_encoder: Enable cross-attention in encoder
             cross_attn_decoder: Enable cross-attention in decoder
             merge: How the local decoder combines the byte path with the trunk's
-                patch output, "add" (BLT) or "gated" (see merge.py)
+                patch output: "add" (BLT), "normalized" or "gated" (see merge.py)
             downsampling_method: Downsampling method ("max", "mean", "min", "topk:N")
         """
         super().__init__()

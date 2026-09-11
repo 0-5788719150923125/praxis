@@ -327,7 +327,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.active_task_ids = None
 
         # The strategy for combining multiple losses into a single scalar objective.
-        self.strategy = registry.namespace("strategies").get(config.strategy, "naive")()
+        self.strategy = registry.namespace("strategies").get(
+            config.strategy, registry.lookup("strategies", "naive")
+        )()
         # Do the model's several objectives agree about the shared trunk? One
         # sampled cosine per loss term; see praxis/losses/conflict.py for why
         # this is the measurement and not the gradient-surgery method itself.

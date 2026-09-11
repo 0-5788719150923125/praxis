@@ -3,11 +3,16 @@
 ``add`` is BLT's sum, ``h = h_encoder + patch_embeds``: nothing holds the two on
 one scale, so whichever path grows faster decides the share.
 
-``gated`` RMS-normalizes both streams, with no learnable scale so neither can
-outgrow the other, and blends them with a per-position softmax gate over the
-pair - the feature blend ParallelHead gives its arms. The gate reads both
-normalized streams and starts at zero, an even split. Each position reads only
-its own two vectors, so the merge is causal.
+``normalized`` RMS-normalizes both streams, with no learnable scale so neither
+can outgrow the other, and adds them at equal weight. Nothing in it can shut a
+path off, so both keep their gradient; the decoder's own layers learn what to
+read from each.
+
+``gated`` blends the normalized streams with a per-position softmax gate over
+the pair. The gate is convex, so the two streams compete and it can saturate
+onto one of them, after which the other receives no gradient.
+
+Each position reads only its own two vectors, so every mode is causal.
 
 Both modes report the same magnitudes, so runs on either can be compared.
 """
@@ -19,11 +24,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-MERGES = ("add", "gated")
+MERGES = ("add", "normalized", "gated")
 
 
 class PatchMerge(nn.Module):
-    """``add`` (the BLT reference) or a gated blend of normalized streams."""
+    """``add`` (the BLT reference), or a sum or gated blend of normalized streams."""
 
     metric_descriptions = {
         "merge_trunk_ratio": {
@@ -134,6 +139,10 @@ class PatchMerge(nn.Module):
         dim = (byte.shape[-1],)
         b = F.rms_norm(byte, dim, eps=self.eps)
         t = F.rms_norm(trunk, dim, eps=self.eps)
+        if self.mode == "normalized":
+            if self.training:
+                self._record(b, t, None)
+            return b + t
         weights = torch.softmax(self.gate(torch.cat([b, t], dim=-1)), dim=-1)
         byte_part = weights[..., :1] * b
         trunk_part = weights[..., 1:] * t

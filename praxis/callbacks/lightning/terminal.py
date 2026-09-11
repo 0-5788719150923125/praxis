@@ -448,7 +448,7 @@ class TerminalInterface(Callback):
         info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
         info_dict["strategy"] = self.strategy
         # No RL policy shapes the model: only the data does.
-        info_dict["policy"] = self.rl_type or "unconstrained"
+        info_dict["policy"] = self.rl_type or "unrestricted"
         info_dict["vocab_size"] = self.vocab_size
         info_dict["block_size"] = seq_length
         info_dict["batch_size"] = batch_size

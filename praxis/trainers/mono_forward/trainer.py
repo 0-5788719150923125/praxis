@@ -34,9 +34,6 @@ import time
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
-
-from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
-from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
 from transformers import (
     LogitsProcessorList,
     SuppressTokensLogitsProcessor,
@@ -45,6 +42,8 @@ from transformers import (
 )
 
 from praxis.generation.decoding import pick_next
+from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
+from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
 from praxis.utils import create_block_ids
 
 _RAY_MISSING_MSG = (
@@ -1492,7 +1491,7 @@ class MonoForwardTrainer:
                     "optimizer_name", "Unknown"
                 ),
                 "strategy": info.get("strategy"),
-                "policy": info.get("rl_type") or "unconstrained",
+                "policy": info.get("rl_type") or "unrestricted",
                 "vocab_size": info.get("vocab_size"),
                 # ``batch_size`` is the raw per-step batch; ``target_batch``
                 # is the effective batch after gradient accumulation.

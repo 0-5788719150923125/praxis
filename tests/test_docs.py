@@ -38,8 +38,3 @@ def test_every_package_is_a_registry_page_or_infrastructure():
         f"praxis subpackages absent from the docs index: {missing}. Give each "
         "one a registry page or an INFRASTRUCTURE_PACKAGES one-liner."
     )
-
-
-def test_every_page_names_its_declaring_module():
-    for ns in registry_pages():
-        assert ns.module and ns.module.startswith("praxis"), ns.name

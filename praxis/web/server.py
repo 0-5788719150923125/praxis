@@ -7,6 +7,9 @@ from datetime import datetime
 from threading import Event, Thread
 from typing import Any, Optional
 
+from werkzeug.debug import DebuggedApplication
+from werkzeug.serving import make_server
+
 from .app import api_logger, app, socketio, werkzeug_logger
 from .config import (
     DEFAULT_HOST,
@@ -285,7 +288,7 @@ class APIServer:
         print(f"[API] Server started at {url}")
 
     def stop(self) -> None:
-        """Stop the API server."""
+        """Stop the API server, closing its listening socket."""
         self.shutdown_event.set()
 
         if hasattr(self, "template_watcher"):
@@ -293,6 +296,10 @@ class APIServer:
                 self.template_watcher.stop()
             except:
                 pass
+
+        if self.server is not None:
+            # Returns once serve_forever has exited, which closes the socket.
+            self.server.shutdown()
 
     def _run_server(self) -> None:
         """Run the server in a thread."""
@@ -320,34 +327,17 @@ class APIServer:
                         # Registering as both causes "write() before start_response" errors
                         register_request_middleware(wrapper)
 
-                # Signal that the server will start
-                self.started.set()
+                # What socketio.run does in threading mode (Flask's app.run),
+                # but keeping the server handle so stop() can shut it down.
+                mode = "dev" if self.dev_mode else "production"
+                api_logger.info(f"Starting {mode} mode server on port {self.port}")
+                app.debug = self.dev_mode
+                wsgi = DebuggedApplication(app, evalex=True) if self.dev_mode else app
+                self.server = make_server("0.0.0.0", self.port, wsgi, threaded=True)
 
-                # Configure and run server
-                if self.dev_mode:
-                    api_logger.info(f"Starting dev mode server on port {self.port}")
-                    app.debug = True
-                    socketio.run(
-                        app,
-                        host="0.0.0.0",
-                        port=self.port,
-                        debug=True,
-                        use_reloader=False,
-                        allow_unsafe_werkzeug=True,
-                    )
-                else:
-                    api_logger.info(
-                        f"Starting production mode server on port {self.port}"
-                    )
-                    app.debug = False
-                    socketio.run(
-                        app,
-                        host="0.0.0.0",
-                        port=self.port,
-                        debug=False,
-                        use_reloader=False,
-                        allow_unsafe_werkzeug=True,
-                    )
+                # Signal that the server is bound and about to serve
+                self.started.set()
+                self.server.serve_forever()
         except Exception as e:
             api_logger.error(f"API server crashed with exception: {e}", exc_info=True)
             raise

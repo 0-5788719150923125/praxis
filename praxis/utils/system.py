@@ -644,8 +644,14 @@ def graceful_shutdown(api_server, exit_code=0, reason="training complete"):
 
 
 def update_license_timestamp():
-    """Update the LICENSE file's copyright line with year progress (0-1)."""
+    """Update the LICENSE file's copyright line with year progress (0-1).
+
+    A no-op when the working directory has no LICENSE (a launch from outside
+    the repo)."""
     from datetime import datetime
+
+    if not os.path.exists("LICENSE"):
+        return
 
     now = datetime.now()
     year_start = datetime(now.year, 1, 1)

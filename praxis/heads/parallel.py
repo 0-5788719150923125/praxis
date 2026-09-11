@@ -585,8 +585,8 @@ class ParallelHead(BaseHead):
 
         Two kinds, and the split IS the design:
 
-        * ``arm{i}_ce`` - arm i's own cross-entropy on the detached branch
-          input. Trains arm i's parameters as a standalone classifier and
+        * ``arm{i}_loss`` - arm i's own objective (cross-entropy, or HALO's
+          geometry for the HALO arm) on the detached branch input. Trains arm i's parameters as a standalone classifier and
           reaches the trunk not at all. This is what lets the crystal arm train
           the way a bare crystal head does, which is the condition its PCA
           geometry was ever observed under.
@@ -997,7 +997,6 @@ class SurgicalParallelHead(ParallelHead):
     # Consistent with the rest of the system: LionGeo's sign and spectral arms
     # discard gradient magnitude anyway, and research/body.tex argues magnitude
     # is the wrong readout for significance (a boundary flip is silent in norm).
-    equalize_rows = True
     equalize_rows = True
 
     # The gate reads a DETACHED trunk. Its cross-entropy would otherwise be a

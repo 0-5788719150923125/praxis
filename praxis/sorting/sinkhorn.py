@@ -32,28 +32,28 @@ class SinkhornSort(NoSort):
 
         if self.ascending:
             # For ascending sort, larger values should be later in sequence
-            _, indices = torch.sort(hidden_states, dim=-1)
+            values, indices = torch.sort(hidden_states, dim=-1)
         else:
             # For descending sort, larger values should be earlier in sequence
-            _, indices = torch.sort(hidden_states, dim=-1, descending=True)
+            values, indices = torch.sort(hidden_states, dim=-1, descending=True)
 
-        # Create the hard permutation matrix (one-hot)
+        # Create the hard permutation matrix (one-hot): row j selects the
+        # feature that lands at sorted position j
         perm_size = hidden_states.shape[-1]
-        hard_perm_matrix = torch.nn.functional.one_hot(indices, perm_size).float()
+        hard_perm_matrix = torch.nn.functional.one_hot(indices, perm_size).to(
+            hidden_states.dtype
+        )
 
         # Apply temperature to control gradient flow
         # Lower temperature = sharper (more exact) permutation
         # Higher temperature = smoother (more gradient flow)
         soft_perm_matrix = torch.softmax(hard_perm_matrix / self.tau, dim=-1)
 
-        # Combine for gradient flow (straight-through estimator)
-        # During forward pass: use hard permutation
-        # During backward pass: use soft permutation gradients
-        perm_matrix = hard_perm_matrix + (soft_perm_matrix - hard_perm_matrix).detach()
-
-        # Apply the permutation matrix
-        sorted_hidden_states = torch.matmul(
-            hidden_states.unsqueeze(-2), perm_matrix
+        # Gather through the soft permutation: y[j] = sum_i P[j, i] * x[i]
+        soft_sorted = torch.matmul(
+            hidden_states.unsqueeze(-2), soft_perm_matrix.transpose(-1, -2)
         ).squeeze(-2)
 
-        return sorted_hidden_states
+        # Straight-through estimator: the forward pass is the exact sort, the
+        # backward pass follows the soft permutation
+        return values.detach() + (soft_sorted - soft_sorted.detach())
