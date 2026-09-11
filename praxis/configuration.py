@@ -8,7 +8,7 @@ from typing import List, Optional, Union
 
 from transformers import PretrainedConfig
 
-from praxis.renames import pop_legacy_config_keys
+from praxis.migrations import pop_legacy_config_keys
 
 
 class PraxisConfig(PretrainedConfig):

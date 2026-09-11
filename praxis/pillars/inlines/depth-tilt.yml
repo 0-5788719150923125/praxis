@@ -1,0 +1,8 @@
+# The current run's measured steepening of the deviation profile across depth -
+# the instrument this paragraph says is waiting to be read. Gated: a run with no
+# depth trajectory logs no such metric, so the empty fallback leaves the
+# paragraph unchanged.
+macro: paperDepthTiltSlope
+provider: depth_tilt_slope
+format: " It is being read now: on the current run the deviation's tip-over-head ratio moves by \\(\\approx {value:+.2f}\\) from the first depth step to the last, against a prediction that it rises."
+fallback: ""

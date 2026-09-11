@@ -127,6 +127,20 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": True,
         },
     },
+    "val_trunk_swap": {
+        "description": (
+            "Bits per token lost when a row is decoded on another row's trunk "
+            "output. 0 = the trunk reads as a constant, whatever its magnitude; "
+            "positive = what the prediction owes it."
+        ),
+        "chart": {
+            "title": "Trunk Swap Cost",
+            "y_label": "bits per token lost",
+            "y_scale": "linear",
+            "order": 53,
+            "is_validation": True,
+        },
+    },
     "val_codec_bpb": {
         "description": (
             "Teacher-forced reconstruction bits/byte for codec encoders (CALM). "
@@ -1130,6 +1144,30 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "no convergence; > 1 = diverging."
         ),
         "order": 251,
+    },
+    {
+        "key": "depth_tilt",
+        "type": "multi_expert_line",
+        "title": "Depth Deviation Tilt (tip vs head)",
+        "y_label": "tip / head deviation",
+        "description": (
+            "Where the input-conditional deviation sits, one line per depth. Above 1 "
+            "= at the tip, below 1 = at the head, 1 = flat. The harmonic reading "
+            "predicts above 1 and growing."
+        ),
+        "key_pattern": r"^depth/tilt_d\d+$",
+        "order": 253,
+    },
+    {
+        "key": "depth/tilt_slope",
+        "type": "line",
+        "title": "Depth Deviation Tilt Slope (steepening)",
+        "y_label": "last tilt - first tilt",
+        "description": (
+            "Change in the tip-over-head deviation ratio from the first depth to the "
+            "last. > 0 = the profile steepens as the loop deepens; <= 0 refutes it."
+        ),
+        "order": 254,
     },
     {
         "key": "depth/jump_concentration",

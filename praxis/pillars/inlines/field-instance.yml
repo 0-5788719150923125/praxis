@@ -1,0 +1,8 @@
+# Which module builds the harmonic field this run, for the section that
+# describes one. Section 3.2 calls itself "a measured instance", so it has to
+# say whose instance it is - and a run whose classifier carries no field (the
+# bare crystal classifier, prismatic10) must not be described as writing one.
+macro: paperFieldInstance
+provider: field_instance
+format: "{value}"
+fallback: ""

@@ -1,0 +1,8 @@
+# The current run's measured in-context copy gain, dropped into the paragraph
+# that says a frozen attention geometry cannot carry content-addressed
+# retrieval. Gated: a run that has not validated yet logs no such metric, so the
+# provider returns None and the empty fallback leaves the paragraph unchanged.
+macro: paperCopyGain
+provider: copy_gain
+format: " Measured on the current run, a passage's second copy costs \\(\\approx {value:.2f}\\) bits per token less than its first - the reading this paragraph predicts, taken on the model rather than argued."
+fallback: ""

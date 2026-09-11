@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Optional
+from typing import Dict, Optional
 
 from praxis import registry
 from praxis.classifiers.crystal import (
@@ -28,6 +28,37 @@ def _field(amp_modulation: str, build_scorer: bool = False, fast_weights: bool =
         build_scorer=build_scorer,
         fast_weights=fast_weights,
     )
+
+
+def classifier_traits(classifier_type: str) -> Dict[str, bool]:
+    """What a profile is built from, for callers that must not parse its name:
+    whether a harmonic field is actually present, and whether the readout is a
+    distance classifier over learned centers.
+
+    A field is one the profile BUILDS - itself, as a stem shared by its arms, or
+    as a stage - so a profile that merely sits in the prismatic family does not
+    inherit the claim (prismatic10 has arms and no stem)."""
+    from praxis.registry import unwrap
+
+    cls, args, keywords = unwrap(registry.namespace("classifiers").get(classifier_type))
+
+    def builds(value) -> tuple:
+        target = unwrap(value)[0] if value is not None else None
+        if not isinstance(target, type):
+            return (False, False)
+        return (
+            issubclass(target, HarmonicClassifier),
+            issubclass(target, CrystalClassifier),
+        )
+
+    parts = [builds(cls), builds(keywords.get("stem"))]
+    for key in ("branches", "stages", "heads"):
+        for spec in list(keywords.get(key) or ()):
+            parts.append(builds(spec))
+    return {
+        "harmonic_field": any(field for field, _ in parts),
+        "distance_readout": any(distance for _, distance in parts),
+    }
 
 
 def _harmonic_crystal(amp_modulation: str) -> list:

@@ -26,7 +26,7 @@ from praxis.containers import LossContainer
 from praxis.losses import build_objectives
 from praxis.losses.conflict import ObjectiveConflict
 from praxis.memory import MemoryBase
-from praxis.renames import rename_legacy_state_dict
+from praxis.migrations import rename_legacy_state_dict
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
 from praxis.utils import create_block_ids
 

@@ -17,7 +17,7 @@ exactly what :meth:`HarmonicField.concentration` measures - the Hoyer sparsity
 reported per panel is therefore the same number the dashboard logs, computed
 from the same tensor. A prismatic (multi-branch) run yields one panel per arm.
 Checkpoints written before the heads -> classifiers rename are read through
-:func:`praxis.renames.rename_legacy_state_dict`, so their branch labels match.
+:func:`praxis.migrations.rename_legacy_state_dict`, so their branch labels match.
 
 Output (all generated, none committed):
 - ``research/figures/spectrum_N.png`` - one magnitude heatmap per field.
@@ -40,7 +40,7 @@ from praxis.pillars.geometries import (
     latest_checkpoint,
     runs_newest_first,
 )
-from praxis.renames import rename_legacy_state_dict
+from praxis.migrations import rename_legacy_state_dict
 
 OUT_TEX = os.path.join(RESEARCH_DIR, "spectrum.tex")
 # A harmonic field's learned amplitude grid is always `...field.amplitudes`

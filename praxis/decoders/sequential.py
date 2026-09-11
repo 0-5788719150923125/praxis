@@ -29,6 +29,26 @@ class SequentialDecoder(BaseDecoder):
             self.steps = 1
         super().__init__(config)
 
+    @staticmethod
+    @torch.no_grad()
+    def _deviation_tilt(hidden_states: Tensor) -> float:
+        """Deviation in the sequence's last quarter over its first, at one depth.
+
+        The deviation is what each row has that the batch does not share - the
+        input-conditional part, the thing a positional shape cannot supply. Above
+        1 it rides the tip, below 1 it sits at the head, and at 1 the profile is
+        flat. Reported beside the magnitude readings because magnitude cannot
+        tell a deviation that moved from one that grew.
+        """
+        if hidden_states.shape[0] < 2 or hidden_states.shape[1] < 4:
+            return float("nan")
+        state = hidden_states.detach().float()
+        deviation = state - state.mean(dim=0, keepdim=True)
+        quarter = max(1, state.shape[1] // 4)
+        head = deviation[:, :quarter].pow(2).mean().sqrt()
+        tip = deviation[:, -quarter:].pow(2).mean().sqrt()
+        return float(tip / head.clamp_min(1e-8))
+
     def forward(
         self,
         hidden_states: Tensor,
@@ -81,6 +101,7 @@ class SequentialDecoder(BaseDecoder):
         current_route: List[int] = []
         realized_widths: List[float] = []  # active width fraction per executed step
         depth_prints: List[Tensor] = []  # per-depth hidden-state fingerprint
+        depth_tilts: List[float] = []  # per-depth tip-over-head deviation ratio
         # Entry fingerprint: the trajectory starts at the decoder input, so even a
         # single executed depth yields one transition (entry -> first cluster).
         if hidden_states.dim() == 3:
@@ -171,6 +192,7 @@ class SequentialDecoder(BaseDecoder):
             # a smooth drift? Detached - diagnostic only.
             if hidden_states.dim() == 3:
                 depth_prints.append(hidden_states.detach().float().mean(dim=(0, 1)))
+                depth_tilts.append(self._deviation_tilt(hidden_states))
 
             # Handle expert decoder loss (can be scalar/tensor or LossContainer)
             if isinstance(decoder_loss, LossContainer):
@@ -238,6 +260,14 @@ class SequentialDecoder(BaseDecoder):
                 self._depth_metrics["depth/jump_concentration"] = max(s) / (
                     sum(s) / len(s) + 1e-8
                 )
+        # Where along the sequence the input-conditional deviation sits, per
+        # depth. The harmonic reading (research/main.tex) predicts it rides the
+        # tip and steepens as the loop deepens, so a flat or falling profile is
+        # this claim's own falsifier rather than a missing number.
+        for i, tilt in enumerate(depth_tilts):
+            self._depth_metrics[f"depth/tilt_d{i}"] = tilt
+        if len(depth_tilts) >= 2:
+            self._depth_metrics["depth/tilt_slope"] = depth_tilts[-1] - depth_tilts[0]
 
         # Mono-forward: the "final" schedule cuts here (one goodness at the
         # top of the stack); every schedule lands its mean score as "mono".

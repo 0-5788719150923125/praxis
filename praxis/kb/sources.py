@@ -568,7 +568,7 @@ def _run_modules(experiment: str) -> str:
     ``encoder: calm_byte_small · attention: arc · classifier: prismatic``."""
     try:
         from praxis.cli.loaders.experiments import load_rendered_config
-        from praxis.renames import rename_legacy_config
+        from praxis.migrations import rename_legacy_config
 
         config = rename_legacy_config(
             load_rendered_config(

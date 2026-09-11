@@ -197,6 +197,62 @@ def _harmonic_concentration() -> Optional[float]:
     return _latest_metric("harmonic_concentration")
 
 
+@provider("field_instance")
+def _field_instance() -> Optional[str]:
+    """Where this run's harmonic field is, as a sentence for the section that
+    describes one. The registry answers it (praxis/classifiers, ``classifier_traits``),
+    because the prismatic family is not the same question: prismatic10 has arms
+    and no stem, and the bare crystal classifier has none either."""
+    from praxis.pillars.framing import newest_experiment, resolve_config
+
+    experiment = newest_experiment()
+    if not experiment:
+        return None
+    config = resolve_config(experiment)
+    carrier = config.get("field_carrier")
+    if carrier == "classifier":
+        name = _head_name() or "harmonic head"
+        return f" The current run builds that field in its {name}."
+    if carrier == "encoder":
+        return (
+            " The current run builds no such field in its classifier. Its harmonic "
+            "latent is the one below: patch latents rotated into the standing-wave "
+            "basis, their amplitudes quantized - so the field readings in this "
+            "section are read off the runs whose classifier carried one."
+        )
+    if carrier == "none":
+        return (
+            " The current run builds neither, so this section describes the "
+            "mechanism rather than the run."
+        )
+    return None
+
+
+@provider("copy_gain")
+def _copy_gain() -> Optional[float]:
+    """Latest in-context copy gain for the current run - bits per token saved on
+    a repeated passage. The measured form of what a frozen attention geometry is
+    predicted not to do; ``None`` (paragraph unchanged) before a validation pass
+    has run."""
+    return _latest_metric("val_copy_gain")
+
+
+@provider("trunk_swap")
+def _trunk_swap() -> Optional[float]:
+    """Latest trunk swap cost for the current run - bits per token lost when a
+    row is decoded on another row's trunk output. The measured form of the
+    bottleneck's second pole; ``None`` for a run with no separable trunk."""
+    return _latest_metric("val_trunk_swap")
+
+
+@provider("depth_tilt_slope")
+def _depth_tilt_slope() -> Optional[float]:
+    """Latest change in the tip-over-head deviation ratio from the first depth
+    step to the last. The density conjecture's own instrument; ``None`` for a run
+    that logs no depth trajectory."""
+    return _latest_metric("depth/tilt_slope")
+
+
 @provider("mtp_accept_run")
 def _mtp_accept_run() -> Optional[float]:
     """Latest accepted-run EMA for the current run's speculative decode - the

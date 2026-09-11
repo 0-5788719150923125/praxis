@@ -21,6 +21,8 @@ body: >
   forward to the next patch, which anchors the \textit{unobserved} continuation.
   One objective, two poles: the byte loss lands at both ends of the bottleneck
   and passes through its interior without ever making that interior a target.
+  That is where the pressure is designed to fall, which is not the same as where
+  it lands.\paperTrunkSwap{}
 
   The patch boundaries themselves are content-adaptive, so the model is not
   imposing a grid on the stream but reading one off it - the cut points follow

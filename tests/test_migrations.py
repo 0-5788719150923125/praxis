@@ -1,4 +1,4 @@
-"""Tests for praxis/renames.py: pre-rename configs and checkpoints still load."""
+"""Tests for praxis/migrations.py: pre-rename configs and checkpoints still load."""
 
 import pytest
 import torch
@@ -6,7 +6,7 @@ import torch
 from praxis import PraxisConfig
 from praxis.cli.loaders.experiments import load_rendered_config
 from praxis.modeling import PraxisForCausalLM
-from praxis.renames import rename_legacy_config, rename_legacy_key
+from praxis.migrations import rename_legacy_config, rename_legacy_key
 
 
 def _config(classifier_type):

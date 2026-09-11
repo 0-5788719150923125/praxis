@@ -172,3 +172,24 @@ def test_no_experiment_names_hardcoded_in_fragment_prose():
         if pattern.search(frag.body)
     }
     assert not offenders, f"fragment prose names specific runs: {offenders}"
+
+
+def test_a_field_claim_needs_a_field_not_a_family_name():
+    """Section 3.2 describes a multiplicative harmonic field. The gate that
+    admits it must ask the registry what a profile builds: prismatic10 is in the
+    prismatic family and has no stem, and the bare crystal classifier has none
+    either, so neither may carry the claim."""
+    from praxis.pillars.framing import _augment
+
+    def gate(classifier, encoder="abstractinator_v1"):
+        return _augment({"classifier_type": classifier, "encoder_type": encoder})
+
+    assert gate("prismatic9")["has_harmonic_field"] is True
+    assert gate("prismatic9")["field_carrier"] == "classifier"
+    assert gate("prismatic10")["has_harmonic_field"] is False
+    assert gate("crystal")["has_harmonic_field"] is False
+    # The harmonic latent itself survives: this run's is in the encoder.
+    assert gate("crystal")["field_carrier"] == "encoder"
+    assert gate("crystal")["uses_harmonic_latent"] is True
+    # And a run with neither says so.
+    assert gate("forward", "byte_latent")["field_carrier"] == "none"

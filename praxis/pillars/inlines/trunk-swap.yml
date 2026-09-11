@@ -1,0 +1,8 @@
+# The current run's measured trunk swap cost, dropped into the paragraph that
+# assigns the global transformer the second of the bottleneck's two poles.
+# Gated: a run with no separable trunk logs no such metric, so the empty
+# fallback leaves the paragraph unchanged.
+macro: paperTrunkSwap
+provider: trunk_swap
+format: " How much of that second pole the trunk actually carries is measurable rather than assumed: decoding a row on another row's trunk output costs \\(\\approx {value:.3f}\\) bits per token on the current run."
+fallback: ""

@@ -12,6 +12,7 @@ from torcheval.metrics.functional import perplexity
 from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.metrics import compute_softmax_collapse
 from praxis.metrics.copy_probe import copy_gain
+from praxis.metrics.trunk_probe import trunk_swap_cost
 from praxis.trainers.compile import try_compile
 
 
@@ -533,6 +534,13 @@ class BackpropagationTrainer(LightningModule):
             gain = copy_gain(self.model, input_ids, aligned=self.outputs_are_aligned)
             if gain is not None:
                 stats["val_copy_gain"] = gain
+            # And does the trunk carry anything the decoder reads?
+            # See praxis/metrics/trunk_probe.py.
+            cost = trunk_swap_cost(
+                self.model, input_ids, aligned=self.outputs_are_aligned
+            )
+            if cost is not None:
+                stats["val_trunk_swap"] = cost
 
         self.log_dict(
             stats,

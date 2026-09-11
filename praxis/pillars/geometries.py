@@ -13,7 +13,7 @@ centers. A run contributes one geometry per such tensor, so prismatic/sequential
 classifiers yield several and a run with no crystal classifier yields none. Runs
 are scanned newest-first until ``limit`` geometries are collected. Checkpoints
 written before the heads -> classifiers rename are read through
-:func:`praxis.renames.rename_legacy_state_dict`, so their keys match too.
+:func:`praxis.migrations.rename_legacy_state_dict`, so their keys match too.
 
 Output (all generated, none committed):
 - ``research/figures/geometry_N.png`` - one density heatmap per panel.
@@ -30,7 +30,7 @@ import json
 import os
 
 from praxis.pillars.runs import experiment_name, experiment_stems
-from praxis.renames import rename_legacy_config, rename_legacy_state_dict
+from praxis.migrations import rename_legacy_config, rename_legacy_state_dict
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RUNS_DIR = os.path.join(REPO_ROOT, "build", "runs")

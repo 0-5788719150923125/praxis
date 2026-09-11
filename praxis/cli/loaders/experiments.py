@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-from praxis.renames import rename_legacy_config
+from praxis.migrations import rename_legacy_config
 
 EXTENDS_KEY = "extends"
 

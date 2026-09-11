@@ -42,7 +42,7 @@ import yaml
 from praxis.cli.loaders.experiments import load_rendered_config
 from praxis.pillars.proofs import PROOFS, render_proof
 from praxis.pillars.runs import experiment_name, experiment_stems
-from praxis.renames import rename_legacy_config
+from praxis.migrations import rename_legacy_config
 
 # Fragment definitions live in this package's own directory, beside this file.
 FRAMING_DIR = Path(__file__).parent
@@ -178,6 +178,17 @@ def _encoder_traits(encoder: str) -> Dict[str, bool]:
     return encoder_traits(encoder)
 
 
+def _classifier_traits(classifier: str) -> Dict[str, bool]:
+    """The classifier profile's traits, read off the registry rather than its
+    name (praxis/classifiers/__init__.py, ``classifier_traits``). Imported here,
+    not at the top, for the same reason ``_encoder_traits`` is."""
+    from praxis.classifiers import classifier_traits
+
+    if not classifier:
+        return {"harmonic_field": False, "distance_readout": False}
+    return classifier_traits(classifier)
+
+
 def _augment(config: Dict) -> Dict:
     """Add config-derived gate keys the raw YAML doesn't carry, so a fragment can
     gate on a semantic ("is this run doing X?") rather than one literal value.
@@ -210,6 +221,16 @@ def _augment(config: Dict) -> Dict:
     classifier = str(config.get("classifier_type", ""))
     encoder = str(config.get("encoder_type", ""))
     traits = _encoder_traits(encoder)
+    # Whether a harmonic FIELD is actually built, asked of the registry rather
+    # than matched on the profile's name: prismatic10 is in that family and has
+    # no stem, and Section 3.2 describes a field the run would not have.
+    classifier_built = _classifier_traits(classifier)
+    derived["has_harmonic_field"] = classifier_built["harmonic_field"]
+    derived["field_carrier"] = (
+        "classifier"
+        if classifier_built["harmonic_field"]
+        else ("encoder" if traits["harmonic_bottleneck"] else "none")
+    )
     # prismatic is prefix-matched: prismatic3/prismatic4 carry the same
     # harmonic fields as the base classifier. The harmonic-bottleneck Abstractinator
     # counts too - its latent is quantized harmonic amplitudes.

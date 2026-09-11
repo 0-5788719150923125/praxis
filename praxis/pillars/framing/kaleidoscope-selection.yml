@@ -20,7 +20,7 @@ body: >
   acuity - and it is the same bias/variance cut this paper draws elsewhere,
   read on the attention axis: a frozen geometry is the corpus's average way of
   looking backward, and content-addressed retrieval is the deviation it does
-  not carry. The head runs one attention head, on the argument that a learned
+  not carry.\paperCopyGain{} The head runs one attention head, on the argument that a learned
   elementwise output gate spans what several heads spanned~\cite{ma2023mega};
   the gate is \mbox{SiLU} rather than sigmoid precisely because that theorem
   needs a gate able to amplify and invert, not only attenuate.

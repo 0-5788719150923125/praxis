@@ -1,8 +1,8 @@
-"""Old names that must keep loading after a rename.
+"""Migrations for data written by an older version of the code.
 
-Checkpoints, run specs, and experiment configs written before a rename still
-carry the old names. Everything that reads one of those translates it here, so
-a rename never silently falls back to a default (an unknown config key is
+Checkpoints, run specs, and experiment configs outlive the names they were
+written under. Everything that reads one of those translates it here, so a
+rename never silently falls back to a default (an unknown config key is
 ignored, an unknown state-dict key fails to load).
 """
 

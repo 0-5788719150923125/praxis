@@ -11,7 +11,7 @@ Selected with ``--trainer-type`` (default: ``backpropagation``).
 
 A standard backpropagation training module with automatic torch.compile support.
 
-Source: [praxis/trainers/backpropagation.py:18](../praxis/trainers/backpropagation.py#L18)
+Source: [praxis/trainers/backpropagation.py:19](../praxis/trainers/backpropagation.py#L19)
 
 ## `mono_forward`
 
