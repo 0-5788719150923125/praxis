@@ -60,7 +60,10 @@ def test_praxis_model_forward(small_config, input_ids, attention_mask):
 
     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 
-    assert outputs.last_hidden_state.shape == (*input_ids.shape, small_config.hidden_size)
+    assert outputs.last_hidden_state.shape == (
+        *input_ids.shape,
+        small_config.hidden_size,
+    )
     assert outputs.h_encoder is None
     assert outputs.patch_lengths is None
 

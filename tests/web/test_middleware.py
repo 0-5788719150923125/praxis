@@ -13,7 +13,9 @@ def test_registered_hooks_reach_the_response(api_url, monkeypatch):
 
     seen = []
     register_response_header("X-Test-Header", "test-value")
-    register_request_middleware(lambda request, response=None: seen.append(request.path))
+    register_request_middleware(
+        lambda request, response=None: seen.append(request.path)
+    )
 
     response = requests.get(f"{api_url}/api/ping")
 

@@ -34,9 +34,7 @@ def test_every_term_enters_with_a_positive_coefficient(name, coefficients):
     total because its coefficient 0.5/p^2 is positive, and the clamped variant
     caps that coefficient at 50."""
     strategy = registry.lookup("strategies", name)()
-    losses = [
-        torch.tensor(v, requires_grad=True) for v in (100.0, -50.0, 1e-3, -1e-4)
-    ]
+    losses = [torch.tensor(v, requires_grad=True) for v in (100.0, -50.0, 1e-3, -1e-4)]
     strategy(losses)  # materialize params
     with torch.no_grad():
         strategy.params.copy_(torch.tensor([0.05, 0.5, 1.0, 30.0]))

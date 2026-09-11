@@ -33,7 +33,6 @@ from praxis.generation.decoding import (
 )
 from praxis.tokenizers.chat_templates import chat_format_of
 
-
 # ---------------------------------------------------------------------------
 # pick_next
 # ---------------------------------------------------------------------------
@@ -113,7 +112,9 @@ def test_pick_next_casts_to_float32():
 def test_positional_partition(prose_tokenizer):
     criteria = StoppingCriteriaList(
         [
-            StopStringCriteria(stop_strings=["\n\nuser\n\n"], tokenizer=prose_tokenizer),
+            StopStringCriteria(
+                stop_strings=["\n\nuser\n\n"], tokenizer=prose_tokenizer
+            ),
             EosTokenCriteria(eos_token_id=torch.tensor([0])),
             MaxLengthCriteria(max_length=99),
             MaxTimeCriteria(max_time=1.0),

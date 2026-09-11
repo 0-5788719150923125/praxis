@@ -397,9 +397,7 @@ def test_speculative_decode_halts_mid_commit(prose_tokenizer, run_scripted, repl
     assert text == PROMPT + f"{reply}\n\nuser\n\n"
 
 
-def test_speculative_decode_without_stop_strings_runs_on(
-    prose_tokenizer, run_scripted
-):
+def test_speculative_decode_without_stop_strings_runs_on(prose_tokenizer, run_scripted):
     """Control: the halt comes from the stop strings, not from the script."""
     text = run_scripted(
         prose_tokenizer,
