@@ -4,7 +4,7 @@ From "EML Trees Are Universal Approximators" (arXiv:2606.23179): a single
 compositional primitive ``EML(x, y) = e^x - Log(y)`` that represents any
 elementary function, universal in ``W^{k,inf}`` with explicit size/depth bounds.
 As a ``dim -> dim`` block it is a sibling to the MLP/KAN entries in
-``DENSE_REGISTRY`` (a swap-in for the Titans memory net via ``build_memory_model``)
+the ``dense`` registry (a swap-in for the Titans memory net via ``build_memory_model``)
 whose curve shape is deliberately ORTHOGONAL to an MLP's - the "log-minus-
 exponent" regime. Paired against the exponential energy memory (a SMEAR blend of
 the two, see praxis/memory), the two opposing regimes pull toward a center rather

@@ -1492,7 +1492,7 @@ class MonoForwardTrainer:
                     "optimizer_name", "Unknown"
                 ),
                 "strategy": info.get("strategy"),
-                "policy": info.get("rl_type"),
+                "policy": info.get("rl_type") or "unconstrained",
                 "vocab_size": info.get("vocab_size"),
                 # ``batch_size`` is the raw per-step batch; ``target_batch``
                 # is the effective batch after gradient accumulation.

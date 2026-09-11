@@ -28,7 +28,7 @@ Flow inside a single optimizer step:
 
 CALM does not own its token classifier. It declares its output layout
 (`output_dim` = the VAE decoder feature width, `output_vocab_size` = the
-tokenizer's true vocab), the model builds a head from `HEAD_REGISTRY`
+tokenizer's true vocab), the model builds a head from the `heads` registry
 sized to that, and injects it via `set_head()`. CALM applies the head to
 the decoder features for both reconstruction and generation. So
 `head_type: forward | crystal | harmonic` all work; `calm-a.yml` uses

@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.dense import DENSE_REGISTRY
+from praxis import registry
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -85,7 +85,7 @@ class MRUBlock(nn.Module):
         self.dropout = nn.Dropout(self.dropout_rate)
 
         # MLP block, output projection scaled down for residual stability.
-        self.ffn = DENSE_REGISTRY.get("mlp")(config)
+        self.ffn = registry.namespace("dense").get("mlp")(config)
         self.ffn.init_weights(in_std=0.02, out_std=0.02 / math.sqrt(self.depth))
 
     def forward(

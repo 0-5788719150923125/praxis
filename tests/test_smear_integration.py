@@ -7,8 +7,8 @@ import pytest
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.containers import LossContainer
-from praxis.decoders import DECODER_REGISTRY
 
 
 @dataclass
@@ -58,7 +58,7 @@ class TestSMEARIntegration:
         config = MockConfig(num_experts=4, num_layers=4)
 
         # Create decoder - should use our new SMEAR logic
-        decoder = DECODER_REGISTRY["sequential"](config)
+        decoder = registry.lookup("decoders", "sequential")(config)
 
         # Verify that locals were created correctly
         assert len(decoder.locals) == config.num_experts
@@ -93,12 +93,12 @@ class TestSMEARIntegration:
         # Test with default configuration
         config = MockConfig()
 
-        decoder = DECODER_REGISTRY["sequential"](config)
+        decoder = registry.lookup("decoders", "sequential")(config)
         assert len(decoder.locals) == config.num_experts
 
         # Test with single expert
         config = MockConfig(num_experts=1, num_layers=1)
-        decoder = DECODER_REGISTRY["sequential"](config)
+        decoder = registry.lookup("decoders", "sequential")(config)
         assert len(decoder.locals) == config.num_experts
 
     def test_smear_expert_merging(self):
@@ -106,7 +106,7 @@ class TestSMEARIntegration:
         ``[batch, seq, targets, num_experts]``, each position routed on the
         running mean of its own prefix."""
         config = MockConfig(num_experts=3, num_layers=3)
-        decoder = DECODER_REGISTRY["sequential"](config)
+        decoder = registry.lookup("decoders", "sequential")(config)
         router = decoder.locals[0].router
 
         # One shared block, `num_experts` deviations per target - not N blocks.
@@ -144,7 +144,7 @@ class TestSMEARIntegration:
         for block_type in ["recurrent", "gru", "min"]:
             config = MockConfig(num_experts=3, num_layers=3, block_type=block_type)
 
-            decoder = DECODER_REGISTRY["sequential"](config)
+            decoder = registry.lookup("decoders", "sequential")(config)
 
             # Test forward pass
             batch_size = 2
@@ -158,7 +158,7 @@ class TestSMEARIntegration:
     def test_smear_gradient_flow(self):
         """Test that gradients flow through SMEAR properly."""
         config = MockConfig(num_experts=3, num_layers=3)
-        decoder = DECODER_REGISTRY["sequential"](config)
+        decoder = registry.lookup("decoders", "sequential")(config)
 
         # Create input with requires_grad
         batch_size = 2
@@ -200,7 +200,7 @@ def test_reinject_halting_runs_through_the_decoder():
     config = replace(
         MockConfig(num_experts=3, num_layers=1, depth=4), halting_type="kl_log_reinject"
     )
-    decoder = DECODER_REGISTRY["sequential"](config)
+    decoder = registry.lookup("decoders", "sequential")(config)
     x = torch.randn(2, 7, config.hidden_size, requires_grad=True)
 
     decoder.train()

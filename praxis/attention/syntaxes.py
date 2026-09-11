@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import DynamicCache
 
-from praxis.encoding import ENCODING_REGISTRY
+from praxis import registry
 
 
 class SyntaxesAttention(nn.Module):
@@ -52,7 +52,7 @@ class SyntaxesAttention(nn.Module):
         encoding_config.num_queries = 1
 
         # Positional encoding
-        self.encoding = ENCODING_REGISTRY[config.encoding](encoding_config)
+        self.encoding = registry.lookup("encoding", config.encoding)(encoding_config)
 
     def forward(
         self,

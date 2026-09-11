@@ -20,11 +20,13 @@ tracking the measured gradient noise scale. ``batch_size`` and
 them. See ``praxis/governors/gns.py`` for the estimator and rationale.
 """
 
+from praxis import registry
 from praxis.governors.gns import (
     GOVERNOR_METRIC_DESCRIPTIONS,
     BatchTierController,
     GradientNoiseEstimator,
 )
+from praxis.registry import Entry
 
 
 def _build_gns_batch(
@@ -43,12 +45,33 @@ def _build_gns_batch(
     )
 
 
-GOVERNOR_REGISTRY = {
-    "gns_batch": _build_gns_batch,
-}
+registry.declare(
+    "governors",
+    title="Training-loop governors",
+    doc=(
+        (
+            "Feedback controllers over loop-level knobs, each driven by an endogenous "
+            "signal native to its knob - a feedback device, not a search. Each entry is a "
+            "builder ``(batch_size, target_batch_size, val_every, "
+            "sequence_multiplier_tiers) -> Callback``. Unset keeps the static accumulation "
+            "factor."
+        )
+    ),
+    entries={
+        "gns_batch": Entry(
+            _build_gns_batch,
+            (
+                "Governs the effective batch (rows per optimizer step) by tracking the "
+                "measured gradient noise scale. ``batch_size`` and "
+                "``target_batch_size`` both become ceilings (one microbatch, one "
+                "step), and ``praxis/data/batch_schedule.py`` factorizes the governed "
+                "row count against them."
+            ),
+        ),
+    },
+)
 
 __all__ = [
-    "GOVERNOR_REGISTRY",
     "GOVERNOR_METRIC_DESCRIPTIONS",
     "GradientNoiseEstimator",
     "BatchTierController",

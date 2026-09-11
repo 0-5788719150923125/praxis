@@ -3,7 +3,9 @@
 
 Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 
-Registry: ``praxis.CONTROLLER_REGISTRY`` (8 entries)
+Namespace: ``registry.namespace("controllers")``, declared in ``praxis.controllers`` (8 entries)
+
+Selected with ``--controller-type`` (default: ``base``).
 
 ## `attention`, `counter_attention` - AttentionChanneler
 
@@ -14,7 +16,7 @@ Source: [praxis/controllers/attention.py:16](../praxis/controllers/attention.py#
 
 Presets:
 - `attention` - class defaults
-- `counter_attention` - `initial_queries=3, max_tokens=5`
+- `counter_attention` (`initial_queries=3, max_tokens=5`) - The attention controller reading the last 5 tokens with 3 learned initial queries, rather than one token and one query.
 
 ## `base` - BaseController
 
@@ -66,4 +68,4 @@ Source: [praxis/controllers/pathfinder.py:14](../praxis/controllers/pathfinder.p
 
 Presets:
 - `pathfinder` - class defaults
-- `shortcutter` - `allow_early_exits=True`
+- `shortcutter` (`allow_early_exits=True`) - Pathfinder whose gates carry one extra choice past the last layer: when the batch votes for it, the pass exits early.

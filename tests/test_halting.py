@@ -13,19 +13,19 @@ multiple steps, and how fast the tail dies as the depth budget grows.
 import collections
 import functools
 import math
+from types import SimpleNamespace
 
 import pytest
 import torch
-from types import SimpleNamespace
 
-from praxis.halting import HALTING_REGISTRY
+from praxis import registry
 from praxis.halting.kl import LOOP_PRIORS, KLDivergenceHalting
 
 SAMPLES = 20_000
 
 
 def _halting(key, depth, num_layers=1):
-    return HALTING_REGISTRY[key](
+    return registry.lookup("halting", key)(
         SimpleNamespace(depth=depth, num_layers=num_layers, hidden_size=16)
     )
 
@@ -60,7 +60,7 @@ def test_the_log_prior_tracks_the_logarithm_of_the_budget(max_loops):
     assert doubled - math.log(max_loops) == pytest.approx(math.log(2), abs=1e-6)
 
 
-@pytest.mark.parametrize("key", sorted(HALTING_REGISTRY.keys() - {"none"}))
+@pytest.mark.parametrize("key", sorted(registry.namespace("halting").keys() - {"none"}))
 @pytest.mark.parametrize("depth", [6, 18])
 def test_the_ramp_toward_multiple_steps_survives(key, depth):
     """The property that keeps the model from exiting at one loop constantly:
@@ -132,7 +132,7 @@ def test_every_prior_is_usable_at_every_reachable_budget(name):
 
 
 def _reinject(depth=6, hidden=16):
-    return HALTING_REGISTRY["kl_log_reinject"](
+    return registry.lookup("halting", "kl_log_reinject")(
         SimpleNamespace(depth=depth, num_layers=1, hidden_size=hidden)
     )
 
@@ -140,7 +140,7 @@ def _reinject(depth=6, hidden=16):
 def test_other_profiles_leave_the_loop_untouched():
     """The three loop hooks are identities everywhere but kl_log_reinject."""
     x = torch.randn(2, 5, 16)
-    for key in HALTING_REGISTRY.keys() - {"kl_log_reinject"}:
+    for key in registry.namespace("halting").keys() - {"kl_log_reinject"}:
         h = _halting(key, 6)
         assert h.initial_state(x) is x
         assert h.inject(x, 0) is x

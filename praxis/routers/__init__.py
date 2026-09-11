@@ -1,6 +1,8 @@
 from functools import partial
 from typing import Optional, TypeVar
 
+from praxis import registry
+from praxis.registry import Entry
 from praxis.routers.arc import ArcMixture
 from praxis.routers.distance import Distance
 from praxis.routers.mixture_of_depths import MixtureOfDepths
@@ -96,44 +98,121 @@ def create_taxus_with_dynamic_budget(
     return Taxus(config, **defaults)
 
 
-ROUTER_REGISTRY = dict(
-    mixture_of_depths=MixtureOfDepths,
-    mixture_of_depths_u=partial(MixtureOfDepths, layout="u"),
-    mixture_of_depths_decayed=partial(MixtureOfDepths, layout="decayed"),
-    mixture_of_depths_ramped=partial(MixtureOfDepths, layout="ramped"),
-    mixture_of_depths_skip_2=partial(MixtureOfDepths, layout="skip_2"),
-    arc_mixture=ArcMixture,
-    # SMEAR (praxis/routers/smear.py): soft-merging of experts at the paper's
-    # granularity - targets discovered per module, Linear targets routed per
-    # example, expert dropout, one shared block plus `num_experts` low-rank
-    # deviations. ONE entry, not a family: the expert count comes from
-    # `num_experts`, the per-recurrent-pass bias is folded in (zero-init, so it
-    # is absent until it learns otherwise), and the reduction is an argument.
-    smear=SMEAR,
-    # VEAR (praxis/routers/vear.py): the repo's variant - sharpened routing plus
-    # inter-expert repulsion. A departure from the paper, unlike `smear`.
-    vear=VEAR,
-    # Batch-reduced SMEAR: one merged geometry for the entire batch, which is
-    # what this repo's routers did before 2026-08-13. Present ONLY as the
-    # control for the per-example claim; see REDUCTIONS in smear.py for why it
-    # is very likely never the right choice.
-    smear_batch=partial(SMEAR, reduction="batch"),
-    # Per-token routing. Beyond the paper, affordable only on the Linear
-    # targets, and the obvious next experiment if per-example pays off.
-    smear_token=partial(SMEAR, reduction="token"),
-    distance=Distance,
-    prismatic=Prismatic,
-    taxus=create_taxus_with_dynamic_budget,
-    taxus_aggressive=partial(
-        create_taxus_with_dynamic_budget,
-        target_depth_ratio=0.25,  # Target 25% depth
-        budget_ratio=0.3,  # 30% computational budget
-        temperature=0.2,  # Lower temp for more decisive exits
+registry.declare(
+    "routers",
+    title="Token routers",
+    doc=(
+        (
+            "Token-routing mechanisms, including the Mixture-of-Depths family that skips a "
+            "fraction of tokens per layer and the SMEAR family that soft-merges expert "
+            "parameters. Unset runs no router."
+        )
     ),
-    taxus_balanced=partial(
-        create_taxus_with_dynamic_budget,
-        target_depth_ratio=0.5,  # Target 50% depth
-        budget_ratio=0.6,  # 60% computational budget
-        temperature=0.5,  # Moderate temperature
-    ),
+    entries={
+        "mixture_of_depths": Entry(
+            MixtureOfDepths,
+            (
+                "Mixture-of-Depths with layers alternating between full capacity and "
+                "12.5% capacity."
+            ),
+        ),
+        "mixture_of_depths_u": Entry(
+            partial(MixtureOfDepths, layout="u"),
+            (
+                "Mixture-of-Depths with a U-shaped layout: full capacity at the first "
+                "and last layers, 12.5% between."
+            ),
+        ),
+        "mixture_of_depths_decayed": Entry(
+            partial(MixtureOfDepths, layout="decayed"),
+            (
+                "Mixture-of-Depths whose capacity falls smoothly with depth, from full "
+                "at the first layer toward 12.5% at the last."
+            ),
+        ),
+        "mixture_of_depths_ramped": Entry(
+            partial(MixtureOfDepths, layout="ramped"),
+            (
+                "The reverse of ``mixture_of_depths_decayed``: capacity rises smoothly "
+                "from 12.5% at the first layer toward full at the last."
+            ),
+        ),
+        "mixture_of_depths_skip_2": Entry(
+            partial(MixtureOfDepths, layout="skip_2"),
+            (
+                "Mixture-of-Depths where one layer in three runs at full capacity and "
+                "the other two at 12.5%."
+            ),
+        ),
+        "arc_mixture": ArcMixture,
+        "smear": Entry(
+            SMEAR,
+            (
+                "Soft-merging of experts at the paper's granularity: targets "
+                "discovered per module, Linear targets routed per example, expert "
+                "dropout, one shared block plus ``num_experts`` low-rank deviations. "
+                "One entry, not a family: the expert count comes from ``num_experts``, "
+                "the per-recurrent-pass bias is folded in (zero-init, so it is absent "
+                "until it learns otherwise), and the reduction is an argument."
+            ),
+        ),
+        "vear": Entry(
+            VEAR,
+            (
+                "Praxis's own SMEAR variant: sharpened routing plus inter-expert "
+                "repulsion. A departure from the paper, unlike ``smear``."
+            ),
+        ),
+        "smear_batch": Entry(
+            partial(SMEAR, reduction="batch"),
+            (
+                "SMEAR with one input-free geometry (the depth prior) for the whole "
+                "batch: the control arm for the per-example routing claim. See "
+                "``REDUCTIONS`` in praxis/routers/smear.py for why it is very likely "
+                "never the right choice."
+            ),
+        ),
+        "smear_token": Entry(
+            partial(SMEAR, reduction="token"),
+            (
+                "SMEAR where every position routes on its own state. Beyond the paper, "
+                "and possible only on the Linear targets, where associativity means "
+                "the merged weight is never materialized."
+            ),
+        ),
+        "distance": Distance,
+        "prismatic": Prismatic,
+        "taxus": Entry(
+            create_taxus_with_dynamic_budget,
+            (
+                "Taxus, the depth-buying early-exit router, with its computational "
+                "budget derived from the model depth (40% of layers) and a target exit "
+                "at 30% of depth."
+            ),
+        ),
+        "taxus_aggressive": Entry(
+            partial(
+                create_taxus_with_dynamic_budget,
+                target_depth_ratio=0.25,  # Target 25% depth
+                budget_ratio=0.3,  # 30% computational budget
+                temperature=0.2,  # Lower temp for more decisive exits
+            ),
+            (
+                "Taxus targeting an exit at 25% of depth under a 30% budget, with a "
+                "lower temperature for more decisive exits."
+            ),
+        ),
+        "taxus_balanced": Entry(
+            partial(
+                create_taxus_with_dynamic_budget,
+                target_depth_ratio=0.5,  # Target 50% depth
+                budget_ratio=0.6,  # 60% computational budget
+                temperature=0.5,  # Moderate temperature
+            ),
+            (
+                "Taxus targeting an exit at 50% of depth under a 60% budget, at a "
+                "moderate temperature."
+            ),
+        ),
+    },
 )

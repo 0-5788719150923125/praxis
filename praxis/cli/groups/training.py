@@ -1,8 +1,5 @@
 """Training-related CLI arguments."""
 
-from praxis.governors import GOVERNOR_REGISTRY
-from praxis.trainers import TRAINER_REGISTRY
-
 
 class TrainingGroup:
     """Training configuration arguments."""
@@ -17,7 +14,7 @@ class TrainingGroup:
         group.add_argument(
             "--trainer-type",
             type=str,
-            choices=list(TRAINER_REGISTRY.keys()),
+            registry="trainers",
             default="backpropagation",
             help=(
                 "Training strategy to use. 'backpropagation' is standard "
@@ -35,7 +32,7 @@ class TrainingGroup:
         group.add_argument(
             "--governor",
             type=str,
-            choices=list(GOVERNOR_REGISTRY.keys()),
+            registry="governors",
             default=None,
             help=(
                 "Training-loop governor: a feedback controller over a loop "

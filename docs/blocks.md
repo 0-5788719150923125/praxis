@@ -3,7 +3,9 @@
 
 Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
 
-Registry: ``praxis.BLOCK_REGISTRY`` (9 entries)
+Namespace: ``registry.namespace("blocks")``, declared in ``praxis.blocks`` (9 entries)
+
+Selected with ``--block-type`` (default: ``transformer``).
 
 ## `conv` - ConvolutionalBlock
 
@@ -25,7 +27,7 @@ A block built around min-GRU (Were RNNs All We Needed?, arxiv 2410.01201): a str
 down GRU with no hidden-state dependence in the gates, which makes it amenable to
 parallel scan. Pairs the min-GRU with a standard MLP and pre-norm residual.
 
-Source: [praxis/blocks/min.py:15](../praxis/blocks/min.py#L15)
+Source: [praxis/blocks/min.py:14](../praxis/blocks/min.py#L14)
 
 ## `mru` - MRUBlock
 
@@ -69,7 +71,7 @@ Source: [praxis/blocks/ssm.py:14](../praxis/blocks/ssm.py#L14)
 
 A standard transformer block, with adjustable feedforward "experts".
 
-Source: [praxis/blocks/transformer.py:35](../praxis/blocks/transformer.py#L35)
+Source: [praxis/blocks/transformer.py:32](../praxis/blocks/transformer.py#L32)
 
 ## `wavelet` - WaveletBlock
 
@@ -79,4 +81,4 @@ mixing, then a standard FFN. Ports the core ideas of WaveletLM
 
 Stateless: it returns no cache/state and recomputes over the full context.
 
-Source: [praxis/blocks/wavelet.py:87](../praxis/blocks/wavelet.py#L87)
+Source: [praxis/blocks/wavelet.py:85](../praxis/blocks/wavelet.py#L85)

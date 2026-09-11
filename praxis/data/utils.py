@@ -3,6 +3,7 @@
 import os
 from typing import Any, Dict, List, Optional
 
+from praxis import registry
 from praxis.data.config import (
     DATASET_COLLECTIONS,
     DATASETS,
@@ -68,12 +69,11 @@ def get_datamodules(
     # An unrecognized curriculum must fail here rather than silently degrade to
     # the fixed roll: experiment yaml values are applied with setattr and so
     # bypass the CLI's choice validation entirely.
-    from praxis.data import SEQ_CURRICULUM_REGISTRY
 
-    if seq_curriculum not in SEQ_CURRICULUM_REGISTRY:
+    if seq_curriculum not in registry.namespace("seq_curriculum"):
         raise ValueError(
             f"Unknown seq_curriculum={seq_curriculum!r}. "
-            f"Valid choices: {sorted(SEQ_CURRICULUM_REGISTRY)}"
+            f"Valid choices: {sorted(registry.namespace("seq_curriculum"))}"
         )
     # `probe` is armed by SequenceProbeCallback (it needs the trainer to reach
     # the validation data manager); `fixed` needs no state at all.

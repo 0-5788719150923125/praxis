@@ -40,38 +40,56 @@ by cut slot, so halting/early exit simply uses fewer of them.
 """
 
 import math
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
+from praxis import registry
 from praxis.containers import LossContainer
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.regression import SmoothL1Loss
+from praxis.registry import Entry
 
-# Named cut schedules. Values are spec dicts (docs render the descriptions);
-# selection flows through build_mono, never a per-knob CLI flag.
-MONO_REGISTRY: Dict[str, Optional[dict]] = {
-    "layer": dict(
-        description="Detach after every expert call (totally flat; default "
-        "mono-forward regime).",
+registry.declare(
+    "mono",
+    title="Mono-forward graph cutting",
+    doc=(
+        (
+            "Sequential-decoder graph cutting: detach hidden states on a cut schedule and "
+            "train each segment from a local goodness score (vocab CE for token models, "
+            "next-patch-embedding prediction for encoder models). Entries are cut "
+            "schedules; selection flows through ``build_mono``, never a per-knob flag. "
+            "Unset, nothing is cut."
+        )
     ),
-    "cycle": dict(
-        description="Detach after each full pass through the num_layers "
-        "physical experts (one cut per recurrent depth step).",
-    ),
-    "final": dict(
-        description="Detach once after the whole stack (single goodness at "
-        "the top; the head trains alone beyond it).",
-    ),
-}
-
-
-# Rendered by the auto-docs generator (registry values are spec dicts).
-MONO_DESCRIPTIONS: Dict[str, str] = {
-    name: spec["description"] for name, spec in MONO_REGISTRY.items() if spec
-}
+    entries={
+        "layer": Entry(
+            dict(),
+            (
+                "Detach after every expert call, the totally flat regime of the paper: "
+                "the main head loss trains only the head, and every layer trains from "
+                "its own goodness score."
+            ),
+        ),
+        "cycle": Entry(
+            dict(),
+            (
+                "Detach after each full pass through the ``num_layers`` physical "
+                "experts - one cut per recurrent depth step, so backprop spans a "
+                "single recurrence cycle and no further."
+            ),
+        ),
+        "final": Entry(
+            dict(),
+            (
+                "Detach once after the whole stack: the decoder trains from a single "
+                "goodness score at the top, and the head trains alone beyond it."
+            ),
+        ),
+    },
+)
 
 
 class MonoBase(nn.Module):
@@ -104,9 +122,9 @@ class MonoForward(MonoBase):
 
     def __init__(self, config, mode: str) -> None:
         super().__init__()
-        if mode not in MONO_REGISTRY:
+        if mode not in registry.namespace("mono"):
             raise ValueError(
-                f"Unknown mono type '{mode}'. Choices: {sorted(MONO_REGISTRY)}"
+                f"Unknown mono type '{mode}'. Choices: {sorted(registry.namespace("mono"))}"
             )
         self.mode = mode
         self.num_layers = getattr(config, "num_layers", 1) or 1

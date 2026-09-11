@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from praxis.sorting import SORTING_REGISTRY
+from praxis import registry
 from praxis.sorting.amplitude import MAX_PERIOD, MIN_PERIOD, AmplitudeFieldSort
 from praxis.sorting.decay import TAU_INIT, DecayBiasSort
 
@@ -16,7 +16,7 @@ def _sorter(hidden_size=32):
 
 
 def test_registered():
-    assert SORTING_REGISTRY.get("amplitude_field") is AmplitudeFieldSort
+    assert registry.namespace("sorting").get("amplitude_field") is AmplitudeFieldSort
 
 
 def test_extends_decay_bias():

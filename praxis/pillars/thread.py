@@ -27,7 +27,9 @@ from typing import Tuple
 
 import yaml
 
+from praxis import registry
 from praxis.pillars.geometries import RESEARCH_DIR
+from praxis.registry import Entry
 
 THREADS_DIR = os.path.join(os.path.dirname(__file__), "threads")
 TITLE_TEX = os.path.join(RESEARCH_DIR, "title.tex")
@@ -58,12 +60,12 @@ class Thread:
 
 
 def _discover() -> dict:
-    registry = {}
+    threads = {}
     for path in sorted(glob.glob(os.path.join(THREADS_DIR, "*.yml"))):
         key = os.path.splitext(os.path.basename(path))[0]
         with open(path) as fh:
             meta = yaml.safe_load(fh) or {}
-        registry[key] = Thread(
+        threads[key] = Thread(
             key=key,
             title=str(meta.get("title", key)),
             subtitle=str(meta.get("subtitle", "")),
@@ -72,10 +74,25 @@ def _discover() -> dict:
                 (name, str(meta[name]).strip()) for name in COMPONENTS if meta.get(name)
             ),
         )
-    return registry
+    return threads
 
 
-THREAD_REGISTRY = _discover()
+registry.declare(
+    "threads",
+    {
+        key: Entry(thread, ": ".join(filter(None, (thread.title, thread.subtitle))))
+        for key, thread in _discover().items()
+    },
+    title="Paper threads",
+    doc=(
+        (
+            "Layouts of the living paper, one per yaml document under "
+            "``praxis/pillars/threads/``: the title block, which content generators run, "
+            "and the prose components the unified ``research/body.tex`` plugs in at its "
+            "hooks. Unset builds ``blind_watchmaking``."
+        )
+    ),
+)
 
 
 def resolve_thread(name=None) -> Thread:
@@ -83,9 +100,11 @@ def resolve_thread(name=None) -> Thread:
     key = name or DEFAULT_THREAD
     if isinstance(key, Thread):
         return key
-    if key not in THREAD_REGISTRY:
-        raise KeyError(f"Unknown thread {key!r}. Known: {sorted(THREAD_REGISTRY)}")
-    return THREAD_REGISTRY[key]
+    if key not in registry.namespace("threads"):
+        raise KeyError(
+            f"Unknown thread {key!r}. Known: {sorted(registry.namespace("threads"))}"
+        )
+    return registry.lookup("threads", key)
 
 
 def write_thread(thread: Thread) -> dict:

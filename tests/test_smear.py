@@ -25,10 +25,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.routers import ROUTER_REGISTRY
+from praxis import registry
 from praxis.routers.smear import SMEAR, MergedLinear, _get_param
 from praxis.routers.vear import VEAR
-from praxis.transforms.targeting import TARGET_PROFILES, discover_targets
+from praxis.transforms.targeting import discover_targets
 
 
 class Opaque(nn.Module):
@@ -100,7 +100,7 @@ def router_args(block, x, depth=0):
 
 def test_opaque_subtree_is_never_targeted():
     _, block = make()
-    groups, skipped = discover_targets(block, TARGET_PROFILES["all"])
+    groups, skipped = discover_targets(block, registry.lookup("target_profiles", "all"))
     names = {g.name for g in groups}
     assert not any(n.startswith("ffn.") or n == "ffn" for n in names)
     assert skipped["opaque"] == 2  # Opaque.big weight + bias
@@ -109,7 +109,7 @@ def test_opaque_subtree_is_never_targeted():
 def test_tied_parameters_are_merged_at_most_once():
     _, block = make()
     block.attn.output.weight = block.attn.qkv.weight  # tie by reference
-    groups, skipped = discover_targets(block, TARGET_PROFILES["all"])
+    groups, skipped = discover_targets(block, registry.lookup("target_profiles", "all"))
     flat = [p for g in groups for p in g.params]
     assert flat.count("attn.qkv.weight") + flat.count("attn.output.weight") == 1
     assert skipped["shared"] == 1
@@ -118,7 +118,7 @@ def test_tied_parameters_are_merged_at_most_once():
 def test_frozen_parameters_are_skipped():
     _, block = make()
     block.attn_norm.weight.requires_grad_(False)
-    _, skipped = discover_targets(block, TARGET_PROFILES["all"])
+    _, skipped = discover_targets(block, registry.lookup("target_profiles", "all"))
     assert skipped["frozen"] == 1
 
 
@@ -433,7 +433,7 @@ def test_registry_entries_build(key):
     cfg = Cfg()
     block = Block(cfg.hidden_size)
     cfg.num_experts = 4
-    router = ROUTER_REGISTRY[key](cfg, block=block, verbose=False)
+    router = registry.lookup("routers", key)(cfg, block=block, verbose=False)
     x = torch.randn(2, 5, cfg.hidden_size)
     out = router(*router_args(block, x))
     assert out[0].shape == x.shape

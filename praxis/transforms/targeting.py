@@ -40,6 +40,9 @@ from typing import Dict, List, Optional, Tuple
 import torch.nn as nn
 from torch.nn.parameter import UninitializedParameter
 
+from praxis import registry
+from praxis.registry import Entry
+
 # Below this many elements a factored delta costs MORE than storing the delta
 # outright (a rank-r factorization of [out, in] holds r * (out + in) numbers), so
 # small tensors - norm scales, residual gates, biases, kappa/mu - take the dense
@@ -87,25 +90,42 @@ class TargetGroup:
         return (self.name or "root").replace(".", "_")
 
 
-# Named profiles, registry-style. ``all`` is the principled default: merge
-# everything that carries a geometry and does not already route itself. The
-# narrower profiles exist to isolate where the gain (if any) comes from.
-TARGET_PROFILES: Dict[str, TargetSpec] = {
-    # Everything parameter-bearing that survives the structural exclusions
-    # above - i.e. every module that does not already route itself. The default.
-    "all": TargetSpec(),
-    # Attention only - the sublayer the standard MoE literature does NOT make
-    # sparse, so this is the honest test of whether it should be.
-    "attn": TargetSpec(include=(r"attn(\..*)?",)),
-    # Norms and residual gates only. Nearly free (a few hundred parameters per
-    # expert) and the cheapest possible probe of whether per-module routing
-    # buys anything at all.
-    "gates": TargetSpec(include=(r".*_norm(\..*)?", r".*_res(\..*)?")),
-    # Attention plus the norms/gates around it.
-    "attn_gates": TargetSpec(
-        include=(r"attn(\..*)?", r".*_norm(\..*)?", r".*_res(\..*)?")
+registry.declare(
+    "target_profiles",
+    doc=(
+        "Which modules a SMEAR router merges. ``all`` is the principled default: merge "
+        "everything that carries a geometry and does not already route itself. The "
+        "narrower profiles exist to isolate where the gain (if any) comes from."
     ),
-}
+    entries={
+        "all": Entry(
+            TargetSpec(),
+            (
+                "Everything parameter-bearing that survives the structural exclusions "
+                "- every module that does not already route itself. The default."
+            ),
+        ),
+        "attn": Entry(
+            TargetSpec(include=(r"attn(\..*)?",)),
+            (
+                "Attention only - the sublayer the standard MoE literature does not "
+                "make sparse, so this is the honest test of whether it should be."
+            ),
+        ),
+        "gates": Entry(
+            TargetSpec(include=(r".*_norm(\..*)?", r".*_res(\..*)?")),
+            (
+                "Norms and residual gates only. Nearly free (a few hundred parameters "
+                "per expert) and the cheapest possible probe of whether per-module "
+                "routing buys anything at all."
+            ),
+        ),
+        "attn_gates": Entry(
+            TargetSpec(include=(r"attn(\..*)?", r".*_norm(\..*)?", r".*_res(\..*)?")),
+            "Attention plus the norms and residual gates around it.",
+        ),
+    },
+)
 
 
 def _opaque_prefixes(root: nn.Module) -> List[str]:

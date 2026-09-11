@@ -39,7 +39,7 @@ class ExpertPool:
 
     Args:
         experts: initial experts (may be empty; peers can join later).
-        mixing: a ``MIXING_REGISTRY`` key for the inference combiner.
+        mixing: a ``mixing`` key for the inference combiner.
         sample_size: experts to sample per inference step (None = all alive).
         max_workers: thread pool size for non-blocking dispatch.
     """

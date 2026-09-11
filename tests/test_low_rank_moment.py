@@ -3,13 +3,10 @@
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.metrics.optimizer import extract_optimizer_dynamics
 from praxis.optimization.low_rank_moment import LowRankSecondMoment
-from praxis.optimization.wrappers import (
-    WRAPPER_REGISTRY,
-    SequentialWrapper,
-    wrappers_disable_schedule,
-)
+from praxis.optimization.wrappers import SequentialWrapper, wrappers_disable_schedule
 
 
 def _problem():
@@ -29,7 +26,7 @@ def _step(opt, model, X, Y):
 
 
 def test_registered_and_keeps_schedule():
-    assert "low_rank_moment" in WRAPPER_REGISTRY
+    assert "low_rank_moment" in registry.namespace("wrappers")
     assert wrappers_disable_schedule(["low_rank_moment"]) is False
 
 

@@ -6,7 +6,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from praxis import PraxisConfig
+from praxis import PraxisConfig, registry
 from praxis.policies import GRPO, REINFORCE, ChainOfThought
 
 
@@ -359,7 +359,6 @@ class TestPolicyIntegration:
 
     def test_policy_registry_completeness(self):
         """Test that all policies are registered."""
-        from praxis.policies import RL_POLICIES_REGISTRY
 
         expected_policies = {
             "reinforce": REINFORCE,
@@ -368,8 +367,8 @@ class TestPolicyIntegration:
         }
 
         for name, policy_class in expected_policies.items():
-            assert name in RL_POLICIES_REGISTRY
-            assert RL_POLICIES_REGISTRY[name] == policy_class
+            assert name in registry.namespace("rl_policies")
+            assert registry.lookup("rl_policies", name) == policy_class
 
 
 @pytest.mark.parametrize("policy_class", [REINFORCE, GRPO, ChainOfThought])

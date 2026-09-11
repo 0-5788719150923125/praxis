@@ -26,6 +26,7 @@ import argparse
 import os
 import sys
 
+from praxis import registry
 from praxis.pillars import (
     conjectures,
     datasets,
@@ -42,7 +43,7 @@ from praxis.pillars import (
     strands,
 )
 from praxis.pillars.geometries import RESEARCH_DIR
-from praxis.pillars.thread import THREAD_REGISTRY, resolve_thread, write_thread
+from praxis.pillars.thread import resolve_thread, write_thread
 
 _AUTHORS_TEX = os.path.join(RESEARCH_DIR, "authors.tex")
 # Bibliography data lives with the pillars; the build renders it into
@@ -218,7 +219,7 @@ def build_all(
 ):
     """Regenerate the selected thread's paper inputs. Returns per-step summaries.
 
-    ``thread`` is a THREAD_REGISTRY key (or Thread) naming the layout - the
+    ``thread`` is a ``threads`` key (or Thread) naming the layout - the
     title block, body prose, and which STEPS run; default is the Blind
     Watchmaker paper. ``model`` is the live training model (passed by
     PaperBuildCallback) used for snapshot figures that need populated forward
@@ -269,7 +270,7 @@ def main():
     ap.add_argument(
         "--title",
         default=None,
-        choices=sorted(THREAD_REGISTRY),
+        choices=sorted(registry.namespace("threads")),
         help="paper thread (layout) to build; default blind_watchmaking",
     )
     args = ap.parse_args()

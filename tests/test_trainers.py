@@ -1,15 +1,15 @@
 """Tests for the trainers module."""
 
 import math
+
 import pytest
 import torch
 from transformers import AutoTokenizer
 
-from praxis import PraxisConfig, PraxisForCausalLM
+from praxis import PraxisConfig, PraxisForCausalLM, registry
 from praxis.optimization import get_optimizer, get_optimizer_profile
 from praxis.schedulers import get_scheduler_func
 from praxis.trainers import (
-    TRAINER_REGISTRY,
     BackpropagationTrainer,
     create_trainer_with_module,
     try_compile,
@@ -232,18 +232,18 @@ class TestTrainerFactory:
 
     def test_trainer_registry(self):
         """Test that trainer registry contains expected trainers."""
-        assert "backpropagation" in TRAINER_REGISTRY
-        assert "mono_forward" in TRAINER_REGISTRY
-        assert "mono_forward_ray" in TRAINER_REGISTRY
+        assert "backpropagation" in registry.namespace("trainers")
+        assert "mono_forward" in registry.namespace("trainers")
+        assert "mono_forward_ray" in registry.namespace("trainers")
 
         # Test that backpropagation trainer is directly accessible
-        assert TRAINER_REGISTRY["backpropagation"] == BackpropagationTrainer
+        assert registry.lookup("trainers", "backpropagation") == BackpropagationTrainer
 
         # Both Mono-Forward profiles are lazy loaders so the package
         # (and Ray) only get imported when the profile is actually
         # selected.
-        assert callable(TRAINER_REGISTRY["mono_forward"])
-        assert callable(TRAINER_REGISTRY["mono_forward_ray"])
+        assert callable(registry.lookup("trainers", "mono_forward"))
+        assert callable(registry.lookup("trainers", "mono_forward_ray"))
 
 
 if __name__ == "__main__":

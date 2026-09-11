@@ -4,7 +4,7 @@ Confirms each registered encoding (rope, alibi, hope, nope) flows cleanly
 through both the segment loop and the segment-blocked path (block_ids set,
 which forces _local_attention_blocked instead of the fast flex_attention
 branch). The refactor moved positional encoding off hardcoded pos_type
-branches and onto the ENCODING_REGISTRY interface; these tests are the
+branches and onto the ``encoding`` interface; these tests are the
 guard that the move didn't drop a code path.
 """
 

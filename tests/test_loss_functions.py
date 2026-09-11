@@ -4,9 +4,9 @@ import pytest
 import torch
 from torch import nn
 
-from praxis.losses import LOSS_REGISTRY
+from praxis import registry
 
-LOSS_FUNCTIONS = list(LOSS_REGISTRY.values())
+LOSS_FUNCTIONS = list(registry.namespace("losses").values())
 
 
 @pytest.fixture(params=LOSS_FUNCTIONS)

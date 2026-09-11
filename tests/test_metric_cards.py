@@ -21,6 +21,7 @@ import re
 
 import pytest
 
+from praxis import registry
 from praxis.metrics.training_metrics import (
     COMPOSITE_METRIC_REGISTRY,
     TRAINING_METRIC_REGISTRY,
@@ -584,12 +585,13 @@ def test_dynamically_built_descriptions_respect_the_length_cap():
     written. Same 180-char cap, checked where the scan cannot reach."""
     import torch
 
-    from praxis.heads import HEAD_REGISTRY
     from praxis.losses.conflict import conflict_metric_descriptions
     from tests.test_prismatic8 import Cfg, Enc
 
     torch.manual_seed(0)
-    built = dict(HEAD_REGISTRY["prismatic9"](Cfg(), encoder=Enc())._arm_descriptions())
+    built = dict(
+        registry.lookup("heads", "prismatic9")(Cfg(), encoder=Enc())._arm_descriptions()
+    )
     built.update(
         conflict_metric_descriptions(
             ["conflict_mtp", "conflict_mag_mtp", "conflict_min"]

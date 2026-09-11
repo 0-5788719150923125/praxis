@@ -43,6 +43,7 @@ from typing import Any, Optional, Sequence, Tuple, Union
 from torch.nn import Module, PReLU
 from transformers.activations import ACT2CLS, ClassInstantier
 
+from praxis import registry
 from praxis.activations.jagged_sine import JaggedSine
 from praxis.activations.mixture import MIXTURE_MODES, ActivationMixture
 from praxis.activations.nmda import NMDA
@@ -55,6 +56,7 @@ from praxis.activations.sin import Sine
 from praxis.activations.sin_cos import SineCosine
 from praxis.activations.sinlu import SinLU
 from praxis.activations.snake import Snake
+from praxis.registry import Entry
 
 ACTIVATION_MAP = dict(
     jagged_sin=JaggedSine,
@@ -75,36 +77,62 @@ for k, v in ACTIVATION_MAP.items():
     ACT2CLS.update({k: v})
 
 ACT2FN = ClassInstantier(ACT2CLS)
-# Concrete nonlinearities only. Combination strategies are a separate axis
-# (ACTIVATION_TYPE_REGISTRY), which is what keeps this list uniform: every entry
-# here is something you can put in `values`.
-ACTIVATION_REGISTRY = dict(sorted(ACT2FN.items()))
+registry.declare(
+    "activations",
+    dict(sorted(ACT2FN.items())),
+    title="Activation functions",
+    doc=(
+        (
+            "Pointwise nonlinearities used inside blocks and heads. Concrete "
+            "nonlinearities only: how several combine at a gate is a separate axis "
+            "(``activation_types``), so every entry here is something you can put in "
+            "``values``. In a config file the value is a bare name or a mapping, ``{type, "
+            "values, linear}``: ``type`` says how the ``values`` combine (``single``, or "
+            "one of the learned mixtures), ``values`` lists activation names and may nest "
+            "further specs, and ``linear`` fills the linear half of a GLU or PEER gate."
+        )
+    ),
+)
 
 SINGLE: str = "single"
 
-# How the `values` combine at the gate. `single` is not a mixture at all - it is
-# the ordinary one-activation case, written in the same shape so that every
-# config has one shape.
-ACTIVATION_TYPE_REGISTRY: dict = {
-    SINGLE: "Use the one activation in `values`. The default.",
-    "mix": (
-        "Learned convex blend: softmax coefficients over the whole bank, one "
-        "set for the model (conv(F), arXiv:1801.09403)."
+# Each value is its own key, so a lookup returns the type's name.
+registry.declare(
+    "activation_types",
+    title="Activation combination types",
+    doc=(
+        (
+            "How the ``values`` of an activation combine at the gate. Declared as ``{type: "
+            "<one of these>, values: [<activations>]}``. ``single`` is not a mixture at "
+            "all - it is the ordinary one-activation case, written in the same shape so "
+            "that every config has one shape."
+        )
     ),
-    "mix_affine": (
-        "Learned affine blend: sum-to-one with the sign constraint dropped, so "
-        "it can subtract one value from another (aff(F), same paper)."
-    ),
-    "mix_gated": (
-        "Per-element blend whose coefficients are read off the input VALUE, so "
-        "the model routes between values by input regime."
-    ),
-    "mix_split": (
-        "Hard partition by an index the caller supplies (PEER passes each "
-        "element's position in the expert bank). Falls back to values[0] where "
-        "there is no index."
-    ),
-}
+    entries={
+        SINGLE: Entry(SINGLE, "Use the one activation in `values`. The default."),
+        "mix": Entry(
+            "mix",
+            "Learned convex blend: softmax coefficients over the whole bank, one "
+            "set for the model (conv(F), arXiv:1801.09403).",
+        ),
+        "mix_affine": Entry(
+            "mix_affine",
+            "Learned affine blend: sum-to-one with the sign constraint dropped, so "
+            "it can subtract one value from another (aff(F), same paper).",
+        ),
+        "mix_gated": Entry(
+            "mix_gated",
+            "Per-element blend whose coefficients are read off the input VALUE, so "
+            "the model routes between values by input regime.",
+        ),
+        "mix_split": Entry(
+            "mix_split",
+            "Hard partition by an index the caller supplies (PEER passes each "
+            "element's position in the expert bank). Falls back to values[0] where "
+            "there is no index.",
+        ),
+    },
+)
 
 ActivationSpec = Union[str, Mapping, Module, None]
 
@@ -169,17 +197,17 @@ def build_activation(spec: ActivationSpec, **kwargs: Any) -> Module:
 
     options = _as_spec(spec)
     name, values = options["type"], options["values"]
-    if name not in ACTIVATION_TYPE_REGISTRY:
+    if name not in registry.namespace("activation_types"):
         raise ValueError(
             f"Unknown activation type {name!r}. Known: "
-            f"{', '.join(ACTIVATION_TYPE_REGISTRY)}."
+            f"{', '.join(registry.namespace("activation_types"))}."
         )
     if name == SINGLE:
         if len(values) != 1:
             raise ValueError(
                 f"`type: single` takes exactly one value, got {list(values)}. "
                 f"Use a mixture type to combine several: "
-                f"{', '.join(n for n in ACTIVATION_TYPE_REGISTRY if n != SINGLE)}."
+                f"{', '.join(n for n in registry.namespace("activation_types") if n != SINGLE)}."
             )
         return _instantiate(values[0], **kwargs)
     return ActivationMixture(

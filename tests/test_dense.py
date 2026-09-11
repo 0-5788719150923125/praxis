@@ -3,10 +3,10 @@ from itertools import product
 import pytest
 import torch
 
-from praxis.dense import DENSE_REGISTRY
+from praxis import registry
 
 # Define test parameters
-MODULE_CLASSES = list(DENSE_REGISTRY.values())
+MODULE_CLASSES = list(registry.namespace("dense").values())
 HIDDEN_SIZES = [64, 256]
 
 # Create parameter combinations
@@ -50,9 +50,9 @@ def test_value_slot_activates_the_glus_linear_half():
     unchanged, and the two must match on parameter count so a swap between them
     is a clean one-variable change.
     """
-    import torch
     from types import SimpleNamespace
-    from praxis.dense import DENSE_REGISTRY
+
+    import torch
 
     cfg = SimpleNamespace(
         hidden_size=64, activation="serpent", epsilon=1e-5, dropout=0.0
@@ -63,8 +63,8 @@ def test_value_slot_activates_the_glus_linear_half():
         epsilon=1e-5,
         dropout=0.0,
     )
-    glu = DENSE_REGISTRY["glu"](cfg)
-    dual = DENSE_REGISTRY["glu"](dual_cfg)
+    glu = registry.lookup("dense", "glu")(cfg)
+    dual = registry.lookup("dense", "glu")(dual_cfg)
     x = torch.randn(2, 16, 64)
     with torch.no_grad():  # serpent carries lazy params until first forward
         glu(x)
@@ -85,9 +85,9 @@ def test_value_slot_activates_the_glus_linear_half():
 def test_peer_glu_value_branch_defaults_to_identity():
     """The `value` slot is opt-in: unfilled, peer_glu is byte-for-byte the old
     behaviour, so every config written before it is unaffected."""
-    import torch
     from types import SimpleNamespace
-    from praxis.dense import DENSE_REGISTRY
+
+    import torch
 
     cfg = SimpleNamespace(
         hidden_size=64,
@@ -104,12 +104,12 @@ def test_peer_glu_value_branch_defaults_to_identity():
         num_layers=1,
     )
     torch.manual_seed(0)
-    plain = DENSE_REGISTRY["peer_glu"](cfg)
+    plain = registry.lookup("dense", "peer_glu")(cfg)
     with torch.no_grad():
         plain(torch.zeros(1, 4, 64))
     assert plain.act_value is None
     torch.manual_seed(0)
-    dual = DENSE_REGISTRY["peer_glu"](
+    dual = registry.lookup("dense", "peer_glu")(
         cfg, activation={"type": "single", "values": [cfg.activation], "linear": "gelu"}
     )
     with torch.no_grad():
@@ -153,12 +153,11 @@ def test_peer_split_partitions_the_bank_by_expert():
     has to survive - otherwise this is `peer_dual` wearing a different name.
     """
     from praxis.activations.mixture import ActivationMixture
-    from praxis.dense import DENSE_REGISTRY
 
     torch.manual_seed(0)
-    plain = DENSE_REGISTRY["peer_glu"](_peer_cfg())
+    plain = registry.lookup("dense", "peer_glu")(_peer_cfg())
     torch.manual_seed(0)
-    split = DENSE_REGISTRY["peer_glu"](_peer_cfg(activation=SPLIT))
+    split = registry.lookup("dense", "peer_glu")(_peer_cfg(activation=SPLIT))
 
     assert isinstance(split.act, ActivationMixture)
     assert split.act.type_name == "mix_split" and split.act.wants_keys
@@ -174,7 +173,9 @@ def test_peer_split_partitions_the_bank_by_expert():
     # The configs in this line run `num_heads: 1`. A head-axis split would be
     # impossible there; an expert-index split is not.
     torch.manual_seed(0)
-    single = DENSE_REGISTRY["peer_glu"](_peer_cfg(num_heads=1, activation=SPLIT))
+    single = registry.lookup("dense", "peer_glu")(
+        _peer_cfg(num_heads=1, activation=SPLIT)
+    )
     single.eval()
     with torch.no_grad():
         assert single(x).shape == (2, 16, 64)
@@ -194,10 +195,9 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
     parameters and legitimately produces a different value per slot - an output
     comparison would fail for a reason that says nothing about the split.
     """
-    from praxis.dense import DENSE_REGISTRY
 
     torch.manual_seed(0)
-    m = DENSE_REGISTRY["peer_glu"](_peer_cfg(activation=SPLIT))
+    m = registry.lookup("dense", "peer_glu")(_peer_cfg(activation=SPLIT))
 
     # The same expert, reached from two different (head, rank) slots, must take
     # the same branch. Constructing indices directly isolates the partition
@@ -233,11 +233,10 @@ def test_peer_mix_routes_through_an_activation_bank():
     from types import SimpleNamespace
 
     from praxis.activations.mixture import ActivationMixture
-    from praxis.dense import DENSE_REGISTRY
 
     def build(name, num_heads=4, **kw):
         torch.manual_seed(0)
-        return DENSE_REGISTRY[name](_peer_cfg(num_heads), **kw)
+        return registry.lookup("dense", name)(_peer_cfg(num_heads), **kw)
 
     plain = build("peer_glu")
     mixed = build("peer_glu", activation=MIX)
@@ -268,8 +267,6 @@ def test_peer_activation_override_defaults_to_config():
     unaffected."""
     from types import SimpleNamespace
 
-    from praxis.dense import DENSE_REGISTRY
-
     cfg = SimpleNamespace(
         hidden_size=64,
         activation="gelu",
@@ -285,9 +282,9 @@ def test_peer_activation_override_defaults_to_config():
         num_layers=1,
     )
     torch.manual_seed(0)
-    default = DENSE_REGISTRY["peer_glu"](cfg)
+    default = registry.lookup("dense", "peer_glu")(cfg)
     torch.manual_seed(0)
-    explicit = DENSE_REGISTRY["peer_glu"](cfg, activation="gelu")
+    explicit = registry.lookup("dense", "peer_glu")(cfg, activation="gelu")
 
     x = torch.randn(2, 16, 64)
     default.eval()

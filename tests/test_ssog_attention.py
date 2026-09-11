@@ -5,8 +5,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from praxis import PraxisConfig
-from praxis.attention import ATTENTION_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.attention.ssog import SSOGAttention
 
 
@@ -20,7 +19,7 @@ def _module(**overrides):
 
 
 def test_registered_and_shapes():
-    assert ATTENTION_REGISTRY["ssog"] is SSOGAttention
+    assert registry.lookup("attention", "ssog") is SSOGAttention
     module, cfg = _module()
     assert cfg.num_queries == 1  # patch_config keeps the config honest
     x = torch.randn(3, 16, 64)

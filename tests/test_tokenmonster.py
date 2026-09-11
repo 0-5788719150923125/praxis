@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from praxis import registry
+
 pytest.importorskip("tokenmonster")
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -40,11 +42,11 @@ def tokenizer(tm):
 
 
 def test_registry_keys(tm):
-    from praxis.tokenizers import TOKENIZER_REGISTRY, VOCAB_SIZE_CHOICES
+    from praxis.tokenizers import VOCAB_SIZE_CHOICES
 
-    assert "tokenmonster" in TOKENIZER_REGISTRY
+    assert "tokenmonster" in registry.namespace("tokenizers")
     for key in tm.main.VARIANTS:
-        assert key in TOKENIZER_REGISTRY
+        assert key in registry.namespace("tokenizers")
     assert 8000 in VOCAB_SIZE_CHOICES
     assert 50256 in VOCAB_SIZE_CHOICES
 

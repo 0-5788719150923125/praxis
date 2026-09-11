@@ -1,9 +1,6 @@
-"""Optimization-related CLI arguments."""
+from praxis import registry
 
-from praxis import LOSS_REGISTRY, STRATEGIES_REGISTRY
-from praxis.optimization import OPTIMIZER_PROFILES
-from praxis.optimization.wrappers import WRAPPER_REGISTRY
-from praxis.tasks import TASK_WEIGHTER_REGISTRY
+"""Optimization-related CLI arguments."""
 
 
 class OptimizationGroup:
@@ -19,7 +16,7 @@ class OptimizationGroup:
         group.add_argument(
             "--optimizer",
             type=str,
-            choices=OPTIMIZER_PROFILES.keys(),
+            registry="optimizers",
             default="Lion",
             help="The optimizer profile to use",
         )
@@ -27,7 +24,7 @@ class OptimizationGroup:
         group.add_argument(
             "--loss-func",
             type=str,
-            choices=LOSS_REGISTRY.keys(),
+            registry="losses",
             default="cross_entropy",
             help="The loss function to use",
         )
@@ -35,7 +32,7 @@ class OptimizationGroup:
         group.add_argument(
             "--strategy",
             type=str,
-            choices=STRATEGIES_REGISTRY.keys(),
+            registry="strategies",
             default="naive",
             help="The multitask objective strategy to use for loss combination",
         )
@@ -44,10 +41,10 @@ class OptimizationGroup:
             "--task-weights",
             type=str,
             default=None,
-            choices=sorted(TASK_WEIGHTER_REGISTRY.keys()),
+            registry="task_weights",
             help=(
                 "Named per-task loss weighting strategy from "
-                "TASK_WEIGHTER_REGISTRY. Unset = identity (every task at 1.0). "
+                "the task_weights registry. Unset = identity (every task at 1.0). "
                 "Fixed variants use constant scalars; learnable variants use a "
                 "sigmoid-gated per-task parameter with an L2 anchor."
             ),
@@ -73,11 +70,11 @@ class OptimizationGroup:
             "--optimizer-wrappers",
             nargs="*",
             default=[],
-            choices=sorted(WRAPPER_REGISTRY.keys()),
+            registry="wrappers",
             metavar="WRAPPER",
             help=(
                 "Optimizer wrappers to stack, in order. Choices: "
-                + ", ".join(sorted(WRAPPER_REGISTRY.keys()))
+                + ", ".join(sorted(registry.namespace("wrappers").keys()))
                 + ". E.g. --optimizer-wrappers ortho gated_schedule_free"
             ),
         )

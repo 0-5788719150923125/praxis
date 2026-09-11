@@ -7,12 +7,10 @@ from typing import Dict, List, NamedTuple
 import pytest
 import torch
 
-from praxis import PraxisConfig
-from praxis.attention import ATTENTION_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.attention.causal import CausalAttention
-from praxis.encoding import ENCODING_REGISTRY
 
-MODULE_CLASSES = list(ATTENTION_REGISTRY.values())
+MODULE_CLASSES = list(registry.namespace("attention").values())
 
 # Full Cartesian product is ~22k cases; sample a stratified subset so every
 # module class still gets coverage but the suite finishes in seconds.
@@ -36,7 +34,7 @@ TEST_PARAMS = {
     "num_heads": [1, 2, 3],
     "num_queries": [1, 2],
     "k_heads": [None, 2],
-    "encodings": list(ENCODING_REGISTRY.keys()),
+    "encodings": list(registry.namespace("encoding").keys()),
     "kv_rank": [None, 1, 2],
     "memory": [False],  # True is currently failing in some instances
     "mega": [False, True],

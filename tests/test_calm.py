@@ -7,8 +7,7 @@ assertions. The smoke-test in the CALM README covers the latter.
 import pytest
 import torch
 
-from praxis import PraxisConfig, PraxisForCausalLM
-from praxis.encoders import ENCODER_REGISTRY
+from praxis import PraxisConfig, PraxisForCausalLM, registry
 from praxis.heads.energy import EnergyHead
 from praxis.losses.energy_score import energy_score_loss
 from praxis.metrics import compute_brier_lm
@@ -32,7 +31,7 @@ def _tiny_config(**overrides):
 
 
 def test_calm_in_encoder_registry():
-    assert "calm" in ENCODER_REGISTRY
+    assert "calm" in registry.namespace("encoders")
 
 
 def test_calm_forward_backward():
@@ -145,7 +144,7 @@ def test_calm_generate_aligns_unaligned_prompt():
 
 
 def test_calm_with_crystal_head():
-    # CALM borrows a HEAD_REGISTRY head as its token classifier. Crystal
+    # CALM borrows a ``heads`` registry head as its token classifier. Crystal
     # (which previously refused loss-owning encoders) now sizes to the VAE
     # decoder layout and trains through the reconstruction path.
     cfg = _tiny_config(head_type="crystal")
@@ -172,10 +171,9 @@ def test_harmonic_latent_head():
     # Drop-in sibling of FlowHead: same flow_loss/forward/sample surface, but the
     # flow lives in a compact harmonic coefficient space and synthesized latents
     # lie exactly in the harmonic subspace.
-    from praxis.heads.flow import LATENT_HEAD_REGISTRY
 
-    assert "harmonic" in LATENT_HEAD_REGISTRY
-    head = LATENT_HEAD_REGISTRY["harmonic"](
+    assert "harmonic" in registry.namespace("latent_heads")
+    head = registry.lookup("latent_heads", "harmonic")(
         cond_dim=32, noise_dim=0, latent_dim=16, hidden_dim=32, num_blocks=2
     )
     assert head.noise_dim == 16  # caller builds a latent-width start state
@@ -202,11 +200,11 @@ def test_calm_harmonic_head_trains():
     # the harmonic head trains through the shared flow loss path.
     import functools
 
-    from praxis.encoders import ENCODER_REGISTRY
-
     cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
-    orig = ENCODER_REGISTRY["calm_byte_flow"]
-    ENCODER_REGISTRY["calm_byte_flow"] = functools.partial(orig, head_kind="harmonic")
+    orig = registry.lookup("encoders", "calm_byte_flow")
+    registry.namespace("encoders")["calm_byte_flow"] = functools.partial(
+        orig, head_kind="harmonic"
+    )
     try:
         model = PraxisForCausalLM(cfg)
         model.train()
@@ -220,14 +218,14 @@ def test_calm_harmonic_head_trains():
             for p in model.encoder.energy_head.net.parameters()
         )
     finally:
-        ENCODER_REGISTRY["calm_byte_flow"] = orig
+        registry.namespace("encoders")["calm_byte_flow"] = orig
 
 
 def test_fixed_codec_deterministic_drop_in():
     # Fixed codec: deterministic encode (pure buffers), learned decode, zero KL.
-    from praxis.encoders.calm.codecs import CODEC_REGISTRY, FixedCodec
+    from praxis.encoders.calm.codecs import FixedCodec
 
-    assert CODEC_REGISTRY["fixed"] is FixedCodec
+    assert registry.lookup("codecs", "fixed") is FixedCodec
     c = FixedCodec(
         vocab_size=264,
         embed_dim=32,
@@ -256,11 +254,9 @@ def test_calm_fixed_codec_trains_single_stage():
     # the learned decoder trains against the stationary fixed latent.
     import functools
 
-    from praxis.encoders import ENCODER_REGISTRY
-
     cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
-    orig = ENCODER_REGISTRY["calm_byte_flow"]
-    ENCODER_REGISTRY["calm_byte_flow"] = functools.partial(
+    orig = registry.lookup("encoders", "calm_byte_flow")
+    registry.namespace("encoders")["calm_byte_flow"] = functools.partial(
         orig, codec_kind="fixed", ae_freeze_steps=0
     )
     try:
@@ -276,7 +272,7 @@ def test_calm_fixed_codec_trains_single_stage():
             for p in model.encoder.vae.dec_in.parameters()
         )
     finally:
-        ENCODER_REGISTRY["calm_byte_flow"] = orig
+        registry.namespace("encoders")["calm_byte_flow"] = orig
 
 
 def test_harmonic_codec_variants():
@@ -284,13 +280,12 @@ def test_harmonic_codec_variants():
     # variant is deterministic with no learnable encode params; serpent variant
     # adds a learned periodic nonlinearity (encode becomes learnable).
     from praxis.encoders.calm.codecs import (
-        CODEC_REGISTRY,
         HarmonicCodec,
         _harmonic_matrix,
         _separable_harmonic_matrix,
     )
 
-    assert CODEC_REGISTRY["harmonic"] is HarmonicCodec
+    assert registry.lookup("codecs", "harmonic") is HarmonicCodec
     # harmonic basis is orthonormal and deterministic
     h = _harmonic_matrix(20, 8)
     assert torch.allclose(h.T @ h, torch.eye(8), atol=1e-5)
@@ -321,9 +316,9 @@ def test_harmonic_codec_variants():
 def test_hybrid_codec_residual_learns():
     # Hybrid codec: fixed scaffold + a never-frozen learned residual. Starts at
     # the fixed scaffold (zero-init), and the residual gets reconstruction grad.
-    from praxis.encoders.calm.codecs import CODEC_REGISTRY, HybridCodec
+    from praxis.encoders.calm.codecs import HybridCodec
 
-    assert CODEC_REGISTRY["hybrid"] is HybridCodec
+    assert registry.lookup("codecs", "hybrid") is HybridCodec
     c = HybridCodec(
         vocab_size=264,
         embed_dim=32,
@@ -832,15 +827,17 @@ def test_linear_prior_recovers_linear_map():
 def test_energy_prior_registry_and_default():
     """linear is the default wherever the energy head is used; none disables;
     harmonic augments features with the sin/cos basis."""
-    from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, PRIOR_HARMONIC_FREQS
+    from praxis.heads.energy import PRIOR_HARMONIC_FREQS
 
-    assert set(ENERGY_PRIOR_REGISTRY) == {"none", "linear", "harmonic"}
+    assert set(registry.namespace("energy_priors")) == {"none", "linear", "harmonic"}
 
     enc = PraxisForCausalLM(_tiny_config()).encoder
     assert enc.energy_head.prior is not None  # default = linear
     assert enc.energy_head.prior.mode == "linear"
 
-    harm = ENERGY_PRIOR_REGISTRY["harmonic"](feature_dim=8, latent_dim=4, period=16)
+    harm = registry.lookup("energy_priors", "harmonic")(
+        feature_dim=8, latent_dim=4, period=16
+    )
     phi = harm.features(torch.randn(2, 5, 8), torch.arange(5))
     assert phi.shape == (2, 5, 8 + 2 * PRIOR_HARMONIC_FREQS)
 

@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.dense import DENSE_REGISTRY
+from praxis import registry
 
 
 class MultiTokenAttention(nn.Module):
@@ -189,7 +189,7 @@ class UniversalAttentionGate(nn.Module):
         super().__init__()
         self.num_queries: int = config.num_queries
         self.hidden_size: int = config.hidden_size
-        self.approximator: nn.Module = DENSE_REGISTRY.get("mlp")(
+        self.approximator: nn.Module = registry.namespace("dense").get("mlp")(
             config, activation=config.activation
         )
 

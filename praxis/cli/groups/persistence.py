@@ -30,7 +30,7 @@ class PersistenceGroup:
             "--save-every",
             type=int,
             default=256,
-            help="Save a checkpoint every N completed batches (default: 256)",
+            help="Save a checkpoint every N completed batches",
         )
 
         group.add_argument(

@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import DynamicCache
 
+from praxis import registry
 from praxis.attention.components import (
     GatedEMA,
     MultiTokenAttention,
@@ -20,8 +21,6 @@ from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.projections import LinearKeyValue, LinearQuery, LowRankKeyValue
 from praxis.attention.sparse_query import SparseQuery
 from praxis.attention.thc import TemporalHealthComplex
-from praxis.dense import DENSE_REGISTRY
-from praxis.encoding import ENCODING_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -158,7 +157,7 @@ class ModularAttention(nn.Module):
             self.core = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.encoding = ENCODING_REGISTRY[config.encoding](config)
+        self.encoding = registry.lookup("encoding", config.encoding)(config)
 
         # For Multi-Token Attention
         self.mta: Union[MultiTokenAttention, bool] = (

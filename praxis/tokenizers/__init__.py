@@ -2,14 +2,16 @@
 
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from transformers import AutoTokenizer, PreTrainedTokenizer
+
+from praxis import registry
+from praxis.registry import Entry
 
 from .base import PraxisTokenizerBase
 from .char_level import CharLevelTokenizer
 from .chat_templates import (
-    CHAT_FORMAT_REGISTRY,
     ChatFormat,
     apply_chat_format,
     chat_format_of,
@@ -29,17 +31,35 @@ except ImportError:
     ByteLevelTokenizer = None
 
 
-# Registry of named tokenizer implementations. Each entry is a callable
-# that accepts ``vocab_size=...`` and ``**kwargs``. BPE / unigram are
-# partials over StandardTokenizer so both names dispatch to the same
-# class with different training models.
-TOKENIZER_REGISTRY: Dict[str, Any] = {
-    "char_level": CharLevelTokenizer,
-    "bpe": partial(StandardTokenizer, tokenizer_type="bpe"),
-    "unigram": partial(StandardTokenizer, tokenizer_type="unigram"),
-}
+registry.declare(
+    "tokenizers",
+    title="Tokenizers",
+    doc=(
+        (
+            "Named tokenizer implementations. Each entry is a callable that takes "
+            "``vocab_size=...`` and keyword arguments; ``bpe`` and ``unigram`` dispatch to "
+            "the same ``StandardTokenizer`` with different training models, and "
+            "``byte_level`` is listed only when the byte-latent stack imports. Unset uses "
+            "``unigram``."
+        )
+    ),
+    entries={
+        "char_level": CharLevelTokenizer,
+        "bpe": Entry(
+            partial(StandardTokenizer, tokenizer_type="bpe"),
+            "``StandardTokenizer`` with a byte-pair-encoding model.",
+        ),
+        "unigram": Entry(
+            partial(StandardTokenizer, tokenizer_type="unigram"),
+            (
+                "``StandardTokenizer`` with a unigram language model. The default, "
+                "since unigram is the flavor with published pretrained checkpoints."
+            ),
+        ),
+    },
+)
 if HAS_BYTE_LEVEL:
-    TOKENIZER_REGISTRY["byte_level"] = ByteLevelTokenizer
+    registry.namespace("tokenizers").register("byte_level", ByteLevelTokenizer)
 
 # Valid --vocab-size values. Mutable on purpose: integrations that ship
 # pretrained vocabs (e.g. tokenmonster) extend this at import time, before
@@ -62,10 +82,9 @@ def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
     is incompatible; selection itself is now explicit.
     """
     try:
-        from praxis.encoders import ENCODER_REGISTRY
         from praxis.encoders.byte_latent import ByteLatentEncoder
 
-        encoder_cls = ENCODER_REGISTRY.get(encoder_type)
+        encoder_cls = registry.namespace("encoders").get(encoder_type)
         if encoder_cls is None:
             return False
         actual_cls = getattr(encoder_cls, "func", encoder_cls)
@@ -129,7 +148,7 @@ def create_tokenizer(
     chat_format: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
-    """Create a tokenizer instance from :data:`TOKENIZER_REGISTRY`.
+    """Create a tokenizer instance from the ``tokenizers`` registry.
 
     Dispatch is explicit: an unrecognized ``tokenizer_type`` is a hard
     error. When ``tokenizer_type`` is unset, defaults to
@@ -139,7 +158,7 @@ def create_tokenizer(
     override.
 
     ``chat_format`` selects an entry from
-    :data:`~praxis.tokenizers.chat_templates.CHAT_FORMAT_REGISTRY` and is
+    the ``chat_formats`` registry and is
     applied last, so it wins over whatever template the tokenizer class (or a
     hub download) installed. Unknown names are a hard error.
     """
@@ -149,10 +168,10 @@ def create_tokenizer(
     if tokenizer_type is None:
         tokenizer_type = DEFAULT_TOKENIZER
 
-    if tokenizer_type not in TOKENIZER_REGISTRY:
+    if tokenizer_type not in registry.namespace("tokenizers"):
         raise ValueError(
             f"Unknown tokenizer_type={tokenizer_type!r}. "
-            f"Valid choices: {sorted(TOKENIZER_REGISTRY)}"
+            f"Valid choices: {sorted(registry.namespace("tokenizers"))}"
         )
 
     if (
@@ -187,7 +206,7 @@ def create_tokenizer(
     # which control tokens exist is decided while the vocab is being built, and
     # byte_alphabet_size (hence the model's output head) is derived from it.
     # apply_chat_format still binds template + record afterwards.
-    factory = TOKENIZER_REGISTRY[tokenizer_type]
+    factory = registry.lookup("tokenizers", tokenizer_type)
     tokenizer = factory(vocab_size=vocab_size, chat_format=requested_format, **kwargs)
     apply_chat_format(tokenizer, requested_format)
     return tokenizer
@@ -242,9 +261,7 @@ __all__ = [
     "CharLevelTokenizer",
     "StandardTokenizer",
     # Registry
-    "TOKENIZER_REGISTRY",
     "DEFAULT_TOKENIZER",
-    "CHAT_FORMAT_REGISTRY",
     "ChatFormat",
     "apply_chat_format",
     "chat_format_of",

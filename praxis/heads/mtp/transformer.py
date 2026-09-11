@@ -6,8 +6,7 @@ Uses a full transformer block per depth — same as the original MTP implementat
 import torch
 import torch.nn as nn
 
-from praxis.blocks import BLOCK_REGISTRY
-from praxis.normalization import NORMALIZATION_REGISTRY
+from praxis import registry
 
 
 class TransformerMTPModule(nn.Module):
@@ -20,16 +19,16 @@ class TransformerMTPModule(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.norm_hidden = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_hidden = registry.lookup("normalization", config.norm_type)(
             config.hidden_size, eps=config.epsilon
         )
-        self.norm_embed = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_embed = registry.lookup("normalization", config.norm_type)(
             config.embed_size, eps=config.epsilon
         )
         self.projection = nn.Linear(
             config.hidden_size + config.embed_size, config.hidden_size, bias=False
         )
-        self.block = BLOCK_REGISTRY[config.block_type](config)
+        self.block = registry.lookup("blocks", config.block_type)(config)
 
     def forward(self, hidden_states, token_embeds, attention_mask):
         h = self.norm_hidden(hidden_states, mode="direct")

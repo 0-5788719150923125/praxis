@@ -15,7 +15,10 @@ nearest thing that runs, loudly, instead of dying mid-run.
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+from praxis import registry
+from praxis.registry import Alias, Entry
 
 DEFAULT_PRECISION = "float32"
 
@@ -42,7 +45,6 @@ class PrecisionProfile:
     # Cast the assembled model here. None leaves it in fp32, which is correct
     # for the mixed-precision profiles: their master weights are fp32.
     param_dtype: Optional[str] = None
-    note: str = ""
 
     @property
     def torch_dtype(self) -> Optional[Any]:
@@ -52,57 +54,87 @@ class PrecisionProfile:
         return None if self.param_dtype is None else getattr(torch, self.param_dtype)
 
 
-PRECISION_REGISTRY: Dict[str, PrecisionProfile] = {
-    "float64": PrecisionProfile(
-        name="float64",
-        lightning="64-true",
-        matmul="highest",
-        param_dtype="float64",
-        note="double precision end-to-end; ~1/64 throughput on consumer GPUs",
+registry.declare(
+    "precision",
+    title="Numeric precision",
+    doc=(
+        (
+            "Numeric precision for weights, gradients and matmul kernels. One setting "
+            "drives the dtype parameters are built in, the precision Lightning steps at "
+            "(which decides whether gradients are low-precision) and the float32 matmul "
+            "kernel policy, so the three cannot drift apart. A level the hardware cannot "
+            "honor is downgraded to the nearest one that runs, with a notice."
+        )
     ),
-    "float32": PrecisionProfile(
-        name="float32",
-        lightning="32-true",
-        matmul="high",
-        note="fp32 weights and gradients, TF32 matmul kernels where available",
-    ),
-    "bfloat16": PrecisionProfile(
-        name="bfloat16",
-        lightning="bf16-true",
-        matmul="high",
-        param_dtype="bfloat16",
-        note="weights, activations and gradients all in bf16",
-    ),
-    "float16": PrecisionProfile(
-        name="float16",
-        lightning="16-mixed",
-        matmul="high",
-        # Deliberately not "16-true": fp16 has no exponent headroom for
-        # gradients, so pure fp16 training needs loss scaling to survive.
-        # The mixed plugin gives fp16 compute with an fp32 master copy and a
-        # GradScaler; bf16 is the profile to reach for if you want the weights
-        # themselves halved.
-        note="fp16 compute with fp32 master weights and loss scaling",
-    ),
-}
+    entries={
+        "float64": Entry(
+            PrecisionProfile(
+                name="float64",
+                lightning="64-true",
+                matmul="highest",
+                param_dtype="float64",
+            ),
+            (
+                "Double precision end to end, with TF32 kernels off; roughly 1/64 the "
+                "throughput on consumer GPUs."
+            ),
+        ),
+        "float32": Entry(
+            PrecisionProfile(
+                name="float32",
+                lightning="32-true",
+                matmul="high",
+            ),
+            "fp32 weights and gradients, with TF32 matmul kernels where available.",
+        ),
+        "bfloat16": Entry(
+            PrecisionProfile(
+                name="bfloat16",
+                lightning="bf16-true",
+                matmul="high",
+                param_dtype="bfloat16",
+            ),
+            (
+                "Weights, activations and gradients all in bf16. On a CUDA device that "
+                "predates bf16 support it is downgraded to float16."
+            ),
+        ),
+        "float16": Entry(
+            PrecisionProfile(
+                name="float16",
+                # Deliberately not "16-true": fp16 has no exponent headroom for
+                # gradients, so pure fp16 training needs loss scaling to survive.
+                # The mixed plugin gives fp16 compute with an fp32 master copy and a
+                # GradScaler; bf16 is the profile to reach for if you want the weights
+                # themselves halved.
+                lightning="16-mixed",
+                matmul="high",
+            ),
+            (
+                "fp16 compute with fp32 master weights and loss scaling. Off CUDA it "
+                "is downgraded to bfloat16, since CPU fp16 kernels are largely "
+                "unimplemented."
+            ),
+        ),
+        # Shorthand people actually type; canonical names stay the keys above.
+        "fp64": Alias("float64"),
+        "64": Alias("float64"),
+        "double": Alias("float64"),
+        "fp32": Alias("float32"),
+        "32": Alias("float32"),
+        "tf32": Alias("float32"),
+        "full": Alias("float32"),
+        "bf16": Alias("bfloat16"),
+        "bfloat": Alias("bfloat16"),
+        "fp16": Alias("float16"),
+        "16": Alias("float16"),
+        "half": Alias("float16"),
+    },
+)
 
-# Shorthand people actually type. Canonical names stay the registry keys.
-PRECISION_ALIASES: Dict[str, str] = {
-    "fp64": "float64",
-    "64": "float64",
-    "double": "float64",
-    "fp32": "float32",
-    "32": "float32",
-    "tf32": "float32",
-    "full": "float32",
-    "bf16": "bfloat16",
-    "bfloat": "bfloat16",
-    "fp16": "float16",
-    "16": "float16",
-    "half": "float16",
-}
-
-PRECISION_CHOICES = sorted(PRECISION_REGISTRY) + sorted(PRECISION_ALIASES)
+PRECISION_CHOICES = sorted(registry.namespace("precision")) + sorted(
+    registry.namespace("precision").aliases()
+)
 
 
 def canonical_precision(name: Optional[str]) -> str:
@@ -110,11 +142,11 @@ def canonical_precision(name: Optional[str]) -> str:
     if name is None:
         return DEFAULT_PRECISION
     key = str(name).strip().lower().replace("-", "").replace("_", "")
-    key = PRECISION_ALIASES.get(key, key)
-    if key not in PRECISION_REGISTRY:
+    key = registry.namespace("precision").canonical(key)
+    if key not in registry.namespace("precision"):
         raise ValueError(
             f"Unknown precision '{name}'. Choose one of: "
-            + ", ".join(sorted(PRECISION_REGISTRY))
+            + ", ".join(sorted(registry.namespace("precision")))
         )
     return key
 
@@ -138,13 +170,13 @@ def resolve_precision(
     got bf16 is a different experiment, and the log is the only place that
     difference is recoverable after the fact.
     """
-    profile = PRECISION_REGISTRY[canonical_precision(name)]
+    profile = registry.lookup("precision", canonical_precision(name))
     on_cuda = str(device).startswith("cuda")
 
     def _swap(target: str, why: str) -> PrecisionProfile:
         if verbose:
             print(f"[INIT] {profile.name} unavailable ({why}); using {target}.")
-        return PRECISION_REGISTRY[target]
+        return registry.lookup("precision", target)
 
     if not on_cuda:
         # CPU kernels for fp16 are largely unimplemented ("addmm_impl_cpu_"
@@ -169,7 +201,8 @@ def apply_precision(profile: PrecisionProfile, verbose: bool = True) -> None:
     if verbose:
         print(
             f"[INIT] Precision: {profile.name} "
-            f"(trainer={profile.lightning}, matmul={profile.matmul}) - {profile.note}"
+            f"(trainer={profile.lightning}, matmul={profile.matmul}) - "
+            f"{registry.namespace("precision").describe(profile.name)}"
         )
 
 

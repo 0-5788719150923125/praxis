@@ -2,6 +2,7 @@
 
 import argparse
 
+from praxis import registry
 from praxis.integrations import IntegrationLoader
 
 
@@ -105,12 +106,11 @@ class IntegrationBridge:
         self.loader.print_summary()
 
     def _register_loss_functions(self):
-        """Register loss functions from integrations into Praxis LOSS_REGISTRY."""
+        """Register loss functions from integrations into the ``losses`` registry."""
         loss_functions = self.loader.get_loss_functions()
         if loss_functions:
-            from praxis.losses import LOSS_REGISTRY
 
-            LOSS_REGISTRY.update(loss_functions)
+            registry.namespace("losses").update(loss_functions)
 
     def get_loader(self):
         """Get the underlying integration loader."""

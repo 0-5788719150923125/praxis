@@ -4,7 +4,7 @@ fallback)."""
 
 import torch
 
-from praxis.losses import LOSS_REGISTRY
+from praxis import registry
 from praxis.losses.batchmode import (
     FLOOR,
     ModeBaselineCrossEntropyLoss,
@@ -126,8 +126,11 @@ def test_byte_latent_forward_with_mode_criterion():
 
 
 def test_metrics_and_registry():
-    assert LOSS_REGISTRY["mode_cross_entropy"] is ModeCrossEntropyLoss
-    assert LOSS_REGISTRY["mode_baseline_cross_entropy"] is ModeBaselineCrossEntropyLoss
+    assert registry.lookup("losses", "mode_cross_entropy") is ModeCrossEntropyLoss
+    assert (
+        registry.lookup("losses", "mode_baseline_cross_entropy")
+        is ModeBaselineCrossEntropyLoss
+    )
 
     crit = ModeCrossEntropyLoss()
     assert crit.training_metrics() == {}  # nothing before a forward

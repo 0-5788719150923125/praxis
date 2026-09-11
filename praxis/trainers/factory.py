@@ -4,6 +4,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
+from praxis import registry
+
 from .capabilities import get_trainer_capabilities
 
 
@@ -176,15 +178,14 @@ def create_trainer_with_module(
     Returns:
         Tuple of (trainer, training_module) where training_module is what gets passed to fit()
     """
-    from praxis.trainers import TRAINER_REGISTRY
     from praxis.trainers.trainer import Trainer
 
-    if trainer_type not in TRAINER_REGISTRY:
+    if trainer_type not in registry.namespace("trainers"):
         raise ValueError(
-            f"Unknown trainer type '{trainer_type}'. Available trainers: {list(TRAINER_REGISTRY.keys())}"
+            f"Unknown trainer type '{trainer_type}'. Available trainers: {list(registry.namespace("trainers").keys())}"
         )
 
-    trainer_class = TRAINER_REGISTRY[trainer_type]
+    trainer_class = registry.lookup("trainers", trainer_type)
     # Handle lazy loading functions
     if callable(trainer_class) and not isinstance(trainer_class, type):
         trainer_class = trainer_class()  # Call the lazy loader
@@ -225,7 +226,7 @@ def create_trainer_with_module(
         # and they silently ignore Lightning-specific keys
         # (accelerator, devices, precision, etc.). The only thing that
         # changes between the profiles is which trainer class
-        # ``TRAINER_REGISTRY`` resolved to above.
+        # the ``trainers`` registry resolved to above.
         merged: Dict[str, Any] = dict(trainer_params or {})
         merged["cache_dir"] = cache_dir
         if tokenizer is not None:

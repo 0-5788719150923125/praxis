@@ -145,7 +145,7 @@ def _license_epoch() -> Optional[str]:
     return match.group(1) if match else None
 
 
-# Display names for HEAD_REGISTRY keys whose prose noun isn't just the key.
+# Display names for ``heads`` keys whose prose noun isn't just the key.
 _HEAD_DISPLAY = {
     "prismatic3": "three-arm prismatic",
     "crystal_harmonic": "harmonic-crystal",

@@ -2,7 +2,7 @@
 
 A source knows how to walk one corner of the corpus (the wiki, run history,
 research notes, external links) and yield normalized items. New corpora plug
-in by subclassing ``KBSource`` and adding to ``KB_SOURCE_REGISTRY``.
+in by subclassing ``KBSource`` and adding to the ``kb_sources`` registry.
 """
 
 import json
@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+from praxis import registry
 from praxis.kb.item import KBItem
 
 # Repo root: praxis/kb/sources.py -> parents[2].
@@ -441,14 +442,14 @@ def _module_chart_metrics() -> List[tuple]:
     Modules (encoders, heads, ...) declare a ``metric_descriptions`` class attr
     that renders on the Dynamics tab via the scalar/snapshot manifest - they're
     not in the central registries. Discover them statically by walking every
-    ``*_REGISTRY`` praxis exposes and reading each registered class's attribute
-    (no model instantiation). Deduped by metric key.
+    registry namespace and reading each registered class's attribute (no model
+    instantiation). Deduped by metric key.
     """
     import functools
     import inspect
 
     try:
-        import praxis
+        spaces = registry.namespaces()
     except Exception:
         return []
 
@@ -461,13 +462,8 @@ def _module_chart_metrics() -> List[tuple]:
 
     out: dict = {}
     seen_titles = set()
-    for name in dir(praxis):
-        if not name.endswith("_REGISTRY"):
-            continue
-        registry = getattr(praxis, name, None)
-        if not isinstance(registry, dict):
-            continue
-        for value in registry.values():
+    for ns in spaces:
+        for value in ns.values():
             cls = resolve(value)
             descriptions = getattr(cls, "metric_descriptions", None) if cls else None
             if not isinstance(descriptions, dict):
@@ -655,13 +651,16 @@ class CodeSource(KBSource):
             )
 
 
-KB_SOURCE_REGISTRY = {
-    "docs": DocsSource,
-    "notes": NotesSource,
-    "runs": RunsSource,
-    "links": LinksSource,
-    "pages": PagesSource,
-    "cards": CardsSource,
-    "agents": AgentsSource,
-    "code": CodeSource,
-}
+registry.declare(
+    "kb_sources",
+    entries={
+        "docs": DocsSource,
+        "notes": NotesSource,
+        "runs": RunsSource,
+        "links": LinksSource,
+        "pages": PagesSource,
+        "cards": CardsSource,
+        "agents": AgentsSource,
+        "code": CodeSource,
+    },
+)

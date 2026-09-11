@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Optional
 
+from praxis import registry
 from praxis.heads.crystal import (
     CrystalClassifier,
     CrystalHead,
@@ -10,10 +11,11 @@ from praxis.heads.crystal import (
 from praxis.heads.forward import ForwardHead
 from praxis.heads.halo import HaloClassifier, HaloHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
-from praxis.heads.mtp import MTP_REGISTRY, MultiTokenPrediction
+from praxis.heads.mtp import MultiTokenPrediction
 from praxis.heads.parallel import ParallelHead, SurgicalParallelHead
 from praxis.heads.stacked import SequentialHead
 from praxis.heads.tied import TiedWeights
+from praxis.registry import Entry
 
 
 def _field(
@@ -188,106 +190,176 @@ def _prismatic8_branches() -> list:
     ]
 
 
-HEAD_REGISTRY = dict(
-    forward=ForwardHead,
-    tied=TiedWeights,
-    harmonic=HarmonicHead,
-    crystal=CrystalHead,
-    # Harmonic field feeding the crystal classifier, composed dynamically by
-    # SequentialHead: bare grid (off) or a fixed single oscillation (static).
-    crystal_harmonic=partial(SequentialHead, heads=_harmonic_crystal("off")),
-    crystal_harmonic_static=partial(SequentialHead, heads=_harmonic_crystal("static")),
-    # Prismatic: a top-level parallel split that makes the bias/variance axes two
-    # physical branches. Branch 0 is a harmonic field (learned but static
-    # envelope) read out by a plain linear head - the bias arm, a strong
-    # structural prior. Branch 1 refracts an input-conditional field (its
-    # envelope carries a per-sequence delta, identity at init) through the
-    # crystal distance classifier - the variance arm, the expressive one. A
-    # learned per-token gate weights the two logit streams, routing features to
-    # whichever arm explains them. Each arm emits its own Bias/Variance Strands
-    # card (#0 stays collapsed = bias; #1 separates as variance is learned):
-    #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
-    prismatic=partial(ParallelHead, branches=_prismatic2_branches()),
-    # Prismatic + a third, variance-only arm: a "pure" field (no static
-    # spectrum; the conditional delta alone, zero at init) with its own linear
-    # readout - the mirror of the bias arm. Variance can arrive in bins the
-    # bias arms never occupy; its strand card starts empty and grows pure red.
-    prismatic3=partial(ParallelHead, branches=_prismatic3_branches()),
-    # prismatic3 + level-repulsion on the gate: a pairwise log-gap penalty pushes
-    # the three arms' mean weights to DISTINCT tiers (e.g. 70/20/10) and punishes
-    # near-ties (70/15/15) where two arms become equally important. Watch the
-    # "Parallel Gate Min Gap" card. Strength is baked here, not a config flag.
-    prismatic3_repel=partial(
-        ParallelHead, branches=_prismatic3_branches(), gate_repulsion=0.02
+registry.declare(
+    "heads",
+    title="Output heads",
+    doc=(
+        (
+            "LM heads: untied and tied linear readouts, the harmonic field, the crystal "
+            "distance classifier, and the prismatic compositions of them, whose "
+            "gate-combined parallel arms split the bias and variance axes. Multi-token "
+            "prediction modules are a separate registry, ``mtp``."
+        )
     ),
-    # prismatic3 with the variance arm's crystal replaced by a VEAR-merged bank
-    # of CrystalClassifiers (CRYSTAL_BANK_SIZE geometries): discrete, unique
-    # output geometries voted per context. See CrystalVearHead, praxis/routers/vear.py.
-    prismatic4=partial(ParallelHead, branches=_prismatic4_branches()),
-    # prismatic4 + a fourth arm: the HALO hyperspherical distance classifier
-    # (praxis/heads/halo.py). Pair with loss_func: halo - the loss detects the
-    # arm and runs its honest composite mode (mixture CE for gate + other
-    # arms, pure HALO geometry for this arm). The parallel gate-share card for
-    # the last branch is the live verdict on whether HALO's scoring competes.
-    prismatic5=partial(ParallelHead, branches=_prismatic5_branches()),
-    # prismatic6: prismatic5's four arms cut to three, over ONE shared harmonic
-    # field carried as the ParallelHead stem instead of one field per arm.
-    # Reads as: Parallel(HarmonicField -> [CrystalSmearBank, Forward, Halo]).
-    # Drops the separate bias arm (gate share 0.029 and falling in -j) and the
-    # duplicate fields; keeps the two readouts the gate rewarded plus the HALO
-    # arm that loss_func: halo requires. Crystal bank merges by SMEAR
-    # (PRISMATIC6_SHARPEN = 1.0), so every geometry trains every step rather
-    # than the bank voting for one. The HALO arm is ATTACHED here (CE reaches
-    # it) rather than detached - the detached measurement is complete, so the
-    # arm is given a chance to be useful instead of only being measured.
-    prismatic6=partial(
-        ParallelHead,
-        stem=_field("input", fast_weights=True),
-        branches=_prismatic6_branches(PRISMATIC6_SHARPEN),
-    ),
-    # The control for the one design choice prismatic6 changes beyond arm count:
-    # identical, but the crystal bank keeps VEAR's discrete vote (sharpen=None
-    # -> VEAR_SHARPEN). Run this against prismatic6 to attribute any delta to
-    # the merge rather than to the shared stem.
-    prismatic6_vear=partial(
-        ParallelHead,
-        stem=_field("input", fast_weights=True),
-        branches=_prismatic6_branches(None),
-    ),
-    # prismatic7: prismatic6's arms, with the crystal bank merged the way the
-    # SMEAR paper merges - per EXAMPLE rather than on the batch mean, over one
-    # shared geometry plus low-rank deviations rather than N independent center
-    # sets. prismatic6 is already SMEAR in its exponent (sharpen 1.0) and in
-    # nothing else; those two are the rest of it. See CrystalSmearHead for why
-    # a batch mean makes a constant router the design's fixed point - which is
-    # what smear_input_dependence sitting near 0 through -m/-n/-p has been.
-    # Exactly identical to prismatic6 at initialization (LoRA init), so the
-    # swap is a clean A/B.
-    prismatic7=partial(
-        ParallelHead,
-        stem=_field("input", fast_weights=True),
-        branches=_prismatic7_branches(),
-    ),
-    # prismatic8: prismatic7 with the crystal bank collapsed to a single
-    # CrystalClassifier. The head keeps its three-way choice between geometric,
-    # direct and hyperspherical readouts; each arm is now a fixed function of
-    # the stem rather than one that re-picks its own geometry per example. See
-    # _prismatic8_branches for the argument and for the measurement that
-    # retired the bank.
-    prismatic8=partial(
-        ParallelHead,
-        stem=_field("input", fast_weights=True),
-        branches=_prismatic8_branches(),
-    ),
-    # prismatic9: prismatic8's exact three arms, trained differently. Each arm
-    # gets its OWN cross-entropy instead of the mixture's residual, and the
-    # trunk receives one PCGrad-combined gradient over those three objectives
-    # rather than their plain sum. The blend is unchanged and still makes every
-    # prediction; it just stops deciding how much each arm gets trained. See
-    # SurgicalParallelHead and the notes above _pcgrad in praxis/heads/parallel.py.
-    prismatic9=partial(
-        SurgicalParallelHead,
-        stem=_field("input", fast_weights=True),
-        branches=_prismatic8_branches(),
-    ),
+    entries={
+        "forward": ForwardHead,
+        "tied": TiedWeights,
+        "harmonic": HarmonicHead,
+        "crystal": CrystalHead,
+        "crystal_harmonic": Entry(
+            partial(SequentialHead, heads=_harmonic_crystal("off")),
+            (
+                "A harmonic field feeding the crystal distance classifier, composed by "
+                'SequentialHead. The field is the bare grid (``amp_modulation="off"``) '
+                "and is transform-only, so it allocates no dead classifier."
+            ),
+        ),
+        "crystal_harmonic_static": Entry(
+            partial(SequentialHead, heads=_harmonic_crystal("static")),
+            (
+                "crystal_harmonic with a fixed single oscillation on the field's "
+                'envelope (``amp_modulation="static"``).'
+            ),
+        ),
+        "prismatic": Entry(
+            partial(ParallelHead, branches=_prismatic2_branches()),
+            (
+                "A top-level parallel split that makes the bias and variance axes two "
+                "physical branches. Branch 0 is a harmonic field with a learned but "
+                "static envelope, read out by a plain linear head: the bias arm, a "
+                "strong structural prior. Branch 1 refracts an input-conditional field "
+                "(a per-sequence envelope delta, identity at init) through the crystal "
+                "distance classifier: the variance arm, the expressive one. A learned "
+                "per-token gate weights the two logit streams. Each arm emits its own "
+                "Bias/Variance Strands card; #0 stays collapsed and #1 separates as "
+                "variance is learned."
+            ),
+        ),
+        "prismatic3": Entry(
+            partial(ParallelHead, branches=_prismatic3_branches()),
+            (
+                "prismatic plus a third, variance-only arm: a ``pure`` field (no "
+                "static spectrum; the conditional delta alone, zero at init) with its "
+                "own linear readout, the mirror of the bias arm. Every arm carries "
+                "fast weights, a bounded test-time overlay on its spectrum. Variance "
+                "can arrive in bins the bias arms never occupy; the third arm's strand "
+                "card starts empty and grows pure red."
+            ),
+        ),
+        "prismatic3_repel": Entry(
+            partial(ParallelHead, branches=_prismatic3_branches(), gate_repulsion=0.02),
+            (
+                "prismatic3 with level repulsion on the gate: a pairwise log-gap "
+                "penalty (strength 0.02, fixed here rather than a flag) pushes the "
+                "three arms' mean weights to distinct tiers such as 70/20/10 and "
+                "punishes near-ties such as 70/15/15, where two arms become equally "
+                'important. Watch the "Parallel Gate Min Gap" card.'
+            ),
+        ),
+        "prismatic4": Entry(
+            partial(ParallelHead, branches=_prismatic4_branches()),
+            (
+                "prismatic3 with a VEAR-merged bank of CrystalClassifiers "
+                "(CRYSTAL_BANK_SIZE geometries) in place of the variance arm's single "
+                "crystal: sharpened routing votes a discrete output geometry per "
+                "context, and inter-expert repulsion keeps the geometries distinct. "
+                "See CrystalVearHead and praxis/routers/vear.py."
+            ),
+        ),
+        "prismatic5": Entry(
+            partial(ParallelHead, branches=_prismatic5_branches()),
+            (
+                "prismatic4 plus a fourth arm: the HALO hyperspherical distance "
+                "classifier (praxis/heads/halo.py), a direct branch on the trunk "
+                "features whose logits are detached in the gate blend, so it trains "
+                "purely under HALO while the gate learns whether to trust it. Pair "
+                "with ``loss_func: halo``: the loss detects the arm and runs its "
+                "composite mode (mixture CE for the gate and the other arms, pure HALO "
+                "geometry for this one). The last branch's gate-share card says "
+                "whether HALO's scoring competes."
+            ),
+        ),
+        "prismatic6": Entry(
+            partial(
+                ParallelHead,
+                stem=_field("input", fast_weights=True),
+                branches=_prismatic6_branches(PRISMATIC6_SHARPEN),
+            ),
+            (
+                "prismatic5's four arms cut to three over ONE shared harmonic field, "
+                "carried as the ParallelHead stem and evaluated once: "
+                "Parallel(HarmonicField -> [crystal bank, linear, HALO]). The arms "
+                "differ only in how they read the field. The plain linear readout is "
+                "the control that says whether the crystal geometry earns its cost, "
+                "and the HALO arm reads the raw trunk, attached so cross-entropy "
+                "reaches it; ``loss_func: halo`` requires it. The bank merges by SMEAR "
+                "(PRISMATIC6_SHARPEN = 1.0), so every geometry trains every step "
+                "rather than the bank voting for one."
+            ),
+        ),
+        "prismatic6_vear": Entry(
+            partial(
+                ParallelHead,
+                stem=_field("input", fast_weights=True),
+                branches=_prismatic6_branches(None),
+            ),
+            (
+                "prismatic6 with the crystal bank keeping VEAR's discrete vote "
+                "(``sharpen=None``, so VEAR_SHARPEN). The control for the one choice "
+                "prismatic6 makes beyond arm count: against prismatic6 it attributes "
+                "any delta to the merge rather than to the shared stem."
+            ),
+        ),
+        "prismatic7": Entry(
+            partial(
+                ParallelHead,
+                stem=_field("input", fast_weights=True),
+                branches=_prismatic7_branches(),
+            ),
+            (
+                "prismatic6's arms with the crystal bank merged the way the SMEAR "
+                "paper merges: per example rather than on the batch mean, over one "
+                "shared geometry plus low-rank deviations rather than N independent "
+                "center sets (CrystalSmearHead). A batch-mean merge makes a constant "
+                "router the design's fixed point, which ``smear_input_dependence`` "
+                "near 0 shows. Identical to prismatic6 at initialization (LoRA init) "
+                "and in its other two arms, so the swap is a clean A/B."
+            ),
+        ),
+        "prismatic8": Entry(
+            partial(
+                ParallelHead,
+                stem=_field("input", fast_weights=True),
+                branches=_prismatic8_branches(),
+            ),
+            (
+                "prismatic7 with the crystal bank collapsed to a single "
+                "CrystalClassifier reading the shared stem. The trunk has already "
+                "routed features at every level it offers - depth, residual, "
+                "attention, memory - so a classifier that also picks its own geometry "
+                "per example makes the last stage the least predictable one, which "
+                "defeats the point of a distance classifier. The three arms give the "
+                "head its choice; each arm is a fixed function of the stem, and "
+                "``causal_readout`` holds on the geometric arm. The other two arms "
+                "match prismatic7, so the comparison isolates the bank."
+            ),
+        ),
+        "prismatic9": Entry(
+            partial(
+                SurgicalParallelHead,
+                stem=_field("input", fast_weights=True),
+                branches=_prismatic8_branches(),
+            ),
+            (
+                "prismatic8's three arms, trained differently: each arm gets its own "
+                "cross-entropy instead of the mixture's residual, and the trunk "
+                "receives one PCGrad-combined gradient over those three objectives "
+                "rather than their plain sum. The blend is unchanged and still makes "
+                "every prediction; it stops deciding how much each arm is trained. The "
+                "cost is the division of labour: arms trained alone all learn the "
+                "whole task, and val NLL is where that shows. See SurgicalParallelHead "
+                "and _pcgrad in praxis/heads/parallel.py."
+            ),
+        ),
+    },
 )

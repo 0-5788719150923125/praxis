@@ -6,7 +6,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import yaml
 from flask import (
     Blueprint,
     Response,
@@ -17,6 +16,7 @@ from flask import (
     request,
 )
 
+from praxis.cli.annotated_config import reference_parser, render_annotated_config
 from praxis.cli.loaders.experiments import load_rendered_config
 from praxis.optimization import get_parameter_stats
 from praxis.utils import mask_git_url
@@ -171,10 +171,11 @@ def get_spec():
 
 @core_bp.route("/api/config", methods=["GET"])
 def get_config():
-    """Get current experiment configuration as YAML.
+    """Get current experiment configuration as annotated YAML.
 
-    Returns the active, running experiment config file from disk.
-    No parameters accepted - returns only the current published config.
+    Returns the active, running experiment config file from disk with its
+    `extends` chain resolved, each key documented from its CLI flag, and every
+    other flag listed at its default, commented out. No parameters accepted.
     """
     try:
         # Get the config file path from app config
@@ -212,21 +213,8 @@ def get_config():
 
         # Resolve `extends` chain so published config is fully rendered
         config_data = load_rendered_config(config_path)
-
-        def sort_dict_recursively(obj):
-            """Recursively sort dictionary keys alphabetically."""
-            if isinstance(obj, dict):
-                return {k: sort_dict_recursively(v) for k, v in sorted(obj.items())}
-            elif isinstance(obj, list):
-                return [sort_dict_recursively(item) for item in obj]
-            else:
-                return obj
-
-        sorted_config = sort_dict_recursively(config_data)
-
-        # Dump back to YAML with sorted keys
-        yaml_content = yaml.dump(
-            sorted_config, default_flow_style=False, sort_keys=False
+        yaml_content = render_annotated_config(
+            config_data, reference_parser(), config_path.stem
         )
 
         response = Response(yaml_content, mimetype="text/yaml")

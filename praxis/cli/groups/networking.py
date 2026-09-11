@@ -1,7 +1,5 @@
 """Networking-related CLI arguments."""
 
-from praxis.pillars.thread import THREAD_REGISTRY
-
 
 class NetworkingGroup:
     """Networking configuration arguments."""
@@ -46,11 +44,13 @@ class NetworkingGroup:
             nargs="*",
             default=None,
             metavar="KEY=VALUE",
+            choices=None,
+            registry="spider",
             help=(
                 "Enable the background web spider. Bare '--spider' uses the "
                 "gentle profile; KEY=VALUE entries override it, e.g. "
                 "'--spider profile=gentle tick_seconds=600 max_sites=8'. "
-                "See SPIDER_REGISTRY for profiles."
+                "See the spider registry for profiles."
             ),
         )
 
@@ -58,11 +58,11 @@ class NetworkingGroup:
             "--title",
             type=str,
             default=None,
-            choices=sorted(THREAD_REGISTRY),
+            registry="threads",
             help=(
                 "Paper thread (layout) the living paper builds: the title block, "
                 "master document, and which content generators run. "
-                "See THREAD_REGISTRY in praxis/pillars/thread.py."
+                "See the threads registry in praxis/pillars/thread.py."
             ),
         )
 

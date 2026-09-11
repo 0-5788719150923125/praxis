@@ -28,7 +28,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--master-port` | int | `None` | Port for distributed rendezvous on the rank-0 node (overrides MASTER_PORT env var) |
 | `--node-rank` | int | `None` | Rank of this node among all nodes (overrides NODE_RANK env var) |
 | `--num-nodes` | int | `1` | Number of nodes for distributed training |
-| `--precision` | str | `float32` | Numeric precision for weights, gradients and matmul kernels: float64 (double precision end-to-end; ~1/64 throughput on consumer GPUs); float32 (fp32 weights and gradients, TF32 matmul kernels where available); bfloat16 (weights, activations and gradients all in bf16); float16 (fp16 compute with fp32 master weights and loss scaling) (choices: bfloat16, float16, float32, float64, 16, 32, 64, bf16, bfloat, double, fp16, fp32, fp64, full, half, tf32) |
+| `--precision` | str | `float32` | Numeric precision for weights, gradients and matmul kernels. Common spellings (fp16, bf16, half, ...) resolve to these names (choices: bfloat16, float16, float32, float64, 16, 32, 64, bf16, bfloat, double, fp16, fp32, fp64, full, half, tf32) |
 
 ### persistence
 
@@ -43,7 +43,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture or a map of slots (gate/value/expert) - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
+| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
 | `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc, arc_dropoff, arc_dropoff_always, arc_single, arc_single_dropoff, arc_nomem, arc_single_nomem, arc_single_dropoff_nomem, arc_single_dropoff_always_nomem, kaleido, kaleido_dropoff, kaleido_dropoff_always, kaleido_pink, kaleido_pink_dropoff_always, kaleido_split, kaleido_split_dropoff_always, kaleido_pink_split_dropoff_always, kaleido_12_dropoff_always, kaleido_24_dropoff_always, kaleido_zoom_dropoff_always, kaleido_12_zoom_dropoff_always, kaleido_norm_dropoff_always, kaleido_12_norm_dropoff_always, kaleido_24_norm_dropoff_always, ssog, arc_ssog, arc_ssog_wide, arc_ssog_null) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
@@ -69,22 +69,22 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |
 | `--linear` | bool | `False` | Use a Linear (O(n)) attention mechanism |
-| `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
+| `--max-position-embeddings` | int | `None` | Maximum positional capacity (unset = the model config's own default) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
 | `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag, mag_standard, mag_energy_stitch, mag_energy_stitch_adaptive, mag_energy_stitch_gated, mag_standard_stitch, mag_energy_static, mag_energy) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
-| `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
+| `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: layer, cycle, final) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
 | `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv, vear, serpent_rnn, per_depth) |
 | `--norm-type` | str | `rms_norm` | The type of normalization to use (choices: none, layer_norm, rms_norm, post_rms_norm, sandwich, sandwich_tied, hero, hero_inverted) |
 | `--num-experts` | int | `1` | Number of experts per layer (1 = no MoE) |
 | `--num-heads` | int | `4` | Number of attention heads |
-| `--num-layers` | int | `2` | Number of layer components for controllers |
+| `--num-layers` | int | `2` | Number of distinct blocks in the decoder stack |
 | `--num-queries` | int | `2` | Number of queries per attention head (for GQA/MQA) |
-| `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
-| `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, isotropy_probe, activation, harmonic_kl, ouroboros_budget, dissonance, dissonance_probe) |
+| `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
+| `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all) (choices: contrastive_isotropy, isotropy_probe, activation, harmonic_kl, ouroboros_budget, dissonance, dissonance_probe) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper, rezero, smear) |
 | `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, arc_mixture, smear, vear, smear_batch, smear_token, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |
@@ -92,9 +92,9 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--stickbreaking` | bool | `False` | Use a Stickbreaking Attention mechanism |
 | `--target-batch-size` | int | `256` | The actual batch size to use, including accumulation steps |
 | `--tie-weights` | bool | `False` | Tie embedding and output projection weights to reduce parameters |
-| `--transform-type` | str | `none` | Model-transform profile: walk the module tree and rewrite the matched parameters in place. `tie_*` stores 1/d of a weight and derives the rest by fixed signed permutation (default none) (choices: none, ghost_conv_complex, ghost_conv_quaternion, ghost_conv_random, ghost_mtp_complex, ghost_mtp_random, ghost_all_complex, ghost_all_quaternion, ghost_all_random, ghost_all_auto, ghost_all_greedy_complex) |
+| `--transform-type` | str | `none` | Model-transform profile: walk the module tree and rewrite the matched parameters in place. `tie_*` stores 1/d of a weight and derives the rest by fixed signed permutation (choices: none, ghost_conv_complex, ghost_conv_quaternion, ghost_conv_random, ghost_mtp_complex, ghost_mtp_random, ghost_all_complex, ghost_all_quaternion, ghost_all_random, ghost_all_auto, ghost_all_greedy_complex) |
 | `--vocab-size` | int | `16384` | The absolute vocab size to use, though some architectures might scale it differently (choices: 1024, 2048, 4096, 8000, 8192, 16000, 16384, 24000, 32000, 32768, 40000, 50256, 65536, 100256) |
-| `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (default none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight, helical_sparse, helical_sparse_tight) |
+| `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight, helical_sparse, helical_sparse_tight) |
 | `--window-size` | int | `None` | Sliding window size for attention (None = full attention). Only used with hex attention. |
 
 ### training
@@ -121,9 +121,9 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mode_cross_entropy, mode_baseline_cross_entropy, mile, stablemax, contrastive_token, halo, cut_cross_entropy) |
 | `--no-mask-prompts` | bool | `False` | Drop the assistant_mask before composing loss weights so every token contributes (the pre-2bc2cd4 language-modeling objective). Default off, meaning prompts are masked. Useful for small models that lack the capacity for the SFT-style prompt-conditional split. |
 | `--optimizer` | str | `Lion` | The optimizer profile to use (choices: AdamW, Lion, MARS, Muon, MuonGeo, LionGeo, Prodigy) |
-| `--optimizer-wrappers` |  | `[]` | Optimizer wrappers to stack, in order. Choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free. E.g. --optimizer-wrappers ortho gated_schedule_free (choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free) |
+| `--optimizer-wrappers` |  | `[]` | Optimizer wrappers to stack, in order. Choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free. E.g. --optimizer-wrappers ortho gated_schedule_free (choices: trac, ortho, lookahead, schedule_free, gated_schedule_free, wave_schedule_free, half_lion, low_rank_moment) |
 | `--strategy` | str | `naive` | The multitask objective strategy to use for loss combination (choices: naive, real_time, weighted, weighted_clamped, capped) |
-| `--task-weights` | str | `None` | Named per-task loss weighting strategy from TASK_WEIGHTER_REGISTRY. Unset = identity (every task at 1.0). Fixed variants use constant scalars; learnable variants use a sigmoid-gated per-task parameter with an L2 anchor. (choices: bias_pretrain, difficulty_bias_pretrain, flat, learnable_bias_pretrain) |
+| `--task-weights` | str | `None` | Named per-task loss weighting strategy from the task_weights registry. Unset = identity (every task at 1.0). Fixed variants use constant scalars; learnable variants use a sigmoid-gated per-task parameter with an L2 anchor. (choices: flat, bias_pretrain, learnable_bias_pretrain, difficulty_bias_pretrain) |
 
 ### networking
 
@@ -133,8 +133,8 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--donations` | str | `https://buymeacoffee.com/vectorrent` | URL the web app's donations icon links to (empty string hides it) |
 | `--host-name` | str | `localhost` | Serve the local API at this CNAME |
 | `--port` | int | `2100` | Serve the local API at this port |
-| `--spider` | str | `None` | Enable the background web spider. Bare '--spider' uses the gentle profile; KEY=VALUE entries override it, e.g. '--spider profile=gentle tick_seconds=600 max_sites=8'. See SPIDER_REGISTRY for profiles. |
-| `--title` | str | `None` | Paper thread (layout) the living paper builds: the title block, master document, and which content generators run. See THREAD_REGISTRY in praxis/pillars/thread.py. (choices: blind_watchmaking, good_get_gooder) |
+| `--spider` | str | `None` | Enable the background web spider. Bare '--spider' uses the gentle profile; KEY=VALUE entries override it, e.g. '--spider profile=gentle tick_seconds=600 max_sites=8'. See the spider registry for profiles. |
+| `--title` | str | `None` | Paper thread (layout) the living paper builds: the title block, master document, and which content generators run. See the threads registry in praxis/pillars/thread.py. (choices: blind_watchmaking, good_get_gooder) |
 
 ### data
 
@@ -166,11 +166,11 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--chat-format` | str | `None` | Chat format from CHAT_FORMAT_REGISTRY. The entry owns the turn boundaries, the assistant mask, the halting contract and the tool-call layout as one unit. Unset = 'default' (ChatML). (choices: default, hf_native, prose) |
+| `--chat-format` | str | `None` | Chat format from the chat_formats registry. The entry owns the turn boundaries, the assistant mask, the halting contract and the tool-call layout as one unit. Unset = 'default' (ChatML). (choices: default, prose, hf_native) |
 | `--tokenizer-num-examples` | int | `5000000` | The number of examples to use for tokenizer training |
 | `--tokenizer-train-type` | str | `unigram` | The type of tokenizer to train (choices: bpe, unigram) |
 | `--tokenizer-train-vocab-size` | int | `16384` | The vocab size for tokenizer training (choices: 1024, 2048, 4096, 8192, 16384, 32768, 65536) |
-| `--tokenizer-type` | str | `None` | Tokenizer implementation from TOKENIZER_REGISTRY. Unset = default ('unigram'). (choices: bpe, byte_level, char_level, tokenmonster, tokenmonster:code-consistent, tokenmonster:english-clean, tokenmonster:englishcode-consistent, unigram) |
+| `--tokenizer-type` | str | `None` | Tokenizer implementation from the tokenizers registry. Unset = default ('unigram'). (choices: char_level, bpe, unigram, byte_level, tokenmonster, tokenmonster:english-clean, tokenmonster:englishcode-consistent, tokenmonster:code-consistent) |
 | `--train-tokenizer` | bool | `False` | Train a new tokenizer and exit (shortcut mode) |
 
 ### other

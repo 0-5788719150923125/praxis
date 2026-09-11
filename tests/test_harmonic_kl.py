@@ -8,8 +8,9 @@ import pytest
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.losses.harmonic_kl import KL_WEIGHT, MAX_POSITIONS, HarmonicKLRegularizer
-from praxis.losses.regularizers import REGULARIZER_REGISTRY, build_regularizers
+from praxis.losses.regularizers import build_regularizers
 
 
 def _readout(vocab=17, dim=8, bias=True):
@@ -39,7 +40,7 @@ def _hidden(b=2, t=6, dim=8):
 
 
 def test_registered_and_not_default():
-    assert REGULARIZER_REGISTRY["harmonic_kl"] is HarmonicKLRegularizer
+    assert registry.lookup("regularizers", "harmonic_kl") is HarmonicKLRegularizer
     # Opt-in only: a default build must not pull it in.
     names = [r.name for r in build_regularizers(None)]
     assert "harmonic_kl" not in names

@@ -28,8 +28,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
+from praxis import registry
 from praxis.activations import build_activation, harmonic_spectrum
-from praxis.normalization import NORMALIZATION_REGISTRY
 
 # Cyclic window width over the expert pool. 3 = your "N-1 over 4" layout; fixed
 # and model-agnostic (adjacent depths overlap by window-1 experts).
@@ -58,10 +58,10 @@ class _HarmonicExpert(nn.Module):
 
     def __init__(self, config) -> None:
         super().__init__()
-        self.norm_hidden = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_hidden = registry.lookup("normalization", config.norm_type)(
             config.hidden_size, eps=config.epsilon
         )
-        self.norm_embed = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_embed = registry.lookup("normalization", config.norm_type)(
             config.embed_size, eps=config.epsilon
         )
         self.projection = nn.Linear(

@@ -7,6 +7,7 @@ import torch.nn as nn
 from cut_cross_entropy import linear_cross_entropy
 from torch import Tensor
 
+from praxis import registry
 from praxis.integrations.base import BaseIntegration
 
 
@@ -64,11 +65,10 @@ def register_loss_functions():
     """Register cut_cross_entropy loss function with Praxis.
 
     This function is called by the integration loader to register
-    the loss function with the LOSS_REGISTRY.
+    the loss function with the ``losses`` registry.
     """
-    from praxis.losses import LOSS_REGISTRY
 
-    LOSS_REGISTRY["cut_cross_entropy"] = CutCrossEntropyLoss
+    registry.register("losses", "cut_cross_entropy", CutCrossEntropyLoss)
 
     return {
         "cut_cross_entropy": CutCrossEntropyLoss,

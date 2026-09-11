@@ -34,9 +34,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import UninitializedParameter
 
+from praxis import registry
 from praxis.activations import build_activation, harmonic_spectrum
 from praxis.heads.mtp.vear import _hoyer
-from praxis.normalization import NORMALIZATION_REGISTRY
 
 
 class SerpentRNNMTPBank(nn.Module):
@@ -46,10 +46,10 @@ class SerpentRNNMTPBank(nn.Module):
         super().__init__()
         self.num_depths = num_depths
         hidden, embed = config.hidden_size, config.embed_size
-        self.norm_hidden = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_hidden = registry.lookup("normalization", config.norm_type)(
             hidden, eps=config.epsilon
         )
-        self.norm_embed = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_embed = registry.lookup("normalization", config.norm_type)(
             embed, eps=config.epsilon
         )
         # Zero-init: every depth starts as the same function; specialization is
@@ -60,7 +60,7 @@ class SerpentRNNMTPBank(nn.Module):
         # The harmonic nonlinearity - the same activation the codec, memory,
         # and head use.
         self.act = build_activation(config.activation)
-        self.norm_out = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_out = registry.lookup("normalization", config.norm_type)(
             hidden, eps=config.epsilon
         )
         # Rolling per-depth gate means (buffer, not python state: indexed

@@ -1,7 +1,7 @@
 """Coverage guards for the auto-docs generator.
 
-The failure these catch is silent: a new namespace lands in
-``praxis/__init__.py`` and nothing in ``docs/`` ever mentions it.
+The failure these catch is silent: a registry namespace a reader can select, or
+a new package, that nothing in ``docs/`` ever mentions.
 """
 
 from pathlib import Path
@@ -9,25 +9,24 @@ from pathlib import Path
 import praxis
 from praxis.docs import (
     INFRASTRUCTURE_PACKAGES,
-    _registries,
-    _registry_attr,
+    page_slug,
+    registry_pages,
     undocumented_registries,
 )
 
 REPO_ROOT = Path(praxis.__file__).resolve().parent.parent
 
 
-def test_every_exported_registry_is_documented():
+def test_every_selectable_namespace_has_a_page():
     missing = undocumented_registries()
     assert not missing, (
-        "registries exported from praxis/__init__.py with no docs page: "
-        f"{missing}. Add them to praxis.docs._registries(), or waive them in "
-        "_REGISTRY_WAIVERS."
+        "registry namespaces bound to a CLI flag with no docs page: "
+        f"{missing}. Give each one a title (and doc) where it is declared."
     )
 
 
 def test_every_package_is_a_registry_page_or_infrastructure():
-    slugs = {slug for slug, *_ in _registries()}
+    slugs = {page_slug(ns) for ns in registry_pages()}
     infra = {slug for slug, _ in INFRASTRUCTURE_PACKAGES}
     packages = {
         p.name
@@ -41,6 +40,6 @@ def test_every_package_is_a_registry_page_or_infrastructure():
     )
 
 
-def test_registry_attr_resolves_for_every_page():
-    for slug, _title, registry, *_ in _registries():
-        assert _registry_attr(slug, registry) != "(unnamed)", slug
+def test_every_page_names_its_declaring_module():
+    for ns in registry_pages():
+        assert ns.module and ns.module.startswith("praxis"), ns.name

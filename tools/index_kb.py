@@ -16,9 +16,11 @@ import argparse
 import sys
 from pathlib import Path
 
+from praxis import registry
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from praxis.kb import DEFAULT_DB_PATH, KB_SOURCE_REGISTRY, KBIndex
+from praxis.kb import DEFAULT_DB_PATH, KBIndex
 
 
 def main() -> int:
@@ -26,7 +28,7 @@ def main() -> int:
     parser.add_argument(
         "--sources",
         nargs="+",
-        choices=list(KB_SOURCE_REGISTRY),
+        choices=list(registry.namespace("kb_sources")),
         help="Sources to index (default: all).",
     )
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Index DB path.")

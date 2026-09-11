@@ -25,10 +25,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from praxis import PraxisConfig
+from praxis import PraxisConfig, registry
 from praxis.containers.loss import LossContainer
 from praxis.heads.forward import ForwardHead
-from praxis.losses import LOSS_REGISTRY, compute_layer_wise_loss
+from praxis.losses import compute_layer_wise_loss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.strategies.naive import NaiveSummation
 
@@ -55,7 +55,7 @@ def test_compute_layer_wise_loss_plain_cross_entropy_backprops():
     config = _toy_config()
 
     head = ForwardHead(config)
-    criterion = LOSS_REGISTRY["cross_entropy"](vocab_size=config.vocab_size)
+    criterion = registry.lookup("losses", "cross_entropy")(vocab_size=config.vocab_size)
 
     batch, seq_len = 2, 8
     hidden_states = torch.randn(batch, seq_len, config.hidden_size, requires_grad=True)

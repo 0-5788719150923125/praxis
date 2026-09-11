@@ -3,6 +3,8 @@
 import os
 import random
 
+from praxis import registry
+
 _FIRST_AUTHOR = "Ryan J. Brooks"
 
 
@@ -45,11 +47,11 @@ def build_training_callbacks(
         EngagementLiveRewardCallback,
         HarmonicWeightRLCallback,
         HostMemoryCallback,
-        StallWatchdogCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
         PaperBuildCallback,
         PeriodicEvaluation,
+        StallWatchdogCallback,
         TerminalInterface,
     )
     from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
@@ -95,10 +97,9 @@ def build_training_callbacks(
         # two owns trainer.accumulate_grad_batches.
         governor = getattr(cfg, "governor", None)
         if governor:
-            from praxis.governors import GOVERNOR_REGISTRY
 
             callbacks.append(
-                GOVERNOR_REGISTRY[governor](
+                registry.lookup("governors", governor)(
                     batch_size=hparams["batch_size"] * cfg.num_nodes,
                     target_batch_size=hparams["target_batch_size"],
                     # Validation cadence in optimizer steps: the governor owns
@@ -144,17 +145,13 @@ def build_training_callbacks(
     # experiment sets only rl_type, not a soup of rl_* flags. Driven here from the
     # training loop, not the forward pass. Ordered before MetricsLogger so the
     # rl_* scalars are in callback_metrics when MetricsLogger drains them.
-    from praxis.policies import (
-        RL_POLICIES_REGISTRY,
-        get_rl_profile,
-        normalize_rl_types,
-    )
+    from praxis.policies import get_rl_profile, normalize_rl_types
 
     for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
         _rl_profile = get_rl_profile(rl_name)
         if _rl_profile is None:
             continue  # forward-path policy; built inside the model, not here
-        rl_policy = RL_POLICIES_REGISTRY[_rl_profile["policy"]](config)
+        rl_policy = registry.lookup("rl_policies", _rl_profile["policy"])(config)
 
         # Profile supplies the defaults; an explicit rl_* config key still wins.
         def _rl(key, cast, _p=_rl_profile):

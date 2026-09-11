@@ -2,16 +2,17 @@
 
 import argparse
 
+from praxis import registry
+
 
 # Auto-register the neural controller when module is imported
 def _register_controller():
     """Register neural controller in the global registry."""
     try:
-        from praxis.controllers import CONTROLLER_REGISTRY
 
         from .neural import NeuralController
 
-        CONTROLLER_REGISTRY["neural"] = NeuralController
+        registry.register("controllers", "neural", NeuralController)
     except ImportError:
         # Fallback for when imported directly
         import os
@@ -22,9 +23,7 @@ def _register_controller():
         try:
             from neural import NeuralController
 
-            from praxis.controllers import CONTROLLER_REGISTRY
-
-            CONTROLLER_REGISTRY["neural"] = NeuralController
+            registry.register("controllers", "neural", NeuralController)
         except ImportError:
             # Silently fail if registry not available yet
             pass

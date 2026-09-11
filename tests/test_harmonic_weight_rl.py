@@ -7,8 +7,8 @@ import pytest
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.callbacks.lightning import HarmonicWeightRLCallback
-from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
 
 
@@ -37,7 +37,7 @@ class _PL:
 
 
 def test_registered_in_rl_registry():
-    assert RL_POLICIES_REGISTRY["harmonic_weight"] is HarmonicWeightPolicy
+    assert registry.lookup("rl_policies", "harmonic_weight") is HarmonicWeightPolicy
     assert HarmonicWeightPolicy.is_weight_controller is True
 
 

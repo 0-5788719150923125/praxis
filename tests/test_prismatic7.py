@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.heads import HEAD_REGISTRY
+from praxis import registry
 from praxis.heads.crystal import CrystalSmearHead, CrystalVearHead
 
 
@@ -42,8 +42,10 @@ def make(cls=CrystalSmearHead, n=4):
 
 
 def test_registered_and_distinct_from_prismatic6():
-    assert "prismatic7" in HEAD_REGISTRY
-    assert HEAD_REGISTRY["prismatic7"] is not HEAD_REGISTRY["prismatic6"]
+    assert "prismatic7" in registry.namespace("heads")
+    assert registry.lookup("heads", "prismatic7") is not registry.lookup(
+        "heads", "prismatic6"
+    )
 
 
 def test_deviations_are_exactly_zero_at_init():

@@ -41,7 +41,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Core
 
 - **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L77))
-- **GET** `/api/config` - Get current experiment configuration as YAML. ([source](../praxis/web/routes/core.py#L172))
+- **GET** `/api/config` - Get current experiment configuration as annotated YAML. ([source](../praxis/web/routes/core.py#L172))
 - **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L94))
 - **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L101))
 

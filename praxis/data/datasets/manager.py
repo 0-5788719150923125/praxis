@@ -12,7 +12,7 @@ from praxis.data.datasets.novelty import NoveltyTracker
 from praxis.data.formatters import _rl_logger
 from praxis.logging.data_metrics_logger import DataMetricsLogger
 
-# Valid weighting modes (kept in sync with SAMPLER_REGISTRY).
+# Valid weighting modes (kept in sync with the ``samplers`` registry).
 WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "tasker", "uniform")
 
 # Sequence-multiplier tiers: (multiplier, per-batch chance), highest first.

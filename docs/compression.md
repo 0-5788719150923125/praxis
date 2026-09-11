@@ -3,7 +3,9 @@
 
 Strategies for reducing sequence length between layers.
 
-Registry: ``praxis.COMPRESSION_REGISTRY`` (3 entries)
+Namespace: ``registry.namespace("compression")``, declared in ``praxis.compression`` (3 entries)
+
+Selected with ``--compression-type`` (default: ``none``).
 
 ## `linear`, `nearest` - SequenceInterpolation
 
@@ -21,8 +23,8 @@ Uses torch.nn.functional.interpolate for ...
 Source: [praxis/compression/sequence_interpolation.py:14](../praxis/compression/sequence_interpolation.py#L14)
 
 Presets:
-- `linear` - `factor=0.9, method='linear'`
-- `nearest` - `factor=0.9, method='nearest'`
+- `linear` (`factor=0.9, method='linear'`) - Sequence interpolation with linear resampling, shrinking the sequence to 90% of its length and expanding it back.
+- `nearest` (`factor=0.9, method='nearest'`) - Sequence interpolation with nearest-neighbour resampling, shrinking the sequence to 90% of its length and expanding it back.
 
 ## `none` - NoCompression
 

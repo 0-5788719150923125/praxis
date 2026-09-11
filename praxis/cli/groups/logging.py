@@ -39,7 +39,7 @@ class LoggingGroup:
             "--infer-every",
             type=int,
             default=3,
-            help="Seconds between inference token generation during training (default: 3)",
+            help="Seconds between inference token generation during training",
             exclude_hash=True,
         )
 
@@ -80,7 +80,7 @@ class LoggingGroup:
             "--profile-memory-steps",
             type=int,
             default=50,
-            help="Number of steps to record before dumping the snapshot (default: 50)",
+            help="Number of steps to record before dumping the snapshot",
             exclude_hash=True,
         )
 

@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from praxis.width import WIDTH_REGISTRY
+from praxis import registry
 from praxis.width.helical import width_fraction
 
 
@@ -34,11 +34,13 @@ def _active_channels(block, policy, depth, max_depth, x):
 
 
 def test_registry_keys():
-    assert "none" in WIDTH_REGISTRY and "helical" in WIDTH_REGISTRY
+    assert "none" in registry.namespace("width") and "helical" in registry.namespace(
+        "width"
+    )
 
 
 def test_full_width_is_noop_and_has_no_profile():
-    policy = WIDTH_REGISTRY["none"]()
+    policy = registry.lookup("width", "none")()
     assert policy.profile(8) is None
     block, x = _Block(), torch.randn(2, 3, 8)
     assert _active_channels(block, policy, 0, 8, x) == 12  # nothing masked
@@ -47,14 +49,14 @@ def test_full_width_is_noop_and_has_no_profile():
 def test_profile_is_an_arch():
     """Inflate early, decay through the tail: ends sit at the floor, the crest
     near the front rises well above them."""
-    prof = WIDTH_REGISTRY["helical"]().profile(6)
+    prof = registry.lookup("width", "helical")().profile(6)
     assert abs(prof[0] - 0.25) < 1e-6 and abs(prof[-1] - 0.25) < 1e-6
     assert max(prof) > 0.9
     assert prof.index(max(prof)) < len(prof) // 2  # crest is in the front half
 
 
 def test_deflation_matches_profile():
-    policy = WIDTH_REGISTRY["helical"]()
+    policy = registry.lookup("width", "helical")()
     block, x = _Block(), torch.randn(2, 3, 8)
     prof = policy.profile(6)
     for d in range(6):
@@ -63,18 +65,18 @@ def test_deflation_matches_profile():
 
 
 def test_hooks_are_removed_on_exit():
-    policy = WIDTH_REGISTRY["helical"]()
+    policy = registry.lookup("width", "helical")()
     block, x = _Block(), torch.randn(2, 3, 8)
     with policy.scope([block], current_depth=3, max_depth=6):
         pass
-    assert _active_channels(block, WIDTH_REGISTRY["none"](), 0, 6, x) == 12
+    assert _active_channels(block, registry.lookup("width", "none")(), 0, 6, x) == 12
 
 
 def test_helix_window_precesses_with_depth():
     """The active set at successive depths is rotated, not identical (coverage)."""
-    policy = WIDTH_REGISTRY[
-        "helical_steady"
-    ]()  # constant width, so only the start moves
+    policy = registry.lookup(
+        "width", "helical_steady"
+    )()  # constant width, so only the start moves
     block, x = _Block(), torch.randn(2, 3, 8)
 
     def active_set(depth):
@@ -111,7 +113,7 @@ class _GLU(nn.Module):
 
 
 def test_sparse_preserves_output_shape():
-    pol = WIDTH_REGISTRY["helical_sparse"]()
+    pol = registry.lookup("width", "helical_sparse")()
     blk, x = _GLU(), torch.randn(2, 4, 16)
     for d in range(6):
         with pol.scope([blk], current_depth=d, max_depth=6):
@@ -122,7 +124,7 @@ def test_sparse_preserves_output_shape():
 def test_sparse_slices_the_matmul_and_grads():
     """At a deflated step the up matmul emits 2r rows and down consumes r cols,
     and only those receive gradient (the rest of the weight is untouched)."""
-    pol = WIDTH_REGISTRY["helical_sparse"]()
+    pol = registry.lookup("width", "helical_sparse")()
     blk, x = _GLU(hidden=16, inner=24), torch.randn(2, 4, 16)
     blk.zero_grad()
     with pol.scope([blk], current_depth=5, max_depth=6):  # frac 0.25 -> r=6
@@ -160,7 +162,7 @@ def test_sparse_slices_parametric_activation_in_sync():
     """A GLU with a per-channel parametric activation IS sliced - its activation
     param is sliced to the same window, so the forward stays well formed and the
     param's gradient lands only on the active channels."""
-    pol = WIDTH_REGISTRY["helical_sparse"]()
+    pol = registry.lookup("width", "helical_sparse")()
     blk, x = _ParamGLU(hidden=16, inner=24), torch.randn(2, 4, 16)
     blk.zero_grad()
     with pol.scope([blk], current_depth=5, max_depth=6):  # frac 0.25 -> r=6
@@ -185,7 +187,7 @@ def test_sparse_defers_while_activation_is_lazy():
 
 
 def test_sparse_restores_full_forward_on_exit():
-    pol = WIDTH_REGISTRY["helical_sparse"]()
+    pol = registry.lookup("width", "helical_sparse")()
     blk, x = _GLU(inner=24), torch.randn(2, 4, 16)
     with pol.scope([blk], current_depth=5, max_depth=6):
         pass
@@ -237,7 +239,7 @@ def test_head_budget_grads_only_kept_heads():
 
 def test_sparse_policy_drops_heads_in_a_block():
     """The sparse policy reaches attention through a containing module."""
-    pol = WIDTH_REGISTRY["helical_sparse"]()
+    pol = registry.lookup("width", "helical_sparse")()
     attn = _arc_attention()
     holder = nn.Module()
     holder.attn = attn

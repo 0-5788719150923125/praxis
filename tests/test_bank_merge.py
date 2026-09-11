@@ -13,7 +13,6 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.routers import ROUTER_REGISTRY
 from praxis.routers.bank import ROUTING_METRICS_INTERVAL
 from praxis.routers.bank import ExpertBank as SMEAR
 from praxis.routers.bank import SharpenedExpertBank as VEAR

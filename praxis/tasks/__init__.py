@@ -7,12 +7,14 @@ many categories defeats the point.
 
 Add a new weighting strategy by defining (or reusing) a weighter class
 in :mod:`praxis.tasks.weighter` and dropping a factory entry in
-``TASK_WEIGHTER_REGISTRY`` below.
+the ``task_weights`` registry below.
 """
 
 from functools import partial
 from typing import Dict
 
+from praxis import registry
+from praxis.registry import Entry
 from praxis.tasks.types import (
     DEFAULT_TASK,
     TASK_NAME_TO_ID,
@@ -75,47 +77,74 @@ BIAS_PRETRAIN_TARGETS: Dict[str, float] = {
 }
 
 
-# Factories match the LOSS_REGISTRY pattern: each entry is callable with
-# no arguments and returns a configured TaskLossWeighter.
-TASK_WEIGHTER_REGISTRY: Dict[str, callable] = {
-    # Identity: every task weighted equally. Backward-compatible default.
-    "flat": FixedTaskLossWeighter,
-    # Fixed bias toward unstructured pretraining content.
-    "bias_pretrain": partial(FixedTaskLossWeighter, targets=BIAS_PRETRAIN_TARGETS),
-    # Same starting values, but the per-task scalars are learnable:
-    # ``weight = 2 * target * sigmoid(raw)`` with an L2 anchor on ``raw``.
-    "learnable_bias_pretrain": partial(
-        LearnableTaskLossWeighter,
-        targets=BIAS_PRETRAIN_TARGETS,
-        anchor_weight=0.01,
+registry.declare(
+    "task_weights",
+    title="Per-task loss weighting",
+    doc=(
+        (
+            "How each token's loss is reweighted by its task tag, the source category it "
+            "came from (pretraining, instruction, conversation, ...). Each entry is a "
+            "factory taking no arguments that returns a configured TaskLossWeighter. Unset "
+            "weights every task equally, as ``flat`` does."
+        )
     ),
-    # Stop-gradient EMA-driven curriculum: upweights hard tasks,
-    # downweights easy ones, capped by floor/ceiling. No anchor needed
-    # because no gradient flows through the multiplier.
-    "difficulty_bias_pretrain": partial(
-        DifficultyTaskLossWeighter,
-        targets=BIAS_PRETRAIN_TARGETS,
-    ),
-}
+    entries={
+        "flat": Entry(
+            FixedTaskLossWeighter,
+            "Identity: every task weighted 1.0. The default.",
+        ),
+        "bias_pretrain": Entry(
+            partial(FixedTaskLossWeighter, targets=BIAS_PRETRAIN_TARGETS),
+            (
+                "Fixed per-task weights (``BIAS_PRETRAIN_TARGETS``) biased toward "
+                "unstructured pretraining content: instruction, conversation and "
+                "tool-call tokens are damped, and local-file tokens most of all."
+            ),
+        ),
+        "learnable_bias_pretrain": Entry(
+            partial(
+                LearnableTaskLossWeighter,
+                targets=BIAS_PRETRAIN_TARGETS,
+                anchor_weight=0.01,
+            ),
+            (
+                "bias_pretrain's starting values as learnable per-task scalars: "
+                "``weight = 2 * target * sigmoid(raw)``, with an L2 anchor on ``raw``."
+            ),
+        ),
+        "difficulty_bias_pretrain": Entry(
+            partial(
+                DifficultyTaskLossWeighter,
+                targets=BIAS_PRETRAIN_TARGETS,
+            ),
+            (
+                "A stop-gradient curriculum over bias_pretrain's targets: an EMA of "
+                "each task's loss upweights hard tasks and downweights easy ones, "
+                "within a floor and ceiling. No gradient flows through the multiplier, "
+                "so it needs no anchor."
+            ),
+        ),
+    },
+)
 
 
 def resolve_task_weighter(name) -> TaskLossWeighter:
-    """Look up a named strategy in ``TASK_WEIGHTER_REGISTRY`` and instantiate it.
+    """Look up a named strategy in the ``task_weights`` registry and instantiate it.
 
     ``None`` or an empty string returns the ``flat`` (identity) weighter,
     so the default path stays a no-op. Passing an already-constructed
     weighter is a pass-through (useful for tests).
     """
     if not name:
-        return TASK_WEIGHTER_REGISTRY["flat"]()
+        return registry.lookup("task_weights", "flat")()
     if isinstance(name, TaskLossWeighter):
         return name
-    if name not in TASK_WEIGHTER_REGISTRY:
+    if name not in registry.namespace("task_weights"):
         raise KeyError(
             f"Unknown task-weighter {name!r}. "
-            f"Known: {sorted(TASK_WEIGHTER_REGISTRY)}"
+            f"Known: {sorted(registry.namespace("task_weights"))}"
         )
-    return TASK_WEIGHTER_REGISTRY[name]()
+    return registry.lookup("task_weights", name)()
 
 
 __all__ = [
@@ -123,7 +152,6 @@ __all__ = [
     "DEFAULT_TASK",
     "TASK_NAMES",
     "TASK_NAME_TO_ID",
-    "TASK_WEIGHTER_REGISTRY",
     "TaskType",
     "TaskLossWeighter",
     "FixedTaskLossWeighter",

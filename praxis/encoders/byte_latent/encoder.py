@@ -27,12 +27,6 @@ from .patcher import (
     patch_reduce,
 )
 
-# Import for recurrent model registry if needed
-try:
-    from praxis.recurrent import RECURRENT_REGISTRY
-except ImportError:
-    RECURRENT_REGISTRY = None
-
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
@@ -66,7 +60,7 @@ class ByteLatentEncoder(BaseEncoder):
         local_architecture: str = "recurrent",
         n_layers_encoder: int = 3,
         n_layers_decoder: int = 3,
-        # Input embeddings (EMBEDDING_REGISTRY profile key)
+        # Input embeddings (``embeddings`` profile key)
         embeddings: str = "byte_hash",
         # Entropy model (for entropy patching)
         entropy_model_layers: int = 2,
@@ -90,7 +84,7 @@ class ByteLatentEncoder(BaseEncoder):
             local_architecture: Architecture for local encoder/decoder ("recurrent", "conv")
             n_layers_encoder: Number of layers in local encoder
             n_layers_decoder: Number of layers in local decoder
-            embeddings: EMBEDDING_REGISTRY profile key for the input embeddings
+            embeddings: ``embeddings`` profile key for the input embeddings
             entropy_model_layers: Number of layers in entropy model
             cross_attn_encoder: Enable cross-attention in encoder
             cross_attn_decoder: Enable cross-attention in decoder
@@ -123,7 +117,7 @@ class ByteLatentEncoder(BaseEncoder):
         self.byte_config.merge = merge
         self.byte_config.downsampling_by_pooling = downsampling_method
 
-        # Input embeddings: a profile key resolved against EMBEDDING_REGISTRY.
+        # Input embeddings: a profile key resolved against the ``embeddings`` registry.
         # The model builds the module (sized via the input_* properties below)
         # and injects it through set_embeddings().
         self.embedding_profile = embeddings
@@ -265,7 +259,7 @@ class ByteLatentEncoder(BaseEncoder):
         return self.byte_config.local_vocab_size
 
     def set_embeddings(self, module: nn.Module) -> None:
-        """Receive the input embedding module built from EMBEDDING_REGISTRY."""
+        """Receive the input embedding module built from the ``embeddings`` registry."""
         self.embeddings = module
 
     @property
@@ -418,7 +412,7 @@ class ByteLatentEncoder(BaseEncoder):
         if self.embeddings is None:
             raise RuntimeError(
                 "Input embeddings not set; the model injects them from "
-                "EMBEDDING_REGISTRY via set_embeddings()."
+                "the ``embeddings`` registry via set_embeddings()."
             )
         embeds = self.embeddings(local_encoder_tokens)
 

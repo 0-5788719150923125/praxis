@@ -6,9 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.normalization import NORMALIZATION_REGISTRY
-from praxis.orchestration import EXPERT_REGISTRY
-from praxis.residuals import RESIDUAL_REGISTRY
+from praxis import registry
 from praxis.utils import norm_scaling
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -107,10 +105,10 @@ class WaveletBlock(nn.Module):
         )
 
         # --- wavelet mixer sublayer ---
-        self.mix_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+        self.mix_res = registry.namespace("residuals").get(config.residual_type)(
             self.hidden_size, num_depths=config.depth
         )
-        self.mix_norm = NORMALIZATION_REGISTRY[config.norm_type](
+        self.mix_norm = registry.lookup("normalization", config.norm_type)(
             self.hidden_size, eps=config.epsilon
         )
         self.lifting = LiftingWavelet(self.cp, self.max_levels)
@@ -123,13 +121,13 @@ class WaveletBlock(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         # --- FFN sublayer (mirrors TransformerBlock) ---
-        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+        self.ffn_res = registry.namespace("residuals").get(config.residual_type)(
             self.hidden_size, num_depths=config.depth
         )
-        self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
+        self.ffn_norm = registry.lookup("normalization", config.norm_type)(
             self.hidden_size, eps=config.epsilon
         )
-        self.ffn = EXPERT_REGISTRY[config.expert](config)
+        self.ffn = registry.lookup("dense", config.expert)(config)
 
     def _mix(self, h: Tensor) -> Tensor:
         if self.cp != self.hidden_size:

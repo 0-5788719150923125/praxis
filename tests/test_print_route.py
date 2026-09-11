@@ -2,6 +2,8 @@
 
 import sys
 
+from praxis import registry
+
 # The web import chain lazily parses argv; keep it benign so importing the routes
 # under pytest doesn't trip argparse on pytest's own flags.
 sys.argv = ["praxis"]
@@ -148,9 +150,9 @@ class TestLoopModes:
     """The loop-mode registry: parse + score contracts."""
 
     def test_registry_and_default(self):
-        from praxis.policies.loop_modes import LOOP_MODE_REGISTRY, get_loop_mode
+        from praxis.policies.loop_modes import get_loop_mode
 
-        assert set(LOOP_MODE_REGISTRY) == {"calibration", "approval"}
+        assert set(registry.namespace("loop_modes")) == {"calibration", "approval"}
         assert get_loop_mode().name == "calibration"
         assert get_loop_mode("approval").name == "approval"
         assert get_loop_mode("nonsense").name == "calibration"  # safe fallback

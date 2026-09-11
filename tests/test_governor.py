@@ -8,9 +8,9 @@ import pytest
 import torch
 from torch import nn
 
+from praxis import registry
 from praxis.callbacks.lightning.governor import GNSBatchGovernor
 from praxis.data.batch_schedule import BatchSchedule, plan_cycle
-from praxis.governors import GOVERNOR_REGISTRY
 from praxis.governors.gns import BatchTierController, GradientNoiseEstimator
 
 
@@ -135,7 +135,7 @@ def test_terminal_reports_live_effective_batch():
 
 
 def test_registry_builds_callback_with_ceiling():
-    gov = GOVERNOR_REGISTRY["gns_batch"](
+    gov = registry.lookup("governors", "gns_batch")(
         batch_size=16, target_batch_size=512, val_every=1024
     )
     assert isinstance(gov, GNSBatchGovernor)
@@ -708,8 +708,8 @@ def test_positional_capacity_still_covers_every_drawn_length():
     max_sequence_multiplier(batch_size). Eligibility is budgeted against
     base_rows, which never exceeds batch_size, so the governed pipeline can
     never draw a length the model has no positions for."""
+    from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS as tiers
     from praxis.data.datasets.manager import (
-        SEQUENCE_MULTIPLIER_TIERS as tiers,
         max_sequence_multiplier,
     )
 

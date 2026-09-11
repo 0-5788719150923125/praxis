@@ -3,8 +3,9 @@
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.optimization.half_lion import HalfLion
-from praxis.optimization.wrappers import WRAPPER_REGISTRY, wrappers_disable_schedule
+from praxis.optimization.wrappers import wrappers_disable_schedule
 
 
 def _quadratic_problem():
@@ -30,7 +31,7 @@ def _train(optimizer, model, X, Y, steps=200):
 
 
 def test_registered_and_keeps_schedule():
-    assert "half_lion" in WRAPPER_REGISTRY
+    assert "half_lion" in registry.namespace("wrappers")
     # Not a schedule-free method: the LR schedule still applies.
     assert wrappers_disable_schedule(["half_lion"]) is False
 

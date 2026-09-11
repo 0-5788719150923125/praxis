@@ -8,7 +8,7 @@ consensus over depth recovers a full-rank computation. See
 ``next/mixture_of_widths.md`` for the framing.
 
 Like every Praxis subsystem this is registry-driven: ``--width-type`` selects a
-named profile from ``WIDTH_REGISTRY`` (bare classes for the base shapes, partial
+named profile from the ``width`` registry (bare classes for the base shapes, partial
 presets for tuned variants, exactly as the routers do). A policy exposes two
 methods::
 
@@ -20,20 +20,64 @@ methods::
 
 from functools import partial
 
+from praxis import registry
+from praxis.registry import Entry
 from praxis.width.base import FullWidth
 from praxis.width.helical import HelicalWidth
 from praxis.width.sparse import HelicalSparseWidth
 
-WIDTH_REGISTRY = {
-    "none": FullWidth,
-    # Mask variants (full matmul, zeroed channels): prove the dynamics.
-    "helical": HelicalWidth,  # inflate early (peak 0.3), floor 0.25
-    "helical_late": partial(HelicalWidth, peak=0.6),  # crest mid-stack
-    "helical_steady": partial(HelicalWidth, floor=0.5, peak=0.5),  # gentle breathing
-    "helical_tight": partial(
-        HelicalWidth, floor=0.1, peak=0.25
-    ),  # aggressive deflation
-    # Sparse variants (sliced weights, smaller matmul): real FLOP reduction.
-    "helical_sparse": HelicalSparseWidth,
-    "helical_sparse_tight": partial(HelicalSparseWidth, floor=0.1, peak=0.25),
-}
+registry.declare(
+    "width",
+    title="Mixture-of-widths",
+    doc=(
+        (
+            "Per-depth deflation of each block's inner rank over the recurrent loop (a "
+            "helically-precessing low-rank slice), turning deep recurrence into a "
+            "population of narrow voters. The ``helical`` variants mask channels under a "
+            "full matmul, which proves the dynamics; the ``helical_sparse`` variants slice "
+            "the weights so the matmul shrinks, a real FLOP reduction."
+        )
+    ),
+    entries={
+        "none": FullWidth,
+        "helical": Entry(
+            HelicalWidth,
+            (
+                "Mask variant on the default arch: inflates early (peak 0.3) with a "
+                "width floor of 0.25."
+            ),
+        ),
+        "helical_late": Entry(
+            partial(HelicalWidth, peak=0.6),
+            "``helical`` with the width crest moved mid-stack (peak 0.6).",
+        ),
+        "helical_steady": Entry(
+            partial(HelicalWidth, floor=0.5, peak=0.5),
+            (
+                "``helical`` with floor and peak both 0.5: a gentle breathing that "
+                "never drops below half width."
+            ),
+        ),
+        "helical_tight": Entry(
+            partial(HelicalWidth, floor=0.1, peak=0.25),
+            (
+                "``helical`` with aggressive deflation: floor 0.1, crest at 0.25 of "
+                "depth."
+            ),
+        ),
+        "helical_sparse": Entry(
+            HelicalSparseWidth,
+            (
+                "Sparse variant on ``helical``'s default arch: sliced weights and a "
+                "smaller matmul, so the FLOP saving is real."
+            ),
+        ),
+        "helical_sparse_tight": Entry(
+            partial(HelicalSparseWidth, floor=0.1, peak=0.25),
+            (
+                "``helical_tight``'s schedule (floor 0.1, peak 0.25) on the sparse, "
+                "sliced-weight implementation."
+            ),
+        ),
+    },
+)

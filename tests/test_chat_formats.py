@@ -1,4 +1,4 @@
-"""Tests for CHAT_FORMAT_REGISTRY and the text-boundary (prose) format.
+"""Tests for the ``chat_formats`` registry and the text-boundary (prose) format.
 
 The invariants worth pinning are the ones that silently produce a broken run
 rather than an exception:
@@ -17,13 +17,13 @@ import contextlib
 import pytest
 import torch
 
+from praxis import registry
 from praxis.data.formatters.tools import format_tool_calling
 from praxis.data.validators import ChatTemplateValidator
 from praxis.generation.decoding import first_halt
 from praxis.generation.request import GenerationRequest
 from praxis.tokenizers import create_tokenizer
 from praxis.tokenizers.chat_templates import (
-    CHAT_FORMAT_REGISTRY,
     DEFAULT_CHAT_TEMPLATE,
     apply_chat_format,
     chat_format_of,
@@ -70,7 +70,7 @@ def test_registry_keys():
     # `hf_native` is not a Praxis format - it is the contract for a model we did
     # NOT train (see tests/test_hf_native_format.py). It lives in the registry
     # so a run can name it, but the two TRAINABLE formats are still these.
-    assert set(CHAT_FORMAT_REGISTRY) == {"default", "prose", "hf_native"}
+    assert set(registry.namespace("chat_formats")) == {"default", "prose", "hf_native"}
 
 
 def test_unknown_format_is_a_hard_error():
@@ -103,7 +103,7 @@ def test_apply_chat_format_sets_both_halves(default_tokenizer):
     tok = tokenizer_for("default")
     apply_chat_format(tok, "prose")
     assert chat_format_of(tok).name == "prose"
-    assert tok.chat_template == CHAT_FORMAT_REGISTRY["prose"].template
+    assert tok.chat_template == registry.lookup("chat_formats", "prose").template
 
 
 # ------------------------------------------------------------- rendering

@@ -18,12 +18,8 @@ import pytest
 import torch
 from torch.nn.parameter import UninitializedParameter
 
-from praxis import PraxisConfig
-from praxis.blocks import BLOCK_REGISTRY
-from praxis.encoders import ENCODER_REGISTRY
-from praxis.heads import HEAD_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.modeling import PraxisForCausalLM
-from praxis.routers import ROUTER_REGISTRY
 
 BASE = dict(
     vocab_size=1024,
@@ -68,16 +64,12 @@ BYTE_SEQ, BYTE_EDITS = 48, (12, 27, 41)
 TOLERANCE = 1e-5
 
 CASES = (
-    [("router", key) for key in sorted(ROUTER_REGISTRY)]
-    + [("head", key) for key in sorted(HEAD_REGISTRY)]
-    + [("block", key) for key in sorted(BLOCK_REGISTRY)]
-    + [("encoder", key) for key in sorted(ENCODER_REGISTRY)]
+    [("router", key) for key in sorted(registry.namespace("routers"))]
+    + [("head", key) for key in sorted(registry.namespace("heads"))]
+    + [("block", key) for key in sorted(registry.namespace("blocks"))]
+    + [("encoder", key) for key in sorted(registry.namespace("encoders"))]
     # Unlisted names that carry a profile of their own, not a listed one's.
-    + [
-        ("encoder", key)
-        for key, target in sorted(ENCODER_REGISTRY.unlisted.items())
-        if not isinstance(target, str)
-    ]
+    + [("encoder", key) for key in sorted(registry.namespace("encoders").unlisted())]
 )
 
 

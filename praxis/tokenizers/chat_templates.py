@@ -50,6 +50,9 @@ and it is a trained target - which is the whole point.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from praxis import registry
+from praxis.registry import Entry
+
 # Standard ChatML template with extra developer role.
 # https://huggingface.co/docs/transformers/en/conversations
 # https://huggingface.co/docs/transformers/en/chat_extras
@@ -440,11 +443,46 @@ HF_NATIVE_FORMAT = ChatFormat(
     document_separator="eos_token_id",
 )
 
-CHAT_FORMAT_REGISTRY: Dict[str, ChatFormat] = {
-    "default": DEFAULT_FORMAT,
-    "prose": PROSE_FORMAT,
-    "hf_native": HF_NATIVE_FORMAT,
-}
+registry.declare(
+    "chat_formats",
+    title="Chat formats",
+    doc=(
+        (
+            "A chat format is more than a Jinja string: each entry pairs a chat template "
+            "with the turn boundaries, assistant mask, halting contract and tool-call "
+            "layout that have to agree with it, so they move together."
+        )
+    ),
+    entries={
+        "default": Entry(
+            DEFAULT_FORMAT,
+            (
+                "ChatML with a developer role: each turn is written ``[BOS]role``, "
+                "content, ``[SEP]``, generation halts on the ``[EOS]``/``[SEP]`` ids, "
+                "and tool calls are wrapped in the atomic "
+                "``[TOOL_CALL]``/``[TOOL_RESULT]`` control tokens."
+            ),
+        ),
+        "prose": Entry(
+            PROSE_FORMAT,
+            (
+                "No control tokens anywhere: a turn ends with the next speaker's name "
+                "on its own blank-line-separated line, inside the generated turn's "
+                "span, so the model halts on a trained stop string, and a tool call "
+                "and its result are turns of their own."
+            ),
+        ),
+        "hf_native": Entry(
+            HF_NATIVE_FORMAT,
+            (
+                "The contract of a foreign HuggingFace model, discovered rather than "
+                "declared: the tokenizer's own ``chat_template`` renders the prompt "
+                "and its own EOS ends a reply, with no Praxis template or tool layout "
+                "claimed."
+            ),
+        ),
+    },
+)
 
 
 def _is_praxis_tokenizer(tokenizer: Any) -> bool:
@@ -471,11 +509,11 @@ def resolve_chat_format(name: Optional[str]) -> ChatFormat:
     if name is None:
         return DEFAULT_FORMAT
     try:
-        return CHAT_FORMAT_REGISTRY[name]
+        return registry.lookup("chat_formats", name)
     except KeyError:
         raise ValueError(
             f"Unknown chat_format={name!r}. "
-            f"Valid choices: {sorted(CHAT_FORMAT_REGISTRY)}"
+            f"Valid choices: {sorted(registry.namespace("chat_formats"))}"
         ) from None
 
 
@@ -491,19 +529,19 @@ def get_chat_format(tokenizer_or_name: Any = None) -> ChatFormat:
     if isinstance(tokenizer_or_name, ChatFormat):
         return tokenizer_or_name
     if isinstance(tokenizer_or_name, str):
-        return CHAT_FORMAT_REGISTRY.get(tokenizer_or_name, DEFAULT_FORMAT)
+        return registry.namespace("chat_formats").get(tokenizer_or_name, DEFAULT_FORMAT)
     fmt = getattr(tokenizer_or_name, "chat_format", None)
     if isinstance(fmt, ChatFormat):
         return fmt
     if isinstance(fmt, str):
-        return CHAT_FORMAT_REGISTRY.get(fmt, DEFAULT_FORMAT)
+        return registry.namespace("chat_formats").get(fmt, DEFAULT_FORMAT)
     # `chat_format` is a plain attribute, so it does NOT survive
     # save_pretrained/from_pretrained - but `chat_template` does. Recover the
     # format from the template rather than silently pairing a prose template
     # with the default halting contract, which would never terminate.
     template = getattr(tokenizer_or_name, "chat_template", None)
     if isinstance(template, str) and template:
-        for candidate in CHAT_FORMAT_REGISTRY.values():
+        for candidate in registry.namespace("chat_formats").values():
             if candidate.template and candidate.template == template:
                 return candidate
         # A template we do not recognise on a tokenizer we did not build is a

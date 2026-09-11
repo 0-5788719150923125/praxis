@@ -1,5 +1,5 @@
 from .amplitude import AmplitudeFieldSort
-from .base import SORTING_REGISTRY, NoSort
+from .base import NoSort
 from .decay import DecayBiasSort
 from .native import NativeSort
 from .sinkhorn import SinkhornSort
@@ -10,5 +10,4 @@ __all__ = [
     "SinkhornSort",
     "DecayBiasSort",
     "AmplitudeFieldSort",
-    "SORTING_REGISTRY",
 ]

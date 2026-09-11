@@ -10,10 +10,10 @@ downgraded to something that runs rather than exploding mid-step.
 
 import torch
 
+from praxis import registry
 from praxis.cli.config import RunConfig
 from praxis.trainers.precision import (
     DEFAULT_PRECISION,
-    PRECISION_REGISTRY,
     canonical_precision,
     cast_module,
     init_context,
@@ -74,7 +74,7 @@ def test_only_float64_forbids_tf32():
     """ "medium" is defined as permitting a bf16 internal datatype, so no
     profile uses it: the fp32-carrying levels take TF32 via "high", and the
     level whose entire premise is arithmetic width takes none of it."""
-    for name, profile in PRECISION_REGISTRY.items():
+    for name, profile in registry.namespace("precision").items():
         assert profile.matmul == ("highest" if name == "float64" else "high")
 
 
@@ -83,7 +83,7 @@ def test_every_profile_is_internally_coherent():
     precision - a bf16 model stepped by a 32-true trainer is the exact drift
     this registry exists to prevent."""
     expected = {"float64": "64-true", "bfloat16": "bf16-true", "float16": "16-true"}
-    for name, profile in PRECISION_REGISTRY.items():
+    for name, profile in registry.namespace("precision").items():
         assert profile.name == name
         if profile.param_dtype is not None:
             assert profile.lightning == expected[profile.param_dtype]
@@ -108,7 +108,7 @@ def test_init_context_scopes_the_default_dtype():
     """Modules build in the profile's dtype; everything created afterwards -
     loss accumulators, metrics, dataset tensors - stays fp32."""
     before = torch.get_default_dtype()
-    with init_context(PRECISION_REGISTRY["bfloat16"]):
+    with init_context(registry.lookup("precision", "bfloat16")):
         assert torch.get_default_dtype() is torch.bfloat16
         assert torch.zeros(2).dtype is torch.bfloat16
     assert torch.get_default_dtype() is before
@@ -118,7 +118,7 @@ def test_init_context_scopes_the_default_dtype():
 def test_init_context_restores_on_failure():
     before = torch.get_default_dtype()
     try:
-        with init_context(PRECISION_REGISTRY["float64"]):
+        with init_context(registry.lookup("precision", "float64")):
             raise RuntimeError("model blew up during construction")
     except RuntimeError:
         pass
@@ -131,13 +131,13 @@ def test_cast_module_moves_params_and_buffers():
     model = torch.nn.Linear(4, 4)
     model.register_buffer("scale", torch.ones(4, dtype=torch.float32))
 
-    cast_module(model, PRECISION_REGISTRY["bfloat16"])
+    cast_module(model, registry.lookup("precision", "bfloat16"))
     assert model.weight.dtype is torch.bfloat16
     assert model.scale.dtype is torch.bfloat16
 
     # fp32/mixed profiles leave the model alone.
     fp32 = torch.nn.Linear(4, 4)
-    cast_module(fp32, PRECISION_REGISTRY["float32"])
+    cast_module(fp32, registry.lookup("precision", "float32"))
     assert fp32.weight.dtype is torch.float32
 
 
@@ -147,7 +147,7 @@ def test_cast_preserves_parameter_identity():
     them."""
     model = torch.nn.Linear(4, 4)
     params = list(model.parameters())
-    cast_module(model, PRECISION_REGISTRY["bfloat16"])
+    cast_module(model, registry.lookup("precision", "bfloat16"))
     assert [id(p) for p in model.parameters()] == [id(p) for p in params]
 
 

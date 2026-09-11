@@ -14,7 +14,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.heads import HEAD_REGISTRY
+from praxis import registry
 from praxis.heads.parallel import (
     ARM_CONFLICT_INTERVAL,
     ParallelHead,
@@ -43,7 +43,7 @@ def objectives(main=None):
 
 def build(name="prismatic9"):
     torch.manual_seed(0)
-    return HEAD_REGISTRY[name](Cfg(), encoder=Enc())
+    return registry.lookup("heads", name)(Cfg(), encoder=Enc())
 
 
 def batch(b=2, t=5, d=48, v=32):
@@ -527,8 +527,8 @@ def test_validation_loss_stays_comparable_to_prismatic8():
 
 def test_geometry_is_still_suppressed_during_training():
     """The other half: the double-count the flag exists to prevent."""
-    from praxis.losses.halo import HALOLoss
     from praxis.heads.halo import HaloHead
+    from praxis.losses.halo import HALOLoss
     from tests.test_prismatic8 import Cfg, Enc
 
     torch.manual_seed(0)

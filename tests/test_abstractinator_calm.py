@@ -12,8 +12,7 @@ These tests pin the mechanics, not the thesis - the run decides that.
 import pytest
 import torch
 
-from praxis import PraxisConfig
-from praxis.encoders import ENCODER_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.encoders.abstractinator import AbstractinatorCALM
 from praxis.modeling import PraxisForCausalLM
 
@@ -54,7 +53,7 @@ def step(m):
 
 
 def test_registered_and_is_the_calm_variant():
-    assert PROFILE in ENCODER_REGISTRY
+    assert PROFILE in registry.namespace("encoders")
     m = build()
     assert isinstance(m.encoder, AbstractinatorCALM)
 
@@ -884,9 +883,7 @@ def test_vote_generation_honors_the_deadline():
     """Queued generations decode INSIDE the training loop, so a loop that
     ignores the caller's stopping criteria stalls the run. transformers never
     runs the criteria list for a loop it does not own."""
-    from transformers import GenerationConfig
-
-    from transformers import StoppingCriteria, StoppingCriteriaList
+    from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaList
 
     class Halt(StoppingCriteria):
         def __call__(self, seq, scores, **kwargs):

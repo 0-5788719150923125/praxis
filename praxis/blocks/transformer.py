@@ -5,11 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.attention import ATTENTION_REGISTRY
+from praxis import registry
 from praxis.memory import build_memory
-from praxis.normalization import NORMALIZATION_REGISTRY
-from praxis.orchestration import EXPERT_REGISTRY
-from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.utils import norm_scaling
 
 # Conditional hivemind import - only used if hivemind integration is loaded
@@ -41,23 +38,23 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
 
-        self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+        self.attn_res = registry.namespace("residuals").get(config.residual_type)(
             config.hidden_size, num_depths=config.depth
         )
-        self.attn_norm = NORMALIZATION_REGISTRY[config.norm_type](
+        self.attn_norm = registry.lookup("normalization", config.norm_type)(
             config.hidden_size, eps=config.epsilon
         )
-        self.attn = ATTENTION_REGISTRY[config.attention_type](config)
+        self.attn = registry.lookup("attention", config.attention_type)(config)
         # Titans long-term memory (a no-op when --memory-type none)
         self.memory = build_memory(config)
 
-        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+        self.ffn_res = registry.namespace("residuals").get(config.residual_type)(
             config.hidden_size, num_depths=config.depth
         )
-        self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
+        self.ffn_norm = registry.lookup("normalization", config.norm_type)(
             config.hidden_size, eps=config.epsilon
         )
-        self.ffn = EXPERT_REGISTRY[config.expert](config)
+        self.ffn = registry.lookup("dense", config.expert)(config)
         self.use_scaler = config.scaled
 
     def forward(

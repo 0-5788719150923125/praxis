@@ -14,8 +14,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from praxis.losses import REGULARIZER_REGISTRY
-from praxis.losses.harmonic_kl import HarmonicKLRegularizer
+from praxis import registry
 from praxis.losses.dissonance import (
     CRITICAL_BAND,
     LAMBDA_MAX,
@@ -28,6 +27,7 @@ from praxis.losses.dissonance import (
     roughness_ceiling,
     roughness_kernel,
 )
+from praxis.losses.harmonic_kl import HarmonicKLRegularizer
 
 
 def _model(**overrides):
@@ -351,8 +351,8 @@ def test_the_probe_measures_without_pushing():
 
 
 def test_both_profiles_are_registered():
-    assert REGULARIZER_REGISTRY["dissonance"] is Dissonance
-    assert REGULARIZER_REGISTRY["dissonance_probe"]().observe_only is True
+    assert registry.lookup("regularizers", "dissonance") is Dissonance
+    assert registry.lookup("regularizers", "dissonance_probe")().observe_only is True
 
 
 # ── a head with no field ───────────────────────────────────────────────────

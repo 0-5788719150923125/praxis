@@ -9,8 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from praxis import PraxisConfig
-from praxis.attention import ATTENTION_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.attention.arc_ssog import ARC_GATE_INIT, FAR_LAG, ArcSSOGAttention
 from praxis.attention.ssog import (
     COLD_GATE_INIT,
@@ -39,10 +38,10 @@ def _module(
 
 
 def test_registered_profiles():
-    assert ATTENTION_REGISTRY["arc_ssog"] is ArcSSOGAttention
+    assert registry.lookup("attention", "arc_ssog") is ArcSSOGAttention
     # Bank size and ladder span are ONE decision and both are registry
     # PROFILE arguments, never config fields or CLI flags.
-    wide = ATTENTION_REGISTRY["arc_ssog_wide"]
+    wide = registry.lookup("attention", "arc_ssog_wide")
     assert wide.func is ArcSSOGAttention
     assert wide.keywords == {"num_atoms": 12, "mu_init_max": 128.0}
     cfg = PraxisConfig(hidden_size=64, num_heads=2, dropout=0.0, depth=3)

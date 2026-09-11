@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from transformers import PreTrainedTokenizer
 
+from praxis import registry
 from praxis.configuration import PraxisConfig
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 from praxis.tokenizers.base import PraxisTokenizerBase, PraxisToolTokensMixin
@@ -580,11 +581,13 @@ def _register() -> None:
     """Register TM variants and extend the valid --vocab-size values."""
     import functools
 
-    from praxis.tokenizers import TOKENIZER_REGISTRY, VOCAB_SIZE_CHOICES
+    from praxis.tokenizers import VOCAB_SIZE_CHOICES
 
-    TOKENIZER_REGISTRY.setdefault("tokenmonster", create_tokenmonster_tokenizer)
+    registry.namespace("tokenizers").setdefault(
+        "tokenmonster", create_tokenmonster_tokenizer
+    )
     for key, (dataset, mode) in VARIANTS.items():
-        TOKENIZER_REGISTRY.setdefault(
+        registry.namespace("tokenizers").setdefault(
             key,
             functools.partial(
                 create_tokenmonster_tokenizer, dataset=dataset, mode=mode

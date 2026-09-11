@@ -1,11 +1,6 @@
 """Data-related CLI arguments."""
 
-from praxis import (
-    RL_POLICIES_REGISTRY,
-    RL_PROFILES,
-    SAMPLER_REGISTRY,
-    SEQ_CURRICULUM_REGISTRY,
-)
+from praxis import registry
 from praxis.data.config import DATASET_COLLECTIONS
 
 
@@ -57,7 +52,13 @@ class DataGroup:
             default=None,
             # Forward-path policies plus the weight-editing controller profiles
             # (which bundle edit_mode/selector, so no separate rl_* flags).
-            choices=sorted({*RL_POLICIES_REGISTRY.keys(), *RL_PROFILES.keys()}),
+            choices=sorted(
+                {
+                    *registry.namespace("rl_policies").keys(),
+                    *registry.namespace("rl_profiles").keys(),
+                }
+            ),
+            registry=("rl_policies", "rl_profiles"),
             help="Enable reinforcement learning with specified algorithm. "
             "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
             "True RL with generation will be added in a future update.",
@@ -67,7 +68,7 @@ class DataGroup:
             "--sampler-mode",
             type=str,
             default="loss",
-            choices=SAMPLER_REGISTRY.keys(),
+            registry="samplers",
             help="Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), "
             "'tasker' (sample each dataset by its task's learned loss weight from --task-weights; "
             "pairs with a 'difficulty' weighter to upsample hard tasks), "
@@ -80,7 +81,7 @@ class DataGroup:
             "--seq-curriculum",
             type=str,
             default="fixed",
-            choices=SEQ_CURRICULUM_REGISTRY.keys(),
+            registry="seq_curriculum",
             help="Sequence-length curriculum. 'fixed' rolls the static per-tier "
             "chances. 'probe' fits the mix by regressing a held-out probe's "
             "improvement onto the arm mixture that produced it, so each length's "

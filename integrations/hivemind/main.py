@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import registry
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -107,11 +108,10 @@ class HivemindOrchestrator:
 
         # Import RemoteLayer from layers
         from praxis.layers import RemoteLayer
-        from praxis.routers import ROUTER_REGISTRY
 
         self.RemoteLayer = RemoteLayer
 
-        router_cls = ROUTER_REGISTRY.get("mixture_of_depths")
+        router_cls = registry.namespace("routers").get("mixture_of_depths")
         self.router = router_cls(
             config, experts=self.active_local_experts + self.active_remote_experts
         )

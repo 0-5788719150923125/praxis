@@ -1,10 +1,6 @@
 """Tokenizer training CLI arguments."""
 
-from praxis.tokenizers import (
-    CHAT_FORMAT_REGISTRY,
-    DEFAULT_TOKENIZER,
-    TOKENIZER_REGISTRY,
-)
+from praxis.tokenizers import DEFAULT_TOKENIZER
 
 
 class TokenizerGroup:
@@ -20,10 +16,10 @@ class TokenizerGroup:
         group.add_argument(
             "--tokenizer-type",
             type=str,
-            choices=sorted(TOKENIZER_REGISTRY),
+            registry="tokenizers",
             default=None,
             help=(
-                f"Tokenizer implementation from TOKENIZER_REGISTRY. "
+                f"Tokenizer implementation from the tokenizers registry. "
                 f"Unset = default ({DEFAULT_TOKENIZER!r})."
             ),
         )
@@ -31,10 +27,10 @@ class TokenizerGroup:
         group.add_argument(
             "--chat-format",
             type=str,
-            choices=sorted(CHAT_FORMAT_REGISTRY),
+            registry="chat_formats",
             default=None,
             help=(
-                "Chat format from CHAT_FORMAT_REGISTRY. The entry owns the turn "
+                "Chat format from the chat_formats registry. The entry owns the turn "
                 "boundaries, the assistant mask, the halting contract and the "
                 "tool-call layout as one unit. Unset = 'default' (ChatML)."
             ),

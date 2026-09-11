@@ -14,6 +14,7 @@ import math
 import pytest
 import torch
 
+from praxis import registry
 from praxis.losses.conflict import ANCHOR, ObjectiveConflict
 
 
@@ -151,10 +152,9 @@ def test_head_gradients_are_the_real_shape():
     """End to end on a prismatic8 head: the main CE and an aux term over the
     same logits both reach the trunk output, and the cosine is finite."""
     from tests.test_prismatic8 import Cfg, Enc
-    from praxis.heads import HEAD_REGISTRY
 
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic8"](Cfg(), encoder=Enc())
+    head = registry.lookup("heads", "prismatic8")(Cfg(), encoder=Enc())
     h = torch.randn(2, 5, 48, requires_grad=True)
     logits = head(h)
     labels = torch.randint(0, 32, (2, 5))

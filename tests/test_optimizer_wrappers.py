@@ -1,14 +1,11 @@
-"""WRAPPER_REGISTRY, SequentialWrapper, and the GatedScheduleFree optimizer."""
+"""The ``wrappers`` registry, SequentialWrapper, and the GatedScheduleFree optimizer."""
 
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.optimization.gated_schedule_free import GatedScheduleFree
-from praxis.optimization.wrappers import (
-    WRAPPER_REGISTRY,
-    SequentialWrapper,
-    wrappers_disable_schedule,
-)
+from praxis.optimization.wrappers import SequentialWrapper, wrappers_disable_schedule
 
 
 def _quadratic_problem():
@@ -80,7 +77,7 @@ def test_registry_keys_and_disable_schedule():
         "gated_schedule_free",
         "wave_schedule_free",
     ]:
-        assert k in WRAPPER_REGISTRY
+        assert k in registry.namespace("wrappers")
     # Only the schedule-free family runs without an LR schedule.
     assert wrappers_disable_schedule(["schedule_free"]) is True
     assert wrappers_disable_schedule(["gated_schedule_free"]) is True

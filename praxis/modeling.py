@@ -20,16 +20,13 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 
-from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
+from praxis import PraxisConfig, registry
 from praxis.attention.cache import PraxisCache
 from praxis.containers import LossContainer
-from praxis.heads import HEAD_REGISTRY
 from praxis.losses import build_objectives
 from praxis.losses.conflict import ObjectiveConflict
-from praxis.policies import RL_POLICIES_REGISTRY
-from praxis.strategies import STRATEGIES_REGISTRY
-from praxis.tasks import TASK_NAMES, resolve_task_weighter
 from praxis.memory import MemoryBase
+from praxis.tasks import TASK_NAMES, resolve_task_weighter
 from praxis.utils import create_block_ids
 
 
@@ -65,7 +62,9 @@ class PraxisModel(PreTrainedModel):
         self.encoder = False
         self.embeds = None
         if config.encoder_type is not None:
-            self.encoder = ENCODER_REGISTRY.get(config.encoder_type)(config)
+            self.encoder = registry.namespace("encoders").get(config.encoder_type)(
+                config
+            )
             # Settle the decoding path once, here, so nothing downstream has to
             # re-derive it. Encoders that offer only one mode pick it
             # themselves; a run that names a mode its encoder cannot drive
@@ -84,12 +83,14 @@ class PraxisModel(PreTrainedModel):
                 # the non-encoder path below. Encoders that own their
                 # embeddings (profile None) are left alone.
                 profile = getattr(config, "embeddings", None) or profile
-                self.embeds = EMBEDDING_REGISTRY[profile](config, encoder=self.encoder)
+                self.embeds = registry.lookup("embeddings", profile)(
+                    config, encoder=self.encoder
+                )
                 self.encoder.set_embeddings(self.embeds)
         else:
             profile = getattr(config, "embeddings", None) or config.block_type
-            self.embeds = EMBEDDING_REGISTRY[profile](config)
-        self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
+            self.embeds = registry.lookup("embeddings", profile)(config)
+        self.decoder = registry.namespace("decoders").get(config.decoder_type)(config)
 
     @property
     def default_sampling_temperature(self):
@@ -245,7 +246,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     """`PraxisModel` plus an LM head and HF `GenerationMixin` (`.generate()`).
 
     This is the causal-LM entry point - what `AutoModelForCausalLM` loads. It wraps
-    the backbone with an output head (from `HEAD_REGISTRY`); `forward` returns
+    the backbone with an output head (from the ``heads`` registry); `forward` returns
     next-token logits and, when `labels` are given, the training loss.
     """
 
@@ -261,7 +262,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # tied) ignore the reference and skip allocating an lm_head.
         encoder_ref = self.encoder if self.encoder else None
         head_type = resolve_head_type(config, has_encoder=encoder_ref is not None)
-        head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
+        head_cls = registry.namespace("heads").get(
+            head_type, registry.lookup("heads", "forward")
+        )
         self.head = head_cls(config, encoder=encoder_ref)
 
         # Loss-owning encoders that borrow the head as their token classifier
@@ -271,7 +274,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Initialize separate backward head if requested
         if config.bidirectional and config.encoder_type is None:
-            backward_cls = HEAD_REGISTRY.get(config.head_type, HEAD_REGISTRY["forward"])
+            backward_cls = registry.namespace("heads").get(
+                config.head_type, registry.lookup("heads", "forward")
+            )
             self.backward_head = backward_cls(config, encoder=None)
         else:
             self.backward_head = None
@@ -322,7 +327,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.active_task_ids = None
 
         # The strategy for combining multiple losses into a single scalar objective.
-        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+        self.strategy = registry.namespace("strategies").get(config.strategy, "naive")()
         # Do the model's several objectives agree about the shared trunk? One
         # sampled cosine per loss term; see praxis/losses/conflict.py for why
         # this is the measurement and not the gradient-surgery method itself.
@@ -1094,7 +1099,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 )
                 outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
-        # Additive representation-shaping regularizers (REGULARIZER_REGISTRY).
+        # Additive representation-shaping regularizers (the ``regularizers`` registry).
         # `classifier` is passed as optional context, not stored: a regularizer
         # holding a reference to the readout would register it a second time and
         # duplicate its parameters in state_dict and the optimizer.
@@ -1372,7 +1377,7 @@ def resolve_head_type(config, has_encoder: bool) -> str:
     The flag is read off the registered class, unwrapping any
     functools.partial variant. Encoder mode always keeps the configured type.
     """
-    head_cls = HEAD_REGISTRY.get(config.head_type)
+    head_cls = registry.namespace("heads").get(config.head_type)
     while isinstance(head_cls, functools.partial):
         head_cls = head_cls.func
     self_ties = bool(getattr(head_cls, "self_ties", False))
@@ -1403,9 +1408,9 @@ def build_rl_policies(config):
     for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
         profile = get_rl_profile(rl_name)
         policy_key = profile["policy"] if profile else rl_name
-        if not policy_key or policy_key not in RL_POLICIES_REGISTRY:
+        if not policy_key or policy_key not in registry.namespace("rl_policies"):
             continue
-        policy_cls = RL_POLICIES_REGISTRY[policy_key]
+        policy_cls = registry.lookup("rl_policies", policy_key)
         if getattr(policy_cls, "is_weight_controller", False):
             continue
         if getattr(policy_cls, "is_recall", False):

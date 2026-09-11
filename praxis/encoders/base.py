@@ -19,7 +19,7 @@ from torch import nn
 class BaseEncoder(nn.Module, ABC):
     """Shared contract for encoders plugged into the model's input slot."""
 
-    # Input-embedding profile key (resolved against EMBEDDING_REGISTRY by the
+    # Input-embedding profile key (resolved against the ``embeddings`` registry by the
     # model). None means the encoder owns its embeddings (e.g. CALM).
     embedding_profile: Optional[str] = None
 

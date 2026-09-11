@@ -10,8 +10,7 @@ import math
 import pytest
 import torch
 
-from praxis import PraxisConfig
-from praxis.encoding import ENCODING_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.encoding.hope import HoPE
 from praxis.encoding.rope import RoPE
 
@@ -28,8 +27,8 @@ def _make_config(context_length: int, num_heads: int = 4, num_queries: int = 1):
 
 
 def test_registered_in_registry():
-    assert "hope" in ENCODING_REGISTRY
-    assert ENCODING_REGISTRY["hope"] is HoPE
+    assert "hope" in registry.namespace("encoding")
+    assert registry.lookup("encoding", "hope") is HoPE
 
 
 def test_pos_dim_matches_threshold_512_head64():
@@ -122,7 +121,7 @@ def test_before_scores_runs_through_registry_interface():
     # End-to-end smoke: HoPE plugs into the standard before_scores signature
     # used by syntaxes.py and modular.py.
     cfg = _make_config(context_length=512, num_heads=4, num_queries=1)
-    enc = ENCODING_REGISTRY["hope"](cfg)
+    enc = registry.lookup("encoding", "hope")(cfg)
     batch, num_heads, seq_len, head_dim = 2, 4, 32, 64
     q = torch.randn(batch, num_heads, seq_len, head_dim)
     k = torch.randn(batch, num_heads, seq_len, head_dim)

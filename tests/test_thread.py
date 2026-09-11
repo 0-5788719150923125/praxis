@@ -2,17 +2,14 @@
 
 import pytest
 
-from praxis.pillars.thread import (
-    DEFAULT_THREAD,
-    THREAD_REGISTRY,
-    resolve_thread,
-)
+from praxis import registry
+from praxis.pillars.thread import DEFAULT_THREAD, resolve_thread
 
 
 def test_registry_discovered_from_yaml_documents():
-    assert "blind_watchmaking" in THREAD_REGISTRY
-    assert "good_get_gooder" in THREAD_REGISTRY
-    for thread in THREAD_REGISTRY.values():
+    assert "blind_watchmaking" in registry.namespace("threads")
+    assert "good_get_gooder" in registry.namespace("threads")
+    for thread in registry.namespace("threads").values():
         assert thread.title and thread.pillars
 
 
@@ -41,7 +38,7 @@ def test_unknown_thread_raises():
 def test_pillars_reference_real_steps():
     from praxis.pillars.build import STEPS
 
-    for thread in THREAD_REGISTRY.values():
+    for thread in registry.namespace("threads").values():
         unknown = set(thread.pillars) - set(STEPS)
         assert not unknown, f"{thread.key} names unknown steps: {unknown}"
 

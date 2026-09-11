@@ -6,10 +6,9 @@ import pytest
 import torch
 from torch import nn
 
-from praxis import PraxisConfig
-from praxis.residuals import RESIDUAL_REGISTRY
+from praxis import PraxisConfig, registry
 
-MODULE_CLASSES = list(RESIDUAL_REGISTRY.values())
+MODULE_CLASSES = list(registry.namespace("residuals").values())
 
 
 # Define test parameters in a more structured way

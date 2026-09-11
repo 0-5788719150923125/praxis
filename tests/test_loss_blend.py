@@ -13,11 +13,10 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from praxis import registry
 from praxis.containers import LossContainer
-from praxis.heads import HEAD_REGISTRY
 from praxis.losses.conflict import ObjectiveConflict
 from praxis.losses.trunk_grads import resolve_anchor, trunk_gradients
-from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.strategies.anchor_capped import AnchorCapped
 
 
@@ -43,7 +42,7 @@ def _cfg(**over):
 @pytest.mark.parametrize("name", ["prismatic7", "prismatic8"])
 def test_mixture_ce_reaches_the_trunk_on_an_ordinary_parallel_head(name):
     torch.manual_seed(0)
-    head = HEAD_REGISTRY[name](_cfg())
+    head = registry.lookup("heads", name)(_cfg())
     head.train()
     h = torch.randn(2, 8, 16, requires_grad=True)
     ce = F.cross_entropy(head(h).reshape(-1, 32), torch.randint(0, 32, (16,)))
@@ -56,7 +55,7 @@ def test_surgical_head_detaches_main_from_the_trunk_entirely():
     measures nothing at all - which is why every conflict_* series stayed dark
     through abstractinator-u."""
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic9"](_cfg())
+    head = registry.lookup("heads", "prismatic9")(_cfg())
     head.train()
     h = torch.randn(2, 8, 16, requires_grad=True)
     ce = F.cross_entropy(head(h).reshape(-1, 32), torch.randint(0, 32, (16,)))
@@ -163,7 +162,7 @@ def test_cap_falls_back_to_the_plain_sum_without_names():
 
 
 def test_cap_is_registered_and_reports_its_weights():
-    s = STRATEGIES_REGISTRY["capped"]()
+    s = registry.lookup("strategies", "capped")()
     s.train()
     h = torch.randn(8, requires_grad=True)
     s([(h * 1.0).sum(), (h * 4.0).sum()], names=["main", "loud"], trunk=h)

@@ -6,17 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import registry
 from praxis.activations import ACT2FN
-from praxis.blocks import BLOCK_REGISTRY
-from praxis.compression import COMPRESSION_REGISTRY
-from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.halting import HALTING_REGISTRY
 from praxis.layers import LocalLayer, RemoteLayer
 from praxis.metrics.density import DensityProbe
-from praxis.orchestration import EXPERT_REGISTRY
-from praxis.sorting import SORTING_REGISTRY
-from praxis.width import WIDTH_REGISTRY
 
 
 def _wants_expert_bank(router_type: Optional[str]) -> bool:
@@ -27,10 +21,9 @@ def _wants_expert_bank(router_type: Optional[str]) -> bool:
     """
     if not router_type:
         return False
-    from praxis.routers import ROUTER_REGISTRY
     from praxis.routers.bank import ExpertBank
 
-    cls = ROUTER_REGISTRY.get(router_type)
+    cls = registry.namespace("routers").get(router_type)
     cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
     return isinstance(cls, type) and issubclass(cls, ExpertBank)
 
@@ -52,9 +45,7 @@ def _router_layout(router_type: Optional[str]) -> str:
     if _wants_expert_bank(router_type):
         return "bank"
 
-    from praxis.routers import ROUTER_REGISTRY
-
-    cls = ROUTER_REGISTRY.get(router_type)
+    cls = registry.namespace("routers").get(router_type)
     cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
     return getattr(cls, "LAYER_LAYOUT", "per_position")
 
@@ -78,15 +69,21 @@ class BaseDecoder(nn.Module):
         # Mixture-of-widths: the policy that deflates each step's inner rank.
         # Registered first so it sits atop the decoder on the blueprint, where the
         # loop reaches for it (see SequentialDecoder).
-        self.width = WIDTH_REGISTRY[getattr(config, "width_type", None) or "none"]()
+        self.width = registry.lookup(
+            "width", getattr(config, "width_type", None) or "none"
+        )()
         self._width_realized = None  # mean active width used in the last forward
-        self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
+        self.controller = registry.namespace("controllers").get(config.controller_type)(
+            config
+        )
         self.genome = GenomicBottleneck(config) if config.evolve else False
-        self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
+        self.compressor = registry.namespace("compression").get(
+            config.compression_type
+        )(config)
         self.manager = False
-        self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
+        self.order = registry.namespace("sorting").get(config.sorting_type)(config)
         halting_type = getattr(config, "halting_type", None) or "none"
-        self.halting = HALTING_REGISTRY[halting_type](config)
+        self.halting = registry.lookup("halting", halting_type)(config)
         # Mono-forward graph cutting (praxis/decoders/mono.py): a no-op unless
         # config.mono_type names a cut schedule. Sequential-only; build_mono
         # raises on other decoder types rather than silently never cutting.
@@ -122,7 +119,7 @@ class BaseDecoder(nn.Module):
         # This allows integrations like Hivemind to inject their management systems
         self._call_integration_hooks(config)
         if "scatter" in config.meta or config.expert in ["scatter"]:
-            block = BLOCK_REGISTRY[config.block_type](config)
+            block = registry.lookup("blocks", config.block_type)(config)
             expert = LocalLayer(config, block=block)
             for i in range(self.num_layers):
                 self.locals.append(expert)
@@ -134,7 +131,7 @@ class BaseDecoder(nn.Module):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
+                    block = registry.lookup("blocks", config.block_type)(config)
                 expert_blocks.append(block)
 
             # The long-term memory is SHARED across the bank rather than
@@ -176,13 +173,12 @@ class BaseDecoder(nn.Module):
             # deviations. It keeps no reference to the block afterwards - the
             # block arrives as the first forward argument - so nothing is
             # double-registered in the state dict.
-            from praxis.routers import ROUTER_REGISTRY
 
             if self.manager:
                 block = self.manager.register_expert(config)
             else:
-                block = BLOCK_REGISTRY[config.block_type](config)
-            router = ROUTER_REGISTRY[config.router_type](config, block=block)
+                block = registry.lookup("blocks", config.block_type)(config)
+            router = registry.lookup("routers", config.router_type)(config, block=block)
             expert = LocalLayer(config, block=block, router=router)
             for i in range(self.num_layers):
                 self.locals.append(expert)
@@ -202,7 +198,7 @@ class BaseDecoder(nn.Module):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
+                    block = registry.lookup("blocks", config.block_type)(config)
                 expert_blocks.append(block)
 
                 print(
@@ -231,7 +227,7 @@ class BaseDecoder(nn.Module):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
+                    block = registry.lookup("blocks", config.block_type)(config)
                 expert = LocalLayer(config, block=block)
                 self.locals.append(expert)
         self.norm = (

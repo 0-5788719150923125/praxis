@@ -2,14 +2,14 @@ import pytest
 import torch
 from torch import nn
 
-from praxis.strategies import STRATEGIES_REGISTRY
+from praxis import registry
 
 
-@pytest.fixture(params=list(STRATEGIES_REGISTRY.keys()))
+@pytest.fixture(params=list(registry.namespace("strategies").keys()))
 def strategy_setup(request):
     """Initialize a strategy module for testing."""
     strategy_name = request.param
-    strategy_class = STRATEGIES_REGISTRY[strategy_name]
+    strategy_class = registry.lookup("strategies", strategy_name)
 
     # Configure the strategy with the right parameters
     if strategy_name == "weighted":
@@ -22,7 +22,7 @@ def strategy_setup(request):
 
 def test_naive_strategy():
     """Test naive summation strategy."""
-    strategy = STRATEGIES_REGISTRY["naive"]()
+    strategy = registry.lookup("strategies", "naive")()
 
     # Create sample losses
     loss1 = torch.tensor(2.0, requires_grad=True)
@@ -47,7 +47,7 @@ def test_naive_strategy():
 
 def test_uncertainty_weighted_strategy():
     """Test uncertainty weighted strategy."""
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # Create sample losses
     loss1 = torch.tensor(2.0, requires_grad=True)
@@ -78,7 +78,7 @@ def test_uncertainty_weighted_strategy():
 
 def test_strategy_with_imbalanced_losses():
     """Test strategies with imbalanced loss values."""
-    for strategy_name, strategy_class in STRATEGIES_REGISTRY.items():
+    for strategy_name, strategy_class in registry.namespace("strategies").items():
         # Initialize with appropriate parameters for each strategy
         if strategy_name == "weighted":
             strategy = strategy_class()
@@ -128,7 +128,7 @@ def test_strategies_parameterized(strategy_setup):
 
 def test_real_time_strategy():
     """Test real-time strategy."""
-    strategy = STRATEGIES_REGISTRY["real_time"]()
+    strategy = registry.lookup("strategies", "real_time")()
 
     # Create sample losses
     loss1 = torch.tensor(2.0, requires_grad=True)
@@ -155,7 +155,7 @@ def test_real_time_strategy():
 
 def test_uncertainty_weighted_with_negative_losses():
     """Test uncertainty weighted strategy with negative losses (RL rewards)."""
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # Create mixed positive and negative losses
     supervised_loss = torch.tensor(2.0, requires_grad=True)
@@ -196,7 +196,7 @@ def test_uncertainty_weighted_with_negative_losses():
 
 def test_uncertainty_weighted_all_negative_losses():
     """Test uncertainty weighted strategy with all negative losses (all rewards)."""
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # All negative losses (representing reward signals)
     reward_loss1 = torch.tensor(-2.0, requires_grad=True)
@@ -224,7 +224,7 @@ def test_uncertainty_weighted_all_negative_losses():
 
 def test_uncertainty_weighted_extreme_values():
     """Test uncertainty weighted strategy with extreme positive and negative values."""
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # Extreme values
     large_positive_loss = torch.tensor(100.0, requires_grad=True)
@@ -259,7 +259,7 @@ def test_uncertainty_weighted_extreme_values():
 
 def test_uncertainty_weighted_sign_preservation():
     """Test that uncertainty weighted strategy preserves loss sign correctly."""
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # Positive loss should contribute positively to total loss
     positive_loss = torch.tensor(1.0, requires_grad=True)
@@ -267,7 +267,7 @@ def test_uncertainty_weighted_sign_preservation():
     positive_combined = strategy(positive_only_losses)
 
     # Reset strategy for fair comparison
-    strategy = STRATEGIES_REGISTRY["weighted"]()
+    strategy = registry.lookup("strategies", "weighted")()
 
     # Negative loss should contribute negatively to total loss (reward maximization)
     negative_loss = torch.tensor(-1.0, requires_grad=True)

@@ -23,6 +23,8 @@ from typing import Dict, Iterator, Optional
 import torch
 import torch.nn.functional as F
 
+from praxis import registry
+
 _EPS = 1e-12
 
 
@@ -90,16 +92,17 @@ def _attention_modules(root) -> Iterator:
 
     Arc is collected separately by :func:`collect_arc_metrics`, so the Arc
     classes are excluded here and nothing is counted twice. Everything else in
-    ATTENTION_REGISTRY opts in the same way an activation does - by defining
+    the ``attention`` registry opts in the same way an activation does - by defining
     ``training_metrics`` - and, like activations, has no loss hook, so a module
     walk is the only way to reach it. Without this walk a mechanism can publish
     a full diagnostic suite that never reaches the log, which is exactly what
     happened to SSOG's field metrics.
     """
-    from praxis.attention import ATTENTION_REGISTRY
     from praxis.attention.arc import ArcAttention
 
-    classes = tuple({getattr(v, "func", v) for v in ATTENTION_REGISTRY.values()})
+    classes = tuple(
+        {getattr(v, "func", v) for v in registry.namespace("attention").values()}
+    )
     for module in root.modules():
         if (
             isinstance(module, classes)

@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import registry
 from praxis.activations import build_activation
-from praxis.dense import DENSE_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -42,7 +42,7 @@ class ConvolutionalBlock(nn.Module):
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = DENSE_REGISTRY.get("glu")(config)
+        self.ffw = registry.namespace("dense").get("glu")(config)
 
     def forward(
         self,

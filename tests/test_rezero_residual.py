@@ -2,9 +2,9 @@
 
 import torch
 
-from praxis import PraxisConfig
+from praxis import PraxisConfig, registry
 from praxis.blocks.transformer import TransformerBlock
-from praxis.residuals import RESIDUAL_REGISTRY, ReZeroConnection
+from praxis.residuals import ReZeroConnection
 
 
 def _cfg(**over):
@@ -23,7 +23,7 @@ def _cfg(**over):
 
 
 def test_registered():
-    assert RESIDUAL_REGISTRY["rezero"] is ReZeroConnection
+    assert registry.lookup("residuals", "rezero") is ReZeroConnection
 
 
 def test_identity_at_init_per_depth():

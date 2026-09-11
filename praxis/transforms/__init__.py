@@ -4,7 +4,7 @@ A pure function over an assembled model, in the shape ``praxis/routers/smear.py`
 established for target discovery: walk the module tree, apply a named profile of
 include/exclude rules, and transform what matches. Nothing here is site-specific
 - moving the experiment to a different tensor is a regex in
-``TRANSFORM_REGISTRY``, not a new implementation.
+the ``transforms`` registry, not a new implementation.
 
 The mechanism is structured weight tying, not quaternion arithmetic. See
 ``praxis/transforms/algebra.py`` for the derivation and the one guarantee the
@@ -42,13 +42,14 @@ import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 from torch.nn.parameter import UninitializedParameter
 
+from praxis import registry
+from praxis.registry import Entry
 from praxis.transforms.algebra import ALGEBRAS
 from praxis.transforms.alignment import align_axis
 from praxis.transforms.ghost import AUTO_ORDER, ghost_parameter, pick_algebra
 from praxis.transforms.targeting import TargetSpec
 
 __all__ = [
-    "TRANSFORM_REGISTRY",
     "MIN_TARGET_NUMEL",
     "TransformProfile",
     "TransformStats",
@@ -94,31 +95,93 @@ _ALL = TargetSpec()
 # targeting.DENSE_DELTA_MAX_NUMEL, which draws the same line for the same reason.
 MIN_TARGET_NUMEL: int = 4096
 
-TRANSFORM_REGISTRY: Dict[str, TransformProfile] = {
-    "ghost_conv_complex": TransformProfile(_CONV, "complex"),
-    "ghost_conv_quaternion": TransformProfile(_CONV, "quaternion"),
-    "ghost_conv_random": TransformProfile(_CONV, "complex", randomize=True),
-    "ghost_mtp_complex": TransformProfile(_MTP, "complex"),
-    "ghost_mtp_random": TransformProfile(_MTP, "complex", randomize=True),
-    # The broad profiles, and the only ones that ask auto-sized modules to round
-    # their derived dimensions onto a compatible lattice - see `request_alignment`
-    # above and praxis/transforms/alignment.py. They target everything, so they
-    # are the ones for which such a module IS a target.
-    "ghost_all_complex": TransformProfile(_ALL, "complex", request_alignment=True),
-    "ghost_all_quaternion": TransformProfile(
-        _ALL, "quaternion", request_alignment=True
+registry.declare(
+    "transforms",
+    title="Model transforms",
+    doc=(
+        (
+            "Ghost features: profiles that walk the assembled module tree and rewrite "
+            "matched parameters in place, storing 1/d of a weight and deriving the rest by "
+            "a fixed signed permutation. Each profile is a target regex plus an algebra."
+        )
     ),
-    "ghost_all_random": TransformProfile(
-        _ALL, "complex", randomize=True, request_alignment=True
-    ),
-    # Deepest cut each tensor admits. Maximizes coverage; costs attribution,
-    # because a difference could be the algebra or the depth.
-    "ghost_all_auto": TransformProfile(_ALL, "auto", request_alignment=True),
-    # Spares nothing, readout included. Expect the LM head to be what breaks.
-    "ghost_all_greedy_complex": TransformProfile(
-        _ALL, "complex", skip_vocab=False, request_alignment=True
-    ),
-}
+    entries={
+        "ghost_conv_complex": Entry(
+            TransformProfile(_CONV, "complex"),
+            (
+                "The encoder's ConvBlock convolutions under the complex algebra, "
+                "storing half of each weight."
+            ),
+        ),
+        "ghost_conv_quaternion": Entry(
+            TransformProfile(_CONV, "quaternion"),
+            (
+                "The encoder's ConvBlock convolutions under the quaternion algebra, "
+                "storing a quarter of each weight."
+            ),
+        ),
+        "ghost_conv_random": Entry(
+            TransformProfile(_CONV, "complex", randomize=True),
+            (
+                "``ghost_conv_complex`` with a frozen arbitrary signed permutation in "
+                "place of the algebra's: the control for whether the algebra matters."
+            ),
+        ),
+        "ghost_mtp_complex": Entry(
+            TransformProfile(_MTP, "complex"),
+            (
+                "The multi-token-prediction bank's per-depth projections under the "
+                "complex algebra."
+            ),
+        ),
+        "ghost_mtp_random": Entry(
+            TransformProfile(_MTP, "complex", randomize=True),
+            (
+                "``ghost_mtp_complex`` with a frozen arbitrary signed permutation: the "
+                "algebra control."
+            ),
+        ),
+        "ghost_all_complex": Entry(
+            TransformProfile(_ALL, "complex", request_alignment=True),
+            (
+                "Every eligible weight under the complex algebra. The broad profiles "
+                "are the only ones that ask auto-sized modules to round their derived "
+                "dimensions onto a lattice the algebra divides "
+                "(``request_alignment``): they target everything, so they are the ones "
+                "for which such a module is a target."
+            ),
+        ),
+        "ghost_all_quaternion": Entry(
+            TransformProfile(_ALL, "quaternion", request_alignment=True),
+            (
+                "``ghost_all_complex`` under the quaternion algebra, storing a quarter "
+                "of each weight."
+            ),
+        ),
+        "ghost_all_random": Entry(
+            TransformProfile(_ALL, "complex", randomize=True, request_alignment=True),
+            (
+                "``ghost_all_complex`` with a frozen arbitrary signed permutation: the "
+                "algebra control."
+            ),
+        ),
+        "ghost_all_auto": Entry(
+            TransformProfile(_ALL, "auto", request_alignment=True),
+            (
+                "Every eligible weight at the deepest cut each tensor admits. "
+                "Maximizes coverage at the cost of attribution, because a difference "
+                "could be the algebra or the depth."
+            ),
+        ),
+        "ghost_all_greedy_complex": Entry(
+            TransformProfile(_ALL, "complex", skip_vocab=False, request_alignment=True),
+            (
+                "``ghost_all_complex`` sparing nothing, the vocab-sized readout "
+                "included, for when tying the readout is the experiment."
+            ),
+        ),
+    },
+)
 
 
 def block_alignment(config: object) -> int:
@@ -134,7 +197,9 @@ def block_alignment(config: object) -> int:
     by 2, so the shallower algebras stay available, and `pick_algebra` walks the
     same order to prefer the deep one where it now fits.
     """
-    entry = TRANSFORM_REGISTRY.get(getattr(config, "transform_type", "none"))
+    entry = registry.namespace("transforms").get(
+        getattr(config, "transform_type", "none")
+    )
     if entry is None or not entry.request_alignment:
         return 1
     names = AUTO_ORDER if entry.algebra == "auto" else (entry.algebra,)
@@ -217,12 +282,12 @@ def apply_transform(model: nn.Module, profile: str) -> TransformStats:
     """
     if not profile or profile == "none":
         return TransformStats("none", "none", [], {}, {})
-    if profile not in TRANSFORM_REGISTRY:
+    if profile not in registry.namespace("transforms"):
         raise ValueError(
-            f"Unknown ghost profile {profile!r}; known: {sorted(TRANSFORM_REGISTRY)}"
+            f"Unknown ghost profile {profile!r}; known: {sorted(registry.namespace("transforms"))}"
         )
 
-    entry = TRANSFORM_REGISTRY[profile]
+    entry = registry.lookup("transforms", profile)
     skipped: Dict[str, int] = {}
     missed: Dict[str, List[str]] = {}
 

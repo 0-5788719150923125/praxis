@@ -604,6 +604,7 @@ def test_only_the_cross_pass_tilt_can_close_the_gate():
     tokens here are worth writing but never that none of them are. Pinning the
     tilt at 1.0 reduces the gate to exactly that, and the decline disappears.
     """
+
     def tail(x):
         return sum(x[-10:]) / 10
 

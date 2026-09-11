@@ -2,7 +2,7 @@
 
 All share ``CALMVAE``'s constructor signature and ``encode``/``decode``/
 ``reparameterize``/``normalize_latent``/``kl_divergence`` surface, so the
-encoder swaps between them via ``codec_kind`` (see ``CODEC_REGISTRY``). They sit
+encoder swaps between them via ``codec_kind`` (see the ``codecs`` registry). They sit
 at different points on the bias-variance codec axis:
 
   - ``FixedCodec`` (pure bias): a deterministic, non-learned encoder (frozen
@@ -31,14 +31,16 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from praxis import registry
 from praxis.activations import build_activation
 from praxis.activations.serpent import Serpent
+from praxis.encoders.basis import harmonic_matrix as _harmonic_matrix
+from praxis.encoders.basis import orthonormal as _orthonormal
 from praxis.encoders.basis import (
-    harmonic_matrix as _harmonic_matrix,
-    orthonormal as _orthonormal,
     separable_harmonic_matrix as _separable_harmonic_matrix,
 )
 from praxis.encoders.calm.vae import HarmonicDropout, ResidualMLPBlock
+from praxis.registry import Entry
 
 # Deterministic build seed for the frozen bases (reproducible, resume-stable).
 FIXED_CODEC_SEED = 1234
@@ -232,13 +234,26 @@ class HarmonicCodec(FixedCodec):
         return z, self.fixed_logvar.expand_as(z)
 
 
-# Codec slot, selected by the encoder's codec_kind kwarg (profile partial).
 from praxis.encoders.calm.vae import CALMVAE  # noqa: E402
 
-CODEC_REGISTRY = {
-    "vae": CALMVAE,
-    "fixed": FixedCodec,
-    "hybrid": HybridCodec,
-    "harmonic": HarmonicCodec,
-    "harmonic_serpent": partial(HarmonicCodec, nonlinear=True),
-}
+registry.declare(
+    "codecs",
+    doc=(
+        "CALM's codec slot, selected by the encoder's ``codec_kind`` argument (bound "
+        "in each encoder profile)."
+    ),
+    entries={
+        "vae": CALMVAE,
+        "fixed": FixedCodec,
+        "hybrid": HybridCodec,
+        "harmonic": HarmonicCodec,
+        "harmonic_serpent": Entry(
+            partial(HarmonicCodec, nonlinear=True),
+            (
+                "``harmonic`` with a learned periodic Serpent activation after the "
+                "transform, a gentle residual nonlinearity that makes the encode "
+                "learnable (single-stage, never frozen)."
+            ),
+        ),
+    },
+)

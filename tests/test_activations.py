@@ -3,12 +3,8 @@ import itertools
 import pytest
 import torch
 
-from praxis.activations import (
-    ACTIVATION_MAP,
-    ACTIVATION_TYPE_REGISTRY,
-    build_activation,
-    linear_activation,
-)
+from praxis import registry
+from praxis.activations import ACTIVATION_MAP, build_activation, linear_activation
 
 # Every concrete activation, plus every combination type over a small bank. Two
 # parameter-free values, so a mixture costs the same to exercise as a plain one.
@@ -18,7 +14,7 @@ SPECS = [(name, name) for name in ACTIVATION_MAP] + [
         f"type:{name}",
         {"type": name, "values": TEST_VALUES[: 1 if name == "single" else 2]},
     )
-    for name in ACTIVATION_TYPE_REGISTRY
+    for name in registry.namespace("activation_types")
 ]
 
 

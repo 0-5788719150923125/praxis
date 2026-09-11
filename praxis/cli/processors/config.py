@@ -2,6 +2,8 @@
 
 import inspect
 
+from praxis import registry
+
 
 def _encoder_owns_embeddings(encoder_type) -> bool:
     """Whether the named encoder builds its own (tokenizer-vocab-sized) input
@@ -9,9 +11,8 @@ def _encoder_owns_embeddings(encoder_type) -> bool:
     underlying class via ``.func``."""
     if not encoder_type:
         return False
-    from praxis import ENCODER_REGISTRY
 
-    builder = ENCODER_REGISTRY.get(encoder_type)
+    builder = registry.namespace("encoders").get(encoder_type)
     cls = getattr(builder, "func", builder)
     return bool(getattr(cls, "owns_embeddings", False))
 

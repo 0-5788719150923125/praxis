@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.residuals import RESIDUAL_REGISTRY
+from praxis import registry
 from praxis.utils import norm_scaling
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -32,7 +32,7 @@ class SSMBlock(nn.Module):
         self.use_scaler = config.scaled
 
         # Residual connection
-        self.residual = RESIDUAL_REGISTRY.get(config.residual_type)(
+        self.residual = registry.namespace("residuals").get(config.residual_type)(
             self.hidden_size, num_depths=config.depth
         )
 

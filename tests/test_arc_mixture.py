@@ -10,8 +10,8 @@ import pytest
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.configuration import PraxisConfig
-from praxis.routers import ROUTER_REGISTRY
 from praxis.routers.arc import ArcMixture
 from praxis.routers.mixture_of_depths import MixtureOfDepths
 
@@ -45,8 +45,8 @@ class TestArcMixtureRegistration:
     """Registry and construction wiring."""
 
     def test_registered_under_arc_mixture(self):
-        assert "arc_mixture" in ROUTER_REGISTRY
-        assert ROUTER_REGISTRY["arc_mixture"] is ArcMixture
+        assert "arc_mixture" in registry.namespace("routers")
+        assert registry.lookup("routers", "arc_mixture") is ArcMixture
 
     def test_is_mixture_of_depths_subclass(self):
         assert issubclass(ArcMixture, MixtureOfDepths)
@@ -55,7 +55,7 @@ class TestArcMixtureRegistration:
         # LocalLayer constructs routers with experts=expert_blocks; ArcMixture
         # should accept and ignore it like MixtureOfDepths does.
         config = make_config()
-        router = ROUTER_REGISTRY["arc_mixture"](config, experts=None)
+        router = registry.lookup("routers", "arc_mixture")(config, experts=None)
         assert isinstance(router, ArcMixture)
 
 

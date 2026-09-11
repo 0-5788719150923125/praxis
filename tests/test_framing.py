@@ -15,13 +15,13 @@ import re
 
 import pytest
 
+from praxis import registry
 from praxis.pillars.framing import (
     FRAMING,
     REPO_ROOT,
     active_fragments,
     resolve_config,
 )
-from praxis.pillars.thread import THREAD_REGISTRY
 
 # One fragment from each family must fire, and only one. Keyed by the section
 # anchor the family renders into.
@@ -84,9 +84,8 @@ def test_every_mtp_type_has_a_mechanism_paragraph():
     paragraph inherits only the intro, which cannot describe every bank at once -
     that is how the transformer and conv banks came to be described by prose
     written for a shared-parameter pool."""
-    from praxis.heads import MTP_REGISTRY
 
-    modes = set(MTP_REGISTRY) | {"vear", "serpent_rnn"}
+    modes = set(registry.namespace("mtp")) | {"vear", "serpent_rnn"}
     covered = {
         m
         for frag in FRAMING.values()
@@ -120,7 +119,9 @@ def _rendered_prose(experiment: str) -> str:
     """Everything a reader of this run's PDF actually sees, minus TikZ."""
     parts = [(REPO_ROOT / "research" / "body.tex").read_text()]
     parts += [f.body for f in active_fragments(resolve_config(experiment))]
-    parts += [prose for _, prose in THREAD_REGISTRY["blind_watchmaking"].components]
+    parts += [
+        prose for _, prose in registry.lookup("threads", "blind_watchmaking").components
+    ]
     blob = "\n".join(parts)
     blob = re.sub(
         r"\\begin\{tikzpicture\}.*?\\end\{tikzpicture\}", " ", blob, flags=re.S

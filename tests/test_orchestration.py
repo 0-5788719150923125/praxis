@@ -9,14 +9,8 @@ exercised without any transport or real model.
 import torch
 from torch import nn
 
-from praxis.orchestration import (
-    EXPERT_REGISTRY,
-    MIXING_REGISTRY,
-    ExpertPool,
-    LocalExpert,
-    build_mixer,
-    build_pool,
-)
+from praxis import registry
+from praxis.orchestration import ExpertPool, LocalExpert, build_mixer, build_pool
 from praxis.orchestration.mixing import _sample, _wave
 
 HIDDEN = 14
@@ -35,9 +29,14 @@ def _batch():
 
 
 def test_registry_exports():
-    assert "mean" in MIXING_REGISTRY and "wave" in MIXING_REGISTRY
+    assert "mean" in registry.namespace("mixing") and "wave" in registry.namespace(
+        "mixing"
+    )
     # backward compat: dense block zoo still surfaced for the integrations layer
-    assert isinstance(EXPERT_REGISTRY, dict) and len(EXPERT_REGISTRY) > 0
+    assert (
+        isinstance(registry.namespace("dense"), dict)
+        and len(registry.namespace("dense")) > 0
+    )
 
 
 def test_local_expert_trains():

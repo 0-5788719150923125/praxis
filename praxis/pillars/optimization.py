@@ -10,7 +10,7 @@ This module renders that choice for the run being written up, so a reader knows
 what trained the model rather than having to assume Adam. Two kinds of content,
 kept deliberately apart:
 
-- **Facts** are read from :data:`praxis.optimization.OPTIMIZER_PROFILES` and the
+- **Facts** are read from the ``optimizers`` registry and the
   resolved experiment config - learning rate, weight decay, the secondary
   optimizer on vocab-facing parameters, wrappers, trainer. These cannot drift
   from the code, because they *are* the code.
@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 from typing import Dict, Optional
 
+from praxis import registry
 from praxis.pillars.geometries import RESEARCH_DIR
 
 OUT_TEX = os.path.join(RESEARCH_DIR, "optimization.tex")
@@ -186,14 +187,13 @@ def _fmt(value) -> str:
 def resolve(experiment: Optional[str] = None) -> Dict:
     """Facts about how ``experiment`` was optimized. Best-effort: any piece the
     config or the profile table does not supply is simply omitted."""
-    from praxis.optimization import OPTIMIZER_PROFILES
     from praxis.pillars.framing import newest_experiment, resolve_config
 
     name = experiment or newest_experiment()
     cfg = resolve_config(name) if name else {}
 
     optimizer = str(cfg.get("optimizer") or "AdamW")
-    profile = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}.get(
+    profile = {k.lower(): v for k, v in registry.namespace("optimizers").items()}.get(
         optimizer.lower(), {}
     )
 

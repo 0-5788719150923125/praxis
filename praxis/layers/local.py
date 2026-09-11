@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from praxis import registry
 from praxis.containers.loss import LossContainer
-from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -41,12 +41,12 @@ class LocalLayer(nn.Module):
             # typo or a renamed registry key surfaced as
             # ``TypeError: 'str' object is not callable`` from inside the
             # constructor, naming neither the key nor the registry.
-            if config.router_type not in ROUTER_REGISTRY:
+            if config.router_type not in registry.namespace("routers"):
                 raise KeyError(
                     f"Unknown router_type {config.router_type!r}. "
-                    f"Known: {sorted(ROUTER_REGISTRY)}"
+                    f"Known: {sorted(registry.namespace("routers"))}"
                 )
-            router_cls = ROUTER_REGISTRY[config.router_type]
+            router_cls = registry.lookup("routers", config.router_type)
             self.router = router_cls(config, experts=expert_blocks)
         self.block: Union[nn.Module, bool] = block
 

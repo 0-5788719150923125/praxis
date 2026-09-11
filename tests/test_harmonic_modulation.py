@@ -4,6 +4,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from praxis import registry
 from praxis.heads.harmonic import FAST_EPS, FAST_SEGMENT, HarmonicField
 
 
@@ -72,7 +73,6 @@ def test_head_type_keys_compose_sequential_heads():
     # keywords.
     import functools
 
-    from praxis.heads import HEAD_REGISTRY
     from praxis.heads import CrystalHead, HarmonicHead
     from praxis.heads.stacked import SequentialHead
 
@@ -80,7 +80,7 @@ def test_head_type_keys_compose_sequential_heads():
         ("crystal_harmonic", "off"),
         ("crystal_harmonic_static", "static"),
     ]:
-        entry = HEAD_REGISTRY[key]
+        entry = registry.lookup("heads", key)
         assert isinstance(entry, functools.partial)
         assert entry.func is SequentialHead
         harmonic_spec, crystal_spec = entry.keywords["heads"]
@@ -95,10 +95,10 @@ def test_prismatic_is_top_level_parallel_split():
     #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
     import functools
 
-    from praxis.heads import HEAD_REGISTRY, CrystalHead, HarmonicHead, ParallelHead
+    from praxis.heads import CrystalHead, HarmonicHead, ParallelHead
     from praxis.heads.stacked import SequentialHead
 
-    entry = HEAD_REGISTRY["prismatic"]
+    entry = registry.lookup("heads", "prismatic")
     assert isinstance(entry, functools.partial) and entry.func is ParallelHead
     arm0, arm1 = entry.keywords["branches"]
     assert arm0.func is SequentialHead and arm1.func is SequentialHead

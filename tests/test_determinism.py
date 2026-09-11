@@ -5,7 +5,7 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from praxis.controllers import CONTROLLER_REGISTRY
+from praxis import registry
 from praxis.controllers.base import BaseController
 from praxis.data import (
     DATASETS,
@@ -241,7 +241,7 @@ def test_base_controller_determinism():
 def test_controller_determinism(controller_name):
     """Test that all controllers produce deterministic routes with fixed seeds."""
     config = MockConfig()
-    controller_class = CONTROLLER_REGISTRY[controller_name]
+    controller_class = registry.lookup("controllers", controller_name)
 
     # First run
     torch.manual_seed(42)

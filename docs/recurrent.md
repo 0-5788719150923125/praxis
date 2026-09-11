@@ -3,7 +3,7 @@
 
 Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 
-Registry: ``praxis.RECURRENT_REGISTRY`` (2 entries)
+Namespace: ``registry.namespace("recurrent")``, declared in ``praxis.recurrent`` (2 entries)
 
 ## `gru` - GRU
 

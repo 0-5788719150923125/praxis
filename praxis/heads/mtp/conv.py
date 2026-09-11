@@ -8,7 +8,7 @@ ConvBlock pattern from praxis/encoders/byte_latent/encoder.py.
 import torch
 import torch.nn as nn
 
-from praxis.normalization import NORMALIZATION_REGISTRY
+from praxis import registry
 
 
 class CausalConvLayer(nn.Module):
@@ -44,10 +44,10 @@ class ConvMTPModule(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.norm_hidden = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_hidden = registry.lookup("normalization", config.norm_type)(
             config.hidden_size, eps=config.epsilon
         )
-        self.norm_embed = NORMALIZATION_REGISTRY[config.norm_type](
+        self.norm_embed = registry.lookup("normalization", config.norm_type)(
             config.embed_size, eps=config.epsilon
         )
         self.projection = nn.Linear(

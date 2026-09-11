@@ -25,6 +25,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from praxis import registry
+from praxis.registry import Entry
+
 # Streaming-ridge sufficient statistics: EMA decay and the scale-free ridge
 # coefficient (lambda = RIDGE_LAMBDA * mean diagonal of A). Fixed and
 # model-agnostic per the no-per-experiment-tuning rule.
@@ -250,13 +253,39 @@ class LinearPrior(nn.Module):
         return phi @ self.W.to(phi.dtype)
 
 
-# Options for the energy head's closed-form prior. "linear" is the default
-# wherever the energy head is used; "none" is the paper-pure ablation.
-ENERGY_PRIOR_REGISTRY = {
-    "none": None,
-    "linear": partial(LinearPrior, mode="linear"),
-    "harmonic": partial(LinearPrior, mode="harmonic"),
-}
+registry.declare(
+    "energy_priors",
+    doc=(
+        "Closed-form priors for the CALM energy head, chosen by the encoder profile's "
+        "``energy_prior``. The flow and harmonic latent heads take none."
+    ),
+    entries={
+        "none": Entry(
+            None,
+            (
+                "No prior: the energy head predicts the next latent unaided. The "
+                "paper-pure ablation."
+            ),
+        ),
+        "linear": Entry(
+            partial(LinearPrior, mode="linear"),
+            (
+                "A closed-form linear predictor of the next latent, ``W phi(h, t)``, "
+                "solved by ridge regression from EMA sufficient statistics and then "
+                "frozen; the energy head learns only the residual. The default "
+                "wherever the energy head is used."
+            ),
+        ),
+        "harmonic": Entry(
+            partial(LinearPrior, mode="harmonic"),
+            (
+                "linear with sin/cos features of integer frequencies over the patch "
+                "period added, so quasi-periodic latent structure is absorbed as "
+                "Fourier coefficients by the same linear solve."
+            ),
+        ),
+    },
+)
 
 
 class MLPBlock(nn.Module):

@@ -10,6 +10,8 @@ import io
 
 import numpy as np
 
+from praxis import registry
+
 # US standard card (3.5 x 2 in) on US Letter, matching Avery 28371:
 # 2 cols x 5 rows = 10 per sheet, 0.75 in side and 0.5 in top/bottom
 # margins, no gutters. EU/A4 support deferred.
@@ -1431,25 +1433,28 @@ def sketch_field(ax, rng, pal, mods):
         )
 
 
-PROJECTION_REGISTRY = {
-    "strands": strand_field,
-    "shatter": shatter_field,
-    "lightning": lightning_field,
-    "scratches": scratch_field,
-    "sketch": sketch_field,
-    "waves": wave_field,
-    "fibonacci": fibonacci_field,
-    "glyphs": glyph_field,
-    "rubble": rubble_field,
-    "splatter": splatter_field,
-    "snowflake": snowflake_field,
-    "flora": flora_field,
-    "bones": bone_field,
-    "neural": neural_field,
-    "matrix": matrix_field,
-    "helix": helix_field,
-    "leaves": leaf_field,
-}
+registry.declare(
+    "projections",
+    entries={
+        "strands": strand_field,
+        "shatter": shatter_field,
+        "lightning": lightning_field,
+        "scratches": scratch_field,
+        "sketch": sketch_field,
+        "waves": wave_field,
+        "fibonacci": fibonacci_field,
+        "glyphs": glyph_field,
+        "rubble": rubble_field,
+        "splatter": splatter_field,
+        "snowflake": snowflake_field,
+        "flora": flora_field,
+        "bones": bone_field,
+        "neural": neural_field,
+        "matrix": matrix_field,
+        "helix": helix_field,
+        "leaves": leaf_field,
+    },
+)
 
 
 def _caps(rng, text, weights, url=False):
@@ -1522,8 +1527,8 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=No
     )
     ax.add_patch(inner)
 
-    names = list(PROJECTION_REGISTRY)
-    field = PROJECTION_REGISTRY[names[int(rng.integers(len(names)))]]
+    names = list(registry.namespace("projections"))
+    field = registry.lookup("projections", names[int(rng.integers(len(names)))])
     sampled = _sample_mods(rng, mods)
     field(ax, rng, pal, sampled)
     # Clip geometry to the inner panel so the border stays clean;

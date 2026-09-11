@@ -16,7 +16,7 @@ Three regimes from next/world_models.md, plus the standing-wave variant:
   deterministic in the expert ordering, so peers compose by constructive /
   destructive interference (the harmonic idea, applied to the peer axis).
 
-Selected by name via ``MIXING_REGISTRY`` (mirrors the project's other
+Selected by name via the ``mixing`` registry (mirrors the project's other
 registries); the chosen ``--orchestration-type`` profile names one. New variants
 are registry entries, not new CLI knobs.
 """
@@ -29,6 +29,9 @@ from typing import Callable, Optional
 
 import torch
 from torch import Tensor
+
+from praxis import registry
+from praxis.registry import Entry
 
 # A mixer maps stacked expert outputs [E, ...] -> [...].
 Mixer = Callable[[Tensor], Tensor]
@@ -68,32 +71,62 @@ def _wave(outputs: Tensor, *, freq: float = 1.0, phase: float = 0.0) -> Tensor:
     return (outputs * w).sum(dim=0)
 
 
-# Registry of mixing strategies. Values are zero-arg-callable factories so a
-# selector can tune a variant without new CLI flags (same shape as the optimizer
-# WRAPPER_REGISTRY).
-MIXING_REGISTRY: dict[str, Callable[[], Mixer]] = {
-    "mean": lambda: _mean,
-    "vote": lambda: _vote,
-    "sample": lambda: partial(_sample, keep=0.5),
-    "sample_quarter": lambda: partial(_sample, keep=0.25),
-    "wave": lambda: partial(_wave, freq=1.0, phase=0.0),
-    "wave_high": lambda: partial(_wave, freq=2.0, phase=0.0),
-}
-
-MIXING_DESCRIPTIONS: dict[str, str] = {
-    "mean": "Pool average (consensus / pure bias). Robust, deterministic.",
-    "vote": "Average the per-expert distributions (CALM expert vote).",
-    "sample": "Keep a random half of experts then average - stochastic.",
-    "sample_quarter": "Keep a random quarter then average - higher variance.",
-    "wave": "Standing wave over the expert index - peers compose by interference.",
-    "wave_high": "Standing wave, doubled frequency over the peer axis.",
-}
+registry.declare(
+    "mixing",
+    title="Expert mixing",
+    doc=(
+        "How a remote-expert pool combines its members at inference. Named by the "
+        "chosen orchestration profile, not by a flag of its own. Values are "
+        "zero-argument factories returning a mixer, which reduces stacked expert "
+        "outputs ``[E, ...]`` to ``[...]``, so a selector can tune a variant without "
+        "new flags (the same shape as the ``wrappers`` registry)."
+    ),
+    entries={
+        "mean": Entry(
+            lambda: _mean,
+            "Pool average: the consensus, pure bias. Robust and deterministic.",
+        ),
+        "vote": Entry(
+            lambda: _vote,
+            (
+                "Average the per-expert distributions (the CALM expert vote): softmax "
+                "over the last dim, mean across experts, returned as log-probs so the "
+                "result stays in logit space."
+            ),
+        ),
+        "sample": Entry(
+            lambda: partial(_sample, keep=0.5),
+            (
+                "Keep a random half of the experts (at least one), then average. The "
+                "expected mix is the mean; the realized mix orbits it, which is the "
+                "point - exploration off consensus at inference."
+            ),
+        ),
+        "sample_quarter": Entry(
+            lambda: partial(_sample, keep=0.25),
+            "sample keeping a random quarter of the experts - higher variance.",
+        ),
+        "wave": Entry(
+            lambda: partial(_wave, freq=1.0, phase=0.0),
+            (
+                "A standing wave over the expert index weights the pool: expert i gets "
+                "``1 + cos(2*pi*i/E)``, normalized to sum 1, so peers compose by "
+                "constructive and destructive interference rather than a flat mean. "
+                "Deterministic in the peer ordering."
+            ),
+        ),
+        "wave_high": Entry(
+            lambda: partial(_wave, freq=2.0, phase=0.0),
+            "wave at doubled frequency over the peer axis.",
+        ),
+    },
+)
 
 
 def build_mixer(name: str) -> Mixer:
     """Resolve a mixing-strategy name to a mixer callable."""
-    if name not in MIXING_REGISTRY:
+    if name not in registry.namespace("mixing"):
         raise KeyError(
-            f"unknown mixing strategy {name!r}; choices: {sorted(MIXING_REGISTRY)}"
+            f"unknown mixing strategy {name!r}; choices: {sorted(registry.namespace("mixing"))}"
         )
-    return MIXING_REGISTRY[name]()
+    return registry.lookup("mixing", name)()

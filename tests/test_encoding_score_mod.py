@@ -7,8 +7,7 @@ hand-rolled in CausalAttention / InfiniAttention.
 
 import torch
 
-from praxis import PraxisConfig
-from praxis.encoding import ENCODING_REGISTRY
+from praxis import PraxisConfig, registry
 
 
 def _cfg(encoding: str) -> PraxisConfig:
@@ -24,13 +23,13 @@ def _cfg(encoding: str) -> PraxisConfig:
 
 def test_nope_rope_hope_return_none():
     for name in ("nope", "rope", "hope"):
-        enc = ENCODING_REGISTRY[name](_cfg(name))
+        enc = registry.lookup("encoding", name)(_cfg(name))
         mod = enc.build_score_mod(num_heads=4, device=torch.device("cpu"))
         assert mod is None, f"{name} should return None from build_score_mod"
 
 
 def test_alibi_no_ghost_matches_simple_bias():
-    enc = ENCODING_REGISTRY["alibi"](_cfg("alibi"))
+    enc = registry.lookup("encoding", "alibi")(_cfg("alibi"))
     device = torch.device("cpu")
     mod = enc.build_score_mod(num_heads=4, device=device, ghost_offset=0)
     slopes = enc.compute_slopes(4, device)
@@ -49,7 +48,7 @@ def test_alibi_ghost_offset_matches_inline_closure():
     #   is_not_ghost = (kv_idx > 0).float()
     #   actual_kv = kv_idx - 1
     #   bias = slopes[h] * (actual_kv - q_idx) * is_not_ghost
-    enc = ENCODING_REGISTRY["alibi"](_cfg("alibi"))
+    enc = registry.lookup("encoding", "alibi")(_cfg("alibi"))
     device = torch.device("cpu")
     mod = enc.build_score_mod(num_heads=4, device=device, ghost_offset=1)
     slopes = enc.compute_slopes(4, device)

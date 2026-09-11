@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.encoding import ENCODING_REGISTRY
+from praxis import registry
 
 # Suppress verbose compile-time logs
 os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
@@ -36,7 +36,7 @@ class CausalAttention(nn.Module):
 
         Args:
             config: Configuration object containing attention parameters.
-                ``config.encoding`` selects any entry from ENCODING_REGISTRY
+                ``config.encoding`` selects any entry from the ``encoding`` registry
                 (rope, alibi, hope, nope, ...). Optional ``config.window_size``
                 (int) enables sliding window attention.
         """
@@ -53,7 +53,7 @@ class CausalAttention(nn.Module):
         # Dropoff ablation (next/dropoff.md): withhold the causal tip so the
         # model must lean on delayed context. ``dropoff`` is the mode - None
         # (off), "shift" (uniform K/V delay) or "warp" (feature-dependent value
-        # sink at the tip) - owned by ATTENTION_REGISTRY profiles (e.g.
+        # sink at the tip) - owned by ``attention`` profiles (e.g.
         # arc_dropoff), not config.
         #
         # ``dropoff_every`` is the SCHEDULE, orthogonal to the mode:
@@ -88,7 +88,7 @@ class CausalAttention(nn.Module):
         # FlexAttention closure (ALiBi), after_scores adds bias on materialized
         # scores (the CPU/ghost-aware path). NoPE/RoPE/HoPE return None from
         # build_score_mod, so the FlexAttention path skips the closure entirely.
-        self.encoding = ENCODING_REGISTRY[config.encoding](config)
+        self.encoding = registry.lookup("encoding", config.encoding)(config)
         # Plain-string introspection field (used by Prismatic router tests
         # and diagnostics to check which encoding an expert was built with).
         self.pos_type = config.encoding

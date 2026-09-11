@@ -12,6 +12,9 @@ from the active RL policy's ``loop_mode`` attribute, defaulting to
 import re
 from typing import Optional, Tuple
 
+from praxis import registry
+from praxis.registry import Entry
+
 # A trailing line is only a self-predicted score if it's a bare number in (a
 # tolerance of) the slider range - a year or a phone number in joke content
 # must read as content, not a wildly-clamped prediction.
@@ -80,13 +83,33 @@ class CalibrationLoopMode(ApprovalLoopMode):
         }
 
 
-LOOP_MODE_REGISTRY = {
-    mode.name: mode for mode in (CalibrationLoopMode(), ApprovalLoopMode())
-}
+registry.declare(
+    "loop_modes",
+    {
+        CalibrationLoopMode.name: Entry(
+            CalibrationLoopMode(),
+            (
+                "The model appends a self-predicted score to its output and the human "
+                "corrects it. The correction magnitude sets the activation (1 - |user "
+                "- predicted| / 2), so reward follows prediction rather than raw "
+                "engagement, and the signed user score stays the logged valence. Until "
+                "the model emits a parseable score it scores as approval. The default."
+            ),
+        ),
+        ApprovalLoopMode.name: Entry(
+            ApprovalLoopMode(),
+            (
+                "The human's signed score taken at face value: activation is (score + "
+                "1) / 2, so any engagement sustains, and the reward is the signed "
+                "score."
+            ),
+        ),
+    },
+)
 DEFAULT_LOOP_MODE = "calibration"
 
 
 def get_loop_mode(name: Optional[str] = None):
-    return LOOP_MODE_REGISTRY.get(
-        name or DEFAULT_LOOP_MODE, LOOP_MODE_REGISTRY[DEFAULT_LOOP_MODE]
+    return registry.namespace("loop_modes").get(
+        name or DEFAULT_LOOP_MODE, registry.lookup("loop_modes", DEFAULT_LOOP_MODE)
     )

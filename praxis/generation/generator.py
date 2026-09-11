@@ -1,6 +1,6 @@
 """Text generation with request queuing and inline tool calling support.
 
-The active chat format (``CHAT_FORMAT_REGISTRY``) decides what a tool-call
+The active chat format (the ``chat_formats`` registry) decides what a tool-call
 boundary looks like; this loop's state machine is the same either way. Under
 ``tool_style="tokens"`` the boundaries are the atomic ``[TOOL_CALL]`` /
 ``[/TOOL_CALL]`` ids; under ``tool_style="roles"`` they are the role-name

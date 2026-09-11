@@ -7,6 +7,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from praxis import registry
+
 
 def configure_torch_precision(precision: str = None, device: str = "cpu"):
     """Resolve the run's precision profile and install its process-wide half.
@@ -105,9 +107,9 @@ def assemble_model(cfg, config) -> ModelBundle:
     """Resolve the optimizer profile, build hparams, instantiate the model."""
     from transformers import AutoModelForCausalLM
 
-    from praxis.transforms import apply_transform
     from praxis.optimization import get_optimizer_profile, wrappers_disable_schedule
     from praxis.trainers.precision import cast_module, init_context
+    from praxis.transforms import apply_transform
     from praxis.utils import initialize_lazy_modules
 
     optimizer_config, disable_schedule_from_optimizer = get_optimizer_profile(
@@ -188,9 +190,7 @@ def _encoder_patch_size(encoder_type) -> int:
     mostly pad (see praxis.generation.streaming.random_text_seed)."""
     import functools
 
-    from praxis.encoders import ENCODER_REGISTRY
-
-    f = ENCODER_REGISTRY.get(encoder_type)
+    f = registry.namespace("encoders").get(encoder_type)
     while isinstance(f, functools.partial):
         if "chunk_size" in f.keywords:
             return int(f.keywords["chunk_size"])

@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import torch
 
-from praxis.heads import HEAD_REGISTRY, ParallelHead
+from praxis import registry
+from praxis.heads import ParallelHead
 from praxis.heads.harmonic import HarmonicHead
 from praxis.metrics.descriptions import get_metric_descriptions
 
@@ -57,13 +58,13 @@ def test_gate_is_learned_and_receives_gradient():
 
 def test_prismatic_forward_logits_shape():
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "prismatic")(_cfg(), encoder=None)
     logits = head(torch.randn(2, 8, 16))
     assert logits.shape == (2, 8, 32)
 
 
 def test_prismatic_repr_is_nested():
-    head = HEAD_REGISTRY["prismatic"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "prismatic")(_cfg(), encoder=None)
     assert repr(head) == (
         "Parallel(arms=[Sequential(HarmonicField), "
         "Sequential(HarmonicField, CrystalClassifier)])"
@@ -72,7 +73,7 @@ def test_prismatic_repr_is_nested():
 
 def test_prismatic_descriptions_namespaced_and_attributed():
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "prismatic")(_cfg(), encoder=None)
     descs = get_metric_descriptions(_stub(head))
 
     for i in (0, 1):
@@ -87,7 +88,7 @@ def test_prismatic_descriptions_namespaced_and_attributed():
 
 def test_training_metrics_namespaced_with_gate():
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "prismatic")(_cfg(), encoder=None)
     head(torch.randn(2, 8, 16))  # populate gate stats
     m = head.training_metrics()
     assert {"gate_weight_0", "gate_weight_1", "gate_entropy"} <= set(m)
@@ -99,7 +100,7 @@ def test_crystal_harmonic_descriptions_unchanged():
     # Regression guard for the SequentialHead.all_metric_descriptions override:
     # the single-field profile must still surface bare (unprefixed) keys.
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["crystal_harmonic"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "crystal_harmonic")(_cfg(), encoder=None)
     descs = head.all_metric_descriptions()
     assert "harmonic_amplitudes_norm" in descs
     assert not any(k.startswith("p0_") for k in descs)
@@ -107,7 +108,7 @@ def test_crystal_harmonic_descriptions_unchanged():
 
 def test_prismatic3_three_arms_and_identity_third_branch():
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic3"](_cfg(), encoder=None)
+    head = registry.lookup("heads", "prismatic3")(_cfg(), encoder=None)
     assert len(head.branches) == 3
     x = torch.randn(2, 6, 16)
     out = head(x)
@@ -129,13 +130,12 @@ def test_every_leaf_head_names_its_readout():
     naming its class where the others name their function, which reads like a
     passthrough or a leftover default instead of the linear readout that is the
     deliberate control arm."""
+    import importlib
     import inspect
+    import pkgutil
 
     import praxis.heads as heads_pkg
     from praxis.heads.base import BaseHead
-
-    import importlib
-    import pkgutil
 
     seen = set()
     for info in pkgutil.iter_modules(heads_pkg.__path__):

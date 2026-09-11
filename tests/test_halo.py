@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from praxis.heads import HEAD_REGISTRY, HaloHead, ParallelHead
+from praxis import registry
+from praxis.heads import HaloHead, ParallelHead
 from praxis.heads.halo import HaloClassifier
 from praxis.losses.halo import HALOLoss
 
@@ -207,7 +208,7 @@ def test_legacy_frozen_centroids_are_not_centered():
 
 
 def _prismatic5(cfg):
-    return HEAD_REGISTRY["prismatic5"](cfg, encoder=None)
+    return registry.lookup("heads", "prismatic5")(cfg, encoder=None)
 
 
 def test_prismatic5_builds_and_classifier_prefers_halo_arm():
@@ -316,7 +317,7 @@ def test_prismatic5_arm_stays_detached():
     """abstractinator-j runs this; its gate share is only a clean verdict
     while CE is kept off the arm."""
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic5"](_cfg())
+    head = registry.lookup("heads", "prismatic5")(_cfg())
     arm = _halo_arm(head)
     assert arm.detach_in_blend is True
     assert not _ce_reaches(head, arm)
@@ -327,7 +328,7 @@ def test_prismatic6_arm_is_attached(name):
     """The detached measurement is complete (0.00125 gate share over 22k
     steps in -j), so prismatic6 lets CE train the arm too."""
     torch.manual_seed(0)
-    head = HEAD_REGISTRY[name](_cfg())
+    head = registry.lookup("heads", name)(_cfg())
     arm = _halo_arm(head)
     assert arm.detach_in_blend is False
     assert _ce_reaches(head, arm)
@@ -337,7 +338,7 @@ def test_geometric_objective_runs_either_way():
     """Attaching changes what ALSO trains the arm, never whether HALOLoss
     finds it - composite mode keys off is_halo, not off detachment."""
     for name in ("prismatic5", "prismatic6"):
-        head = HEAD_REGISTRY[name](_cfg())
+        head = registry.lookup("heads", name)(_cfg())
         clf = head.classifier
         assert getattr(clf, "is_halo", False), f"{name} lost composite mode"
 
@@ -346,7 +347,7 @@ def test_detach_is_training_only():
     """Inference always blends the real logits; detachment is a gradient
     concern, so it must not change what the model emits."""
     torch.manual_seed(0)
-    head = HEAD_REGISTRY["prismatic5"](_cfg())
+    head = registry.lookup("heads", "prismatic5")(_cfg())
     x = torch.randn(2, 8, head.output_dims()[0])
     head.eval()
     with torch.no_grad():

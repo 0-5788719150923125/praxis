@@ -4,14 +4,17 @@ Some sites are JS-rendered: <a href> extraction yields nothing, but the data
 the spider wants (links, text) sits in inline JSON or an alternate machine
 feed. An enricher recognizes its site, mines the raw document for extra links
 and text, and may handle a non-HTML feed format outright. The generic walk
-stays unchanged; sites get smarter by adding an entry to ENRICHER_REGISTRY.
+stays unchanged; sites get smarter by adding an entry to the ``enrichers`` registry.
 """
 
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import urlsplit
+
+from praxis import registry
+from praxis.registry import Entry
 
 
 @dataclass
@@ -85,13 +88,23 @@ class YouTubeEnricher(Enricher):
         return Enriched(links=links, text=text)
 
 
-ENRICHER_REGISTRY: Dict[str, Enricher] = {
-    "youtube": YouTubeEnricher(),
-}
+registry.declare(
+    "enrichers",
+    entries={
+        "youtube": Entry(
+            YouTubeEnricher(),
+            (
+                "Mines the inline JSON of JS-rendered YouTube channel and watch pages "
+                "for video links, cited channels and descriptions, so discovery spills "
+                "from one channel into the ones it cites."
+            ),
+        ),
+    },
+)
 
 
 def enricher_for(url: str) -> Optional[Enricher]:
-    for enricher in ENRICHER_REGISTRY.values():
+    for enricher in registry.namespace("enrichers").values():
         if enricher.matches(url):
             return enricher
     return None

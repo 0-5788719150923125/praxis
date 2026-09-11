@@ -1,7 +1,8 @@
 """Auto-docs generator for Praxis.
 
-Walks every registry exposed from ``praxis.__init__``, introspects each
-registered class, and writes one markdown file per category under ``docs/``.
+Writes one markdown page under ``docs/`` for every registry namespace (see
+``praxis.registry``) that carries a title, from the docs declared on its entries (falling back to
+class docstrings).
 Also documents the third-party ``integrations/`` from their spec.yaml files,
 and patches the project README between two AUTODOC markers.
 
@@ -24,294 +25,23 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import praxis
-from praxis.registry import count_registries
+from praxis.registry import (
+    Namespace,
+    count_namespaces,
+    docstring_body,
+    namespaces,
+    unwrap,
+)
 
 
-# Each tuple: (slug, title, registry, category description) and optionally
-# a 5th element - a {key: description} dict that overrides docstring/value
-# rendering for entries that aren't introspectable classes (e.g. string
-# enums). Slug is the filename stem under docs/.
-def _registries() -> List[Tuple]:
-    return [
-        (
-            "activations",
-            "Activation functions",
-            praxis.ACTIVATION_REGISTRY,
-            "Pointwise nonlinearities used inside blocks and heads.",
-        ),
-        (
-            "activation-types",
-            "Activation combination types",
-            praxis.ACTIVATION_TYPE_REGISTRY,
-            "How the `values` of an ``--activation-type`` combine at the gate. "
-            "Declared as ``{type: <one of these>, values: [<activations>]}``.",
-            praxis.ACTIVATION_TYPE_REGISTRY,
-        ),
-        (
-            "attention",
-            "Attention mechanisms",
-            praxis.ATTENTION_REGISTRY,
-            "Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.",
-        ),
-        (
-            "blocks",
-            "Decoder block layouts",
-            praxis.BLOCK_REGISTRY,
-            "Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.",
-        ),
-        (
-            "compression",
-            "Sequence compression",
-            praxis.COMPRESSION_REGISTRY,
-            "Strategies for reducing sequence length between layers.",
-        ),
-        (
-            "controllers",
-            "Layer-routing controllers",
-            praxis.CONTROLLER_REGISTRY,
-            "Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.",
-        ),
-        (
-            "data",
-            "Data sampler strategies",
-            praxis.SAMPLER_REGISTRY,
-            "How datasets are interleaved during training. Praxis trains on multiple "
-            "datasets at once: at every step the trainer picks a dataset, draws a "
-            "document, and tokenizes it (see ``InterleaveDataManager`` in "
-            "``praxis/data/datasets/manager.py``). The sampler chosen here decides "
-            "*how* that pick is biased - either statically from configured weights, "
-            "or adaptively based on document length, novelty, or per-dataset loss. "
-            "Set with ``--sampler``; default is ``novelty``.",
-            praxis.data.SAMPLER_DESCRIPTIONS,
-        ),
-        (
-            "curriculum",
-            "Sequence-length curriculum",
-            praxis.SEQ_CURRICULUM_REGISTRY,
-            "How the per-batch sequence-length multiplier is chosen. Every batch "
-            "trades batch size for sequence length at constant attention cost; "
-            "this picks the mix. Set with ``--seq-curriculum``; default is "
-            "``fixed``.",
-            praxis.data.SEQ_CURRICULUM_DESCRIPTIONS,
-        ),
-        (
-            "decoders",
-            "Block-stacking decoders",
-            praxis.DECODER_REGISTRY,
-            "How the stack of blocks is composed (sequential, parallel, weighted, ...).",
-        ),
-        (
-            "dense",
-            "Feedforward experts",
-            praxis.DENSE_REGISTRY,
-            "How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, "
-            "scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.",
-        ),
-        (
-            "embeddings",
-            "Token embeddings",
-            praxis.EMBEDDING_REGISTRY,
-            "Input embedding layers, paired with the corresponding block type.",
-        ),
-        (
-            "encoders",
-            "Input encoders",
-            praxis.ENCODER_REGISTRY,
-            "Front-end encoders, including the byte-latent and abstractinator variants.",
-        ),
-        (
-            "encoding",
-            "Positional encoding",
-            praxis.ENCODING_REGISTRY,
-            "RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.",
-        ),
-        (
-            "governors",
-            "Training-loop governors",
-            praxis.GOVERNOR_REGISTRY,
-            "Feedback controllers over loop-level knobs, driven by endogenous "
-            "signals - e.g. ``gns_batch`` governs the gradient-accumulation "
-            "factor by tracking the measured gradient noise scale.",
-        ),
-        (
-            "halting",
-            "Halting / early exit",
-            praxis.HALTING_REGISTRY,
-            "Per-token mechanisms for early exit from recurrent depth loops.",
-        ),
-        (
-            "width",
-            "Mixture-of-widths",
-            praxis.WIDTH_REGISTRY,
-            "Per-depth deflation of each block's inner rank over the recurrent "
-            "loop (a helically-precessing low-rank slice), turning deep recurrence "
-            "into a population of narrow voters. Selected with ``--width-type``; "
-            "default is ``none`` (full width).",
-        ),
-        (
-            "heads",
-            "Output heads",
-            {**praxis.HEAD_REGISTRY, **praxis.MTP_REGISTRY},
-            "LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.",
-        ),
-        (
-            "losses",
-            "Loss functions",
-            praxis.LOSS_REGISTRY,
-            "Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.",
-        ),
-        (
-            "memory",
-            "Long-term memory",
-            praxis.MEMORY_REGISTRY,
-            "Titans-style test-time-learned memory modules (Behrouz et al. 2024), "
-            "surfaced as a layer (MAL) or a gate (MAG). Selected with "
-            "``--memory-type``; default is ``none``.",
-            praxis.MEMORY_PROFILE_DESCRIPTIONS,
-        ),
-        (
-            "mono",
-            "Mono-forward graph cutting",
-            praxis.MONO_REGISTRY,
-            "Sequential-decoder graph cutting: detach hidden states on a cut "
-            "schedule and train each segment from a local goodness score "
-            "(vocab CE for token models, next-patch-embedding prediction for "
-            "encoder models). Selected with ``--mono-type``; default is off.",
-            praxis.MONO_DESCRIPTIONS,
-        ),
-        (
-            "mixing",
-            "Expert mixing",
-            praxis.MIXING_REGISTRY,
-            "How a remote-expert pool combines its members at inference. Named by "
-            "the chosen orchestration profile, not by a flag of its own.",
-            praxis.orchestration.MIXING_DESCRIPTIONS,
-        ),
-        (
-            "normalization",
-            "Normalization layers",
-            praxis.NORMALIZATION_REGISTRY,
-            "LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).",
-        ),
-        (
-            "optimizers",
-            "Optimizer profiles",
-            praxis.OPTIMIZER_PROFILES,
-            "Named optimizer presets (built on pytorch-optimizer). Selected with "
-            "``--optimizer``; default is ``Lion``. Each entry shows its concrete "
-            "settings (lr, betas, weight decay, ...).",
-        ),
-        (
-            "wrappers",
-            "Optimizer wrappers",
-            praxis.WRAPPER_REGISTRY,
-            "Composable wrappers layered onto the base optimizer with "
-            "``--optimizer-wrappers`` (a list, applied innermost-first). The "
-            "schedule-free family runs without an LR schedule; the others keep it.",
-            {
-                "trac": "TRAC - tunes a per-parameter learning-rate scale online to "
-                "mitigate loss of plasticity over long training runs.",
-                "ortho": "OrthoGrad - projects each gradient orthogonal to the "
-                "current weights before the base step (a grokking/regularization aid).",
-                "lookahead": "Lookahead - keeps slow weights and pulls the fast "
-                "iterate toward them every k steps (k=5, alpha=0.5).",
-                "schedule_free": "Schedule-Free - primal averaging in place of an LR "
-                "schedule; deploys the running average x at eval, the iterate z while training.",
-                "gated_schedule_free": "Schedule-Free with a per-coordinate gradient-SNR "
-                "gate on the averaging weight, so each coordinate picks its own "
-                "bias-variance point (no knob).",
-                "wave_schedule_free": "Schedule-Free whose averaging weight is a standing "
-                "wave over the flattened parameter index (frozen ~pi cycles); RL-drivable.",
-                "half_lion": "Blends the live weights with a frozen copy of their init "
-                "via a traveling standing wave over the parameter index; eval deploys "
-                "100% current weights. Cannot stack with wave_schedule_free.",
-                "low_rank_moment": "Passthrough telemetry: tracks an Adafactor-style "
-                "factored second moment of the gradient (O(out+in)) so the second-moment "
-                "dashboard cards populate even under Lion. Does not change the update.",
-            },
-        ),
-        (
-            "orchestration",
-            "Remote-expert orchestration",
-            praxis.ORCHESTRATION_REGISTRY,
-            "Pool profiles for the distributed swarm: how many local experts the "
-            "backend sidecar starts and which mixing strategy the pool uses. The "
-            "expert block types a pool member can wrap are the feedforward "
-            "experts (``praxis.EXPERT_REGISTRY`` mirrors ``DENSE_REGISTRY``). "
-            "Selected with ``--orchestration-type``; default is ``none``.",
-        ),
-        (
-            "policies",
-            "RL policies",
-            # Profiles first: a profile sharing a policy's key is that
-            # policy's default config, so the class entry is the better page.
-            {**praxis.RL_PROFILES, **praxis.RL_POLICIES_REGISTRY},
-            "Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for "
-            "post-training, plus the weight-editing controller profiles that "
-            "bundle a policy with its edit mode and selector. Both are selected "
-            "with ``--rl-type``.",
-        ),
-        (
-            "recurrent",
-            "Recurrent cells",
-            praxis.RECURRENT_REGISTRY,
-            "Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block "
-            "types and as a sequence mixer inside the byte-latent encoder.",
-        ),
-        (
-            "regularizers",
-            "Regularizers",
-            praxis.REGULARIZER_REGISTRY,
-            "Additive representation-shaping losses layered on top of the main "
-            "criterion. Set with ``--regularizers`` (space-separated; pass with "
-            "no values to disable all); default is ``contrastive_isotropy``. The "
-            "``*_probe`` variants observe only - they log their metric without "
-            "contributing to the loss.",
-        ),
-        (
-            "residuals",
-            "Residual connections",
-            praxis.RESIDUAL_REGISTRY,
-            "Standard residuals vs. hyper-connections.",
-        ),
-        (
-            "routers",
-            "Token routers",
-            praxis.ROUTER_REGISTRY,
-            "Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.",
-        ),
-        (
-            "sorting",
-            "Sequence sorting",
-            praxis.SORTING_REGISTRY,
-            "Optional reordering operations applied to the sequence.",
-        ),
-        (
-            "spider",
-            "Web-spider profiles",
-            praxis.SPIDER_REGISTRY,
-            "Pacing presets for the background crawler that grounds the knowledge "
-            "base in a watchlist of sites. Enabled with ``--spider``; bare use "
-            "takes ``gentle``, and ``KEY=VALUE`` entries override any field.",
-        ),
-        (
-            "strategies",
-            "Training strategies",
-            praxis.STRATEGIES_REGISTRY,
-            "Multi-task / task-weighting strategies used by the trainer.",
-        ),
-        (
-            "transforms",
-            "Model transforms",
-            praxis.TRANSFORM_REGISTRY,
-            "Ghost features: profiles that walk the assembled module tree and "
-            "rewrite matched parameters in place, storing 1/d of a weight and "
-            "deriving the rest by a fixed signed permutation. Each profile is a "
-            "target regex plus an algebra. Selected with ``--transform-type``; "
-            "default is ``none``.",
-        ),
-    ]
+def registry_pages() -> List[Namespace]:
+    """Every registry namespace with a docs page (a ``title``), by name."""
+    return [ns for ns in namespaces() if ns.title]
+
+
+def page_slug(ns: Namespace) -> str:
+    """The docs filename stem for a namespace: its name, dashed."""
+    return ns.name.replace("_", "-")
 
 
 # Hand-curated one-liners for packages that don't have a registry.
@@ -330,6 +60,11 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
         "``PraxisConfig`` - the central model config object passed everywhere.",
     ),
     ("containers", "Small typed containers (LossContainer, OutputContainer)."),
+    (
+        "data",
+        "Dataset collections, the interleaving data manager and its samplers "
+        "(the ``samplers`` and ``seq_curriculum`` namespaces).",
+    ),
     ("environments", "Per-environment feature flags layered on top of experiments."),
     ("experimental", "Modules that are not yet promoted to a registry."),
     ("functional", "Stateless functional ops."),
@@ -361,15 +96,22 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
         "``inlines`` (single-value edits); plus runs/geometries/halting/ghostmax figures.",
     ),
     (
+        "policies",
+        "Reinforcement-learning policy losses and weight-editing controllers "
+        "(the ``rl_policies`` and ``rl_profiles`` namespaces).",
+    ),
+    (
         "registry",
-        "Registry discovery - AST-walks the package to count the ``*_REGISTRY`` "
-        "dicts, and the eventual home of a unified ``Registry`` type.",
+        "The registry: every pluggable choice, declared by namespace "
+        "(``registry.declare``) with what each entry means, and read by name "
+        "(``registry.lookup``) by the model, the CLI, these docs and the "
+        "annotated config download.",
     ),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
     (
         "tokenizers",
-        "Tokenizer creation and registry, plus ``CHAT_FORMAT_REGISTRY`` "
+        "Tokenizer creation and registry, plus the ``chat_formats`` registry "
         "(``--chat-format``): each entry pairs a chat template with the turn "
         "boundaries, assistant mask, halting contract and tool-call layout that "
         "have to agree with it. ``default`` is ChatML with control tokens; "
@@ -454,14 +196,11 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
     docs_dir.mkdir(exist_ok=True)
 
     written: List[Tuple[str, str, int, str]] = []
-    for entry in _registries():
-        slug, title, registry, description = entry[:4]
-        overrides = entry[4] if len(entry) > 4 else None
-        content = _render_registry(
-            slug, title, registry, description, repo_root, overrides
-        )
-        _write_if_changed(docs_dir / f"{slug}.md", content)
-        written.append((slug, title, len(registry), description))
+    for ns in registry_pages():
+        content = _render_registry(ns, repo_root)
+        _write_if_changed(docs_dir / f"{page_slug(ns)}.md", content)
+        written.append((page_slug(ns), ns.title, len(ns), ns.doc or ""))
+    _remove_stale_pages(docs_dir, {slug for slug, *_ in written})
 
     integration_specs = _discover_integration_specs(repo_root)
     _write_if_changed(
@@ -636,50 +375,58 @@ def _regenerate_web_webps(repo_root: Path) -> None:
         print(f"[DOCS] Skipped web webps: {e}")
 
 
-def _render_registry(
-    slug: str,
-    title: str,
-    registry: Dict[str, Any],
-    description: str,
-    repo_root: Path,
-    overrides: Optional[Dict[str, str]] = None,
-) -> str:
+def _render_registry(registry: Namespace, repo_root: Path) -> str:
     lines = [
         f"<!-- AUTOGENERATED by praxis/docs.py - do not edit by hand -->",
-        f"# {title}",
+        f"# {registry.title}",
         "",
-        description,
+        registry.doc or "",
         "",
-        f"Registry: ``praxis.{_registry_attr(slug, registry)}`` "
-        f"({len(registry)} entries)",
+        f'Namespace: ``registry.namespace("{registry.name}")``, declared in '
+        f"``{registry.module}`` ({len(registry)} entries)",
         "",
     ]
+    selected = _selecting_flags().get(registry.name)
+    if selected:
+        lines[-1:-1] = ["", f"Selected with {selected}."]
     for entry in _grouped_entries(registry):
         if "cls" in entry:
-            lines.extend(_render_class_entry(entry, repo_root))
+            lines.extend(_render_class_entry(registry, entry, repo_root))
         else:
             key = entry["keys"][0]
-            override = overrides.get(key) if overrides else None
-            lines.extend(_render_value_entry(entry["keys"], entry["value"], override))
+            lines.extend(_render_value_entry(registry, key, entry["value"]))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
+@functools.lru_cache(maxsize=None)
+def _selecting_flags() -> Dict[str, str]:
+    """``{namespace: "``--flag`` (default: x)"}`` for every namespace a CLI
+    flag selects from, read off the parser so the page cannot drift from it."""
+    from praxis.cli.core.parser import resolve_namespace
+
+    out: Dict[str, List[str]] = {}
+    for action in _build_cli_parser()._actions:
+        bound = getattr(action, "registry", None)
+        if bound is None:
+            continue
+        default = "unset" if action.default is None else f"``{action.default}``"
+        text = f"``{action.option_strings[0]}`` (default: {default})"
+        for ref in bound if isinstance(bound, tuple) else (bound,):
+            out.setdefault(resolve_namespace(ref).name, []).append(text)
+    return {name: ", ".join(texts) for name, texts in out.items()}
+
+
 def _resolve_class(value: Any) -> Tuple[Optional[type], Optional[str]]:
-    """Unwrap a ``functools.partial`` chain to the underlying class, if any.
-    Returns ``(cls, config)`` where config is a string of the bound args
-    (``None`` for a bare class). Returns ``(None, None)`` when the target
+    """The class a ``functools.partial`` chain builds, and its bound arguments
+    as a string (``None`` for a bare class). ``(None, None)`` when the target
     isn't a class - e.g. a partial wrapping a plain factory function."""
-    config_parts: List[str] = []
-    while isinstance(value, functools.partial):
-        config_parts.extend(_format_value(a) for a in value.args)
-        config_parts.extend(
-            f"{k}={_format_value(v)}" for k, v in sorted(value.keywords.items())
-        )
-        value = value.func
-    if inspect.isclass(value):
-        return value, ", ".join(config_parts) if config_parts else None
-    return None, None
+    target, args, keywords = unwrap(value)
+    if not inspect.isclass(target):
+        return None, None
+    parts = [_format_value(a) for a in args]
+    parts += [f"{k}={_format_value(v)}" for k, v in sorted(keywords.items())]
+    return target, ", ".join(parts) if parts else None
 
 
 def _grouped_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -702,15 +449,21 @@ def _grouped_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
     return sorted(list(class_groups.values()) + others, key=lambda e: e["keys"][0])
 
 
-def _render_class_entry(entry: Dict[str, Any], repo_root: Path) -> List[str]:
+def _render_class_entry(
+    registry: Namespace, entry: Dict[str, Any], repo_root: Path
+) -> List[str]:
     cls = entry["cls"]
     keys = entry["keys"]
     header = ", ".join(f"`{k}`" for k in keys)
     qualname = getattr(cls, "__qualname__", cls.__name__)
-    summary = _extract_summary(cls)
     link = _source_link(cls, repo_root)
 
     out = [f"## {header} - {qualname}", ""]
+    # One key with a doc of its own: that doc says more than the class does.
+    if len(keys) == 1 and registry.has_doc(keys[0]):
+        summary = _fill(registry.describe(keys[0]))
+    else:
+        summary = _extract_summary(cls)
     if summary:
         out.extend([summary, ""])
     if link:
@@ -723,24 +476,37 @@ def _render_class_entry(entry: Dict[str, Any], repo_root: Path) -> List[str]:
             else "Source: (unknown)"
         )
 
-    # Only show a presets list when at least one key binds extra config.
-    if any(config for _, config in entry["presets"]):
+    presets = entry["presets"]
+    documented = len(keys) > 1 and any(registry.has_doc(k) for k in keys)
+    if any(config for _, config in presets) or documented:
         out.extend(["", "Presets:"])
-        for key, config in entry["presets"]:
-            out.append(f"- `{key}` - {f'`{config}`' if config else 'class defaults'}")
+        for key, config in presets:
+            doc = (
+                registry.describe(key)
+                if len(keys) > 1 and registry.has_doc(key)
+                else None
+            )
+            if doc:
+                where = f" (`{config}`)" if config else ""
+                out.append(f"- `{key}`{where} - {doc}")
+            else:
+                out.append(
+                    f"- `{key}` - {f'`{config}`' if config else 'class defaults'}"
+                )
     return out
 
 
-def _render_value_entry(
-    keys: List[str], value: Any, override: Optional[str] = None
-) -> List[str]:
-    header = ", ".join(f"`{k}`" for k in keys)
-    out = [f"## {header}", ""]
-    if override:
-        out.append(textwrap.fill(override, width=88, replace_whitespace=True))
+def _render_value_entry(registry: Namespace, key: str, value: Any) -> List[str]:
+    out = [f"## `{key}`", ""]
+    if registry.has_doc(key):
+        out.append(_fill(registry.describe(key)))
     else:
         out.append(f"Value: `{_format_value(value)}`")
     return out
+
+
+def _fill(text: str) -> str:
+    return textwrap.fill(text, width=88, replace_whitespace=True)
 
 
 def _discover_integration_specs(repo_root: Path) -> List[Any]:
@@ -981,17 +747,10 @@ def _render_route_table(repo_root: Path) -> List[str]:
 
 
 def _build_cli_parser():
-    """Build the parser with all static argument groups, without parsing argv
-    or running integration discovery/bootstrap (which reads sys.argv and may
-    install dependencies). Experiment/environment/integration flags are
-    user-local and intentionally excluded so the doc stays reproducible."""
-    from praxis.cli.core import create_base_parser
-    from praxis.cli.groups import OtherGroup, add_all_argument_groups
+    """The static CLI parser (see ``build_static_parser``)."""
+    from praxis.cli.groups import build_static_parser
 
-    parser = create_base_parser()
-    add_all_argument_groups(parser)
-    OtherGroup.add_dev_argument_if_needed(parser)
-    return parser
+    return build_static_parser()
 
 
 # Subcommands handled by the `./launch` bash wrapper before Python runs, so
@@ -1114,7 +873,7 @@ def _render_index(
         "<!-- AUTOGENERATED by praxis/docs.py - do not edit by hand -->",
         "# Praxis docs index",
         "",
-        f"Praxis is built around {count_registries()} pluggable registries. The "
+        f"Praxis is built around {count_namespaces()} registry namespaces. The "
         "feature categories below link to a page listing the registered "
         "implementations and their source.",
         "",
@@ -1130,11 +889,9 @@ def _render_index(
     lines.append(_render_layout_block(repo_root, link_prefix="../"))
     lines.extend(["", "## Core infrastructure", ""])
     lines.append(
-        "These packages don't expose a registry yet, but they're the load-bearing"
+        "These packages don't expose a registry yet; they are the infrastructure"
     )
-    lines.append(
-        "infrastructure the registries plug into. One-liner per package; consult"
-    )
+    lines.append("the registries plug into. One-liner per package; consult")
     lines.append("the package directory for details.")
     lines.append("")
     for slug, description in INFRASTRUCTURE_PACKAGES:
@@ -1182,7 +939,7 @@ def _patch_readme_block(readme_path: Path, name: str, body: str) -> None:
 
 def _render_features_block(written: List[Tuple[str, str, int, str]]) -> str:
     lines = [
-        f"Praxis is organized as {count_registries()} pluggable registries. The "
+        f"Praxis is organized as {count_namespaces()} registry namespaces. The "
         "feature categories below link to a docs page listing the concrete "
         "implementations and their source. See [docs/index.md](docs/index.md) "
         "for the full map.",
@@ -1316,105 +1073,55 @@ def _source_link(cls: type, repo_root: Path) -> Optional[_Link]:
     return _Link(display=f"{rel}:{line}", url=f"{rel_from_docs.as_posix()}#L{line}")
 
 
-_SECTION_HEADERS = (
-    "Args:",
-    "Arguments:",
-    "Returns:",
-    "Raises:",
-    "Yields:",
-    "Example:",
-    "Examples:",
-    "Note:",
-    "Notes:",
-    "Attributes:",
-)
-
-
 def _extract_summary(cls: type) -> str:
     """Lead of the class docstring (or its module's), trimmed at the first
     Args/Returns section and capped at ~500 chars."""
-    for source in (inspect.getdoc(cls), inspect.getdoc(inspect.getmodule(cls))):
-        if not source:
+    body = docstring_body(cls)
+    if len(body) > 500:
+        body = body[:500].rsplit(" ", 1)[0] + " ..."
+    paragraphs = []
+    for p in body.split("\n\n"):
+        p = p.strip()
+        if not p:
             continue
-        # Stop at the first section header (Args:, Returns:, etc).
-        lines = source.splitlines()
-        cut = len(lines)
-        for i, line in enumerate(lines):
-            if line.strip() in _SECTION_HEADERS:
-                cut = i
-                break
-        body = "\n".join(lines[:cut]).strip()
-        if len(body) > 500:
-            body = body[:500].rsplit(" ", 1)[0] + " ..."
-        if body:
-            paragraphs = []
-            for p in body.split("\n\n"):
-                p = p.strip()
-                if not p:
-                    continue
-                # Preserve markdown lists; only fill prose paragraphs.
-                if any(
-                    line.lstrip().startswith(("- ", "* ", "1.", "2.", "3."))
-                    for line in p.splitlines()
-                ):
-                    paragraphs.append(p)
-                else:
-                    paragraphs.append(
-                        textwrap.fill(p, width=88, replace_whitespace=True)
-                    )
-            return "\n\n".join(paragraphs)
-    return ""
-
-
-def _registry_attr(slug: str, registry: Dict[str, Any]) -> str:
-    """Name the registry variable a doc page was rendered from.
-
-    Resolved by identity against the ``praxis`` namespace, so a new registry
-    needs no bookkeeping here. Pages that merge several registries can't be
-    resolved that way and are named explicitly."""
-    if slug in _MERGED_REGISTRY_ATTRS:
-        return _MERGED_REGISTRY_ATTRS[slug]
-    for name, value in vars(praxis).items():
-        if name.isupper() and value is registry:
-            return name
-    return "(unnamed)"
-
-
-# Doc pages built from more than one registry, which identity can't name.
-_MERGED_REGISTRY_ATTRS: Dict[str, str] = {
-    "heads": "HEAD_REGISTRY + MTP_REGISTRY",
-    "policies": "RL_POLICIES_REGISTRY + RL_PROFILES",
-}
-
-
-# Registries that are deliberately not their own doc page, and why.
-_REGISTRY_WAIVERS: Dict[str, str] = {
-    "EXPERT_REGISTRY": "a mirror of DENSE_REGISTRY; see docs/dense.md",
-}
+        # Preserve markdown lists; only fill prose paragraphs.
+        if any(
+            line.lstrip().startswith(("- ", "* ", "1.", "2.", "3."))
+            for line in p.splitlines()
+        ):
+            paragraphs.append(p)
+        else:
+            paragraphs.append(_fill(p))
+    return "\n\n".join(paragraphs)
 
 
 def undocumented_registries() -> List[str]:
-    """Registries exported from ``praxis`` that no doc page renders.
+    """Namespaces a CLI flag selects from that have no docs page (no
+    ``title``). The drift guard behind ``tests/test_docs.py``."""
+    from praxis.cli.core.parser import resolve_namespace
 
-    The drift guard behind ``tests/test_docs.py``: adding a namespace to
-    ``praxis/__init__.py`` without wiring it into ``_registries()`` (or waiving
-    it in ``_REGISTRY_WAIVERS``) fails that test."""
-    rendered = {id(entry[2]) for entry in _registries()}
-    for entry in _registries():
-        rendered.update(id(getattr(praxis, n, None)) for n in _merged_sources(entry[0]))
-    missing = []
-    for name, value in sorted(vars(praxis).items()):
-        if not (name.endswith("_REGISTRY") or name.endswith("_PROFILES")):
+    missing = set()
+    for action in _build_cli_parser()._actions:
+        bound = getattr(action, "registry", None)
+        for ref in bound if isinstance(bound, tuple) else (bound,):
+            ns = resolve_namespace(ref) if ref is not None else None
+            if ns is not None and not ns.title:
+                missing.add(f"{ns.name} ({action.option_strings[0]})")
+    return sorted(missing)
+
+
+# Generated pages that are not registry pages.
+_FIXED_PAGES = {"cli", "index", "integrations", "web"}
+
+
+def _remove_stale_pages(docs_dir: Path, current: set) -> None:
+    """Delete generated pages whose namespace no longer exists (renamed or
+    removed). Only files carrying the AUTOGENERATED marker are touched."""
+    for path in docs_dir.glob("*.md"):
+        if path.stem in current or path.stem in _FIXED_PAGES:
             continue
-        if name in _REGISTRY_WAIVERS or id(value) in rendered:
-            continue
-        missing.append(name)
-    return missing
-
-
-def _merged_sources(slug: str) -> List[str]:
-    """The registry variable names a merged doc page was built from."""
-    return re.findall(r"[A-Z_]+", _MERGED_REGISTRY_ATTRS.get(slug, ""))
+        if path.read_text().startswith("<!-- AUTOGENERATED by praxis/docs.py"):
+            path.unlink()
 
 
 def _write_if_changed(path: Path, content: str) -> None:

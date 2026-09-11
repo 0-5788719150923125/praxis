@@ -6,35 +6,60 @@ HTTP request per tick, spread over days. Crawled pages land in
 ``build/spider.db`` (the store of record) and surface in the KB through the
 "pages" source on reindex.
 
-Profiles live in ``SPIDER_REGISTRY``; ``--spider`` selects and overrides them
+Profiles live in the ``spider`` registry; ``--spider`` selects and overrides them
 with KEY=VALUE entries, e.g. ``--spider profile=gentle tick_seconds=600``.
 """
 
 from dataclasses import dataclass, fields
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
-# Fixed, model-agnostic pacing constants. "gentle" is the default profile;
-# "ghost" is for development, where waiting 5 minutes per fetch is unusable.
-SPIDER_REGISTRY: Dict[str, dict] = {
-    "gentle": dict(
-        max_sites=16,
-        max_pages_per_site=50,
-        max_kb_pages=200,
-        tick_seconds=300,
-        domain_seconds=1800,
-        max_page_bytes=2 * 1024 * 1024,
-        revisit_days=7.0,
+from praxis import registry
+from praxis.registry import Entry
+
+registry.declare(
+    "spider",
+    title="Web-spider profiles",
+    doc=(
+        "Pacing presets for the background crawler that grounds the knowledge base in "
+        "a watchlist of sites. Each profile is a set of fixed, model-agnostic pacing "
+        "constants. Enabled with ``--spider``; bare use takes ``gentle``, and "
+        "``KEY=VALUE`` entries override any field."
     ),
-    "ghost": dict(
-        max_sites=23,
-        max_pages_per_site=23,
-        max_kb_pages=230,
-        tick_seconds=15,
-        domain_seconds=60,
-        max_page_bytes=2 * 1024 * 1024,
-        revisit_days=0.25,  # every 6 hours
-    ),
-}
+    entries={
+        "gentle": Entry(
+            dict(
+                max_sites=16,
+                max_pages_per_site=50,
+                max_kb_pages=200,
+                tick_seconds=300,
+                domain_seconds=1800,
+                max_page_bytes=2 * 1024 * 1024,
+                revisit_days=7.0,
+            ),
+            (
+                "The default pacing: one request every 5 minutes, at most one hit per "
+                "host every 30 minutes, a 16-site watchlist, and a weekly re-fetch of "
+                "the stalest page once the frontier runs dry."
+            ),
+        ),
+        "ghost": Entry(
+            dict(
+                max_sites=23,
+                max_pages_per_site=23,
+                max_kb_pages=230,
+                tick_seconds=15,
+                domain_seconds=60,
+                max_page_bytes=2 * 1024 * 1024,
+                revisit_days=0.25,  # every 6 hours
+            ),
+            (
+                "Development pacing, for when waiting 5 minutes per fetch is unusable: "
+                "one request every 15 seconds, at most one hit per host a minute, and "
+                "a re-fetch every 6 hours."
+            ),
+        ),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +80,7 @@ def spider_settings(
 ) -> Optional[SpiderSettings]:
     """Resolve ``--spider`` KEY=VALUE entries to settings; None = disabled.
 
-    ``profile`` picks a base from ``SPIDER_REGISTRY`` (default "gentle");
+    ``profile`` picks a base from the ``spider`` registry (default "gentle");
     remaining keys override individual fields. Accepts a dict too, for
     experiment yml configs.
     """
@@ -72,11 +97,11 @@ def spider_settings(
             overrides[key.strip()] = value.strip()
 
     profile = str(overrides.pop("profile", "gentle"))
-    if profile not in SPIDER_REGISTRY:
+    if profile not in registry.namespace("spider"):
         raise ValueError(
-            f"Unknown spider profile {profile!r}. Available: {sorted(SPIDER_REGISTRY)}"
+            f"Unknown spider profile {profile!r}. Available: {sorted(registry.namespace("spider"))}"
         )
-    spec = dict(SPIDER_REGISTRY[profile], profile=profile)
+    spec = dict(registry.lookup("spider", profile), profile=profile)
 
     valid = {f.name for f in fields(SpiderSettings)}
     for key, value in overrides.items():
@@ -96,4 +121,4 @@ def _cast(key: str, value):
     return int(value)
 
 
-__all__ = ["SPIDER_REGISTRY", "SpiderSettings", "spider_settings"]
+__all__ = ["SpiderSettings", "spider_settings"]

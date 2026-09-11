@@ -55,9 +55,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import registry
 from praxis.transforms.targeting import (
     DENSE_DELTA_MAX_NUMEL,
-    TARGET_PROFILES,
     TargetGroup,
     describe,
     discover_targets,
@@ -257,10 +257,10 @@ class SMEAR(nn.Module):
                 "SMEAR routers merge deviations against a concrete block; pass "
                 "block=... at construction (see praxis/decoders/base.py)."
             )
-        if target_profile not in TARGET_PROFILES:
+        if target_profile not in registry.namespace("target_profiles"):
             raise ValueError(
                 f"Unknown target profile {target_profile!r}; "
-                f"known: {sorted(TARGET_PROFILES)}"
+                f"known: {sorted(registry.namespace("target_profiles"))}"
             )
 
         # From the config, like every other sizing decision in this repo. The
@@ -273,7 +273,7 @@ class SMEAR(nn.Module):
         self.hidden_size = config.hidden_size
         self.profile_name = target_profile
 
-        spec = TARGET_PROFILES[target_profile]
+        spec = registry.lookup("target_profiles", target_profile)
         self.targets, skipped = discover_targets(block, spec)
         if not self.targets:
             raise ValueError(

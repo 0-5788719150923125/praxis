@@ -10,8 +10,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+from praxis import registry
 from praxis.kb.item import KBHit, KBItem, with_provenance
-from praxis.kb.sources import KB_SOURCE_REGISTRY, REPO_ROOT
+from praxis.kb.sources import REPO_ROOT
 
 DEFAULT_DB_PATH = REPO_ROOT / "build" / "kb.db"
 
@@ -81,11 +82,11 @@ class KBIndex:
 
     def rebuild(self, sources: Optional[List[str]] = None) -> int:
         """Full reindex from the named sources (default: all registered)."""
-        names = sources or list(KB_SOURCE_REGISTRY)
+        names = sources or list(registry.namespace("kb_sources"))
         self._conn.execute("DELETE FROM kb")
         count = 0
         for name in names:
-            source = KB_SOURCE_REGISTRY[name]()
+            source = registry.lookup("kb_sources", name)()
             # The bus, not the source, stamps producer identity and a default
             # summary - so every entry has supporting details.
             count += self._insert(

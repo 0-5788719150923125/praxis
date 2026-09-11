@@ -1,9 +1,9 @@
 import torch
 
+from praxis import registry
 from praxis.activations.ouroboros import MAX_STEPS, Ouroboros, drain_step_counts
 from praxis.activations.serpent import Serpent
 from praxis.activations.servant import Servant
-from praxis.losses.regularizers import REGULARIZER_REGISTRY
 
 
 def _built(cls, x, **kwargs):
@@ -31,7 +31,7 @@ def test_budget_starts_at_one_step_and_flows_gradients():
     torch.manual_seed(0)
     x = torch.randn(2, 5, 16)
 
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
 
     y = activation(x)
@@ -65,7 +65,7 @@ def test_dual_pushes_toward_the_target_from_both_sides():
     x = torch.randn(2, 5, 16)
 
     def dual_gradient(target, lambda_raw=0.0):
-        regularizer = REGULARIZER_REGISTRY["ouroboros_budget"](target=target)
+        regularizer = registry.lookup("regularizers", "ouroboros_budget")(target=target)
         with torch.no_grad():
             regularizer.lambda_raw.fill_(lambda_raw)
         activation = _built(Ouroboros, x).train()
@@ -106,7 +106,7 @@ def test_no_zero_dim_parameters():
 
     modules = {
         "Ouroboros": _built(Ouroboros, x),
-        "OuroborosBudget": REGULARIZER_REGISTRY["ouroboros_budget"](),
+        "OuroborosBudget": registry.lookup("regularizers", "ouroboros_budget")(),
         "Servant": _built(Servant, x),
     }
     for tag, module in modules.items():
@@ -133,7 +133,7 @@ def test_reset_drops_graphs_from_a_labels_free_forward():
 
     torch.manual_seed(0)
     x = torch.randn(2, 4, 16)
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
 
     # Step 1: a labels-free forward. The regularizer is NOT called.
@@ -157,7 +157,7 @@ def test_exit_distribution_is_a_distribution():
     torch.manual_seed(0)
     x = torch.randn(4, 8, 32)
 
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
     drain_step_counts()
 
@@ -181,7 +181,7 @@ def test_spread_detects_a_deep_shallow_split():
     torch.manual_seed(0)
     x = torch.randn(4, 8, 32)
 
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
 
     # Open steps 1 and 2 for half the features: that half runs ~3 steps, the
@@ -215,7 +215,7 @@ def test_token_spread_is_independent_of_feature_spread():
     energies = torch.linspace(0.05, 20.0, 16).view(1, 16, 1)
     x = torch.randn(4, 16, 32) * energies
 
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
     with torch.no_grad():
         # 3.0 sufficed while `m` was a SATURATED tanh, where this 6-nat energy
@@ -239,7 +239,7 @@ def test_accounting_drains_and_skips_eval():
     torch.manual_seed(0)
     x = torch.randn(2, 5, 16)
 
-    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    regularizer = registry.lookup("regularizers", "ouroboros_budget")()
     activation = _built(Ouroboros, x).train()
     drain_step_counts()
 

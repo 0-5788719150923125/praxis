@@ -6,10 +6,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from praxis import registry
 from praxis.attention.kaleidoscope import (
+    FACET_SCALE,
     MIRROR_RES,
     TURN_MOD,
-    FACET_SCALE,
     KaleidoscopeAttention,
 )
 
@@ -243,9 +244,8 @@ def test_gate_receives_gradient():
 
 
 def test_registered_in_the_attention_registry():
-    from praxis.attention import ATTENTION_REGISTRY
 
-    assert ATTENTION_REGISTRY["kaleido"] is KaleidoscopeAttention
+    assert registry.lookup("attention", "kaleido") is KaleidoscopeAttention
 
 
 def test_specialization_is_absent_rather_than_1_when_there_is_no_deformation():
@@ -394,10 +394,11 @@ def test_dropoff_every_fires_on_every_pass():
 
 
 def test_always_profile_is_registered_and_differs_from_the_one_beat_profile():
-    from praxis.attention import ATTENTION_REGISTRY
 
-    once = ATTENTION_REGISTRY["kaleido_dropoff"](_config(depth=6, num_layers=1))
-    always = ATTENTION_REGISTRY["kaleido_dropoff_always"](
+    once = registry.lookup("attention", "kaleido_dropoff")(
+        _config(depth=6, num_layers=1)
+    )
+    always = registry.lookup("attention", "kaleido_dropoff_always")(
         _config(depth=6, num_layers=1)
     )
     once.train()
@@ -409,9 +410,8 @@ def test_always_profile_is_registered_and_differs_from_the_one_beat_profile():
 
 
 def test_dropoff_profile_is_registered_and_sets_the_step():
-    from praxis.attention import ATTENTION_REGISTRY
 
-    a = ATTENTION_REGISTRY["kaleido_dropoff"](_config(depth=6, num_layers=1))
+    a = registry.lookup("attention", "kaleido_dropoff")(_config(depth=6, num_layers=1))
     assert a.dropoff_mode == "warp" and a.dropoff_step == 5 and not a.dropoff_every
     assert a(torch.randn(1, 12, 32), current_depth=5)[0].shape == (1, 12, 32)
 
@@ -429,11 +429,10 @@ def test_dropoff_envelope_is_the_shared_one_not_a_copy():
 
 def test_arc_inherits_the_training_gate_and_the_always_schedule():
     """The fix lives in CausalAttention so every dropoff user gets it at once."""
-    from praxis.attention import ATTENTION_REGISTRY
 
     cfg = _config(depth=6, num_layers=1)
     cfg.encoding, cfg.vocab_size, cfg.dropout = "nope", 256, 0.0
-    a = ATTENTION_REGISTRY["arc_single_dropoff_always_nomem"](cfg)
+    a = registry.lookup("attention", "arc_single_dropoff_always_nomem")(cfg)
     assert a.dropoff_every is True and a.dropoff_step == 5
     k = v = torch.ones(1, 1, 8, 4)
     a.eval()
@@ -477,7 +476,7 @@ def test_block_is_merge_opaque_to_the_smear_target_walker():
     """
     from praxis import PraxisConfig
     from praxis.modeling import PraxisForCausalLM
-    from praxis.transforms.targeting import TARGET_PROFILES, discover_targets
+    from praxis.transforms.targeting import discover_targets
 
     assert KaleidoscopeAttention.MERGE_OPAQUE is True
     cfg = PraxisConfig(
@@ -495,7 +494,9 @@ def test_block_is_merge_opaque_to_the_smear_target_walker():
         router_type="smear",
         device_map="cpu",
     )
-    groups, skipped = discover_targets(PraxisForCausalLM(cfg), TARGET_PROFILES["all"])
+    groups, skipped = discover_targets(
+        PraxisForCausalLM(cfg), registry.lookup("target_profiles", "all")
+    )
     names = [getattr(g, "name", "") for g in groups]
     for banned in ("turn", "facet", "value", "gate", "output"):
         assert not any(banned in n for n in names), f"SMEAR still targets {banned}"
@@ -765,10 +766,9 @@ def test_ratio_structure_survives_but_fixed_lag_smears():
 
 # ------------------------------------------------- the 1/k^alpha envelope
 def _pink(**over):
-    from praxis.attention import ATTENTION_REGISTRY
 
     torch.manual_seed(0)
-    return ATTENTION_REGISTRY["kaleido_pink"](_config(**over))
+    return registry.lookup("attention", "kaleido_pink")(_config(**over))
 
 
 def test_base_dictionary_is_flat_and_pink_is_not():

@@ -6,8 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.dense import DENSE_REGISTRY
-from praxis.recurrent import RECURRENT_REGISTRY
+from praxis import registry
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -22,10 +21,10 @@ class MinGRUBlock(nn.Module):
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)
-        self.recurrent = RECURRENT_REGISTRY["min_gru"](
+        self.recurrent = registry.lookup("recurrent", "min_gru")(
             config.hidden_size, expansion_factor=1.0, proj_out=None
         )
-        self.ffn = DENSE_REGISTRY.get("mlp")(config)
+        self.ffn = registry.namespace("dense").get("mlp")(config)
 
     def forward(
         self,

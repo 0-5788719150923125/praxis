@@ -1,6 +1,7 @@
 import pytest
 from flask import Flask
 
+from praxis import registry
 from praxis.pillars.projections import render_card, render_sheet_pdf
 from praxis.web.routes.cards import cards_bp
 
@@ -38,17 +39,17 @@ def test_chaos_changes_field():
 def test_every_field_renders():
     import praxis.pillars.projections as P
 
-    full = dict(P.PROJECTION_REGISTRY)
+    full = dict(registry.namespace("projections"))
     try:
         for name, fn in full.items():
-            P.PROJECTION_REGISTRY.clear()
-            P.PROJECTION_REGISTRY[name] = fn
+            registry.namespace("projections").clear()
+            registry.namespace("projections")[name] = fn
             for side in ("front", "back"):
                 out = render_card(side, 7, "dark", 200, AUTHORS, DONATE, "abc")
                 assert out.startswith(b"<?xml"), name
     finally:
-        P.PROJECTION_REGISTRY.clear()
-        P.PROJECTION_REGISTRY.update(full)
+        registry.namespace("projections").clear()
+        registry.namespace("projections").update(full)
 
 
 def test_sheet_is_pdf():

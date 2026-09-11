@@ -3,7 +3,9 @@
 
 RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 
-Registry: ``praxis.ENCODING_REGISTRY`` (5 entries)
+Namespace: ``registry.namespace("encoding")``, declared in ``praxis.encoding`` (5 entries)
+
+Selected with ``--encoding-type`` (default: ``rope``).
 
 ## `alibi` - ALiBi
 

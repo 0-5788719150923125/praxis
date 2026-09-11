@@ -1,10 +1,7 @@
 """Hardware-related CLI arguments."""
 
-from praxis.trainers.precision import (
-    DEFAULT_PRECISION,
-    PRECISION_CHOICES,
-    PRECISION_REGISTRY,
-)
+from praxis import registry
+from praxis.trainers.precision import DEFAULT_PRECISION, PRECISION_CHOICES
 
 
 class HardwareGroup:
@@ -29,13 +26,11 @@ class HardwareGroup:
             type=str,
             default=DEFAULT_PRECISION,
             choices=PRECISION_CHOICES,
-            metavar="{" + ",".join(PRECISION_REGISTRY) + "}",
+            registry="precision",
+            metavar="{" + ",".join(registry.namespace("precision")) + "}",
             help=(
-                "Numeric precision for weights, gradients and matmul kernels: "
-                + "; ".join(
-                    f"{name} ({p.note})" for name, p in PRECISION_REGISTRY.items()
-                )
-                + f" (default: {DEFAULT_PRECISION})"
+                "Numeric precision for weights, gradients and matmul kernels. "
+                "Common spellings (fp16, bf16, half, ...) resolve to these names"
             ),
         )
 
@@ -44,6 +39,12 @@ class HardwareGroup:
             type=int,
             default=1,
             help="Batch size to use for training",
+            doc=(
+                "Rows per microbatch, the unit that has to fit in memory. "
+                "--target-batch-size sets rows per optimizer step, reached by "
+                "accumulating microbatches. Larger batches also unlock the longer "
+                "sequence-length tiers (see --block-size)."
+            ),
         )
 
         group.add_argument(
@@ -57,7 +58,7 @@ class HardwareGroup:
             "--num-nodes",
             type=int,
             default=1,
-            help="Number of nodes for distributed training (default: 1)",
+            help="Number of nodes for distributed training",
             exclude_hash=True,
         )
 

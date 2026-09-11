@@ -11,6 +11,7 @@ from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
 
+from praxis import registry
 from praxis.data.datasets.base import PraxisSampler
 
 # Default sources: written + crawled prose. Configs/cards/agents are skipped
@@ -29,11 +30,10 @@ class KBDataset(PraxisSampler):
         self._epoch: List[str] = []
 
     def _load_epoch(self) -> None:
-        from praxis.kb.sources import KB_SOURCE_REGISTRY
 
         texts = []
         for name in self.sources:
-            source = KB_SOURCE_REGISTRY[name]()
+            source = registry.lookup("kb_sources", name)()
             for item in source.iter_items():
                 body = (item.body or "").strip()
                 if not body:

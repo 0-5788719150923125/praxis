@@ -2,81 +2,164 @@
 Reinforcement Learning policies for training language models.
 """
 
+from praxis import registry
 from praxis.policies.cot import ChainOfThought
 from praxis.policies.engagement import EngagementPolicy, JokePolicy
 from praxis.policies.grpo import GRPO
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
 from praxis.policies.preference import PreferencePolicy
 from praxis.policies.reinforce import REINFORCE
+from praxis.registry import Entry
 
-# Registry for RL algorithms
-RL_POLICIES_REGISTRY = {
-    "reinforce": REINFORCE,
-    "grpo": GRPO,
-    "cot": ChainOfThought,  # Basic supervised CoT
-    # Forward-path engagement-prediction reward (computes its own reward from
-    # labels, so it needs no RL dataset). See PLAN.md / next/homeostatic_engagement.md.
-    "engagement": EngagementPolicy,
-    # Forward-path joke reward (same machinery; dense grounding from well-rated
-    # jokes, live signal from human approval via the Loop UI). PLAN.md section 7b.
-    "joke": JokePolicy,
-    # Forward-path reference-free preference margin over chosen/rejected task
-    # tags (hh-rlhf card compliance). praxis/policies/preference.py.
-    "preference": PreferencePolicy,
-    # Weight-editing controller (driven by a callback, not the forward pass).
-    "harmonic_weight": HarmonicWeightPolicy,
-    # "ppo": PPO,    # TODO: Implement PPO
-}
+registry.declare(
+    "rl_policies",
+    title="RL policies",
+    doc=(
+        (
+            "Reinforcement-learning policy losses for post-training: forward-path policies "
+            "that reweight the LM's own log-probabilities, and weight-editing controllers "
+            "driven by a callback. The same flag also takes the controller profiles in "
+            "``rl_profiles``, and several names may be combined with commas."
+        )
+    ),
+    entries={
+        "reinforce": Entry(
+            REINFORCE,
+            (
+                "REINFORCE on reasoning traces, rewarded by the RL dataset's "
+                "solve_rate scores."
+            ),
+        ),
+        "grpo": Entry(
+            GRPO,
+            (
+                "Group Relative Policy Optimization (DeepSeekMath): outcome-level "
+                "rewards with group-normalized advantages in place of a value network, "
+                "plus a KL penalty against reward hacking. Rewards are the dataset's "
+                "static solve_rate scores."
+            ),
+        ),
+        "cot": Entry(
+            ChainOfThought,
+            (
+                "Supervised chain-of-thought training: rewards structured reasoning "
+                "(thinking tags) and weights reasoning steps above the final answer."
+            ),
+        ),
+        "engagement": Entry(
+            EngagementPolicy,
+            (
+                "Forward-path engagement-prediction reward: the model's recall of its "
+                "own assistant-region answer tokens, plus the homeostatic energy, "
+                "reweights the LM's log-probs over those tokens. The reward comes from "
+                "labels, so it needs no RL dataset."
+            ),
+        ),
+        "joke": Entry(
+            JokePolicy,
+            (
+                "Forward-path reward for the joke task, on engagement's machinery: "
+                "dense grounding from well-rated jokes in the data mix, and a live "
+                "signal from human approval through the Loop UI."
+            ),
+        ),
+        "preference": Entry(
+            PreferencePolicy,
+            (
+                "Forward-path reference-free preference margin over chosen/rejected "
+                "task tags: pushes the mean per-token log-probability of chosen text "
+                "above that of rejected text. It is the preference-modeling use that "
+                "the hh-rlhf dataset card permits."
+            ),
+        ),
+        "harmonic_weight": Entry(
+            HarmonicWeightPolicy,
+            (
+                "Weight-editing controller: a small Gaussian policy that proposes "
+                "harmonic edits (alpha, omega, phi) to one weight row at a time and is "
+                "rewarded by the loss improvement that follows. Driven by a callback, "
+                "not the forward pass; its ``rl_profiles`` entries set the edit mode "
+                "and credit-assignment knobs."
+            ),
+        ),
+    },
+)
 
-# Profiles for the weight-editing controller. ``--rl-type`` selects one, and the
-# profile bundles everything that defines the variant - the underlying policy,
-# the controller behavior (edit_mode, selector), and the credit-assignment knobs
-# (period, horizon, warmup, reward_decay) - so an experiment sets a single key
-# instead of a soup of rl_* flags. Mirrors the memory/orchestration registries.
-# These are profile defaults; an experiment may still override any one via the
-# matching rl_* config key (the builder falls back to the profile value).
-RL_PROFILES = {
-    "harmonic_weight": dict(
-        policy="harmonic_weight",
-        edit_mode="harmonic",
-        selector="sinusoidal",
-        period=50,
-        horizon=20,
-        warmup_steps=200,
-        reward_decay=0.9,
+registry.declare(
+    "rl_profiles",
+    title="RL controller profiles",
+    doc=(
+        (
+            "Profiles for the weight-editing RL controller, selected alongside the RL "
+            "policies (``rl_policies``). Each bundles everything that defines a variant - "
+            "the underlying policy, the controller behavior (edit_mode, selector) and the "
+            "credit-assignment knobs (period, horizon, warmup, reward_decay) - so an "
+            "experiment sets one key instead of a set of rl_* flags. The values are "
+            "defaults: an experiment may override any one through the matching rl_* config "
+            "key."
+        )
     ),
-    # Drives HalfLion's wave gate (amp, cycles, phase) per episode instead of
-    # editing weight rows (calm-c). A non-helpful change restores the three
-    # scalars - no weight surgery. Small localized harmonic edits manifest
-    # slowly, so it credits them over a long window: a 100-step horizon with a
-    # matched ~100-step EMA (1/(1-0.99)=100) accumulates the delayed effect
-    # rather than snapshotting a noisy endpoint.
-    "harmonic_weight_wave": dict(
-        policy="harmonic_weight",
-        edit_mode="wave",
-        selector="sinusoidal",
-        period=50,
-        horizon=100,
-        warmup_steps=200,
-        reward_decay=0.99,
-    ),
-    # Hash-gated frozen-anchor weight replacement (see next/hash_gated_anchor.md).
-    "harmonic_weight_anchor": dict(
-        policy="harmonic_weight",
-        edit_mode="anchor_gate",
-        selector="sinusoidal",
-        period=50,
-        horizon=20,
-        warmup_steps=200,
-        reward_decay=0.9,
-    ),
-}
+    entries={
+        "harmonic_weight": Entry(
+            dict(
+                policy="harmonic_weight",
+                edit_mode="harmonic",
+                selector="sinusoidal",
+                period=50,
+                horizon=20,
+                warmup_steps=200,
+                reward_decay=0.9,
+            ),
+            (
+                "The harmonic_weight controller at its defaults: every 50 steps after "
+                "a 200-step warmup it modulates one weight row with a sinusoid, "
+                "credits the edit over a 20-step horizon, and keeps or rolls it back."
+            ),
+        ),
+        "harmonic_weight_wave": Entry(
+            dict(
+                policy="harmonic_weight",
+                edit_mode="wave",
+                selector="sinusoidal",
+                period=50,
+                horizon=100,
+                warmup_steps=200,
+                reward_decay=0.99,
+            ),
+            (
+                "Drives the wave gate (amp, cycles, phase) of a wave-bearing optimizer "
+                "wrapper (``half_lion`` or ``wave_schedule_free``) per episode instead "
+                "of editing weight rows; an unhelpful change restores the three "
+                "scalars, with no weight surgery. Small localized harmonic edits "
+                "manifest slowly, so it credits them over a long window: a 100-step "
+                "horizon with a matched ~100-step EMA (1/(1-0.99)) accumulates the "
+                "delayed effect rather than snapshotting a noisy endpoint."
+            ),
+        ),
+        "harmonic_weight_anchor": Entry(
+            dict(
+                policy="harmonic_weight",
+                edit_mode="anchor_gate",
+                selector="sinusoidal",
+                period=50,
+                horizon=20,
+                warmup_steps=200,
+                reward_decay=0.9,
+            ),
+            (
+                "Hash-gated frozen-anchor weight replacement: instead of modulating a "
+                "row, each edit resets a gated subset of it to a frozen snapshot of "
+                "the weights taken at the end of warmup."
+            ),
+        ),
+    },
+)
 
 
 def get_rl_profile(name):
     """Resolve an ``rl_type`` to its profile dict, or None if it isn't a
     weight-editing profile (e.g. reinforce/grpo/cot run on the forward path)."""
-    return RL_PROFILES.get(name)
+    return registry.namespace("rl_profiles").get(name)
 
 
 def normalize_rl_types(rl_type):
@@ -97,7 +180,7 @@ def _policy_for(name):
     """Resolve an ``rl_type`` name (policy or profile key) to its policy class."""
     profile = get_rl_profile(name)
     policy_key = profile["policy"] if profile else name
-    return RL_POLICIES_REGISTRY.get(policy_key)
+    return registry.namespace("rl_policies").get(policy_key)
 
 
 def resolves_to_weight_controller(name):
@@ -174,8 +257,6 @@ __all__ = [
     "GRPO",
     "ChainOfThought",
     "HarmonicWeightPolicy",
-    "RL_POLICIES_REGISTRY",
-    "RL_PROFILES",
     "get_rl_profile",
     "normalize_rl_types",
     "resolves_to_weight_controller",

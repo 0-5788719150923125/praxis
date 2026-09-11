@@ -1,7 +1,7 @@
 """Harmonic latent generative head for CALM.
 
 A drop-in sibling to ``FlowHead`` (same ``flow_loss`` / ``forward`` /
-``sample`` / ``set_prior`` surface) selectable via ``LATENT_HEAD_REGISTRY``.
+``sample`` / ``set_prior`` surface) selectable via the ``latent_heads`` registry.
 It trains by flow matching like ``FlowHead``, but the flow lives in a small
 harmonic *coefficient* space: each next-latent is synthesized as a
 superposition of low-frequency harmonics over the latent-index axis,

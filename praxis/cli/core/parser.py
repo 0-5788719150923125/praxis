@@ -2,6 +2,8 @@
 
 import argparse
 
+import praxis.registry as _registry
+
 from .hasher import register_hash_exclusion
 
 
@@ -12,16 +14,35 @@ class _HashAwareContainer:
     argv, and it names the run's checkpoint directory - so a flag that changes
     nothing about the model (where it is served, how loud it logs, which decoder
     it uses at inference) must be kept out of it, or toggling it forks a new
-    empty run. That used to be a hand-kept list of flag strings in hasher.py,
-    sitting a long way from the arguments it named and free to drift from them.
-    Declared here, the fact lives on the argument itself and cannot go stale.
+    empty run. Declared on the argument, the fact cannot drift from the flag.
+
+    ``registry`` names the registry namespace (or tuple of names) a flag's
+    values are keys of. A single namespace also becomes the flag's ``choices``
+    unless the call passes its own (``choices=None`` for a flag that takes
+    free-form values), and the namespace's doc is the flag's long form. Any
+    other flag may pass ``doc``, its long form: ``help`` stays the one line
+    ``--help`` prints, and both are written into the annotated config download
+    (``praxis.cli.annotated_config``).
 
     Anything else that wants to be said about an argument at its definition site
     belongs here too - add a keyword, consume it, pass the rest through.
     """
 
-    def add_argument(self, *args, exclude_hash=False, **kwargs):
+    def add_argument(
+        self, *args, exclude_hash=False, doc=None, registry=None, **kwargs
+    ):
+        if registry is not None and doc is not None:
+            raise ValueError(
+                f"{args[0] if args else kwargs.get('dest')}: a flag bound to a registry "
+                "namespace takes its long form from the namespace's doc; document "
+                "it where the namespace is declared instead of passing doc="
+            )
+        if registry is not None and not isinstance(registry, tuple):
+            kwargs.setdefault("choices", resolve_namespace(registry))
         action = super().add_argument(*args, **kwargs)
+        action.exclude_hash = exclude_hash
+        action.doc = doc
+        action.registry = registry
         if exclude_hash:
             if not action.option_strings:
                 # The hasher keys positionals by index (_pos_N), not by name,
@@ -48,14 +69,20 @@ class _HashAwareContainer:
         return group
 
 
+def resolve_namespace(ref):
+    """A flag's ``registry=`` reference as a namespace: a name, or a namespace
+    object (tests build their own)."""
+    return _registry.namespace(ref) if isinstance(ref, str) else ref
+
+
 class PraxisArgumentGroup(_HashAwareContainer, argparse._ArgumentGroup):
-    """An argument group whose ``add_argument`` accepts ``exclude_hash``."""
+    """An argument group whose ``add_argument`` accepts Praxis metadata."""
 
 
 class PraxisMutuallyExclusiveGroup(
     _HashAwareContainer, argparse._MutuallyExclusiveGroup
 ):
-    """A mutually-exclusive group whose ``add_argument`` accepts ``exclude_hash``."""
+    """A mutually-exclusive group whose ``add_argument`` accepts Praxis metadata."""
 
 
 class PraxisArgumentParser(_HashAwareContainer, argparse.ArgumentParser):

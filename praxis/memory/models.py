@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from torch.nn.parameter import UninitializedParameter
 
-from praxis.dense import DENSE_REGISTRY
+from praxis import registry
 
 
 def _materialize_lazy(model: nn.Module, dim: int) -> None:
@@ -50,7 +50,7 @@ def build_memory_model(config, spec: dict) -> nn.Module:
     cfg.activation = spec.get("activation", "gelu")
     cfg.dropout = 0.0  # surprise gradient must be deterministic
 
-    dense_cls = DENSE_REGISTRY[spec.get("dense", "mlp")]
+    dense_cls = registry.lookup("dense", spec.get("dense", "mlp"))
 
     # Pass num_layers/hidden_dim only to variants that accept them explicitly,
     # so dense modules that don't (PEER, KAN) aren't handed args they'd misroute.

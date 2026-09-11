@@ -5,10 +5,9 @@ from typing import List
 import pytest
 import torch
 
-from praxis import PraxisConfig
-from praxis.blocks import BLOCK_REGISTRY
+from praxis import PraxisConfig, registry
 
-MODULE_CLASSES = list(BLOCK_REGISTRY.keys())
+MODULE_CLASSES = list(registry.namespace("blocks").keys())
 MODULE_CLASSES.remove("mru")
 
 # Define test parameters in a more structured way
@@ -45,7 +44,7 @@ def module_setup(request, config):
     setattr(config, "hidden_size", block_config.hidden_size)
     setattr(config, "num_heads", block_config.num_heads)
 
-    module = BLOCK_REGISTRY.get(module_class)(config)
+    module = registry.namespace("blocks").get(module_class)(config)
     return module, block_config
 
 

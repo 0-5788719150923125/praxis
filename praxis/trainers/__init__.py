@@ -1,5 +1,7 @@
 """Trainer modules for Praxis."""
 
+from praxis import registry
+from praxis.registry import Entry
 from praxis.trainers.backpropagation import BackpropagationTrainer
 from praxis.trainers.base import (
     BaseCallback,
@@ -21,7 +23,6 @@ from praxis.trainers.factory import (
 from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.precision import (
     DEFAULT_PRECISION,
-    PRECISION_REGISTRY,
     PrecisionProfile,
     apply_precision,
     canonical_precision,
@@ -29,13 +30,13 @@ from praxis.trainers.precision import (
     resolve_precision,
 )
 from praxis.trainers.progress import BaseProgressBar, get_progress_bar_base
+from praxis.trainers.ray_support import ensure_ray
 from praxis.trainers.runtime import (
     assemble_trainer,
     print_training_banner,
     resolve_training_logger,
     run_training,
 )
-from praxis.trainers.ray_support import ensure_ray
 from praxis.trainers.seed import reset_seed, seed_everything
 from praxis.trainers.setup import (
     ModelBundle,
@@ -72,21 +73,10 @@ except ImportError:
     LightningTrainerWrapper = None
 
 
-# Registry for trainers. Each ``mono_forward*`` entry is a profile
-# that picks a worker backend in addition to the trainer math:
-#
-# - ``mono_forward``: in-process, single CUDA context, single host.
-#   The default Mono-Forward profile - no Ray dependency, suitable
-#   for iterating on very deep models on one GPU.
-# - ``mono_forward_ray``: one Ray actor per layer. Multi-host /
-#   multi-raylet capable, but pays ~300-500 MB of CUDA context per
-#   actor; use this when you actually need multiple machines.
-#
-# Both are lazy-loaded so selecting ``backpropagation`` doesn't
-# import the Mono-Forward package or its (Ray-backed) worker
-# runtime; ``mono_forward_ray`` additionally defers ``import ray``
-# until ``fit()`` so the in-process profile loads on Python builds
-# where Ray has no wheels.
+# Both Mono-Forward trainers are lazy-loaded so selecting ``backpropagation``
+# doesn't import the Mono-Forward package or its (Ray-backed) worker runtime;
+# ``mono_forward_ray`` additionally defers ``import ray`` until ``fit()`` so the
+# in-process profile loads on Python builds where Ray has no wheels.
 def _get_mono_forward_inprocess_trainer():
     """Lazy load the in-process Mono-Forward trainer."""
     from praxis.trainers.mono_forward import InProcessMonoForwardTrainer
@@ -101,11 +91,38 @@ def _get_mono_forward_ray_trainer():
     return MonoForwardTrainer
 
 
-TRAINER_REGISTRY = {
-    "backpropagation": BackpropagationTrainer,
-    "mono_forward": _get_mono_forward_inprocess_trainer,
-    "mono_forward_ray": _get_mono_forward_ray_trainer,
-}
+registry.declare(
+    "trainers",
+    title="Trainers",
+    doc=(
+        (
+            "The training loop that updates the model. ``backpropagation`` is standard "
+            "gradient descent. The Mono-Forward profiles share one training math - each "
+            "layer trains locally against a per-layer projection matrix, with O(1) "
+            "activation memory in depth - and differ only in worker backend."
+        )
+    ),
+    entries={
+        "backpropagation": BackpropagationTrainer,
+        "mono_forward": Entry(
+            _get_mono_forward_inprocess_trainer,
+            (
+                "Mono-Forward in process: every layer runs in the driver process under "
+                "one CUDA context, on a single host. The default Mono-Forward profile, "
+                "with no Ray dependency and low VRAM overhead, for iterating on very "
+                "deep models on one GPU."
+            ),
+        ),
+        "mono_forward_ray": Entry(
+            _get_mono_forward_ray_trainer,
+            (
+                "Mono-Forward with one Ray actor per layer. Multi-host capable, but "
+                "each actor pays roughly 300-500 MB of CUDA context, so it is the "
+                "profile for runs that need multiple machines."
+            ),
+        ),
+    },
+)
 
 # Lightning wrapper is not exposed as a separate trainer type
 
@@ -151,7 +168,6 @@ __all__ = [
     "register_praxis_models",
     "configure_torch_precision",
     "DEFAULT_PRECISION",
-    "PRECISION_REGISTRY",
     "PrecisionProfile",
     "apply_precision",
     "canonical_precision",
@@ -177,7 +193,6 @@ __all__ = [
     "BaseProgressBar",
     "get_progress_bar_base",
     # Registry
-    "TRAINER_REGISTRY",
 ]
 
 # Add Lightning exports if available

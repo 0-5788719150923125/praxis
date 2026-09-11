@@ -11,9 +11,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import registry
 from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
-from praxis.dense import DENSE_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -56,7 +56,7 @@ class GraphRouter(BaseController):
 
         # Transform the hidden states
         self.mix_norm = nn.LayerNorm(self.hidden_dim)
-        self.mixer = DENSE_REGISTRY.get("glu")(config)
+        self.mixer = registry.namespace("dense").get("glu")(config)
 
         # Graph attention components
         self.attn_norm = nn.LayerNorm(self.hidden_dim)

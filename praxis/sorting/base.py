@@ -1,7 +1,7 @@
-from typing import Dict, Optional, Type
-
 import torch
 import torch.nn as nn
+
+from praxis import registry
 
 
 class NoSort(nn.Module):
@@ -32,8 +32,19 @@ class NoSort(nn.Module):
         return hidden_states
 
 
-# Registry for sorting mechanisms
-SORTING_REGISTRY: Dict[str, Type[NoSort]] = {}
+# Filled by @register_sorting as each module under praxis/sorting is imported.
+registry.declare(
+    "sorting",
+    title="Sequence sorting",
+    doc=(
+        (
+            "Optional reordering operations applied to the sequence. The slot also hosts "
+            "differentiable positional-bias fields (``decay_bias``, ``amplitude_field``) "
+            "that reuse the hook without permuting anything; a module's ``permutes`` "
+            "attribute says which kind it is."
+        )
+    ),
+)
 
 
 def register_sorting(name: str):
@@ -45,7 +56,7 @@ def register_sorting(name: str):
     """
 
     def register_sorting_cls(cls):
-        SORTING_REGISTRY[name] = cls
+        registry.namespace("sorting").register(name, cls)
         return cls
 
     return register_sorting_cls

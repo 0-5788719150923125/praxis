@@ -2,7 +2,7 @@
 
 A drop-in sibling to ``EnergyHead`` (same constructor signature, same
 ``sample`` / ``forward`` / ``set_prior`` surface) selectable via
-``LATENT_HEAD_REGISTRY``. Where the energy head trains an implicit
+the ``latent_heads`` registry. Where the energy head trains an implicit
 generator with a high-variance sample-based score, this trains a velocity
 field by flow matching - a dense, low-variance regression target at every
 noise level. Faithful to the reference (github.com/shaochenze/calm,
@@ -22,6 +22,8 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+from praxis import registry
 
 # ODE integration steps at sampling time. Midpoint halves the count (two net
 # calls per step). Fixed, model-agnostic (matches the reference's 20/midpoint).
@@ -255,14 +257,21 @@ class FlowHead(nn.Module):
         return self._integrate(x0, cond)
 
 
-# Energy, flow, and harmonic share the encoder's head slot; the encoder picks
-# via the head_kind kwarg baked into its profile partial. Imported at the bottom
-# (after FlowMLP is defined) since harmonic_latent reuses it.
+# Imported at the bottom (after FlowMLP is defined) since harmonic_latent
+# reuses it.
 from praxis.heads.energy import EnergyHead  # noqa: E402
 from praxis.heads.harmonic_latent import HarmonicLatentHead  # noqa: E402
 
-LATENT_HEAD_REGISTRY = {
-    "energy": EnergyHead,
-    "flow": FlowHead,
-    "harmonic": HarmonicLatentHead,
-}
+registry.declare(
+    "latent_heads",
+    doc=(
+        "Generators for the CALM encoder's continuous-latent head slot. All three "
+        "share one sample/forward surface; the encoder picks one by the ``head_kind`` "
+        "baked into its profile."
+    ),
+    entries={
+        "energy": EnergyHead,
+        "flow": FlowHead,
+        "harmonic": HarmonicLatentHead,
+    },
+)

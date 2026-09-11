@@ -3,7 +3,9 @@
 
 How the stack of blocks is composed (sequential, parallel, weighted, ...).
 
-Registry: ``praxis.DECODER_REGISTRY`` (4 entries)
+Namespace: ``registry.namespace("decoders")``, declared in ``praxis.decoders`` (4 entries)
+
+Selected with ``--decoder-type`` (default: ``sequential``).
 
 ## `parallel_mean`, `parallel_variance`, `parallel_weighted` - ParallelDecoder
 
@@ -12,9 +14,9 @@ A module that wraps decoder operations.
 Source: [praxis/decoders/parallel.py:15](../praxis/decoders/parallel.py#L15)
 
 Presets:
-- `parallel_mean` - `mode='mean'`
-- `parallel_variance` - `mode='variance'`
-- `parallel_weighted` - `mode='weighted'`
+- `parallel_mean` (`mode='mean'`) - Run every expert in parallel on the same input and average their outputs. Parallel decoders have no early exit.
+- `parallel_variance` (`mode='variance'`) - Run every expert in parallel on the same input and sum their outputs, each feature weighted by a sigmoid of that expert's log-variance around the expert mean, so outputs that depart from the consensus count for more.
+- `parallel_weighted` (`mode='weighted'`) - Run every expert in parallel on the same input and sum their outputs with learned per-expert, per-feature weights, softmaxed across experts.
 
 ## `sequential` - SequentialDecoder
 

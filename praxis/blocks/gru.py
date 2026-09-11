@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.recurrent import RECURRENT_REGISTRY
+from praxis import registry
 from praxis.routers.bank import ExpertBank
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -33,7 +33,7 @@ class GRUBlock(nn.Module):
             config,
             experts=nn.ModuleList(
                 [
-                    RECURRENT_REGISTRY["gru"](
+                    registry.lookup("recurrent", "gru")(
                         config.hidden_size, expansion_factor=1.5, proj_out=True
                     )
                     for _ in range(num_experts_for_smear)

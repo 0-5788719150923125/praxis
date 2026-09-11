@@ -7,7 +7,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.embeddings import EMBEDDING_REGISTRY, AdditiveEmbedding
+from praxis import registry
+from praxis.embeddings import AdditiveEmbedding
 from praxis.embeddings.byte import ByteEmbedding
 from praxis.embeddings.hash import HashEmbedding
 from praxis.embeddings.positional import PositionalEmbedding
@@ -274,12 +275,12 @@ class TestEmbeddingRegistry:
         }
 
         for arch, cls in expected.items():
-            assert arch in EMBEDDING_REGISTRY
-            assert EMBEDDING_REGISTRY[arch] == cls
+            assert arch in registry.namespace("embeddings")
+            assert registry.lookup("embeddings", arch) == cls
 
     def test_registry_values_are_callables(self):
         """Registry values are callable; class entries are nn.Module subclasses."""
-        for arch, ctor in EMBEDDING_REGISTRY.items():
+        for arch, ctor in registry.namespace("embeddings").items():
             assert callable(ctor)
             if isinstance(ctor, type):
                 assert issubclass(ctor, nn.Module)
@@ -288,10 +289,10 @@ class TestEmbeddingRegistry:
         """The byte-latent profiles compose the expected primitives."""
         config = MockConfig()
 
-        tok_only = EMBEDDING_REGISTRY["byte"](config)
+        tok_only = registry.lookup("embeddings", "byte")(config)
         assert isinstance(tok_only, ByteEmbedding)
 
-        tok_hash = EMBEDDING_REGISTRY["byte_hash"](config)
+        tok_hash = registry.lookup("embeddings", "byte_hash")(config)
         assert isinstance(tok_hash, AdditiveEmbedding)
         kinds = [type(m) for m in tok_hash.embeddings]
         assert kinds == [ByteEmbedding, HashEmbedding]
@@ -306,7 +307,7 @@ class TestEmbeddingRegistry:
         Flattening them into an expression put the tree on one line and hid any
         structure the children had of their own.
         """
-        composed = EMBEDDING_REGISTRY["byte_hash"](MockConfig())
+        composed = registry.lookup("embeddings", "byte_hash")(MockConfig())
         lines = repr(composed).splitlines()
 
         assert " + " not in repr(composed)

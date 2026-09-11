@@ -3,10 +3,8 @@
 import pytest
 import torch
 
-from praxis.losses.regularizers import (
-    REGULARIZER_REGISTRY,
-    build_regularizers,
-)
+from praxis import registry
+from praxis.losses.regularizers import build_regularizers
 
 
 def test_default_is_contrastive_isotropy():
@@ -25,8 +23,8 @@ def test_unknown_name_raises():
 
 
 def test_multiple_regularizers_compose():
-    reg = build_regularizers(list(REGULARIZER_REGISTRY.keys()))
-    assert len(reg) == len(REGULARIZER_REGISTRY)
+    reg = build_regularizers(list(registry.namespace("regularizers").keys()))
+    assert len(reg) == len(registry.namespace("regularizers"))
     names = {m.name for m in reg}
     assert "contrastive" in names and "activation_reg" in names
 
@@ -217,15 +215,14 @@ def test_isotropy_probe_measures_without_forcing():
     evidence that could say whether removing it helped. abstractinator-f lost
     exactly that way."""
     import torch
-    from praxis.losses.regularizers import REGULARIZER_REGISTRY
 
     # Collapsed reps, so the hinge is genuinely active and the loss is nonzero.
     base = torch.randn(1, 1, 32)
     h = (base + 0.02 * torch.randn(2, 16, 32)).requires_grad_(True)
     ids = torch.randint(1, 50, (2, 16))
 
-    live = REGULARIZER_REGISTRY["contrastive_isotropy"]()
-    probe = REGULARIZER_REGISTRY["isotropy_probe"]()
+    live = registry.lookup("regularizers", "contrastive_isotropy")()
+    probe = registry.lookup("regularizers", "isotropy_probe")()
     live_loss, probe_loss = live(h, ids), probe(h, ids)
 
     assert float(live_loss.detach()) > 0.0

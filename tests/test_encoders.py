@@ -4,18 +4,17 @@ import pytest
 import torch
 from torch import nn
 
-from praxis import EMBEDDING_REGISTRY, ENCODER_REGISTRY
-from praxis.heads import HEAD_REGISTRY
-from praxis.modeling import resolve_head_type
+from praxis import registry
 from praxis.encoders.byte_latent.encoder import (
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
     packed_rnn_block,
     pooling_downsample,
 )
+from praxis.modeling import resolve_head_type
 
 # Define test parameters
-MODULE_CLASSES = list(ENCODER_REGISTRY.values())
+MODULE_CLASSES = list(registry.namespace("encoders").values())
 META_MODES = [
     ["space", "ngram"],
     ["space"],
@@ -37,13 +36,17 @@ def module_setup(request, config):
     # for encoders that name an embedding profile.
     profile = getattr(module, "embedding_profile", None)
     if profile:
-        module.set_embeddings(EMBEDDING_REGISTRY[profile](config, encoder=module))
+        module.set_embeddings(
+            registry.lookup("embeddings", profile)(config, encoder=module)
+        )
     # Mirror PraxisForCausalLM again: loss-owning encoders (CALM) do not own a
     # token classifier, they borrow the LM head and apply it internally, so
     # decode() cannot classify until the head is injected.
     if hasattr(module, "set_head"):
         head_type = resolve_head_type(config, has_encoder=True)
-        head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
+        head_cls = registry.namespace("heads").get(
+            head_type, registry.lookup("heads", "forward")
+        )
         module.set_head(head_cls(config, encoder=module))
     return module, config
 
@@ -533,25 +536,23 @@ def test_topk_mean_pooling():
 def test_unlisted_encoder_names_resolve_but_are_not_listed():
     """Descriptive names build the same profiles as the listed names they map
     to; only the listed names reach the CLI choices and the docs."""
-    from praxis.encoders import ENCODER_REGISTRY
 
-    listed = set(ENCODER_REGISTRY)
-    for name, target in ENCODER_REGISTRY.unlisted.items():
-        assert name in ENCODER_REGISTRY and name not in listed, name
-        if isinstance(target, str):
-            assert target in listed, target
-            assert ENCODER_REGISTRY[name] is ENCODER_REGISTRY[target]
-        else:
-            assert ENCODER_REGISTRY.get(name) is target
-    assert ENCODER_REGISTRY.get("no_such_encoder") is None
+    listed = set(registry.namespace("encoders"))
+    for name, target in registry.namespace("encoders").aliases().items():
+        assert name in registry.namespace("encoders") and name not in listed, name
+        assert target in listed, target
+        assert registry.lookup("encoders", name) is registry.lookup("encoders", target)
+    for name, profile in registry.namespace("encoders").unlisted().items():
+        assert name in registry.namespace("encoders") and name not in listed, name
+        assert registry.namespace("encoders").get(name) is profile
+    assert registry.namespace("encoders").get("no_such_encoder") is None
 
 
 def test_unlisted_encoder_name_is_accepted_on_the_command_line():
-    import argparse
-
+    from praxis.cli.core import create_base_parser
     from praxis.cli.groups.architecture import ArchitectureGroup
 
-    parser = argparse.ArgumentParser()
+    parser = create_base_parser()
     ArchitectureGroup.add_arguments(parser)
     name = "abstractinator_harmonic_gdn_vocab_bank_static"
     assert parser.parse_args(["--encoder-type", name]).encoder_type == name
@@ -575,7 +576,7 @@ class TestStaticPatchingNeedsNoBOE:
 
     @staticmethod
     def _encoder(mode, patch_size=8):
-        from praxis import ENCODER_REGISTRY, PraxisConfig
+        from praxis import PraxisConfig
 
         name = (
             "abstractinator_v1"
@@ -598,7 +599,7 @@ class TestStaticPatchingNeedsNoBOE:
             max_position_embeddings=1024,
             device_map="cpu",
         )
-        return ENCODER_REGISTRY[name](config)
+        return registry.lookup("encoders", name)(config)
 
     def test_static_prepends_no_boe(self):
         encoder = self._encoder("static")

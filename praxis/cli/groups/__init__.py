@@ -32,6 +32,19 @@ def add_all_argument_groups(parser):
         group_class.add_arguments(parser)
 
 
+def build_static_parser():
+    """The parser with every static argument group, built without parsing argv
+    or running integration discovery (which reads sys.argv and may install
+    dependencies). Experiment, environment and integration flags are local to
+    a checkout, so they are not part of it."""
+    from praxis.cli.core import create_base_parser
+
+    parser = create_base_parser()
+    add_all_argument_groups(parser)
+    OtherGroup.add_dev_argument_if_needed(parser)
+    return parser
+
+
 def process_all_arguments(args):
     """Process arguments through all groups that have processors."""
     for group_class in ARGUMENT_GROUPS:
@@ -43,6 +56,7 @@ def process_all_arguments(args):
 __all__ = [
     "ARGUMENT_GROUPS",
     "add_all_argument_groups",
+    "build_static_parser",
     "process_all_arguments",
     "HardwareGroup",
     "PersistenceGroup",

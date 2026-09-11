@@ -19,16 +19,36 @@ from typing import Callable, Optional
 import torch
 import torch.nn as nn
 
+from praxis import registry
 from praxis.containers import LossContainer
 from praxis.heads.mtp.conv import ConvMTPModule
 from praxis.heads.mtp.transformer import TransformerMTPModule
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.regression import MeanSquaredErrorLoss
 
-MTP_REGISTRY = {
-    "transformer": TransformerMTPModule,
-    "conv": ConvMTPModule,
-}
+registry.declare(
+    "mtp",
+    title="Multi-token prediction",
+    doc=(
+        (
+            "Depth modules for multi-token prediction in DeepSeek-V3's sequential form: "
+            "depth k takes the previous depth's hidden and the ground-truth embedding and "
+            "predicts the token at offset k+2, as an auxiliary loss in training and as "
+            "speculative drafts at inference. Unset, no MTP runs; ``--mtp-depth`` sets the "
+            "depth count. These entries build one independent module per depth. "
+            "``--mtp-type`` also accepts three bank types, each one module owning every "
+            "depth: ``vear`` (a shared pool of light harmonic experts, sliding-window "
+            "merged per depth), ``serpent_rnn`` (one shared gated serpent cell unrolled K "
+            "times) and ``per_depth`` (K independent light harmonic transforms, nothing "
+            "shared). The entries here are context-dependent, so byte-latent encoders, "
+            "which draft one position at a time with no cache, require a bank type."
+        )
+    ),
+    entries={
+        "transformer": TransformerMTPModule,
+        "conv": ConvMTPModule,
+    },
+)
 
 # Depth transforms whose output at a position depends on the positions before
 # it. Training runs them over the whole sequence; ``draft_next_tokens`` runs
@@ -165,7 +185,7 @@ class MultiTokenPrediction(nn.Module):
         # serpent cell unrolled K times (praxis/heads/mtp/rnn.py); per_depth = K
         # independent light harmonic transforms, nothing shared
         # (praxis/heads/mtp/independent.py). Registry types: K independent
-        # per-depth modules built from MTP_REGISTRY.
+        # per-depth modules built from the ``mtp`` registry.
         self.is_vear = config.mtp_type == "vear"
         self.bank = None
         self.depths = None
@@ -182,7 +202,7 @@ class MultiTokenPrediction(nn.Module):
 
             self.bank = PerDepthMTPBank(depth_config, self.num_depths)
         else:
-            module_cls = MTP_REGISTRY[config.mtp_type]
+            module_cls = registry.lookup("mtp", config.mtp_type)
             self.depths = nn.ModuleList(
                 [module_cls(depth_config) for _ in range(self.num_depths)]
             )

@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
+from praxis import registry
 from praxis.activations import build_activation
 from praxis.generation.decoding import (
     first_halt,
@@ -41,13 +42,11 @@ from praxis.generation.decoding import (
     stream_put,
     trunk_hooks,
 )
-from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, EnergyHead
-from praxis.heads.flow import LATENT_HEAD_REGISTRY
+from praxis.heads.energy import EnergyHead
 from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
 from ..base import BaseEncoder
-from .codecs import CODEC_REGISTRY
 
 # AE pretraining-phase convergence detector. Fixed and model-agnostic (per the
 # no-per-experiment-tuning rule): the phase ends when reconstruction stops
@@ -567,7 +566,7 @@ class CALMEncoder(BaseEncoder):
         # encoder + learned decoder, no freeze needed). Attribute stays `vae`
         # so every call site is codec-agnostic.
         self.codec_kind = codec_kind
-        self.vae = CODEC_REGISTRY[codec_kind](
+        self.vae = registry.lookup("codecs", codec_kind)(
             vocab_size=self._output_vocab_size,
             embed_dim=config.embed_size,
             chunk_size=self.K,
@@ -582,7 +581,7 @@ class CALMEncoder(BaseEncoder):
         )
 
         # The token classifier (forward/crystal/...) is built from
-        # HEAD_REGISTRY and injected via set_head(); CALM applies it to the
+        # the ``heads`` registry and injected via set_head(); CALM applies it to the
         # VAE decoder features. Stored as a bare ref (in a list) so the head
         # stays owned by the model and isn't double-registered here.
         self._head: list = []
@@ -604,7 +603,7 @@ class CALMEncoder(BaseEncoder):
         # branches in _register_head_loss. Attribute stays `energy_head` so
         # generation/diagnostic call sites are head-agnostic.
         self.head_kind = head_kind
-        head_cls = LATENT_HEAD_REGISTRY[head_kind]
+        head_cls = registry.lookup("latent_heads", head_kind)
         self.energy_head = head_cls(
             cond_dim=config.hidden_size,
             noise_dim=self.noise_dim,
@@ -614,9 +613,9 @@ class CALMEncoder(BaseEncoder):
         )
         # Closed-form linear prior (reservoir-style readout): solved from EMA
         # sufficient statistics over a post-freeze window, then frozen; the
-        # MLP learns only the residual. See ENERGY_PRIOR_REGISTRY for options
+        # MLP learns only the residual. See the ``energy_priors`` registry for options
         # ("none" = paper-pure ablation). Energy head only; flow has none.
-        prior_factory = ENERGY_PRIOR_REGISTRY[energy_prior]
+        prior_factory = registry.lookup("energy_priors", energy_prior)
         if prior_factory is not None and head_kind not in ("flow", "harmonic"):
             period = max(2, int(getattr(config, "block_size", 512)) // self.K)
             self.energy_head.set_prior(
@@ -666,7 +665,7 @@ class CALMEncoder(BaseEncoder):
         return self._output_vocab_size
 
     def set_head(self, head: nn.Module) -> None:
-        """Receive the LM head built from HEAD_REGISTRY. Held as a bare ref
+        """Receive the LM head built from the ``heads`` registry. Held as a bare ref
         (the model owns the parameters); CALM applies it to decoder features."""
         self._head = [head]
 

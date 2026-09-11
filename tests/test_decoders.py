@@ -6,27 +6,20 @@ from typing import List
 import pytest
 import torch
 
-from praxis import (
-    BLOCK_REGISTRY,
-    CONTROLLER_REGISTRY,
-    DECODER_REGISTRY,
-    RESIDUAL_REGISTRY,
-    PraxisConfig,
-)
+from praxis import PraxisConfig, registry
 from praxis.containers import LossContainer
-from praxis.routers import ROUTER_REGISTRY
 
 TEST_PARAMS = {
     "debug": [True, False],
     "hidden_size": [64, 128],
     "num_heads": [2],
-    "mod": list(ROUTER_REGISTRY.keys()),
+    "mod": list(registry.namespace("routers").keys()),
     "depth": [3],
     "num_experts": [3, 5],
-    "decoder_type": list(DECODER_REGISTRY.keys()),
-    "block_type": list(BLOCK_REGISTRY.keys()),
-    "controller_type": list(CONTROLLER_REGISTRY.keys()),
-    "residual_type": list(RESIDUAL_REGISTRY.keys()),
+    "decoder_type": list(registry.namespace("decoders").keys()),
+    "block_type": list(registry.namespace("blocks").keys()),
+    "controller_type": list(registry.namespace("controllers").keys()),
+    "residual_type": list(registry.namespace("residuals").keys()),
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 
@@ -75,7 +68,7 @@ def _sampled_decoder_configs() -> List[PraxisConfig]:
 @pytest.fixture(params=_sampled_decoder_configs())
 def module_setup(request):
     config = request.param
-    decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
+    decoder = registry.namespace("decoders").get(config.decoder_type)(config)
     return decoder, config.hidden_size, config.num_experts
 
 

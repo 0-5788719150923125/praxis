@@ -18,7 +18,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.heads import HEAD_REGISTRY
+from praxis import registry
 from praxis.heads.crystal import CrystalHead, CrystalVearHead
 from praxis.heads.forward import ForwardHead
 from praxis.heads.halo import HaloHead
@@ -49,12 +49,14 @@ class Enc(nn.Module):
 
 def build(name="prismatic8"):
     torch.manual_seed(0)
-    return HEAD_REGISTRY[name](Cfg(), encoder=Enc())
+    return registry.lookup("heads", name)(Cfg(), encoder=Enc())
 
 
 def test_registered_and_distinct_from_prismatic7():
-    assert "prismatic8" in HEAD_REGISTRY
-    assert HEAD_REGISTRY["prismatic8"] is not HEAD_REGISTRY["prismatic7"]
+    assert "prismatic8" in registry.namespace("heads")
+    assert registry.lookup("heads", "prismatic8") is not registry.lookup(
+        "heads", "prismatic7"
+    )
 
 
 def test_arms_are_crystal_forward_halo_with_no_bank():

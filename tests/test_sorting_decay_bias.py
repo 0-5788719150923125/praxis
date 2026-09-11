@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from praxis.sorting import SORTING_REGISTRY
+from praxis import registry
 from praxis.sorting.decay import (
     TAU_INIT,
     TAU_MAX,
@@ -22,7 +22,7 @@ def _sorter(hidden_size=16):
 
 
 def test_registered():
-    assert SORTING_REGISTRY.get("decay_bias") is DecayBiasSort
+    assert registry.namespace("sorting").get("decay_bias") is DecayBiasSort
 
 
 def test_identity_at_init():

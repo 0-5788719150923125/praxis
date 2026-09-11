@@ -1,4 +1,4 @@
-"""PEER gated experts (praxis/dense/peer.py, DENSE_REGISTRY["peer_glu"]).
+"""PEER gated experts (praxis/dense/peer.py, the "dense" registry entry "peer_glu").
 
 ``test_dense.py`` already covers forward-pass shape for every registry entry.
 What needs its own pins here are the invariants that make ``peer_glu`` a fair
@@ -8,8 +8,7 @@ comparison against ``peer`` rather than a disguised size increase.
 import pytest
 import torch
 
-from praxis import PraxisConfig
-from praxis.dense import DENSE_REGISTRY
+from praxis import PraxisConfig, registry
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.peer import (
     BANK_WIDTH_MULTIPLE,
@@ -35,13 +34,13 @@ def params(module):
 
 
 def test_registry_exposes_the_gated_variant():
-    assert "peer_glu" in DENSE_REGISTRY
-    module = DENSE_REGISTRY["peer_glu"](make_config())
+    assert "peer_glu" in registry.namespace("dense")
+    module = registry.lookup("dense", "peer_glu")(make_config())
     assert isinstance(module, ParameterEfficientExpertRetrieval)
     assert module.glu is True
     assert module.gate is not None
     # And the ungated entry is untouched.
-    assert DENSE_REGISTRY["peer"](make_config()).gate is None
+    assert registry.lookup("dense", "peer")(make_config()).gate is None
 
 
 @pytest.mark.parametrize("hidden_size", WIDTHS)
@@ -159,7 +158,7 @@ ODD_WIDTHS = [33, 65, 111, 257]
 @pytest.mark.parametrize("expert", ["peer", "peer_glu"])
 def test_odd_hidden_size_builds_and_runs(hidden_size, expert):
     config = make_config(hidden_size=hidden_size, num_heads=4)
-    module = DENSE_REGISTRY[expert](config)
+    module = registry.lookup("dense", expert)(config)
 
     x = torch.randn(2, 8, hidden_size, requires_grad=True)
     y = module(x)
@@ -175,8 +174,8 @@ def test_odd_hidden_size_builds_and_runs(hidden_size, expert):
 @pytest.mark.parametrize("expert", ["peer", "peer_glu"])
 def test_odd_width_matches_its_even_neighbour(expert):
     """Parity is not a cliff: 111 and 112 size the bank identically."""
-    odd = DENSE_REGISTRY[expert](make_config(hidden_size=111, num_heads=4))
-    even = DENSE_REGISTRY[expert](make_config(hidden_size=112, num_heads=4))
+    odd = registry.lookup("dense", expert)(make_config(hidden_size=111, num_heads=4))
+    even = registry.lookup("dense", expert)(make_config(hidden_size=112, num_heads=4))
     assert odd.num_experts == even.num_experts
     assert odd.key_dims == even.key_dims
     assert odd.num_keys == even.num_keys
@@ -186,7 +185,7 @@ def test_key_dims_floor_holds_at_a_tiny_odd_width():
     """hidden_size // (2 * num_heads) floors to 0 here; MIN_KEY_DIMS catches it."""
     from praxis.dense.peer import MIN_KEY_DIMS
 
-    module = DENSE_REGISTRY["peer"](make_config(hidden_size=3, num_heads=4))
+    module = registry.lookup("dense", "peer")(make_config(hidden_size=3, num_heads=4))
     assert module.key_dims == MIN_KEY_DIMS
     x = torch.randn(2, 4, 3)
     assert module(x).shape == x.shape
@@ -253,7 +252,9 @@ def test_training_forward_is_causal_and_row_independent(expert):
     statistic anywhere on the query path breaks both, and top-k retrieval
     turns even a small shift into different experts."""
     torch.manual_seed(0)
-    module = DENSE_REGISTRY[expert](make_config(hidden_size=64, num_heads=4)).train()
+    module = registry.lookup("dense", expert)(
+        make_config(hidden_size=64, num_heads=4)
+    ).train()
     x = torch.randn(3, 12, 64)
     p = 7
     xp = x.clone()

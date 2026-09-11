@@ -1,12 +1,12 @@
 import pytest
 import torch
 
-from praxis.sorting import SORTING_REGISTRY
+from praxis import registry
 
 
 class TestSorting:
     """
-    Test suite for sorting implementations in the SORTING_REGISTRY.
+    Test suite for sorting implementations in the ``sorting`` registry.
     Tests run automatically for all registered sorting modules.
     """
 
@@ -27,7 +27,7 @@ class TestSorting:
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
-    @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
+    @pytest.mark.parametrize("sorting_type", list(registry.namespace("sorting").keys()))
     @pytest.mark.parametrize("batch_size", BATCH_SIZES)
     @pytest.mark.parametrize("seq_length", SEQ_LENGTHS)
     @pytest.mark.parametrize("feature_dim", FEATURE_DIMS)
@@ -48,7 +48,7 @@ class TestSorting:
         )
 
         # Instantiate the sorting module
-        sorter = SORTING_REGISTRY[sorting_type](config)
+        sorter = registry.lookup("sorting", sorting_type)(config)
 
         # Create random input tensor
         x = torch.randn(batch_size, seq_length, feature_dim)
@@ -59,14 +59,14 @@ class TestSorting:
         # Test output shape matches input shape
         assert y.shape == x.shape, f"{sorting_type} changed tensor shape"
 
-    @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
+    @pytest.mark.parametrize("sorting_type", list(registry.namespace("sorting").keys()))
     @pytest.mark.parametrize("ascending", SORT_DIRECTIONS)
     def test_sorting_correctness(self, sorting_type, ascending):
         """Test that sorting modules sort values correctly."""
         # Only the entries that actually permute have a sort order to check.
         # "none" and the positional-bias fields share this registry slot
         # without reordering anything.
-        if not SORTING_REGISTRY[sorting_type].permutes:
+        if not registry.lookup("sorting", sorting_type).permutes:
             pytest.skip(f"{sorting_type} does not permute its input")
 
         # Create specifically designed test tensor where sorting result is predictable
@@ -87,7 +87,7 @@ class TestSorting:
         )
 
         # Instantiate the sorting module
-        sorter = SORTING_REGISTRY[sorting_type](config)
+        sorter = registry.lookup("sorting", sorting_type)(config)
 
         # Apply sorting
         y = sorter(x)
@@ -137,7 +137,7 @@ class TestSorting:
                             f"Min idx: orig={torch.argmin(values).item()}, out={torch.argmin(y_vals).item()}"
                         )
 
-    @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
+    @pytest.mark.parametrize("sorting_type", list(registry.namespace("sorting").keys()))
     def test_gradient_flow(self, sorting_type):
         """Test that gradients flow through sorting modules."""
         # Create config (hidden_size matches the 4-wide input built below)
@@ -149,7 +149,7 @@ class TestSorting:
         )
 
         # Instantiate the sorting module
-        sorter = SORTING_REGISTRY[sorting_type](config)
+        sorter = registry.lookup("sorting", sorting_type)(config)
 
         # Create input tensor with gradient tracking
         x = torch.randn(2, 3, 4, requires_grad=True)
@@ -184,7 +184,7 @@ class TestSorting:
                 msg=f"Gradient sum incorrect for {sorting_type}",
             )
 
-    @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
+    @pytest.mark.parametrize("sorting_type", list(registry.namespace("sorting").keys()))
     def test_deterministic_behavior(self, sorting_type):
         """Test that sorting modules produce consistent outputs for the same inputs."""
         # Create config (hidden_size matches the 4-wide input built below)
@@ -196,7 +196,7 @@ class TestSorting:
         )
 
         # Instantiate the sorting module
-        sorter = SORTING_REGISTRY[sorting_type](config)
+        sorter = registry.lookup("sorting", sorting_type)(config)
 
         # Create random input tensor
         x = torch.randn(2, 3, 4)

@@ -2,9 +2,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.normalization import NORMALIZATION_REGISTRY, LayerNorm, NoNorm, RMSNorm
+from praxis import registry
+from praxis.normalization import LayerNorm, NoNorm, RMSNorm
 
-MODULE_CLASSES = list(NORMALIZATION_REGISTRY.values())
+MODULE_CLASSES = list(registry.namespace("normalization").values())
 
 
 @pytest.fixture(params=MODULE_CLASSES)
@@ -50,7 +51,7 @@ def test_registry_keys():
         "hero",
         "hero_inverted",
     }
-    actual_keys = set(NORMALIZATION_REGISTRY.keys())
+    actual_keys = set(registry.namespace("normalization").keys())
 
     assert (
         actual_keys == expected_keys
@@ -59,7 +60,7 @@ def test_registry_keys():
 
 def test_registry_values():
     """Test that registry values are callable functions."""
-    for key, value in NORMALIZATION_REGISTRY.items():
+    for key, value in registry.namespace("normalization").items():
         assert callable(value), f"Registry value for '{key}' should be callable"
 
 
@@ -87,7 +88,7 @@ def test_no_normalization_parameters():
 def test_layer_norm_behavior():
     """Test LayerNorm basic functionality."""
     hidden_size = 64
-    layer_norm = NORMALIZATION_REGISTRY["layer_norm"](hidden_size)
+    layer_norm = registry.lookup("normalization", "layer_norm")(hidden_size)
 
     x = torch.randn(32, 16, hidden_size)
     output = layer_norm(x)
@@ -105,7 +106,7 @@ def test_layer_norm_behavior():
 def test_rms_norm_behavior():
     """Test RMSNorm basic functionality."""
     hidden_size = 64
-    rms_norm = NORMALIZATION_REGISTRY["rms_norm"](hidden_size)
+    rms_norm = registry.lookup("normalization", "rms_norm")(hidden_size)
 
     x = torch.randn(32, 16, hidden_size)
     output = rms_norm(x)
@@ -124,10 +125,10 @@ def test_pre_post_norm_flags():
     hidden_size = 64
 
     # Test default configurations
-    layer_norm = NORMALIZATION_REGISTRY["layer_norm"](hidden_size)
-    rms_norm = NORMALIZATION_REGISTRY["rms_norm"](hidden_size)
-    post_rms_norm = NORMALIZATION_REGISTRY["post_rms_norm"](hidden_size)
-    sandwich_norm = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
+    layer_norm = registry.lookup("normalization", "layer_norm")(hidden_size)
+    rms_norm = registry.lookup("normalization", "rms_norm")(hidden_size)
+    post_rms_norm = registry.lookup("normalization", "post_rms_norm")(hidden_size)
+    sandwich_norm = registry.lookup("normalization", "sandwich_tied")(hidden_size)
 
     # Check default flags (pre_norm=True, post_norm=False)
     assert layer_norm.pre_norm == True
@@ -150,7 +151,7 @@ def test_mode_based_forward():
     x = torch.randn(10, 20, hidden_size)
 
     # Test pre-norm configuration (default)
-    layer_norm = NORMALIZATION_REGISTRY["layer_norm"](hidden_size)
+    layer_norm = registry.lookup("normalization", "layer_norm")(hidden_size)
 
     # Pre mode should apply normalization (pre_norm=True)
     pre_output = layer_norm(x, mode="pre")
@@ -169,7 +170,7 @@ def test_mode_based_forward():
     assert torch.equal(none_output, x)  # Should be unchanged
 
     # Test post-norm configuration
-    post_rms_norm = NORMALIZATION_REGISTRY["post_rms_norm"](hidden_size)
+    post_rms_norm = registry.lookup("normalization", "post_rms_norm")(hidden_size)
 
     # Pre mode should be no-op (pre_norm=False)
     pre_output = post_rms_norm(x, mode="pre")
@@ -203,7 +204,7 @@ def test_no_normalization_all_modes():
     hidden_size = 64
     x = torch.randn(10, 20, hidden_size)
 
-    none_norm = NORMALIZATION_REGISTRY["none"](hidden_size)
+    none_norm = registry.lookup("normalization", "none")(hidden_size)
 
     # All modes should return input unchanged
     assert torch.equal(none_norm(x, mode="pre"), x)
@@ -218,7 +219,7 @@ def test_sandwich_norm_behavior():
     hidden_size = 64
     x = torch.randn(10, 20, hidden_size)
 
-    sandwich_norm = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
+    sandwich_norm = registry.lookup("normalization", "sandwich_tied")(hidden_size)
 
     # Verify flags are set correctly
     assert sandwich_norm.pre_norm == True
@@ -256,7 +257,7 @@ def test_hero_norm_positions_differ():
     torch.manual_seed(0)
     x = torch.randn(10, 20, hidden_size)
 
-    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+    hero = registry.lookup("normalization", "hero")(hidden_size)
 
     assert hero.pre_norm == True
     assert hero.post_norm == True
@@ -287,7 +288,7 @@ def test_hero_inverted_mirrors_hero():
     torch.manual_seed(0)
     x = torch.randn(10, 20, hidden_size)
 
-    inverted = NORMALIZATION_REGISTRY["hero_inverted"](hidden_size)
+    inverted = registry.lookup("normalization", "hero_inverted")(hidden_size)
 
     post_mean = inverted(x, mode="post").mean(dim=-1)
     pre_mean = inverted(x, mode="pre").mean(dim=-1)
@@ -300,9 +301,9 @@ def test_sandwich_weight_tying():
     """`sandwich` gives each position its own weight; `sandwich_tied` shares one."""
     hidden_size = 64
 
-    untied = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
-    tied = NORMALIZATION_REGISTRY["sandwich_tied"](hidden_size)
-    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+    untied = registry.lookup("normalization", "sandwich")(hidden_size)
+    tied = registry.lookup("normalization", "sandwich_tied")(hidden_size)
+    hero = registry.lookup("normalization", "hero")(hidden_size)
 
     # Default: two independent RMSNorm weights. Also the control for `hero`,
     # since hero-vs-sandwich then isolates the LayerNorm/RMSNorm swap alone.
@@ -324,7 +325,7 @@ def test_paired_norm_post_is_unused_at_direct_only_sites():
     whether a paired norm is free to drop into every site in the registry.
     """
     hidden_size = 64
-    hero = NORMALIZATION_REGISTRY["hero"](hidden_size)
+    hero = registry.lookup("normalization", "hero")(hidden_size)
 
     x = torch.randn(4, 8, hidden_size)
     hero(x, mode="direct").sum().backward()

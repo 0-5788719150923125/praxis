@@ -14,14 +14,13 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
+from praxis import registry
 from praxis.transforms import (
-    TRANSFORM_REGISTRY,
     MIN_TARGET_NUMEL,
     aligned_size,
     apply_transform,
     block_alignment,
 )
-from praxis.transforms.alignment import align_axis
 from praxis.transforms.algebra import (
     ALGEBRAS,
     has_antipodal_pair,
@@ -29,6 +28,7 @@ from praxis.transforms.algebra import (
     structure_matrices,
     tables,
 )
+from praxis.transforms.alignment import align_axis
 from praxis.transforms.ghost import (
     AUTO_ORDER,
     GhostExpansion,
@@ -327,7 +327,7 @@ def test_ghostify_hits_exactly_the_profiled_targets():
     )
 
 
-@pytest.mark.parametrize("profile", sorted(TRANSFORM_REGISTRY))
+@pytest.mark.parametrize("profile", sorted(registry.namespace("transforms")))
 def test_every_profile_builds_and_runs(profile):
     model = _Toy()
     stats = apply_transform(model, profile)
@@ -423,9 +423,8 @@ def test_double_ghostify_is_refused_not_stacked():
 
 
 def _peer(transform_type, profile="peer_glu"):
-    from praxis.dense import DENSE_REGISTRY
 
-    return DENSE_REGISTRY[profile](
+    return registry.lookup("dense", profile)(
         SimpleNamespace(
             hidden_size=272,
             num_heads=1,
@@ -461,7 +460,7 @@ def test_every_unrestricted_profile_requests_alignment():
     """The guard on adding a profile. A spec that matches any name reaches the
     auto-sized modules, so it is one of the profiles they should be asking about;
     forgetting the flag would silently leave the largest banks indivisible."""
-    for name, entry in TRANSFORM_REGISTRY.items():
+    for name, entry in registry.namespace("transforms").items():
         unrestricted = entry.spec.matches("decoder.0.ffn.down") and entry.spec.matches(
             "encoder.encoder.layers.0.conv"
         )

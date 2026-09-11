@@ -12,11 +12,11 @@ raw transcript, with no error anywhere.
 
 import pytest
 
+from praxis import registry
 from praxis.generation.reply import extract_assistant_reply
 from praxis.generation.request import GenerationResult
 from praxis.tokenizers import create_tokenizer
 from praxis.tokenizers.chat_templates import (
-    CHAT_FORMAT_REGISTRY,
     DEFAULT_FORMAT,
     HF_NATIVE_FORMAT,
     PROSE_FORMAT,
@@ -97,7 +97,7 @@ def test_a_tokenizer_with_no_template_is_unchanged():
 
 
 def test_the_foreign_contract_is_selectable_by_name():
-    assert "hf_native" in CHAT_FORMAT_REGISTRY
+    assert "hf_native" in registry.namespace("chat_formats")
     assert resolve_chat_format("hf_native") is HF_NATIVE_FORMAT
 
 

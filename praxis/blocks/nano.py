@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.dense import DENSE_REGISTRY
+from praxis import registry
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -43,7 +43,7 @@ class NanoBlock(nn.Module):
         # Feed-forward network with sine activation
         config.activation = "sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = DENSE_REGISTRY.get("mlp")(config)
+        self.ffw = registry.namespace("dense").get("mlp")(config)
 
     def forward(
         self,

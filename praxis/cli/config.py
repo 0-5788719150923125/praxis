@@ -45,14 +45,14 @@ class RunConfig:
     device: str
     target_batch_size: int
 
-    # PRECISION_REGISTRY key (or alias). The profile it resolves to drives the
+    # ``precision`` key (or alias). The profile it resolves to drives the
     # model dtype, the Lightning precision plugin and the matmul policy
     # together; read it through `precision_profile`, never by name.
     precision: str = DEFAULT_PRECISION
 
     encoder_type: Optional[str] = None
     tokenizer_type: Optional[str] = None
-    # CHAT_FORMAT_REGISTRY key. The format owns the turn boundaries, the
+    # ``chat_formats`` key. The format owns the turn boundaries, the
     # assistant mask, the halting contract and the tool-call layout together
     # (praxis/tokenizers/chat_templates.py); None = "default" (ChatML).
     chat_format: Optional[str] = None
@@ -66,7 +66,7 @@ class RunConfig:
     tokenizer_train_vocab_size: int = 16384
 
     # Optimizer wrappers / schedule. optimizer_wrappers is an ordered list of
-    # WRAPPER_REGISTRY keys (e.g. ["schedule_free"]); the old --trac/--ortho/
+    # ``wrappers`` keys (e.g. ["schedule_free"]); the old --trac/--ortho/
     # --lookahead/--schedule-free flags collapsed into it.
     fixed_schedule: bool = False
     optimizer_wrappers: List[str] = field(default_factory=list)
@@ -76,7 +76,7 @@ class RunConfig:
     gradient_clip_val: float = 10.0
 
     # Training loop
-    governor: Optional[str] = None  # GOVERNOR_REGISTRY key; None = static factor
+    governor: Optional[str] = None  # ``governors`` key; None = static factor
     max_steps: Optional[int] = None
     val_every: int = 1024
     use_dashboard: bool = False

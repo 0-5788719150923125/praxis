@@ -1,20 +1,18 @@
 from pytorch_optimizer import create_optimizer
 
+from praxis import registry
 from praxis.optimization.composite import CompositeOptimizer
 from praxis.optimization.param_counter import (
     count_model_parameters,
     count_optimizer_parameters,
     get_parameter_stats,
 )
-from praxis.optimization.wrappers import (
-    WRAPPER_REGISTRY,
-    SequentialWrapper,
-    wrappers_disable_schedule,
-)
+from praxis.optimization.wrappers import SequentialWrapper, wrappers_disable_schedule
+from praxis.registry import Entry
 
 
 def get_optimizer_profile(name="AdamW", disable_schedule=False):
-    profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
+    profiles = {k.lower(): v for k, v in registry.namespace("optimizers").items()}
     profile = {**profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
     disable_schedule = profile.get("disable_schedule", disable_schedule)
     if "disable_schedule" in profile:
@@ -246,7 +244,7 @@ def _build_secondary(name, params, wd_override=None):
 def get_optimizer(model, wrappers=(), *args, **kwargs):
     """Build the base optimizer and apply a sequence of registry wrappers.
 
-    ``wrappers`` is an ordered list of WRAPPER_REGISTRY keys (e.g.
+    ``wrappers`` is an ordered list of ``wrappers`` keys (e.g.
     ``["ortho", "schedule_free"]``), applied innermost-first. Schedule-free
     wrappers handle their own lr/weight-decay prep, so nothing here is
     special-cased.
@@ -320,122 +318,158 @@ def build_optimizer_and_scheduler(
     return optimizer, scheduler, param_stats
 
 
-# Most optimizer settings can be found here:
-# https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-OPTIMIZER_PROFILES = {
-    "AdamW": dict(
-        optimizer_name="AdamW",
-        lr=1e-3,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
+registry.declare(
+    "optimizers",
+    title="Optimizer profiles",
+    doc=(
+        (
+            "Named optimizer presets built on pytorch-optimizer (settings reference: "
+            "https://pytorch-optimizers.readthedocs.io/en/latest/optimizer). Each entry "
+            "carries its concrete settings (lr, betas, weight decay, ...). Names are "
+            "case-insensitive."
+        )
     ),
-    "Lion": dict(
-        optimizer_name="Lion",
-        lr=0.0003,
-        weight_decay=0.1,
-        betas=(0.95, 0.98),
-        use_gc=True,
-        adanorm=True,
-        cautious=True,
-    ),
-    "MARS": dict(
-        optimizer_name="MARS",
-        mars_type="shampoo",
-        lr=0.0003,
-        gamma=0.025,
-        optimize_1d=True,
-        betas=(0.95, 0.99),
-        betas_1d=(0.9, 0.95),
-        weight_decay=0.1,
-        weight_decay_1d=0.1,
-        cautious=True,
-    ),
-    "Muon": dict(
-        optimizer_name="Muon",
-        # Muon orthogonalizes only >=2D params; embeddings, the LM head, and
-        # scalar/vector params auto-route to the internal AdamW (adamw_*) - the
-        # classic instability (orthogonalizing an embedding matrix) can't happen.
-        # use_adjusted_lr scales LR per matrix shape (Moonlight): automatic,
-        # model-agnostic, and robust to CALM's variable latent shapes. lr is
-        # conservative for small-model LM (warmup ramps in). NB: the internal
-        # AdamW betas key is `betas`, not `adamw_betas` (the latter is ignored).
-        lr=0.01,
-        momentum=0.95,
-        nesterov=True,
-        weight_decay=0.1,
-        use_adjusted_lr=True,
-        # Vocab-facing params (embeddings/head/norms/biases) get their own
-        # optimizer via CompositeOptimizer. Lion's sign signal has clean
-        # semantics on token-frequency geometry, paired with Muon's full-
-        # spectrum signal in the interior. Set to None to use Muon's internal
-        # AdamW instead (the adamw_* keys below apply only in that case).
-        secondary_optimizer="Lion",
-        adamw_lr=0.0003,
-        adamw_betas=(0.9, 0.95),
-        adamw_wd=0.0,
-    ),
-    "MuonGeo": dict(
-        # Muon, but with weight decay ELIMINATED on the geometry - the small-model
-        # counterpart to the default's wd=0.1. Rationale (and a stated hot take,
-        # see research/body.tex): weight decay is the single global complexity
-        # dial, and this architecture already decouples bias/variance into
-        # separate, targeted controls (smoothness prior, delta regularizer), so a
-        # uniform shrink is redundant; in the underparameterized regime it just
-        # erodes the persistent geometry (corpus rhythm, crystal centers) that is
-        # the signal. Norm control is structural here - Muon orthogonalizes the
-        # update (bounded step), the harmonic latents are RMS-normalized, and the
-        # harmonic bases are fixed buffers - which is why decay can go to zero
-        # rather than a tuned whisper. FALSIFIER: watch the weight-norm cards; if
-        # the geometry-bearing matrices grow unbounded, restore a light decay.
-        # The Serpent frequencies are already wd-exempt (WD_BAN_LIST), so this
-        # only changes the matrices (codec/attention/FFN projections + the Lion
-        # secondary's vocab head/embeddings/crystal centers).
-        optimizer_name="Muon",
-        lr=0.01,
-        momentum=0.95,
-        nesterov=True,
-        weight_decay=0.0,
-        use_adjusted_lr=True,
-        secondary_optimizer="Lion",
-        secondary_weight_decay=0.0,
-        adamw_lr=0.0003,
-        adamw_betas=(0.9, 0.95),
-        adamw_wd=0.0,
-    ),
-    "LionGeo": dict(
-        # Lion's machinery, THREE geometries. sign(), Newton-Schulz and the
-        # RMS-rescaled momentum are steepest descent under the
-        # elementwise-infinity, spectral and Frobenius norms respectively
-        # (Lion-K / Schatten-p family); LionGeo computes all three
-        # normalizations of ONE shared Lion momentum and blends them per matrix
-        # with a SMEAR-style softmax mixture whose logits adapt online by
-        # hypergradient descent, floored so no geometry is ever extinguished. All
-        # branches are RMS-matched to 1, so a single Lion-scale lr bounds the
-        # step regardless of where the blend settles. Weight decay is
-        # eliminated outright, as in MuonGeo (same rationale, same falsifier:
-        # watch the weight-norm cards). Interior matrices only; embeddings,
-        # the head, norms and biases go to the plain Lion secondary. Watch
-        # opt_geo_share / opt_geo_share_spread for where the mixture lands.
-        optimizer_name="LionGeo",
-        lr=0.0003,
-        betas=(0.95, 0.98),
-        weight_decay=0.0,
-        secondary_optimizer="Lion",
-        secondary_weight_decay=0.0,
-    ),
-    "Prodigy": dict(
-        optimizer_name="Prodigy",
-        lr=1.0,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        beta3=0.98,
-        growth_rate=float("inf"),
-        d_coef=0.1,
-        bias_correction=True,
-        safeguard_warmup=False,
-        disable_schedule=True,
-    ),
-}
+    entries={
+        "AdamW": Entry(
+            dict(
+                optimizer_name="AdamW",
+                lr=1e-3,
+                weight_decay=0.1,
+                betas=(0.9, 0.95),
+            ),
+            "AdamW with decoupled weight decay: the conventional baseline.",
+        ),
+        "Lion": Entry(
+            dict(
+                optimizer_name="Lion",
+                lr=0.0003,
+                weight_decay=0.1,
+                betas=(0.95, 0.98),
+                use_gc=True,
+                adanorm=True,
+                cautious=True,
+            ),
+            (
+                "Lion, a sign update on interpolated momentum, with gradient "
+                "centralization, AdaNorm and cautious masking. The default optimizer."
+            ),
+        ),
+        "MARS": Entry(
+            dict(
+                optimizer_name="MARS",
+                mars_type="shampoo",
+                lr=0.0003,
+                gamma=0.025,
+                optimize_1d=True,
+                betas=(0.95, 0.99),
+                betas_1d=(0.9, 0.95),
+                weight_decay=0.1,
+                weight_decay_1d=0.1,
+                cautious=True,
+            ),
+            (
+                "MARS variance-reduced momentum in its Shampoo-preconditioned form, "
+                "with cautious masking. 1-D params are optimized by MARS too "
+                "(``optimize_1d``), under their own betas and weight decay."
+            ),
+        ),
+        "Muon": Entry(
+            dict(
+                optimizer_name="Muon",
+                lr=0.01,
+                momentum=0.95,
+                nesterov=True,
+                weight_decay=0.1,
+                use_adjusted_lr=True,
+                # None puts the vocab-facing params on Muon's internal AdamW instead;
+                # the adamw_* keys below apply only in that case.
+                secondary_optimizer="Lion",
+                adamw_lr=0.0003,
+                adamw_betas=(0.9, 0.95),
+                adamw_wd=0.0,
+            ),
+            (
+                "Muon over the interior >=2D matrices: each momentum update is "
+                "orthogonalized by Newton-Schulz, a bounded step, and "
+                "``use_adjusted_lr`` scales the LR per matrix shape (Moonlight), which "
+                "is automatic and robust to variable latent shapes. Embeddings, the LM "
+                "head, norms and biases never reach Muon, since orthogonalizing an "
+                "embedding matrix is the classic instability; they go to a Lion "
+                "secondary through CompositeOptimizer, whose sign signal suits "
+                "token-frequency geometry beside Muon's full-spectrum signal in the "
+                "interior. The lr is conservative for small-model LM; warmup ramps it "
+                "in."
+            ),
+        ),
+        "MuonGeo": Entry(
+            dict(
+                optimizer_name="Muon",
+                lr=0.01,
+                momentum=0.95,
+                nesterov=True,
+                weight_decay=0.0,
+                use_adjusted_lr=True,
+                secondary_optimizer="Lion",
+                secondary_weight_decay=0.0,
+                adamw_lr=0.0003,
+                adamw_betas=(0.9, 0.95),
+                adamw_wd=0.0,
+            ),
+            (
+                "Muon with weight decay at zero, on both the orthogonalized matrices "
+                "and the Lion secondary's vocab-facing params. Weight decay is one "
+                "global complexity dial, and this architecture already controls bias "
+                "and variance with targeted mechanisms (a smoothness prior, a delta "
+                "regularizer), so a uniform shrink erodes the persistent geometry "
+                "(corpus rhythm, crystal centers) that a small model's signal lives "
+                "in. Norm control is structural: Muon bounds the step, harmonic "
+                "latents are RMS-normalized and harmonic bases are fixed buffers. "
+                "Watch the weight-norm cards: if the geometry-bearing matrices grow "
+                "unbounded, restore a light decay."
+            ),
+        ),
+        "LionGeo": Entry(
+            dict(
+                optimizer_name="LionGeo",
+                lr=0.0003,
+                betas=(0.95, 0.98),
+                weight_decay=0.0,
+                secondary_optimizer="Lion",
+                secondary_weight_decay=0.0,
+            ),
+            (
+                "Lion's machinery under three geometries. sign(), Newton-Schulz and "
+                "RMS-rescaled momentum are steepest descent under the "
+                "elementwise-infinity, spectral and Frobenius norms; LionGeo computes "
+                "all three normalizations of one shared Lion momentum and blends them "
+                "per matrix with a SMEAR-style softmax whose logits adapt online by "
+                "hypergradient descent, floored so no geometry is extinguished. Every "
+                "branch is RMS-matched to 1, so one Lion-scale lr bounds the step "
+                "wherever the blend settles. Weight decay is zero, as in MuonGeo; "
+                "embeddings, the head, norms and biases go to a plain Lion secondary. "
+                "Read opt_geo_share and opt_geo_share_spread."
+            ),
+        ),
+        "Prodigy": Entry(
+            dict(
+                optimizer_name="Prodigy",
+                lr=1.0,
+                weight_decay=0.1,
+                betas=(0.9, 0.95),
+                beta3=0.98,
+                growth_rate=float("inf"),
+                d_coef=0.1,
+                bias_correction=True,
+                safeguard_warmup=False,
+                disable_schedule=True,
+            ),
+            (
+                "Prodigy: estimates its own step size online (lr is a multiplier on "
+                "the estimate, left at 1.0), so it runs without an LR schedule."
+            ),
+        ),
+    },
+)
 
 WD_BAN_LIST = [
     "bias",
