@@ -1,70 +1,63 @@
+"""Sweeps over every entry of the ``tokenizers`` and ``chat_formats`` registries.
+
+Both lists are taken at COLLECTION time: importing the tokenmonster integration
+registers more tokenizers at run time, and a sweep that iterated the registry then
+would depend on test order.
+"""
+
 import pytest
 
-from praxis.tokenizers import create_tokenizer
+from praxis import registry
+from praxis.tokenizers.base import PraxisToolTokensMixin
 from praxis.tokenizers.chat_templates import chat_format_of, tokenize_with_mask
+from tests.stubs import tokenizer_for
+from tests.tokenizers.conversations import CONVERSATION, MULTIBYTE
 
-# ------------------------------------------------------------------------------
-# chat_formats
-# ------------------------------------------------------------------------------
-# Tests for the ``chat_formats`` registry and the text-boundary (prose) format.
-#
-# The invariants worth pinning are the ones that silently produce a broken run rather
-# than an exception:
-#
-# - the `default` profile must stay byte-identical, since every existing checkpoint's
-# data pipeline depends on it, - the boundary that ENDS a generated turn must be a
-# trained target (the defect `prose` exists to remove), - a stop-string halt must not
-# re-fire on the boundary it resumed from, or the tool loop returns zero new tokens
-# forever, - the tool flow's three boundaries must classify unambiguously.
+TOKENIZERS = sorted(registry.namespace("tokenizers"))
+TEMPLATED_FORMATS = sorted(
+    name for name, fmt in registry.namespace("chat_formats").items() if fmt.template
+)
 
 
-CONVERSATION = [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"},
-    {"role": "assistant", "content": "Paris is the capital of France."},
-    {"role": "user", "content": "And of Japan?"},
-    {"role": "assistant", "content": "Tokyo."},
-]
+# ---------------------------------------------------------------------------
+# tokenizers
+# ---------------------------------------------------------------------------
 
 
-def tokenizer_for(chat_format):
-    return create_tokenizer(
-        tokenizer_type="byte_level", vocab_size=1024, chat_format=chat_format
-    )
+@pytest.mark.parametrize("key", TOKENIZERS)
+def test_every_tokenizer_builds_and_encodes(key):
+    """Built from the registry factory directly, so the trained (bpe/unigram)
+    entries construct untrained and never reach the hub. Those know no text
+    yet (bpe encodes it to nothing); the merge-free ones must round-trip it."""
+    tok = registry.lookup("tokenizers", key)(vocab_size=1024)
+    assert isinstance(tok, PraxisToolTokensMixin)
+    text = "Hello, world!"
+    ids = tok.encode(text, add_special_tokens=False)
+    assert all(isinstance(i, int) and 0 <= i < len(tok) for i in ids)
+    if getattr(tok, "context_free_tokenization", False):
+        assert tok.decode(ids, skip_special_tokens=True) == text
 
 
-# ------------------------------------------- assistant mask on non-ASCII text
-
-
-MULTIBYTE = [
-    {"role": "system", "content": "“quoted”"},
-    {"role": "user", "content": "Calculate √1156 \U0001f600"},
-    {"role": "assistant", "content": "— the answer is 34."},
-    {"role": "user", "content": "and été?"},
-    {"role": "assistant", "content": "Summer."},
-]
+# ---------------------------------------------------------------------------
+# chat formats with a template
+# ---------------------------------------------------------------------------
 
 
 def _trained_text(tok, messages):
-    from praxis.tokenizers.chat_templates import tokenize_with_mask
-
     ids, mask = tokenize_with_mask(tok, messages)
     return tok.decode([t for t, m in zip(ids, mask) if m], skip_special_tokens=False)
 
 
-@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+@pytest.mark.parametrize("fmt_name", TEMPLATED_FORMATS)
 def test_mask_is_exact_on_multibyte_text(fmt_name):
     """HuggingFace's return_assistant_tokens_mask maps CHARACTER offsets to token
-    spans, which slips wherever one character is several tokens. Measured on the
-    byte tokenizer before the fix: every multi-byte character before a span shifted
-    the prose mask two tokens (cumulatively, so 'The answer' became 'r is'), and a
-    multi-byte character starting a span shifted the default mask by its byte
-    length. That is a silently corrupted SFT objective on any text with a curly
-    quote, accent, em dash or emoji - which is most real text."""
-    tok = tokenizer_for(fmt_name)
-    trained = _trained_text(tok, MULTIBYTE)
+    spans, which slips wherever one character is several tokens: every multi-byte
+    character before a span shifted the prose mask two tokens (cumulatively, so
+    'The answer' became 'r is'). That is a silently corrupted SFT objective on any
+    text with a curly quote, accent, dash or emoji - which is most real text."""
+    trained = _trained_text(tokenizer_for(fmt_name), MULTIBYTE)
     # Every assistant turn, whole and unshifted.
-    assert "— the answer is 34." in trained
+    assert MULTIBYTE[2]["content"] in trained
     assert "Summer." in trained
     # And nothing from a prompt turn.
     assert "quoted" not in trained
@@ -72,10 +65,10 @@ def test_mask_is_exact_on_multibyte_text(fmt_name):
     assert "été" not in trained
 
 
-@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+@pytest.mark.parametrize("fmt_name", TEMPLATED_FORMATS)
 def test_segment_join_is_byte_identical_to_the_template(fmt_name):
     """The segment split only stays safe while it renders exactly what Jinja
-    does - otherwise the fix silently changes the training data."""
+    does - otherwise it silently changes the training data."""
     tok = tokenizer_for(fmt_name)
     fmt = chat_format_of(tok)
     cases = [CONVERSATION, MULTIBYTE, [{"role": "user", "content": "solo"}]]
@@ -95,12 +88,10 @@ def test_segment_join_is_byte_identical_to_the_template(fmt_name):
                 assert "".join(text for text, _ in segments) == jinja
 
 
-@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+@pytest.mark.parametrize("fmt_name", TEMPLATED_FORMATS)
 def test_segment_ids_match_whole_string_encoding(fmt_name):
     """Piece-wise encoding is only equivalent for merge-free tokenizers; this is
     the property that licenses the whole approach."""
-    from praxis.tokenizers.chat_templates import tokenize_with_mask
-
     tok = tokenizer_for(fmt_name)
     ids, mask = tokenize_with_mask(tok, MULTIBYTE)
     whole = tok.encode(
@@ -108,15 +99,3 @@ def test_segment_ids_match_whole_string_encoding(fmt_name):
     )
     assert ids == whole
     assert len(mask) == len(ids)
-
-
-# ------------------------------------------------------------------------------
-# tokenizers
-# ------------------------------------------------------------------------------
-
-
-def test_create_tokenizer_dispatch_char_level():
-    from praxis.tokenizers import CharLevelTokenizer, create_tokenizer
-
-    t = create_tokenizer(tokenizer_type="char_level")
-    assert isinstance(t, CharLevelTokenizer)

@@ -1,11 +1,18 @@
-"""DecayBiasSort: additive rank-1 positional bias with an absolute-position envelope."""
+"""DecayBiasSort: additive rank-1 positional bias with an absolute-position envelope.
+
+AmplitudeFieldSort extends it with a multiplicative per-feature modulation, so the
+behaviors the two share are checked here on both classes; the modulation itself is
+covered in test_amplitude.py.
+"""
 
 import math
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
+from praxis.sorting.amplitude import AmplitudeFieldSort
 from praxis.sorting.decay import (
     TAU_INIT,
     TAU_MAX,
@@ -15,90 +22,96 @@ from praxis.sorting.decay import (
     tau_logit,
 )
 
+WIDTH = 16
 
-def _sorter(hidden_size=16):
-    return DecayBiasSort(SimpleNamespace(hidden_size=hidden_size))
-
-
-def test_identity_at_init():
-    # Zero-init bias -> starts as a no-op (the "if it doesn't work, code was
-    # minimal" property).
-    s = _sorter()
-    x = torch.randn(2, 6, 16)
-    assert torch.equal(s(x), x)
+both = pytest.mark.parametrize("cls", [DecayBiasSort, AmplitudeFieldSort])
 
 
-def test_additive_bias_decays_toward_tail():
-    s = _sorter()
+def _sorter(cls=DecayBiasSort, hidden_size=WIDTH):
+    return cls(SimpleNamespace(hidden_size=hidden_size))
+
+
+def _shaped(cls):
+    """A sorter moved off its zero init, both halves of the field where it has two."""
+    s = _sorter(cls)
     with torch.no_grad():
-        s.bias.copy_(torch.randn(16))
-    x = torch.randn(1, 8, 16)
-    out = s(x)
-    delta = (out - x)[0]  # [T, H] - the applied bias per position
-    norms = delta.norm(dim=-1)  # per-position bias magnitude
+        s.bias.copy_(torch.randn(WIDTH))
+        if hasattr(s, "amp"):
+            s.amp.copy_(torch.randn(WIDTH))
+    return s
+
+
+@both
+def test_identity_at_init(cls):
+    # Zero-init bias (and amp) -> starts as a no-op.
+    x = torch.randn(2, 6, WIDTH)
+    torch.testing.assert_close(_sorter(cls)(x), x, rtol=0, atol=1e-6)
+
+
+@both
+def test_additive_bias_decays_toward_tail(cls):
+    s = _sorter(cls)
+    with torch.no_grad():
+        s.bias.copy_(torch.randn(WIDTH))  # amp stays 0 -> only the additive part
+    x = torch.randn(1, 8, WIDTH)
+    delta = (s(x) - x)[0]  # [T, H] - the applied bias per position
+    norms = delta.norm(dim=-1)
     # Monotone decay: head perturbed most, tail least.
-    assert torch.all(norms[:-1] >= norms[1:] - 1e-6)
+    assert torch.all(norms[:-1] >= norms[1:] - 1e-5)
     assert float(norms[0].detach()) > float(norms[-1].detach())
     # The bias is the same direction scaled by g(t) = exp(-t/tau).
     t = torch.arange(8, dtype=torch.float32)
-    g = torch.exp(-t / TAU_INIT)
-    torch.testing.assert_close(delta, g.unsqueeze(-1) * s.bias)
+    torch.testing.assert_close(delta, torch.exp(-t / TAU_INIT).unsqueeze(-1) * s.bias)
 
 
-def test_field_is_independent_of_sequence_length():
-    """The regression this parameterization exists for.
-
-    Under the old ``g(t) = 1 - t/T`` envelope, a token's bias depended on how
-    long the sequence it was batched into happened to be. The same position must
-    now land on the same field value at every length.
-    """
-    s = _sorter()
-    with torch.no_grad():
-        s.bias.copy_(torch.randn(16))
-    x = torch.randn(1, 64, 16)
-    full = s(x) - x
+@both
+def test_field_is_independent_of_sequence_length(cls):
+    """The same absolute position lands on the same field value at every length,
+    so a token's bias does not depend on the length it was batched into."""
+    s = _shaped(cls)
+    x = torch.randn(1, 64, WIDTH)
+    full = s(x)
     for length in (4, 9, 17, 33, 64):
-        clipped = s(x[:, :length]) - x[:, :length]
-        torch.testing.assert_close(clipped, full[:, :length])
+        torch.testing.assert_close(s(x[:, :length]), full[:, :length])
 
 
-def test_offset_continues_the_field_for_cached_decode():
+@both
+def test_offset_continues_the_field_for_cached_decode(cls):
     """Cached decode feeds only the new suffix; ``offset`` has to continue it."""
-    s = _sorter()
-    with torch.no_grad():
-        s.bias.copy_(torch.randn(16))
-    x = torch.randn(1, 12, 16)
-    full = s(x) - x
-    # Feed the tail alone, telling the module where it actually sits.
-    suffix = s(x[:, 8:], offset=8) - x[:, 8:]
-    torch.testing.assert_close(suffix, full[:, 8:])
+    s = _shaped(cls)
+    x = torch.randn(1, 12, WIDTH)
+    full = s(x)
+    torch.testing.assert_close(s(x[:, 8:], offset=8), full[:, 8:])
+    # A single-token step (the generation case) lands on its true position.
+    torch.testing.assert_close(s(x[:, 11:], offset=11), full[:, 11:])
     # ...and without the offset it would wrongly restart at position 0.
-    assert not torch.allclose(s(x[:, 8:]) - x[:, 8:], full[:, 8:], atol=1e-4)
+    assert not torch.allclose(s(x[:, 8:]), full[:, 8:], atol=1e-4)
 
 
 def test_survives_layernorm_direction_change():
     # An additive per-feature bias changes direction, so normalization does NOT
     # erase it (the whole point vs a scalar amplitude scale).
-    s = _sorter()
-    with torch.no_grad():
-        s.bias.copy_(torch.randn(16))
-    ln = nn.LayerNorm(16)
-    x = torch.randn(1, 5, 16)
+    s = _shaped(DecayBiasSort)
+    ln = nn.LayerNorm(WIDTH)
+    x = torch.randn(1, 5, WIDTH)
     assert not torch.allclose(ln(s(x)), ln(x), atol=1e-5)
 
 
-def test_bias_is_a_trainable_parameter():
-    s = _sorter()
-    names = {n for n, _ in s.named_parameters()}
-    assert "bias" in names and s.bias.requires_grad
-    # Gradient reaches the bias (so the optimizer can shape it).
-    (s(torch.randn(2, 4, 16)).sum()).backward()
-    assert s.bias.grad is not None and s.bias.grad.abs().sum() >= 0.0
+@both
+def test_field_parameters_are_trainable(cls):
+    s = _sorter(cls)
+    params = dict(s.named_parameters())
+    names = {"bias", "log_tau"} | ({"amp"} if cls is AmplitudeFieldSort else set())
+    assert names <= set(params)
+    s(torch.randn(2, 4, WIDTH)).sum().backward()
+    # log_tau is gated by the bias (test below); every other field parameter
+    # gets gradient straight from the zero init.
+    for name in names - {"log_tau"}:
+        assert params[name].grad.abs().sum() > 0, name
 
 
 def test_tau_is_learnable_and_bounded():
     s = _sorter()
-    assert "log_tau" in {n for n, _ in s.named_parameters()}
     # Inits exactly on TAU_INIT, and stays inside the bounds at any extreme.
     assert math.isclose(float(bounded_tau(s.log_tau.detach())), TAU_INIT, rel_tol=1e-5)
     for z in (-1e4, -20.0, 0.0, 20.0, 1e4):
@@ -111,27 +124,29 @@ def test_tau_gradient_is_gated_by_the_bias():
     """tau only starts moving once the bias is nonzero - it has nothing to scale
     before that, so the module picks its horizon only after it wants one."""
     s = _sorter()
-    s(torch.randn(2, 6, 16)).sum().backward()
+    s(torch.randn(2, 6, WIDTH)).sum().backward()
     assert float(s.log_tau.grad.abs().sum()) == 0.0
 
-    s = _sorter()
-    with torch.no_grad():
-        s.bias.copy_(torch.randn(16))
-    s(torch.randn(2, 6, 16)).sum().backward()
+    s = _shaped(DecayBiasSort)
+    s(torch.randn(2, 6, WIDTH)).sum().backward()
     assert float(s.log_tau.grad.abs().sum()) > 0.0
 
 
-def test_training_metrics_report_the_field():
-    s = _sorter()
+@both
+def test_training_metrics_report_the_field(cls):
+    s = _sorter(cls)
     metrics = s.training_metrics()
     assert metrics["sorting/bias_norm"] == 0.0  # identity at init
     assert math.isclose(metrics["sorting/decay_tau"], TAU_INIT, rel_tol=1e-5)
     with torch.no_grad():
-        s.bias.copy_(torch.ones(16))
-    assert math.isclose(s.training_metrics()["sorting/bias_norm"], 4.0, rel_tol=1e-5)
+        s.bias.copy_(torch.ones(WIDTH))
+    assert math.isclose(
+        s.training_metrics()["sorting/bias_norm"], math.sqrt(WIDTH), rel_tol=1e-5
+    )
 
 
-def test_dim_mismatch_is_a_safe_noop():
-    s = _sorter(hidden_size=16)
-    x = torch.randn(2, 4, 8)  # wrong feature dim
+@both
+def test_dim_mismatch_is_a_safe_noop(cls):
+    s = _sorter(cls)
+    x = torch.randn(2, 4, WIDTH // 2)  # wrong feature dim
     assert torch.equal(s(x), x)

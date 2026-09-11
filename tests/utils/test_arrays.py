@@ -1,3 +1,5 @@
+"""Tests for praxis/utils/arrays.py."""
+
 import pytest
 
 from praxis.utils import coerce_to_list

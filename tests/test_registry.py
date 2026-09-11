@@ -1,4 +1,9 @@
+"""Tests for praxis/registry: namespaces, lookup and descriptions, plus the
+package-wide lints that keep every pluggable choice in the registry and keep
+background threads off the process-global stdout."""
+
 import ast
+import re
 from functools import partial
 from pathlib import Path
 
@@ -7,12 +12,6 @@ import pytest
 import praxis
 from praxis import registry
 from praxis.registry import Alias, Entry, Namespace
-
-# ------------------------------------------------------------------------------
-# registry
-# ------------------------------------------------------------------------------
-# The Praxis registry, and the rule that every pluggable choice lives in it.
-
 
 PKG = Path(praxis.__file__).resolve().parent
 
@@ -128,41 +127,33 @@ def test_no_module_keeps_its_own_registry_constant():
 
 
 # ------------------------------------------------------------------------------
-# stdout_safety
+# stdout safety
 # ------------------------------------------------------------------------------
-# Nothing on a background thread may swap the process-global ``sys.stdout``.
-#
 # ``contextlib.redirect_stdout`` mutates a PROCESS-GLOBAL. Used from the Flask API
-# thread or a build thread, it silently redirects every other thread's output for the
-# width of the block, and any thread that reads ``sys.stdout`` before the block ends and
-# writes to it after gets ``ValueError: I/O operation on closed file``.
-#
-# That killed abstractinator-m at its first step: the snapshot publisher requested the
-# spec payload (which printed the model repr under a redirect) at the same moment the
-# compute profiler flushed stdout on the training thread. The profiler's own error
-# handler then used ``print``, failed identically, and escaped its ``except`` - turning
-# optional telemetry into a fatal error.
+# thread or a build thread, it silently redirects every other thread's output for
+# the width of the block, and any thread that reads ``sys.stdout`` before the block
+# ends and writes to it after gets ``ValueError: I/O operation on closed file``.
+# That killed abstractinator-m at its first step, when the snapshot publisher
+# printed the model repr under a redirect while the compute profiler flushed
+# stdout on the training thread.
 
 
 def test_no_background_thread_redirects_stdout():
-    """A grep-level guard: redirect_stdout must not reappear off the main thread.
+    """redirect_stdout must not reappear off the main thread.
 
     paper.py is the known remaining offender - ``_build`` runs in a daemon
     thread and holds the global for an entire LaTeX build - so it is listed
     explicitly rather than silently tolerated.
     """
-    import pathlib
-    import re
-
     known = {"praxis/callbacks/lightning/paper.py"}
-    root = pathlib.Path(__file__).resolve().parent.parent
     # CALLS only - the fix in spec_data.py names the hazard in a comment, and
     # matching prose would make this test un-passable by documenting itself.
     call = re.compile(r"^(?!\s*#).*\bredirect_std(out|err)\s*\(", re.M)
-    offenders = set()
-    for path in (root / "praxis").rglob("*.py"):
-        if call.search(path.read_text()):
-            offenders.add(str(path.relative_to(root)))
+    offenders = {
+        str(path.relative_to(PKG.parent))
+        for path in PKG.rglob("*.py")
+        if call.search(path.read_text())
+    }
     assert offenders <= known, (
         f"new global-stdout redirect(s): {sorted(offenders - known)}. "
         "Render to a string instead; see praxis/web/spec_data.py."

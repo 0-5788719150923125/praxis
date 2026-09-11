@@ -1,24 +1,18 @@
+"""Source guards over the frontend (praxis/web/src js and css).
+
+Invariants a browser run would show but that span two files, pinned at the
+source until a browser probe replaces them.
+
+The run-selector swatch must follow the theme, and must not be dropped by CSS.
+
+A hex baked into an inline ``style`` cannot follow a theme switch (charts
+retint through a MutationObserver; plain HTML does not). And ``--run-hue`` must
+stay unitless like ``--accent-hue``: ``calc()`` refuses <number> + <angle>, the
+whole ``hsl()`` goes invalid, and the swatch renders with no background.
+"""
+
 import re
 from pathlib import Path
-
-import pytest
-
-# ------------------------------------------------------------------------------
-# web_theming
-# ------------------------------------------------------------------------------
-# The run-selector swatch must follow the theme, and must not be dropped by CSS.
-#
-# Two bugs, one after the other:
-#
-# * The swatch baked a hex string into an inline ``style`` at render time. Charts
-# survive a theme switch through the MutationObserver retint in charts.js; plain HTML
-# does not, so the dots stayed green after switching to the blue hue. * The CSS fix then
-# emitted ``--run-hue: 44deg`` while ``--accent-hue`` is a bare number. ``calc()``
-# refuses to add a <number> to an <angle>, the whole ``hsl()`` became invalid, and the
-# swatch rendered with NO background at all.
-#
-# So the invariant has two halves that have to agree, and they live in different files:
-# the JS emits the offset, the CSS adds it to the accent.
 
 
 SRC = Path(__file__).resolve().parents[2] / "praxis" / "web" / "src"
@@ -106,26 +100,6 @@ def test_colours_are_assigned_by_selection_not_history():
     )
 
 
-# ------------------------------------------------------------------------------
-# metric_cards
-# ------------------------------------------------------------------------------
-# Dashboard card invariants for the Research-tab metric registries.
-#
-# The Research tab builds its deck with ``buildScalarConfigsFromRegistry`` and
-# ``buildCompositeConfigsFromRegistry`` (praxis/web/src/js/charts.js), which concatenate
-# ALL scalars ahead of ALL composites and sort each half flat by ``order``. Neither
-# honours ``group``, ``group_order`` or ``series_group`` - those belong to the Dynamics
-# tab's manifest builder. Two things went wrong because of that and are pinned here:
-#
-# * four (since removed) density entries carried ``series_group`` expecting to merge
-# into two cards, so the deck rendered four; * they also carried ``order: 10``, tying
-# with ``loss``, and a stable sort puts the earlier-declared entry first - which put a
-# research probe at deck position 1, ahead of training loss.
-#
-# The information-density probe now emits only ``readout_*`` keys into extra_metrics (no
-# schema columns), claimed by the composite cards pinned below.
-
-
 def test_cross_run_charts_do_not_match_points_by_array_index():
     """Run comparison must hover by x VALUE, not by position in the array.
 
@@ -140,9 +114,7 @@ def test_cross_run_charts_do_not_match_points_by_array_index():
     Source-level guard. The behaviour itself was verified in a browser against
     live run data; this only catches a revert to the built-in mode.
     """
-    import pathlib
-
-    src = pathlib.Path("praxis/web/src/js/charts.js").read_text()
+    src = CHARTS_JS.read_text()
 
     assert "praxisNearestX" in src, "the nearest-by-x interaction mode is gone"
     assert src.count("crossRunInteraction()") >= 2, (

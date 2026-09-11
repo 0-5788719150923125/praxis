@@ -1,87 +1,56 @@
+"""Sweep of the ``rl_policies`` and ``rl_profiles`` registries: every policy
+builds, and the data it declares a binding to exists."""
+
 import pytest
 import torch
 
-from praxis import registry
-from praxis.policies import GRPO, REINFORCE, ChainOfThought
-from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
-
-# ------------------------------------------------------------------------------
-# policies
-# ------------------------------------------------------------------------------
-# Tests for reinforcement learning policies in praxis.policies.
-
-
-class TestPolicyIntegration:
-    """Integration tests for RL policies."""
-
-    def test_all_policies_forward_pass(self, config, sample_data):
-        """Test that all policies can perform forward passes."""
-        policies = [
-            REINFORCE(config),
-            GRPO(config),
-            ChainOfThought(config),
-        ]
-
-        for policy in policies:
-            policy.train()
-
-            # Test basic forward pass
-            if isinstance(policy, (REINFORCE,)):
-                output, loss = policy(sample_data["hidden_states"])
-                assert output.shape == sample_data["hidden_states"].shape
-
-            elif isinstance(policy, (GRPO,)):
-                output, loss = policy(
-                    sample_data["hidden_states"],
-                    sample_data["logits"],
-                    sample_data["labels"],
-                )
-                assert output.shape == sample_data["hidden_states"].shape
-
-            elif isinstance(policy, (ChainOfThought)):
-                output, loss = policy(
-                    sample_data["hidden_states"],
-                    sample_data["logits"],
-                    sample_data["labels"],
-                )
-                assert output.shape == sample_data["hidden_states"].shape
-
-    def test_device_compatibility(self, config, sample_data):
-        """Test that policies work on different devices."""
-        if torch.cuda.is_available():
-            device = torch.device("cuda:0")  # Specify exact device
-
-            policy = REINFORCE(config).to(device)
-            hidden_states = sample_data["hidden_states"].to(device)
-            rewards = sample_data["rewards"].to(device)
-
-            output, loss = policy(hidden_states, rewards=rewards)
-
-            # Check device type matches (cuda:0 and cuda are equivalent)
-            assert output.device.type == device.type
-            if loss is not None:
-                assert loss.device.type == device.type
-
-    def test_policy_registry_completeness(self):
-        """Test that all policies are registered."""
-
-        expected_policies = {
-            "reinforce": REINFORCE,
-            "grpo": GRPO,
-            "cot": ChainOfThought,
-        }
-
-        for name, policy_class in expected_policies.items():
-            assert name in registry.namespace("rl_policies")
-            assert registry.lookup("rl_policies", name) == policy_class
+from praxis import PraxisConfig, registry
+from praxis.data.config import DATASET_COLLECTIONS, DATASETS
+from praxis.policies import (
+    needs_rl_datasets,
+    resolves_to_weight_controller,
+    rl_dataset_collections,
+    rl_dataset_weights,
+)
 
 
-# ------------------------------------------------------------------------------
-# harmonic_weight_rl
-# ------------------------------------------------------------------------------
-# Harmonic-weight RL controller: policy-gradient mechanics + callback loop.
+@pytest.mark.parametrize("name", sorted(registry.namespace("rl_policies")))
+def test_policy_builds_and_binds_to_existing_data(name):
+    cls = registry.lookup("rl_policies", name)
+    assert isinstance(cls(PraxisConfig(hidden_size=64, dropout=0.0)), torch.nn.Module)
+
+    collections, weights = rl_dataset_collections(name), rl_dataset_weights(name)
+    assert all(c in DATASET_COLLECTIONS for c in collections), collections
+    for dataset in weights:
+        # A restricted dataset may only be injected by a policy it names.
+        assert name in DATASETS[dataset].get("requires_rl_type", (name,))
+    if getattr(cls, "is_weight_controller", False):
+        # Weight controllers reward from a callback and pull no data.
+        assert (collections, weights, needs_rl_datasets(name)) == ((), {}, False)
 
 
-def test_registered_in_rl_registry():
-    assert registry.lookup("rl_policies", "harmonic_weight") is HarmonicWeightPolicy
-    assert HarmonicWeightPolicy.is_weight_controller is True
+@pytest.mark.parametrize("name", sorted(registry.namespace("rl_profiles")))
+def test_rl_profile_resolves_to_a_weight_controller(name):
+    assert resolves_to_weight_controller(name)
+    assert rl_dataset_collections(name) == () and not needs_rl_datasets(name)
+
+
+@pytest.mark.parametrize(
+    "name,collections,weights,needs_rl",
+    [
+        ("engagement", ("print",), {}, False),
+        ("joke", ("joke",), {}, False),
+        # hh-rlhf is bound dataset-level (restricted), not via a collection.
+        ("preference", (), {"hh-rlhf": 1.0}, False),
+        ("reinforce", ("rl",), {}, True),
+        ("grpo", ("rl",), {}, True),
+        ("cot", ("cot",), {}, True),
+        ("harmonic_weight_wave", (), {}, False),
+        # An unregistered legacy name fails open rather than loading nothing.
+        ("cot-reinforce", ("cot",), {}, True),
+    ],
+)
+def test_declared_data_bindings(name, collections, weights, needs_rl):
+    assert rl_dataset_collections(name) == collections
+    assert rl_dataset_weights(name) == weights
+    assert needs_rl_datasets(name) is needs_rl

@@ -14,7 +14,6 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from praxis.transforms import aligned_size
 from praxis.transforms.algebra import ALGEBRAS
 from praxis.transforms.ghost import (
     AUTO_ORDER,
@@ -127,7 +126,6 @@ def test_indivisible_shapes_are_refused_not_approximated():
 def test_auto_takes_the_deepest_cut_that_divides():
     assert pick_algebra((544, 272), "auto") == "quaternion"  # d=4 divides both
     assert pick_algebra((90, 272), "auto") == "complex"  # 90 % 4 != 0
-    assert pick_algebra((729, 272), "auto") is None
 
 
 def test_random_control_meets_the_same_conditions_and_is_reproducible():

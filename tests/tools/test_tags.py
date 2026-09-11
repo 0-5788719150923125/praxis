@@ -1,4 +1,10 @@
-import json
+"""``praxis.tools.tags``: the tool-call layout, as text and as token ids.
+
+Under ``default`` the boundaries are atomic special tokens
+(``[TOOL_CALL]``/``[/TOOL_CALL]``/``[TOOL_RESULT]``/``[/TOOL_RESULT]``); under
+``prose`` they are ordinary role turns. The text predicates (``parse_tool_call``,
+``has_*``, ``get_unprocessed_tool_call``) have no production caller.
+"""
 
 import pytest
 
@@ -11,7 +17,6 @@ from praxis.tools import (
     TOOL_RESULT_OPEN,
     build_result_splice_ids,
     build_result_splice_text,
-    calc,
     classify_boundary_halt,
     find_pending_call_text,
     find_unprocessed_tool_call_ids,
@@ -28,17 +33,6 @@ from praxis.tools import (
     tool_token_ids,
 )
 
-# ------------------------------------------------------------------------------
-# tools
-# ------------------------------------------------------------------------------
-# Tool-calling tests.
-#
-# Tool-call boundaries are atomic special tokens
-# (``[TOOL_CALL]``/``[/TOOL_CALL]``/``[TOOL_RESULT]``/``[/TOOL_RESULT]``). The tests
-# exercise both the string-form helpers (format, parse, regex patterns) and the token-ID
-# helpers used by the generator at runtime.
-
-
 # ---------------------------------------------------------------------------
 # String-form format/parse helpers.
 # ---------------------------------------------------------------------------
@@ -49,14 +43,11 @@ def test_format_tool_input_uses_atomic_strings():
     assert out.startswith(TOOL_CALL_OPEN)
     assert out.rstrip().endswith(TOOL_CALL_CLOSE)
     assert '"name": "calc"' in out
-    # Legacy inline string forms must be gone.
-    assert "<tin>" not in out and "</tin>" not in out
 
 
 def test_format_tool_output_uses_atomic_strings():
     out = format_tool_output(42)
     assert out == f"{TOOL_RESULT_OPEN}\n42\n{TOOL_RESULT_CLOSE}"
-    assert "<tout>" not in out
 
 
 def test_format_tool_call_with_result_separates_special_tokens():
@@ -67,12 +58,13 @@ def test_format_tool_call_with_result_separates_special_tokens():
     assert f"{TOOL_RESULT_OPEN}\n3\n{TOOL_RESULT_CLOSE}" in s
 
 
-def test_parse_tool_call_extracts_last_valid():
-    text = format_tool_input("calc", {"values": [10, 20], "op": "add"})
-    parsed = parse_tool_call(text)
+def test_parse_tool_call_extracts_the_last_call():
+    first = format_tool_input("calc", {"values": [1, 1], "op": "add"})
+    last = format_tool_input("calc", {"values": [10, 20], "op": "mul"})
+    parsed = parse_tool_call(f"{first}\n{last}")
     assert parsed is not None
     assert parsed["name"] == "calc"
-    assert parsed["arguments"] == {"values": [10, 20], "op": "add"}
+    assert parsed["arguments"] == {"values": [10, 20], "op": "mul"}
 
 
 def test_has_complete_and_has_output_text_helpers():
@@ -93,15 +85,16 @@ def test_get_unprocessed_tool_call_text_helper():
     resolved = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
     assert get_unprocessed_tool_call(resolved) is None
 
-
-def test_multiple_calls_unprocessed_scan_order():
-    # First call resolved, second pending: should surface the second.
-    first = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
+    # First call resolved, second pending: the scan surfaces the second.
     second_open = format_tool_input("calc", {"values": [3, 4], "op": "mul"})
-    text = f"{first}\n{second_open}"
-    got = get_unprocessed_tool_call(text)
+    got = get_unprocessed_tool_call(f"{resolved}\n{second_open}")
     assert got is not None
     assert got[0]["arguments"] == {"values": [3, 4], "op": "mul"}
+
+
+# ---------------------------------------------------------------------------
+# token-id helpers - the generator's runtime path
+# ---------------------------------------------------------------------------
 
 
 def test_tool_token_ids_lookup_returns_ints():
@@ -124,6 +117,9 @@ def test_find_unprocessed_tool_call_ids_locates_pending_call():
     # end_idx points one past the close token.
     assert ids[end_idx - 1] == tok.tool_call_end_token_id
 
+    chatter = list(tok.encode("just some chatter", add_special_tokens=False))
+    assert find_unprocessed_tool_call_ids(chatter, tok) is None
+
 
 def test_find_unprocessed_tool_call_ids_skips_resolved_calls():
     """A call followed by a *complete* [TOOL_RESULT]...[/TOOL_RESULT]
@@ -136,25 +132,23 @@ def test_find_unprocessed_tool_call_ids_skips_resolved_calls():
     assert find_unprocessed_tool_call_ids(ids, tok) is None
 
 
-def test_find_unprocessed_tool_call_ids_returns_none_on_no_tool():
+@pytest.mark.parametrize("body", ["5", "not valid json"])
+def test_a_body_that_is_not_a_call_object_is_malformed_not_fatal(body):
+    """A bare JSON value parses but is not a call, and bad JSON does not parse;
+    both must surface as a ``_malformed`` sentinel so the generator splices an
+    error result, never a raw value that a downstream ``.get()`` crashes on."""
     tok = ByteLevelTokenizer()
-    ids = list(tok.encode("just some chatter", add_special_tokens=False))
-    assert find_unprocessed_tool_call_ids(ids, tok) is None
-
-
-def test_non_object_tool_body_is_malformed_not_fatal():
-    """A bare JSON value (e.g. "5") parses fine but isn't a tool call object;
-    it must be flagged malformed, never returned as a raw int that downstream
-    .get() would crash on."""
-    tok = ByteLevelTokenizer()
-    open_id = tok.tool_call_token_id
-    close_id = tok.tool_call_end_token_id
-    body = list(tok.encode("5", add_special_tokens=False))
-    ids = [open_id] + body + [close_id]
+    ids = list(
+        tok.encode(
+            f"{TOOL_CALL_OPEN}\n{body}\n{TOOL_CALL_CLOSE}", add_special_tokens=False
+        )
+    )
     found = find_unprocessed_tool_call_ids(ids, tok)
     assert found is not None
     call, _ = found
-    assert isinstance(call, dict) and call.get("_malformed")
+    assert isinstance(call, dict) and call.get("_malformed") is True
+    if body != "5":
+        assert "JSON" in call.get("_error", "")
 
 
 def test_has_complete_tool_call_and_output_ids():
@@ -254,36 +248,9 @@ def test_find_unprocessed_executes_call_with_partial_hallucinated_result():
     assert call["name"] == "calc"
 
 
-def test_find_unprocessed_returns_malformed_for_bad_json_body():
-    """Bad JSON inside a well-formed bracket pair must surface as a
-    ``_malformed`` sentinel so the generator can splice an error result
-    instead of letting the model hallucinate one."""
-    tok = ByteLevelTokenizer()
-    bad = f"{TOOL_CALL_OPEN}\nnot valid json\n{TOOL_CALL_CLOSE}"
-    ids = list(tok.encode(bad, add_special_tokens=False))
-    found = find_unprocessed_tool_call_ids(ids, tok)
-    assert found is not None
-    call, _ = found
-    assert call.get("_malformed") is True
-    assert "JSON" in call.get("_error", "")
-
-
-# ------------------------------------------------------------------------------
-# chat_formats
-# ------------------------------------------------------------------------------
-# Tests for the ``chat_formats`` registry and the text-boundary (prose) format.
-#
-# The invariants worth pinning are the ones that silently produce a broken run rather
-# than an exception:
-#
-# - the `default` profile must stay byte-identical, since every existing checkpoint's
-# data pipeline depends on it, - the boundary that ENDS a generated turn must be a
-# trained target (the defect `prose` exists to remove), - a stop-string halt must not
-# re-fire on the boundary it resumed from, or the tool loop returns zero new tokens
-# forever, - the tool flow's three boundaries must classify unambiguously.
-
-
-# ------------------------------------------------------------- tool flow
+# ---------------------------------------------------------------------------
+# the role-style (prose) tool flow
+# ---------------------------------------------------------------------------
 
 
 def test_prose_tool_boundaries_classify(prose_tokenizer):

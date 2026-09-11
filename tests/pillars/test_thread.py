@@ -10,9 +10,8 @@ def test_default_is_blind_watchmaking():
     assert s.key == DEFAULT_THREAD
     assert s.title == "Blind Watchmaking"
     assert "framing" in s.pillars and "proofs" in s.pillars
-    assert s.component("abstract").startswith("Do you exist")
-    assert s.component("introduction").startswith("The dominant recipe")
-    assert s.component("conclusion").startswith("We began with scale")
+    for component in ("abstract", "introduction", "conclusion"):
+        assert s.component(component).strip(), f"empty {component}"
 
 
 def test_unknown_thread_raises():

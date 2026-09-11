@@ -1,10 +1,9 @@
-"""Spider settings resolution, store behavior, and HTML extraction."""
+"""Tests for praxis/spider/store.py: the watchlist, frontier, link graph,
+promotion and event log."""
 
 import pytest
 
 from praxis.spider.store import SpiderStore, site_of
-
-# --- store ---
 
 
 @pytest.fixture

@@ -6,8 +6,6 @@ a seven-line caption past \\textheight, and the caption printed over the page
 number. The width now scales with the row count.
 """
 
-import inspect
-
 from praxis.pillars.geometries import (
     _CAPTION_ALLOWANCE,
     _MAX_PANEL_WIDTH,
@@ -18,10 +16,11 @@ from praxis.pillars.geometries import (
 )
 
 
-def test_one_and_two_row_grids_keep_the_two_up_width():
-    """The common case (up to 4 panels) must not shrink - only overflow does."""
-    assert _panel_width(1) == _MAX_PANEL_WIDTH
-    assert _panel_width(2) == _MAX_PANEL_WIDTH
+def test_only_overflow_narrows_the_panels():
+    """The common case (up to two rows) keeps the two-up width, and no row
+    count ever widens past it."""
+    assert _panel_width(1) == _panel_width(2) == _MAX_PANEL_WIDTH
+    assert all(_panel_width(r) <= _MAX_PANEL_WIDTH for r in range(0, 9))
 
 
 def test_grid_plus_caption_fits_the_text_block():
@@ -31,10 +30,6 @@ def test_grid_plus_caption_fits_the_text_block():
     for rows in range(1, 9):
         height = rows * _panel_width(rows) * _PANEL_ASPECT + _CAPTION_ALLOWANCE
         assert height <= _TEXT_HEIGHT + 1e-9, f"{rows} rows overflow: {height:.3f}"
-
-
-def test_width_never_exceeds_the_two_up_default():
-    assert all(_panel_width(r) <= _MAX_PANEL_WIDTH for r in range(0, 9))
 
 
 def test_five_panels_emit_a_narrowed_three_row_grid():
@@ -76,8 +71,6 @@ def test_caption_names_the_head_the_run_actually_used():
     reader it was looking at prismatic4's bank. The head name now comes from the
     run's own spec, and falls back to naming no head at all rather than guessing.
     """
-    from praxis.pillars.geometries import figure_tex
-
     def geo(head_type):
         return {
             "name": "abstractinator-n",
@@ -96,16 +89,25 @@ def test_caption_names_the_head_the_run_actually_used():
     assert "prismatic" not in tex
 
 
-def test_intra_run_panels_respect_the_limit():
+def test_intra_run_panels_respect_the_limit(tmp_path, monkeypatch):
     """A bank wider than the budget used to return every expert regardless.
 
     The cross-run path honoured ``limit``; the multi-head early return did not,
     so the figure could overflow its float page (and did, at five panels).
     """
+    import torch
+
     import praxis.pillars.geometries as g
 
-    src = inspect.getsource(g.collect_geometries)
-    assert "run_geos[:limit]" in src, (
-        "the intra-run early return must truncate to `limit`, or a wide bank "
-        "emits an unbounded number of panels"
+    ckpt = tmp_path / "last.ckpt"
+    bank = {f"model.head.bank.experts.{i}.centers": torch.randn(8, 4) for i in range(5)}
+    torch.save({"state_dict": bank}, ckpt)
+    monkeypatch.setattr(
+        g, "runs_newest_first", lambda: [(0.0, "abc123", "wide-bank", str(tmp_path))]
     )
+    monkeypatch.setattr(g, "latest_checkpoint", lambda run_dir: str(ckpt))
+    monkeypatch.setattr(g, "head_type_of", lambda run_dir: "prismatic4")
+
+    geos = g.collect_geometries(limit=2, scan=1)
+    assert len(geos) == 2
+    assert all(geo["intra_run"] for geo in geos)

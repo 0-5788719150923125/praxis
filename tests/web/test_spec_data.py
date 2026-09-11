@@ -1,21 +1,12 @@
-"""Nothing on a background thread may swap the process-global ``sys.stdout``.
+"""Spec payload (praxis/web/spec_data.py): rendering the model repr must not
+swap the process-global ``sys.stdout``.
 
-``contextlib.redirect_stdout`` mutates a PROCESS-GLOBAL. Used from the Flask API
-thread or a build thread, it silently redirects every other thread's output for
-the width of the block, and any thread that reads ``sys.stdout`` before the block
-ends and writes to it after gets ``ValueError: I/O operation on closed file``.
-
-That killed abstractinator-m at its first step: the snapshot publisher requested
-the spec payload (which printed the model repr under a redirect) at the same
-moment the compute profiler flushed stdout on the training thread. The profiler's
-own error handler then used ``print``, failed identically, and escaped its
-``except`` - turning optional telemetry into a fatal error.
+A ``redirect_stdout`` on the API thread redirects every other thread for the
+width of the block; the training thread flushing stdout inside it hit a closed
+file and killed abstractinator-m at its first step.
 """
 
 import sys
-
-import pytest
-
 
 def test_capture_model_architecture_leaves_stdout_alone():
     """The spec payload must render the model without touching the global."""

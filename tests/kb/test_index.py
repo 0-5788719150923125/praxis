@@ -1,11 +1,11 @@
+"""Tests for praxis/kb/index.py: the FTS index roundtrip, search semantics and
+the migration off the pre-provenance schema."""
+
+import sqlite3
+
 import pytest
 
 from praxis.kb import KBIndex, KBItem
-
-# ------------------------------------------------------------------------------
-# kb
-# ------------------------------------------------------------------------------
-# KB provenance schema and index roundtrip.
 
 
 @pytest.fixture
@@ -46,8 +46,6 @@ def test_search_and_feeds_carry_summary(index):
 
 
 def test_old_schema_is_dropped_and_recreated(tmp_path):
-    import sqlite3
-
     db = tmp_path / "kb.db"
     conn = sqlite3.connect(db)
     conn.execute(
@@ -63,37 +61,14 @@ def test_old_schema_is_dropped_and_recreated(tmp_path):
     ix.close()
 
 
-# ------------------------------------------------------------------------------
-# kb_dataset
-# ------------------------------------------------------------------------------
-# KB-as-dataset sampler and incremental page indexing.
-
-
-def test_search_groups_widen_and_overlap_ranks_first(tmp_path):
-    from praxis.kb.index import KBIndex
-    from praxis.kb.item import KBItem
-
-    idx = KBIndex(db_path=tmp_path / "kb.db")
-    idx.upsert(
+def test_search_groups_widen_and_overlap_ranks_first(index):
+    index.upsert(
         [
-            KBItem(
-                id="a", type="doc", label="W", title="alpha only", body="alpha", uri=""
-            ),
-            KBItem(
-                id="b", type="doc", label="W", title="beta only", body="beta", uri=""
-            ),
-            KBItem(
-                id="c",
-                type="doc",
-                label="W",
-                title="alpha beta both",
-                body="alpha beta",
-                uri="",
-            ),
+            _item(id="a", title="alpha only", body="alpha"),
+            _item(id="b", title="beta only", body="beta"),
+            _item(id="c", title="alpha beta both", body="alpha beta"),
         ]
     )
-    hits = idx.search("alpha, beta", limit=10)
-    ids = [h.item.id for h in hits]
+    ids = [h.item.id for h in index.search("alpha, beta", limit=10)]
     assert set(ids) == {"a", "b", "c"}  # OR widens to every group's matches
     assert ids[0] == "c"  # the AND-overlap ranks first
-    idx.close()

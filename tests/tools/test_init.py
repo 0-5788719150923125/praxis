@@ -1,27 +1,16 @@
+"""``praxis.tools``: the tools themselves, schema validation, and execution."""
+
 import pytest
 
 from praxis.tools import (
     ToolValidationError,
     calc,
     call_tool,
+    execute_tool_call,
     get_tools,
+    tool_call_name,
     validate_tool_arguments,
 )
-
-# ------------------------------------------------------------------------------
-# tools
-# ------------------------------------------------------------------------------
-# Tool-calling tests.
-#
-# Tool-call boundaries are atomic special tokens
-# (``[TOOL_CALL]``/``[/TOOL_CALL]``/``[TOOL_RESULT]``/``[/TOOL_RESULT]``). The tests
-# exercise both the string-form helpers (format, parse, regex patterns) and the token-ID
-# helpers used by the generator at runtime.
-
-
-# ---------------------------------------------------------------------------
-# Tool functions themselves (unchanged by the conversion).
-# ---------------------------------------------------------------------------
 
 
 def test_calc_basic_ops():
@@ -54,16 +43,9 @@ def test_get_tools_registry():
 def test_execute_tool_call_guards_non_dict():
     """execute_tool_call must not crash on a non-dict (defense in depth for the
     'int object has no attribute get' regression)."""
-    from praxis.tools import execute_tool_call
-
     for bad in (5, "hi", [1, 2], None):
         result = execute_tool_call(bad, [])
         assert isinstance(result, str) and result.startswith("Error:")
-
-
-# ---------------------------------------------------------------------------
-# Synthetic training data.
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -73,39 +55,30 @@ def test_execute_tool_call_guards_non_dict():
 # ---------------------------------------------------------------------------
 
 
-def test_validate_accepts_valid_call():
-    validate_tool_arguments("calc", {"values": [1, 2], "op": "add"})
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"values": [1, 2], "op": "add"},
+        {"values": [1, 2]},  # ``op`` has a default
+    ],
+)
+def test_validate_accepts_valid_calls(arguments):
+    validate_tool_arguments("calc", arguments)
 
 
-def test_validate_accepts_missing_optional():
-    # ``op`` has a default - omitting it is fine.
-    validate_tool_arguments("calc", {"values": [1, 2]})
-
-
-def test_validate_rejects_unknown_tool():
-    with pytest.raises(ToolValidationError, match="Unknown tool"):
-        validate_tool_arguments("nonexistent_tool", {})
-
-
-def test_validate_rejects_missing_required():
-    with pytest.raises(ToolValidationError, match="Missing required"):
-        validate_tool_arguments("calc", {"op": "add"})
-
-
-def test_validate_rejects_unknown_param():
-    with pytest.raises(ToolValidationError, match="Unknown parameter"):
-        validate_tool_arguments("calc", {"values": [1], "op": "add", "extra": 1})
-
-
-def test_validate_rejects_wrong_type():
-    # ``values`` must be an array, not a string.
-    with pytest.raises(ToolValidationError, match="expected type 'array'"):
-        validate_tool_arguments("calc", {"values": "not a list", "op": "add"})
-
-
-def test_validate_rejects_non_dict_arguments():
-    with pytest.raises(ToolValidationError, match="must be an object"):
-        validate_tool_arguments("calc", [1, 2, 3])
+@pytest.mark.parametrize(
+    "name,arguments,match",
+    [
+        ("nonexistent_tool", {}, "Unknown tool"),
+        ("calc", {"op": "add"}, "Missing required"),
+        ("calc", {"values": [1], "op": "add", "extra": 1}, "Unknown parameter"),
+        ("calc", {"values": "not a list", "op": "add"}, "expected type 'array'"),
+        ("calc", [1, 2, 3], "must be an object"),
+    ],
+)
+def test_validate_rejects_bad_calls(name, arguments, match):
+    with pytest.raises(ToolValidationError, match=match):
+        validate_tool_arguments(name, arguments)
 
 
 def test_call_tool_raises_validation_error_on_bad_args():
@@ -113,30 +86,10 @@ def test_call_tool_raises_validation_error_on_bad_args():
         call_tool("calc", {"op": "add"})  # missing 'values'
 
 
-# ------------------------------------------------------------------------------
-# tool_reporting
-# ------------------------------------------------------------------------------
-# Telling the client that a tool ran.
-#
-# The reply is the wrong place to look. Under either chat format the extractor strips
-# the whole call/result exchange out of it (see ``praxis.generation.reply``), and under
-# ``tool_style="roles"`` the streamer is muted for the duration of the call on top of
-# that - so a turn that consulted a tool and a turn that made the same claim up produce
-# byte-identical text. The only account of the difference is ``on_tool``, fired from the
-# branch that executes the tool, and these are its properties:
-#
-# - it names the tool that actually RAN, resolved the same way the executor resolves it,
-# - a call that never ran is never announced, - and the announcement survives the reset
-# that follows it, because the reset retracts the model's pre-call chatter and not the
-# fact of the call.
-
-
-def test_the_reported_name_is_the_one_the_executor_resolved(tokenizer):
+def test_the_reported_name_is_the_one_the_executor_resolved():
     """Three spellings reach the executor (``name``, ``tool``, and OpenAI's
     nested ``function.name``). The badge shares its resolver, so it cannot name
     a different tool than the one that ran."""
-    from praxis.tools import tool_call_name
-
     for call in (
         {"name": "calc"},
         {"tool": "calc"},

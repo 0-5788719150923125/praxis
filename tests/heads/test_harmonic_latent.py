@@ -1,20 +1,15 @@
-"""CALM encoder + energy head + LF-temperature sanity tests.
+"""praxis/heads/harmonic_latent.py: the harmonic latent head, FlowHead's sibling
+in the ``latent_heads`` registry."""
 
-These are shape / plumbing checks rather than training-quality
-assertions. The smoke-test in the CALM README covers the latter.
-"""
-
-import pytest
 import torch
 
 from praxis import registry
 
 
 def test_harmonic_latent_head():
-    # Drop-in sibling of FlowHead: same flow_loss/forward/sample surface, but the
-    # flow lives in a compact harmonic coefficient space and synthesized latents
-    # lie exactly in the harmonic subspace.
-
+    """Same flow_loss/forward/sample surface as FlowHead, but the flow lives in
+    a compact harmonic coefficient space and synthesized latents lie exactly in
+    the harmonic subspace."""
     assert "harmonic" in registry.namespace("latent_heads")
     head = registry.lookup("latent_heads", "harmonic")(
         cond_dim=32, noise_dim=0, latent_dim=16, hidden_dim=32, num_blocks=2

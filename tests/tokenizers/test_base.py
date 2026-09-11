@@ -1,10 +1,4 @@
-"""Tool-calling tests.
-
-Tool-call boundaries are atomic special tokens
-(``[TOOL_CALL]``/``[/TOOL_CALL]``/``[TOOL_RESULT]``/``[/TOOL_RESULT]``).
-The tests exercise both the string-form helpers (format, parse, regex
-patterns) and the token-ID helpers used by the generator at runtime.
-"""
+"""``PraxisToolTokensMixin``: tool-call boundaries as atomic special tokens."""
 
 import pytest
 
@@ -17,33 +11,14 @@ from praxis.tools import (
     TOOL_RESULT_OPEN,
 )
 
-# ---------------------------------------------------------------------------
-# Token-ID helpers - the generator's runtime path.
-# ---------------------------------------------------------------------------
 
-
-def test_tokenizer_encodes_tool_tokens_as_single_ids_byte_level():
-    tok = ByteLevelTokenizer()
-    for marker in (
-        TOOL_CALL_OPEN,
-        TOOL_CALL_CLOSE,
-        TOOL_RESULT_OPEN,
-        TOOL_RESULT_CLOSE,
-    ):
-        ids = tok.encode(marker, add_special_tokens=False)
-        assert len(ids) == 1, f"{marker} not atomic: {ids}"
-
-
-def test_tokenizer_encodes_tool_tokens_as_single_ids_char_level():
-    tok = CharLevelTokenizer()
-    for marker in (
-        TOOL_CALL_OPEN,
-        TOOL_CALL_CLOSE,
-        TOOL_RESULT_OPEN,
-        TOOL_RESULT_CLOSE,
-    ):
-        ids = tok.encode(marker, add_special_tokens=False)
-        assert len(ids) == 1, f"{marker} not atomic: {ids}"
+@pytest.mark.parametrize("cls", [ByteLevelTokenizer, CharLevelTokenizer])
+@pytest.mark.parametrize(
+    "marker", [TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE]
+)
+def test_tool_markers_encode_as_single_ids(cls, marker):
+    ids = cls().encode(marker, add_special_tokens=False)
+    assert len(ids) == 1, f"{marker} not atomic: {ids}"
 
 
 def test_skip_special_tokens_strips_tool_markers():

@@ -1,6 +1,5 @@
-"""Tests for the engagement-prediction reward (P2) and policy (P3)."""
-
-import pytest
+"""Tests for praxis/policies/engagement_reward.py: recall rewards and the
+homeostatic energy."""
 
 from praxis.policies.engagement_reward import (
     ENERGY_FLOOR,

@@ -1,172 +1,76 @@
+"""``ByteLevelTokenizer``: specials, UTF-8 boundaries, and the per-format alphabet.
+
+Special-token round trips are shared with ``CharLevelTokenizer``, which makes the
+same promises.
+"""
+
 import pytest
 
 from praxis.tokenizers.byte_level import ByteLevelTokenizer
+from praxis.tokenizers.char_level import CharLevelTokenizer
 from praxis.tokenizers.chat_templates import chat_format_of
 
-# ------------------------------------------------------------------------------
-# tokenizers
-# ------------------------------------------------------------------------------
+TOKENIZERS = [ByteLevelTokenizer, CharLevelTokenizer]
 
 
-# Only test ByteLevelTokenizer directly, StandardTokenizer needs to be loaded
-TOKENIZER_TYPES = [ByteLevelTokenizer]
+def _specials(tok):
+    return tok.bos_token, tok.eos_token, tok.pad_token
 
 
-@pytest.fixture(params=TOKENIZER_TYPES)
-def tokenizer_setup(request):
-    tokenizer = request.param
-    return tokenizer
+@pytest.mark.parametrize("cls", TOKENIZERS)
+@pytest.mark.parametrize(
+    "layout",
+    [
+        "{bos}Hello{eos}",
+        "{bos}Hello{eos}{pad}",
+        "Hello{eos}World",
+        "{bos}{eos}Hello",
+        "{bos}Hello World{eos}",
+    ],
+)
+def test_specials_round_trip(cls, layout):
+    """Named specials inline in text survive both the id path and the token
+    path, wherever they sit."""
+    tok = cls()
+    bos, eos, pad = _specials(tok)
+    text = layout.format(bos=bos, eos=eos, pad=pad)
+
+    ids = tok.encode(text, add_special_tokens=False)
+    assert tok.decode(ids, skip_special_tokens=False) == text
+    if layout.startswith("{bos}"):
+        assert ids[0] == tok.BOS_ID
+    tokens = tok.tokenize(text)
+    assert all(special in tokens for special in (bos, eos, pad) if special in text)
+    assert tok.convert_tokens_to_string(tokens) == text
 
 
-def test_tokenizer_full(tokenizer_setup) -> None:
-    """Comprehensive test suite for ByteLevelTokenizer with enhanced special token testing."""
-    print("Running comprehensive tokenizer tests...\n")
+@pytest.mark.parametrize("cls", TOKENIZERS)
+def test_batch_padding_keeps_specials(cls):
+    tok = cls()
+    bos, eos, _ = _specials(tok)
+    texts = [f"{bos}Hello{eos}", f"{bos}Hi{eos}"]
+    batch = tok(texts, padding=True, return_tensors="pt")
+    assert batch["input_ids"].shape[0] == 2
+    for i, text in enumerate(texts):
+        assert text in tok.decode(batch["input_ids"][i], skip_special_tokens=False)
 
-    tokenizer = tokenizer_setup()
 
-    def test_special_token_preservation():
-        print("1. Testing special token preservation...")
+def test_add_special_tokens_flag():
+    """Specials are added when asked, absent otherwise, and never doubled onto
+    text that already carries them. (CharLevelTokenizer adds none either way.)"""
+    tok = ByteLevelTokenizer()
+    bos, eos, _ = _specials(tok)
+    text = "Hello, world!"
 
-        # Test encoding with special tokens
-        text = f"{tokenizer.bos_token}Hello{tokenizer.eos_token}"
-        tokens = tokenizer.tokenize(text)
-        assert tokenizer.bos_token in tokens, "BOS token lost during tokenization"
-        assert tokenizer.eos_token in tokens, "EOS token lost during tokenization"
+    added = tok.decode(tok.encode(text, add_special_tokens=True))
+    assert bos in added and eos in added
+    plain = tok.decode(tok.encode(text, add_special_tokens=False))
+    assert bos not in plain and eos not in plain
 
-        # Test encoding and decoding roundtrip
-        encoded = tokenizer.encode(text, add_special_tokens=False)
-        decoded = tokenizer.decode(encoded)
-        assert text == decoded, f"Roundtrip failed: {text} != {decoded}"
-
-        # Test multiple special tokens
-        text = f"{tokenizer.bos_token}Hello{tokenizer.eos_token}{tokenizer.pad_token}"
-        decoded = tokenizer.decode(tokenizer.encode(text, add_special_tokens=False))
-        assert text == decoded, "Multiple special tokens not preserved"
-
-        print("✓ Special token preservation tests passed\n")
-
-    def test_mixed_content():
-        print("2. Testing mixed special tokens and regular text...")
-
-        # Test mixed content
-        test_cases = [
-            f"{tokenizer.bos_token}Hello",
-            f"Hello{tokenizer.eos_token}",
-            f"{tokenizer.bos_token}Hello{tokenizer.eos_token}",
-            f"{tokenizer.bos_token}Hello World{tokenizer.eos_token}",
-        ]
-
-        for text in test_cases:
-            tokens = tokenizer.tokenize(text)
-            decoded = tokenizer.convert_tokens_to_string(tokens)
-            assert text == decoded, f"Mixed content failed: {text} != {decoded}"
-
-        print("✓ Mixed content tests passed\n")
-
-    def test_batch_processing():
-        print("3. Testing batch processing with special tokens...")
-
-        batch_texts = [
-            f"{tokenizer.bos_token}Hello{tokenizer.eos_token}",
-            f"{tokenizer.bos_token}World{tokenizer.eos_token}",
-        ]
-
-        # Test batch encoding
-        batch_encoded = tokenizer(batch_texts, padding=True, return_tensors="pt")
-
-        # Decode each sequence
-        for i, text in enumerate(batch_texts):
-            decoded = tokenizer.decode(
-                batch_encoded["input_ids"][i], skip_special_tokens=False
-            )
-            assert text in decoded, f"Batch processing failed for: {text}"
-
-        print("✓ Batch processing tests passed\n")
-
-    def test_special_token_positioning():
-        print("4. Testing special token positioning...")
-
-        # Test special tokens at different positions
-        text = f"Hello{tokenizer.eos_token}World"
-        tokens = tokenizer.tokenize(text)
-        decoded = tokenizer.convert_tokens_to_string(tokens)
-        assert text == decoded, "Mid-sequence special token failed"
-
-        text = f"{tokenizer.bos_token}{tokenizer.eos_token}Hello"
-        tokens = tokenizer.tokenize(text)
-        decoded = tokenizer.convert_tokens_to_string(tokens)
-        assert text == decoded, "Adjacent special tokens failed"
-
-        print("✓ Special token positioning tests passed\n")
-
-    def test_add_special_tokens_flag():
-        print("5. Testing add_special_tokens flag...")
-
-        # Create tokenizer instances with different settings
-        tokenizer_with_special = tokenizer_setup()
-
-        test_text = "Hello, world!"
-        print(f"\nTest setup:")
-        print(f"- Input text: {repr(test_text)}")
-
-        # Test with add_special_tokens=True
-        print("\nTesting add_special_tokens=True:")
-        encoded_with = tokenizer_with_special.encode(test_text, add_special_tokens=True)
-        decoded_with = tokenizer_with_special.decode(encoded_with)
-        print(f"- Encoded tokens: {encoded_with}")
-        print(f"- Decoded text: {repr(decoded_with)}")
-        print(f"- BOS token: {repr(tokenizer_with_special.bos_token)}")
-        print(f"- EOS token: {repr(tokenizer_with_special.eos_token)}")
-
-        assert (
-            tokenizer_with_special.bos_token in decoded_with
-        ), "BOS token not added when requested"
-        assert (
-            tokenizer_with_special.eos_token in decoded_with
-        ), "EOS token not added when requested"
-
-        # Test with add_special_tokens=False
-        encoded_without = tokenizer_with_special.encode(
-            test_text, add_special_tokens=False
-        )
-        decoded_without = tokenizer_with_special.decode(encoded_without)
-        assert (
-            tokenizer_with_special.bos_token not in decoded_without
-        ), "BOS token added when not requested"
-        assert (
-            tokenizer_with_special.eos_token not in decoded_without
-        ), "EOS token added when not requested"
-
-        # Test with text already containing special tokens
-        text_with_special = f"{tokenizer_with_special.bos_token}{test_text}{tokenizer_with_special.eos_token}"
-        encoded_existing = tokenizer_with_special.encode(
-            text_with_special, add_special_tokens=False
-        )
-        decoded_existing = tokenizer_with_special.decode(encoded_existing)
-        assert (
-            decoded_existing == text_with_special
-        ), "Existing special tokens not preserved"
-
-        # Test that add_special_tokens=True doesn't duplicate tokens
-        encoded_no_duplicate = tokenizer_with_special.encode(
-            text_with_special, add_special_tokens=True
-        )
-        decoded_no_duplicate = tokenizer_with_special.decode(encoded_no_duplicate)
-        assert (
-            decoded_no_duplicate.count(tokenizer_with_special.bos_token) == 1
-        ), "BOS token duplicated"
-        assert (
-            decoded_no_duplicate.count(tokenizer_with_special.eos_token) == 1
-        ), "EOS token duplicated"
-
-        print("✓ add_special_tokens flag tests passed\n")
-
-    # Run all tests
-    test_special_token_preservation()
-    test_mixed_content()
-    test_batch_processing()
-    test_special_token_positioning()
-    test_add_special_tokens_flag()
+    wrapped = f"{bos}{text}{eos}"
+    assert tok.decode(tok.encode(wrapped, add_special_tokens=False)) == wrapped
+    again = tok.decode(tok.encode(wrapped, add_special_tokens=True))
+    assert again.count(bos) == 1 and again.count(eos) == 1
 
 
 # ── UTF-8 boundaries in the rolling contexts ─────────────────────────────
@@ -181,7 +85,7 @@ def test_tokenizer_full(tokenizer_setup) -> None:
 # once one appears the context keeps minting more, and the model conditions on
 # a sequence essentially absent from its training data.
 
-MIXED_TEXT = "café naïve — 日本語 test ✓ emoji 🙂 end"
+MIXED_TEXT = "café naïve \u2014 日本語 test ✓ emoji 🙂 end"
 
 
 @pytest.fixture
@@ -260,50 +164,6 @@ def test_an_unfixable_tail_is_left_alone(byte_tok):
     assert byte_tok.strip_incomplete_tail(junk) == junk
 
 
-# ------------------------------------------------------------------------------
-# chat_formats
-# ------------------------------------------------------------------------------
-# Tests for the ``chat_formats`` registry and the text-boundary (prose) format.
-#
-# The invariants worth pinning are the ones that silently produce a broken run rather
-# than an exception:
-#
-# - the `default` profile must stay byte-identical, since every existing checkpoint's
-# data pipeline depends on it, - the boundary that ENDS a generated turn must be a
-# trained target (the defect `prose` exists to remove), - a stop-string halt must not
-# re-fire on the boundary it resumed from, or the tool loop returns zero new tokens
-# forever, - the tool flow's three boundaries must classify unambiguously.
-
-
-def test_prose_has_no_separator_to_decode(prose_tokenizer):
-    """Prose defines no control token, so none can appear in a decode.
-
-    The reply extractor therefore only ever has to cut on role boundaries -
-    there is no literal `[EOS]` string for it to trip over, because the id does
-    not exist in this tokenizer at all.
-    """
-    from praxis.generation.reply import (
-        EMPTY_REPLY_PLACEHOLDER,
-        extract_assistant_reply,
-    )
-
-    assert prose_tokenizer.eos_token_id is None
-    assert chat_format_of(prose_tokenizer).document_separator is None
-
-    prompt = prose_tokenizer.apply_chat_template(
-        [{"role": "user", "content": "hi"}],
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    assert extract_assistant_reply(
-        f"{prompt}Hello there.\n\nuser\n\n", prose_tokenizer
-    ) == ("Hello there.")
-    assert (
-        extract_assistant_reply(f"{prompt}\n\nuser\n\n", prose_tokenizer)
-        == EMPTY_REPLY_PLACEHOLDER
-    )
-
-
 # ------------------------------------------------- control-token inventory
 #
 # The head is exactly as wide as the tokenizer's alphabet, so every id the
@@ -311,24 +171,21 @@ def test_prose_has_no_separator_to_decode(prose_tokenizer):
 # inventory in both directions: what must not exist, and what must.
 
 
-def test_prose_does_not_register_the_tool_tokens(prose_tokenizer, default_tokenizer):
-    """No [TOOL_CALL] id under prose - it lays tool calls out as ordinary turns.
+def test_prose_registers_no_control_token(prose_tokenizer):
+    """No named special and no [TOOL_CALL] id under prose - it lays turns and
+    tool calls out as ordinary text, so none can appear in a decode.
 
     Registering them anyway is not cosmetic: byte_alphabet_size counts them and
     the model's output head is sized from it, so four logits would exist that no
     training example can ever make a target.
     """
+    assert prose_tokenizer.eos_token_id is None
+    assert chat_format_of(prose_tokenizer).document_separator is None
     assert not prose_tokenizer.tool_tokens_registered
     assert "[TOOL_CALL]" not in prose_tokenizer.get_vocab()
     assert prose_tokenizer.tool_call_token_id is None
-    # The string is now ordinary text, so it encodes to its bytes.
+    # The string is ordinary text, so it encodes to its bytes.
     assert len(prose_tokenizer.encode("[TOOL_CALL]")) == len("[TOOL_CALL]")
-
-    # default keeps them: its template renders them as atomic markers.
-    assert default_tokenizer.tool_tokens_registered
-    assert default_tokenizer.encode("[TOOL_CALL]") == [
-        default_tokenizer.tool_call_token_id
-    ]
 
 
 def test_alphabet_and_head_shrink_together(prose_tokenizer, default_tokenizer):

@@ -1,13 +1,10 @@
-"""Spider settings resolution, store behavior, and HTML extraction."""
+"""Tests for praxis/spider/enrichers.py: the YouTube enricher."""
 
-import pytest
-
-# --- enrichers ---
+from praxis.kb.sources import LinksSource
+from praxis.spider.enrichers import enricher_for
 
 
 def test_youtube_enricher_mines_inline_json():
-    from praxis.spider.enrichers import enricher_for
-
     html = (
         '{"videoId":"dQw4w9WgXcQ",'
         '"canonicalBaseUrl":"/@OtherChannel",'
@@ -23,9 +20,6 @@ def test_youtube_enricher_mines_inline_json():
 
 
 def test_youtube_link_veto():
-    from praxis.kb.sources import LinksSource
-    from praxis.spider.enrichers import enricher_for
-
     e = enricher_for("https://www.youtube.com/")
     # The point of the pipeline: whatever channel the README cites must pass
     # the veto - discovered, not hardcoded.
@@ -47,7 +41,6 @@ def test_youtube_link_veto():
 
 def test_blocked_shell_pages_are_errors():
     """A YouTube page with no minable JSON is a consent/blocked shell."""
-    from praxis.spider.enrichers import enricher_for
 
     e = enricher_for("https://youtube.com/watch?v=abcdefghijk")
     out = e.enrich_html(

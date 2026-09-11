@@ -1,10 +1,4 @@
-"""Ghost features: the algebra, the in-place parametrization, and the walker.
-
-The properties pinned here are the ones the experiment's interpretation rests on.
-If the complex product is wrong the arm is not testing the paper's mechanism; if
-the init does not inherit the host module's scale the arms differ by an init as
-well as a mechanism; if the walker misses a target the run is not the experiment.
-"""
+"""Tests for praxis/transforms/algebra.py, the algebras ghost features expand over."""
 
 import pytest
 import torch

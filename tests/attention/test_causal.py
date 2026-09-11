@@ -1,4 +1,6 @@
-from types import SimpleNamespace
+"""CausalAttention and what its subclasses (Infini, Arc) inherit from it: packed
+document isolation, the block-mask cache, the head-budget recipe, and the dropoff
+gate."""
 
 import pytest
 import torch
@@ -6,9 +8,15 @@ import torch
 from praxis import PraxisConfig, registry
 from praxis.attention.causal import CausalAttention
 
-# ------------------------------------------------------------------------------
-# attention
-# ------------------------------------------------------------------------------
+ENCODINGS = sorted(registry.namespace("encoding"))
+
+
+def _config(**fields):
+    config = PraxisConfig(hidden_size=64, num_heads=2, num_queries=1, dropout=0.0)
+    config.causal = True  # modeling.py sets this at assembly; the bare config is False
+    for name, value in fields.items():
+        setattr(config, name, value)
+    return config
 
 
 def _packed_block_ids(batch_size: int, seq_len: int) -> torch.Tensor:
@@ -21,27 +29,41 @@ def _packed_block_ids(batch_size: int, seq_len: int) -> torch.Tensor:
     return torch.tensor(rows, dtype=torch.long)
 
 
-def test_causal_attention_honours_block_ids():
-    """A packed document must not be able to read the one before it.
+# Within a segment the blocked path isolates documents (arc_nomem passes), but the
+# compressive memory folded from earlier segments is read by every later query,
+# whichever document wrote it.
+MEMORY_CROSSES_DOCUMENTS = pytest.mark.xfail(
+    strict=True,
+    reason="Infini's compressive memory carries document 1 into document 2 across "
+    "segments; block_ids never reach the memory read or its fold",
+)
 
-    `block_ids` reached CausalAttention for a long time without being used,
-    so packed documents attended across each other. Perturbing document 1
-    must leave document 2's outputs untouched.
-    """
-    config = PraxisConfig(
-        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
-    )
-    config.causal = True
-    module = CausalAttention(config).eval()
 
-    batch_size, seq_len = 4, 16
+@pytest.mark.parametrize("encoding", ENCODINGS)
+@pytest.mark.parametrize(
+    "key",
+    [
+        "causal",
+        pytest.param("infini", marks=MEMORY_CROSSES_DOCUMENTS),
+        pytest.param("arc", marks=MEMORY_CROSSES_DOCUMENTS),
+        "arc_nomem",
+    ],
+)
+def test_block_ids_isolate_packed_documents(key, encoding):
+    """A packed document must not be able to read the one before it: perturbing
+    document 1 leaves document 2's outputs untouched. Infini and Arc run their
+    own segment-blocked path, over several segments here."""
+    torch.manual_seed(0)
+    config = _config(encoding=encoding)
+    if key != "causal":
+        config.window_size = 8  # Infini's segment size
+    module = registry.lookup("attention", key)(config).eval()
+
+    batch_size, seq_len = 4, 32
     block_ids = _packed_block_ids(batch_size, seq_len)
     x = torch.randn(batch_size, seq_len, config.hidden_size)
-
     perturbed = x.clone()
-    for b in range(batch_size):
-        first_doc = block_ids[b] == 1
-        perturbed[b, first_doc] += 5.0
+    perturbed[block_ids == 1] += 5.0
 
     with torch.no_grad():
         base, _, _ = module(x, block_ids=block_ids)
@@ -52,23 +74,17 @@ def test_causal_attention_honours_block_ids():
     second_doc = block_ids == 2
     leak = (base[second_doc] - moved[second_doc]).abs().max()
     control = (no_ids_base[second_doc] - no_ids_moved[second_doc]).abs().max()
-
     assert leak < 1e-6, f"document 2 saw document 1 (delta {leak})"
     assert control > 1e-3, "control is not a real signal; the test proves nothing"
 
 
-def test_causal_attention_block_mask_cache_is_batch_independent():
+def test_block_mask_cache_is_batch_independent():
     """The (q_len, kv_len, device) cache must not serve a document mask.
 
     Document masks depend on batch contents, so they are rebuilt every
     forward; only the batch-independent causal mask may be cached.
     """
-    config = PraxisConfig(
-        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
-    )
-    config.causal = True
-    module = CausalAttention(config).eval()
-
+    module = CausalAttention(_config(encoding="nope")).eval()
     if module.create_block_mask is None:
         pytest.skip("FlexAttention unavailable")
 
@@ -84,48 +100,30 @@ def test_causal_attention_block_mask_cache_is_batch_independent():
     assert len(module.block_mask_cache) == 1
 
 
-def test_causal_attention_ignores_mismatched_block_ids():
+def test_ignores_mismatched_block_ids():
     """Wrong-shaped block_ids are declined, not masked with."""
-    config = PraxisConfig(
-        hidden_size=64, num_heads=2, num_queries=1, encoding="nope", causal=True
-    )
-    config.causal = True
-    module = CausalAttention(config).eval()
-
-    batch_size, seq_len = 4, 16
-    x = torch.randn(batch_size, seq_len, config.hidden_size)
-    too_short = torch.ones(batch_size, seq_len // 2, dtype=torch.long)
-
+    module = CausalAttention(_config(encoding="nope")).eval()
+    x = torch.randn(4, 16, 64)
+    too_short = torch.ones(4, 8, dtype=torch.long)
     with torch.no_grad():
         out, _, _ = module(x, block_ids=too_short)
         expected, _, _ = module(x, block_ids=None)
-
     assert torch.equal(out, expected)
 
 
 # ------------------------------------------------------------------------------
-# width
+# head budget
 # ------------------------------------------------------------------------------
-# Mixture-of-widths: the helical deflation policy and its profile.
+# The mixture-of-widths recipe for attention: restrict one forward to a subset of
+# KV heads, then restore.
 
 
-# ─── Attention head-drop recipe ──────────────────────────────────────────────
-
-
-def _arc_attention(hidden=128, num_heads=4, num_queries=2):
-    from praxis import PraxisConfig
+def _arc_attention():
     from praxis.attention.arc import ArcAttention
 
-    cfg = PraxisConfig(
-        hidden_size=hidden,
-        num_heads=num_heads,
-        num_queries=num_queries,
-        depth=8,
-        dropout=0.0,
-        encoding="rope",
-        causal=False,
+    return ArcAttention(
+        _config(hidden_size=128, num_heads=4, num_queries=2, depth=8, encoding="rope")
     )
-    return ArcAttention(cfg)
 
 
 def test_head_budget_preserves_output_and_restores():
@@ -153,33 +151,13 @@ def test_head_budget_grads_only_kept_heads():
 
 
 # ------------------------------------------------------------------------------
-# kaleidoscope
+# dropoff
 # ------------------------------------------------------------------------------
-# Kaleidoscope attention: frozen mirrors, input-conditional turn, per-depth facets.
 
 
-def _config(**over):
-    cfg = SimpleNamespace(
-        hidden_size=32,
-        num_heads=1,  # patch_config forces this; set >1 only to test the patch
-        head_size=16,
-        num_queries=1,
-        causal=True,
-        dropout=0.0,
-        depth=4,
-        window_size=None,
-        max_position_embeddings=64,
-    )
-    for k, v in over.items():
-        setattr(cfg, k, v)
-    return cfg
-
-
-def test_arc_inherits_the_training_gate_and_the_always_schedule():
-    """The fix lives in CausalAttention so every dropoff user gets it at once."""
-
-    cfg = _config(depth=6, num_layers=1)
-    cfg.encoding, cfg.vocab_size, cfg.dropout = "nope", 256, 0.0
+def test_dropoff_is_training_only_and_the_always_schedule_fires_every_pass():
+    """The gate lives in CausalAttention, so every dropoff user inherits it."""
+    cfg = _config(depth=6, num_layers=1, encoding="nope", head_size=16)
     a = registry.lookup("attention", "arc_single_dropoff_always_nomem")(cfg)
     assert a.dropoff_every is True and a.dropoff_step == 5
     k = v = torch.ones(1, 1, 8, 4)

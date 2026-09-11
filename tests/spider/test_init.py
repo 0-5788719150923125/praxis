@@ -1,10 +1,8 @@
-"""Spider settings resolution, store behavior, and HTML extraction."""
+"""Tests for praxis/spider/__init__.py: ``spider_settings`` resolution."""
 
 import pytest
 
 from praxis.spider import spider_settings
-
-# --- settings ---
 
 
 def test_disabled_when_flag_absent():
@@ -24,15 +22,12 @@ def test_key_value_overrides():
     assert settings.tick_seconds == 15  # from ghost
 
 
-def test_dict_entries_from_yml():
-    settings = spider_settings({"tick_seconds": "600"})
-    assert settings.tick_seconds == 600
-
-
-def test_fractional_revisit_days():
+def test_values_are_cast_to_their_field_types():
+    # A dict from yml carries strings; the CLI list carries key=value text.
+    assert spider_settings({"tick_seconds": "600"}).tick_seconds == 600
     settings = spider_settings(["tick_seconds=3600", "revisit_days=0.05"])
-    assert settings.revisit_days == 0.05
     assert settings.tick_seconds == 3600
+    assert settings.revisit_days == 0.05  # fractional, not truncated
 
 
 @pytest.mark.parametrize("bad", [["nope"], ["profile=missing"], ["bogus=1"]])

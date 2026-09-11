@@ -1,10 +1,6 @@
-"""Spider settings resolution, store behavior, and HTML extraction."""
-
-import pytest
+"""Tests for praxis/spider/fetch.py: HTML extraction and link normalization."""
 
 from praxis.spider.fetch import _Extractor, _normalize_link
-
-# --- extraction ---
 
 _HTML = """
 <html><head><title>A Page</title>

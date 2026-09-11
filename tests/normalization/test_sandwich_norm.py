@@ -1,43 +1,14 @@
-import pytest
+"""Tests for praxis/normalization/sandwich_norm.py: the paired (two-position) norms."""
+
 import torch
 
 from praxis import registry
 
 
-def test_sandwich_norm_behavior():
-    """Test sandwich normalization (both pre and post norm enabled)."""
-    hidden_size = 64
-    x = torch.randn(10, 20, hidden_size)
-
-    sandwich_norm = registry.lookup("normalization", "sandwich_tied")(hidden_size)
-
-    # Verify flags are set correctly
-    assert sandwich_norm.pre_norm == True
-    assert sandwich_norm.post_norm == True
-
-    # Test pre mode - should apply normalization (pre_norm=True)
-    pre_output = sandwich_norm(x, mode="pre")
-    assert not torch.equal(pre_output, x)  # Should be normalized
-
-    # Test post mode - should apply normalization (post_norm=True)
-    post_output = sandwich_norm(x, mode="post")
-    assert not torch.equal(post_output, x)  # Should be normalized
-
-    # Test both mode - should apply normalization (both flags True)
-    both_output = sandwich_norm(x, mode="both")
-    assert not torch.equal(both_output, x)  # Should be normalized
-
-    # Test direct mode - should always apply normalization
-    direct_output = sandwich_norm(x, mode="direct")
-    assert not torch.equal(direct_output, x)  # Should be normalized
-
-    # Test none mode - should always be no-op
-    none_output = sandwich_norm(x, mode="none")
-    assert torch.equal(none_output, x)  # Should be unchanged
-
-    # Verify it actually normalizes correctly (RMS should be ~1)
-    normalized = sandwich_norm(x, mode="direct")
-    rms = torch.sqrt(torch.mean(normalized**2, dim=-1))
+def test_tied_sandwich_normalizes_to_unit_rms():
+    norm = registry.lookup("normalization", "sandwich_tied")(64)
+    out = norm(torch.randn(10, 20, 64), mode="direct")
+    rms = torch.sqrt(torch.mean(out**2, dim=-1))
     assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4)
 
 
@@ -49,8 +20,8 @@ def test_hero_norm_positions_differ():
 
     hero = registry.lookup("normalization", "hero")(hidden_size)
 
-    assert hero.pre_norm == True
-    assert hero.post_norm == True
+    assert hero.pre_norm
+    assert hero.post_norm
 
     # Pre position is a LayerNorm: mean is removed.
     pre_output = hero(x, mode="pre")

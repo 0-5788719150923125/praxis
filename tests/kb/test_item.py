@@ -1,6 +1,4 @@
-"""KB provenance schema and index roundtrip."""
-
-import pytest
+"""Tests for praxis/kb/item.py: ``with_provenance`` stamping."""
 
 from praxis.kb import KBItem
 from praxis.kb.item import with_provenance

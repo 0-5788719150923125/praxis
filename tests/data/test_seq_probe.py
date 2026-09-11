@@ -1,19 +1,12 @@
 """Probe-attribution sequence curriculum (praxis/data/seq_probe.py).
 
-The invariants that matter are the ones the previous controller failed:
+The invariants that matter:
 
 - an arm's coefficient must recover its true value from the regression,
 - an arm with no measurable edge must not be handed a confident share,
 - the fit must track a change in which arm is best rather than average over all
   of history,
 - the fixed per-tier roll must remain the cold-start path.
-
-The controller this replaced (a learning-progress bandit scoring each arm by the
-loss drop between two visits to it) is gone rather than deprecated: that drop
-measures how much the WHOLE model improved in the interval, so it carried no
-information about arm quality - a worthless arm still earned a full share, and
-sampling an arm more often shortened its own interval, making the mechanism
-negative feedback on visit rate that drove the mix to uniform.
 """
 
 import random
@@ -47,19 +40,16 @@ def feed(values, windows=400, noise=5.0, seed=0, max_visits=40):
 
 
 def test_recovers_known_arm_values():
+    """The fit recovers each arm's value, calls the real edge significant, and
+    hands the best arm the mass."""
     SequenceProbe.enable(64, TIERS)
     beta = feed({1: 1.0, 2: 3.0, 4: 0.0})
     assert beta[1] == pytest.approx(1.0, abs=0.15)
     assert beta[2] == pytest.approx(3.0, abs=0.15)
     assert beta[4] == pytest.approx(0.0, abs=0.15)
-
-
-def test_best_arm_gets_the_mass():
-    SequenceProbe.enable(64, TIERS)
-    feed({1: 1.0, 2: 3.0, 4: 0.0})
-    probs = SequenceProbe.shared_probs
-    assert probs[2] > 0.8
-    assert probs[2] > probs[1] > probs[4] or probs[2] > probs[4]
+    tstat = dict(zip(SequenceProbe.arms, SequenceProbe._tstat))
+    assert tstat[2] > 3.0, tstat
+    assert SequenceProbe.shared_probs[2] > 0.8
 
 
 def test_worthless_arm_is_starved():
@@ -73,30 +63,15 @@ def test_worthless_arm_is_starved():
 
 
 def test_no_signal_is_not_certainty():
-    """Pure noise must not produce a near-1.0 share. The old z-scoring divided
-    by the spread BETWEEN arms, which collapses when no arm is better, so noise
-    rendered as confident."""
+    """Pure noise must not produce a near-1.0 share, and no arm may be excluded
+    on no evidence. The honest read on "is there anything to exploit" is the
+    t-statistic, which stays small for every arm."""
     SequenceProbe.enable(64, TIERS)
     feed({1: 0.0, 2: 0.0, 4: 0.0})
     probs = SequenceProbe.shared_probs
     assert max(probs.values()) < 0.85, probs
-    # And no arm may be effectively excluded on no evidence.
     assert min(probs.values()) > 0.02, probs
-
-
-def test_no_signal_leaves_every_t_statistic_insignificant():
-    """The honest read on 'is there anything to exploit' is the t-statistic
-    card, not the mix: under pure noise every |t| stays small."""
-    SequenceProbe.enable(64, TIERS)
-    feed({1: 0.0, 2: 0.0, 4: 0.0})
     assert all(abs(t) < 2.5 for t in SequenceProbe._tstat), SequenceProbe._tstat
-
-
-def test_real_signal_is_significant():
-    SequenceProbe.enable(64, TIERS)
-    feed({1: 1.0, 2: 3.0, 4: 0.0})
-    by_arm = dict(zip(SequenceProbe.arms, SequenceProbe._tstat))
-    assert by_arm[2] > 3.0, by_arm
 
 
 def test_fit_tracks_a_change_in_the_best_arm():

@@ -1,4 +1,4 @@
-"""The side channel that carries a reply to the browser as it is written.
+"""Generation streaming (praxis/web/websocket): the side channel that carries a reply to the browser as it is written.
 
 ``POST /messages/`` is unchanged - one request, one final JSON reply, still
 authoritative. The deltas ride the ``/realtime`` socket the client already has
@@ -9,36 +9,13 @@ socket has to cost the preview and nothing else.
 
 import sys
 
-import pytest
-
 from praxis.web.websocket.generation_stream import stream_callbacks
 from praxis.web.websocket.realtime import NAMESPACE
 
 
-@pytest.fixture
-def emitted(monkeypatch):
-    """Capture what would go out on the socket."""
-    frames = []
-
-    class _Socket:
-        def emit(self, event, payload, namespace=None):
-            frames.append((event, payload, namespace))
-
-    # Reached through sys.modules on purpose: `praxis/web/__init__.py` does
-    # `from .app import app`, which rebinds the attribute `praxis.web.app` to
-    # the FLASK OBJECT - so `import praxis.web.app as m` binds the Flask app,
-    # not the module, and patching it would silently do nothing.
-    import praxis.web.app  # noqa: F401  (ensure it is in sys.modules)
-
-    monkeypatch.setattr(sys.modules["praxis.web.app"], "socketio", _Socket())
-    return frames
-
-
 def test_the_channel_is_not_named_for_any_one_passenger():
     """It carries metrics, cache invalidations and generation deltas, so it is
-    named for what it is - the server's live push channel. It was
-    ``/metrics-live`` while metrics were all it carried, which stopped being
-    true the moment inference started riding it."""
+    named for what it is: the server's live push channel."""
     from praxis.web.app import socketio
     from praxis.web.websocket import (
         generation_stream,
@@ -76,9 +53,9 @@ def test_deltas_carry_the_clients_own_id(emitted):
 
 
 def test_frames_are_sequenced(emitted):
-    """The deltas are produced on the training thread and the final reply comes
-    back over HTTP, so their ARRIVAL order is not guaranteed even though their
-    production order is. The client uses this to drop a straggler."""
+    """Deltas are produced on the training thread and the final reply comes
+    back over HTTP, so ARRIVAL order is not guaranteed even though production
+    order is. The client uses the sequence to drop a straggler."""
     on_text, on_reset, _ = stream_callbacks("s1")
     on_text("a")
     on_reset()
@@ -87,13 +64,8 @@ def test_frames_are_sequenced(emitted):
     seqs = [f[1]["seq"] for f in emitted]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     assert [f[0] for f in emitted] == ["gen_delta", "gen_reset", "gen_delta"]
-
-
-def test_a_reset_carries_no_text(emitted):
-    """It means "drop what you have", not "replace it with this"."""
-    _, on_reset, _ = stream_callbacks("s1")
-    on_reset()
-    assert "text" not in emitted[0][1]
+    # A reset means "drop what you have", not "replace it with this".
+    assert "text" not in emitted[1][1]
 
 
 def test_a_broken_socket_never_reaches_the_training_loop(monkeypatch):

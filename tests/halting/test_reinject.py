@@ -1,27 +1,13 @@
-from dataclasses import dataclass
+"""Tests for praxis/halting/reinject.py: kl_log_reinject, where the recurrence
+re-reads its input and each position exits on its own."""
+
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-from praxis import registry
+from praxis import PraxisConfig, registry
 from praxis.containers import LossContainer
-
-# ------------------------------------------------------------------------------
-# halting
-# ------------------------------------------------------------------------------
-# The training-time depth prior, which is the shape the halting signal learns.
-#
-# `KLDivergenceHalting` samples a loop count per forward so the model never knows how
-# much compute it will get. The distribution those samples come from is the experiment:
-# it decides how much of the budget the model learns to treat as routine, and the
-# inference-time KL rule can only ever exit somewhere the prior taught it to be useful.
-#
-# What is pinned here is the SHAPE, not the sampler's internals - the ramp toward
-# multiple steps, and how fast the tail dies as the depth budget grows.
-
-
-# --- kl_log_reinject: the recurrence re-reads its input, positions exit alone --
 
 
 def _reinject(depth=6, hidden=16):
@@ -150,58 +136,19 @@ def test_the_whole_pass_ends_when_every_position_has_exited():
     assert sum(h._eval_hist.values()) == 4
 
 
-# ------------------------------------------------------------------------------
-# smear_integration
-# ------------------------------------------------------------------------------
-# Test SMEAR integration with sequential decoder and multiple experts.
-
-
-@dataclass
-class MockConfig:
-    """Mock configuration for testing SMEAR integration."""
-
-    # Core configuration
-    hidden_size: int = 256
-    depth: int = 6
-    num_experts: int = 3  # Number of experts for SMEAR to manage
-    num_layers: int = 3  # Number of layer components for controllers
-    epsilon: float = 1e-6
-    dropout: float = 0.1
-
-    # Decoder configuration
-    decoder_type: str = "sequential"
-    block_type: str = "recurrent"
-    router_type: str = "smear"
-    controller_type: str = "base"
-    compression_type: str = "none"
-    sorting_type: str = "none"
-    halting_type: str = "none"
-
-    # Additional required fields
-    checkpoint_every: int = 0
-    debug: bool = False
-    evolve: bool = False
-    hivemind: bool = False
-    expert: str = "default"
-    meta: dict = None
-
-    # For blocks that need these
-    num_heads: int = 8
-    activation: str = "swish"
-    causal: bool = True
-
-    def __post_init__(self):
-        if self.meta is None:
-            self.meta = {}
-
-
 def test_reinject_halting_runs_through_the_decoder():
     """kl_log_reinject inside the real sequential loop: training re-reads the
     input and trains the adapter; inference records one exit per position."""
-    from dataclasses import replace
-
-    config = replace(
-        MockConfig(num_experts=3, num_layers=1, depth=4), halting_type="kl_log_reinject"
+    config = PraxisConfig(
+        hidden_size=64,
+        embed_size=64,
+        num_heads=4,
+        depth=4,
+        num_layers=1,
+        num_experts=3,
+        decoder_type="sequential",
+        block_type="recurrent",
+        halting_type="kl_log_reinject",
     )
     decoder = registry.lookup("decoders", "sequential")(config)
     x = torch.randn(2, 7, config.hidden_size, requires_grad=True)

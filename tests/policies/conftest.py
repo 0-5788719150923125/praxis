@@ -1,6 +1,4 @@
-"""
-Tests for reinforcement learning policies in praxis.policies.
-"""
+"""Shared fixtures for the forward-path RL policy tests."""
 
 import pytest
 import torch
@@ -9,8 +7,7 @@ from praxis import PraxisConfig
 
 
 @pytest.fixture
-def config():
-    """Base configuration for RL policies."""
+def rl_config():
     return PraxisConfig(
         hidden_size=128,
         dropout=0.1,
@@ -23,12 +20,8 @@ def config():
 
 @pytest.fixture
 def sample_data():
-    """Sample data for testing RL policies."""
-    batch_size = 8
-    seq_len = 32
-    hidden_size = 128
-    vocab_size = 1000
-
+    """A batch of 8 sequences of 32 positions, hidden 128, vocab 1000."""
+    batch_size, seq_len, hidden_size, vocab_size = 8, 32, 128, 1000
     return {
         "hidden_states": torch.randn(batch_size, seq_len, hidden_size),
         "logits": torch.randn(batch_size, seq_len, vocab_size),

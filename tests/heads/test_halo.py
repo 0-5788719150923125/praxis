@@ -1,7 +1,8 @@
-"""HALO honest contract: shared scoring head + composite loss (prismatic5)."""
+"""praxis/heads/halo.py: HaloClassifier scoring, HaloHead's blend contract, and
+HaloHead's wiring as a prismatic arm. HALOLoss itself is tested in
+tests/losses/test_halo.py."""
 
 import math
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -10,23 +11,7 @@ from praxis import registry
 from praxis.heads import HaloHead
 from praxis.heads.halo import HaloClassifier
 from praxis.losses.halo import HALOLoss
-
-
-def _cfg(**over):
-    base = dict(
-        hidden_size=16,
-        vocab_size=32,
-        max_position_embeddings=64,
-        encoder_type="",
-        loss_func="halo",
-        crystal_n=None,
-        crystal_label_smoothing=None,
-        tie_word_embeddings=False,
-        embed_size=16,
-    )
-    base.update(over)
-    return SimpleNamespace(**base)
-
+from tests.stubs import Cfg, Enc
 
 # ── HaloClassifier: the scoring function ─────────────────────────────────
 
@@ -73,51 +58,41 @@ def test_classifier_scoring_is_scale_invariant():
     assert torch.allclose(a, b, atol=1e-4)
 
 
-# ── prismatic5 wiring ────────────────────────────────────────────────────
+# ── HaloHead as a prismatic arm ──────────────────────────────────────────
 
 
-def _prismatic5(cfg):
-    return registry.lookup("heads", "prismatic5")(cfg, encoder=None)
-
-
-def test_prismatic5_builds_and_classifier_prefers_halo_arm():
+def build(name):
     torch.manual_seed(0)
-    head = _prismatic5(_cfg())
-    assert len(head.branches) == 4
-    clf = head.classifier
-    assert getattr(clf, "is_halo", False)
+    return registry.lookup("heads", name)(Cfg(), encoder=Enc())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "prismatic5",
+        "prismatic6",
+        "prismatic6_vear",
+        "prismatic7",
+        "prismatic8",
+        "prismatic9",
+    ],
+)
+def test_classifier_is_the_halo_arm(name):
+    """HALOLoss keys composite mode off ``is_halo`` on the head's classifier,
+    so every profile with a HALO arm must hand that arm out - whether or not
+    it is detached in the blend."""
+    clf = build(name).classifier
     assert isinstance(clf, HaloClassifier)
-
-
-def test_halo_arm_detached_in_blend_but_gate_learns():
-    torch.manual_seed(0)
-    head = _prismatic5(_cfg())
-    head.train()
-    x = torch.randn(2, 8, 16)
-    out = head(x)
-    out.sum().backward()
-    halo_arm = head.branches[-1]
-    assert isinstance(halo_arm, HaloHead)
-    # Blend gradient must not reach the HALO arm (its logits are detached)...
-    assert (
-        halo_arm.lm_head.centers.grad is None
-        or halo_arm.lm_head.centers.grad.abs().sum() == 0
-    )
-    # ...but the gate still learns how much to trust it.
-    assert head.gate.weight.grad is not None
-    assert head.gate.weight.grad.abs().sum() > 0
+    assert clf.is_halo
 
 
 def test_prismatic5_end_to_end_composite_loss():
     """Full honest wiring: trunk features -> prismatic5 logits + HALOLoss."""
-    torch.manual_seed(0)
-    cfg = _cfg()
-    head = _prismatic5(cfg)
-    head.train()
-    trunk = torch.randn(2, 8, 16, requires_grad=True)
+    head = build("prismatic5").train()
+    trunk = torch.randn(2, 8, Cfg.hidden_size, requires_grad=True)
     logits = head(trunk)
-    labels = torch.randint(0, cfg.vocab_size, (2, 8))
-    loss_fn = HALOLoss(vocab_size=cfg.vocab_size)
+    labels = torch.randint(0, Cfg.vocab_size, (2, 8))
+    loss_fn = HALOLoss(vocab_size=Cfg.vocab_size)
     loss = loss_fn(
         logits=logits[..., :-1, :].contiguous(),
         labels=labels[..., 1:].contiguous(),
@@ -140,64 +115,42 @@ def test_prismatic5_end_to_end_composite_loss():
 # Not a correctness switch - a measurement one. Detached, the arm's gate share
 # is an uncontaminated verdict on HALO's scoring function; attached, CE also
 # reaches it and the verdict is traded for the chance the arm becomes useful.
-# prismatic5 detaches, prismatic6 attaches, and neither should drift silently.
-
-
-def _halo_arm(head):
-    arms = [b for b in head.branches if isinstance(b, HaloHead)]
-    assert len(arms) == 1, f"expected exactly one HALO arm, got {len(arms)}"
-    return arms[0]
-
-
-def _ce_reaches(head, arm):
-    """True when the blended CE puts gradient on the arm's own centroids."""
-    head.train()
-    head.zero_grad(set_to_none=True)
-    head(torch.randn(2, 8, head.output_dims()[0])).sum().backward()
-    g = arm.lm_head.centers.grad
-    return g is not None and bool(g.abs().sum() > 0)
-
-
-def test_class_default_detaches():
-    """The bare head keeps the original honest-contract default."""
-    assert HaloHead.detach_in_blend is True
-    assert HaloHead(_cfg()).detach_in_blend is True
+# prismatic5 detaches, prismatic6 onward attach, and neither should drift.
 
 
 def test_constructor_overrides_per_instance():
-    """Per-instance override, so a profile can choose without moving the
-    default out from under the profiles already running."""
-    assert HaloHead(_cfg(), detach_in_blend=False).detach_in_blend is False
-    assert HaloHead(_cfg(), detach_in_blend=True).detach_in_blend is True
+    """The bare head keeps the honest-contract default; a profile overrides it
+    per instance without moving the default out from under the others."""
+    assert HaloHead.detach_in_blend is True
+    assert HaloHead(Cfg(), detach_in_blend=False).detach_in_blend is False
+    assert HaloHead(Cfg(), detach_in_blend=True).detach_in_blend is True
     # None leaves the class default alone.
-    assert HaloHead(_cfg(), detach_in_blend=None).detach_in_blend is True
+    assert HaloHead(Cfg(), detach_in_blend=None).detach_in_blend is True
+    assert HaloHead(Cfg()).detach_in_blend is True
 
 
-def test_prismatic5_arm_stays_detached():
-    """abstractinator-j runs this; its gate share is only a clean verdict
-    while CE is kept off the arm."""
-    torch.manual_seed(0)
-    head = registry.lookup("heads", "prismatic5")(_cfg())
-    arm = _halo_arm(head)
-    assert arm.detach_in_blend is True
-    assert not _ce_reaches(head, arm)
+@pytest.mark.parametrize(
+    "name, detached",
+    [
+        ("prismatic5", True),
+        ("prismatic6", False),
+        ("prismatic6_vear", False),
+        ("prismatic7", False),
+        ("prismatic8", False),
+    ],
+)
+def test_halo_arm_blend_gradient_and_gate(name, detached):
+    """A detached arm gets no gradient from the blended CE; an attached one
+    does. Either way the gate learns how much to trust it."""
+    head = build(name).train()
+    arms = [b for b in head.branches if isinstance(b, HaloHead)]
+    assert len(arms) == 1, f"expected exactly one HALO arm, got {len(arms)}"
+    arm = arms[0]
+    assert arm.detach_in_blend is detached
 
-
-@pytest.mark.parametrize("name", ["prismatic6", "prismatic6_vear"])
-def test_prismatic6_arm_is_attached(name):
-    """The detached measurement is complete (0.00125 gate share over 22k
-    steps in -j), so prismatic6 lets CE train the arm too."""
-    torch.manual_seed(0)
-    head = registry.lookup("heads", name)(_cfg())
-    arm = _halo_arm(head)
-    assert arm.detach_in_blend is False
-    assert _ce_reaches(head, arm)
-
-
-def test_geometric_objective_runs_either_way():
-    """Attaching changes what ALSO trains the arm, never whether HALOLoss
-    finds it - composite mode keys off is_halo, not off detachment."""
-    for name in ("prismatic5", "prismatic6"):
-        head = registry.lookup("heads", name)(_cfg())
-        clf = head.classifier
-        assert getattr(clf, "is_halo", False), f"{name} lost composite mode"
+    head(torch.randn(2, 8, Cfg.hidden_size)).sum().backward()
+    g = arm.lm_head.centers.grad
+    reached = g is not None and bool(g.abs().sum() > 0)
+    assert reached is not detached
+    assert head.gate.weight.grad is not None
+    assert head.gate.weight.grad.abs().sum() > 0

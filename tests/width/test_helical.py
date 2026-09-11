@@ -1,36 +1,10 @@
-"""Mixture-of-widths: the helical deflation policy and its profile."""
+"""HelicalWidth: an arch-shaped per-depth width profile whose active window
+precesses around the inner channels."""
 
 import torch
-import torch.nn as nn
 
 from praxis import registry
 from praxis.width.helical import width_fraction
-
-
-class _Block(nn.Module):
-    """A GLU-shaped stand-in: ``down`` is the inner projection width policies mask."""
-
-    def __init__(self, hidden=8, inner=12):
-        super().__init__()
-        self.up = nn.Linear(hidden, 2 * inner)
-        self.down = nn.Linear(inner, hidden)
-
-    def forward(self, x):
-        a, b = self.up(x).chunk(2, dim=-1)
-        return self.down(a * b)
-
-
-def _active_channels(block, policy, depth, max_depth, x):
-    """Count inner channels that survive the policy's mask at this depth."""
-    seen = {}
-    with policy.scope([block], current_depth=depth, max_depth=max_depth):
-        # Register AFTER the policy hook so we observe the masked input.
-        handle = block.down.register_forward_pre_hook(
-            lambda m, a: seen.setdefault("x", a[0].detach().clone())
-        )
-        block(x)
-        handle.remove()
-    return int((seen["x"].abs().sum(dim=(0, 1)) > 0).sum().item())
 
 
 def test_profile_is_an_arch():
@@ -42,33 +16,23 @@ def test_profile_is_an_arch():
     assert prof.index(max(prof)) < len(prof) // 2  # crest is in the front half
 
 
-def test_deflation_matches_profile():
+def test_deflation_matches_profile(glu, active_channels):
     policy = registry.lookup("width", "helical")()
-    block, x = _Block(), torch.randn(2, 3, 8)
+    block, x = glu(hidden=8, inner=12), torch.randn(2, 3, 8)
     prof = policy.profile(6)
     for d in range(6):
         expected = max(1, min(12, round(prof[d] * 12)))
-        assert _active_channels(block, policy, d, 6, x) == expected
+        assert len(active_channels(block, policy, d, 6, x)) == expected
 
 
-def test_helix_window_precesses_with_depth():
-    """The active set at successive depths is rotated, not identical (coverage)."""
-    policy = registry.lookup(
-        "width", "helical_steady"
-    )()  # constant width, so only the start moves
-    block, x = _Block(), torch.randn(2, 3, 8)
-
-    def active_set(depth):
-        seen = {}
-        with policy.scope([block], current_depth=depth, max_depth=8):
-            handle = block.down.register_forward_pre_hook(
-                lambda m, a: seen.setdefault("x", a[0].detach().clone())
-            )
-            block(x)
-            handle.remove()
-        return set((seen["x"].abs().sum(dim=(0, 1)) > 0).nonzero().flatten().tolist())
-
-    assert active_set(0) != active_set(1)
+def test_helix_window_precesses_with_depth(glu, active_channels):
+    """The active set at successive depths is rotated, not identical (coverage).
+    ``helical_steady`` holds the width constant, so only the start moves."""
+    policy = registry.lookup("width", "helical_steady")()
+    block, x = glu(hidden=8, inner=12), torch.randn(2, 3, 8)
+    assert active_channels(block, policy, 0, 8, x) != active_channels(
+        block, policy, 1, 8, x
+    )
 
 
 def test_width_fraction_single_depth():

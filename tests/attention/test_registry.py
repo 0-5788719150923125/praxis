@@ -1,167 +1,213 @@
+"""Every entry of the ``attention`` registry: it builds, runs, is causal, and its
+metrics reach the dashboard.
+
+The grid is deterministic: every entry at one small shape, every encoding only on
+the entries that read ``config.encoding``, and ModularAttention's own mode axes
+only on ModularAttention.
+"""
+
+import copy
 import itertools
-import os
-import random
-from enum import Enum
-from typing import List
+import math
 
 import pytest
 import torch
+import torch.nn as nn
 
 from praxis import PraxisConfig, registry
 from praxis.attention.causal import CausalAttention
+from praxis.attention.infini import _DEFAULT_SEGMENT_SIZE
+from praxis.attention.modular import ModularAttention
+from praxis.attention.syntaxes import SyntaxesAttention
 
-MODULE_CLASSES = list(registry.namespace("attention").values())
-
-# Full Cartesian product is ~22k cases; sample a stratified subset so every
-# module class still gets coverage but the suite finishes in seconds.
-# Override with PRAXIS_ATTENTION_FULL=1 to run the full grid.
-SAMPLES_PER_MODULE = int(os.environ.get("PRAXIS_ATTENTION_SAMPLES", "20"))
-SAMPLE_SEED = 0xA77E
-
-
-class AttentionMode(Enum):
-    BASE = "base"
-    LINEAR = "linear"
-    DIFFERENTIAL = "differential"
-    STICKBREAKING = "stickbreaking"
-    MULTIHEAD_LATENT_ATTENTION = "mla"
+ATTENTION = sorted(registry.namespace("attention"))
+ENCODINGS = sorted(registry.namespace("encoding"))
+HIDDEN = 64
 
 
-# Define test parameters in a more structured way
-TEST_PARAMS = {
-    "hidden_sizes": [64, 128, 256],
-    "modes": list(AttentionMode),
-    "num_heads": [1, 2, 3],
-    "num_queries": [1, 2],
-    "k_heads": [None, 2],
-    "encodings": list(registry.namespace("encoding").keys()),
-    "kv_rank": [None, 1, 2],
-    "memory": [False],  # True is currently failing in some instances
-    "mega": [False, True],
-    "gated": [False],  # Broken as well
-}
+def _class(key):
+    entry = registry.lookup("attention", key)
+    return getattr(entry, "func", entry)  # profiles are functools.partial
 
 
-def get_attention_configs() -> List[PraxisConfig]:
-    """Generate valid attention configurations using itertools.product."""
-    return [
-        PraxisConfig(
-            mode=mode,
-            hidden_size=hidden_size,
-            encoding=encoding,
-            num_heads=num_heads,
-            num_queries=num_queries,
-            kv_rank=kv_rank,
-            memory=memory,
-            k_heads=k_heads,
-            mega=mega,
-            gated=gated,
-        )
-        for hidden_size, mode, encoding, num_heads, num_queries, kv_rank, memory, k_heads, mega, gated in itertools.product(
-            TEST_PARAMS["hidden_sizes"],
-            TEST_PARAMS["modes"],
-            TEST_PARAMS["encodings"],
-            TEST_PARAMS["num_heads"],
-            TEST_PARAMS["num_queries"],
-            TEST_PARAMS["kv_rank"],
-            TEST_PARAMS["memory"],
-            TEST_PARAMS["k_heads"],
-            TEST_PARAMS["mega"],
-            TEST_PARAMS["gated"],
-        )
-    ]
+# The kaleidoscope and SSOG fields have no Q/K to encode, and ignore it.
+READS_ENCODING = [
+    key
+    for key in ATTENTION
+    if issubclass(_class(key), (ModularAttention, SyntaxesAttention, CausalAttention))
+]
+HAS_METRICS = [key for key in ATTENTION if hasattr(_class(key), "metric_descriptions")]
 
 
-def _sampled_module_configs():
-    """Stratified sample: take SAMPLES_PER_MODULE configs per module class.
-
-    Set PRAXIS_ATTENTION_FULL=1 to fall back to the full Cartesian product.
-    """
-    configs = get_attention_configs()
-    if os.environ.get("PRAXIS_ATTENTION_FULL"):
-        return list(itertools.product(MODULE_CLASSES, configs))
-
-    rng = random.Random(SAMPLE_SEED)
-    sampled = []
-    for module_class in MODULE_CLASSES:
-        pool = list(configs)
-        rng.shuffle(pool)
-        sampled.extend((module_class, c) for c in pool[:SAMPLES_PER_MODULE])
-    return sampled
+def _build(key, **fields):
+    config = PraxisConfig(hidden_size=HIDDEN, num_heads=2, num_queries=1, dropout=0.0)
+    config.causal = True  # modeling.py sets this at assembly; the bare config is False
+    for name, value in fields.items():
+        setattr(config, name, value)
+    torch.manual_seed(0)
+    return registry.lookup("attention", key)(config)
 
 
-@pytest.fixture(params=_sampled_module_configs())
-def module_setup(request, config):
-    """
-    Parametrized fixture that provides module and its configuration.
-
-    Args:
-        request: pytest request object containing the parameter tuple
-        config: the base config fixture from conftest.py
-
-    Returns:
-        tuple: (module instance, config)
-    """
-    module_class, attention_config = request.param
-    # Registry entries may be partials (profiles); inspect the underlying class.
-    base_class = getattr(module_class, "func", module_class)
-
-    if issubclass(base_class, CausalAttention):
-        if attention_config.encoding == "nope":
-            pytest.skip(
-                "CausalAttention requires a positional encoding (alibi or rope)"
-            )
-        if (
-            attention_config.encoding == "rope"
-            and (attention_config.hidden_size // attention_config.num_heads) % 2 != 0
-        ):
-            pytest.skip("CausalAttention with RoPE requires an even head_dim")
-
-    setattr(config, "hidden_size", attention_config.hidden_size)
-    setattr(config, "num_heads", attention_config.num_heads)
-    setattr(config, "num_queries", attention_config.num_queries)
-
-    setattr(config, "encoding", attention_config.encoding)
-    setattr(config, "kv_rank", attention_config.kv_rank)
-    setattr(config, "memory", attention_config.memory)
-    setattr(config, "k_heads", attention_config.k_heads)
-
-    # Set gating mode
-    if attention_config.mega:
-        setattr(config, "mega", True)
-    elif attention_config.gated:
-        setattr(config, "gated", True)
-
-    # Set the appropriate mode
-    setattr(config, "linear", False)
-    setattr(config, "differential", False)
-    setattr(config, "stickbreaking", False)
-    setattr(config, "mla", False)
-
-    if attention_config.mode == AttentionMode.DIFFERENTIAL:
-        setattr(config, "differential", True)
-    # elif attention_config.mode == AttentionMode.LINEAR:
-    #     setattr(config, "linear", True)
-    elif attention_config.mode == AttentionMode.STICKBREAKING:
-        setattr(config, "stickbreaking", True)
-    elif attention_config.mode == AttentionMode.MULTIHEAD_LATENT_ATTENTION:
-        setattr(config, "mla", True)
-
-    module = module_class(config)
-    return module, attention_config
+def _run(module, batch=2, seq_len=16):
+    x = torch.randn(batch, seq_len, HIDDEN)
+    out, _, _ = module(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
 
 
-def test_forward_pass(module_setup):
-    """Test forward pass with valid parameter combinations."""
-    module, attention_config = module_setup
-    batch_size = 32
-    seq_len = 16
+@pytest.mark.parametrize("key", ATTENTION)
+def test_forward(key):
+    _run(_build(key))
 
-    # Create input tensor
-    x = torch.randn(batch_size, seq_len, attention_config.hidden_size)
 
-    # Run forward pass
-    output, layer_kv, aux_loss = module(x)
+@pytest.mark.parametrize("key", ATTENTION)
+def test_no_zero_dim_parameters(key):
+    """Schedule-free optimizers swap parameters through ``x.view(torch.uint8)``,
+    which a 0-dim tensor cannot do. This crashed a run at step 1."""
+    zero_dim = [n for n, p in _build(key).named_parameters() if p.dim() == 0]
+    assert zero_dim == [], zero_dim
 
-    # Verify output shape
-    assert output.shape == (batch_size, seq_len, attention_config.hidden_size)
+
+@pytest.mark.parametrize("encoding", ENCODINGS)
+@pytest.mark.parametrize("key", READS_ENCODING)
+def test_forward_encoding(key, encoding):
+    _run(_build(key, encoding=encoding))
+
+
+@pytest.mark.parametrize("encoding", ["rope", "hope", "arc"])
+@pytest.mark.parametrize("key", READS_ENCODING)
+def test_forward_odd_head_dim(key, encoding):
+    """64 / 3 heads gives an odd head_dim, which the rotary encodings must pass
+    through on their unpaired last dimension."""
+    _run(_build(key, encoding=encoding, num_heads=3))
+
+
+MODULAR_GRID = list(
+    itertools.product(
+        [None, "differential", "stickbreaking", "mla"],  # mode
+        [None, 2],  # kv_rank
+        [None, 2],  # k_heads
+        [False, True],  # mega
+    )
+)
+
+
+@pytest.mark.parametrize(
+    "mode, kv_rank, k_heads, mega",
+    MODULAR_GRID,
+    ids=[f"{m}-kv{r}-k{k}-mega{g}" for m, r, k, g in MODULAR_GRID],
+)
+def test_modular_grid(mode, kv_rank, k_heads, mega):
+    modes = {m: m == mode for m in ("differential", "stickbreaking", "mla")}
+    module = _build(
+        "modular", num_queries=2, kv_rank=kv_rank, k_heads=k_heads, mega=mega, **modes
+    )
+    _run(module)
+
+
+# ------------------------------------------------------------------------------
+# causality
+# ------------------------------------------------------------------------------
+# One token changes in one row; no output at an earlier position of that row, and
+# none in the other row, may move - in training and in inference. The method is
+# tests/test_modeling.py's: every forward runs on a fresh copy under the same RNG
+# (training forwards mutate state), and every parameter is first moved off its
+# initialization so zero-initialized paths cannot hide a leak.
+
+# Longer than every window default, so the windowed entries run past their windows:
+# SyntaxesAttention keeps the last 128 tokens, Infini folds 256-token segments.
+SYNTAXES_CONTEXT = 128
+SEQ = _DEFAULT_SEGMENT_SIZE + 16
+# Edits land where a window opens - a leak into a window's past shows first at
+# its first position - plus one inside a window.
+EDITS = (SEQ - SYNTAXES_CONTEXT, SEQ - SYNTAXES_CONTEXT // 2, _DEFAULT_SEGMENT_SIZE)
+TOLERANCE = 1e-6
+
+
+def _movement(key, train):
+    """Worst change before an edited position and in the other row, over all
+    edits, and the largest change the edits made where they may."""
+    pristine = _build(key)
+    with torch.no_grad():
+        for p in pristine.parameters():
+            if p.is_floating_point():
+                p.add_(0.05 * torch.randn_like(p))
+    torch.manual_seed(1)
+    x = torch.randn(2, SEQ, HIDDEN)
+
+    def outputs(inputs):
+        module = copy.deepcopy(pristine).train(train)
+        torch.manual_seed(0)
+        with torch.no_grad():
+            return module(inputs)[0]
+
+    base = outputs(x)
+    before = other_row = reached = 0.0
+    for position in EDITS:
+        edited = x.clone()
+        edited[0, position] += 1.0
+        delta = (outputs(edited) - base).abs().amax(dim=-1)
+        before = max(before, delta[0, :position].max().item())
+        other_row = max(other_row, delta[1].max().item())
+        reached = max(reached, delta[0, position:].max().item())
+    return before, other_row, reached
+
+
+@pytest.mark.parametrize("train", [False, True], ids=["eval", "train"])
+@pytest.mark.parametrize("key", ATTENTION)
+def test_causal(key, train):
+    before, other_row, reached = _movement(key, train)
+    assert reached > 0, "no edit moved anything, so the check cannot see a leak"
+    assert before <= TOLERANCE, f"an output before the edit moved by {before:.3e}"
+    assert other_row <= TOLERANCE, f"an output in another row moved by {other_row:.3e}"
+
+
+# ------------------------------------------------------------------------------
+# dashboard
+# ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", HAS_METRICS)
+def test_metrics_reach_the_dashboard(key):
+    """Attention modules have no loss hook and are not an attribute of the model
+    the way the head and encoder are, so a module walk is the only way anything
+    of theirs is reachable. Three walks must each find the module: values
+    (dynamics.db), declarations (a logged key with no ``metric_descriptions``
+    entry is written and then dropped, since the manifest is built from
+    declarations), and live snapshots - through the precompute recipe too, as
+    the /api/head_snapshots route is only the cold-start fallback. Arc has a walk
+    of its own, so each value is counted once."""
+    from praxis.metrics.descriptions import get_metric_descriptions
+    from praxis.metrics.specialization import (
+        collect_arc_metrics,
+        collect_attention_metrics,
+        collect_attention_snapshots,
+    )
+    from praxis.web.snapshots import _recipe_head_snapshots
+
+    module = _build(key).train()
+    module(torch.randn(2, 16, HIDDEN))
+    model = nn.Sequential(nn.Identity(), module)
+    metrics = {k: v for k, v in module.training_metrics().items() if v is not None}
+    snapshots = (
+        module.dashboard_snapshots() if hasattr(module, "dashboard_snapshots") else {}
+    )
+
+    assert all(math.isfinite(v) for v in metrics.values())
+    collected = {**collect_attention_metrics(model), **collect_arc_metrics(model)}
+    assert collected.keys() == metrics.keys()
+    assert collect_attention_snapshots(model).keys() == snapshots.keys()
+
+    descriptions = get_metric_descriptions(model)
+    for name in metrics:
+        assert descriptions.get(name, {}).get("chart"), name
+    for name in snapshots:
+        assert descriptions.get(name, {}).get("snapshot"), name
+    # The dashboard labels each card with the class that raised it.
+    for name in list(metrics)[:1]:
+        assert descriptions[name]["caller"] == type(module).__name__
+
+    if snapshots:
+        payload = _recipe_head_snapshots(model)
+        assert payload["status"] == "ok"
+        assert set(snapshots) <= set(payload["snapshots"])

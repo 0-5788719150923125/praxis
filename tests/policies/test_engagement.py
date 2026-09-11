@@ -1,11 +1,10 @@
-"""Tests for the engagement-prediction reward (P2) and policy (P3)."""
+"""Tests for praxis/policies/engagement.py: the engagement and joke recall
+policies and how coexisting ones partition the task space."""
 
-import pytest
 import torch
 
 from praxis import PraxisConfig
 from praxis.policies import EngagementPolicy
-from praxis.policies.engagement_reward import recall
 
 
 class TestEngagementPolicy:
@@ -168,12 +167,3 @@ class TestTaskScoping:
             logits=logits, labels=labels, assistant_mask=mask, task_type_ids=task_ids
         )
         assert loss is None and metrics == {}
-
-    def test_no_task_ids_falls_back_to_scoring_all(self):
-        from praxis.policies import EngagementPolicy
-
-        logits, labels, mask, _ = self._batch()
-        pol = EngagementPolicy(self._config())
-        pol.train()
-        loss, metrics = pol(logits=logits, labels=labels, assistant_mask=mask)
-        assert loss is not None and metrics

@@ -1,8 +1,8 @@
-import pytest
+"""Tests for praxis/normalization/layer_norm.py."""
+
 import torch
 
 from praxis import registry
-from praxis.normalization import LayerNorm
 
 
 def test_layer_norm_behavior():

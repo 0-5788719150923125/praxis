@@ -1,7 +1,14 @@
+"""Tests for the activation spec resolver in praxis/activations/__init__.py."""
+
 import pytest
 import torch
 
-from praxis.activations import build_activation, linear_activation
+from praxis.activations import (
+    build_activation,
+    harmonic_spectrum,
+    linear_activation,
+)
+from praxis.activations.mixture import ActivationMixture
 
 
 def test_the_spec_is_always_a_type_over_values():
@@ -10,8 +17,6 @@ def test_the_spec_is_always_a_type_over_values():
     The shorthand is what keeps `activation_type: gelu` the thing anyone would
     write, so it has to produce exactly what the long form does.
     """
-    from praxis.activations.mixture import ActivationMixture
-
     assert type(build_activation("gelu")) is type(
         build_activation({"type": "single", "values": ["gelu"]})
     )
@@ -62,8 +67,6 @@ def test_a_mixture_can_hold_a_mixture():
     """Values resolve through the same builder, so nesting needs no special
     case. Worth pinning because the recursion is the only reason `values` holds
     NAMES rather than modules."""
-    from praxis.activations.mixture import ActivationMixture
-
     outer = build_activation(
         {
             "type": "mix",
@@ -85,8 +88,6 @@ def test_harmonic_spectrum_survives_a_mixture_in_the_slot():
     swallowed by the dynamics logger, charts blank, training unaffected and
     nothing louder than a repeating log line to say so.
     """
-    from praxis.activations import harmonic_spectrum
-
     x = torch.randn(2, 8, 16)
 
     direct = build_activation("servant")

@@ -1,7 +1,9 @@
-"""KV-cache equivalence: cached decode must reproduce full-recompute outputs.
+"""PraxisCache: cached decode must reproduce full-recompute outputs.
 
 Covers the vanilla path (gpt2-1.yml), the Infini/Arc memory-state cache, and
-the safe fallback for cache-less attentions (CausalAttention).
+the safe fallback for cache-less attentions (CausalAttention). The head-side
+cache state of the harmonic heads is checked logit for logit in
+tests/heads/test_harmonic.py.
 """
 
 import pytest
@@ -52,15 +54,9 @@ def greedy(model, ids, use_cache):
         # Memory-free Arc: a plain growing KV cache, no memory fold.
         dict(attention_type="arc_nomem", encoding="arc", window_size=8),
         dict(attention_type="arc_single_dropoff_nomem", encoding="arc", window_size=8),
-        # Harmonic stem (input envelope + fast weights) + crystal SMEAR arm:
-        # both carry context across chunks through the head-side cache state.
-        dict(
-            attention_type="vanilla",
-            embeddings="positional",
-            encoding="nope",
-            head_type="prismatic6",
-            block_size=128,
-        ),
+        # CausalAttention never writes the cache; use_cache=True must still be
+        # correct (full recompute each step), just without the speedup.
+        dict(attention_type="causal", encoding="rope"),
     ],
     ids=[
         "vanilla",
@@ -68,19 +64,11 @@ def greedy(model, ids, use_cache):
         "arc",
         "arc_nomem",
         "arc_single_dropoff_nomem",
-        "prismatic6",
+        "causal",
     ],
 )
 def test_cached_generate_matches_uncached(kwargs):
     model = build_model(**kwargs)
-    ids = torch.randint(0, 200, (1, PROMPT_LEN))
-    assert torch.equal(greedy(model, ids, False), greedy(model, ids, True))
-
-
-def test_cacheless_attention_falls_back_correctly():
-    """CausalAttention never writes the cache; use_cache=True must still be
-    correct (full recompute each step), just without the speedup."""
-    model = build_model(attention_type="causal", encoding="rope")
     ids = torch.randint(0, 200, (1, PROMPT_LEN))
     assert torch.equal(greedy(model, ids, False), greedy(model, ids, True))
 

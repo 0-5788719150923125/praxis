@@ -1,56 +1,20 @@
-"""Stopping the dashboard must leave the terminal alone.
+"""Dashboard IO (praxis/interface/io): the stream stand-ins that keep output
+off a terminal the dashboard owns, and off one it has released."""
 
-The reported failure: Ctrl+C during a run, and the dashboard's box drawing and
-charts render *into* the shell's scrollback, interleaved with the shutdown's
-own messages. The cause was an ordering bug, not a rendering one. ``stop()``
-flipped a flag and immediately left the alternate screen, while the render
-thread was still mid-frame or asleep in its 100ms tick - and that thread writes
-through a private handle on the real stdout, bypassing every redirection. The
-frame it painted next landed, absolutely positioned, on the restored terminal.
-"""
-
-import io
-import threading
-
-import pytest
+from types import SimpleNamespace
 
 from praxis.interface.io import DashboardOutput, LogCapture
+from tests.stubs import _Tty
 
 
-class _Tty(io.StringIO):
-    """A stand-in terminal that records everything written to it."""
-
-    def __init__(self):
-        super().__init__()
-        self.lock = threading.Lock()
-        self.chunks = []
-
-    def write(self, s):
-        with self.lock:
-            self.chunks.append(s)
-        return len(s)
-
-    def flush(self):
-        pass
-
-    def isatty(self):
-        return True
-
-    @property
-    def text(self):
-        with self.lock:
-            return "".join(self.chunks)
-
-
-# ── the redirection contract ─────────────────────────────────────────────
-
-
-def test_log_capture_is_not_a_tty(dashboard):
+def test_log_capture_is_not_a_tty():
     """Otherwise libraries draw progress bars and move a cursor we own."""
-    capture = LogCapture(dashboard)
+    logged = []
+    capture = LogCapture(SimpleNamespace(add_log=logged.append))
     assert capture.isatty() is False
     assert capture.writable() is True
     assert capture.write("hello\n") == len("hello\n")
+    assert logged == ["hello"]
     assert capture.encoding
 
 

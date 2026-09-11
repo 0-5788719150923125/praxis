@@ -1,4 +1,8 @@
+"""Tests for praxis/cli/loaders: PRAXIS_* environment overrides and the
+``extends`` keyword in experiment YAML."""
+
 import argparse
+import os
 import textwrap
 
 import pytest
@@ -7,9 +11,8 @@ from praxis.cli.loaders.env_vars import EnvVarLoader
 from praxis.cli.loaders.experiments import load_rendered_config
 
 # ------------------------------------------------------------------------------
-# env_var_loader
+# environment variables
 # ------------------------------------------------------------------------------
-# Tests for PRAXIS_* environment variable overrides of CLI arguments.
 
 
 def _build_parser():
@@ -26,27 +29,36 @@ def _build_parser():
     return p
 
 
-def _parse(parser, argv):
-    return parser.parse_args(argv)
-
-
-def test_env_var_sets_int(monkeypatch):
+def _apply(monkeypatch, env, argv=(), explicit=()):
     parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_BATCH_SIZE", "32")
+    args = parser.parse_args(list(argv))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    loader = EnvVarLoader()
+    loader.apply_env_vars(parser, args, explicitly_provided=set(explicit))
+    return args, loader
 
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.batch_size == 32
-    assert isinstance(args.batch_size, int)
 
-
-def test_env_var_sets_string(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_DEVICE", "cuda:1")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.device == "cuda:1"
+@pytest.mark.parametrize(
+    "env,attr,expected",
+    [
+        ({"PRAXIS_BATCH_SIZE": "32"}, "batch_size", 32),
+        ({"PRAXIS_DEVICE": "cuda:1"}, "device", "cuda:1"),
+        ({"PRAXIS_OPTIMIZER": "AdamW"}, "optimizer", "AdamW"),
+        ({"PRAXIS_DATA_PATH": "/data/a, /data/b"}, "data_path", ["/data/a", "/data/b"]),
+        (
+            {"PRAXIS_DATA_PATH": '["/data/a", "/data/b"]'},
+            "data_path",
+            ["/data/a", "/data/b"],
+        ),
+        ({"PRAXIS_META": "one,two,three"}, "meta", ["one", "two", "three"]),
+    ],
+    ids=["int", "string", "choice", "nargs-comma", "nargs-json", "append"],
+)
+def test_env_var_sets_the_typed_value(monkeypatch, env, attr, expected):
+    args, _ = _apply(monkeypatch, env)
+    assert getattr(args, attr) == expected
+    assert type(getattr(args, attr)) is type(expected)
 
 
 @pytest.mark.parametrize(
@@ -54,120 +66,67 @@ def test_env_var_sets_string(monkeypatch):
     [("1", True), ("true", True), ("YES", True), ("0", False), ("false", False)],
 )
 def test_env_var_store_true_bool(monkeypatch, raw, expected):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_DEBUG", raw)
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
+    args, _ = _apply(monkeypatch, {"PRAXIS_DEBUG": raw})
     assert args.debug is expected
 
 
-def test_env_var_choices_valid(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_OPTIMIZER", "AdamW")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.optimizer == "AdamW"
-
-
-def test_env_var_choices_invalid_skipped(monkeypatch, capsys):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_OPTIMIZER", "NotARealOptimizer")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    # Unchanged — we refuse to apply an invalid value
-    assert args.optimizer == "Lion"
+@pytest.mark.parametrize(
+    "env,attr,default,message",
+    [
+        (
+            {"PRAXIS_OPTIMIZER": "NotARealOptimizer"},
+            "optimizer",
+            "Lion",
+            "not in choices",
+        ),
+        ({"PRAXIS_BATCH_SIZE": "not-an-int"}, "batch_size", 1, ""),
+    ],
+    ids=["choice", "int"],
+)
+def test_an_invalid_value_keeps_the_default_and_names_the_var(
+    monkeypatch, capsys, env, attr, default, message
+):
+    args, _ = _apply(monkeypatch, env)
+    assert getattr(args, attr) == default
     out = capsys.readouterr().out
-    assert "PRAXIS_OPTIMIZER" in out
-    assert "not in choices" in out
+    assert next(iter(env)) in out
+    assert message in out
 
 
-def test_env_var_nargs_list_comma(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_DATA_PATH", "/data/a, /data/b")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.data_path == ["/data/a", "/data/b"]
-
-
-def test_env_var_nargs_list_json(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_DATA_PATH", '["/data/a", "/data/b"]')
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.data_path == ["/data/a", "/data/b"]
-
-
-def test_env_var_append_list(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_META", "one,two,three")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.meta == ["one", "two", "three"]
-
-
-def test_cli_explicit_wins_over_env(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, ["--batch-size", "64"])
-    monkeypatch.setenv("PRAXIS_BATCH_SIZE", "32")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided={"batch-size"})
-    assert args.batch_size == 64
-
-
-def test_cli_explicit_underscore_form(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_BATCH_SIZE", "32")
-
-    # Explicit set may be recorded as either form; loader must honour both.
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided={"batch_size"})
-    assert args.batch_size == 1
-
-
-def test_invalid_int_skipped_with_warning(monkeypatch, capsys):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    monkeypatch.setenv("PRAXIS_BATCH_SIZE", "not-an-int")
-
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided=set())
-    assert args.batch_size == 1  # unchanged
-    assert "PRAXIS_BATCH_SIZE" in capsys.readouterr().out
+@pytest.mark.parametrize(
+    "env,argv,explicit,attr,expected",
+    [
+        (
+            {"PRAXIS_BATCH_SIZE": "32"},
+            ["--batch-size", "64"],
+            {"batch-size"},
+            "batch_size",
+            64,
+        ),
+        # The explicit set may record either spelling; both are honoured.
+        ({"PRAXIS_BATCH_SIZE": "32"}, [], {"batch_size"}, "batch_size", 1),
+        ({"PRAXIS_DEBUG": "0"}, ["--debug"], {"debug"}, "debug", True),
+    ],
+    ids=["dashed", "underscored", "store-true"],
+)
+def test_an_explicit_cli_flag_wins_over_the_env(
+    monkeypatch, env, argv, explicit, attr, expected
+):
+    args, _ = _apply(monkeypatch, env, argv, explicit)
+    assert getattr(args, attr) == expected
 
 
 def test_no_env_vars_is_noop(monkeypatch):
-    parser = _build_parser()
-    args = _parse(parser, [])
-    # Make sure no PRAXIS_* leaked in from the shell.
-    for key in list(__import__("os").environ):
+    for key in list(os.environ):
         if key.startswith("PRAXIS_"):
-            monkeypatch.delenv(key, raising=False)
-
-    loader = EnvVarLoader()
-    loader.apply_env_vars(parser, args, explicitly_provided=set())
+            monkeypatch.delenv(key)
+    _, loader = _apply(monkeypatch, {})
     assert loader.applied == {}
 
 
-def test_store_true_false_value(monkeypatch):
-    parser = _build_parser()
-    # Flip default True -> argparse default is False for store_true.
-    args = _parse(parser, ["--debug"])  # CLI-explicit True
-    monkeypatch.setenv("PRAXIS_DEBUG", "0")
-
-    # CLI wins when explicit.
-    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided={"debug"})
-    assert args.debug is True
-
-
 # ------------------------------------------------------------------------------
-# experiment_extends
+# experiment extends
 # ------------------------------------------------------------------------------
-# Tests for the `extends` keyword in experiment YAML loading.
 
 
 def _write(dir_path, name, contents):
@@ -222,19 +181,8 @@ def test_list_extends_merges_left_to_right(tmp_path):
     # `two` beats `one`; child has no `shared`, so `two` wins.
     assert load_rendered_config(child) == {"a": 1, "b": 2, "shared": "two", "c": 3}
 
-
-def test_child_overrides_all_bases(tmp_path):
-    _write(tmp_path, "one", "shared: one\n")
-    _write(tmp_path, "two", "shared: two\n")
-    child = _write(
-        tmp_path,
-        "child",
-        """
-        extends: [one, two]
-        shared: child
-        """,
-    )
-    assert load_rendered_config(child)["shared"] == "child"
+    override = _write(tmp_path, "override", "extends: [one, two]\nshared: child\n")
+    assert load_rendered_config(override)["shared"] == "child"
 
 
 def test_nested_dicts_are_deep_merged(tmp_path):

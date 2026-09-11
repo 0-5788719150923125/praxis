@@ -1,7 +1,10 @@
+"""Tests for praxis/activations/mixture.py: learned and keyed activation mixtures."""
+
 import pytest
 import torch
 
 from praxis.activations import build_activation
+from praxis.activations.mixture import ActivationMixture
 
 
 def test_mixture_blends_the_whole_bank():
@@ -12,8 +15,6 @@ def test_mixture_blends_the_whole_bank():
     averaged the bank would pass the looser check at init - uniform is exactly
     where every mixture starts.
     """
-    from praxis.activations.mixture import ActivationMixture
-
     mixture = ActivationMixture(("linear", "relu", "tanh"), mode="convex")
     x = torch.randn(4, 16)
 
@@ -29,8 +30,6 @@ def test_mixture_modes_hold_their_constraints():
     """conv(F) is non-negative and sums to one; aff(F) sums to one with the
     sign constraint dropped. The affine one is only interesting BECAUSE it can
     go negative, so that has to be reachable rather than merely unenforced."""
-    from praxis.activations.mixture import ActivationMixture
-
     convex = ActivationMixture(("linear", "relu", "tanh"), mode="convex")
     with torch.no_grad():
         convex.logits.copy_(torch.tensor([3.0, -1.0, 0.5]))
@@ -54,8 +53,6 @@ def test_gated_mixture_routes_per_element_and_reports_it():
     a static preference - a lesson carried from the Servant chirp, whose signal
     saturated into a constant and looked healthy on a magnitude metric.
     """
-    from praxis.activations.mixture import ActivationMixture
-
     mixture = ActivationMixture(("linear", "relu", "tanh"), mode="gated")
     mixture.train()
 
@@ -82,8 +79,6 @@ def test_mixture_metrics_are_declared():
     """A metric with no declaration is written to the database and then dropped
     on the floor, so every key `training_metrics` emits needs a chart entry -
     including the per-branch shares, whose names depend on the bank."""
-    from praxis.activations.mixture import ActivationMixture
-
     mixture = ActivationMixture(("serpent", "swish", "linear"), mode="gated")
     mixture.train()
     mixture(torch.randn(2, 8, 16))
@@ -92,37 +87,30 @@ def test_mixture_metrics_are_declared():
 
 
 def test_keyed_mixture_partitions_by_an_external_index():
-    """`keyed` is the discrete arm: the branch is chosen by the caller's index,
-    not by the value and not by a learned parameter.
+    """`mix_split` is the discrete arm: the branch is chosen by the caller's
+    index, normalized into [0, 1), not by the value or a learned parameter.
 
-    The fraction contract is the point - the caller owns the index space and
-    normalizes into [0, 1), so the mixture never has to learn what PEER's bank
-    (or a head axis, or a depth) looks like.
+    With no index it runs values[0], which is what lets `mix_split` be declared
+    model-wide: PEER's expert bank is the only place with an index to partition
+    on, and everywhere else the primary activation runs unchanged.
     """
-    from praxis.activations.mixture import ActivationMixture
-
-    mixture = ActivationMixture(("relu", "tanh"), mode="keyed")
-    assert mixture.wants_keys
-    assert not list(mixture.parameters()), "the partition IS the key; nothing to learn"
+    split = build_activation({"type": "mix_split", "values": ["relu", "tanh"]})
+    assert isinstance(split, ActivationMixture) and split.wants_keys
+    assert not list(split.parameters()), "the partition IS the key; nothing to learn"
 
     x = torch.randn(4, 8)
-    keys = torch.linspace(0, 1, 8).expand(4, 8)
-    out = mixture(x, keys=keys)
+    out = split(x, keys=torch.linspace(0, 1, 8).expand(4, 8))
     # First half of the key range takes relu, second half takes tanh.
     assert torch.allclose(out[:, :4], torch.relu(x[:, :4]), atol=1e-6)
     assert torch.allclose(out[:, 4:], torch.tanh(x[:, 4:]), atol=1e-6)
 
-    # A caller with no index gets values[0] rather than an exception - see
-    # test_mix_split_without_an_index_is_the_first_value.
-    assert torch.allclose(mixture(x), torch.relu(x), atol=1e-6)
+    assert torch.allclose(split(x), torch.relu(x), atol=1e-6)
 
 
 def test_keyed_mixture_reports_realized_occupancy():
     """Segments are equal by construction but the KEYS are not uniformly drawn -
     PEER retrieves experts by score - so what each branch carries is a
     measurement, not a declared ratio."""
-    from praxis.activations.mixture import ActivationMixture
-
     mixture = ActivationMixture(("relu", "tanh"), mode="keyed")
     mixture.train()
     x = torch.randn(4, 8)
@@ -136,28 +124,6 @@ def test_keyed_mixture_reports_realized_occupancy():
 
     mixture(x, keys=torch.linspace(0, 1, 8).expand(4, 8))
     assert mixture.training_metrics()["activation_mix_share_relu"] == pytest.approx(0.5)
-
-
-def test_mix_split_without_an_index_is_the_first_value():
-    """The fallback that lets `mix_split` be declared model-wide.
-
-    PEER's expert bank is the only place with an index to partition on; the
-    encoder, the heads and the controllers have none. Falling back to values[0]
-    is what makes one line mean "split it where there is something to split, and
-    otherwise run the primary activation" - so an arm that adds the split stays
-    ONE change off the arm that does not.
-    """
-    from praxis.activations.mixture import ActivationMixture
-
-    split = build_activation({"type": "mix_split", "values": ["servant", "swish"]})
-    x = torch.randn(4, 16)
-    assert torch.allclose(split(x), split.branches[0](x))
-
-    # With an index it really does partition.
-    keys = torch.cat([torch.zeros(4, 8), torch.full((4, 8), 0.9)], dim=-1)
-    out = split(x, keys=keys)
-    assert torch.allclose(out[:, :8], split.branches[0](x)[:, :8])
-    assert torch.allclose(out[:, 8:], split.branches[1](x)[:, 8:])
 
 
 def test_unused_branches_are_still_materialized():

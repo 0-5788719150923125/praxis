@@ -1,23 +1,11 @@
-"""GNS batch governor: estimator math, tier control, Lightning wiring."""
+"""Tests for praxis/data/batch_schedule.py: the governed cycle plan, the
+multiplier roll under the governor, and the fetcher's one-batch lead."""
 
 import random
-
-import pytest
 
 from praxis.data.batch_schedule import BatchSchedule, plan_cycle
 
 # ── batch schedule: the factorization ────────────────────────────────────
-
-
-def test_batch_size_is_a_ceiling_not_a_floor():
-    """The ask that motivated the rework. With batch_size=64 the governor must
-    still be able to run an 8-row step; the old wiring floored it at 128."""
-    ceiling = 64
-    for rows in (2, 4, 8, 16, 32, 64):
-        plan = plan_cycle(rows, ceiling)
-        assert plan.delivered_rows == rows, rows
-        assert plan.micro_rows <= ceiling
-        assert plan.accum >= 2
 
 
 def test_microbatch_fills_the_ceiling_at_large_batches():
@@ -31,13 +19,17 @@ def test_microbatch_fills_the_ceiling_at_large_batches():
 
 
 def test_plan_is_exact_and_respects_the_estimator_minimum():
-    for rows in (2, 8, 64, 128, 512):
+    """batch_size is a ceiling, not a floor: any row count at or under it is
+    delivered exactly, with at least two microbatches for the estimator."""
+    for rows in (2, 4, 8, 16, 32, 64, 128, 512):
         for ceiling in (1, 8, 16, 64, 256):
             plan = plan_cycle(rows, ceiling)
             assert plan.micro_rows >= 1
             assert plan.micro_rows <= max(1, ceiling)
             assert plan.accum >= 2  # two points for the estimator, always
             assert plan.micro_rows * plan.accum == plan.delivered_rows
+            if rows <= ceiling:
+                assert plan.delivered_rows == rows
 
 
 def test_accum_ignores_the_sequence_multiplier():
@@ -252,5 +244,4 @@ def test_retarget_keeps_production_in_phase_with_the_trainer():
             accum, ready = BatchSchedule.accum(), 0
     # Exactly one step straddles: the one holding the microbatch the fetcher
     # had already built when the commit landed. That batch cannot be unbuilt.
-    # Before the carry it was every step from the commit onward.
     assert straddled == [3]

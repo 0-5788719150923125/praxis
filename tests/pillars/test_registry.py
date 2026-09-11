@@ -1,49 +1,34 @@
+"""Sweeps over the pillars registries: every projection field renders, and
+every paper thread is well formed."""
+
 import pytest
 
 from praxis import registry
 from praxis.pillars.projections import render_card
-
-# ------------------------------------------------------------------------------
-# cards
-# ------------------------------------------------------------------------------
+from praxis.registry import Namespace
 
 
-AUTHORS = ["Ryan J. Brooks"]
-DONATE = "https://example.com/donate"
+@pytest.mark.parametrize("name", list(registry.namespace("projections")))
+def test_every_projection_renders(name, monkeypatch):
+    """A card picks its field at random, so pin the namespace to this one."""
+    field = registry.lookup("projections", name)
+    monkeypatch.setitem(
+        registry._NAMESPACES, "projections", Namespace("projections", {name: field})
+    )
+    for side in ("front", "back"):
+        out = render_card(side, 7, "dark", 200, ["Ryan J. Brooks"], "", "abc")
+        assert out.startswith(b"<?xml")
 
 
-def test_every_field_renders():
-    import praxis.pillars.projections as P
-
-    full = dict(registry.namespace("projections"))
-    try:
-        for name, fn in full.items():
-            registry.namespace("projections").clear()
-            registry.namespace("projections")[name] = fn
-            for side in ("front", "back"):
-                out = render_card(side, 7, "dark", 200, AUTHORS, DONATE, "abc")
-                assert out.startswith(b"<?xml"), name
-    finally:
-        registry.namespace("projections").clear()
-        registry.namespace("projections").update(full)
+def test_the_named_threads_are_discovered():
+    assert {"blind_watchmaking", "good_get_gooder"} <= set(registry.namespace("threads"))
 
 
-# ------------------------------------------------------------------------------
-# thread
-# ------------------------------------------------------------------------------
-# Paper threads: yaml-document layouts behind --title.
-
-
-def test_registry_discovered_from_yaml_documents():
-    assert "blind_watchmaking" in registry.namespace("threads")
-    assert "good_get_gooder" in registry.namespace("threads")
-    for thread in registry.namespace("threads").values():
-        assert thread.title and thread.pillars
-
-
-def test_pillars_reference_real_steps():
+@pytest.mark.parametrize("key", list(registry.namespace("threads")))
+def test_every_thread_is_well_formed(key):
     from praxis.pillars.build import STEPS
 
-    for thread in registry.namespace("threads").values():
-        unknown = set(thread.pillars) - set(STEPS)
-        assert not unknown, f"{thread.key} names unknown steps: {unknown}"
+    thread = registry.lookup("threads", key)
+    assert thread.title and thread.pillars
+    unknown = set(thread.pillars) - set(STEPS)
+    assert not unknown, f"{key} names unknown steps: {unknown}"

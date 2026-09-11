@@ -1,88 +1,85 @@
+"""Sweeps over the ``heads`` registry: what each profile builds, and the blueprint
+contract every head class honours."""
+
+import importlib
+import inspect
+import pkgutil
+
 import pytest
 
+import praxis.heads as heads_pkg
 from praxis import registry
-from praxis.heads import ParallelHead
+from praxis.heads.base import BaseHead
 from praxis.heads.harmonic import HarmonicHead
-
-# ------------------------------------------------------------------------------
-# harmonic_modulation
-# ------------------------------------------------------------------------------
-# Amplitude modulation envelope on the harmonic field (off|static|learned).
+from praxis.heads.parallel import ParallelHead
+from praxis.heads.stacked import SequentialHead
+from tests.stubs import Cfg, Enc
 
 
-def test_head_type_keys_compose_sequential_heads():
-    # The single-field harmonic+crystal keys are functools.partial over
-    # SequentialHead, composing [HarmonicHead(mode, transform-only), CrystalHead]
-    # dynamically - no bespoke subclass. The mode lives in the harmonic builder's
-    # keywords.
-    import functools
-
-    from praxis.heads import CrystalHead, HarmonicHead
-    from praxis.heads.stacked import SequentialHead
-
-    for key, mode in [
-        ("crystal_harmonic", "off"),
-        ("crystal_harmonic_static", "static"),
-    ]:
-        entry = registry.lookup("heads", key)
-        assert isinstance(entry, functools.partial)
-        assert entry.func is SequentialHead
-        harmonic_spec, crystal_spec = entry.keywords["heads"]
-        assert crystal_spec is CrystalHead
-        assert harmonic_spec.func is HarmonicHead
-        assert harmonic_spec.keywords["amp_modulation"] == mode
-        assert harmonic_spec.keywords["build_classifier"] is False
+def _describe(head):
+    """What a built head is made of. A harmonic field reads as its envelope
+    mode plus ``+fast`` (fast-weight overlay) and ``+linear`` (its own readout);
+    a SequentialHead as the list of its stages; a ParallelHead as
+    ``(stem, arms)``; any other head as its class name."""
+    if isinstance(head, HarmonicHead):
+        field = head.field
+        return (
+            field.amp_modulation
+            + ("+fast" if field.fast_weights else "")
+            + ("+linear" if head.lm_head is not None else "")
+        )
+    if isinstance(head, SequentialHead):
+        return [_describe(h) for h in head.heads]
+    if isinstance(head, ParallelHead):
+        stem = _describe(head.stem) if head.stem is not None else None
+        return (stem, [_describe(b) for b in head.branches])
+    return type(head).__name__
 
 
-def test_prismatic_is_top_level_parallel_split():
-    # prismatic is a top-level Parallel of two arms balancing bias vs variance:
-    #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
-    import functools
-
-    from praxis.heads import CrystalHead, HarmonicHead, ParallelHead
-    from praxis.heads.stacked import SequentialHead
-
-    entry = registry.lookup("heads", "prismatic")
-    assert isinstance(entry, functools.partial) and entry.func is ParallelHead
-    arm0, arm1 = entry.keywords["branches"]
-    assert arm0.func is SequentialHead and arm1.func is SequentialHead
-
-    # arm 0 (bias): a single harmonic field with its own linear readout.
-    (field0,) = arm0.keywords["heads"]
-    assert field0.func is HarmonicHead
-    assert field0.keywords["amp_modulation"] == "learned"
-    assert field0.keywords["build_classifier"] is True
-
-    # arm 1 (variance): a transform-only field feeding the crystal classifier.
-    field1, crystal = arm1.keywords["heads"]
-    assert field1.func is HarmonicHead
-    assert field1.keywords["build_classifier"] is False
-    assert crystal is CrystalHead
+_PRISMATIC3_ARMS = [
+    ["learned+fast+linear"],
+    ["input+fast", "CrystalHead"],
+    ["pure+fast+linear"],
+]
+_PRISMATIC4_ARMS = [
+    ["learned+fast+linear"],
+    ["input+fast", "CrystalVearHead"],
+    ["pure+fast+linear"],
+]
+_STEM = "input+fast"
 
 
-# ------------------------------------------------------------------------------
-# parallel_head
-# ------------------------------------------------------------------------------
-# ParallelHead: gated parallel branches + namespaced per-branch dashboards.
-
-
-# ── the blueprint repr ─────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("crystal_harmonic", ["off", "CrystalHead"]),
+        ("crystal_harmonic_static", ["static", "CrystalHead"]),
+        # Bias arm (learned field, linear readout) vs variance arm (input field
+        # into the crystal).
+        ("prismatic", (None, [["learned+linear"], ["input", "CrystalHead"]])),
+        ("prismatic3", (None, _PRISMATIC3_ARMS)),
+        ("prismatic3_repel", (None, _PRISMATIC3_ARMS)),
+        ("prismatic4", (None, _PRISMATIC4_ARMS)),
+        ("prismatic5", (None, _PRISMATIC4_ARMS + ["HaloHead"])),
+        # prismatic6 onward: one shared stem, arms that differ only in how they
+        # read it. Each successor changes the geometric arm alone, so a delta
+        # between neighbours attributes to that arm.
+        ("prismatic6", (_STEM, ["CrystalVearHead", "ForwardHead", "HaloHead"])),
+        ("prismatic6_vear", (_STEM, ["CrystalVearHead", "ForwardHead", "HaloHead"])),
+        ("prismatic7", (_STEM, ["CrystalSmearHead", "ForwardHead", "HaloHead"])),
+        ("prismatic8", (_STEM, ["CrystalHead", "ForwardHead", "HaloHead"])),
+        ("prismatic9", (_STEM, ["CrystalHead", "ForwardHead", "HaloHead"])),
+    ],
+)
+def test_profile_wiring(name, expected):
+    head = registry.lookup("heads", name)(Cfg(), encoder=Enc())
+    assert _describe(head) == expected
 
 
 def test_every_leaf_head_names_its_readout():
     """`compose_repr` is what the blueprint tab renders, and the base default
-    falls back to the CLASS name. Two leaves never overrode it, so prismatic6-9
-    rendered as `[CrystalClassifier, ForwardHead, HaloClassifier]` - one arm
-    naming its class where the others name their function, which reads like a
-    passthrough or a leftover default instead of the linear readout that is the
-    deliberate control arm."""
-    import importlib
-    import inspect
-    import pkgutil
-
-    import praxis.heads as heads_pkg
-    from praxis.heads.base import BaseHead
-
+    falls back to the CLASS name - which reads like a passthrough or a leftover
+    default next to arms that name their function."""
     seen = set()
     for info in pkgutil.iter_modules(heads_pkg.__path__):
         m = importlib.import_module(f"praxis.heads.{info.name}")

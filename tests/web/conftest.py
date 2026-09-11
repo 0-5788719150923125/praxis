@@ -8,7 +8,6 @@ Flask app around that route's blueprint instead.
 
 import socket
 import sys
-from unittest.mock import Mock
 
 import pytest
 
@@ -19,7 +18,7 @@ class MockGenerator:
     """Answers every request at once with a numbered reply."""
 
     def __init__(self):
-        self.model = Mock()
+        self.model = None
         self.request_counter = 0
         self.last_deadline = None
 

@@ -22,7 +22,7 @@ from praxis import PraxisConfig, PraxisForCausalLM
 from praxis.generation.decoding import first_halt
 from praxis.memory.neural_memory import NeuralMemory
 from praxis.tokenizers import create_tokenizer
-from praxis.trainers.mono_forward import MonoForwardTrainer
+from praxis.trainers.mono_forward import MonoForwardTrainer  # noqa: F401 (re-exported)
 
 # ------------------------------------------------------------------------------
 # models and configs
@@ -48,6 +48,13 @@ def build_memory_model(**overrides):
         **overrides,
     )
     return PraxisForCausalLM(cfg).eval()
+
+
+def materialize(cls, x, **kwargs):
+    """``cls(**kwargs)`` after one forward on ``x``, which sizes lazy parameters."""
+    module = cls(**kwargs)
+    module(x)
+    return module
 
 
 def neural_memories(model):

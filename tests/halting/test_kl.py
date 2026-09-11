@@ -10,62 +10,40 @@ What is pinned here is the SHAPE, not the sampler's internals - the ramp toward
 multiple steps, and how fast the tail dies as the depth budget grows.
 """
 
-import collections
-import functools
 import math
 from types import SimpleNamespace
 
 import pytest
-import torch
 
-from praxis import registry
 from praxis.halting.kl import LOOP_PRIORS, KLDivergenceHalting
 
-SAMPLES = 20_000
 
-
-def _halting(key, depth, num_layers=1):
-    return registry.lookup("halting", key)(
-        SimpleNamespace(depth=depth, num_layers=num_layers, hidden_size=16)
-    )
-
-
-@functools.lru_cache(maxsize=None)
-def _pmf(key, depth, seed=0):
-    """Monte-Carlo the real sampler. Deliberately not an analytic reimplementation
-    - the point is to measure what training will actually see. Cached because the
-    sampler builds two distribution objects per draw and several tests read the
-    same curve."""
-    torch.manual_seed(seed)
-    module = _halting(key, depth)
-    counts = collections.Counter(module._sample_loop_count() for _ in range(SAMPLES))
-    return tuple(counts[r] / SAMPLES for r in range(1, module.max_loops + 1))
-
-
-def test_the_linear_prior_is_untouched():
-    """Adding a prior must not move `kl`, or every arm on it changes shape."""
-    assert _halting("kl", 6).r_bar == pytest.approx(2.5)
-    assert _halting("kl", 18).r_bar == pytest.approx(8.5)
+def test_linear_prior_is_the_papers_half_budget(halting):
+    """`kl` keeps the paper's r_bar = (L - 1) / 2, or every arm on it changes shape."""
+    assert halting("kl", 6).r_bar == pytest.approx(2.5)
+    assert halting("kl", 18).r_bar == pytest.approx(8.5)
 
 
 @pytest.mark.parametrize("max_loops", [4, 6, 12, 18, 32])
-def test_the_log_prior_tracks_the_logarithm_of_the_budget(max_loops):
+def test_the_log_prior_tracks_the_logarithm_of_the_budget(halting, max_loops):
     """Derived from the depth budget, not swept. Doubling the budget adds a
     constant to the expected loop count instead of doubling it, which is the
     whole difference between the two curves."""
-    assert _halting("kl_log", max_loops).r_bar == pytest.approx(
+    assert halting("kl_log", max_loops).r_bar == pytest.approx(
         max(1.0, math.log(max_loops))
     )
-    doubled = _halting("kl_log", 2 * max_loops).r_bar
+    doubled = halting("kl_log", 2 * max_loops).r_bar
     assert doubled - math.log(max_loops) == pytest.approx(math.log(2), abs=1e-6)
 
 
-def test_the_log_prior_puts_its_mass_on_the_first_few_loops():
+def test_the_log_prior_puts_its_mass_on_the_first_few_loops(pmf):
     """At a budget of 18 the linear rule slides its whole curve right - mode 7,
     and better than a third of forwards running 10+ loops, which is close to
     uniform over the range. The log rule keeps the mode where a 6-deep model had
-    it and spends the extra budget on a thin tail instead."""
-    linear, log = _pmf("kl", 18), _pmf("kl_log", 18)
+    it and spends the extra budget on a thin tail, where full depth is rare
+    rather than routine (a ratio, since the absolute count at 20k samples is
+    noisy)."""
+    linear, log = pmf("kl", 18), pmf("kl_log", 18)
 
     assert linear.index(max(linear)) + 1 >= 6
     assert log.index(max(log)) + 1 <= 3
@@ -73,19 +51,13 @@ def test_the_log_prior_puts_its_mass_on_the_first_few_loops():
     assert sum(linear[9:]) > 0.25
     assert sum(log[9:]) < 0.05
 
-
-def test_full_depth_is_rare_rather_than_routine():
-    """ "Essentially unreachable" is the requirement, and 1.6% of forwards is not
-    that. Measured as a ratio because the absolute count at 20k samples is small
-    enough to be noisy."""
-    linear, log = _pmf("kl", 18), _pmf("kl_log", 18)
     assert log[-1] < linear[-1] / 20
 
 
-def test_the_descent_is_monotone_past_the_mode():
+def test_the_descent_is_monotone_past_the_mode(pmf):
     """A deeper descent, not a bumpy one: once past the peak every further loop is
     strictly less likely than the one before it."""
-    p = _pmf("kl_log", 18)
+    p = pmf("kl_log", 18)
     peak = p.index(max(p))
     tail = p[peak:]
     assert all(b <= a for a, b in zip(tail, tail[1:]))

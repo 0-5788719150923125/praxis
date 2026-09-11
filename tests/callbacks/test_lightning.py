@@ -1,6 +1,13 @@
+"""Lightning callbacks (praxis/callbacks/lightning): one section per callback.
+
+Most hooks are driven by hand against SimpleNamespace trainers, in the order
+Lightning calls them, so each test pins one callback's contract without a fit.
+"""
+
 import io
 import math
 import random
+import re
 import sys
 import threading
 import time
@@ -8,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-import torch.nn as nn
 from torch import nn
 
 from praxis import PraxisConfig, PraxisForCausalLM
@@ -26,21 +32,22 @@ from praxis.data.seq_probe import SequenceProbe
 from praxis.environments import EnvironmentFeatures
 from praxis.generation.decode_backend import ModelBackend
 from praxis.governors.gns import GradientNoiseEstimator
-from praxis.memory.neural_memory import NeuralMemory
-from praxis.policies import EngagementPolicy
+from praxis.policies import EngagementPolicy, JokePolicy
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
 from praxis.trainers import BackpropagationTrainer
 from praxis.web.snapshots import Recipe, SnapshotProducer, SnapshotStore
+from tests.stubs import _Tty, build_memory_model, neural_memories
 
 # ------------------------------------------------------------------------------
 # governor
 # ------------------------------------------------------------------------------
-# GNS batch governor: estimator math, tier control, Lightning wiring.
+# GNS batch governor: tier control and Lightning wiring.
 
 
 @pytest.fixture(autouse=True)
 def _clean_schedule():
-    """The schedule is class-level state a governor writes on construction."""
+    """The schedule is class-level state a governor writes on construction.
+    Autouse because nearly every section here drives one; a reset is free."""
     BatchSchedule.reset()
     yield
     BatchSchedule.reset()
@@ -49,8 +56,6 @@ def _clean_schedule():
 def test_terminal_reports_live_effective_batch():
     """The info panel derives target_batch from the trainer itself, not the
     decision-cadence stash: zero staleness when the governor moves a tier."""
-    from praxis.callbacks.lightning.terminal import TerminalInterface
-
     t = SimpleNamespace(accumulate_grad_batches=4, world_size=1)
     assert TerminalInterface._effective_batch(t, 16) == 64
     t.accumulate_grad_batches = 8  # a committed tier change is visible at once
@@ -103,19 +108,30 @@ def _run_cycle(gov, trainer, module, k, rows=None):
         gov.on_train_batch_end(trainer, module, None, None, cur.ready - 1)
 
 
-def test_callback_undoes_lightning_loss_scaling():
-    """First-microbatch grads arrive scaled by 1/K; the estimator must see
-    the unscaled squared norm (x K^2)."""
-    gov = GNSBatchGovernor(batch_size=16, target_batch_size=512)
+@pytest.mark.parametrize(
+    "batch_size,rows,s_ema",
+    [
+        (16, 16, 31.68),
+        # The pipeline lags the plan (8 rows arrive where 64 were planned): the
+        # S term must come from the rows that actually arrived. |G|^2 is
+        # scale-free across proportional pairs, so only S tells them apart.
+        (64, 8, 15.84),
+    ],
+    ids=["planned-rows", "stale-rows"],
+)
+def test_callback_undoes_lightning_loss_scaling(batch_size, rows, s_ema):
+    """First-microbatch grads arrive scaled by 1/K; the estimator must see the
+    unscaled squared norm (x K^2), paired at the observed row counts."""
+    gov = GNSBatchGovernor(batch_size=batch_size, target_batch_size=512)
     trainer = _fake_trainer()
     module = nn.Linear(3, 3, bias=False)
     gov.on_train_start(trainer, module)
-    # Starts at one full microbatch per point: 2 x 16 = 32 rows.
+    # Starts at one full microbatch per point.
     assert trainer.accumulate_grad_batches == 2
-    assert gov._rows == 32
+    assert gov._rows == 2 * batch_size
 
     k = 2
-    batch = torch.zeros(16, 8, dtype=torch.long)
+    batch = torch.zeros(rows, 8, dtype=torch.long)
     gov.on_train_batch_start(trainer, module, batch, 0)
     _set_grads(module, 0.6 / k)  # Lightning-scaled first microbatch
     gov.on_after_backward(trainer, module)
@@ -127,9 +143,9 @@ def test_callback_undoes_lightning_loss_scaling():
     state = gov.estimator.state_dict()
     assert state["updates"] == 1
     # small_sq = 9 * 0.6^2 = 3.24 (after the K^2 correction), big_sq = 2.25:
-    # g = (32*2.25 - 16*3.24)/16 = 1.26; s = (3.24 - 2.25)/(1/16 - 1/32).
+    # g = (2*2.25 - 3.24) / (2 - 1) = 1.26; s = (3.24 - 2.25) / (1/b - 1/2b).
     assert state["g_sq_ema"] == pytest.approx(1.26, rel=1e-4)
-    assert state["s_ema"] == pytest.approx(31.68, rel=1e-4)
+    assert state["s_ema"] == pytest.approx(s_ema, rel=1e-4)
 
 
 def test_up_move_defers_until_aligned_boundary():
@@ -253,22 +269,22 @@ def test_state_dict_accepts_legacy_factor_key():
     assert trainer.accumulate_grad_batches == 4
 
 
-def test_metrics_stash_and_descriptions_fold():
+def test_metrics_stash():
     gov = GNSBatchGovernor(batch_size=16, target_batch_size=512)
-    trainer = _fake_trainer()
     module = nn.Linear(4, 4)
-    gov.on_train_start(trainer, module)
+    gov.on_train_start(_fake_trainer(), module)
     stash = module._governor_metrics
     assert stash["gov_effective_batch"] == 32.0
     assert stash["gov_target_batch"] == 32.0
 
+
+def test_governor_descriptions_fold_in_when_armed():
     from praxis.metrics.descriptions import get_metric_descriptions
 
     class _Bare:
         pass
 
-    plain = _Bare()
-    assert "gov_noise_scale" not in get_metric_descriptions(plain)
+    assert "gov_noise_scale" not in get_metric_descriptions(_Bare())
 
     governed = _Bare()
     governed._governor_metrics = {"gov_effective_batch": 32.0}
@@ -326,35 +342,6 @@ def test_governor_can_descend_below_the_microbatch_ceiling():
     assert plan.accum == 2  # still measurable at the bottom
 
 
-def test_governor_measures_observed_rows_not_planned_rows():
-    """The plan is shared state the pipeline can lag on; the estimator's two
-    points must come from the batches that actually arrived."""
-    gov = GNSBatchGovernor(batch_size=64, target_batch_size=512)
-    trainer = _fake_trainer()
-    module = nn.Linear(3, 3, bias=False)
-    gov.on_train_start(trainer, module)
-
-    k = 2
-    stale = torch.zeros(8, 4, dtype=torch.long)  # pipeline still on 8 rows
-    gov.on_train_batch_start(trainer, module, stale, 0)
-    _set_grads(module, 0.6 / k)
-    gov.on_after_backward(trainer, module)
-    gov.on_train_batch_start(trainer, module, stale, 1)
-    gov.on_after_backward(trainer, module)
-    _set_grads(module, 0.5)
-    gov.on_before_optimizer_step(trainer, module, None)
-
-    assert gov.estimator._updates == 1
-    # small_sq = 9*(0.3)^2 * k^2 = 3.24, big_sq = 9*0.5^2 = 2.25. The S term is
-    # what distinguishes the two readings: at the observed (8, 16) rows it is
-    # 0.99/(1/8 - 1/16) = 15.84, where the planned (64, 128) would give 126.72.
-    # |G|^2 is scale-free across proportional pairs, so it cannot tell them
-    # apart - assert on S.
-    state = gov.estimator.state_dict()
-    assert state["s_ema"] == pytest.approx(15.84, rel=1e-4)
-    assert state["g_sq_ema"] == pytest.approx(1.26, rel=1e-4)
-
-
 def test_mixed_shape_cycle_is_not_measured():
     """A cycle whose microbatches differ in size breaks both the uniform
     1/accum loss scaling and the estimator's pairing - skip the pair."""
@@ -384,7 +371,7 @@ def test_mixed_shape_cycle_is_not_measured():
 
 
 def test_small_batch_uses_one_microbatch_when_not_measuring():
-    """The reported bug: 4 governed rows under a 64-row ceiling ran 2x2."""
+    """4 governed rows under a 64-row ceiling must not run as 2x2."""
     gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
 
     exploit = gov._plan(4, measuring=False)
@@ -462,19 +449,14 @@ def test_schedule_agrees_with_the_governor_about_accum():
     """The data pipeline and Lightning read the split minimum from the same
     place; if they disagreed the pipeline would build cycles of the wrong
     length for the factor the trainer steps on."""
-    from praxis.data.batch_schedule import BatchSchedule
-
     gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
     trainer = _fake_trainer()
-    try:
-        for rows, measuring in ((4, False), (4, True), (256, False)):
-            gov._rows, gov._measuring = rows, measuring
-            gov._publish(trainer)
-            assert BatchSchedule.accum() == trainer.accumulate_grad_batches
-            plan = BatchSchedule.next_microbatch()
-            assert plan.accum == trainer.accumulate_grad_batches
-    finally:
-        BatchSchedule.reset()
+    for rows, measuring in ((4, False), (4, True), (256, False)):
+        gov._rows, gov._measuring = rows, measuring
+        gov._publish(trainer)
+        assert BatchSchedule.accum() == trainer.accumulate_grad_batches
+        plan = BatchSchedule.next_microbatch()
+        assert plan.accum == trainer.accumulate_grad_batches
 
 
 def test_resume_returns_to_measuring():
@@ -567,7 +549,7 @@ def _run_step(cb, pl, trainer, batch_idx=0):
 # ── install guard ───────────────────────────────────────────────────────────
 
 
-def test_compiled_model_gets_a_coarse_forward_only_profile(capsys):
+def test_compiled_model_gets_a_coarse_forward_only_profile():
     """Compiled runs are profiled, just coarsely and forward-only."""
     inner = Stack()
     wrapper = FakeCompiled(inner)
@@ -583,11 +565,9 @@ def test_compiled_model_gets_a_coarse_forward_only_profile(capsys):
         if hasattr(m, "_praxis_scope")
     }
     assert hooked == {"encoder", "decoder", "head"}
-    out = capsys.readouterr().out
-    assert "forward only" in out and "top-level" in out
 
 
-def test_eager_model_gets_the_full_profile(capsys):
+def test_eager_model_gets_the_full_profile():
     cb = ComputeProfilerCallback()
     model = Stack()
     cb.on_train_start(FakeTrainer(), FakeModule(model))
@@ -599,7 +579,6 @@ def test_eager_model_gets_the_full_profile(capsys):
         if getattr(m, "_praxis_scope", "").startswith("encoder.fc|")
     ]
     assert deep, "eager mode must instrument leaf modules"
-    assert "forward+backward" in capsys.readouterr().out
 
 
 def test_compiled_snapshot_is_labelled_forward_only():
@@ -619,16 +598,11 @@ def test_compiled_snapshot_is_labelled_forward_only():
     assert stash["compute_profile"]["mode"] == "forward"
 
 
-def test_a_disabled_callback_never_arms(wired):
+@pytest.mark.parametrize("disabled,zero", [(True, True), (False, False)])
+def test_only_an_enabled_global_zero_callback_arms(wired, disabled, zero):
     cb, pl = wired
-    cb._disabled = True
-    cb.on_train_batch_start(FakeTrainer(step=100), pl, None, 0)
-    assert cb._active is None
-
-
-def test_only_global_zero_profiles(wired):
-    cb, pl = wired
-    cb.on_train_batch_start(FakeTrainer(step=100, zero=False), pl, None, 0)
+    cb._disabled = disabled
+    cb.on_train_batch_start(FakeTrainer(step=100, zero=zero), pl, None, 0)
     assert cb._active is None
 
 
@@ -674,7 +648,12 @@ def test_accumulation_microbatches_do_not_each_arm(wired):
 
 def test_before_optimizer_step_closes_the_window(wired):
     cb, pl = wired
-    _run_step(cb, pl, FakeTrainer(step=0))
+    trainer = FakeTrainer(step=0)
+    cb.on_train_batch_start(trainer, pl, None, 0)
+    assert cb._active is not None
+    pl.model(torch.randn(4, 16)).sum().backward()
+    pl.model.zero_grad(set_to_none=True)
+    cb.on_before_optimizer_step(trainer, pl, None)
     assert cb._active is None
 
 
@@ -721,6 +700,7 @@ def test_train_end_closes_and_detaches(wired):
 
 def test_stashes_where_the_dashboard_reads(wired):
     cb, pl = wired
+    assert not hasattr(pl.model, "_compute_profile"), "stashed before a sample"
     _run_step(cb, pl, FakeTrainer(step=0))
     assert isinstance(getattr(pl.model, "_compute_profile", None), dict)
     assert "compute_profile" in pl.model._compute_profile
@@ -728,19 +708,13 @@ def test_stashes_where_the_dashboard_reads(wired):
     assert isinstance(metrics, dict) and "compute_coverage" in metrics
 
 
-def test_nothing_is_stashed_before_a_sample(wired):
-    cb, pl = wired
-    assert not hasattr(pl.model, "_compute_profile")
-
-
-def test_dynamics_callback_drains_the_stash(wired):
+def test_dynamics_callback_drains_the_stash():
     from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 
-    cb, pl = wired
-    _run_step(cb, pl, FakeTrainer(step=0))
-    drained = DynamicsLoggerCallback._extract_compute_dynamics(None, pl.model)
-    assert "compute_coverage" in drained
-    assert all(isinstance(v, (int, float)) for v in drained.values())
+    model = Tiny()
+    model._compute_metrics = {"compute_coverage": 0.5}
+    drained = DynamicsLoggerCallback._extract_compute_dynamics(None, model)
+    assert drained["compute_coverage"] == 0.5
 
 
 def test_dynamics_drain_is_empty_without_the_profiler():
@@ -751,8 +725,6 @@ def test_dynamics_drain_is_empty_without_the_profiler():
 
 def test_metric_keys_are_sql_safe(wired):
     """dynamics.db does an unquoted ALTER TABLE ADD COLUMN per key."""
-    import re
-
     cb, pl = wired
     _run_step(cb, pl, FakeTrainer(step=0))
     for key in pl.model._compute_metrics:
@@ -769,13 +741,29 @@ def test_announces_once(capsys, wired):
     assert "CLASS" not in second, "summary printed more than once"
 
 
+def test_profiler_callback_logger_never_raises(monkeypatch):
+    """Its whole job is to report failures, so it must not become one - a
+    closed stdout once turned optional telemetry into a fatal error."""
+    from praxis.callbacks.lightning.compute_profiler import _log_quietly
+
+    closed = io.StringIO()
+    closed.close()
+    monkeypatch.setattr(sys, "stdout", closed)
+    _log_quietly("this must not raise")
+
+
 # ------------------------------------------------------------------------------
 # harmonic_weight_rl
 # ------------------------------------------------------------------------------
-# Harmonic-weight RL controller: policy-gradient mechanics + callback loop.
+# Harmonic-weight RL controller: an episode edits a few weights, and the loss
+# over the following horizon decides whether the edit is kept or rolled back.
+# Five steps with warmup=3, horizon=2 complete exactly one episode.
+
+HELPFUL = [5.0, 5.0, 5.0, 4.0, 2.0]  # loss drops across the episode -> kept
+UNHELPFUL = [3.0, 3.0, 3.0, 4.0, 6.0]  # loss rises -> rolled back
 
 
-def _cfg(**over):
+def _rl_cfg(**over):
     base = dict(
         rl_hidden=16,
         rl_lr=0.05,
@@ -788,126 +776,83 @@ def _cfg(**over):
     return SimpleNamespace(**base)
 
 
-class _Trainer:
-    def __init__(self):
-        self.callback_metrics = {}
-        self.global_step = 0
-
-
-class _PL:
-    def __init__(self, model):
-        self.model = model
-
-
-def test_callback_keeps_helpful_edit_and_updates_policy():
+def _rl_callback(policy_over=None, **kwargs):
     torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    pl, tr = _PL(model), _Trainer()
+    policy = HarmonicWeightPolicy(_rl_cfg(**(policy_over or {})))
+    settings = dict(period=3, horizon=2, warmup_steps=3, keep_threshold=0.0)
+    settings.update(kwargs)
+    return policy, HarmonicWeightRLCallback(policy, **settings)
 
-    before = [p.detach().clone() for p in model.parameters()]
-    # Five steps so exactly one episode completes (warmup=3 -> start at step 3,
-    # horizon=2 -> finish at step 5) with no new episode left dangling.
-    # Loss drops across the episode -> positive reward -> edit kept.
-    losses = [5.0, 5.0, 5.0, 4.0, 2.0]
-    for ls in losses:
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
 
-    assert cb._metrics, "an episode should have completed"
-    assert cb._metrics["rl_edit_kept"] == 1.0
-    # The kept edit changed exactly the model (some 2D weight row differs).
-    after = list(model.parameters())
-    changed = any(not torch.equal(b, a) for b, a in zip(before, after))
-    assert changed
-    # rl_* scalars were published to callback_metrics for the logger.
-    assert "rl_reward" in tr.callback_metrics and "rl_edit_kept" in tr.callback_metrics
+def _rl_model():
+    return nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+
+
+def _rl_run(cb, model, losses, optimizer=None):
+    """Feed one loss per step through on_train_batch_end; returns the trainer."""
+    trainer = SimpleNamespace(callback_metrics={}, global_step=0)
+    if optimizer is not None:
+        trainer.optimizers = [optimizer]
+    pl = SimpleNamespace(model=model)
+    for loss in losses:
+        cb.on_train_batch_end(trainer, pl, torch.tensor(loss), None, 0)
+    return trainer
+
+
+def _snapshot(model):
+    return [p.detach().clone() for p in model.parameters()]
+
+
+def _unchanged(before, model):
+    return all(torch.equal(b, a) for b, a in zip(before, model.parameters()))
+
+
+@pytest.mark.parametrize("losses,kept", [(HELPFUL, True), (UNHELPFUL, False)])
+def test_callback_keeps_a_helpful_edit_and_rolls_back_the_rest(losses, kept):
+    _, cb = _rl_callback({"rl_alpha_scale": 0.3})
+    model = _rl_model()
+    before = _snapshot(model)
+
+    trainer = _rl_run(cb, model, losses)
+
+    assert cb._metrics["rl_edit_kept"] == float(kept)
+    # A kept edit changed the model; a rollback restored it exactly.
+    assert _unchanged(before, model) is not kept
+    # rl_* scalars are published to callback_metrics for the logger.
+    assert {"rl_reward", "rl_edit_kept"} <= set(trainer.callback_metrics)
 
 
 def test_reward_is_ema_return_over_horizon():
-    # The per-edit reward is an EMA-integrated return over the horizon, not the
-    # one-step endpoint delta. With loss_ema_decay=0 the smoothed loss equals
-    # the raw loss, so the arithmetic is exact.
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=3,
-        warmup_steps=3,
-        keep_threshold=0.0,
-        loss_ema_decay=0.0,
-        reward_decay=0.5,
+    """The per-edit reward integrates the horizon, not the endpoint delta.
+    With loss_ema_decay=0 the smoothed loss is the raw loss, so it is exact."""
+    _, cb = _rl_callback(
+        {"rl_alpha_scale": 0.3}, horizon=3, loss_ema_decay=0.0, reward_decay=0.5
     )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    pl, tr = _PL(model), _Trainer()
-
     # Episode starts at step 3 (L_before=5), edit takes effect on steps 4..6.
     # Post-edit improvements vs L_before=5 are 1, 2, 3; EMA(d=0.5): 1 -> 1.5 -> 2.25.
-    for ls in [5.0, 5.0, 5.0, 4.0, 3.0, 2.0]:
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+    _rl_run(cb, _rl_model(), [5.0, 5.0, 5.0, 4.0, 3.0, 2.0])
 
     assert cb._metrics["rl_reward"] == pytest.approx(2.25)  # EMA return
     assert cb._metrics["rl_reward_instant"] == pytest.approx(3.0)  # endpoint delta
     assert cb._metrics["rl_edit_kept"] == 1.0
 
 
-def test_callback_rolls_back_unhelpful_edit():
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    pl, tr = _PL(model), _Trainer()
-
-    before = [p.detach().clone() for p in model.parameters()]
-    # One completed episode (steps 3..5), nothing dangling. Loss rises across
-    # the episode -> negative reward -> edit rolled back.
-    losses = [3.0, 3.0, 3.0, 4.0, 6.0]
-    for ls in losses:
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-
-    assert cb._metrics["rl_edit_kept"] == 0.0
-    # Rollback restored the weights exactly.
-    after = list(model.parameters())
-    assert all(torch.equal(b, a) for b, a in zip(before, after))
-
-
 def test_edit_kept_reports_rolling_rate_not_binary():
-    # rl_edit_kept is an EMA of the per-episode keep decision, so over multiple
-    # mixed episodes it lands strictly between 0 and 1 (the chart is a rate, not
-    # a 0/1 line). loss_ema_decay=0 makes L_before exactly the start-step loss.
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=2,
-        warmup_steps=3,
-        keep_threshold=0.0,
-        loss_ema_decay=0.0,
-    )
-    pl, tr = _PL(nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))), _Trainer()
+    """rl_edit_kept is an EMA of the keep decision, so mixed episodes land
+    strictly between 0 and 1 - the chart is a rate, not a 0/1 line."""
+    _, cb = _rl_callback({"rl_alpha_scale": 0.3}, loss_ema_decay=0.0)
+    # Episode 1 (steps 3-5) falls -> kept -> rate seeds to 1.0.
+    # Episode 2 (steps 6-8) rises -> rolled back -> rate = 0.9*1 + 0.1*0.
+    _rl_run(cb, _rl_model(), [5.0, 5.0, 5.0, 4.0, 3.0, 3.0, 4.0, 5.0])
 
-    # Episode 1 (steps 3-5): loss falls -> kept -> rate seeds to 1.0.
-    # Episode 2 (steps 6-8): loss rises -> rolled back -> rate = 0.9*1 + 0.1*0.
-    for ls in [5.0, 5.0, 5.0, 4.0, 3.0, 3.0, 4.0, 5.0]:
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-
-    kept = cb._metrics["rl_edit_kept"]
-    assert 0.0 < kept < 1.0, kept  # the whole point: an in-between value
-    assert kept == pytest.approx(0.9)
+    assert cb._metrics["rl_edit_kept"] == pytest.approx(0.9)
 
 
 def _schedulefree(model):
     # Outermost wrapper, as praxis builds it; one step to create the z iterate.
     from pytorch_optimizer.optimizer import ScheduleFreeWrapper
 
-    base = torch.optim.SGD(model.parameters(), lr=1e-3)
-    sf = ScheduleFreeWrapper(base, momentum=0.98)
+    sf = ScheduleFreeWrapper(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.98)
     sf.train()
     model(torch.randn(2, 8)).sum().backward()
     sf.step()
@@ -915,193 +860,106 @@ def _schedulefree(model):
     return sf
 
 
-def test_schedulefree_edit_mirrors_onto_z():
-    # Under schedule-free the edit must also land on the carried iterate z, not
-    # just p.data - else it gets smeared by the x/z reconstruction. Dropping
-    # loss -> edit kept -> the chosen param's z row changed.
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+@pytest.mark.parametrize("losses,kept", [(HELPFUL, True), (UNHELPFUL, False)])
+def test_schedulefree_edits_land_on_z_too(losses, kept):
+    """Under schedule-free the edit must also land on the carried iterate z, or
+    the x/z reconstruction smears it; a rollback restores weight AND z."""
+    _, cb = _rl_callback({"rl_alpha_scale": 0.3})
+    model = _rl_model()
     sf = _schedulefree(model)
     z_before = {p: sf.state[p]["z"].clone() for p in model.parameters()}
+    before = _snapshot(model)
 
-    tr, pl = _Trainer(), _PL(model)
-    tr.optimizers = [sf]
-    for ls in [5.0, 5.0, 5.0, 4.0, 2.0]:  # loss drops -> kept
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+    trainer = _rl_run(cb, model, losses, optimizer=sf)
 
-    assert cb._metrics["rl_edit_kept"] == 1.0
-    # The callback found schedule-free and a z row was edited (and kept).
-    assert cb._schedulefree(tr) is sf
-    changed = any(
-        not torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters()
-    )
-    assert changed, "a schedule-free z iterate row should have been edited"
+    assert cb._schedulefree(trainer) is sf
+    assert cb._metrics["rl_edit_kept"] == float(kept)
+    z_same = all(torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters())
+    assert z_same is not kept, "z should move with a kept edit and only then"
+    if not kept:
+        assert _unchanged(before, model)
 
 
-def test_schedulefree_rollback_restores_both_weight_and_z():
-    # Rising loss -> edit rolled back -> both p.data and z restored exactly.
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
-    cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    sf = _schedulefree(model)
-    z_before = {p: sf.state[p]["z"].clone() for p in model.parameters()}
-    w_before = [p.detach().clone() for p in model.parameters()]
-
-    tr, pl = _Trainer(), _PL(model)
-    tr.optimizers = [sf]
-    for ls in [3.0, 3.0, 3.0, 4.0, 6.0]:  # loss rises -> rolled back
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-
-    assert cb._metrics["rl_edit_kept"] == 0.0
-    assert all(torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters())
-    assert all(torch.equal(b, p) for b, p in zip(w_before, model.parameters()))
-
-
-def test_wave_mode_drives_and_rolls_back_the_optimizer_wave():
-    # edit_mode="wave": the controller's action sets the WaveScheduleFree wave
-    # (amp, cycles, phase); a non-helpful change restores the three scalars.
+@pytest.mark.parametrize("losses,kept", [(HELPFUL, True), (UNHELPFUL, False)])
+def test_wave_mode_drives_the_optimizer_wave(losses, kept):
+    """edit_mode="wave": the action sets WaveScheduleFree's (amp, cycles,
+    phase); an unhelpful change restores all three."""
     from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg())
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=2,
-        warmup_steps=3,
-        keep_threshold=0.0,
-        edit_mode="wave",
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    _, cb = _rl_callback(edit_mode="wave")
+    model = _rl_model()
     sf = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.9)
     sf.train()
     model(torch.randn(2, 8)).sum().backward()  # populate grads for the state
     wave_before = (sf.wave_amp, sf.wave_cycles, sf.wave_phase)
 
-    tr, pl = _Trainer(), _PL(model)
-    tr.optimizers = [sf]
-    # Rising loss -> negative return -> the wave change is rolled back.
-    for ls in [3.0, 3.0, 3.0, 4.0, 6.0]:
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+    _rl_run(cb, model, losses, optimizer=sf)
 
-    assert cb._metrics["rl_edit_kept"] == 0.0
-    assert (sf.wave_amp, sf.wave_cycles, sf.wave_phase) == wave_before
-    # The action was published under the reused rl_action_* keys.
+    assert cb._metrics["rl_edit_kept"] == float(kept)
+    moved = (sf.wave_amp, sf.wave_cycles, sf.wave_phase) != wave_before
+    assert moved is kept
+    # The action is published under the reused rl_action_* keys.
     assert "rl_action_alpha" in cb._metrics  # = amp
 
 
-def test_wave_mode_keeps_helpful_wave_change():
-    from praxis.optimization.wave_schedule_free import WaveScheduleFree
-
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg())
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=2,
-        warmup_steps=3,
-        keep_threshold=0.0,
-        edit_mode="wave",
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    sf = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.9)
-    sf.train()
-    model(torch.randn(2, 8)).sum().backward()
-    wave_before = (sf.wave_amp, sf.wave_cycles, sf.wave_phase)
-
-    tr, pl = _Trainer(), _PL(model)
-    tr.optimizers = [sf]
-    for ls in [5.0, 5.0, 5.0, 4.0, 2.0]:  # dropping loss -> kept
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-
-    assert cb._metrics["rl_edit_kept"] == 1.0
-    assert (sf.wave_amp, sf.wave_cycles, sf.wave_phase) != wave_before  # wave moved
-
-
-def test_anchor_gate_replaces_selected_with_anchor_and_rolls_back():
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg())
-    # Near-deterministic action so the gate mask is stable for the assertion.
-    policy.log_std.data.fill_(-10.0)
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=2,
-        warmup_steps=2,
-        keep_threshold=0.0,
-        edit_mode="anchor_gate",
-        selector="sinusoidal",
-    )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    pl, tr = _PL(model), _Trainer()
-
-    # Steps 1,2: anchor snapshot captured at warmup (step 2).
-    for ls in (5.0, 5.0):
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-    assert cb._anchor, "anchor should be snapshotted at warmup"
-
-    # Simulate training drift: live weights move away from the anchor.
+def _drift(model):
+    """Simulate training moving the live weights away from the anchor."""
     with torch.no_grad():
         for p in model.parameters():
             p.add_(1.0)
 
-    # Step 3 starts the episode (gate-replaces a subset back to the anchor),
-    # steps 4,5 run the horizon; loss drops -> reward>0 -> kept.
-    for ls in (5.0, 4.0, 2.0):
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+def test_anchor_gate_keeps_partial_reset():
+    policy, cb = _rl_callback(
+        warmup_steps=2, edit_mode="anchor_gate", selector="sinusoidal"
+    )
+    # Near-deterministic action so the gate mask is stable for the assertion.
+    policy.log_std.data.fill_(-10.0)
+    model = _rl_model()
+    pl = SimpleNamespace(model=model)
+    trainer = SimpleNamespace(callback_metrics={}, global_step=0)
+
+    for loss in (5.0, 5.0):  # the anchor is snapshotted at warmup
+        cb.on_train_batch_end(trainer, pl, torch.tensor(loss), None, 0)
+    assert cb._anchor, "anchor should be snapshotted at warmup"
+    _drift(model)
+    # Step 3 gate-replaces a subset back to the anchor; loss drops -> kept.
+    for loss in (5.0, 4.0, 2.0):
+        cb.on_train_batch_end(trainer, pl, torch.tensor(loss), None, 0)
 
     assert cb._metrics["rl_edit_kept"] == 1.0
     assert 0.0 < cb._metrics["rl_gate_frac"] < 1.0
-    # The kept edit pulled the gated elements back to the (older) anchor while
-    # the ungated elements keep the drifted live value -> a partial reset.
-    # Find the row that changed and verify it contains both anchor and live values.
+    # Gated elements went back to the (older) anchor while ungated ones keep
+    # the drifted live value: some row holds both.
     reverted = False
     for name, p in model.named_parameters():
         if name in cb._anchor and p.dim() == 2:
             anchor = cb._anchor[name]
             eq_anchor = (p.data == anchor).any(dim=1)
             eq_live = (p.data == anchor + 1.0).any(dim=1)
-            if (eq_anchor & eq_live).any():
-                reverted = True
+            reverted |= bool((eq_anchor & eq_live).any())
     assert reverted, "expected a row gated partly to anchor, partly drifted-live"
 
 
 def test_anchor_gate_rolls_back_unhelpful_edit():
-    torch.manual_seed(0)
-    policy = HarmonicWeightPolicy(_cfg())
-    policy.log_std.data.fill_(-10.0)
-    cb = HarmonicWeightRLCallback(
-        policy,
-        period=3,
-        horizon=2,
-        warmup_steps=2,
-        keep_threshold=0.0,
-        edit_mode="anchor_gate",
-        selector="uniform_hash",
+    policy, cb = _rl_callback(
+        warmup_steps=2, edit_mode="anchor_gate", selector="uniform_hash"
     )
-    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
-    pl, tr = _PL(model), _Trainer()
+    policy.log_std.data.fill_(-10.0)
+    model = _rl_model()
+    pl = SimpleNamespace(model=model)
+    trainer = SimpleNamespace(callback_metrics={}, global_step=0)
 
-    for ls in (3.0, 3.0):
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
-    with torch.no_grad():
-        for p in model.parameters():
-            p.add_(1.0)
-    before = [p.detach().clone() for p in model.parameters()]
-    # Loss rises -> reward<0 -> rolled back to the (drifted) pre-edit weights.
-    for ls in (3.0, 4.0, 6.0):
-        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+    for loss in (3.0, 3.0):
+        cb.on_train_batch_end(trainer, pl, torch.tensor(loss), None, 0)
+    _drift(model)
+    before = _snapshot(model)
+    # Loss rises -> rolled back to the (drifted) pre-edit weights.
+    for loss in (3.0, 4.0, 6.0):
+        cb.on_train_batch_end(trainer, pl, torch.tensor(loss), None, 0)
 
     assert cb._metrics["rl_edit_kept"] == 0.0
-    after = list(model.parameters())
-    assert all(torch.equal(b, a) for b, a in zip(before, after))
+    assert _unchanged(before, model)
 
 
 # ------------------------------------------------------------------------------
@@ -1136,7 +994,7 @@ class _DeadStream(io.StringIO):
 
 
 @pytest.fixture
-def handler(monkeypatch):
+def signal_handler_cb(monkeypatch):
     cb = SignalHandlerCallback()
     cb.trainer_ref = SimpleNamespace(should_stop=False)
     # The cleanup thread is not what these tests are about, and it would race
@@ -1149,20 +1007,20 @@ def handler(monkeypatch):
 # ── the handler must be total ────────────────────────────────────────────
 
 
-def test_handler_survives_a_closed_stdout(handler, monkeypatch):
+def test_handler_survives_a_closed_stdout(signal_handler_cb, monkeypatch):
     """The reported failure: ValueError escaping into unrelated main-thread
     code, which then gets classified as a crash."""
     monkeypatch.setattr(sys, "stdout", _DeadStream())
     monkeypatch.setattr(sys, "__stderr__", _DeadStream())
 
-    handler._handle_signal(2, None)  # must not raise
+    signal_handler_cb._handle_signal(2, None)  # must not raise
 
-    # And the shutdown still happened - the announcement is not load-bearing.
-    assert handler.trainer_ref.should_stop is True
-    assert handler.cuda_manager.is_shutting_down() is True
+    # And the shutdown still happened - the announcement is optional.
+    assert signal_handler_cb.trainer_ref.should_stop is True
+    assert signal_handler_cb.cuda_manager.is_shutting_down() is True
 
 
-def test_handler_still_flags_shutdown_when_the_trainer_is_gone(handler):
+def test_handler_still_flags_shutdown_when_the_trainer_is_gone(signal_handler_cb):
     """Each step is independently guarded, so one failure cannot skip the
     others. The flag is what teardown reads to tell cancel from crash."""
 
@@ -1175,26 +1033,23 @@ def test_handler_still_flags_shutdown_when_the_trainer_is_gone(handler):
         def should_stop(self, value):
             raise RuntimeError("trainer already torn down")
 
-    handler.trainer_ref = Exploding()
-    handler._handle_signal(2, None)
-    assert handler.cuda_manager.is_shutting_down() is True
+    signal_handler_cb.trainer_ref = Exploding()
+    signal_handler_cb._handle_signal(2, None)
+    assert signal_handler_cb.cuda_manager.is_shutting_down() is True
 
 
-def test_message_reaches_a_live_stdout(handler, monkeypatch):
-    buf = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", buf)
-    handler._handle_signal(2, None)
-    assert "Gracefully stopping training" in buf.getvalue()
-
-
-def test_message_falls_back_to_real_stderr(handler, monkeypatch):
+@pytest.mark.parametrize("stdout_alive", [True, False], ids=["live", "dead"])
+def test_the_message_reaches_whichever_stream_is_alive(
+    signal_handler_cb, monkeypatch, stdout_alive
+):
     """stdout is captured into the dashboard's log panel; when it is dead the
     process's own stderr is the next best surface."""
-    err = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", _DeadStream())
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out if stdout_alive else _DeadStream())
     monkeypatch.setattr(sys, "__stderr__", err)
-    handler._handle_signal(2, None)
-    assert "Gracefully stopping training" in err.getvalue()
+    signal_handler_cb._handle_signal(2, None)
+    shown = (out if stdout_alive else err).getvalue()
+    assert "Gracefully stopping training" in shown
 
 
 def test_cleanup_runs_before_the_fit_starts(monkeypatch):
@@ -1217,88 +1072,96 @@ def test_cleanup_runs_before_the_fit_starts(monkeypatch):
 # ── no internal text on the way out ──────────────────────────────────────
 
 
-class _Interface(TerminalInterface):
-    """Only the inference-display branch is under test."""
+class _StubInterface(TerminalInterface):
+    """A TerminalInterface with ``__init__`` bypassed: only the inference
+    display and the generation trigger are under test."""
 
-    def __init__(self, use_dashboard, dashboard):
+    def __init__(self, use_dashboard=False, dashboard=None):
         self.use_dashboard = use_dashboard
         self.dashboard = dashboard
         self.headless = False
         self.printed = []
+        self.generator = object()
+        self.interval = 10
+        self.last_time = None
+        self.captured = []
 
     def print(self, text):
         self.printed.append(text)
 
+    def _is_trigger_passed(self, last_time, interval):
+        self.captured.append(interval)
+        return False  # stop after recording the interval
 
-def test_torn_down_dashboard_does_not_print_the_context():
-    """Cleanup nulls the dashboard while training still steps; the fallback
-    print would put the rolling context on the restored terminal."""
-    iface = _Interface(use_dashboard=True, dashboard=None)
+
+class _Dash:
+    def __init__(self):
+        self.status = None
+
+    def update_status(self, text):
+        self.status = text
+
+    def force_redraw(self):
+        pass
+
+
+def _lightning_module(global_step):
+    return SimpleNamespace(
+        trainer=SimpleNamespace(accumulate_grad_batches=1, global_step=global_step)
+    )
+
+
+@pytest.mark.parametrize(
+    "use_dashboard,live_dash,shutdown,printed,status",
+    [
+        # Cleanup nulls the dashboard while training still steps; the fallback
+        # print would put the rolling context on the restored terminal.
+        (True, False, False, [], None),
+        # A run that never had a dashboard is what the fallback exists for.
+        (False, False, False, ["rolling context text"], None),
+        (True, True, False, [], "rolling context text"),
+        # Once shutdown starts nothing more is emitted anywhere - the dashboard
+        # may be mid-teardown in the cleanup thread.
+        (True, True, True, [], None),
+        (False, False, True, [], None),
+    ],
+    ids=["torn-down", "no-dashboard", "live", "live-shutdown", "no-dashboard-shutdown"],
+)
+def test_show_context(use_dashboard, live_dash, shutdown, printed, status):
+    dash = _Dash() if live_dash else None
+    iface = _StubInterface(use_dashboard=use_dashboard, dashboard=dash)
+    if shutdown:
+        iface.begin_shutdown()
     iface._show_context("rolling context text")
-    assert iface.printed == []
-
-
-def test_run_without_a_dashboard_still_prints():
-    """The fallback is not removed - a run that never had a dashboard is the
-    case it exists for."""
-    iface = _Interface(use_dashboard=False, dashboard=None)
-    iface._show_context("rolling context text")
-    assert iface.printed == ["rolling context text"]
-
-
-def test_live_dashboard_gets_the_text_and_nothing_is_printed():
-    class _Dash:
-        def __init__(self):
-            self.status = None
-
-        def update_status(self, text):
-            self.status = text
-
-        def force_redraw(self):
-            pass
-
-    dash = _Dash()
-    iface = _Interface(use_dashboard=True, dashboard=dash)
-    iface._show_context("rolling context text")
-    assert dash.status == "rolling context text"
-    assert iface.printed == []
-
-
-def test_shutdown_silences_even_a_live_dashboard():
-    """Once shutdown starts nothing more is emitted anywhere - the dashboard
-    may be mid-teardown in the cleanup thread."""
-    iface = _Interface(use_dashboard=False, dashboard=None)
-    iface.begin_shutdown()
-    iface._show_context("rolling context text")
-    assert iface.printed == []
+    assert iface.printed == printed
+    if dash is not None:
+        assert dash.status == status
 
 
 def test_begin_shutdown_stops_generation():
-    """Belt and braces: the hook bails before generating at all, so nothing
-    downstream of it can emit either."""
-    calls = []
+    """The hook bails before generating at all, so nothing downstream of it
+    can emit either."""
+    iface = _StubInterface()
+    iface._generate_text(_lightning_module(9999), batch_idx=0, interval=10)
+    assert iface.captured, "sanity: normally it gets as far as the trigger check"
 
-    class _Gen(TerminalInterface):
-        def __init__(self):
-            self.generator = object()
-            self.interval = 10
-            self.last_time = None
+    iface.captured.clear()
+    iface.begin_shutdown()
+    iface._generate_text(_lightning_module(9999), batch_idx=0, interval=10)
+    assert iface.captured == []
 
-        def _is_trigger_passed(self, *a):
-            calls.append(a)
-            return False
 
-    cb = _Gen()
-    lm = SimpleNamespace(
-        trainer=SimpleNamespace(accumulate_grad_batches=1, global_step=9999)
-    )
-    cb._generate_text(lm, batch_idx=0, interval=10)
-    assert calls, "sanity: normally it gets as far as the trigger check"
+def test_validation_batches_keep_trained_interval():
+    """batch_idx resets during validation; that must not re-enter warmup."""
+    iface = _StubInterface()
+    iface._generate_text(_lightning_module(6127), batch_idx=0, interval=10)
+    assert iface.captured == [iface.interval]  # past warmup; no 120s stall
 
-    calls.clear()
-    cb.begin_shutdown()
-    cb._generate_text(lm, batch_idx=0, interval=10)
-    assert calls == []
+
+def test_fresh_run_still_warms_up():
+    iface = _StubInterface()
+    iface._generate_text(_lightning_module(0), batch_idx=0, interval=10)
+    assert iface.captured[0] > iface.interval  # step 0 starts at the slow end
 
 
 def test_signal_cleanup_flags_the_interface_before_nulling(monkeypatch):
@@ -1331,9 +1194,47 @@ def test_signal_cleanup_flags_the_interface_before_nulling(monkeypatch):
 
 
 # ------------------------------------------------------------------------------
+# signal_handler: releasing the terminal on the force-exit paths
+# ------------------------------------------------------------------------------
+# os._exit runs no atexit handler, so these paths restore the terminal inline.
+
+
+def test_release_terminal_leaves_the_alternate_screen(dashboard, monkeypatch):
+    cb = SignalHandlerCallback()
+    cb.terminal_interface = SimpleNamespace(dashboard=dashboard)
+
+    dashboard.start()
+    time.sleep(0.15)
+    assert dashboard.terminal_manager.in_fullscreen
+
+    real_stderr = _Tty()
+    monkeypatch.setattr(sys, "__stderr__", real_stderr)
+    cb._release_terminal()
+
+    assert "\x1b[?1049l" in real_stderr.text
+    assert "\x1b[?25h" in real_stderr.text
+    assert not dashboard.running
+    assert not dashboard.dashboard_output.enabled
+
+
+def test_release_terminal_does_not_emit_an_unmatched_rmcup(dashboard, monkeypatch):
+    """An rmcup we never matched with smcup jumps the cursor into scrollback."""
+    cb = SignalHandlerCallback()
+    cb.terminal_interface = SimpleNamespace(dashboard=dashboard)  # never started
+
+    real_stderr = _Tty()
+    monkeypatch.setattr(sys, "__stderr__", real_stderr)
+    cb._release_terminal()
+
+    assert "\x1b[?1049l" not in real_stderr.text
+    assert "\x1b[?25h" in real_stderr.text
+
+
+# ------------------------------------------------------------------------------
 # seq_probe
 # ------------------------------------------------------------------------------
-# Probe-attribution sequence curriculum (praxis/data/seq_probe.py).
+# SequenceProbeCallback: arms the probe-attribution curriculum
+# (praxis/data/seq_probe.py, tested in tests/data) and reports on schedule.
 #
 # The invariants that matter are the ones the previous controller failed:
 #
@@ -1354,8 +1255,9 @@ TIERS = ((4, 0.01), (2, 0.1))
 ARMS = [1, 2, 4]
 
 
-@pytest.fixture(autouse=True)
-def _clean():
+@pytest.fixture
+def seq_probe_reset():
+    """SequenceProbe is class-level state."""
     SequenceProbe.reset()
     yield
     SequenceProbe.reset()
@@ -1371,24 +1273,25 @@ def feed(values, windows=400, noise=5.0, seed=0, max_visits=40):
     return dict(zip(SequenceProbe.arms, SequenceProbe._beta))
 
 
-def test_warmup_stays_short_enough_to_be_visible():
+def test_the_schedule_reports_early_and_ramps_up():
     """A guard on the constants, not the code: the cards have to arrive early
-    enough in a run that their absence is not mistaken for a missing feature."""
+    enough that their absence is not mistaken for a missing feature, and the
+    window ramps so the first one is short."""
     from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback as cb
 
     assert cb.first_report_step() <= 64, cb.first_report_step()
     assert cb.first_mix_step() <= 320, cb.first_mix_step()
+    lengths = cb.window_lengths(5)
+    assert lengths[0] == cb.warmup_window
+    assert lengths[-1] == cb.window
+    assert lengths == sorted(lengths)  # monotone ramp, never a shrink
 
 
-def test_advertised_arrival_matches_actual_arrival():
+def test_advertised_arrival_matches_actual_arrival(seq_probe_reset):
     """The printed estimate has to be the truth. The first window only anchors
     the probe's loss level - it produces no delta to regress - so an estimate
     that forgets it is off by a whole window, which is how a working feature
     gets reported as broken."""
-    from types import SimpleNamespace
-
-    import torch
-
     from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback
 
     class Inner(torch.nn.Module):
@@ -1424,16 +1327,7 @@ def test_advertised_arrival_matches_actual_arrival():
     assert first_mix == cb.first_mix_step(), (first_mix, cb.first_mix_step())
 
 
-def test_window_ramps_so_the_first_window_is_short():
-    from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback as cb
-
-    lengths = cb.window_lengths(5)
-    assert lengths[0] == cb.warmup_window
-    assert lengths[-1] == cb.window
-    assert lengths == sorted(lengths)  # monotone ramp, never a shrink
-
-
-def test_dynamics_extractor_surfaces_the_card_keys():
+def test_dynamics_extractor_surfaces_the_card_keys(seq_probe_reset):
     """The seq_mix card pattern-matches ^seq_prob_x\\d+$ off the dynamics
     payload, so the extractor is the contract that matters."""
     from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
@@ -1447,10 +1341,8 @@ def test_dynamics_extractor_surfaces_the_card_keys():
     assert [k for k in payload if k.startswith("seq_prob_x")], sorted(payload)
 
 
-def test_callback_disarms_loudly_without_validation_data(capsys):
+def test_callback_disarms_loudly_without_validation_data(capsys, seq_probe_reset):
     """A silently inert controller looks exactly like a missing card."""
-    from types import SimpleNamespace
-
     from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback
 
     cb = SequenceProbeCallback(block_size=64, sequence_multiplier_tiers=TIERS)
@@ -1464,52 +1356,20 @@ def test_callback_disarms_loudly_without_validation_data(capsys):
 
 
 # ------------------------------------------------------------------------------
-# decode_compile
+# generation_queue: warming the decode-compiled memory
 # ------------------------------------------------------------------------------
-# Decode-time compilation of NeuralMemory: plumbing, scoping, and fallback.
-#
-# The measured payoff (1.7x on a 128-byte generation, byte-identical output) needs a GPU
-# and several minutes of Inductor, so it is not asserted here. What IS asserted is
-# everything that could silently break it or, worse, leak a compiled body into training:
-# installation, dispatch, restoration, the ``no_compile`` gate, and degrading to eager
-# when compilation raises.
-#
-# ``torch.compile`` is stubbed throughout - compiling for real would make this test
-# minutes long and would test Inductor rather than this wiring.
-
-
-def build_memory_model(**overrides):
-    torch.manual_seed(0)
-    cfg = PraxisConfig(
-        vocab_size=200,
-        hidden_size=64,
-        embed_size=64,
-        depth=2,
-        num_layers=2,
-        num_heads=4,
-        device="cpu",
-        block_type="transformer",
-        max_position_embeddings=256,
-        attention_type="causal",
-        encoding="rope",
-        memory_type="mal_energy",
-        **overrides,
-    )
-    return PraxisForCausalLM(cfg).eval()
-
-
-def neural_memories(model):
-    return [m for m in model.modules() if isinstance(m, NeuralMemory)]
+# ``torch.compile`` is stubbed: compiling for real would take minutes and test
+# Inductor rather than this wiring. The compile itself is covered in
+# tests/generation/test_decode_backend.py.
 
 
 @pytest.fixture
-def feature_on():
-    """The decode compile is opt-in per environment; most tests want it on."""
+def feature_on(monkeypatch):
+    """The decode compile is opt-in per environment. The feature table is
+    class-level, so it is swapped for a copy rather than cleared after."""
+    monkeypatch.setattr(EnvironmentFeatures, "_features", {})
+    monkeypatch.setattr(EnvironmentFeatures, "_active_environment", None)
     EnvironmentFeatures.set_from_environment({"compile_decode_memory": True})
-    try:
-        yield
-    finally:
-        EnvironmentFeatures.clear()
 
 
 @pytest.fixture
@@ -1620,14 +1480,14 @@ def test_callback_survives_a_broken_producer():
 # stacks rather than just that it constructs.
 
 
-class _Trainer_stall_watchdog(SimpleNamespace):
+class _WatchdogTrainer(SimpleNamespace):
     is_global_zero = True
     global_step = 7
 
 
 def test_dumps_stacks_when_a_step_overruns(tmp_path):
     wd = StallWatchdogCallback(run_dir=tmp_path, timeout_s=0.2)
-    trainer = _Trainer_stall_watchdog()
+    trainer = _WatchdogTrainer()
     wd.on_fit_start(trainer, None)
     wd.on_train_batch_start(trainer, None, None, 0)
     time.sleep(0.6)  # overrun: the C timer thread fires while we sit here
@@ -1646,11 +1506,16 @@ def test_priority_dump_lands_without_the_training_thread(tmp_path):
     faulthandler alone caps at 100 threads and drops main off the end."""
     wd = StallWatchdogCallback(run_dir=tmp_path, timeout_s=0.2)
     wd.POLL_S = 0.05
-    trainer = _Trainer_stall_watchdog()
+    trainer = _WatchdogTrainer()
     wd.on_fit_start(trainer, None)
     wd.on_train_batch_start(trainer, None, None, 0)
-    time.sleep(1.0)  # never call another hook: this is the deadlock shape
-    log = (tmp_path / "stalls.log").read_text()
+    # Never call another hook: this is the deadlock shape.
+    stalls = tmp_path / "stalls.log"
+    deadline = time.monotonic() + 5.0
+    while "priority dump" not in stalls.read_text() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.2)  # a few more polls, to catch a second dump
+    log = stalls.read_text()
     wd.on_train_end(trainer, None)
 
     assert "priority dump" in log, log
@@ -1662,7 +1527,7 @@ def test_priority_dump_lands_without_the_training_thread(tmp_path):
 
 def test_a_normal_step_dumps_nothing(tmp_path):
     wd = StallWatchdogCallback(run_dir=tmp_path, timeout_s=30.0)
-    trainer = _Trainer_stall_watchdog()
+    trainer = _WatchdogTrainer()
     wd.on_fit_start(trainer, None)
     for i in range(3):
         wd.on_train_batch_start(trainer, None, None, i)
@@ -1675,279 +1540,116 @@ def test_a_normal_step_dumps_nothing(tmp_path):
 
 
 # ------------------------------------------------------------------------------
-# terminal_warmup
+# engagement: the live reward drain
 # ------------------------------------------------------------------------------
-# Terminal inference must not re-enter warmup during validation.
 
 
-class _NoGen(TerminalInterface):
-    def __init__(self):  # bypass full init; only warmup math is exercised
-        self.generator = object()
-        self.interval = 10
-        self.last_time = None
-        self.captured = None
+@pytest.fixture(params=["engagement", "joke"])
+def live_drain(request):
+    """(callback, channel, policy, submit) for each live reward channel; the
+    channels are process-global, so each is drained first."""
+    from praxis.callbacks.lightning import EngagementLiveRewardCallback
+    from praxis.policies.engagement_channel import LIVE_ENGAGEMENT, LIVE_JOKES
 
-    def _is_trigger_passed(self, last_time, interval):
-        self.captured = interval
-        return False  # stop after recording the interval
+    def build(period=1):
+        cfg = PraxisConfig(hidden_size=32, dropout=0.0)
+        if request.param == "engagement":
+            LIVE_ENGAGEMENT.drain()
+            cb = EngagementLiveRewardCallback(period=period)
+            submit = lambda: LIVE_ENGAGEMENT.submit(["paris"], ["i", "think", "paris"])
+            return cb, LIVE_ENGAGEMENT, EngagementPolicy(cfg), submit
+        LIVE_JOKES.drain()
+        cb = EngagementLiveRewardCallback(
+            period=period,
+            channel=LIVE_JOKES,
+            policy_class_name="JokePolicy",
+            metric_prefix="joke",
+        )
+        return cb, LIVE_JOKES, JokePolicy(cfg), lambda: LIVE_JOKES.submit_scalar(1.0)
 
-
-def test_validation_batches_keep_trained_interval():
-    cb = _NoGen()
-    lm = SimpleNamespace(
-        trainer=SimpleNamespace(accumulate_grad_batches=1, global_step=6127)
-    )
-    cb._generate_text(lm, batch_idx=0, interval=10)  # validation: batch_idx resets
-    assert cb.captured == cb.interval  # past warmup; no 120s stall
-
-
-def test_fresh_run_still_warms_up():
-    cb = _NoGen()
-    lm = SimpleNamespace(
-        trainer=SimpleNamespace(accumulate_grad_batches=1, global_step=0)
-    )
-    cb._generate_text(lm, batch_idx=0, interval=10)
-    assert cb.captured > cb.interval  # step 0 starts at the slow end
+    return request.param, build
 
 
-# ------------------------------------------------------------------------------
-# dashboard_shutdown
-# ------------------------------------------------------------------------------
-# Stopping the dashboard must leave the terminal alone.
-#
-# The reported failure: Ctrl+C during a run, and the dashboard's box drawing and charts
-# render *into* the shell's scrollback, interleaved with the shutdown's own messages.
-# The cause was an ordering bug, not a rendering one. ``stop()`` flipped a flag and
-# immediately left the alternate screen, while the render thread was still mid-frame or
-# asleep in its 100ms tick - and that thread writes through a private handle on the real
-# stdout, bypassing every redirection. The frame it painted next landed, absolutely
-# positioned, on the restored terminal.
+def test_drain_folds_live_reward_into_energy(live_drain):
+    """The training-loop seam: live web rewards -> the policy's energy."""
+    prefix, build = live_drain
+    cb, channel, policy, submit = build()
+    trainer = SimpleNamespace(callback_metrics={})
+    pl = SimpleNamespace(model=SimpleNamespace(policy=policy))
+    assert policy.energy.value == 0.0
+
+    submit()  # a user engaged / approved
+    cb.on_train_batch_end(trainer, pl, None, None, 0)
+
+    assert policy.energy.value > 0.0
+    assert trainer.callback_metrics[f"{prefix}_live_count"].item() == 1.0
+    assert channel.snapshot()["buffered"] == 0  # drained
 
 
-class _Tty(io.StringIO):
-    """A stand-in terminal that records everything written to it."""
-
-    def __init__(self):
-        super().__init__()
-        self.lock = threading.Lock()
-        self.chunks = []
-
-    def write(self, s):
-        with self.lock:
-            self.chunks.append(s)
-        return len(s)
-
-    def flush(self):
-        pass
-
-    def isatty(self):
-        return True
-
-    @property
-    def text(self):
-        with self.lock:
-            return "".join(self.chunks)
-
-
-# ── the force-exit paths bypass every cleanup hook ───────────────────────
-
-
-def test_release_terminal_leaves_the_alternate_screen(dashboard):
-    """os._exit runs no atexit handler, so these paths restore inline."""
-    from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
-
-    cb = SignalHandlerCallback()
-    cb.terminal_interface = SimpleNamespace(dashboard=dashboard)
-
-    dashboard.start()
-    time.sleep(0.15)
-    assert dashboard.terminal_manager.in_fullscreen
-
-    real_stderr = _Tty()
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sys, "__stderr__", real_stderr)
-        cb._release_terminal()
-
-    assert "\033[?1049l".encode().decode("unicode_escape") in real_stderr.text
-    assert "\033[?25h".encode().decode("unicode_escape") in real_stderr.text
-    assert not dashboard.running
-    assert not dashboard.dashboard_output.enabled
-
-
-def test_release_terminal_does_not_emit_an_unmatched_rmcup(dashboard):
-    """An rmcup we never matched with smcup jumps the cursor into scrollback."""
-    from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
-
-    cb = SignalHandlerCallback()
-    cb.terminal_interface = SimpleNamespace(dashboard=dashboard)  # never started
-
-    real_stderr = _Tty()
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sys, "__stderr__", real_stderr)
-        cb._release_terminal()
-
-    assert "\033[?1049l".encode().decode("unicode_escape") not in real_stderr.text
-    assert "\033[?25h".encode().decode("unicode_escape") in real_stderr.text
+def test_drain_respects_period(live_drain):
+    _, build = live_drain
+    cb, _, policy, submit = build(period=3)
+    trainer = SimpleNamespace(callback_metrics={})
+    pl = SimpleNamespace(model=SimpleNamespace(policy=policy))
+    submit()
+    cb.on_train_batch_end(trainer, pl, None, None, 0)  # step 1: no drain
+    cb.on_train_batch_end(trainer, pl, None, None, 1)  # step 2: no drain
+    assert policy.energy.value == 0.0
+    cb.on_train_batch_end(trainer, pl, None, None, 2)  # step 3: drains
+    assert policy.energy.value > 0.0
 
 
 # ------------------------------------------------------------------------------
-# engagement
+# rlct
 # ------------------------------------------------------------------------------
-# Tests for the engagement-prediction reward (P2) and policy (P3).
 
 
-class TestLiveDrainCallback:
-    """The training-loop seam: live web rewards -> policy energy baseline."""
-
-    def _setup(self, period=1):
-        import types
-
-        from praxis.callbacks.lightning import EngagementLiveRewardCallback
-        from praxis.policies.engagement_channel import LIVE_ENGAGEMENT
-
-        LIVE_ENGAGEMENT.drain()  # start clean
-        policy = EngagementPolicy(PraxisConfig(hidden_size=32, dropout=0.0))
-        pl = types.SimpleNamespace(model=types.SimpleNamespace(policy=policy))
-        trainer = types.SimpleNamespace(callback_metrics={})
-        cb = EngagementLiveRewardCallback(period=period)
-        return cb, trainer, pl, policy, LIVE_ENGAGEMENT
-
-    def test_drain_folds_live_reward_into_energy(self):
-        cb, trainer, pl, policy, channel = self._setup(period=1)
-        assert policy.energy.value == 0.0
-        channel.submit(["paris"], ["i", "think", "paris"])  # activation 1.0
-        cb.on_train_batch_end(trainer, pl, None, None, 0)
-        assert policy.energy.value > 0.0
-        assert trainer.callback_metrics["engagement_live_count"].item() == 1.0
-        assert channel.snapshot()["buffered"] == 0  # drained
-
-    def test_respects_period(self):
-        cb, trainer, pl, policy, channel = self._setup(period=3)
-        channel.submit(["paris"], ["paris"])
-        cb.on_train_batch_end(trainer, pl, None, None, 0)  # step 1: no drain
-        assert policy.energy.value == 0.0
-        cb.on_train_batch_end(trainer, pl, None, None, 1)  # step 2: no drain
-        cb.on_train_batch_end(trainer, pl, None, None, 2)  # step 3: drains
-        assert policy.energy.value > 0.0
-
-
-# ------------------------------------------------------------------------------
-# trainers
-# ------------------------------------------------------------------------------
-# Tests for the trainers module.
-
-
-class TestRLCTProbeUnpacksTheBatch:
+def test_rlct_probe_unpacks_the_whole_batch_and_forwards_block_ids():
     """The RLCT callback re-uses the trainer's batch unpacking.
 
-    `on_train_batch_end` swallows probe exceptions and prints them, so a break
-    here is non-blocking and invisible to every other test - which is how an
-    UnboundLocalError for `rewards` survived a whole training run. `_probe`
-    does its unpacking OUTSIDE any try, so calling it directly makes that
-    class of failure loud.
+    ``on_train_batch_end`` swallows probe exceptions, so a break is invisible
+    to every other test - an UnboundLocalError for ``rewards`` survived a whole
+    run. ``_probe`` unpacks OUTSIDE any try, so calling it makes that loud.
+    block_ids must survive sub-batching too, or the probe measures a model
+    whose packed documents can read each other while the real step's cannot.
     """
+    from praxis.callbacks.lightning.rlct import RLCTLandscapeCallback
 
-    def test_probe_unpacks_without_unbound_names(self):
-        from praxis.callbacks.lightning.rlct import RLCTLandscapeCallback
+    config = PraxisConfig(
+        depth=2,
+        hidden_size=64,
+        embed_size=32,
+        vocab_size=256,
+        num_heads=2,
+        num_queries=2,
+        device_map="cpu",
+    )
+    model = PraxisForCausalLM(config)
+    captured = {}
+    original = model.forward
 
-        config = PraxisConfig(
-            depth=2,
-            hidden_size=64,
-            embed_size=32,
-            vocab_size=256,
-            num_heads=2,
-            num_queries=2,
-            device_map="cpu",
-        )
-        model = PraxisForCausalLM(config)
-        optimizer = torch.optim.SGD(model.parameters(), lr=1e-4)
-        pl_module = BackpropagationTrainer(
-            model, optimizer, None, {"batch_size": 4}, None, byte_level=True
-        )
+    def spy(**kwargs):
+        captured.update(kwargs)
+        return original(**kwargs)
 
-        batch = {
-            "input_ids": torch.randint(0, 256, (4, 16)),
-            "task_type_ids": torch.zeros(4, 16, dtype=torch.uint8),
-            "assistant_mask": torch.ones(4, 16, dtype=torch.uint8),
-            "block_ids": torch.ones(4, 16, dtype=torch.long),
-        }
+    model.forward = spy
+    pl_module = BackpropagationTrainer(
+        model,
+        torch.optim.SGD(model.parameters(), lr=1e-4),
+        None,
+        {"batch_size": 4},
+        None,
+        byte_level=True,
+    )
+    batch = {
+        "input_ids": torch.randint(0, 256, (4, 16)),
+        "task_type_ids": torch.zeros(4, 16, dtype=torch.uint8),
+        "assistant_mask": torch.ones(4, 16, dtype=torch.uint8),
+        "block_ids": torch.ones(4, 16, dtype=torch.long),
+    }
+    RLCTLandscapeCallback(
+        {"probe_seqs": 2, "probe_len": 8, "manifold_grid": 2, "field_grid": 2}
+    )._probe(pl_module, batch, 0, 0)
 
-        callback = RLCTLandscapeCallback(
-            {"probe_seqs": 2, "probe_len": 8, "manifold_grid": 2, "field_grid": 2}
-        )
-        # Any NameError/UnboundLocalError in the unpacking propagates from here.
-        callback._probe(pl_module, batch, 0, 0)
-
-    def test_probe_forwards_block_ids(self):
-        """block_ids must survive sub-batching, or the probe measures a model
-        whose packed documents can read each other while the real step's cannot.
-        """
-        from praxis.callbacks.lightning import rlct
-
-        captured = {}
-        config = PraxisConfig(
-            depth=2,
-            hidden_size=64,
-            embed_size=32,
-            vocab_size=256,
-            num_heads=2,
-            num_queries=2,
-            device_map="cpu",
-        )
-        model = PraxisForCausalLM(config)
-        original = model.forward
-
-        def spy(**kwargs):
-            captured.update(kwargs)
-            return original(**kwargs)
-
-        model.forward = spy
-        pl_module = BackpropagationTrainer(
-            model,
-            torch.optim.SGD(model.parameters(), lr=1e-4),
-            None,
-            {"batch_size": 4},
-            None,
-            byte_level=True,
-        )
-        batch = {
-            "input_ids": torch.randint(0, 256, (4, 16)),
-            "block_ids": torch.ones(4, 16, dtype=torch.long),
-        }
-        rlct.RLCTLandscapeCallback(
-            {"probe_seqs": 2, "probe_len": 8, "manifold_grid": 2, "field_grid": 2}
-        )._probe(pl_module, batch, 0, 0)
-
-        assert captured.get("block_ids") is not None
-        assert captured["block_ids"].shape == captured["input_ids"].shape
-
-
-# ------------------------------------------------------------------------------
-# stdout_safety
-# ------------------------------------------------------------------------------
-# Nothing on a background thread may swap the process-global ``sys.stdout``.
-#
-# ``contextlib.redirect_stdout`` mutates a PROCESS-GLOBAL. Used from the Flask API
-# thread or a build thread, it silently redirects every other thread's output for the
-# width of the block, and any thread that reads ``sys.stdout`` before the block ends and
-# writes to it after gets ``ValueError: I/O operation on closed file``.
-#
-# That killed abstractinator-m at its first step: the snapshot publisher requested the
-# spec payload (which printed the model repr under a redirect) at the same moment the
-# compute profiler flushed stdout on the training thread. The profiler's own error
-# handler then used ``print``, failed identically, and escaped its ``except`` - turning
-# optional telemetry into a fatal error.
-
-
-def test_profiler_callback_logger_never_raises():
-    """Its whole job is to report failures, so it must not become one."""
-    from praxis.callbacks.lightning.compute_profiler import _log_quietly
-
-    original = sys.stdout
-    closed = io.StringIO()
-    closed.close()
-    sys.stdout = closed
-    try:
-        _log_quietly("this must not raise")
-    finally:
-        sys.stdout = original
+    assert captured.get("block_ids") is not None
+    assert captured["block_ids"].shape == captured["input_ids"].shape

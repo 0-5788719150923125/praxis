@@ -1,82 +1,39 @@
+"""Tests for praxis/utils/tensors.py."""
+
 import pytest
 import torch
 
 from praxis.utils import create_block_ids
 
+# A special token closes the block it ends; the next token opens a new one.
+BLOCKS = [
+    ([[1, 2, 0, 3, 4, 0, 5]], [[1, 1, 1, 2, 2, 2, 3]]),
+    ([[1, 2, 0, 3, 0, 4, 0, 5]], [[1, 1, 1, 2, 2, 3, 3, 4]]),
+    ([[1, 2, 0, 3, 4], [5, 0, 6, 0, 7]], [[1, 1, 1, 2, 2], [1, 1, 2, 2, 3]]),
+    ([[1, 0, 2, 0, 3]], [[1, 1, 2, 2, 3]]),
+    ([[0, 0, 0]], [[1, 2, 2]]),
+    ([[0, 1, 0]], [[1, 2, 2]]),
+    ([[1, 2, 3]], [[1, 1, 1]]),
+]
 
-@pytest.fixture
-def device():
-    """Fixture for device selection."""
-    return "cpu"
 
-
-def test_single_special_token(device):
-    """Test block creation with a single special token."""
-    # Arrange
-    input_ids = torch.tensor([[1, 2, 0, 3, 4, 0, 5]], device=device)
-    special_tokens = [0]  # Using 0 as padding token
-
-    # Act
+@pytest.mark.parametrize(
+    "special_tokens",
+    # Production passes a scalar id (sep/eos); lists and tensors take other branches.
+    [0, [0], torch.tensor([0])],
+    ids=["int", "list", "tensor"],
+)
+@pytest.mark.parametrize("ids,expected", BLOCKS)
+def test_create_block_ids(ids, expected, special_tokens):
+    input_ids = torch.tensor(ids)
     block_ids = create_block_ids(input_ids, special_tokens)
-
-    # Assert
-    expected = torch.tensor([[1, 1, 1, 2, 2, 2, 3]], device=device)
-    assert torch.all(block_ids == expected)
     assert block_ids.shape == input_ids.shape
+    assert torch.equal(block_ids, torch.tensor(expected))
 
 
-def test_multiple_special_tokens(device):
-    """Test block creation with multiple special tokens."""
-    # Arrange
-    input_ids = torch.tensor([[1, 2, 0, 3, 0, 4, 0, 5]], device=device)
-    special_tokens = [0]  # Using only padding token
-
-    # Act
-    block_ids = create_block_ids(input_ids, special_tokens)
-
-    # Assert
-    expected = torch.tensor([[1, 1, 1, 2, 2, 3, 3, 4]], device=device)
-    assert torch.all(block_ids == expected)
-
-
-def test_batched_input(device):
-    """Test block creation with batched input."""
-    # Arrange
-    input_ids = torch.tensor([[1, 2, 0, 3, 4], [5, 0, 6, 0, 7]], device=device)
-    special_tokens = [0]
-
-    # Act
-    block_ids = create_block_ids(input_ids, special_tokens)
-
-    # Assert
-    expected = torch.tensor([[1, 1, 1, 2, 2], [1, 1, 2, 2, 3]], device=device)
-    assert torch.all(block_ids == expected)
-    assert block_ids.shape == input_ids.shape
-
-
-def test_edge_cases(device):
-    """Test edge cases for block creation."""
-    # Test with all special tokens
-    input_ids = torch.tensor([[0, 0, 0]], device=device)
-    special_tokens = [0]
-    block_ids = create_block_ids(input_ids, special_tokens)
-    expected = torch.tensor([[1, 2, 2]], device=device)  # Updated to match behavior
-    assert torch.all(block_ids == expected)
-
-    # Test with no special tokens
-    input_ids = torch.tensor([[1, 2, 3]], device=device)
-    block_ids = create_block_ids(input_ids, special_tokens)
-    expected = torch.tensor([[1, 1, 1]], device=device)
-    assert torch.all(block_ids == expected)
-
-    # Test with alternating special tokens
-    input_ids = torch.tensor([[1, 0, 2, 0, 3]], device=device)
-    block_ids = create_block_ids(input_ids, special_tokens)
-    expected = torch.tensor([[1, 1, 2, 2, 3]], device=device)
-    assert torch.all(block_ids == expected)
-
-    # Test with special tokens at start/end
-    input_ids = torch.tensor([[0, 1, 0]], device=device)
-    block_ids = create_block_ids(input_ids, special_tokens)
-    expected = torch.tensor([[1, 2, 2]], device=device)
-    assert torch.all(block_ids == expected)
+@pytest.mark.parametrize(
+    "special_tokens", [[0, 1], torch.tensor([0, 1])], ids=["list", "tensor"]
+)
+def test_create_block_ids_with_several_special_tokens(special_tokens):
+    block_ids = create_block_ids(torch.tensor([[5, 0, 6, 1, 7]]), special_tokens)
+    assert torch.equal(block_ids, torch.tensor([[1, 1, 2, 2, 3]]))

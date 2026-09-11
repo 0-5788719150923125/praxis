@@ -153,8 +153,13 @@ def _greedy(model, ids, rungs=None):
         )
 
 
-@pytest.mark.parametrize("prompt_len", [31, 64, 100])
-@pytest.mark.parametrize("rungs", [(64, 128, 256), (128, 256)])
+@pytest.mark.parametrize(
+    "prompt_len,rungs",
+    [
+        (31, (64, 128, 256)),  # crosses a rung mid-turn
+        (100, (128, 256)),  # starts mid-rung under a coarse ladder
+    ],
+)
 def test_bucketed_generation_writes_the_same_bytes(byte_model, prompt_len, rungs):
     """The claim the whole mechanism rests on. Every stage of this stack is
     causal, so positions appended after the last real byte cannot reach it; the

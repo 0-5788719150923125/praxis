@@ -1,15 +1,12 @@
-"""Task-type resolution for DATASETS entries.
+"""Tests for praxis/data/config.py: task-type resolution for DATASETS entries.
 
 ``resolve_task_type`` reads an explicit ``task_type`` first and otherwise maps
 the entry's ``format`` through ``FORMAT_TO_TASK``. Type-only entries - the
-synthetic and locally-sourced datasets - set no ``format``, so they hit
-``DEFAULT_TASK`` (PRETRAIN) unless they say otherwise. That fallback is silent:
-nothing warns, the dataset simply trains on fineweb's loss-weight line and
-shares fineweb's difficulty EMA.
-
-``git-history`` sat there. It is one repo's commit log, a few MB re-read every
-epoch, and it carried ``pretrain``'s 1.0 target instead of ``local``'s 0.1.
+synthetic and locally-sourced datasets - set no ``format``, so they fall back
+to ``DEFAULT_TASK`` (PRETRAIN) unless they say otherwise, and nothing warns.
 """
+
+import pytest
 
 from praxis.data.config import DATASETS, FORMAT_TO_TASK, resolve_task_type
 from praxis.tasks import DEFAULT_TASK, TaskType
@@ -30,7 +27,8 @@ def _falls_back(cfg):
     return "task_type" not in cfg and cfg.get("format") is None
 
 
-def test_local_sourced_datasets_agree():
+@pytest.mark.parametrize("name", LOCAL_SOURCED)
+def test_local_sourced_datasets_agree(name):
     """Everything read off this machine carries the same task type.
 
     They share one economics: a bounded corpus the model revisits, against web
@@ -38,17 +36,16 @@ def test_local_sourced_datasets_agree():
     would give the same material two different loss weights and two different
     difficulty EMAs.
     """
-    for name in LOCAL_SOURCED:
-        resolved = TaskType(resolve_task_type(DATASETS[name]))
-        assert resolved is TaskType.LOCAL, f"{name} is {resolved.name}, not LOCAL"
+    resolved = TaskType(resolve_task_type(DATASETS[name]))
+    assert resolved is TaskType.LOCAL, f"{name} is {resolved.name}, not LOCAL"
 
 
 def test_no_dataset_lands_on_the_pretrain_fallback_by_accident():
     """A type-only entry that forgets ``task_type`` is silently PRETRAIN.
 
-    This is the trap that caught git-history. New synthetic or local datasets
-    are declared with ``type`` and no ``format``, so they inherit DEFAULT_TASK
-    without any signal that a choice was skipped.
+    New synthetic or local datasets are declared with ``type`` and no
+    ``format``, so they inherit DEFAULT_TASK without any signal that a choice
+    was skipped.
     """
     offenders = sorted(
         name

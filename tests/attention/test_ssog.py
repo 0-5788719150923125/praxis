@@ -1,21 +1,24 @@
-"""SSOG attention: shape, causality, field non-negativity, steering gradients,
-and flex/materialised parity on GPU."""
+"""SSOGAttention: the faithful port, its field bounds and steering gradients, the
+window, the geometry snapshots and cascade, and flex/materialised parity on GPU.
+Causality, the dashboard walks and the 0-dim parameter rule are swept for every
+attention entry in test_registry.py."""
 
 import pytest
 import torch
 import torch.nn.functional as F
 
 from praxis import PraxisConfig, registry
-from praxis.attention.ssog import SSOGAttention
+from praxis.attention.arc_ssog import ArcSSOGAttention
+from praxis.attention.ssog import COLD_GATE_INIT, NUM_ATOMS, SSOGAttention
 
 
-def _module(**overrides):
+def _module(cls=SSOGAttention, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0)
     cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
-    return SSOGAttention(cfg), cfg
+    return cls(cfg), cfg
 
 
 def test_registered_and_shapes():
@@ -25,18 +28,13 @@ def test_registered_and_shapes():
     x = torch.randn(3, 16, 64)
     out, kv, aux = module(x)
     assert out.shape == x.shape and kv is None and aux == 0.0
-
-
-def test_causal():
-    module, _ = _module()
-    module.eval()
-    x = torch.randn(1, 12, 64)
-    out = module(x)[0]
-    x2 = x.clone()
-    x2[:, 8:] = torch.randn(1, 4, 64)
-    out2 = module(x2)[0]
-    assert torch.allclose(out[:, :8], out2[:, :8], atol=1e-6)
-    assert not torch.allclose(out[:, 8:], out2[:, 8:])
+    # The reference ArcSSOG subclasses: four shared atoms, no depth axis, cold gate.
+    assert module.num_atoms == NUM_ATOMS == 4
+    assert module.raw_mu.shape == (module.num_heads, 4)
+    assert torch.allclose(
+        module.raw_gate, torch.full_like(module.raw_gate, COLD_GATE_INIT)
+    )
+    assert not hasattr(module, "depths")
 
 
 def test_field_never_looks_ahead_and_steering_learns():
@@ -81,34 +79,14 @@ def test_flex_matches_materialised():
     assert torch.allclose(out_lse, ref_lse, atol=1e-4), (out_lse - ref_lse).abs().max()
 
 
-def test_no_zero_dim_parameters():
-    """Schedule-free optimizers swap parameters through ``x.view(torch.uint8)``,
-    which a 0-dim tensor cannot do. This crashed a run at step 1."""
-    module, _ = _module()
-    zero_dim = [n for n, p in module.named_parameters() if p.dim() == 0]
-    assert zero_dim == [], zero_dim
-
-
-def test_geometry_snapshots_and_declarations():
-    """The heatmaps ride the LIVE snapshot path and the scalars ride the logged
-    path, and each needs its own declaration. A logged key with no
-    ``metric_descriptions`` entry is written to dynamics.db and then dropped:
-    the dashboard manifest is built from declarations, not from columns."""
+def test_geometry_snapshots_have_one_row_per_atom_and_hop():
     import math
 
     from praxis.attention.ssog import GEOM_BINS
 
     module, _ = _module(depth=4)
-    declared = type(module).metric_descriptions
-
-    logged = module.training_metrics()
-    assert all(math.isfinite(v) for v in logged.values())
-    assert set(logged) <= set(declared), sorted(set(logged) - set(declared))
-    assert all(declared[k].get("chart") for k in logged), "logged keys need a chart"
-
     snapshots = module.dashboard_snapshots()
     assert set(snapshots) == {"ssog_geometry", "ssog_cascade"}
-    assert all(declared[k].get("snapshot") for k in snapshots)
     for key, expected_rows in (
         ("ssog_geometry", module.num_atoms + 1),  # atoms, plus the summed mixture
         ("ssog_cascade", 4),  # one row per recurrent hop
@@ -119,60 +97,17 @@ def test_geometry_snapshots_and_declarations():
         assert all(math.isfinite(v) and v >= 0.0 for row in grid for v in row)
 
 
-def test_cascade_reaches_further_with_depth():
+@pytest.mark.parametrize("cls", [SSOGAttention, ArcSSOGAttention])
+def test_cascade_reaches_further_with_depth(cls):
     """The h-fold self-convolution has mean lag h*mu, so the composed field has
-    to walk outward monotonically - that IS the scale-space claim the card makes."""
-    module, _ = _module(depth=5)
+    to walk outward monotonically - that IS the scale-space claim the card makes.
+    ArcSSOG composes its real per-depth kernels (band h is k_0 * ... * k_h-1),
+    not one shared kernel, and must march outward all the same."""
+    module, _ = _module(cls, depth=5)
     lags = module.geom_lags
     rows = module._cascade()
     centroid = (rows * lags).sum(-1) / rows.sum(-1)
     assert torch.all(centroid[1:] > centroid[:-1]), centroid.tolist()
-
-
-def test_attention_walk_reaches_the_field():
-    """Attention modules have no loss hook and are not an attribute of the model
-    the way the head and encoder are, so a module walk is the only way anything
-    of theirs is reachable. All THREE walks are needed and each was missing:
-    values (dynamics.db), declarations (the card exists at all), and live
-    snapshots (the heatmap payload)."""
-    import torch.nn as nn
-
-    from praxis.metrics.descriptions import get_metric_descriptions
-    from praxis.metrics.specialization import (
-        collect_attention_metrics,
-        collect_attention_snapshots,
-    )
-
-    module, _ = _module()
-    model = nn.Sequential(nn.Identity(), module)
-
-    assert collect_attention_metrics(model).keys() == module.training_metrics().keys()
-    assert (
-        collect_attention_snapshots(model).keys() == module.dashboard_snapshots().keys()
-    )
-
-    descriptions = get_metric_descriptions(model)
-    for key in module.training_metrics():
-        assert descriptions.get(key, {}).get("chart"), key
-    for key in module.dashboard_snapshots():
-        assert descriptions.get(key, {}).get("snapshot"), key
-    # The dashboard labels each card with the class that raised it.
-    assert descriptions["ssog_temperature"]["caller"] == "SSOGAttention"
-
-
-def test_snapshot_recipe_serves_the_geometry():
-    """The /api/head_snapshots ROUTE is only the cold-start fallback; a
-    background producer normally fills the slot from the precompute recipe. A
-    snapshot wired into one and not the other renders blank as soon as the
-    producer takes over, which is exactly what happened."""
-    import torch.nn as nn
-
-    from praxis.web.snapshots import _recipe_head_snapshots
-
-    module, _ = _module()
-    payload = _recipe_head_snapshots(nn.Sequential(nn.Identity(), module))
-    assert payload["status"] == "ok"
-    assert set(module.dashboard_snapshots()) <= set(payload["snapshots"])
 
 
 def test_inverse_softplus_survives_a_long_ladder():

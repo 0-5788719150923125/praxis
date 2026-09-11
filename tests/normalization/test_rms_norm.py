@@ -1,8 +1,8 @@
-import pytest
+"""Tests for praxis/normalization/rms_norm.py."""
+
 import torch
 
 from praxis import registry
-from praxis.normalization import RMSNorm
 
 
 def test_rms_norm_behavior():

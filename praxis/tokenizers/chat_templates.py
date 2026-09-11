@@ -494,10 +494,11 @@ def _is_praxis_tokenizer(tokenizer: Any) -> bool:
     not recognise is a foreign model.
     """
     try:
-        from praxis.tokenizers.base import PraxisTokenizerBase
+        from praxis.tokenizers.base import PraxisTokenizerBase, PraxisToolTokensMixin
     except Exception:
         return False
-    return isinstance(tokenizer, PraxisTokenizerBase)
+    # ByteLevelTokenizer carries only the mixin, which every Praxis tokenizer has.
+    return isinstance(tokenizer, (PraxisTokenizerBase, PraxisToolTokensMixin))
 
 
 def resolve_chat_format(name: Optional[str]) -> ChatFormat:

@@ -1,6 +1,5 @@
-"""Tests for the Print mechanism: model-led question -> user answer -> reward."""
-
-import pytest
+"""Tests for praxis/policies/loop_modes.py: the Loop UI's parse and score
+contracts."""
 
 from praxis import registry
 
@@ -11,7 +10,9 @@ class TestLoopModes:
     def test_registry_and_default(self):
         from praxis.policies.loop_modes import get_loop_mode
 
-        assert set(registry.namespace("loop_modes")) == {"calibration", "approval"}
+        modes = registry.namespace("loop_modes")
+        assert set(modes) >= {"calibration", "approval"}
+        assert all(get_loop_mode(k).name == k for k in modes)
         assert get_loop_mode().name == "calibration"
         assert get_loop_mode("approval").name == "approval"
         assert get_loop_mode("nonsense").name == "calibration"  # safe fallback

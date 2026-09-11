@@ -1,40 +1,26 @@
-"""ArcSSOG: the per-depth field, the warm gate, and the populated bank.
-
-Each test pins one of the three deviations, plus the invariant that matters
-most: the faithful ``ssog`` port next door must not move.
-"""
+"""ArcSSOGAttention: the per-depth field, the warm gate, the populated bank, and the
+opt-in null atom. The faithful ``ssog`` port it extends is pinned in
+test_ssog.py."""
 
 import pytest
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from praxis import PraxisConfig, registry
 from praxis.attention.arc_ssog import ARC_GATE_INIT, FAR_LAG, ArcSSOGAttention
-from praxis.attention.ssog import (
-    COLD_GATE_INIT,
-    NULL_LOGIT_INIT,
-    NUM_ATOMS,
-    SIGMA_FLOOR,
-    SSOGAttention,
-    _inv_softplus,
-)
+from praxis.attention.ssog import NULL_LOGIT_INIT, SIGMA_FLOOR, _inv_softplus
 
 
-def _module(
-    cls=ArcSSOGAttention, num_atoms=None, mu_init_max=None, null_atom=False, **overrides
-):
+def _module(num_atoms=None, mu_init_max=None, null_atom=False, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0, depth=4)
     cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
-    if cls is ArcSSOGAttention:
-        return (
-            cls(cfg, num_atoms=num_atoms, mu_init_max=mu_init_max, null_atom=null_atom),
-            cfg,
-        )
-    return cls(cfg), cfg
+    module = ArcSSOGAttention(
+        cfg, num_atoms=num_atoms, mu_init_max=mu_init_max, null_atom=null_atom
+    )
+    return module, cfg
 
 
 def test_registered_profiles():
@@ -48,15 +34,9 @@ def test_registered_profiles():
     cfg.causal = True
     built = wide(cfg)
     assert built.num_atoms == 12 and built.mu_init_max == 128.0
-
-
-def test_the_faithful_port_did_not_move():
-    """The whole point of the subclass is that ``ssog`` stays the reference."""
-    base, _ = _module(SSOGAttention)
-    assert base.num_atoms == NUM_ATOMS == 4
-    assert base.raw_mu.shape == (base.num_heads, 4)  # no depth axis
-    assert torch.allclose(base.raw_gate, torch.full_like(base.raw_gate, COLD_GATE_INIT))
-    assert not hasattr(base, "depths")
+    # The wide ladder runs past the ~88 where log(expm1(y)) overflows float32.
+    mu = F.softplus(built.raw_mu)
+    assert torch.isfinite(mu).all() and mu.max() > 88.0
 
 
 def test_field_is_per_depth():
@@ -125,17 +105,7 @@ def test_default_ladder_stays_inside_the_window():
     assert (sigma / mu.clamp_min(1e-6)).max() < 1.0  # constant-Q
 
 
-def test_wide_profile_ladder_is_finite_past_the_overflow_point():
-    """``log(expm1(y))`` overflows float32 at y > ~88 and silently produced
-    ``inf`` centres; the wide ladder is the configuration that reaches there."""
-    module, _ = _module(num_atoms=12, mu_init_max=128.0)
-    mu = F.softplus(module.raw_mu)
-    sigma = F.softplus(module.raw_sigma) + 0.25
-    assert torch.isfinite(mu).all() and torch.isfinite(sigma).all()
-    assert mu.max() > 88.0
-
-
-def test_metrics_and_snapshots_are_per_depth_and_declared():
+def test_metrics_and_snapshots_are_per_depth():
     module, cfg = _module()
     metrics = module.training_metrics()
     for d in range(cfg.depth):
@@ -153,39 +123,10 @@ def test_metrics_and_snapshots_are_per_depth_and_declared():
     # six passes agreeing to do nothing.
     assert not any(k.endswith(("_mean", "_a0")) for k in metrics)
 
-    declared = type(module).metric_descriptions
-    assert set(metrics) <= set(declared)
-    assert all(declared[k].get("chart") for k in metrics)
-
     snapshots = module.dashboard_snapshots()
     assert set(snapshots) == {"ssog_geometry", "ssog_cascade"}
     for key, snap in snapshots.items():
-        assert declared[key].get("snapshot")
         assert snap["grid_rows"] == cfg.depth == len(snap["grid"])
-
-
-def test_cascade_composes_the_real_per_depth_kernels():
-    """Not a self-convolution of one shared kernel: band h is k_0 * ... * k_h-1,
-    so it must still march outward monotonically."""
-    module, _ = _module()
-    rows = module._cascade()
-    lags = module.geom_lags
-    centroid = (rows * lags).sum(-1) / rows.sum(-1)
-    assert torch.all(centroid[1:] > centroid[:-1]), centroid.tolist()
-
-
-def test_reaches_the_dashboard_through_the_precompute_recipe():
-    from praxis.metrics.descriptions import get_metric_descriptions
-    from praxis.web.snapshots import _recipe_head_snapshots
-
-    module, _ = _module()
-    model = nn.Sequential(nn.Identity(), module)
-    served = _recipe_head_snapshots(model)["snapshots"]
-    assert set(module.dashboard_snapshots()) <= set(served)
-    descriptions = get_metric_descriptions(model)
-    for key in module.training_metrics():
-        assert descriptions.get(key, {}).get("chart"), key
-    assert descriptions["ssog_reach_d0"]["caller"] == "ArcSSOGAttention"
 
 
 def test_snapshots_issue_no_gpu_work():
@@ -316,7 +257,7 @@ def test_null_logit_card_reports_the_merged_value_not_the_base():
     module, _ = _module(null_atom=True)
     merged = module.raw_null.detach() + 4.0
     x = torch.randn(2, 24, 64)
-    for _ in range(200):
+    for _ in range(40):  # NULL_EMA_DECAY 0.99 covers 33% of the gap by then
         torch.func.functional_call(
             module, {"raw_null": merged}, (x, None, None, None, 1)
         )

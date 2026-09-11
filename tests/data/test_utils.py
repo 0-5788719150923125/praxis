@@ -1,4 +1,5 @@
-"""Tests for the engagement-prediction reward (P2) and policy (P3)."""
+"""Tests for praxis/data/utils.py: ``rl_type`` pulls in the datasets its
+policies are bound to, and nothing else."""
 
 import pytest
 
@@ -17,32 +18,11 @@ class TestRlDatasetBinding:
         cfg = get_dataset_configs(train, [], rl_type=rl_type)
         return [e["_id"] for e in cfg["primary"]]
 
-    def test_declared_bindings(self):
-        from praxis.policies import rl_dataset_collections
-
-        assert rl_dataset_collections("engagement") == ("print",)
-        assert rl_dataset_collections("joke") == ("joke",)
-        # hh-rlhf is bound dataset-level (restricted), not via a collection.
-        assert rl_dataset_collections("preference") == ()
-        # Weight controllers reward from a callback and pull nothing.
-        assert rl_dataset_collections("harmonic_weight_wave") == ()
-        # Dataset-RL mapping preserved, including the unregistered legacy name.
-        assert rl_dataset_collections("reinforce") == ("rl",)
-        assert rl_dataset_collections("cot") == ("cot",)
-        assert rl_dataset_collections("cot-reinforce") == ("cot",)
-
     def test_rl_type_alone_pulls_its_data(self):
         ids = self._ids(["focused"], ["engagement", "joke"])
         assert "synthetic-print" in ids
         assert "rated-jokes" in ids
         assert "hh-rlhf" in self._ids(["print"], "preference")
-
-    def test_declared_dataset_injections(self):
-        from praxis.policies import rl_dataset_weights
-
-        assert rl_dataset_weights("preference") == {"hh-rlhf": 1.0}
-        assert rl_dataset_weights("engagement") == {}
-        assert rl_dataset_weights("harmonic_weight_wave") == {}
 
     def test_restricted_dataset_needs_its_policy(self):
         """hh-rlhf's card permits preference modeling only, so no collection

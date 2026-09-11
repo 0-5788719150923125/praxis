@@ -8,31 +8,13 @@ adds is the hold-back, and most of what is worth testing is that it never lets
 half a boundary out.
 """
 
-import time
-
 import pytest
 import torch
 
 from praxis.generation.reply import extract_assistant_reply
 from praxis.generation.request import GenerationResult
 from praxis.generation.streamers import ReplyStreamer
-
-
-class _Sink:
-    def __init__(self):
-        self.chunks = []
-        self.resets = 0
-
-    def text(self, delta):
-        self.chunks.append(delta)
-
-    def reset(self):
-        self.resets += 1
-        self.chunks.clear()
-
-    @property
-    def joined(self):
-        return "".join(self.chunks)
+from tests.generation.scripted import Sink
 
 
 def _feed(streamer, tokenizer, text):
@@ -47,12 +29,13 @@ def _feed(streamer, tokenizer, text):
 
 
 def test_streamed_text_equals_the_waited_for_reply(prose_tokenizer):
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     reply = "Hello there, this is the whole answer."
     _feed(streamer, prose_tokenizer, reply)
     streamer.finish()
 
+    assert len(sink.chunks) > 1, "published as one snapshot, not deltas"
     assert sink.joined == reply
     # ...which is exactly what the caller who waited would have gotten.
     assert sink.joined == extract_assistant_reply(
@@ -60,19 +43,8 @@ def test_streamed_text_equals_the_waited_for_reply(prose_tokenizer):
     )
 
 
-def test_the_turn_boundary_is_never_published(prose_tokenizer):
-    """A prose turn ends at the next speaker's name. The reply stops there and
-    the boundary itself is plumbing the client must not see."""
-    sink = _Sink()
-    streamer = ReplyStreamer(prose_tokenizer, sink.text)
-    _feed(streamer, prose_tokenizer, "Hi there.\n\nuser\n\nwhat the model kept going")
-    streamer.finish()
-
-    assert sink.joined == "Hi there."
-
-
 def _tokens_until_first_text(tokenizer, reply):
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(tokenizer, sink.text)
     for i, token_id in enumerate(tokenizer.encode(reply), start=1):
         streamer.put(torch.tensor([token_id]))
@@ -81,30 +53,21 @@ def _tokens_until_first_text(tokenizer, reply):
     return None
 
 
-def test_the_first_character_ships_immediately(prose_tokenizer):
-    """The latency regression, and it was invisible in every other test here
-    because they all call `finish()`.
-
-    The hold-back used to be a flat "longest terminator" - 16 characters under
-    both shipped formats - taken from the very first token. On a byte-level
-    model decoding inside the training loop that is 16 bytes before ANY text
-    reaches the reader, however fast the model runs, and it reads as the model
-    never having started.
-    """
-    assert _tokens_until_first_text(prose_tokenizer, "The capital of France.") == 1
-
-
-def test_the_first_character_ships_immediately_under_token_boundaries(
-    default_tokenizer,
-):
-    assert _tokens_until_first_text(default_tokenizer, "The capital of France.") == 1
+@pytest.mark.parametrize("fmt", ["prose", "default"])
+def test_the_first_character_ships_immediately(request, fmt):
+    """The hold-back is only the tail that could still become a boundary. A
+    flat "longest terminator" taken from the first token held 16 bytes back
+    before ANY text reached the reader, which reads as the model never having
+    started - and every test that calls `finish()` hides it."""
+    tokenizer = request.getfixturevalue(f"{fmt}_tokenizer")
+    assert _tokens_until_first_text(tokenizer, "The capital of France.") == 1
 
 
 def test_only_a_real_partial_match_is_held_back(prose_tokenizer):
     """Every terminator starts with a newline or a bracket, so ordinary prose
     withholds nothing - and a tail that could still become a boundary withholds
     exactly itself, no more."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "Hello there")
     assert sink.joined == "Hello there", "ordinary prose was held back"
@@ -122,7 +85,7 @@ def test_the_head_strip_is_not_half_published(default_tokenizer):
     """`extract_assistant_reply` strips a leading `#RESPONSE`, so shipping half
     of it would have to be retracted - and a retraction is what the streamer
     cannot do."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(default_tokenizer, sink.text)
     _feed(streamer, default_tokenizer, "#RESP")
     assert sink.joined == ""
@@ -135,7 +98,7 @@ def test_half_a_boundary_is_never_published(prose_tokenizer):
     """The hold-back's whole job. Feeding text that ends mid-boundary, the
     partial must stay private - published text cannot be retracted, and one
     more token would turn it into a cut."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "Hi there.\n\nuse")
 
@@ -149,14 +112,29 @@ def test_half_a_boundary_is_never_published(prose_tokenizer):
     assert sink.joined == "Hi there."
 
 
-def test_every_prefix_of_the_stream_is_a_prefix_of_the_answer(prose_tokenizer):
+@pytest.mark.parametrize(
+    "after",
+    [
+        "what the model kept going",
+        pytest.param(
+            "trailing junk",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="ReplyStreamer publishes the '\\n\\nuser' boundary when the "
+                "text after it starts like the 'tool' role boundary",
+            ),
+        ),
+    ],
+)
+def test_every_prefix_of_the_stream_is_a_prefix_of_the_answer(prose_tokenizer, after):
     """Monotonicity: a consumer appends, so anything published early has to
-    still be right later."""
-    sink = _Sink()
+    still be right later. The turn ends at the next speaker's name, and that
+    boundary and everything after it is plumbing the client never sees."""
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     final = "One two three four five."
     seen = []
-    for token_id in prose_tokenizer.encode(final + "\n\nuser\n\n"):
+    for token_id in prose_tokenizer.encode(final + "\n\nuser\n\n" + after):
         streamer.put(torch.tensor([token_id]))
         seen.append(sink.joined)
     streamer.finish()
@@ -166,20 +144,11 @@ def test_every_prefix_of_the_stream_is_a_prefix_of_the_answer(prose_tokenizer):
         assert final.startswith(partial), f"published {partial!r}, answer {final!r}"
 
 
-def test_the_stream_is_deltas_not_snapshots(prose_tokenizer):
-    sink = _Sink()
-    streamer = ReplyStreamer(prose_tokenizer, sink.text)
-    _feed(streamer, prose_tokenizer, "abcdefghijklmnopqrstuvwxyz")
-    streamer.finish()
-    assert len(sink.chunks) > 1
-    assert sink.joined == "abcdefghijklmnopqrstuvwxyz"
-
-
 def test_an_empty_turn_publishes_nothing(prose_tokenizer):
     """The placeholder a finished empty turn shows is a presentation choice for
     a completed turn; streaming it would put literal parenthetical text into
     the middle of a reply."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "\n\nuser\n\n")
     streamer.finish()
@@ -189,7 +158,7 @@ def test_an_empty_turn_publishes_nothing(prose_tokenizer):
 def test_control_tokens_do_not_leak_under_the_default_format(default_tokenizer):
     """The default format ends a turn on a control TOKEN rather than a role
     line, and its text (`[EOS]`) must not reach the client either."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(default_tokenizer, sink.text)
     _feed(streamer, default_tokenizer, "answer text")
     streamer.put(torch.tensor([default_tokenizer.eos_token_id]))
@@ -205,7 +174,7 @@ def test_control_tokens_do_not_leak_under_the_default_format(default_tokenizer):
 def test_the_step_prompt_is_not_republished(prose_tokenizer):
     """Every `generate` call publishes the whole sequence so far before it
     starts. Only what follows is new, and `begin_step` is what says so."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
 
     streamer.begin_step()
@@ -218,7 +187,7 @@ def test_the_step_prompt_is_not_republished(prose_tokenizer):
 
 
 def test_a_muted_streamer_absorbs_nothing(prose_tokenizer):
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "visible ")
     streamer.mute()
@@ -232,7 +201,7 @@ def test_a_muted_streamer_absorbs_nothing(prose_tokenizer):
 
 
 def test_restart_drops_what_is_no_longer_part_of_the_answer(prose_tokenizer):
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text, on_reset=sink.reset)
     _feed(streamer, prose_tokenizer, "thinking out loud")
     streamer.finish()
@@ -250,7 +219,7 @@ def test_restart_drops_what_is_no_longer_part_of_the_answer(prose_tokenizer):
 def test_restart_without_a_reset_callback_is_still_safe(prose_tokenizer):
     """A consumer with nowhere to put a reset can omit it and lean on the final
     result instead; the streamer must not require one."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "abc")
     streamer.restart()
@@ -262,7 +231,7 @@ def test_restart_without_a_reset_callback_is_still_safe(prose_tokenizer):
 def test_end_is_a_step_boundary_not_the_end_of_the_turn(prose_tokenizer):
     """transformers calls end() at the close of every decode, and a Praxis turn
     is several of them - so end() must not release the hold-back."""
-    sink = _Sink()
+    sink = Sink()
     streamer = ReplyStreamer(prose_tokenizer, sink.text)
     _feed(streamer, prose_tokenizer, "partial\n\nuse")
     streamer.end()

@@ -1,10 +1,8 @@
-"""Unit tests for :class:`praxis.generation.StreamingContext`.
+"""``StreamingContext``: the growing text buffer with reset-on-degeneracy.
 
-The streaming context is the shared helper that drives the
-"growing text buffer with reset-on-degeneracy" pattern used by both
-the backprop Lightning ``TerminalInterface`` callback and the Ray
-Mono-Forward live-inference hook. These tests cover the degeneracy
-heuristics and the stuck-output reset path in isolation.
+Shared by the Lightning ``TerminalInterface`` callback and the Mono-Forward
+live-inference hook. These tests cover the degeneracy
+heuristics, the stuck-output reset, and the display copy the web renders.
 """
 
 from __future__ import annotations
@@ -31,49 +29,26 @@ def test_unchanged_text_triggers_reset_after_threshold():
     assert ctx.unchanged_count == 0
 
 
-def test_character_ngram_repetition_triggers_reset():
-    ctx = StreamingContext(
-        initial_text="seed",
-        repetition_n_gram_size=3,
-        repetition_frequency=5,
-    )
-    # 10 copies of "abc" -> "abc" n-gram count is 8, exceeds threshold=5.
-    did_reset = ctx.update("abc" * 10)
-    assert did_reset is True
+@pytest.mark.parametrize(
+    "kwargs,text",
+    [
+        # 10 copies of "abc": the "abc" n-gram count is 8, over the threshold.
+        (dict(repetition_n_gram_size=3, repetition_frequency=5), "abc" * 10),
+        # "foo" * 5: pattern length 3 repeated 5 times, 15 >= min_segment_length.
+        ({}, "foofoofoofoofoo"),
+        # Bracket-pipe lines ("[tag]|" with >= 4 brackets) on 2 of 3 lines.
+        (
+            dict(repetition_frequency=1000),
+            "[a]|[b]|[c]|[d]\n[e]|[f]|[g]|[h]\nnormal line",
+        ),
+        ({}, "     \n\n\t  "),
+    ],
+    ids=["ngram", "sequential", "bracket_pipe", "whitespace"],
+)
+def test_degenerate_buffer_resets(kwargs, text):
+    ctx = StreamingContext(initial_text="seed", **kwargs)
+    assert ctx.update(text) is True
     assert ctx.text == "seed"
-
-
-def test_sequential_repetition_triggers_reset():
-    ctx = StreamingContext(initial_text="<s>")
-    # "foofoofoofoofoo" = "foo" * 5, pattern_length=3, repeat_count=5,
-    # total segment length = 15 >= min_segment_length(8).
-    did_reset = ctx.update("foofoofoofoofoo")
-    assert did_reset is True
-
-
-def test_bracket_pipe_pattern_triggers_reset():
-    ctx = StreamingContext(initial_text="<s>", repetition_frequency=1000)
-    # The bracket-pipe heuristic looks for ``[tag]`` items followed
-    # immediately by ``|`` or end-of-line, with >= 4 brackets and
-    # >= 1 pipe per matching line. Two lines of that pattern out of
-    # three (67% >= 50% threshold) trips the reset.
-    text = "\n".join(
-        [
-            "[a]|[b]|[c]|[d]",
-            "[e]|[f]|[g]|[h]",
-            "normal line",
-        ]
-    )
-    did_reset = ctx.update(text)
-    assert did_reset is True
-    assert ctx.text == "<s>"
-
-
-def test_all_whitespace_triggers_reset():
-    ctx = StreamingContext(initial_text="<s>")
-    did_reset = ctx.update("     \n\n\t  ")
-    assert did_reset is True
-    assert ctx.text == "<s>"
 
 
 def test_max_length_left_truncates_buffer():
@@ -121,37 +96,24 @@ def test_explicit_reset_clears_history():
 # Terminal tab. The DISPLAY copy is normalized so both agree; the PROMPT copy
 # must not be, or the model conditions on bytes it never produced.
 
-EXOTIC_BREAKS = ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
+EXOTIC_BREAKS = ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
 
 
 @pytest.mark.parametrize("sep", EXOTIC_BREAKS)
 def test_display_text_normalizes_breaks_the_browser_ignores(sep):
-    ctx = StreamingContext(initial_text="a")
-    ctx.update(f"one{sep}two")
-
-    # The prompt copy is untouched - byte-exact is the contract.
-    assert ctx.text == f"one{sep}two"
-
-    # The display copy breaks where the CLI already did.
-    assert ctx.display_text == "one\ntwo"
-
-
-@pytest.mark.parametrize("sep", EXOTIC_BREAKS)
-def test_both_renderers_agree_on_line_count(sep):
-    """The actual invariant: same number of lines in the terminal and the web.
-
-    The CLI counts with splitlines(); the browser counts LF (having already
-    collapsed CRLF). Before normalizing, these disagreed by one per separator.
-    """
+    """Both renderers must agree on the line count: the CLI counts with
+    splitlines(), the browser counts LF (having already collapsed CRLF)."""
     ctx = StreamingContext(initial_text="a")
     ctx.update(f"alpha{sep}beta{sep}gamma")
+
+    # The prompt copy is untouched - byte-exact is the contract - and it is
+    # where the two renderers disagree.
+    assert ctx.text == f"alpha{sep}beta{sep}gamma"
+    assert len(ctx.text.splitlines()) != len(ctx.text.split("\n"))
 
     cli_lines = ctx.display_text.splitlines()
     browser_lines = ctx.display_text.replace("\r\n", "\n").split("\n")
     assert cli_lines == browser_lines == ["alpha", "beta", "gamma"]
-
-    # And the raw buffer is where they diverged.
-    assert len(ctx.text.splitlines()) != len(ctx.text.split("\n"))
 
 
 def test_display_text_leaves_ordinary_whitespace_alone():

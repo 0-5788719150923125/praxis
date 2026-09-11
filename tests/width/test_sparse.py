@@ -1,31 +1,18 @@
-"""Mixture-of-widths: the helical deflation policy and its profile."""
+"""HelicalSparseWidth: the true-slice variant, which narrows the matmuls (and any
+per-channel activation parameters) instead of masking, and drops attention heads."""
 
 import torch
 import torch.nn as nn
 
-from praxis import registry
-
-# ─── Sparse (true-slice) variant ─────────────────────────────────────────────
-
-
-class _GLU(nn.Module):
-    """up -> chunk(2) -> a*act(b) -> down, like GatedLinearMLP/ArcGLU."""
-
-    def __init__(self, hidden=16, inner=24):
-        super().__init__()
-        self.up = nn.Linear(hidden, 2 * inner)
-        self.down = nn.Linear(inner, hidden)
-
-    def forward(self, x):
-        a, b = self.up(x).chunk(2, dim=-1)
-        return self.down(a * torch.tanh(b))
+from praxis import PraxisConfig, registry
+from praxis.attention.arc import ArcAttention
 
 
-def test_sparse_slices_the_matmul_and_grads():
+def test_sparse_slices_the_matmul_and_grads(glu):
     """At a deflated step the up matmul emits 2r rows and down consumes r cols,
     and only those receive gradient (the rest of the weight is untouched)."""
     pol = registry.lookup("width", "helical_sparse")()
-    blk, x = _GLU(hidden=16, inner=24), torch.randn(2, 4, 16)
+    blk, x = glu(), torch.randn(2, 4, 16)
     blk.zero_grad()
     with pol.scope([blk], current_depth=5, max_depth=6):  # frac 0.25 -> r=6
         out = blk(x)
@@ -46,24 +33,12 @@ class _ParamAct(nn.Module):
         return x * self.scale  # broadcasts on last dim; breaks if x desyncs
 
 
-class _ParamGLU(nn.Module):
-    def __init__(self, hidden=16, inner=24):
-        super().__init__()
-        self.up = nn.Linear(hidden, 2 * inner)
-        self.act = _ParamAct(inner)
-        self.down = nn.Linear(inner, hidden)
-
-    def forward(self, x):
-        a, b = self.up(x).chunk(2, dim=-1)
-        return self.down(a * self.act(b))
-
-
-def test_sparse_slices_parametric_activation_in_sync():
+def test_sparse_slices_parametric_activation_in_sync(glu):
     """A GLU with a per-channel parametric activation IS sliced - its activation
     param is sliced to the same window, so the forward stays well formed and the
     param's gradient lands only on the active channels."""
     pol = registry.lookup("width", "helical_sparse")()
-    blk, x = _ParamGLU(hidden=16, inner=24), torch.randn(2, 4, 16)
+    blk, x = glu(act=_ParamAct(24)), torch.randn(2, 4, 16)
     blk.zero_grad()
     with pol.scope([blk], current_depth=5, max_depth=6):  # frac 0.25 -> r=6
         out = blk(x)  # would raise if act param desynced from the sliced inner dim
@@ -86,29 +61,14 @@ def test_sparse_defers_while_activation_is_lazy():
     assert _activation_channel_tensors(act, 24) is None  # bail while lazy
 
 
-# ─── Attention head-drop recipe ──────────────────────────────────────────────
-
-
-def _arc_attention(hidden=128, num_heads=4, num_queries=2):
-    from praxis import PraxisConfig
-    from praxis.attention.arc import ArcAttention
-
-    cfg = PraxisConfig(
-        hidden_size=hidden,
-        num_heads=num_heads,
-        num_queries=num_queries,
-        depth=8,
-        dropout=0.0,
-        encoding="rope",
-        causal=False,
-    )
-    return ArcAttention(cfg)
-
-
 def test_sparse_policy_drops_heads_in_a_block():
     """The sparse policy reaches attention through a containing module."""
     pol = registry.lookup("width", "helical_sparse")()
-    attn = _arc_attention()
+    attn = ArcAttention(
+        PraxisConfig(
+            hidden_size=128, num_heads=4, num_queries=2, depth=8, dropout=0.0
+        )
+    )
     holder = nn.Module()
     holder.attn = attn
     x = torch.randn(2, 12, 128)

@@ -1,25 +1,13 @@
-"""Unit tests for :class:`praxis.generation.StreamingContext`.
-
-The streaming context is the shared helper that drives the
-"growing text buffer with reset-on-degeneracy" pattern used by both
-the backprop Lightning ``TerminalInterface`` callback and the Ray
-Mono-Forward live-inference hook. These tests cover the degeneracy
-heuristics and the stuck-output reset path in isolation.
-"""
+"""``ContextStreams``: a cohort of rolling contexts sharing one anchor."""
 
 from __future__ import annotations
 
-import pytest
-
 from praxis.generation import StreamingContext
-
-# --- ContextStreams: the anchored cohort ------------------------------------
+from praxis.generation.context_blocks import ContextBlock, ContextStreams
 
 
 def _cohort(reseed_threshold=2, n=3):
     """Three single-char-anchored paths with a deterministic anchor mint."""
-    from praxis.generation.context_blocks import ContextBlock, ContextStreams
-
     seeds = iter(["A", "B", "C", "D"])
     temps = [1.0 / 3.0, 0.5, 1.0][:n]
     blocks = [ContextBlock(f"b{i}", "", temps[i], 1.0) for i in range(n)]
@@ -60,8 +48,6 @@ def test_quorum_degeneracy_reanchors_all_paths():
 def test_context_payload_ships_the_display_copy():
     """The web reads ContextStreams.payload(); that is the copy that must be
     normalized, while token counts stay measured against the raw buffer."""
-    from praxis.generation.context_blocks import ContextBlock, ContextStreams
-
     blocks = [
         ContextBlock(name="Primary", description="test", temperature=0.5, chance=1.0)
     ]

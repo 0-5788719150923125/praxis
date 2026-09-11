@@ -15,10 +15,12 @@ WHAT IS SUBSTITUTED: the socket.io CLIENT is loaded from a CDN
 (`templates/index.html`), so an offline browser cannot open a real one. `io` is
 stubbed with a socket that can be handed frames from the test, which is what
 lets the delta path be driven at all; the wire format those frames use is
-pinned server-side in `tests/test_generation_stream_route.py`.
+pinned server-side in `tests/web/test_routes.py`. The page is served by the
+session's APIServer (tests/web/conftest.py); every POST is fulfilled here.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -65,89 +67,67 @@ SOCKET_STUB_JS = """
 """
 
 
-class _StubGenerator:
-    """Never asked to generate; the POST is fulfilled by a route."""
-
-    model = None
-
-    def request_generation(self, prompt, kwargs, deadline=None, **_):
-        return "stub_0"
-
-    def get_result(self, request_id):
-        return ""
+@pytest.fixture(scope="module")
+def app_url(api_server):
+    return f"http://127.0.0.1:{api_server.port}/"
 
 
 @pytest.fixture(scope="module")
-def app_url():
-    import sys
-    import time
-    import urllib.request
-
-    from praxis.web.src.build import build_dev
-
-    # praxis.cli parses sys.argv on import; hide pytest's flags from it.
-    argv, sys.argv = sys.argv, sys.argv[:1]
-    try:
-        from praxis.web import APIServer
-    finally:
-        sys.argv = argv
-
-    build_dev()
-    server = APIServer(
-        _StubGenerator(),
-        "127.0.0.1",
-        2199,
-        tokenizer=None,
-        integration_loader=None,
-        dev_mode=False,
-    )
-    server.start()
-
-    url = f"http://127.0.0.1:{server.port}/"
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                if response.status == 200:
-                    break
-        except OSError:
-            time.sleep(0.2)
-    else:
-        pytest.skip("API server never became reachable")
-    yield url
-
-
-@pytest.fixture(scope="module")
-def page(app_url):
+def browser():
     with sync_playwright() as play:
         browser = play.chromium.launch()
-        context = browser.new_context(viewport={"width": 1280, "height": 900})
-        context.route(
-            "**/*",
-            lambda route: (
-                route.continue_()
-                if route.request.url.startswith(app_url)
-                else route.abort()
-            ),
-        )
-        context.route(
-            "https://cdnjs.cloudflare.com/**",
-            lambda route: route.fulfill(
-                content_type="application/javascript", body=SOCKET_STUB_JS
-            ),
-        )
-        context.route(
-            "https://cdn.jsdelivr.net/**",
-            lambda route: route.fulfill(
-                content_type="application/javascript", body="/* chart.js stubbed */"
-            ),
-        )
-        page = context.new_page()
-        page.goto(app_url, wait_until="load")
-        page.wait_for_timeout(400)
-        yield page
-        context.close()
+        yield browser
         browser.close()
+
+
+def _open(browser, app_url, **context_args):
+    """A page on the app with every off-origin request stubbed or refused."""
+    context = browser.new_context(**context_args)
+    context.route(
+        "**/*",
+        lambda route: (
+            route.continue_() if route.request.url.startswith(app_url) else route.abort()
+        ),
+    )
+    context.route(
+        "https://cdnjs.cloudflare.com/**",
+        lambda route: route.fulfill(
+            content_type="application/javascript", body=SOCKET_STUB_JS
+        ),
+    )
+    context.route(
+        "https://cdn.jsdelivr.net/**",
+        lambda route: route.fulfill(
+            content_type="application/javascript", body="/* chart.js stubbed */"
+        ),
+    )
+    page = context.new_page()
+    page.goto(app_url, wait_until="load")
+    page.wait_for_timeout(400)
+    return context, page
+
+
+@pytest.fixture(scope="module")
+def page(browser, app_url):
+    """One desktop page shared by the module; tests reset the state they use."""
+    context, page = _open(browser, app_url, viewport={"width": 1280, "height": 900})
+    yield page
+    context.close()
+
+
+@pytest.fixture
+def phone(browser, app_url):
+    """A Pixel 6 sized touch viewport."""
+    context, page = _open(
+        browser,
+        app_url,
+        viewport={"width": 412, "height": 915},
+        device_scale_factor=2.625,
+        is_mobile=True,
+        has_touch=True,
+    )
+    yield page
+    context.close()
 
 
 def _reset(page):
@@ -190,6 +170,67 @@ def _snapshot(page):
         }""")
 
 
+SEND_JS = """async (streaming) => {
+    const { sendMessage } = await import('/static/js/api.js');
+    const { streamingTurn } = await import('/static/js/chatstream.js');
+    const { state } = await import('/static/js/state.js');
+    const { render } = await import('/static/js/render.js');
+    if (!streaming) {
+        return [(await sendMessage(state.messages)).response];
+    }
+    const turn = streamingTurn();
+    try {
+        const response = await sendMessage(state.messages, {
+            onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
+        });
+        turn.settle(response.response, response.tools);
+    } catch (error) {
+        turn.fail(`Error: ${error.message}`);
+    }
+    state.isThinking = false;
+    render();
+    return state.messages.map((m) => m.content);
+}"""
+
+
+def _send(page, app_url, frames=(), response=None, streaming=True):
+    """Send one message through the real client modules.
+
+    While the POST is in flight, each ``(event, payload)`` in ``frames`` is
+    delivered on the socket carrying the request's own stream id (a payload
+    ``id`` overrides it), with a DOM snapshot after each. The POST is then
+    fulfilled with ``response``, or aborted when it is None.
+    """
+    _reset(page)
+    seen, bodies = [], []
+
+    def handle(route):
+        body = json.loads(route.request.post_data)
+        bodies.append(body)
+        for event, payload in frames:
+            page.evaluate(
+                "([ev, data]) => window.__deliver(ev, data)",
+                [event, {"id": body.get("stream_id"), "seq": 1, **payload}],
+            )
+            page.wait_for_timeout(40)
+            seen.append(_snapshot(page))
+        if response is None:
+            route.abort()
+        else:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(response),
+            )
+
+    page.route(f"{app_url}messages/", handle)
+    try:
+        messages = page.evaluate(SEND_JS, streaming)
+    finally:
+        page.unroute(f"{app_url}messages/")
+    return SimpleNamespace(seen=seen, bodies=bodies, messages=messages)
+
+
 # ---------------------------------------------------------------------------
 # the whole client path: sendMessage -> socket frame -> turn -> DOM
 # ---------------------------------------------------------------------------
@@ -199,121 +240,42 @@ def test_the_reply_fills_in_while_the_post_is_still_outstanding(page, app_url):
     """The point of the feature. The deltas arrive on the socket WHILE the POST
     is in flight, which is the ordering production has - and the id that routes
     them is the one `api.js` put in the request body."""
-    _reset(page)
-    seen = []
+    out = _send(
+        page,
+        app_url,
+        frames=[("gen_delta", {"text": t}) for t in ("It ", "is ", "noo")],
+        response={"response": "It is noon."},
+    )
 
-    def handle(route):
-        body = json.loads(route.request.post_data)
-        # The client mints it and sends it; the server only echoes it back.
-        stream_id = body["stream_id"]
-        for chunk in ("It ", "is ", "noo"):
-            page.evaluate(
-                "([id, text]) => window.__deliver('gen_delta', { id, text, seq: 1 })",
-                [stream_id, chunk],
-            )
-            page.wait_for_timeout(40)
-            seen.append(_snapshot(page))
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps({"response": "It is noon."}),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        result = page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset
-                });
-                turn.settle(response.response);
-                state.isThinking = false;
-                render();
-                return state.messages.map((m) => m.content);
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
+    # The client mints the id and sends it; the server only echoes it back.
+    assert out.bodies[0]["stream_id"]
     # It grew, as ONE message beside the user's - never a bubble per delta.
-    assert [s["text"] for s in seen] == ["It ", "It is ", "It is noo"]
-    assert {s["count"] for s in seen} == {2}
-    assert all(s["streaming"] for s in seen)
+    assert [s["text"] for s in out.seen] == ["It ", "It is ", "It is noo"]
+    assert {s["count"] for s in out.seen} == {2}
+    assert all(s["streaming"] for s in out.seen)
     # ...and settled on the POST's answer, which is what stays authoritative.
-    assert result == ["hi", "It is noon."]
+    assert out.messages == ["hi", "It is noon."]
     assert _snapshot(page)["streaming"] is False
 
 
 def test_deltas_for_another_request_are_ignored(page, app_url):
     """Ids keep concurrent requests from cross-talking, and stop a straggler
     from a finished turn landing in the next one."""
-    _reset(page)
-
-    def handle(route):
-        page.evaluate(
-            "() => window.__deliver('gen_delta', "
-            "{ id: 'some-other-request', text: 'WRONG', seq: 1 })"
-        )
-        page.wait_for_timeout(40)
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps({"response": "mine"}),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        result = page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset
-                });
-                turn.settle(response.response);
-                state.isThinking = false;
-                render();
-                return state.messages.map((m) => m.content);
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
-    assert result == ["hi", "mine"]
+    out = _send(
+        page,
+        app_url,
+        frames=[("gen_delta", {"id": "some-other-request", "text": "WRONG"})],
+        response={"response": "mine"},
+    )
+    assert out.messages == ["hi", "mine"]
 
 
 def test_a_request_that_does_not_stream_sends_no_id(page, app_url):
     """The unchanged path: no `onDelta`, no `stream_id`, so the server builds no
     streamer at all and the behaviour is exactly what it was."""
-    _reset(page)
-    bodies = []
-
-    def handle(route):
-        bodies.append(json.loads(route.request.post_data))
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps({"response": "quiet reply"}),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        result = page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { state } = await import('/static/js/state.js');
-                const response = await sendMessage(state.messages);
-                return response.response;
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
-    assert result == "quiet reply"
-    assert "stream_id" not in bodies[0]
+    out = _send(page, app_url, response={"response": "quiet reply"}, streaming=False)
+    assert out.messages == ["quiet reply"]
+    assert "stream_id" not in out.bodies[0]
 
 
 # ---------------------------------------------------------------------------
@@ -414,74 +376,37 @@ def test_a_tool_call_clears_what_was_already_shown(page):
     assert {s["count"] for s in seen} == {2}
 
 
-def test_a_turn_that_streamed_nothing_is_still_appended(page):
+@pytest.mark.parametrize(
+    "streamed,ending,shown",
+    [
+        (None, "settle('quiet reply')", "quiet reply"),
+        ("partial", "settle('final answer')", "final answer"),
+        # A long reply streams in, the client's 60s patience runs out, and the
+        # POST comes back "". The stream is closed by then, so what is on
+        # screen IS everything the model produced: keep it and caption it.
+        ("partial", "settle('')", "partial"),
+        # With nothing on screen there is nothing to protect.
+        (None, "settle('')", "Error: No response"),
+        # An outright failure is a footnote on streamed text, not a replacement.
+        ("partial", "fail('Error: boom')", "partial"),
+        (None, "fail('Error: boom')", "Error: boom"),
+    ],
+)
+def test_how_a_turn_ends(page, streamed, ending, shown):
+    """(streamed or not) x (answer, empty answer, failure): the turn is always
+    appended exactly once, and streamed text is never thrown away."""
+    delta = f"await step(() => turn.onDelta({streamed!r}));" if streamed else ""
     out = _drive(
         page,
-        """(async () => {
-            await step(() => { turn.settle('quiet reply'); render(); });
-        })()""",
+        f"""(async () => {{
+            {delta}
+            await step(() => {{ turn.{ending}; render(); }});
+        }})()""",
     )
-    assert out["messages"] == ["hi", "quiet reply"]
-    assert out["seen"][-1]["text"] == "quiet reply"
-    assert out["seen"][-1]["streaming"] is False
-
-
-def test_a_reply_that_streamed_survives_an_empty_final_answer(page):
-    """The one that actually bit: a long reply streams in, the client's own 60s
-    patience runs out mid-turn, `POST /messages/` comes back with `""`, and the
-    whole visible reply was replaced by "Error: No response" at the very end.
-
-    The stream is closed by then, so what is on screen IS everything the model
-    produced before the request was abandoned. Keep it and caption it.
-    """
-    out = _drive(
-        page,
-        """(async () => {
-            await step(() => turn.onDelta('a long reply the reader watched arrive'));
-            await step(() => { turn.settle(''); render(); });
-        })()""",
-    )
-    assert out["messages"] == ["hi", "a long reply the reader watched arrive"]
-    assert "No response" not in out["messages"][-1]
-    assert out["seen"][-1]["streaming"] is False
-
-
-def test_an_empty_answer_with_nothing_streamed_still_reports_the_failure(page):
-    """...and the converse. With nothing on screen there is nothing to protect,
-    so the failure is the message."""
-    out = _drive(
-        page,
-        """(async () => {
-            await step(() => { turn.settle(''); render(); });
-        })()""",
-    )
-    assert out["messages"] == ["hi", "Error: No response"]
-
-
-def test_a_failed_request_keeps_what_was_already_streamed(page):
-    """Same rule for an outright failure: the error becomes a footnote on the
-    text rather than a replacement for it."""
-    out = _drive(
-        page,
-        """(async () => {
-            await step(() => turn.onDelta('half a thought'));
-            await step(() => { turn.fail('Error: boom'); render(); });
-        })()""",
-    )
-    assert out["messages"] == ["hi", "half a thought"]
+    assert out["messages"] == ["hi", shown]
     assert out["seen"][-1]["count"] == 2
-
-
-def test_a_failed_request_with_nothing_streamed_leaves_only_the_error(page):
-    out = _drive(
-        page,
-        """(async () => {
-            await step(() => { turn.fail('Error: boom'); render(); });
-        })()""",
-    )
-    assert out["messages"] == ["hi", "Error: boom"]
-    assert out["seen"][-1]["text"] == "Error: boom"
-    assert out["seen"][-1]["count"] == 2
+    assert out["seen"][-1]["streaming"] is False
+    assert shown in out["seen"][-1]["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -688,55 +613,22 @@ def test_a_tool_chip_appears_while_the_reply_is_still_arriving(page, app_url):
     """A tool that ran leaves no trace in the reply text - the server strips
     the whole call/result exchange - so the chip is the only thing that shows
     it, and it shows up as it happens rather than at the end."""
-    _reset(page)
-    seen = []
-
-    def handle(route):
-        stream_id = json.loads(route.request.post_data)["stream_id"]
-
-        def deliver(event, payload):
-            page.evaluate(
-                "([ev, data]) => window.__deliver(ev, data)",
-                [event, {"id": stream_id, "seq": 1, **payload}],
-            )
-            page.wait_for_timeout(40)
-            seen.append(_snapshot(page))
-
-        deliver("gen_delta", {"text": "let me look"})
-        deliver("gen_tool", {"name": "read_file"})
-        deliver("gen_delta", {"text": " - found it"})
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "response": "let me look - found it",
-                    "tools": [{"name": "read_file", "count": 1}],
-                }
-            ),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
-                });
-                turn.settle(response.response, response.tools);
-                state.isThinking = false;
-                render();
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
-    assert [s["tools"] for s in seen] == [[], ["read_file"], ["read_file"]]
+    out = _send(
+        page,
+        app_url,
+        frames=[
+            ("gen_delta", {"text": "let me look"}),
+            ("gen_tool", {"name": "read_file"}),
+            ("gen_delta", {"text": " - found it"}),
+        ],
+        response={
+            "response": "let me look - found it",
+            "tools": [{"name": "read_file", "count": 1}],
+        },
+    )
+    assert [s["tools"] for s in out.seen] == [[], ["read_file"], ["read_file"]]
     # One turn throughout - the chip is part of the message, not a bubble.
-    assert {s["count"] for s in seen} == {2}
+    assert {s["count"] for s in out.seen} == {2}
     assert _snapshot(page)["tools"] == ["read_file"]
 
 
@@ -744,53 +636,20 @@ def test_a_reset_clears_the_text_but_not_the_chips(page, app_url):
     """`gen_reset` fires BECAUSE a tool ran: the runtime spliced the result and
     moved the turn anchor past it, so the model's pre-call chatter stopped
     being part of the answer. The call itself still happened."""
-    _reset(page)
-
-    seen = []
-
-    def handle(route):
-        stream_id = json.loads(route.request.post_data)["stream_id"]
-        for event, payload in (
+    out = _send(
+        page,
+        app_url,
+        frames=[
             ("gen_delta", {"text": "let me look"}),
             ("gen_tool", {"name": "read_file"}),
             ("gen_reset", {}),
             ("gen_delta", {"text": "it says 42"}),
-        ):
-            page.evaluate(
-                "([ev, data]) => window.__deliver(ev, data)",
-                [event, {"id": stream_id, "seq": 1, **payload}],
-            )
-            page.wait_for_timeout(40)
-            seen.append(_snapshot(page))
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {"response": "it says 42", "tools": [{"name": "read_file", "count": 1}]}
-            ),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
-                });
-                turn.settle(response.response, response.tools);
-                state.isThinking = false;
-                render();
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
-    # Measured MID-STREAM, which is the only place the rule is visible: the
-    # response's own tally would restore the chips at the end either way.
-    after_reset = seen[2]
+        ],
+        response={"response": "it says 42", "tools": [{"name": "read_file", "count": 1}]},
+    )
+    # Measured MID-STREAM, the only place the rule is visible: the response's
+    # own tally would restore the chips at the end either way.
+    after_reset = out.seen[2]
     assert after_reset["text"] == ""  # the chatter was dropped
     assert after_reset["tools"] == ["read_file"]  # the call was not
 
@@ -802,128 +661,67 @@ def test_a_reset_clears_the_text_but_not_the_chips(page, app_url):
 def test_repeated_use_of_one_tool_is_counted_not_repeated(page, app_url):
     """Two chips reading `read_file` would be noise. One with a count is the
     Discord-reaction shape the row is modelled on."""
-    _reset(page)
-
-    def handle(route):
-        stream_id = json.loads(route.request.post_data)["stream_id"]
-        for name in ("read_file", "search", "read_file"):
-            page.evaluate(
-                "([id, name]) => window.__deliver('gen_tool', { id, name, seq: 1 })",
-                [stream_id, name],
-            )
-            page.wait_for_timeout(30)
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "response": "done",
-                    "tools": [
-                        {"name": "read_file", "count": 2},
-                        {"name": "search", "count": 1},
-                    ],
-                }
-            ),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
-                });
-                turn.settle(response.response, response.tools);
-                state.isThinking = false;
-                render();
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
+    _send(
+        page,
+        app_url,
+        frames=[("gen_tool", {"name": n}) for n in ("read_file", "search", "read_file")],
+        response={
+            "response": "done",
+            "tools": [{"name": "read_file", "count": 2}, {"name": "search", "count": 1}],
+        },
+    )
     # First-use order, and the count only shows past one.
     assert _snapshot(page)["tools"] == ["read_file x2", "search"]
 
 
 def test_the_response_tally_is_what_the_turn_settles_on(page, app_url):
-    """The chips are not a preview the answer supersedes and then forgets: the
-    server tallies them in the branch that runs each tool and sends them
-    whether or not the socket was up. A client whose socket dropped every
+    """The server tallies tools in the branch that runs each one and sends them
+    whether or not the socket was up, so a client whose socket dropped every
     frame still ends up with the right row."""
-    _reset(page)
-
-    def handle(route):
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {"response": "done", "tools": [{"name": "calc", "count": 3}]}
-            ),
-        )
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                const response = await sendMessage(state.messages, {
-                    onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
-                });
-                turn.settle(response.response, response.tools);
-                state.isThinking = false;
-                render();
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
+    _send(
+        page,
+        app_url,
+        response={"response": "done", "tools": [{"name": "calc", "count": 3}]},
+    )
     assert _snapshot(page)["tools"] == ["calc x3"]
 
 
 def test_a_failed_request_keeps_the_chips_it_earned(page, app_url):
     """A tool that ran still ran. The error is a footnote on the turn, not a
     replacement for the record of what it did."""
-    _reset(page)
+    _send(page, app_url, frames=[("gen_tool", {"name": "search"})], response=None)
 
-    def handle(route):
-        stream_id = json.loads(route.request.post_data)["stream_id"]
-        page.evaluate(
-            "(id) => window.__deliver('gen_tool', { id, name: 'search', seq: 1 })",
-            stream_id,
-        )
-        page.wait_for_timeout(40)
-        route.abort()
-
-    page.route(f"{app_url}messages/", handle)
-    try:
-        page.evaluate("""async () => {
-                const { sendMessage } = await import('/static/js/api.js');
-                const { streamingTurn } = await import('/static/js/chatstream.js');
-                const { state } = await import('/static/js/state.js');
-                const { render } = await import('/static/js/render.js');
-                const turn = streamingTurn();
-                try {
-                    const response = await sendMessage(state.messages, {
-                        onDelta: turn.onDelta, onReset: turn.onReset, onTool: turn.onTool
-                    });
-                    turn.settle(response.response, response.tools);
-                } catch (error) {
-                    turn.fail(`Error: ${error.message}`);
-                }
-                state.isThinking = false;
-                render();
-            }""")
-    finally:
-        page.unroute(f"{app_url}messages/")
-
-    final = _snapshot(page)
-    assert final["tools"] == ["search"]
+    assert _snapshot(page)["tools"] == ["search"]
     assert page.evaluate("""async () => {
             const { state } = await import('/static/js/state.js');
             return state.messages[state.messages.length - 1].caption;
         }""").startswith("Error:")
+
+
+# ---------------------------------------------------------------------------
+# phone layout (css/responsive.css, mobile.js)
+# ---------------------------------------------------------------------------
+
+
+TABS = ["chat", "terminal", "agents", "research", "dynamics", "spec"]
+
+
+def test_no_tab_overflows_a_phone_screen(phone):
+    width = phone.viewport_size["width"]
+    for tab in TABS:
+        # The tab bar is rendered once per layout; click the visible one.
+        phone.locator(f'button[data-tab="{tab}"]:visible').first.click()
+        phone.wait_for_timeout(100)
+        body = phone.evaluate("() => document.body.scrollWidth")
+        assert body <= width + 5, f"{tab}: body scrollWidth {body} > {width}"
+        panel = phone.locator(f"#{tab}-content").bounding_box()
+        assert panel, f"{tab}: panel not shown"
+        assert panel["x"] + panel["width"] <= width, f"{tab}: panel overflows"
+
+
+def test_the_message_input_fits_a_phone_screen(phone):
+    field = phone.locator("#message-input")
+    assert field.is_visible()
+    box = field.bounding_box()
+    assert box["x"] + box["width"] <= phone.viewport_size["width"]
+    assert box["width"] >= 200, f"input too narrow: {box['width']}px"

@@ -1,7 +1,14 @@
+"""HTTP routes (praxis/web/routes): one section per route module.
+
+Routes that only read ``current_app.config`` are exercised on a throwaway Flask
+app carrying their blueprint; the few that need the full app (static files, git,
+agents, the home page) go through the session's live server.
+"""
+
+import io
 import json
-import sys
-import time
-from typing import Generator
+import sqlite3
+import zipfile
 from unittest.mock import Mock, patch
 
 import flask
@@ -12,9 +19,7 @@ import torch.nn as nn
 import yaml
 from flask import Flask
 
-from praxis import registry
 from praxis.metrics.training_metrics import TRAINING_METRIC_REGISTRY, X_AXIS_REGISTRY
-from praxis.web import APIServer, app
 from praxis.web.routes import print as print_route
 from praxis.web.routes import register_routes
 from praxis.web.routes.cards import cards_bp
@@ -22,173 +27,140 @@ from praxis.web.routes.dynamics import dynamics_bp
 from praxis.web.websocket.realtime import NAMESPACE
 
 # ------------------------------------------------------------------------------
-# generation_stream_route
+# generation: /input and /messages
 # ------------------------------------------------------------------------------
-# The side channel that carries a reply to the browser as it is written.
-#
-# ``POST /messages/`` is unchanged - one request, one final JSON reply, still
-# authoritative. The deltas ride the ``/realtime`` socket the client already has open,
-# keyed by an id the client mints. The properties worth pinning are the ones whose
-# failure is silent: opting out has to change nothing, and a broken socket has to cost
-# the preview and nothing else.
 
 
 @pytest.fixture
-def emitted(monkeypatch):
-    """Capture what would go out on the socket."""
-    frames = []
+def generation_app(fake_tokenizer):
+    """A throwaway app carrying only the generation blueprint.
 
-    class _Socket:
-        def emit(self, event, payload, namespace=None):
-            frames.append((event, payload, namespace))
-
-    # Reached through sys.modules on purpose: `praxis/web/__init__.py` does
-    # `from .app import app`, which rebinds the attribute `praxis.web.app` to
-    # the FLASK OBJECT - so `import praxis.web.app as m` binds the Flask app,
-    # not the module, and patching it would silently do nothing.
-    import praxis.web.app  # noqa: F401  (ensure it is in sys.modules)
-
-    monkeypatch.setattr(sys.modules["praxis.web.app"], "socketio", _Socket())
-    return frames
-
-
-@pytest.fixture
-def client():
-    """A throwaway Flask app carrying only the generation blueprint.
-
-    Deliberately NOT `praxis.web.app.app`: that is a module-level singleton the
-    rest of the web tests share, and both mutating its config and registering
-    blueprints on it leak - the second registration makes `APIServer` fail to
-    start in whatever test runs next. A blueprint can be registered on any
-    number of apps, and this route only reads `current_app.config`.
+    Deliberately NOT `praxis.web.app.app`: mutating that singleton's config, or
+    registering blueprints on it a second time, leaks into every later test.
     """
-    from flask import Flask
-
     from praxis.web.routes.generation import generation_bp
 
     app = Flask(__name__)
     app.config["TESTING"] = True
+    app.config["tokenizer"] = fake_tokenizer
     app.register_blueprint(generation_bp)
     return app
 
 
-def test_the_route_streams_and_still_returns_the_whole_reply(emitted, client):
-    """End to end through the Flask route: the deltas go out AND the response
-    body is the same complete reply it always was."""
+def _post(app, path, generator, **body):
+    app.config["generator"] = generator
+    with app.test_client() as http:
+        return http.post(path, json=body)
 
-    class _StreamingGenerator:
-        """Publishes a reply in pieces, then returns it whole - the shape a
-        real `Generator` with a `ReplyStreamer` attached produces."""
 
-        def __init__(self):
-            self.pending = None
+def test_input_generation(generation_app, mock_generator):
+    response = _post(
+        generation_app, "/input", mock_generator, prompt="Hello, world!", max_new_tokens=50
+    )
+    assert response.status_code == 200
+    assert "Generated response" in response.get_json()["response"]
 
-        def request_generation(
-            self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, **_
-        ):
-            for chunk in ("It ", "is ", "noon."):
-                if on_text:
-                    on_text(chunk)
-            self.pending = "It is noon."
-            return "rid"
 
-        def get_result(self, request_id):
-            result, self.pending = self.pending, None
-            return result
+def test_messages_generation(generation_app, mock_generator):
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello!"},
+    ]
+    response = _post(generation_app, "/messages", mock_generator, messages=messages)
+    assert response.status_code == 200
+    assert response.get_json()["response"]
 
-    class _Tokenizer:
-        bos_token = "[BOS]"
-        eos_token = "[EOS]"
-        sep_token = "[SEP]"
 
-        def apply_chat_template(
-            self, messages, tokenize=False, add_generation_prompt=False
-        ):
-            return "[BOS]user\nhi[SEP]\n[BOS]assistant\n"
+@pytest.mark.parametrize(
+    "path,body,complaint",
+    [
+        ("/input", {"max_new_tokens": 50}, "prompt"),
+        (
+            "/input",
+            {"prompt": "test", "messages": [{"role": "user", "content": "x"}]},
+            "/messages endpoint",
+        ),
+        ("/messages", {"max_new_tokens": 50}, "messages"),
+    ],
+)
+def test_malformed_requests_are_rejected(
+    generation_app, mock_generator, path, body, complaint
+):
+    response = _post(generation_app, path, mock_generator, **body)
+    assert response.status_code == 400
+    assert complaint in response.get_json()["error"].lower()
 
-        def convert_tokens_to_ids(self, token):
-            return None
 
-    client.config["generator"] = _StreamingGenerator()
-    client.config["tokenizer"] = _Tokenizer()
-    client.config.pop("api_server", None)
+# The reply also streams to the browser as it is written. `POST /messages/`
+# stays one request with one authoritative JSON reply; the deltas ride the
+# `/realtime` socket, keyed by an id the client mints.
 
-    with client.test_client() as http:
-        response = http.post(
-            "/messages/",
-            json={
-                "messages": [{"role": "user", "content": "what time is it?"}],
-                "stream_id": "tab-1",
-            },
-        )
+
+class _StreamingGenerator:
+    """Publishes a reply in pieces, then returns it whole - the shape a real
+    `Generator` with a `ReplyStreamer` attached produces."""
+
+    def __init__(self):
+        self.pending = None
+
+    def request_generation(
+        self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, **_
+    ):
+        for chunk in ("It ", "is ", "noon."):
+            if on_text:
+                on_text(chunk)
+        self.pending = "It is noon."
+        return "rid"
+
+    def get_result(self, request_id):
+        result, self.pending = self.pending, None
+        return result
+
+
+def test_the_route_streams_and_still_returns_the_whole_reply(emitted, generation_app):
+    """The deltas go out AND the response body is the same complete reply."""
+    response = _post(
+        generation_app,
+        "/messages/",
+        _StreamingGenerator(),
+        messages=[{"role": "user", "content": "what time is it?"}],
+        stream_id="tab-1",
+    )
 
     assert response.status_code == 200
     assert "It is noon." in response.get_json()["response"]
-
     deltas = [f[1]["text"] for f in emitted if f[0] == "gen_delta"]
     assert "".join(deltas) == "It is noon."
     assert all(f[1]["id"] == "tab-1" for f in emitted)
 
 
-def test_the_route_without_a_stream_id_emits_nothing(emitted, client):
-    """The unchanged path. A client that never learned about streaming - or one
-    whose socket is down - gets exactly the behavior it had before."""
+def test_the_route_without_a_stream_id_emits_nothing(emitted, generation_app):
+    """A client that never learned about streaming - or whose socket is down -
+    gets exactly the behavior it had before."""
 
     class _Generator:
         def request_generation(
             self, prompt, kwargs, deadline=None, on_text=None, on_reset=None, **kw
         ):
-            # `on_tool` is the exception: the route installs a tally for it
-            # unconditionally, because the counts ride the RESPONSE and not
-            # the socket. Nothing is emitted without a stream id, which is
-            # what this test goes on to assert.
             assert on_text is None and on_reset is None
+            # The tool tally is installed unconditionally: its counts ride the
+            # RESPONSE, not the socket.
             assert kw.get("on_tool") is not None
             return "rid"
 
         def get_result(self, request_id):
             return "[BOS]assistant\nquiet reply[SEP]"
 
-    class _Tokenizer:
-        bos_token = "[BOS]"
-        eos_token = "[EOS]"
-        sep_token = "[SEP]"
-
-        def apply_chat_template(self, messages, **kwargs):
-            return "[BOS]user\nhi[SEP]\n[BOS]assistant\n"
-
-        def convert_tokens_to_ids(self, token):
-            return None
-
-    client.config["generator"] = _Generator()
-    client.config["tokenizer"] = _Tokenizer()
-    client.config.pop("api_server", None)
-
-    with client.test_client() as http:
-        response = http.post(
-            "/messages/", json={"messages": [{"role": "user", "content": "hi"}]}
-        )
+    response = _post(
+        generation_app,
+        "/messages/",
+        _Generator(),
+        messages=[{"role": "user", "content": "hi"}],
+    )
 
     assert response.status_code == 200
     assert response.get_json()["response"] == "quiet reply"
     assert emitted == []
-
-
-# ---------------------------------------------------------------------------
-# tool use: the one thing the reply itself can never show
-# ---------------------------------------------------------------------------
-
-
-class _ToolTokenizer:
-    bos_token = "[BOS]"
-    eos_token = "[EOS]"
-    sep_token = "[SEP]"
-
-    def apply_chat_template(self, messages, **kwargs):
-        return "[BOS]user\nhi[SEP]\n[BOS]assistant\n"
-
-    def convert_tokens_to_ids(self, token):
-        return None
 
 
 class _ToolUsingGenerator:
@@ -217,223 +189,154 @@ class _ToolUsingGenerator:
         return result
 
 
-def _post_tools(client, **body):
-    client.config["generator"] = _ToolUsingGenerator()
-    client.config["tokenizer"] = _ToolTokenizer()
-    client.config.pop("api_server", None)
-    with client.test_client() as http:
-        return http.post(
-            "/messages/",
-            json={"messages": [{"role": "user", "content": "hi"}], **body},
-        )
+TOOL_TALLY = [{"name": "read_file", "count": 2}, {"name": "search", "count": 1}]
 
 
-def test_tool_use_is_counted_in_the_response(emitted, client):
-    """The reply extractor strips the whole call/result exchange, so without
-    this the response is the same whether a tool ran or not. Counted per name,
-    in first-use order - which is the order the chips render in."""
-    response = _post_tools(client)
+def _post_tools(app, **body):
+    return _post(
+        app,
+        "/messages/",
+        _ToolUsingGenerator(),
+        messages=[{"role": "user", "content": "hi"}],
+        **body,
+    )
+
+
+def test_tool_use_is_counted_in_the_response_without_a_socket(emitted, generation_app):
+    """The reply extractor strips the whole call/result exchange, so this tally
+    is the only record a tool ran. Counted per name in first-use order (the
+    order the chips render in), and server-side: a client whose socket is down
+    loses the live chips, not the record."""
+    response = _post_tools(generation_app)
 
     assert response.status_code == 200
-    assert response.get_json()["tools"] == [
-        {"name": "read_file", "count": 2},
-        {"name": "search", "count": 1},
-    ]
-
-
-def test_tool_counts_do_not_need_a_socket(emitted, client):
-    """The tally is server-side and unconditional. A client whose socket is
-    down loses the live chips, not the record - the same bargain the reply
-    text already makes."""
-    response = _post_tools(client)
-
+    assert response.get_json()["tools"] == TOOL_TALLY
     assert emitted == []  # no stream id, so nothing went out on the wire
-    assert [t["name"] for t in response.get_json()["tools"]] == ["read_file", "search"]
 
 
-def test_a_tool_frame_names_the_tool(emitted, client):
-    """Live half. One frame per execution, carrying the client's own id."""
-    response = _post_tools(client, stream_id="tab-9")
+def test_a_tool_frame_names_the_tool_ahead_of_its_reset(emitted, generation_app):
+    """One frame per execution, carrying the client's own id, and each lands
+    before the reset it causes - a chip arriving after the reset would look
+    like something the reset should have taken back."""
+    response = _post_tools(generation_app, stream_id="tab-9")
 
     tools = [f[1] for f in emitted if f[0] == "gen_tool"]
     assert [f["name"] for f in tools] == ["read_file", "search", "read_file"]
     assert all(f["id"] == "tab-9" for f in tools)
     assert all(f[2] == NAMESPACE for f in emitted)
-    # ...and the response still carries the authoritative tally to settle on.
-    assert response.get_json()["tools"] == [
-        {"name": "read_file", "count": 2},
-        {"name": "search", "count": 1},
-    ]
-
-
-def test_a_tool_frame_precedes_the_reset_it_causes(emitted, client):
-    """Ordering the client depends on: the reset retracts the model's pre-call
-    chatter, and a chip that arrived after it would look like something the
-    reset should have taken back. It arrives first, and stands."""
-    _post_tools(client, stream_id="tab-9")
-
     kinds = [f[0] for f in emitted if f[0] in ("gen_tool", "gen_reset")]
     assert kinds == ["gen_tool", "gen_reset"] * 3
+    # ...and the response still carries the authoritative tally to settle on.
+    assert response.get_json()["tools"] == TOOL_TALLY
 
 
 # ------------------------------------------------------------------------------
-# print_route
+# core: ping, spec, home page, config download
 # ------------------------------------------------------------------------------
-# Tests for the Print mechanism: model-led question -> user answer -> reward.
 
 
-@pytest.fixture(autouse=True)
-def _reset_pending():
-    """The pending slots are process-global; clear them between tests."""
-    with print_route._lock:
-        print_route._pending.clear()
-        print_route._loop_pending.clear()
-    yield
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_ping_endpoint(api_url, method):
+    response = getattr(requests, method)(f"{api_url}/api/ping")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "Praxis API server is running" in data["message"]
 
 
-class _FakeGen:
-    """Returns a model-led 'question\\nanswer' in the chat-template envelope."""
-
-    def __init__(self, reply):
-        self._reply = reply
-
-    def request_generation(self, prompt, kwargs, deadline=None, **_):
-        return "rid"
-
-    def get_result(self, rid):
-        return self._reply
+def test_spec_endpoint(api_url):
+    response = requests.get(f"{api_url}/api/spec")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["truncated_hash"] == "test12345"
+    assert data["full_hash"] == "test1234567890abcdef"
+    assert "args" in data
+    assert data["param_stats"]["total"] == 1000000
+    assert data["seed"] == 42
 
 
-class _FakeTok:
-    bos_token = "[BOS]"
-    eos_token = "[EOS]"
-    sep_token = "[SEP]"
+def test_home_page(api_url):
+    response = requests.get(f"{api_url}/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("Content-Type", "")
+    assert "Content-Security-Policy" in response.headers
+    assert "<!DOCTYPE html>" in response.text
+    assert "<title>Praxis</title>" in response.text
 
-    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-        return "[BOS]system\n..."
 
+def test_route_serves_the_annotated_file(tmp_path, monkeypatch):
+    """The config behind the web app's Download button, annotated with defaults."""
+    experiments = tmp_path / "experiments"
+    experiments.mkdir()
+    (experiments / "base.yml").write_text("block_size: 128\n")
+    (experiments / "child.yml").write_text("# a comment\nextends: base\ndepth: 3\n")
+    monkeypatch.chdir(tmp_path)
 
-def _client(reply="[BOS]assistant\nWhat is the capital of France?\nParis[SEP]"):
     app = flask.Flask(__name__)
-    app.config.update(generator=_FakeGen(reply), tokenizer=_FakeTok())
+    app.config.update(config_file="experiments/child.yml")
     register_routes(app)
-    return app.test_client()
+    response = app.test_client().get("/api/config")
 
-
-def test_button_is_conditional_until_asked():
-    c = _client()
-    assert c.get("/api/print/pending").get_json() == {"available": False}
-    ask = c.post("/api/print/ask", json={}).get_json()
-    assert ask["available"] is True
-    assert ask["question"] == "What is the capital of France?"
-    assert c.get("/api/print/pending").get_json()["available"] is True
-
-
-def test_ask_is_idempotent_while_pending():
-    c = _client()
-    a1 = c.post("/api/print/ask", json={}).get_json()
-    a2 = c.post("/api/print/ask", json={}).get_json()
-    assert a1["id"] == a2["id"]
-
-
-def test_respond_scores_and_clears():
-    c = _client()
-    ask = c.post("/api/print/ask", json={}).get_json()
-    r = c.post(
-        "/api/print/respond", json={"id": ask["id"], "response": "Is it Paris?"}
-    ).get_json()
-    assert r["status"] == "ok"
-    assert r["activation"] == 1.0  # 'Paris?' matches predicted 'Paris'
-    assert r["recall"] == 1.0
-    assert r["predicted_answer"] == "Paris"
-    # Slot cleared after answering.
-    assert c.get("/api/print/pending").get_json() == {"available": False}
-
-
-def test_stale_id_is_rejected():
-    c = _client()
-    c.post("/api/print/ask", json={})
-    resp = c.post("/api/print/respond", json={"id": "nope", "response": "x"})
-    assert resp.status_code == 409
-
-
-def test_unavailable_when_generator_missing():
-    app = flask.Flask(__name__)
-    app.config["tokenizer"] = _FakeTok()  # no generator
-    register_routes(app)
-    out = app.test_client().post("/api/print/ask", json={}).get_json()
-    assert out["available"] is False
-
-
-def test_loop_approve_records_joke_reward():
-    from praxis.policies.engagement_channel import LIVE_JOKES
-
-    LIVE_JOKES.drain()
-    c = _client()
-    approve = c.post("/api/loop/approve", json={"score": 1.0}).get_json()
-    assert approve["status"] == "ok"
-    assert approve["activation"] == 1.0
-    # A rejection still sustains energy (engagement alone counts), but its
-    # valence lives in the signed reward, not the activation.
-    reject = c.post("/api/loop/approve", json={"approve": False}).get_json()
-    assert reject["activation"] == pytest.approx(0.8)
-    assert reject["score"] == -1.0 and reject["reward"] == -1.0
-    assert c.get("/api/loop/energy").get_json()["count"] >= 2
-    # Both events buffered for the joke drain callback.
-    assert len(LIVE_JOKES.drain()) >= 2
-
-
-def test_loop_generate_then_calibrated_approve():
-    from praxis.policies.engagement_channel import LIVE_JOKES
-
-    LIVE_JOKES.drain()
-    c = _client(reply="[BOS]assistant\nA pun!\n+0.6[SEP]")
-    gen = c.post("/api/loop/generate", json={"task": "joke"}).get_json()
-    assert gen["available"] is True
-    assert gen["mode"] == "calibration"
-    assert gen["text"] == "A pun!"  # prediction parsed off the display text
-    assert gen["predicted"] == pytest.approx(0.6)
-
-    # Confirming the model's guess = zero correction = full activation.
-    ok = c.post("/api/loop/approve", json={"id": gen["id"], "score": 0.6}).get_json()
-    assert ok["correction"] == pytest.approx(0.0)
-    assert ok["activation"] == 1.0
-
-    # A large correction shrinks the activation; valence keeps the user's sign.
-    bad = c.post("/api/loop/approve", json={"id": gen["id"], "score": -0.4}).get_json()
-    assert bad["correction"] == pytest.approx(1.0)
-    assert bad["reward"] == pytest.approx(-0.4)
-    assert bad["activation"] < ok["activation"]
-    assert len(LIVE_JOKES.drain()) == 2
+    assert response.status_code == 200
+    text = response.get_data(as_text=True)
+    assert yaml.safe_load(text) == {"block_size": 128, "depth": 3}
+    assert "block_size: 128  # default: 512" in text
 
 
 # ------------------------------------------------------------------------------
-# web_probe_isolation
+# agents, static, git
 # ------------------------------------------------------------------------------
-# Web probes must not touch training state.
-#
-# Probes no longer run on the API thread at all - ``SnapshotPumpCallback`` runs them
-# from the training loop, because "read-only" was never enough: a pure ``tensor[...,
-# :k]`` still locks that tensor's ``AutogradMeta``, and holding the GIL while waiting
-# for a lock the training thread holds deadlocks the process outright
-# (praxis/web/snapshots.py has the ABBA). These rules still stand on top of that, both
-# because they are what a probe means and because an inference-only server has no
-# training loop to pump them.
-#
-# The dashboard samples the live model, and the module tree is shared state:
-#
-# * ``torch.func.functional_call`` swaps entries in a module's ``_parameters`` dict. It
-# is not thread-safe, and the activations it was briefly used on here live INSIDE
-# ``memory_model`` (``NeuralMemory(model=..., activation=serpent)``). The training
-# thread read those swapped, detached tensors and died with "One of the differentiated
-# Tensors does not require grad" - and, when the swap landed during the memory's own
-# vmap, "tensor escaped from inside a function being vmapped". Hundreds of steps in,
-# only under the full launcher, which is why no single-process test run ever caught it.
-# * Building an autograd graph through live parameters lets the optimizer bump a version
-# counter between the probe's forward and its backward.
-#
-# So a probe reads, and does nothing else: no parameter swap, no graph, no grads. A torn
-# read costs one wrong sample on one poll; the next poll fixes it.
+
+
+@patch("subprocess.run")
+def test_agents_endpoint_lists_this_instance(mock_run, api_url):
+    mock_run.return_value = Mock(
+        returncode=0,
+        stdout="origin\thttps://github.com/test/repo.git\t(fetch)\n",
+        stderr="",
+    )
+    response = requests.get(f"{api_url}/api/agents")
+    assert response.status_code == 200
+    names = [agent["name"] for agent in response.json()["agents"]]
+    assert any(name.startswith("self-") for name in names)
+
+
+def test_favicon(api_url):
+    # 204 when no favicon was built.
+    assert requests.get(f"{api_url}/favicon.ico").status_code in (200, 204)
+
+
+def test_missing_static_file_is_a_404(api_url):
+    assert requests.get(f"{api_url}/static/nonexistent.js").status_code == 404
+
+
+@patch("subprocess.run")
+def test_git_info_refs(mock_run, api_url):
+    mock_run.return_value = Mock(returncode=0, stdout=b"abc123\tHEAD\n", stderr=b"")
+    response = requests.get(f"{api_url}/praxis/info/refs?service=git-upload-pack")
+    assert response.status_code == 200
+    assert "application/x-git-upload-pack-advertisement" in response.headers.get(
+        "Content-Type", ""
+    )
+
+
+@pytest.mark.parametrize(
+    "service,status", [("invalid", 400), ("git-receive-pack", 403)]
+)
+def test_git_refuses_unknown_services_and_writes(api_url, service, status):
+    response = requests.get(f"{api_url}/praxis/info/refs?service={service}")
+    assert response.status_code == status
+
+
+# ------------------------------------------------------------------------------
+# dynamics: activation probes and the compute treemap
+# ------------------------------------------------------------------------------
+# Probes read the live model, whose module tree is shared with the training
+# thread: ``torch.func.functional_call`` swaps entries in a module's
+# ``_parameters`` dict (not thread-safe, and the activations it was used on live
+# inside the memory's vmap), and a graph through live parameters races the
+# optimizer's version counter. So a probe reads and does nothing else: no
+# parameter swap, no graph, no grads. A torn read costs one wrong sample.
 
 
 class Activation(nn.Module):
@@ -456,31 +359,24 @@ def _probe(module, points=33):
     )
 
 
-def test_probe_does_not_mutate_parameters():
+def test_probe_is_read_only(monkeypatch):
+    """functional_call is never reached, and every parameter comes back the
+    same object, untouched, with no grad and still trainable."""
+    import torch.func
+
+    def boom(*a, **k):
+        raise AssertionError("probe reparametrized a live module")
+
+    monkeypatch.setattr(torch.func, "functional_call", boom)
     module = Activation()
     before = {n: p.detach().clone() for n, p in module.named_parameters()}
+
     assert _probe(module) is not None
     for name, p in module.named_parameters():
+        assert isinstance(p, nn.Parameter), f"{name} was swapped for a plain tensor"
         assert torch.equal(p, before[name]), f"{name} was mutated by the probe"
-        assert isinstance(p, nn.Parameter), f"{name} was swapped out for a plain tensor"
-
-
-def test_probe_creates_no_gradients():
-    """No graph through live parameters - that is the version-counter race."""
-    module = Activation()
-    assert _probe(module) is not None
-    assert all(p.grad is None for p in module.parameters())
-    assert all(p.requires_grad for p in module.parameters())
-
-
-def test_probe_leaves_parameters_usable_by_functorch():
-    """The exact operations the memory performs on its own parameters after a
-    probe has run: a batched tensor left installed breaks both."""
-    module = Activation()
-    assert _probe(module) is not None
-    for p in module.parameters():
-        p.unsqueeze(0).expand(4, *p.shape)  # _init_weights
-        p.detach().cpu()  # Lightning teardown
+        assert p.grad is None, f"{name} got a gradient"
+        assert p.requires_grad
 
 
 def test_probe_derivative_is_right():
@@ -496,34 +392,25 @@ def test_probe_derivative_is_right():
     )
 
 
-def test_probe_does_not_reparametrize(monkeypatch):
-    """A hard guard: functional_call must never be reached from this path."""
-    import torch.func
-
-    def boom(*a, **k):
-        raise AssertionError("probe reparametrized a live module")
-
-    monkeypatch.setattr(torch.func, "functional_call", boom)
-    assert _probe(Activation()) is not None
-
-
 def test_probe_skips_a_module_that_is_mid_transform():
-    """Several activations live inside memory_model, which the Titans memory
-    drives under vmap. Sampling one then raises "tensor escaped from inside a
-    function being vmapped" - true, transient, and not worth a traceback every
-    poll. The probe checks first and skips on purpose."""
+    """Sampling a module the Titans memory is driving under vmap raises "tensor
+    escaped from inside a function being vmapped" - true, transient and not
+    worth a traceback every poll. The probe checks first and skips, and the skip
+    is not logged as a failure: that would suppress the genuine warning for the
+    class forever after."""
     import torch.func as F
     from torch.func import vmap
 
+    from praxis.web.routes import dynamics
     from praxis.web.routes.dynamics import _inside_a_transform
 
     module = Activation()
     assert not _inside_a_transform(module)
+    failures_before = set(dynamics._SAMPLE_FAILURES)
 
-    # Observed from INSIDE the reparametrized scope, which is where the real
-    # collision happens: functional_call swaps the module's _parameters
-    # process-wide for the duration of the call, so the API thread sees batched
-    # tensors exactly here. A pre-hook is the faithful vantage point.
+    # Observed from INSIDE the reparametrized scope, where the real collision
+    # happens: functional_call swaps the module's _parameters process-wide for
+    # the duration of the call. A pre-hook is the faithful vantage point.
     seen = {}
     handle = module.register_forward_pre_hook(
         lambda m, inp: seen.update(
@@ -542,93 +429,43 @@ def test_probe_skips_a_module_that_is_mid_transform():
 
     assert seen["mid"] is True, "mid-transform state was not detected"
     assert seen["skipped"] is True, "probe sampled a module that was mid-transform"
-
+    assert set(dynamics._SAMPLE_FAILURES) == failures_before
     # ...and once the transform is done, sampling works again by itself.
     assert not _inside_a_transform(module)
     assert _probe(module) is not None
 
 
-def test_mid_transform_skip_is_not_logged_as_a_failure():
-    """The skip must not poison _SAMPLE_FAILURES, or a transient collision would
-    suppress the genuine warning for that class forever after."""
-    from praxis.web.routes import dynamics
+def test_activation_curves_route_preserves_training_mode():
+    """The route samples the live training model. Flipping it to eval races the
+    training forward - a CALM stage-2 forward seen in eval mode detaches its
+    whole loss and crashes backward()."""
+    from praxis.web.routes.dynamics import _compute_activation_curves
 
-    before = set(dynamics._SAMPLE_FAILURES)
-    module = Activation()
-    assert _probe(module) is not None
-    assert set(dynamics._SAMPLE_FAILURES) == before
+    model = nn.Sequential(nn.Linear(4, 4), nn.GELU())
+    model.train()
+    seen_training = []
+    model[1].register_forward_hook(lambda m, i, o: seen_training.append(model.training))
 
+    curves, _ = _compute_activation_curves(model, -6.0, 6.0, 64)
 
-# ------------------------------------------------------------------------------
-# compute_profiler_route
-# ------------------------------------------------------------------------------
-# /api/head_snapshots must serve the compute treemap stashed on the model.
-
-
-class FakeModel:
-    """Stands in for the live model the generator holds."""
-
-    head = None
-    criterion = None
-    encoder = None
+    assert curves, "expected at least one activation curve (GELU)"
+    assert model.training is True, "route left the model out of train mode"
+    assert seen_training and all(seen_training), "model left train mode mid-sample"
 
 
-@pytest.fixture
-def dynamics_client():
+def _head_snapshots(model):
+    """GET /api/head_snapshots through the live fallback (no snapshot store)."""
     app = Flask(__name__)
     app.register_blueprint(dynamics_bp)
-    app.config["snapshot_store"] = None  # force the live fallback path
-    return app
+    app.config["snapshot_store"] = None
+    app.config["generator"] = type("G", (), {"model": model})()
+    with app.test_client() as c:
+        return json.loads(c.get("/api/head_snapshots").data)
 
 
-def _payload():
-    return {
-        "compute_profile": {
-            "total_ms": 100.0,
-            "coverage": 0.71,
-            "samples": 3,
-            "interval": 100,
-            "ema_alpha": 0.2,
-            "groups": [
-                {
-                    "name": "ArcAttention",
-                    "ms": 50.0,
-                    "share": 0.5,
-                    "calls": 2.0,
-                    "outside": False,
-                    "residual": False,
-                    "children": [
-                        {
-                            "name": "decoder.locals.0.block.attn",
-                            "ms": 50.0,
-                            "share": 0.5,
-                            "fwd_ms": 30.0,
-                            "bwd_ms": 20.0,
-                            "calls": 2.0,
-                        }
-                    ],
-                },
-                {
-                    "name": "(outside model)",
-                    "ms": 50.0,
-                    "share": 0.5,
-                    "calls": 0.0,
-                    "outside": True,
-                    "residual": False,
-                    "children": [],
-                },
-            ],
-        }
-    }
-
-
-def test_route_serves_the_stashed_profile(dynamics_client):
-    model = FakeModel()
-    model._compute_profile = _payload()
-    dynamics_client.config["generator"] = type("G", (), {"model": model})()
-
-    with dynamics_client.test_client() as c:
-        body = json.loads(c.get("/api/head_snapshots").data)
+def test_route_serves_the_stashed_profile(bare_model, compute_profile):
+    bare_model._compute_profile = compute_profile
+    body = _head_snapshots(bare_model)
 
     assert body["status"] == "ok"
     profile = body["snapshots"]["compute_profile"]
@@ -637,87 +474,34 @@ def test_route_serves_the_stashed_profile(dynamics_client):
     assert sum(g["share"] for g in profile["groups"]) == pytest.approx(1.0)
 
 
-def test_route_is_quiet_without_the_profiler(dynamics_client):
+@pytest.mark.parametrize("stash", [None, "not a dict"], ids=["absent", "non-dict"])
+def test_route_is_quiet_without_a_profile(bare_model, stash):
     """A run that never profiled (e.g. torch.compile) grows no compute card."""
-    dynamics_client.config["generator"] = type("G", (), {"model": FakeModel()})()
-
-    with dynamics_client.test_client() as c:
-        body = json.loads(c.get("/api/head_snapshots").data)
-
-    assert "compute_profile" not in body.get("snapshots", {})
+    if stash is not None:
+        bare_model._compute_profile = stash
+    assert "compute_profile" not in _head_snapshots(bare_model).get("snapshots", {})
 
 
-def test_route_ignores_a_non_dict_stash(dynamics_client):
-    model = FakeModel()
-    model._compute_profile = "not a dict"
-    dynamics_client.config["generator"] = type("G", (), {"model": model})()
-
-    with dynamics_client.test_client() as c:
-        body = json.loads(c.get("/api/head_snapshots").data)
-
-    assert "compute_profile" not in body.get("snapshots", {})
-
-
-def test_recipe_and_route_agree_on_the_compute_key():
-    """Two implementations of the same payload; keep them from drifting again."""
+def test_recipe_and_route_agree_on_the_compute_key(bare_model, compute_profile):
+    """Two implementations of the same payload; keep them from drifting."""
     from praxis.web.snapshots import _recipe_head_snapshots
 
-    model = FakeModel()
-    model._compute_profile = _payload()
-    recipe_out = _recipe_head_snapshots(model)["snapshots"]
-
-    app = Flask(__name__)
-    app.register_blueprint(dynamics_bp)
-    app.config["snapshot_store"] = None
-    app.config["generator"] = type("G", (), {"model": model})()
-    with app.test_client() as c:
-        route_out = json.loads(c.get("/api/head_snapshots").data)["snapshots"]
-
+    bare_model._compute_profile = compute_profile
+    recipe_out = _recipe_head_snapshots(bare_model)["snapshots"]
+    route_out = _head_snapshots(bare_model)["snapshots"]
     assert recipe_out["compute_profile"] == route_out["compute_profile"]
 
 
 # ------------------------------------------------------------------------------
-# metric_cards
+# metrics: the per-run payload behind the Research tab
 # ------------------------------------------------------------------------------
-# Dashboard card invariants for the Research-tab metric registries.
-#
-# The Research tab builds its deck with ``buildScalarConfigsFromRegistry`` and
-# ``buildCompositeConfigsFromRegistry`` (praxis/web/src/js/charts.js), which concatenate
-# ALL scalars ahead of ALL composites and sort each half flat by ``order``. Neither
-# honours ``group``, ``group_order`` or ``series_group`` - those belong to the Dynamics
-# tab's manifest builder. Two things went wrong because of that and are pinned here:
-#
-# * four (since removed) density entries carried ``series_group`` expecting to merge
-# into two cards, so the deck rendered four; * they also carried ``order: 10``, tying
-# with ``loss``, and a stable sort puts the earlier-declared entry first - which put a
-# research probe at deck position 1, ahead of training loss.
-#
-# The information-density probe now emits only ``readout_*`` keys into extra_metrics (no
-# schema columns), claimed by the composite cards pinned below.
 
 
-# --- run comparison ----------------------------------------------------------
+def _payload(db):
+    """The per-run payload /api/metrics builds, read from one metrics.db."""
+    from praxis.web.routes.metrics import _read_metrics_file, _transform_metrics
 
-
-def _payload_metric_cards(run_hash, limit=1000):
-    """The exact per-run payload /api/metrics builds for the Research tab."""
-    import pathlib
-
-    from praxis.web.routes.metrics import (
-        _downsample_metrics,
-        _read_metrics_file,
-        _transform_metrics,
-    )
-
-    db = pathlib.Path("build/runs") / run_hash / "metrics.db"
-    if not db.exists():
-        return None
-    rows = _read_metrics_file(db, 0, max_rows=limit * 3)
-    if not rows:
-        return None
-    if len(rows) > limit:
-        rows = _downsample_metrics(rows, limit, "lttb")
-    return _transform_metrics(rows)
+    return _transform_metrics(_read_metrics_file(db, 0))
 
 
 def _has(payload, key):
@@ -725,110 +509,77 @@ def _has(payload, key):
     return bool(values) and any(v is not None for v in values)
 
 
-def test_no_run_loses_a_series_it_actually_recorded():
-    """A run must surface every charted metric it genuinely has data for.
-
-    Older runs used to vanish from the Research tab entirely: the SELECT named
-    every registry column, so any run predating one raised ``no such column``,
-    ``_read_metrics_file`` swallowed it, and the caller dropped the run - taking
-    its loss curve with it. The projection is per-database now
-    (``_projection_for``), and this pins the property that guarantees: what the
-    database holds is what the payload serves.
-
-    Deliberately NOT "every run draws every card". A run that stopped before its
-    first validation step has no val_loss, and that is correct, not a defect.
-    """
-    import pathlib
-    import sqlite3
-
-    checked = 0
-    for path in sorted(pathlib.Path("build/runs").iterdir())[:6]:
-        db = path / "metrics.db"
-        if not db.exists():
-            continue
-        payload = _payload_metric_cards(path.name, limit=200)
-        if payload is None:
-            continue
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
-        try:
-            columns = {r[1] for r in conn.execute("PRAGMA table_info(metrics)")}
-            for key, entry in TRAINING_METRIC_REGISTRY.items():
-                if not entry.get("chart") or key not in columns:
-                    continue
-                recorded = conn.execute(
-                    f"SELECT COUNT(*) FROM metrics WHERE {key} IS NOT NULL"
-                ).fetchone()[0]
-                if recorded:
-                    assert _has(payload, key), (
-                        f"{path.name}: {key!r} has {recorded} recorded values "
-                        f"but was dropped from the payload"
-                    )
-        finally:
-            conn.close()
-        checked += 1
-    if checked == 0:
-        pytest.skip("no runs on disk")
+@pytest.fixture
+def old_run(tmp_path):
+    """A metrics.db written before most of today's registry columns existed,
+    carrying one column the registry has since dropped and no extra_metrics."""
+    db = tmp_path / "metrics.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE metrics (step INTEGER PRIMARY KEY, ts REAL NOT NULL, "
+        "loss REAL, val_loss REAL, num_tokens REAL, retired_metric REAL)"
+    )
+    for step in range(10):
+        conn.execute(
+            "INSERT INTO metrics VALUES (?, ?, ?, ?, ?, ?)",
+            (step, 1000.0 + step, 3.0 - 0.1 * step, 2.9 if step == 9 else None,
+             1000.0 * step, 0.5),
+        )
+    conn.commit()
+    conn.close()
+    return db
 
 
-def test_core_metrics_survive_in_every_run_on_disk():
-    """loss / val_loss are the comparison baseline - they must never drop out."""
-    import pathlib
+def test_an_old_schema_run_keeps_every_series_it_recorded(old_run):
+    """Naming every registry column in one SELECT raised ``no such column`` on
+    any run older than the newest metric, and the caller dropped the run - its
+    loss curve with it. What the database holds is what the payload serves.
 
-    checked = 0
-    for path in sorted(pathlib.Path("build/runs").iterdir()):
-        if not (path / "metrics.db").exists():
-            continue
-        payload = _payload_metric_cards(path.name, limit=200)
-        if payload is None:
-            continue
-        checked += 1
-        assert "steps" in payload, f"{path.name}: no step axis"
-        assert _has(payload, "loss"), f"{path.name}: lost its loss series"
-    if checked == 0:
-        pytest.skip("no runs on disk")
+    Not "every run draws every card": a column a run never had reads as NULL."""
+    payload = _payload(old_run)
+
+    assert payload and "steps" in payload
+    conn = sqlite3.connect(old_run)
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(metrics)")}
+    recorded = {
+        key
+        for key, entry in TRAINING_METRIC_REGISTRY.items()
+        if entry.get("chart")
+        and key in columns
+        and conn.execute(f"SELECT COUNT({key}) FROM metrics").fetchone()[0]
+    }
+    conn.close()
+    assert {"loss", "val_loss"} <= recorded
+    for key in recorded:
+        assert _has(payload, key), f"{key!r} was recorded but dropped from the payload"
 
 
-def test_validation_points_carry_every_x_coordinate():
-    """A val point must know exactly where it sits on EVERY axis.
+def test_validation_points_carry_every_x_coordinate(tmp_path):
+    """A val point must know where it sits on EVERY axis.
 
-    This is the property the whole feature rests on. Validation is computed
-    every ``val_check_interval`` steps, and the worry was that plotting it
-    against tokens would silently lag by up to one interval. It does not:
-    ``MetricsLoggerCallback.on_validation_end`` drains callback_metrics at
-    ``trainer.global_step``, and ``MetricsLogger.log`` upserts on the step
-    primary key, so the val write MERGES into the row the training step already
-    wrote - carrying that step's exact num_tokens and ts.
+    Validation drains at ``trainer.global_step`` and ``MetricsLogger.log``
+    upserts on the step key, so the val write MERGES into the row the training
+    step already wrote, carrying that step's num_tokens and ts. If validation
+    ever lands on a row of its own, its coordinates go null and a val curve on
+    the token axis is silently misplaced."""
+    from praxis.logging.metrics_logger import MetricsLogger
 
-    If a refactor ever splits validation onto its own row, the coordinates go
-    null and this fails. That failure is the point: a val curve plotted against
-    a carried-forward token count is wrong in a way nobody would see.
-    """
-    import pathlib
+    logger = MetricsLogger(run_dir=tmp_path, csv_mirror=False)
+    for step in range(10):
+        logger.log(step=step, loss=3.0 - 0.1 * step, num_tokens=1000 * step)
+        if step % 4 == 3:
+            logger.log(step=step, val_loss=2.9)
+    logger.close()
 
-    sources = [axis["source"] for axis in X_AXIS_REGISTRY]
-
-    checked = 0
-    for path in sorted(pathlib.Path("build/runs").iterdir()):
-        if not (path / "metrics.db").exists():
-            continue
-        payload = _payload_metric_cards(path.name, limit=200)
-        if payload is None or not _has(payload, "val_loss"):
-            continue
-        checked += 1
-        val_rows = [i for i, v in enumerate(payload["val_loss"]) if v is not None]
-        for source in sources:
-            column = payload.get(source)
-            assert column is not None, f"{path.name}: no {source} column"
-            assert len(column) == len(
-                payload["val_loss"]
-            ), f"{path.name}: {source} is not index-aligned with val_loss"
-            missing = [i for i in val_rows if column[i] is None]
-            assert not missing, (
-                f"{path.name}: {len(missing)} validation points have no {source} "
-                f"coordinate - they cannot be plotted on that axis"
-            )
-    if checked == 0:
-        pytest.skip("no run on disk has validation data")
+    payload = _payload(tmp_path / "metrics.db")
+    val_rows = [i for i, v in enumerate(payload["val_loss"]) if v is not None]
+    assert val_rows == [3, 7]
+    for axis in X_AXIS_REGISTRY:
+        column = payload.get(axis["source"])
+        assert column is not None, f"no {axis['source']} column"
+        assert len(column) == len(payload["val_loss"])
+        missing = [i for i in val_rows if column[i] is None]
+        assert not missing, f"val points {missing} have no {axis['source']}"
 
 
 def test_elapsed_discounts_a_suspension():
@@ -840,8 +591,7 @@ def test_elapsed_discounts_a_suspension():
     # Uninterrupted: elapsed is exactly the span.
     assert _elapsed_seconds(rows([0, 10, 20, 30]))[-1] == 30
 
-    # An 8-hour pause between 10-second rows contributes one typical interval,
-    # not 8 hours.
+    # An 8-hour pause between 10-second rows contributes one typical interval.
     paused = _elapsed_seconds(rows([0, 10, 20, 28800, 28810]))
     assert paused[-1] < 100, f"pause was billed as training time: {paused[-1]}s"
 
@@ -865,312 +615,196 @@ def test_transform_strips_the_raw_timestamp():
 
 
 # ------------------------------------------------------------------------------
-# cards
+# print: model-led question -> user answer -> reward
 # ------------------------------------------------------------------------------
 
 
-AUTHORS = ["Ryan J. Brooks"]
-DONATE = "https://example.com/donate"
+class _QuestionGenerator:
+    """Returns a model-led 'question\\nanswer' in the chat-template envelope."""
+
+    def __init__(self, reply):
+        self._reply = reply
+
+    def request_generation(self, prompt, kwargs, deadline=None, **_):
+        return "rid"
+
+    def get_result(self, rid):
+        return self._reply
+
+
+@pytest.fixture
+def print_client(fake_tokenizer):
+    """Client factory; the pending slots are process-global, so clear them."""
+    with print_route._lock:
+        print_route._pending.clear()
+        print_route._loop_pending.clear()
+
+    def make(reply="[BOS]assistant\nWhat is the capital of France?\nParis[SEP]"):
+        app = flask.Flask(__name__)
+        app.config["tokenizer"] = fake_tokenizer
+        if reply is not None:
+            app.config["generator"] = _QuestionGenerator(reply)
+        register_routes(app)
+        return app.test_client()
+
+    return make
+
+
+def test_button_is_conditional_until_asked(print_client):
+    c = print_client()
+    assert c.get("/api/print/pending").get_json() == {"available": False}
+    ask = c.post("/api/print/ask", json={}).get_json()
+    assert ask["available"] is True
+    assert ask["question"] == "What is the capital of France?"
+    assert c.get("/api/print/pending").get_json()["available"] is True
+
+
+def test_ask_is_idempotent_while_pending(print_client):
+    c = print_client()
+    a1 = c.post("/api/print/ask", json={}).get_json()
+    a2 = c.post("/api/print/ask", json={}).get_json()
+    assert a1["id"] == a2["id"]
+
+
+def test_respond_scores_and_clears(print_client):
+    c = print_client()
+    ask = c.post("/api/print/ask", json={}).get_json()
+    r = c.post(
+        "/api/print/respond", json={"id": ask["id"], "response": "Is it Paris?"}
+    ).get_json()
+    assert r["status"] == "ok"
+    assert r["activation"] == 1.0  # 'Paris?' matches predicted 'Paris'
+    assert r["recall"] == 1.0
+    assert r["predicted_answer"] == "Paris"
+    assert c.get("/api/print/pending").get_json() == {"available": False}
+
+
+def test_stale_id_is_rejected(print_client):
+    c = print_client()
+    c.post("/api/print/ask", json={})
+    resp = c.post("/api/print/respond", json={"id": "nope", "response": "x"})
+    assert resp.status_code == 409
+
+
+def test_unavailable_when_generator_missing(print_client):
+    out = print_client(reply=None).post("/api/print/ask", json={}).get_json()
+    assert out["available"] is False
+
+
+def test_loop_approve_records_joke_reward(print_client):
+    from praxis.policies.engagement_channel import LIVE_JOKES
+
+    LIVE_JOKES.drain()
+    c = print_client()
+    approve = c.post("/api/loop/approve", json={"score": 1.0}).get_json()
+    assert approve["status"] == "ok"
+    assert approve["activation"] == 1.0
+    # A rejection still sustains energy (engagement alone counts), but its
+    # valence lives in the signed reward, not the activation.
+    reject = c.post("/api/loop/approve", json={"approve": False}).get_json()
+    assert reject["activation"] == pytest.approx(0.8)
+    assert reject["score"] == -1.0 and reject["reward"] == -1.0
+    assert c.get("/api/loop/energy").get_json()["count"] >= 2
+    # Both events buffered for the joke drain callback.
+    assert len(LIVE_JOKES.drain()) >= 2
+
+
+def test_loop_generate_then_calibrated_approve(print_client):
+    from praxis.policies.engagement_channel import LIVE_JOKES
+
+    LIVE_JOKES.drain()
+    c = print_client(reply="[BOS]assistant\nA pun!\n+0.6[SEP]")
+    gen = c.post("/api/loop/generate", json={"task": "joke"}).get_json()
+    assert gen["available"] is True
+    assert gen["mode"] == "calibration"
+    assert gen["text"] == "A pun!"  # prediction parsed off the display text
+    assert gen["predicted"] == pytest.approx(0.6)
+
+    # Confirming the model's guess = zero correction = full activation.
+    ok = c.post("/api/loop/approve", json={"id": gen["id"], "score": 0.6}).get_json()
+    assert ok["correction"] == pytest.approx(0.0)
+    assert ok["activation"] == 1.0
+
+    # A large correction shrinks the activation; valence keeps the user's sign.
+    bad = c.post("/api/loop/approve", json={"id": gen["id"], "score": -0.4}).get_json()
+    assert bad["correction"] == pytest.approx(1.0)
+    assert bad["reward"] == pytest.approx(-0.4)
+    assert bad["activation"] < ok["activation"]
+    assert len(LIVE_JOKES.drain()) == 2
+
+
+# ------------------------------------------------------------------------------
+# cards: preview SVG and PDF downloads
+# ------------------------------------------------------------------------------
 
 
 @pytest.fixture
 def cards_client():
     app = Flask(__name__)
     app.register_blueprint(cards_bp)
-    app.config["author"] = AUTHORS
-    app.config["donations"] = DONATE
+    app.config["author"] = ["Ryan J. Brooks"]
+    app.config["donations"] = "https://example.com/donate"
     app.config["truncated_hash"] = "abc123"
     return app.test_client()
 
 
-def test_preview_route(cards_client):
-    resp = cards_client.get(
-        "/api/card/preview.svg?seed=5&side=front&theme=dark&hue=161"
-    )
+@pytest.fixture
+def rendered_sides(monkeypatch):
+    """Stub the PDF renderers (the routes import them lazily): these tests are
+    about packaging, and tests/pillars renders a real sheet."""
+    import praxis.pillars.projections as projections
+
+    sides = []
+
+    def stub(side, *args, **kwargs):
+        sides.append(side)
+        return b"%PDF-stub"
+
+    monkeypatch.setattr(projections, "render_single_pdf", stub)
+    monkeypatch.setattr(projections, "render_sheet_pdf", stub)
+    return sides
+
+
+@pytest.mark.parametrize("query", ["?seed=5&side=front&theme=dark&hue=161", ""])
+def test_preview_route(cards_client, query):
+    resp = cards_client.get(f"/api/card/preview.svg{query}")
     assert resp.status_code == 200
     assert resp.mimetype == "image/svg+xml"
-    assert resp.headers["X-Card-Seed"] == "5"
+    seed = int(resp.headers["X-Card-Seed"])
+    assert seed == 5 if query else seed >= 0
 
 
-def test_preview_route_random_seed(cards_client):
-    resp = cards_client.get("/api/card/preview.svg")
-    assert resp.status_code == 200
-    assert int(resp.headers["X-Card-Seed"]) >= 0
-
-
-def test_zip_routes(cards_client):
-    import io
-    import zipfile
-
-    for path, names in [
+@pytest.mark.parametrize(
+    "path,names",
+    [
         ("/api/card/cards.zip", {"praxis-card-front.pdf", "praxis-card-back.pdf"}),
         (
             "/api/card/sheets.zip",
             {"praxis-cards-10up-front.pdf", "praxis-cards-10up-back.pdf"},
         ),
-    ]:
-        resp = cards_client.get(f"{path}?seed=5")
-        assert resp.status_code == 200
-        zf = zipfile.ZipFile(io.BytesIO(resp.data))
-        assert set(zf.namelist()) == names
-        for n in names:
-            assert zf.read(n)[:4] == b"%PDF"
+    ],
+)
+def test_zip_routes_carry_both_sides(cards_client, rendered_sides, path, names):
+    resp = cards_client.get(f"{path}?seed=5")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/zip"
+    zf = zipfile.ZipFile(io.BytesIO(resp.data))
+    assert set(zf.namelist()) == names
+    assert all(zf.read(n) == b"%PDF-stub" for n in names)
+    assert sorted(rendered_sides) == ["back", "front"]
 
 
-def test_pdf_routes(cards_client):
-    for path, name in [
+@pytest.mark.parametrize(
+    "path,name",
+    [
         ("/api/card/card.pdf", "praxis-card-back.pdf"),
         ("/api/card/sheet.pdf", "praxis-cards-10up-back.pdf"),
-    ]:
-        resp = cards_client.get(f"{path}?seed=5&side=back")
-        assert resp.status_code == 200
-        assert resp.data[:4] == b"%PDF"
-        assert name in resp.headers["Content-Disposition"]
-
-
-# ------------------------------------------------------------------------------
-# api
-# ------------------------------------------------------------------------------
-# Comprehensive test suite for the Praxis API server.
-
-
-class TestCoreRoutes:
-    """Test core API routes."""
-
-    def test_ping_endpoint(self, api_url):
-        """Test /api/ping endpoint."""
-        response = requests.get(f"{api_url}/api/ping")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert "Praxis API server is running" in data["message"]
-
-    def test_ping_post(self, api_url):
-        """Test /api/ping with POST method."""
-        response = requests.post(f"{api_url}/api/ping")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-
-    def test_ping_options(self, api_url):
-        """Test /api/ping with OPTIONS method."""
-        response = requests.options(f"{api_url}/api/ping")
-        assert response.status_code == 200
-        assert "Access-Control-Allow-Origin" in response.headers
-
-    def test_spec_endpoint(self, api_url):
-        """Test /api/spec endpoint."""
-        response = requests.get(f"{api_url}/api/spec")
-        assert response.status_code == 200, response.text
-        data = response.json()
-
-        # Check required fields
-        assert "truncated_hash" in data
-        assert data["truncated_hash"] == "test12345"
-        assert "full_hash" in data
-        assert data["full_hash"] == "test1234567890abcdef"
-        assert "args" in data
-        assert "param_stats" in data
-        assert data["param_stats"]["total"] == 1000000
-        assert "seed" in data
-        assert data["seed"] == 42
-
-    def test_home_page(self, api_url):
-        """Test home page returns HTML."""
-        response = requests.get(f"{api_url}/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers.get("Content-Type", "")
-        # Check for CSP header
-        assert "Content-Security-Policy" in response.headers
-
-        # Check that it's actually HTML content
-        assert "<!DOCTYPE html>" in response.text
-        assert "<title>Praxis</title>" in response.text
-
-
-class TestGenerationRoutes:
-    """Test generation API routes."""
-
-    def test_input_generation(self, api_url):
-        """Test /input endpoint for string-based generation."""
-        payload = {"prompt": "Hello, world!", "max_new_tokens": 50, "temperature": 0.7}
-        response = requests.post(f"{api_url}/input", json=payload)
-        assert response.status_code == 200
-        data = response.json()
-        assert "response" in data
-        assert "Generated response" in data["response"]
-
-    def test_input_missing_prompt(self, api_url):
-        """Test /input endpoint with missing prompt."""
-        payload = {"max_new_tokens": 50}
-        response = requests.post(f"{api_url}/input", json=payload)
-        assert response.status_code == 400
-        data = response.json()
-        assert "error" in data
-        assert "prompt" in data["error"].lower()
-
-    def test_input_with_messages_error(self, api_url):
-        """Test /input endpoint rejects messages."""
-        payload = {"prompt": "test", "messages": [{"role": "user", "content": "test"}]}
-        response = requests.post(f"{api_url}/input", json=payload)
-        assert response.status_code == 400
-        data = response.json()
-        assert "error" in data
-        assert "/messages endpoint" in data["error"]
-
-    def test_messages_generation(self, api_url):
-        """Test /messages endpoint for chat-based generation."""
-        payload = {
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Hello!"},
-            ],
-            "max_new_tokens": 50,
-        }
-        response = requests.post(f"{api_url}/messages", json=payload)
-        assert response.status_code == 200
-        data = response.json()
-        assert "response" in data
-        # Response should contain generated text
-        assert len(data["response"]) > 0
-
-    def test_messages_missing_messages(self, api_url):
-        """Test /messages endpoint with missing messages."""
-        payload = {"max_new_tokens": 50}
-        response = requests.post(f"{api_url}/messages", json=payload)
-        assert response.status_code == 400
-        data = response.json()
-        assert "error" in data
-        assert "messages" in data["error"].lower()
-
-    def test_generation_options(self, api_url):
-        """Test generation endpoints with OPTIONS method."""
-        response = requests.options(f"{api_url}/input")
-        assert response.status_code == 200
-        assert "Access-Control-Allow-Origin" in response.headers
-
-        response = requests.options(f"{api_url}/messages")
-        assert response.status_code == 200
-        assert "Access-Control-Allow-Origin" in response.headers
-
-
-class TestAgentsRoute:
-    """Test agent discovery route."""
-
-    @patch("subprocess.run")
-    def test_agents_endpoint(self, mock_run, api_url):
-        """Test /api/agents endpoint."""
-        # Mock git commands
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout="origin\thttps://github.com/test/repo.git\t(fetch)\n",
-            stderr="",
-        )
-
-        response = requests.get(f"{api_url}/api/agents")
-        assert response.status_code == 200
-        data = response.json()
-        assert "agents" in data
-        assert isinstance(data["agents"], list)
-
-        # Should at least have a "self-*" agent
-        agent_names = [agent["name"] for agent in data["agents"]]
-        assert any(name.startswith("self-") for name in agent_names)
-
-    def test_agents_options(self, api_url):
-        """Test /api/agents with OPTIONS method."""
-        response = requests.options(f"{api_url}/api/agents")
-        assert response.status_code == 200
-        assert "Access-Control-Allow-Origin" in response.headers
-
-
-class TestStaticRoutes:
-    """Test static file serving routes."""
-
-    def test_favicon(self, api_url):
-        """Test favicon.ico endpoint."""
-        response = requests.get(f"{api_url}/favicon.ico")
-        # Should return 204 No Content if favicon doesn't exist
-        assert response.status_code in [200, 204]
-
-    def test_static_files(self, api_url):
-        """Test static file serving."""
-        # Try to get a non-existent static file
-        response = requests.get(f"{api_url}/static/nonexistent.js")
-        # Should return 404
-        assert response.status_code == 404
-
-
-class TestGitRoutes:
-    """Test Git HTTP backend routes."""
-
-    @patch("subprocess.run")
-    def test_git_info_refs(self, mock_run, api_url):
-        """Test git info/refs endpoint."""
-        mock_run.return_value = Mock(returncode=0, stdout=b"abc123\tHEAD\n", stderr=b"")
-
-        response = requests.get(f"{api_url}/praxis/info/refs?service=git-upload-pack")
-        assert response.status_code == 200
-        assert "application/x-git-upload-pack-advertisement" in response.headers.get(
-            "Content-Type", ""
-        )
-
-    def test_git_invalid_service(self, api_url):
-        """Test git endpoint with invalid service."""
-        response = requests.get(f"{api_url}/praxis/info/refs?service=invalid")
-        assert response.status_code == 400
-
-    def test_git_write_denied(self, api_url):
-        """Test git write access is denied."""
-        response = requests.get(f"{api_url}/praxis/info/refs?service=git-receive-pack")
-        assert response.status_code == 403
-
-
-def test_activation_curves_route_preserves_training_mode():
-    """The /api/activation_curves route runs on the API server thread against
-    the live training model. It must never flip the shared model's train/eval
-    mode: doing so races the training forward, and a CALM stage-2 forward
-    observed in eval mode detaches its entire loss (every grad-bearing term is
-    gated on self.training), crashing backward().
-    """
-    import torch.nn as nn
-
-    from praxis.web.routes.dynamics import _compute_activation_curves
-
-    model = nn.Sequential(nn.Linear(4, 4), nn.GELU())
-    model.train()
-
-    seen_training = []
-    model[1].register_forward_hook(lambda m, i, o: seen_training.append(model.training))
-
-    curves, _ = _compute_activation_curves(model, -6.0, 6.0, 64)
-
-    assert curves, "expected at least one activation curve (GELU)"
-    assert model.training is True, "route left the model out of train mode"
-    assert seen_training and all(
-        seen_training
-    ), "model dropped out of train mode during sampling"
-
-
-# ------------------------------------------------------------------------------
-# annotated_config
-# ------------------------------------------------------------------------------
-# The annotated config behind the web app's Download button.
-
-
-def test_route_serves_the_annotated_file(tmp_path, monkeypatch):
-    experiments = tmp_path / "experiments"
-    experiments.mkdir()
-    (experiments / "base.yml").write_text("block_size: 128\n")
-    (experiments / "child.yml").write_text("# a comment\nextends: base\ndepth: 3\n")
-    monkeypatch.chdir(tmp_path)
-
-    app = flask.Flask(__name__)
-    app.config.update(config_file="experiments/child.yml")
-    register_routes(app)
-    response = app.test_client().get("/api/config")
-
-    assert response.status_code == 200
-    text = response.get_data(as_text=True)
-    assert yaml.safe_load(text) == {"block_size": 128, "depth": 3}
-    assert "block_size: 128  # default: 512" in text
+    ],
+)
+def test_pdf_routes_render_the_requested_side(cards_client, rendered_sides, path, name):
+    resp = cards_client.get(f"{path}?seed=5&side=back")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/pdf"
+    assert resp.data == b"%PDF-stub"
+    assert name in resp.headers["Content-Disposition"]
+    assert rendered_sides == ["back"]

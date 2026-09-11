@@ -1,4 +1,7 @@
-import pytest
+"""praxis/heads/energy.py: EnergyHead sampling and LinearPrior - the streaming
+ridge solve and the post-freeze re-solve (milestone-gated, damped,
+reject-if-worse)."""
+
 import torch
 
 from praxis.heads.energy import (
@@ -8,10 +11,7 @@ from praxis.heads.energy import (
     LinearPrior,
 )
 
-# ------------------------------------------------------------------------------
-# prior_resolve
-# ------------------------------------------------------------------------------
-# LinearPrior post-freeze re-solve: milestone-gated, damped, reject-if-worse.
+# ── LinearPrior re-solve ──────────────────────────────────────────────────
 
 
 def _trained_prior(d=8, l=4, seed=0):
@@ -96,8 +96,7 @@ def test_old_checkpoint_loads_without_resolve_buffers():
     sd = {
         k: v
         for k, v in p.state_dict().items()
-        if "resolve" not in k
-        and k
+        if k
         not in (
             "W_prev",
             "pending",
@@ -127,7 +126,7 @@ def test_resolve_does_not_break_inflight_backward():
     out = p(h)  # phi @ W enters the graph
     loss = out.pow(2).sum()
     # Re-solve triggers between forward and backward, exactly like training.
-    p.update_resolve(cond_gap=1.0, energy_loss=float(loss), opt_step=10)
+    p.update_resolve(cond_gap=1.0, energy_loss=float(loss.detach()), opt_step=10)
     assert bool(p.pending)
     loss.backward()  # must not raise "modified by an inplace operation"
     assert h.grad is not None
@@ -149,13 +148,7 @@ def test_reject_restore_also_safe_for_inflight_backward():
     assert h.grad is not None
 
 
-# ------------------------------------------------------------------------------
-# calm
-# ------------------------------------------------------------------------------
-# CALM encoder + energy head + LF-temperature sanity tests.
-#
-# These are shape / plumbing checks rather than training-quality assertions. The smoke-
-# test in the CALM README covers the latter.
+# ── EnergyHead and the linear prior's solve ───────────────────────────────
 
 
 def test_energy_head_shapes():
@@ -170,8 +163,6 @@ def test_energy_head_shapes():
 def test_linear_prior_recovers_linear_map():
     """The streaming ridge solve recovers a known linear map z = h @ M with
     R² near 1, without any gradient training."""
-    from praxis.heads.energy import LinearPrior
-
     torch.manual_seed(0)
     prior = LinearPrior(feature_dim=16, latent_dim=4, mode="linear")
     M = torch.randn(16, 4)

@@ -1,20 +1,16 @@
+"""Tests for praxis/activations/servant.py."""
+
 import math
 
 import torch
 
 from praxis.activations.serpent import Serpent
-from praxis.activations.servant import MOD_MAX, Servant
+from praxis.activations.servant import MOD_MAX, SIGNAL_SIGMAS, Servant
 from praxis.metrics.specialization import (
     collect_activation_descriptions,
     collect_activation_metrics,
 )
-
-
-def _built(cls, x, **kwargs):
-    """Lazy modules materialize on first forward."""
-    module = cls(**kwargs)
-    module(x)
-    return module
+from tests.stubs import materialize
 
 
 def test_identity_to_serpent_at_init_in_value_and_gradient():
@@ -24,8 +20,8 @@ def test_identity_to_serpent_at_init_in_value_and_gradient():
     torch.manual_seed(0)
     x0 = torch.randn(2, 5, 16)
 
-    servant = _built(Servant, x0, a=1.0, b=1.0, g=0.1)
-    serpent = _built(Serpent, x0, a=1.0, b=1.0, g=0.1)
+    servant = materialize(Servant, x0, a=1.0, b=1.0, g=0.1)
+    serpent = materialize(Serpent, x0, a=1.0, b=1.0, g=0.1)
 
     xa = x0.clone().requires_grad_(True)
     xb = x0.clone().requires_grad_(True)
@@ -43,7 +39,7 @@ def test_coupling_moves_the_frequency():
     torch.manual_seed(0)
     x = torch.randn(2, 5, 16)
 
-    servant = _built(Servant, x, a=1.0, b=1.0, g=0.1)
+    servant = materialize(Servant, x, a=1.0, b=1.0, g=0.1)
     with torch.no_grad():
         servant.v.fill_(2.0)
 
@@ -63,7 +59,7 @@ def test_metrics_are_zero_at_init_and_reachable_by_the_walk():
     torch.manual_seed(0)
     x = torch.randn(2, 5, 16)
 
-    servant = _built(Servant, x)
+    servant = materialize(Servant, x)
     servant(x)  # populate the realized-swing stash
 
     metrics = servant.training_metrics()
@@ -83,7 +79,7 @@ def test_uninitialized_module_reports_nothing():
     assert Servant().training_metrics() == {}
 
 
-def test_the_swing_stash_ignores_a_no_grad_probe():
+def test_a_no_grad_probe_writes_neither_the_swing_stash_nor_the_running_stats():
     """The dashboard samples every activation on a `linspace(-6, 6)` under
     `torch.no_grad()`, without changing train/eval mode (it races the trainer).
 
@@ -98,11 +94,13 @@ def test_the_swing_stash_ignores_a_no_grad_probe():
     real = torch.randn(4, 16, 32) * 3.0
     act(real)
     stashed = float(act._swing)
+    running = act.log_s_mean.clone()
 
     probe = torch.linspace(-6.0, 6.0, 256).unsqueeze(-1).expand(256, 32).contiguous()
     with torch.no_grad():
         act(probe)
     assert float(act._swing) == stashed, "a no_grad probe wrote the training stash"
+    assert torch.equal(act.log_s_mean, running), "a no_grad probe moved the stats"
 
     # ...and a real forward still updates it.
     act(torch.randn(4, 16, 32) * 0.01)
@@ -175,16 +173,6 @@ def test_running_stats_are_buffers_and_stay_out_of_the_optimizer():
     assert buffers["log_s_var"].shape == (1,)
 
 
-def test_a_no_grad_probe_does_not_advance_the_running_stats():
-    act = Servant()
-    act(torch.randn(4, 16, 32))
-    before = act.log_s_mean.clone()
-    probe = torch.linspace(-6.0, 6.0, 256).unsqueeze(-1).expand(256, 32).contiguous()
-    with torch.no_grad():
-        act(probe)
-    assert torch.equal(act.log_s_mean, before)
-
-
 # ── print(model) is a structural listing ─────────────────────────────────
 
 
@@ -196,10 +184,6 @@ def test_extra_repr_follows_pytorch_convention():
     that position breaks the column the reader is scanning. The formula belongs
     in the class docstring.
     """
-    import torch
-
-    from praxis.activations.servant import MOD_MAX, SIGNAL_SIGMAS, Servant
-
     act = Servant()
     fields = [part.strip() for part in act.extra_repr().split(",")]
     assert fields, "extra_repr is empty"

@@ -1,9 +1,9 @@
-"""Harmonic-weight RL controller: policy-gradient mechanics + callback loop."""
+"""Tests for praxis/policies/harmonic_weight_rl.py: the controller policy's
+gradient estimator and its gate-mask selectors."""
 
 import math
 from types import SimpleNamespace
 
-import pytest
 import torch
 
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy

@@ -14,8 +14,6 @@ from transformers.generation.stopping_criteria import (
     StopStringCriteria,
 )
 
-from praxis.generation.decoding import first_halt
-
 
 class ScriptedBackend:
     """Emits a fixed script one token per step, halting as the real decode does.
@@ -38,13 +36,19 @@ class ScriptedBackend:
     def eval_mode(self):
         yield
 
+    # StopStringCriteria precomputes tables over the vocab; share them.
+    _stop_criteria = {}
+
     def _criteria(self, step_kwargs):
         criteria = StoppingCriteriaList()
         stops = step_kwargs.get("stop_strings")
         if stops:
-            criteria.append(
-                StopStringCriteria(stop_strings=list(stops), tokenizer=self.tokenizer)
-            )
+            key = (id(self.tokenizer), tuple(stops))
+            if key not in self._stop_criteria:
+                self._stop_criteria[key] = StopStringCriteria(
+                    stop_strings=list(stops), tokenizer=self.tokenizer
+                )
+            criteria.append(self._stop_criteria[key])
         eos = step_kwargs.get("eos_token_id")
         if eos:
             eos = list(eos) if isinstance(eos, (list, tuple)) else [eos]
@@ -54,7 +58,6 @@ class ScriptedBackend:
     def generate_until_halt(self, tokens, step_kwargs, deadline=None, streamer=None):
         criteria = self._criteria(step_kwargs)
         budget = int(step_kwargs.get("max_new_tokens", 100))
-        start = tokens.shape[1]
         # transformers publishes the step's prompt first, then each new token.
         if streamer is not None:
             streamer.put(tokens)
@@ -66,7 +69,8 @@ class ScriptedBackend:
             produced += 1
             if streamer is not None:
                 streamer.put(torch.tensor([nxt]))
-            if first_halt(torch.tensor([ids]), criteria, start) is not None:
+            # Checked after every token, as transformers' own loop does.
+            if criteria and criteria(torch.tensor([ids]), None).any():
                 break
         if streamer is not None:
             streamer.end()

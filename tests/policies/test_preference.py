@@ -1,5 +1,5 @@
-"""Tests for the forward-path preference policy (praxis/policies/preference.py)
-and the paired hh-rlhf data path."""
+"""Tests for praxis/policies/preference.py: the reference-free preference
+margin over chosen/rejected task tags."""
 
 import pytest
 import torch

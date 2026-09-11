@@ -1,4 +1,5 @@
-"""Stopping the dashboard must leave the terminal alone.
+"""TerminalDashboard (praxis/interface/dashboard.py): stopping it must leave the
+terminal alone.
 
 The reported failure: Ctrl+C during a run, and the dashboard's box drawing and
 charts render *into* the shell's scrollback, interleaved with the shutdown's
@@ -12,8 +13,6 @@ frame it painted next landed, absolutely positioned, on the restored terminal.
 import sys
 import threading
 import time
-
-import pytest
 
 # ── the ordering contract ────────────────────────────────────────────────
 
@@ -52,14 +51,17 @@ def test_stop_waits_for_the_painter_before_releasing_the_screen(dashboard):
     assert dashboard.terminal_manager.terminal_restored
 
 
-def test_stop_joins_the_render_thread(dashboard):
+def test_stop_joins_the_render_thread_and_hands_stdout_back(dashboard):
     dashboard.start()
     thread = dashboard._render_thread
     assert thread.is_alive()
     assert thread.daemon, "a wedged painter must not outlive the process"
+    assert sys.stdout is dashboard.log_capture
 
     dashboard.stop()
     assert not thread.is_alive(), "stop() returned while the painter was still up"
+    assert sys.stdout is dashboard.original_stdout
+    assert sys.stderr is dashboard.original_stderr
 
 
 def test_nothing_reaches_the_terminal_after_stop(dashboard):
@@ -75,14 +77,6 @@ def test_nothing_reaches_the_terminal_after_stop(dashboard):
     dashboard.dashboard_output.flush()
 
     assert dashboard.tty.text == before, "output escaped after shutdown"
-
-
-def test_stop_hands_stdout_back(dashboard):
-    dashboard.start()
-    assert sys.stdout is dashboard.log_capture
-    dashboard.stop()
-    assert sys.stdout is dashboard.original_stdout
-    assert sys.stderr is dashboard.original_stderr
 
 
 def test_stop_is_idempotent_and_thread_safe(dashboard):
@@ -112,8 +106,12 @@ def test_stop_is_idempotent_and_thread_safe(dashboard):
     assert exits <= 1, f"terminal released {exits} times"
 
 
-def test_a_wedged_painter_cannot_reach_the_terminal(dashboard):
+def test_a_wedged_painter_cannot_reach_the_terminal(dashboard, monkeypatch):
     """The join has a timeout; the tap closing is what makes that safe."""
+    join = type(dashboard)._join_render_thread
+    monkeypatch.setattr(
+        dashboard, "_join_render_thread", lambda timeout=2.0: join(dashboard, 0.2)
+    )
     released = threading.Event()
 
     def wedged_render(frame, out):
