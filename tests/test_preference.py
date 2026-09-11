@@ -163,7 +163,7 @@ def test_byte_latent_forward_with_preference():
         num_heads=4,
         num_layers=2,
         depth=4,
-        encoder_type="abstractinator_harmonic_serpent",
+        encoder_type="abstractinator_v0",
         tokenizer_type="byte_level",
         decoder_type="sequential",
         activation="serpent",

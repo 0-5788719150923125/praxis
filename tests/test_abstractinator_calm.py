@@ -17,8 +17,8 @@ from praxis.encoders import ENCODER_REGISTRY
 from praxis.encoders.abstractinator import AbstractinatorCALM
 from praxis.modeling import PraxisForCausalLM
 
-PROFILE = "abstractinator_harmonic_gdn_vocab_bank_static_calm"
-PARENT = "abstractinator_harmonic_gdn_vocab_bank_static"
+PROFILE = "abstractinator_v1_calm"
+PARENT = "abstractinator_v1"
 
 
 def cfg(encoder=PROFILE, d=64):

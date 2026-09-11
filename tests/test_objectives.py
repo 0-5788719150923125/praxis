@@ -92,7 +92,7 @@ def _model(**overrides):
         num_heads=4,
         num_layers=1,
         depth=2,
-        encoder_type="abstractinator_harmonic_serpent",
+        encoder_type="abstractinator_v0",
         tokenizer_type="byte_level",
         decoder_type="sequential",
         head_type="prismatic5",

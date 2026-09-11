@@ -19,18 +19,9 @@ Source: [praxis/routers/arc.py:48](../praxis/routers/arc.py#L48)
 
 ## `distance` - Distance
 
-Distance Router: SMEAR with Parameter Diversity Loss.
+SMEAR whose experts are pushed apart in parameter space.
 
-Extends SMEAR's soft parameter merging with an auxiliary loss that encourages experts to
-maintain distinct parameters from the base expert. This prevents expert collapse and
-enables better gradient manipulation.
-
-The diversity loss is:     L_div = -Σ ||θ_i - θ_0||_2 for i in [1, num_experts)
-
-Where θ_i are the parameters of expert i and θ_0 are base expert parameters. The
-negative sign encourages distance (higher loss = more similar).
-
-Source: [praxis/routers/distance.py:21](../praxis/routers/distance.py#L21)
+Source: [praxis/routers/distance.py:23](../praxis/routers/distance.py#L23)
 
 ## `mixture_of_depths`, `mixture_of_depths_decayed`, `mixture_of_depths_ramped`, `mixture_of_depths_skip_2`, `mixture_of_depths_u` - MixtureOfDepths
 
@@ -41,7 +32,10 @@ tokens by score) rather than token-choice, per the original paper's recommendati
 The ``layout`` controls how per-layer capacity varies with depth - flat, decayed,
 U-shaped, ramped, or skip-every-N. See https://arxiv.org/abs/2404.02258.
 
-Source: [praxis/routers/mixture_of_depths.py:40](../praxis/routers/mixture_of_depths.py#L40)
+CAUSALITY follows the paper (Sec. 3.5). Expert-choice top-k is non-causal - whether a
+...
+
+Source: [praxis/routers/mixture_of_depths.py:39](../praxis/routers/mixture_of_depths.py#L39)
 
 Presets:
 - `mixture_of_depths` - class defaults
@@ -54,27 +48,25 @@ Presets:
 
 Prismatic router with architectural diversity (ALiBi vs RoPE).
 
-Routes entire sequences to k=2 experts with different positional encodings:
+Routes every position to k=2 experts with different positional encodings:
 - Expert 0: ALiBi (linear distance bias)
 - Expert 1: RoPE (rotational encoding)
 - Expert 2: ALiBi
 - Expert 3: RoPE
 
 The router:
-1. Computes routing probabilities per sequence
-2. Selects TOP-2 experts per sequence (sparse, top-k)
-3. Executes selected experts and blends outputs
-4. Applies load balancing loss to encourage balanced usage
+1. Computes routing probabilities per position, from the prefix mean
+2. Selects TOP-2 experts per position (sparse, top-k)
+3. Executes every selected expert on the batch and blends per position
+4. Applies load balancing loss to ...
 
-Key design: Clean ...
-
-Source: [praxis/routers/prismatic.py:29](../praxis/routers/prismatic.py#L29)
+Source: [praxis/routers/prismatic.py:30](../praxis/routers/prismatic.py#L30)
 
 ## `smear`, `smear_batch`, `smear_token` - SMEAR
 
 Soft-merging of experts, at the granularity the paper uses.
 
-Source: [praxis/routers/smear.py:237](../praxis/routers/smear.py#L237)
+Source: [praxis/routers/smear.py:222](../praxis/routers/smear.py#L222)
 
 Presets:
 - `smear` - class defaults

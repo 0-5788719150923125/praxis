@@ -30,6 +30,7 @@ class MockConfig:
     controller_type: str = "base"
     compression_type: str = "none"
     sorting_type: str = "none"
+    halting_type: str = "none"
 
     # Additional required fields
     checkpoint_every: int = 0
@@ -101,13 +102,9 @@ class TestSMEARIntegration:
         assert len(decoder.locals) == config.num_experts
 
     def test_smear_expert_merging(self):
-        """SMEAR emits one coefficient distribution PER TARGET, per example.
-
-        This used to assert ``[batch, num_experts]`` - one distribution for a
-        whole block. The router now discovers per-module targets and emits
-        ``[batch, targets, num_experts]``; the old shape was the coarseness the
-        rewrite removed.
-        """
+        """SMEAR emits one coefficient distribution PER TARGET, per position:
+        ``[batch, seq, targets, num_experts]``, each position routed on the
+        running mean of its own prefix."""
         config = MockConfig(num_experts=3, num_layers=3)
         decoder = DECODER_REGISTRY["sequential"](config)
         router = decoder.locals[0].router
@@ -122,9 +119,14 @@ class TestSMEARIntegration:
         hidden_states = torch.randn(batch_size, seq_len, config.hidden_size)
         merge, probs = router._coefficients(hidden_states, 0)
 
-        assert probs.shape == (batch_size, len(router.targets), config.num_experts)
+        assert probs.shape == (
+            batch_size,
+            seq_len,
+            len(router.targets),
+            config.num_experts,
+        )
         assert torch.allclose(
-            probs.sum(dim=-1), torch.ones(batch_size, len(router.targets))
+            probs.sum(dim=-1), torch.ones(batch_size, seq_len, len(router.targets))
         )
 
         # A nested ExpertBank must not be re-routed: it already routes itself.
@@ -181,6 +183,34 @@ class TestSMEARIntegration:
             hidden_states.grad, torch.zeros_like(hidden_states.grad)
         )
 
-        # Check that SMEAR router has gradients
+        # The depth prior always trains; the input projection trains exactly
+        # when some target is a Linear, since only those route on the input.
         smear_router = decoder.locals[0].router
-        assert smear_router.router.weight.grad is not None
+        assert smear_router.router.bias.grad is not None
+        assert smear_router.depth_bias.weight.grad is not None
+        if smear_router.wrappers:
+            assert smear_router.router.weight.grad is not None
+
+
+def test_reinject_halting_runs_through_the_decoder():
+    """kl_log_reinject inside the real sequential loop: training re-reads the
+    input and trains the adapter; inference records one exit per position."""
+    from dataclasses import replace
+
+    config = replace(
+        MockConfig(num_experts=3, num_layers=1, depth=4), halting_type="kl_log_reinject"
+    )
+    decoder = DECODER_REGISTRY["sequential"](config)
+    x = torch.randn(2, 7, config.hidden_size, requires_grad=True)
+
+    decoder.train()
+    out, _, _, _ = decoder(x, losses=LossContainer())
+    out.mean().backward()
+    assert decoder.halting.adapter.weight.grad is not None
+    assert x.grad is not None and x.grad.abs().sum() > 0
+
+    decoder.eval()
+    with torch.no_grad():
+        out, _, _, _ = decoder(x.detach(), losses=LossContainer())
+    assert out.shape == x.shape
+    assert sum(decoder.halting._eval_hist.values()) == 2 * 7

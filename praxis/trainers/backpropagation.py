@@ -11,6 +11,7 @@ from torcheval.metrics.functional import perplexity
 
 from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.metrics import compute_softmax_collapse
+from praxis.metrics.copy_probe import copy_gain
 from praxis.trainers.compile import try_compile
 
 
@@ -526,6 +527,13 @@ class BackpropagationTrainer(LightningModule):
             )
             stats["val_perplexity"] = perplexity(val_logits, labels)
 
+        # Once per validation run: does the model use its long-range context?
+        # See praxis/metrics/copy_probe.py.
+        if batch_idx == 0:
+            gain = copy_gain(self.model, input_ids, aligned=self.outputs_are_aligned)
+            if gain is not None:
+                stats["val_copy_gain"] = gain
+
         self.log_dict(
             stats,
             on_step=False,
@@ -643,13 +651,7 @@ class BackpropagationTrainer(LightningModule):
 
         Valid as "bits per byte" precisely when ``loss`` is already a mean
         per-byte NLL, which is true of the codec's reconstruction CE and of
-        nothing else here. It used to be applied to ``val_loss`` as well, and
-        that was wrong twice over: the result was a fixed multiple of a series
-        already being charted (so it carried no information), and it inherited
-        whatever the training objective happened to be - under HALOLoss's honest
-        mode, "CE + a geometry penalty", giving a bits-per-byte with no entropy
-        floor that opened above 16 against a hard chance ceiling of 8.
-        ``_compute_byte_nll_bits`` is the per-byte likelihood.
+        nothing else here. ``_compute_byte_nll_bits`` is the per-byte likelihood.
         """
         return loss / torch.log(torch.tensor(2.0))
 
@@ -657,17 +659,10 @@ class BackpropagationTrainer(LightningModule):
     def _compute_byte_nll_bits(self, outputs, labels):
         """Plain per-byte NLL in bits, measured and never optimized.
 
-        WHY THIS EXISTS. The series this replaced was ``val_loss / ln(2)``,
-        i.e. whatever the training objective happened to be, converted to bits.
-        That made the absolute level uninterpretable, and the level is the
-        thing you need to know where a run sits on a scaling curve: bits per
-        byte has a hard chance ceiling (8.0 for a 256-way byte prediction) and
-        a data-dependent floor, and "how far between those are we" is not
-        answerable from a composite. Under HALOLoss's honest mode - CE plus a
-        geometry penalty, 1:1 - runs opened above 16 on a scale whose maximum
-        is 8.
-
-        This is the same quantity every byte-level scaling law is written in:
+        The training objective can be a composite, whose absolute level says
+        nothing about where a run sits between bits per byte's chance ceiling
+        (8.0 for a 256-way byte prediction) and its data-dependent floor. This
+        is the same quantity every byte-level scaling law is written in:
         unweighted mean cross-entropy of the emitted logits against the byte
         labels, in bits. Unweighted is deliberate - task weights and loss
         weights are training-time policy, and folding them in would make the

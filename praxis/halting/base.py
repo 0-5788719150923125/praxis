@@ -27,9 +27,25 @@ class BaseHalting(nn.Module):
         """Capture a baseline from the pre-loop hidden states."""
         pass
 
+    def initial_state(self, hidden_states: Tensor) -> Tensor:
+        """The loop's starting state, given the decoder input."""
+        return hidden_states
+
+    def inject(self, hidden_states: Tensor, current_depth: int) -> Tensor:
+        """The block input for one loop step, given the current state."""
+        return hidden_states
+
+    def settle(self, hidden_states: Tensor) -> Tensor:
+        """The state after one loop step, given the block output."""
+        return hidden_states
+
     def check(self, hidden_states: Tensor, current_depth: int) -> bool:
         """Check whether the decoder should halt early."""
         return False
+
+    def release(self) -> None:
+        """Drop anything held for the loop, once the loop has finished."""
+        pass
 
     def get_metrics(self) -> Dict[str, Any]:
         return {}

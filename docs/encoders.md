@@ -3,9 +3,9 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (27 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (23 entries)
 
-## `abstractinator`, `abstractinator_harmonic`, `abstractinator_harmonic_gdn_vocab_bank`, `abstractinator_harmonic_gdn_vocab_bank_static`, `abstractinator_harmonic_serpent`, `abstractinator_harmonic_serpent_avg`, `abstractinator_harmonic_serpent_vocab_bank`, `abstractinator_harmonic_vocab_bank` - AbstractinatorEncoder
+## `abstractinator_rvq`, `abstractinator_v0`, `abstractinator_v1`, `abstractinator_v2` - AbstractinatorEncoder
 
 BLT encoder with a multi-stage residual VQ bottleneck between the local encoder and the
 global transformer.
@@ -17,16 +17,12 @@ existing encoder aux_loss, requiring no changes to the training loop.
 Source: [praxis/encoders/abstractinator/encoder.py:30](../praxis/encoders/abstractinator/encoder.py#L30)
 
 Presets:
-- `abstractinator` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
-- `abstractinator_harmonic` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
-- `abstractinator_harmonic_gdn_vocab_bank` - `bottleneck='harmonic_gdn', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
-- `abstractinator_harmonic_gdn_vocab_bank_static` - `bottleneck='harmonic_gdn', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`
-- `abstractinator_harmonic_serpent` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
-- `abstractinator_harmonic_serpent_avg` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, downsampling_method='avg', embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
-- `abstractinator_harmonic_serpent_vocab_bank` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
-- `abstractinator_harmonic_vocab_bank` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
+- `abstractinator_rvq` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
+- `abstractinator_v0` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
+- `abstractinator_v1` - `bottleneck='harmonic_gdn', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`
+- `abstractinator_v2` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', merge='gated', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`
 
-## `abstractinator_harmonic_gdn_vocab_bank_static_calm` - AbstractinatorCALM
+## `abstractinator_v1_calm` - AbstractinatorCALM
 
 Abstractinator with a continuous CALM codec and a count-based vote.
 
@@ -41,7 +37,7 @@ this ...
 Source: [praxis/encoders/abstractinator/calm.py:160](../praxis/encoders/abstractinator/calm.py#L160)
 
 Presets:
-- `abstractinator_harmonic_gdn_vocab_bank_static_calm` - `bottleneck='harmonic_gdn', patch_size=8, patching_mode='static', vq_codebook_size=None`
+- `abstractinator_v1_calm` - `bottleneck='harmonic_gdn', patch_size=8, patching_mode='static', vq_codebook_size=None`
 
 ## `byte_latent`, `byte_latent_conv`, `byte_latent_conv_small`, `byte_latent_transformer` - ByteLatentEncoder
 
@@ -51,7 +47,7 @@ https://arxiv.org/abs/2412.09871
 TODO: This code is an absolute mess. Both this repo and BLT are in active development,
 so it has been difficult to standardize. This could be a lot cleaner.
 
-Source: [praxis/encoders/byte_latent/encoder.py:38](../praxis/encoders/byte_latent/encoder.py#L38)
+Source: [praxis/encoders/byte_latent/encoder.py:39](../praxis/encoders/byte_latent/encoder.py#L39)
 
 Presets:
 - `byte_latent` - class defaults

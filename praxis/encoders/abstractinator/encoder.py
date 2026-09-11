@@ -54,6 +54,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         entropy_model_layers: int = 2,
         cross_attn_encoder: bool = False,
         cross_attn_decoder: bool = False,
+        merge: str = "add",
         downsampling_method: str = "max",
         # Bottleneck coordinate frame: "rvq" quantizes raw patch features (the
         # abstractinator default); "harmonic" rotates them into the CALM
@@ -90,6 +91,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             entropy_model_layers=entropy_model_layers,
             cross_attn_encoder=cross_attn_encoder,
             cross_attn_decoder=cross_attn_decoder,
+            merge=merge,
             downsampling_method=downsampling_method,
         )
 
@@ -100,9 +102,8 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         # for the same reason `config.embeddings` outranks the encoder's
         # embedding profile - a number written in the run's config should not be
         # overridden by a default written in a registry partial. The vocab_size
-        # tail is the legacy path, and it is a coincidence of scale rather than
-        # a rule: this bank indexes patch latents, not tokens, so a tokenizer
-        # change would move it for no reason.
+        # fallback is a coincidence of scale rather than a rule: this bank
+        # indexes patch latents, not tokens.
         K = getattr(config, "codebook_size", None)
         if K is None:
             K = vq_codebook_size
@@ -170,7 +171,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         so unwrap one level when present."""
         core = self.quantizer
         core = getattr(core, "quantizer", core)
-        out = {}
+        out = super().training_metrics()
         if hasattr(core, "telemetry"):
             out.update(core.telemetry())
         ppl = getattr(self, "_last_vq_perplexity", None)
@@ -191,6 +192,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
     # Chart hints for the metrics above. Per-stage keys are declared for up to
     # 4 residual stages; absent stages simply never emit their key.
     metric_descriptions = {
+        **ByteLatentEncoder.metric_descriptions,
         "vq_gdn_anisotropy": {
             "description": (
                 "Coefficient of variation of the GDN compander's gamma. 0 = still the "

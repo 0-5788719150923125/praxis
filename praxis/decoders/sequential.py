@@ -86,6 +86,11 @@ class SequentialDecoder(BaseDecoder):
         if hidden_states.dim() == 3:
             depth_prints.append(hidden_states.detach().float().mean(dim=(0, 1)))
 
+        # The loop's starting state. The decoder input itself for every halting
+        # profile but kl_log_reinject, which starts from noise and re-reads the
+        # input at each step instead (praxis/halting/reinject.py).
+        hidden_states = self.halting.initial_state(hidden_states)
+
         controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
@@ -127,6 +132,7 @@ class SequentialDecoder(BaseDecoder):
                 current_state[state_idx] if current_state is not None else None
             )
             realized_widths.append(self.width.fraction(current_depth, self.depth))
+            block_input = self.halting.inject(hidden_states, current_depth)
             with self.width.scope([expert], current_depth, max_depth=self.depth):
                 (
                     hidden_states,
@@ -138,7 +144,7 @@ class SequentialDecoder(BaseDecoder):
                     expert,
                     self.controller,
                     self.manager,
-                    hidden_states,
+                    block_input,
                     attention_mask,
                     past_key_values,
                     layer_state,
@@ -149,6 +155,9 @@ class SequentialDecoder(BaseDecoder):
                     ),
                     positions,
                 )
+            # Positions that already exited keep their state (per-position
+            # halting); an identity for every other profile.
+            hidden_states = self.halting.settle(hidden_states)
 
             # Update route immediately after expert execution
             current_route = self.controller.update_route(
@@ -203,6 +212,8 @@ class SequentialDecoder(BaseDecoder):
             if current_state is not None:
                 # Use the same state index for updating
                 current_state[state_idx] = layer_state
+
+        self.halting.release()
 
         # Mean active width actually used this forward. Varies over training even
         # under the fixed schedule, because halting samples how many depths run.

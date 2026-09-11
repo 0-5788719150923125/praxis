@@ -166,6 +166,15 @@ def resolve_config(experiment: str) -> Dict:
     return _augment(load_rendered_config(path, experiments_dir=EXP_DIR))
 
 
+def _encoder_traits(encoder: str) -> Dict[str, bool]:
+    """The encoder profile's traits, read off the registry rather than its name
+    (praxis/encoders/__init__.py, ``encoder_traits``). Imported here, not at the
+    top, so the framing module stays importable without torch."""
+    from praxis.encoders import encoder_traits
+
+    return encoder_traits(encoder)
+
+
 def _augment(config: Dict) -> Dict:
     """Add config-derived gate keys the raw YAML doesn't carry, so a fragment can
     gate on a semantic ("is this run doing X?") rather than one literal value.
@@ -196,6 +205,7 @@ def _augment(config: Dict) -> Dict:
     # Harmonic latent space = a harmonic/crystal-bearing head OR the CALM codec.
     head = str(config.get("head_type", ""))
     encoder = str(config.get("encoder_type", ""))
+    traits = _encoder_traits(encoder)
     # prismatic is prefix-matched: prismatic3/prismatic4 carry the same
     # harmonic fields as the base head. The harmonic-bottleneck Abstractinator
     # counts too - its latent is quantized harmonic amplitudes.
@@ -203,7 +213,7 @@ def _augment(config: Dict) -> Dict:
         head in ("harmonic", "crystal", "crystal_harmonic")
         or head.startswith("prismatic")
         or encoder.startswith("calm")
-        or encoder.startswith("abstractinator_harmonic")
+        or traits["harmonic_bottleneck"]
     )
 
     # codec_mode: which input representation the harmonic section opens on -
@@ -212,7 +222,7 @@ def _augment(config: Dict) -> Dict:
     # section-3.1 fragments are mutually exclusive.
     if encoder.startswith("calm"):
         derived["codec_mode"] = "calm"
-    elif encoder.startswith("byte") or encoder.startswith("abstractinator"):
+    elif encoder.startswith("byte") or traits["abstractinator"]:
         # Abstractinator subclasses ByteLatentEncoder (BLT + residual VQ), so it
         # opens the same section-3.1 fragment as the plain byte-latent encoders.
         derived["codec_mode"] = "byte_latent"
@@ -221,20 +231,18 @@ def _augment(config: Dict) -> Dict:
 
     # Abstractinator (byte-latent + residual-VQ bottleneck) gates an addendum to
     # the byte-latent codec section: residual codes written into the encoder.
-    derived["uses_abstractinator"] = encoder.startswith("abstractinator")
+    derived["uses_abstractinator"] = traits["abstractinator"]
 
     # The harmonic-bottleneck Abstractinator: residual codes read as amplitudes
     # in the CALM standing-wave basis. Swaps the addendum's conjecture fragment
     # for the one that states the conjecture is being run.
-    derived["uses_harmonic_bottleneck"] = encoder.startswith("abstractinator_harmonic")
+    derived["uses_harmonic_bottleneck"] = traits["harmonic_bottleneck"]
 
     # The Abstractinator run that carries a SECOND codec: CALM's autoencoder
     # beside the residual quantizer, over the same patch features. Gates the
     # order-13 addendum, which describes the paired construction rather than
     # the single bottleneck the order-12 fragments cover.
-    derived["uses_calm_arm"] = encoder.startswith(
-        "abstractinator"
-    ) and encoder.endswith("calm")
+    derived["uses_calm_arm"] = traits["calm_arm"]
 
     # HALO objective: a distance-to-centroid loss in embedding space (a shell
     # of consensus + an origin abstain sink) rather than cross-entropy.

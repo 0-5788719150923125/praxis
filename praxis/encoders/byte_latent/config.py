@@ -35,6 +35,10 @@ class ByteLatentConfig:
     # Downsampling
     downsampling_by_pooling: Optional[str] = "max"
 
+    # How the local decoder combines the byte path with the trunk's patch
+    # output; see praxis/encoders/byte_latent/merge.py.
+    merge: str = "add"
+
     # Cross-attention settings
     cross_attn_encoder: bool = False
     cross_attn_decoder: bool = False

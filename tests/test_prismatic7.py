@@ -1,16 +1,9 @@
 """prismatic7: the crystal bank merged the way the SMEAR paper merges.
 
-prismatic6 is already SMEAR in its routing EXPONENT (sharpen 1.0) and in
-nothing else. Two things separate it from the paper, and both are pinned here:
-
-  * routing is per EXAMPLE, not on the batch mean. Under a batch mean the loss
-    reaches the coefficients only through ``mean(dim=0)``, so every example
-    contributes the identical routing gradient and a constant router is the
-    fixed point - which is what smear_input_dependence sitting near zero
-    through abstractinator-m/n/p has been;
-  * the bank is one shared geometry plus low-rank deviations, not N independent
-    center sets, so it is EXACTLY prismatic6 at init and the shared trunk keeps
-    full gradient however the routing collapses.
+Pinned here: routing is per example (each row's logits read only that row), and
+the bank is one shared geometry plus low-rank deviations, so it is EXACTLY
+prismatic6 at init and the shared trunk keeps full gradient however the routing
+collapses.
 """
 
 import pytest
@@ -73,9 +66,9 @@ def test_bank_is_base_plus_deviations_not_n_center_sets():
     assert n_smear < n_vear, f"smear {n_smear} is not cheaper than vear {n_vear}"
 
 
-def test_training_routes_per_example_not_on_the_batch_mean():
-    """THE property. Two examples whose routing differs must get different
-    logits for the same hidden state; under a batch mean they cannot."""
+def test_training_routes_per_example():
+    """Row 0 routes on itself, so the same input gets the same logits whatever
+    row 1 holds."""
     head = make()
     with torch.no_grad():  # give the deviations something to say
         nn.init.normal_(head.lora_b, std=0.3)
@@ -92,15 +85,12 @@ def test_training_routes_per_example_not_on_the_batch_mean():
 
     with torch.no_grad():
         la, lb = head(a), head(b)
-    # Row 0 is the SAME input in both batches. Its logits may only differ if
-    # the merge is per example... and must NOT differ, since row 0 routes on
-    # itself. A batch-mean merge would let row 1 move row 0.
     torch.testing.assert_close(la[0], lb[0], rtol=1e-4, atol=1e-4)
 
 
-def test_batch_mean_parent_fails_that_same_property():
-    """Proves the test above is not vacuous: prismatic6's bank DOES let one
-    example's routing move another's logits."""
+def test_the_parent_keeps_rows_independent_too():
+    """Row 0 holds still while row 1 changes, and row 1's own logits move, which
+    keeps the check from being vacuous."""
     head = make(CrystalVearHead)
     with torch.no_grad():
         for e in head.bank.experts:
@@ -114,9 +104,8 @@ def test_batch_mean_parent_fails_that_same_property():
     b = torch.cat([same, torch.randn(1, 5, Cfg.hidden_size) * 8], dim=0)
     with torch.no_grad():
         la, lb = head(a), head(b)
-    assert not torch.allclose(
-        la[0], lb[0], rtol=1e-3, atol=1e-3
-    ), "the parent no longer merges on the batch mean; this control is stale"
+    torch.testing.assert_close(la[0], lb[0], rtol=1e-4, atol=1e-4)
+    assert not torch.allclose(la[1], lb[1], rtol=1e-3, atol=1e-3)
 
 
 def test_shared_trunk_receives_gradient_however_routing_falls():
@@ -130,9 +119,8 @@ def test_shared_trunk_receives_gradient_however_routing_falls():
 
 def test_every_declared_pca_card_is_emitted():
     """The bank declares one Center PCA Density card per EXPERT, and the
-    snapshot loop has to fill all of them. It used to walk ``bank.experts``,
-    which this class collapses to the single shared trunk, so three of the four
-    cards on abstractinator-q rendered blank."""
+    snapshot loop has to fill all of them, although ``bank.experts`` holds only
+    the shared trunk."""
     head = make()
     declared = {k for k in head.all_metric_descriptions() if "centers_pca" in k}
     emitted = {k for k in head.dashboard_snapshots() if "centers_pca" in k}
@@ -144,8 +132,7 @@ def test_pca_panels_share_one_frame_and_are_deterministic():
     """The panels exist to be compared, so they must be drawn in the same
     projection: identical geometries (the LoRA init) render identically, and a
     trained deviation shows up as displacement rather than as a re-fit. Repeat
-    calls must also agree - the randomized SVD this replaced re-binned the same
-    centers on every dashboard refresh and drew from the training RNG stream."""
+    calls must also agree, without drawing from the training RNG stream."""
     head = make()
     first = head.dashboard_snapshots()
     assert first == head.dashboard_snapshots()

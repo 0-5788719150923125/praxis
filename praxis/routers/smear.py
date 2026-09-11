@@ -7,16 +7,9 @@ per-module targets rather than to whole decoder blocks:
   merged unit        adapters after attention,    per-module targets found by
                      FFN and cross-attention      walking the module tree
   coefficients       one router per adapter       one row per target
-  routing            per example                  per example (Linear targets)
+  routing            per example                  per example, causally (Linear
+                                                  targets; see CAUSALITY)
   balancing          expert dropout               same, 0.1
-
-Merging a whole block under one scalar leaves the router injecting
-``num_experts - 1`` free numbers per forward while paying for N copies of
-everything - including a ``ffn_type: peer`` feedforward, the largest module in
-the model and already a per-token mixture over its own product-key bank. A batch
-mean is worse than coarse: the loss reaches the routing only through
-``probs.mean(0)``, so every example receives the identical routing gradient
-``dL/dw / B``, and a constant router is that design's fixed point.
 
 Two things here are not in the paper, and neither is novel:
 
@@ -31,12 +24,18 @@ Two things here are not in the paper, and neither is novel:
   * PEFT-style target discovery (praxis/routers/targeting.py), so merge sites are
     found rather than hand-placed.
 
-Honest limit: routing is per EXAMPLE, never per TOKEN. Associativity buys the
-former for Linear targets - see ``MergedLinear`` - but a per-token merge needs a
-distinct geometry per position, which is the fast-weights work in
-praxis/routers/prismatic.py. Elementwise and indexed targets (norms, residual
-gates, the per-depth table) stay on the batch mean, which is also what the paper
-does: it trains layernorm parameters but never treats them as experts.
+CAUSALITY. The paper pools the example's hidden states, and in its decoder it
+pools the ENCODER's final states "to prevent information leakage from later
+target tokens". A decoder-only trunk has no such fully visible source, so a
+sequence mean here would hand every position's merged weights the future.
+Position ``t`` therefore routes on the running mean of positions ``0..t``: the
+paper's pooled input at the last position, and nothing later anywhere. Linear
+targets take those per-position coefficients through ``MergedLinear`` at no
+extra cost. Elementwise and indexed targets (norms, residual gates, the
+per-depth table) can hold only one geometry per forward, and a geometry shared
+by every position cannot read any of them, so they merge on the input-free
+depth prior - the paper never routes layernorm parameters either. Lory
+(arXiv:2405.03133) takes the segment-level route to the same constraint.
 
 Sharpening is OFF by default: ``p**4`` drives losing deviations to zero
 gradient, which is the dead-expert mechanism. ``VEAR`` re-enables it for the
@@ -71,24 +70,18 @@ METRICS_INTERVAL: int = 10
 
 # How far the routing decision is shared before the merge.
 #
-#   "token"   - every position routes itself. Beyond the paper, and possible
-#               only on the Linear targets, where associativity means the merged
-#               weight is never materialized (see MergedLinear). Costs nothing
-#               extra: the coefficient tensor gains a sequence axis the einsum
-#               was already broadcasting over.
-#   "example" - one routing per sequence, the paper's granularity. Default.
-#   "batch"   - one routing for the whole batch, which is what this repo's old
-#               whole-block SMEAR did. Kept for the controlled comparison ONLY.
-#               It is very likely never the right choice: under a batch mean the
-#               loss reaches the routing only through ``probs.mean(0)``, so every
-#               example receives the identical routing gradient and a CONSTANT
-#               router is the fixed point. Measured on abstractinator-m, where
-#               input dependence decayed to exactly 0.
+#   "token"   - every position routes on its own state. Beyond the paper, and
+#               possible only on the Linear targets, where associativity means
+#               the merged weight is never materialized (see MergedLinear).
+#   "example" - every position routes on the running mean of its prefix: the
+#               paper's per-example pooling, made causal. Default.
+#   "batch"   - one input-free geometry (the depth prior) for the whole batch:
+#               the control arm for input-dependent routing.
 #
 # Elementwise and indexed targets (norms, residual gates, the per-depth table)
-# always reduce to one geometry per forward regardless: their merged parameter
-# would have to vary per position, which needs a rewritten forward, not a
-# reassociated one.
+# take the depth prior under every reduction: one geometry per forward is all
+# their forwards can hold, and it cannot read any position without reading the
+# future of the positions before it.
 REDUCTIONS = ("token", "example", "batch")
 
 # Rank of a factored deviation, as a divisor of the smaller weight dimension.
@@ -99,12 +92,10 @@ MIN_RANK: int = 4
 
 # Probability of dropping an entire deviation from a routing decision. This is
 # SMEAR's OWN load-balancing mechanism (the paper uses expert dropout, not an
-# auxiliary balance loss or a DeepSeek-style bias), at the paper's rate, and it
-# is what the first cut of this router was missing: nothing stopped one deviation per
-# target from monopolizing its coefficient, and on abstractinator-m every one of
-# the twelve targets duly saturated to near one-hot.
+# auxiliary balance loss or a DeepSeek-style bias), at the paper's rate. Without
+# it one deviation per target monopolizes its coefficient.
 #
-# Safe here in a way it is not under the original SMEAR. When every expert is
+# Safe here in a way it is not under the paper's merge. When every expert is
 # dropped, the renormalized coefficients are all zero, and a base-plus-deviation
 # merge then falls back to ``base`` EXACTLY. SMEAR's ``sum_e w_e P_e`` under the
 # same draw yields an all-zero parameter block.
@@ -126,13 +117,12 @@ def _set_submodule(root: nn.Module, dotted: str, replacement: nn.Module) -> None
 
 class MergedLinear(nn.Module):
     """A routed ``nn.Linear``: base weight plus N low-rank deviations, merged
-    PER EXAMPLE.
+    per example or per position.
 
-    This is the module that lets the modular router leave the batch mean behind, and the
-    reason it can is associativity. Merging first and applying second needs one
+    Associativity is what makes that affordable. Merging first and applying second needs one
     weight tensor per distinct coefficient vector, so per-example routing would
-    mean a whole ``[B, out, in]`` stack. Applying first and merging second does
-    not::
+    mean a whole ``[B, out, in]`` stack and per-position routing a ``[B, T, out,
+    in]`` one. Applying first and merging second does not::
 
         y_b = (W + sum_e c_be B_e A_e) x_b
             = W x_b + sum_e c_be * B_e (A_e x_b)
@@ -142,19 +132,14 @@ class MergedLinear(nn.Module):
     ``N = 4`` that is roughly one extra base projection, and the only new
     activation is ``[B, T, N, r]``.
 
-    WHY PER EXAMPLE IS THE POINT. Under a batch mean the loss reaches the
-    routing only through ``probs.mean(0)``, so every example in the batch
-    receives the SAME routing gradient, ``dL/dw / B``. No gradient path can
-    express "example 1 wanted deviation 2 while example 5 wanted deviation 3",
-    which makes a constant router the design's fixed point rather than a
-    training failure - and ``smear_input_dependence`` decaying to exactly 0 is
-    that fixed point being reached. Per-example merging restores the signal.
+    Per-example coefficients are what let the routing learn: under one shared
+    merge every example receives the same routing gradient, and a constant
+    router is the fixed point.
 
     The base ``weight`` and ``bias`` are the ORIGINAL Parameter objects, held
-    directly rather than behind a nested Linear, so qualified names and any
-    checkpoint written before this wrapper existed both still resolve
-    (``attn.qkv.weight`` stays ``attn.qkv.weight``) and anything introspecting
-    ``.weight`` / ``.in_features`` keeps working.
+    directly rather than behind a nested Linear, so qualified names are
+    unchanged (``attn.qkv.weight`` stays ``attn.qkv.weight``) and anything
+    introspecting ``.weight`` / ``.in_features`` keeps working.
     """
 
     def __init__(self, base: nn.Linear, num_experts: int, rank: int) -> None:
@@ -299,15 +284,16 @@ class SMEAR(nn.Module):
 
         # Targets split by HOW they are merged, not by what they are:
         #
-        #   per-example - the target is an nn.Linear, so associativity lets each
-        #     example carry its own coefficients at low-rank cost (MergedLinear).
+        #   routed - the target is an nn.Linear, so associativity lets each
+        #     position carry its own coefficients at low-rank cost (MergedLinear).
         #     These are the adapter-shaped modules, which is exactly what the
         #     SMEAR paper routes: adapters inserted after self-attention, the
         #     feed-forward and cross-attention.
-        #   batch-mean - norms, residual gates, kappa/mu, the per-depth table.
-        #     Elementwise or indexed rather than matmuls, so the associativity
-        #     trick does not apply, and the paper does not treat them as experts
-        #     either (it trains layernorm parameters but never routes them).
+        #   depth prior - norms, residual gates, kappa/mu, the per-depth table.
+        #     Elementwise or indexed rather than matmuls, so one geometry per
+        #     forward is all they hold, and the paper does not treat them as
+        #     experts either (it trains layernorm parameters but never routes
+        #     them).
         self.wrappers = nn.ModuleDict()  # metric label -> MergedLinear
         self._wrapper_row: Dict[str, int] = {}  # metric label -> router row
         self.deltas = nn.ParameterDict()
@@ -351,16 +337,14 @@ class SMEAR(nn.Module):
         # ArcAttention idiom (praxis/attention/arc.py), widened to
         # ``targets * experts`` so each pass can move each module
         # independently. Zero-init, so it is exactly absent until it learns
-        # otherwise; that is why it is unconditional rather than a separate
-        # class, which is what `arc_smear` / `arc_vear` used to be.
+        # otherwise.
         self.depth = getattr(config, "depth", 1) or 1
         self.depth_bias = nn.Embedding(self.depth, len(self.targets) * self.num_experts)
         nn.init.zeros_(self.depth_bias.weight)
 
         self._metrics: Dict[str, float] = {}
         # On-device running sums over the passes since the last flush, and
-        # how many passes went into them. See _log_metrics for why sampling
-        # one pass instead was an aliasing bug.
+        # how many passes went into them. See _log_metrics.
         self._accum: Dict[str, Tensor] = {}
         self._passes: int = 0
         self._tick: int = 0
@@ -376,9 +360,10 @@ class SMEAR(nn.Module):
                 f"({self.delta_numel / max(1, merged_numel):.2f}x the merged base)"
             )
             print(
-                f"[SMEAR] {len(self.wrappers)} target(s) routed PER EXAMPLE "
+                f"[SMEAR] {len(self.wrappers)} target(s) routed causally, "
+                f"reduction={self.reduction} "
                 f"({', '.join(self.wrappers) or 'none'}); "
-                f"{len(self._param_row)} parameter(s) on the batch-mean path; "
+                f"{len(self._param_row)} parameter(s) on the depth prior; "
                 f"expert dropout {self.EXPERT_DROPOUT}"
             )
 
@@ -439,67 +424,127 @@ class SMEAR(nn.Module):
         )
         return logits + bias.view(len(self.targets), self.num_experts)
 
-    def _coefficients(
-        self, inputs: Tensor, current_depth: int
-    ) -> Tuple[Tensor, Tensor]:
-        """Merge coefficients ``[B, targets, experts]`` and the router's own probs.
+    def _prior_logits(self, current_depth: int) -> Tensor:
+        """Input-free logits ``[targets, experts]``: the router's bias plus the
+        per-depth row. The one routing every position may share, because it
+        reads none of them."""
+        logits = self.router.bias.view(len(self.targets), self.num_experts)
+        bias = self.depth_bias(
+            torch.tensor(int(current_depth) % self.depth, device=logits.device)
+        )
+        return logits + bias.view_as(logits)
 
-        Returns the FULL per-example tensor, not a batch mean. Callers that
-        cannot use per-example coefficients (the elementwise targets) take the
-        mean themselves, which keeps the mean an explicit, local decision rather
-        than something baked into every path.
+    def _prefix_mean(self, inputs: Tensor, cache: Any, current_depth: int) -> Tensor:
+        """Mean over positions ``0..t`` at every position ``t``, ``[B, T, D]``.
 
-        Pooling is ``inputs.mean(dim=1)`` - averaged over the sequence, which is
-        what the SMEAR paper's router reads too. Per-TOKEN routing remains out
-        of reach: it would need a distinct merged geometry per position, and the
-        associativity trick buys per-example, not per-token.
+        Accumulated in float32, since a low-precision cumsum drifts over a long
+        row. Under cached decode the sum continues from the state carried for
+        this depth when it lines up with the depth's cached length, and falls
+        back to the suffix alone when it does not (a rollback, a batch change),
+        which is the crystal head's rule (``_route_causal``).
         """
-        # Per-token routing reads every position; the coarser reductions pool
-        # over the sequence first, which is what the paper's router does.
-        routed_input = inputs if self.reduction == "token" else inputs.mean(dim=1)
-        logits = self._route_logits(self.router_norm(routed_input), current_depth)
-        probs = F.softmax(logits, dim=-1)  # [..., T, N] - the router's own opinion
+        x = inputs.float()
+        batch, length = x.shape[0], x.shape[1]
+        total = x.cumsum(dim=1)
+        count = torch.arange(1, length + 1, device=x.device, dtype=x.dtype)
+        count = count.view(1, -1, 1).expand(batch, -1, 1)
+        if hasattr(cache, "get_head_state") and hasattr(cache, "get_seq_length"):
+            depth = int(current_depth)
+            key = f"{type(self).__name__}-prefix:{id(self)}:{depth}"
+            cached = int(cache.get_seq_length(depth))
+            state = cache.get_head_state(key)
+            if (
+                state is not None
+                and state["pos"] == cached
+                and state["sum"].shape[0] == batch
+            ):
+                total = total + state["sum"].to(x.device).unsqueeze(1)
+                count = count + state["count"].to(x.device).view(batch, 1, 1)
+            cache.set_head_state(
+                key,
+                {
+                    "sum": total[:, -1].detach(),
+                    "count": count[:, -1, 0].detach(),
+                    "pos": cached + length,
+                },
+            )
+        return (total / count).to(inputs.dtype)
 
+    def _regularize(self, probs: Tensor, draw_shape: Optional[tuple] = None) -> Tensor:
+        """Expert dropout, then sharpening: ``probs`` -> merge coefficients.
+
+        Dropout is SMEAR's own load-balancing mechanism; ``draw_shape`` lets one
+        draw cover several positions (one per example under "example"). Under
+        gradient checkpointing the recomputed pass draws the SAME mask, because
+        torch.utils.checkpoint runs with preserve_rng_state=True
+        (praxis/decoders/checkpoint.py). An all-dropped row renormalizes to
+        zeros rather than NaN, and zero coefficients mean "use the base
+        unchanged" - see MODULAR_EXPERT_DROPOUT.
+        """
         merge = probs
-        # Expert dropout: SMEAR's own load-balancing mechanism, drawn
-        # independently per (example, target) so a deviation that would
-        # otherwise monopolize a target keeps being made to share. Under
-        # gradient checkpointing the forward re-runs during backward, and
-        # torch.utils.checkpoint is called with use_reentrant=False and the
-        # default preserve_rng_state=True (praxis/decoders/checkpoint.py), so
-        # the recomputed pass draws the SAME mask the original did.
         if self.training and self.EXPERT_DROPOUT > 0:
-            keep = torch.bernoulli(torch.full_like(merge, 1.0 - self.EXPERT_DROPOUT))
+            shape = probs.shape if draw_shape is None else draw_shape
+            keep = torch.bernoulli(
+                torch.full(
+                    shape,
+                    1.0 - self.EXPERT_DROPOUT,
+                    device=probs.device,
+                    dtype=probs.dtype,
+                )
+            )
             merge = merge * keep
-            # An all-dropped row renormalizes to zeros rather than NaN, and zero
-            # coefficients mean "use the base unchanged" - see MODULAR_EXPERT_DROPOUT.
             merge = merge / merge.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-
         if self.SHARPEN != 1.0:
             merge = merge.pow(self.SHARPEN)
             merge = merge / merge.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        return merge
 
+    def _coefficients(
+        self, inputs: Tensor, current_depth: int, cache: Any = None
+    ) -> Tuple[Tensor, Tensor]:
+        """Merge coefficients for the Linear targets, and the router's own probs.
+
+        ``[B, T, targets, experts]`` under "example" and "token", one routing
+        per position that reads no later position; ``[B, targets, experts]``
+        under "batch", the depth prior repeated for every example.
+        """
         if self.reduction == "batch":
-            # Every example shares one geometry. This is what `smear` and `vear`
-            # used to do unconditionally, kept ONLY so the per-example claim can
-            # be A/B'd against it - see REDUCTIONS for why it is not a default.
-            merge = merge.mean(dim=0, keepdim=True).expand_as(merge)
-        return merge, probs
+            probs = F.softmax(self._prior_logits(current_depth), dim=-1)
+            merge = self._regularize(probs)
+            batch = inputs.shape[0]
+            return merge.expand(batch, -1, -1), probs.expand(batch, -1, -1)
+        if self.reduction == "token":
+            routed, draw_shape = inputs, None
+        else:
+            routed = self._prefix_mean(inputs, cache, current_depth)
+            draw_shape = (inputs.shape[0], 1, len(self.targets), self.num_experts)
+        logits = self._route_logits(self.router_norm(routed), current_depth)
+        probs = F.softmax(logits, dim=-1)
+        return self._regularize(probs, draw_shape), probs
+
+    def _depth_prior(self, current_depth: int) -> Tensor:
+        """``[targets, experts]`` coefficients for the elementwise targets."""
+        return self._regularize(F.softmax(self._prior_logits(current_depth), dim=-1))
 
     @staticmethod
     def _flatten(merge: Tensor) -> Tensor:
-        """``[..., targets, experts]`` -> ``[targets, experts]``.
-
-        The elementwise targets always merge to one geometry per forward, so
-        they need every leading axis collapsed - one under "example", two under
-        "token".
-        """
+        """``[..., targets, experts]`` -> ``[targets, experts]``, averaging every
+        leading axis. Diagnostics only."""
         return merge.reshape(-1, merge.shape[-2], merge.shape[-1]).mean(dim=0)
+
+    def _applied(self, merge: Tensor, prior: Tensor) -> Tensor:
+        """Mean coefficients each target actually ran with, ``[targets, experts]``:
+        the routed rows for the Linear targets, the depth prior for the rest."""
+        applied = prior.clone()
+        routed = self._flatten(merge)
+        for row in self._wrapper_row.values():
+            applied[row] = routed[row]
+        return applied
 
     @contextmanager
     def _coefficient_scope(self, merge: Tensor) -> Iterator[None]:
-        """Hand each per-example target its ``[B, N]`` coefficients for one
-        block forward, then take them back.
+        """Hand each Linear target its ``[B, T, N]`` (or ``[B, N]``) coefficients
+        for one block forward, then take them back.
 
         Scoped rather than passed as an argument because the coefficients have
         to reach modules several levels inside the block whose forward
@@ -549,13 +594,8 @@ class SMEAR(nn.Module):
     # --- forward --------------------------------------------------------------
 
     def forward(self, *args: Any, **kwargs: Any):
-        """Router-mode forward.
-
-        Arity handling mirrors SMEAR's deliberately rather than sharing it: the
-        legacy router is frozen for backward compatibility, so the two are kept
-        independent. Seven positional arguments, or eight when an encoder
-        supplies a byte timeline (praxis/layers/local.py).
-        """
+        """Router-mode forward: seven positional arguments, or eight when an
+        encoder supplies a byte timeline (praxis/layers/local.py)."""
         if len(args) not in (7, 8):
             raise NotImplementedError(
                 "SMEAR routers support router mode only (7 or 8 positional args "
@@ -565,25 +605,23 @@ class SMEAR(nn.Module):
         current_state, current_depth, block_ids = args[4:7]
         positions = args[7] if len(args) == 8 else None
 
-        merge, probs = self._coefficients(inputs, current_depth)
+        merge, probs = self._coefficients(inputs, current_depth, past_key_values)
 
-        # Elementwise and indexed targets still merge on the batch mean; the
-        # Linear targets take their per-example rows through the scope below.
-        mean_w = self._flatten(merge)
-        merged = self._merged_state_dict(layer, mean_w)
+        # Elementwise and indexed targets merge on the input-free depth prior;
+        # the Linear targets take their per-position rows through the scope.
+        prior = self._depth_prior(current_depth)
+        merged = self._merged_state_dict(layer, prior)
 
         # Diagnostics run over a contiguous WINDOW of `depth` passes and then
-        # sleep for METRICS_INTERVAL - 1 windows. See _log_metrics: sampling one
-        # pass per interval aliased across recurrent depth, and sampling every
-        # pass fixed that but cost +9.8% per pass, which at ~96 passes per
-        # optimizer step is a third of the step. A window is long enough to span
-        # every depth in a step and still touches only one pass in
-        # METRICS_INTERVAL. Ordered after the merge because _delta_scale reads
-        # the merged tensors rather than recomputing them.
+        # sleep for METRICS_INTERVAL - 1 windows: long enough to span every
+        # depth, while touching only one pass in METRICS_INTERVAL (every pass
+        # would cost ~10% per pass). Ordered after the merge because
+        # _delta_scale reads the merged tensors rather than recomputing them.
         if (self._tick // self._window) % METRICS_INTERVAL == 0:
             with torch.no_grad():
-                self._log_metrics(merge, probs)
-                self._delta_scale(layer, merged, mean_w)
+                applied = self._applied(merge, prior)
+                self._log_metrics(applied, probs)
+                self._delta_scale(layer, merged, applied)
         self._tick += 1
         # Flush on a COMPLETE window, so the reported average always covers a
         # whole recurrent loop rather than whichever passes happened to land
@@ -604,8 +642,7 @@ class SMEAR(nn.Module):
         # passing positions there would feed it to the FFN gate.
         forward_kwargs = {} if positions is None else {"positions": positions}
 
-        # tie_weights=False for the same reason SMEAR needs it: the same module
-        # is reparametrized once per recurrent pass, and functional_call's
+        # tie_weights=False: the same module is reparametrized once per recurrent pass, and functional_call's
         # parameter-aliasing machinery corrupts the merged graph across those
         # reuses, surfacing as a double-backward on a freed graph.
         with self._coefficient_scope(merge):
@@ -631,26 +668,14 @@ class SMEAR(nn.Module):
         return (-(p * p.log()).sum(dim=dim)).clamp_min(0.0)
 
     def _log_metrics(self, merge: Tensor, probs: Tensor) -> None:
-        """Four scalars and one heatmap, deliberately.
-
-        SMEAR emitted nine chart families keyed by ``layer_{depth}_``, which at
-        depth 6 rendered 54 lines - every one of them the SAME router sampled at
-        a different recurrent pass, since one router serves every depth. Nothing
-        here carries a depth prefix, and the per-pass story is told by
-        ``router_depth_specialization``, which is where the depths genuinely
+        """Four scalars and one heatmap, with no depth prefix: one router serves
+        every depth, and ``router_depth_specialization`` reports how the passes
         differ.
 
-        Averaged over a contiguous WINDOW of passes rather than sampled from one
-        of them. Sampling was an aliasing bug, not a cheaper approximation:
-        the old code logged whenever ``_tick % METRICS_INTERVAL == 0`` while
-        ``_tick`` advances once per recurrent pass, so at depth 6 and interval 10
-        it reported depths 0, 2 and 4 and NEVER 1, 3 or 5. With
-        ``router_depth_specialization`` at 0.78 on abstractinator-n those passes
-        are not interchangeable, and what surfaced on the charts as a router
-        oscillating between collapsed and diverse was in part the sampler
-        rotating between depths that differ. Accumulation stays on-device and
-        only the flush calls ``.item()``, so this still costs one host-device
-        sync per window and not one per pass.
+        Averaged over a contiguous WINDOW of passes rather than sampled from one:
+        ``_tick`` advances once per recurrent pass, so sampling every Nth tick
+        would report a fixed subset of depths. Accumulation stays on-device and
+        only the flush calls ``.item()``, one host-device sync per window.
         """
         try:
             self._reset_accum_if_moved(merge)
@@ -673,7 +698,11 @@ class SMEAR(nn.Module):
                 (w > (0.5 / n)).float().sum(dim=-1).mean() / n,
             )
 
-            if n > 1:
+            # Only the Linear targets route on the input; the rest run on the
+            # depth prior, so their rows of `probs` describe nothing applied.
+            routed_rows = sorted(self._wrapper_row.values())
+            if n > 1 and routed_rows:
+                probs = probs[..., routed_rows, :]
                 # Does the router read its input? I(input; expert) per target,
                 # normalized to [0, 1], then averaged. Zero means every sequence
                 # in the batch got the same coefficients, i.e. the router is a
@@ -719,27 +748,26 @@ class SMEAR(nn.Module):
                 # the argmax distribution, normalized. 0 = every example picks the
                 # SAME deviation (so a sharp router is just a collapsed one);
                 # 1 = the selections spread evenly across the bank. Exactly 0 by
-                # construction under reduction="batch", which is the honest
-                # reading of that mode.
+                # construction under reduction="batch".
                 picks = F.one_hot(sel.argmax(dim=-1), n).to(sel.dtype)  # [D, T, N]
                 self._add(
                     "smear_selection_diversity",
                     (self._entropy(picks.mean(dim=0), dim=-1) / math.log(n)).mean(),
                 )
 
-                # THE number this design exists to produce. Mean pairwise L1
-                # distance between different targets' coefficient rows, over its
-                # maximum of 2. Zero means every module chose the same mixture,
-                # so per-module granularity bought nothing and the block is back
-                # to one scalar; high means the modules genuinely disagree, which
-                # is the only thing that justifies the extra rows.
-                if len(self.targets) > 1:
-                    d = (w.unsqueeze(0) - w.unsqueeze(1)).abs().sum(-1)  # [T, T]
-                    t_count = len(self.targets)
-                    self._add(
-                        "smear_target_dispersion",
-                        d.sum() / (t_count * (t_count - 1) * 2.0),
-                    )
+            # THE number this design exists to produce. Mean pairwise L1
+            # distance between different targets' coefficient rows, over its
+            # maximum of 2. Zero means every module chose the same mixture, so
+            # per-module granularity bought nothing and the block is back to one
+            # scalar; high means the modules genuinely disagree, which is the
+            # only thing that justifies the extra rows.
+            if n > 1 and len(self.targets) > 1:
+                d = (w.unsqueeze(0) - w.unsqueeze(1)).abs().sum(-1)  # [T, T]
+                t_count = len(self.targets)
+                self._add(
+                    "smear_target_dispersion",
+                    d.sum() / (t_count * (t_count - 1) * 2.0),
+                )
         except Exception:
             # Diagnostics never break a step; they write to a plain dict and
             # never reach the loss.
@@ -756,8 +784,8 @@ class SMEAR(nn.Module):
         arguing about nothing, and is indistinguishable from a real one on the
         coefficient heatmap alone.
 
-        Reported for the mean coefficients, matching the heatmap, even though the
-        Linear targets apply their own row per example. Delta over BASE rather
+        Reported for the mean applied coefficients, matching the heatmap, even
+        though the Linear targets apply their own row per position. Delta over BASE rather
         than over merged, so the number is read directly as "the routing moved
         this module's weights by N% of their own norm".
         """
@@ -765,9 +793,7 @@ class SMEAR(nn.Module):
             self._reset_accum_if_moved(w)
             self._delta_scale_inner(layer, merged, w)
         except Exception:
-            # Optional telemetry must never reach the step. A diagnostic that
-            # can raise into forward() is how a profiler took abstractinator-m
-            # down; this one had the same shape.
+            # Optional telemetry must never reach the step.
             pass
 
     def _delta_scale_inner(
@@ -832,10 +858,7 @@ class SMEAR(nn.Module):
 
     def _flush_metrics(self) -> None:
         """Average the accumulated passes into the float dict the logger drains.
-
-        The only place this class touches the host, which is what keeps
-        per-pass accumulation as cheap as the old per-interval sampling.
-        """
+        The only place this class touches the host."""
         if not self._accum or self._passes == 0:
             return
         try:

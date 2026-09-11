@@ -1,15 +1,17 @@
 """Modular SMEAR: the paper's granularity, over a shared block plus deviations.
 
 Not a new method - SMEAR (arxiv 2306.03745) applied the way the paper applies
-it, which praxis/routers/smear.py does not. What is pinned here is exactly that:
+it. Pinned here:
 
   * targets are discovered per MODULE, not per block, and each gets its own
     coefficient row (the paper puts a router on each inserted adapter);
-  * Linear targets route PER EXAMPLE (the paper's routing granularity), while
-    elementwise targets stay on the batch mean (the paper does not treat
-    layernorm parameters as experts either);
+  * Linear targets route per position on the running mean of the prefix (the
+    paper's per-example pooling, made causal), while elementwise targets take
+    the input-free depth prior (the paper does not treat layernorm parameters
+    as experts either), so no position reads a later one and no row reads
+    another;
   * expert dropout is present, because that is the paper's load-balancing
-    mechanism and omitting it collapsed every target to one-hot;
+    mechanism and without it every target collapses to one-hot;
   * ``MERGE_OPAQUE`` subtrees and reference-tied parameters are never merged -
     the two structural exclusions PEER and the Titans memory rely on;
   * the router is EXACTLY identity at init, so a config swap is a clean A/B;
@@ -136,12 +138,12 @@ def test_merge_is_exactly_identity_at_init():
     x = torch.randn(3, 7, Cfg.hidden_size)
     merge, _ = router._coefficients(x, 0)
 
-    # Batch-mean path: every merged tensor is bit-identical to its base.
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
+    # Depth-prior path: every merged tensor is bit-identical to its base.
+    merged = router._merged_state_dict(block, router._depth_prior(0))
     for name, tensor in merged.items():
         assert torch.equal(tensor, _get_param(block, name)), f"{name} moved at init"
 
-    # Per-example path: each wrapper reduces to the Linear it replaced.
+    # Routed path: each wrapper reduces to the Linear it replaced.
     with router._coefficient_scope(merge):
         for label, wrapper in router.wrappers.items():
             probe = torch.randn(3, 7, wrapper.in_features)
@@ -179,13 +181,13 @@ def test_depth_bias_wraps_past_the_table():
 
 
 def test_merge_equals_convex_combination_of_implied_experts():
-    """base + sum_e w_e delta_e == sum_e w_e (base + delta_e), on the batch-mean path."""
+    """base + sum_e w_e delta_e == sum_e w_e (base + delta_e), on the depth-prior path."""
     router, block = make()
     for param in router.deltas.values():
         nn.init.normal_(param, std=0.05)
-    x = torch.randn(4, 6, Cfg.hidden_size)
-    merge, _ = router._coefficients(x, 0)
-    w = merge.mean(dim=0)
+    with torch.no_grad():  # a non-uniform prior, so the check has teeth
+        nn.init.normal_(router.router.bias, std=1.0)
+    w = router._depth_prior(0)
     merged = router._merged_state_dict(block, w)
 
     for name, row in router._param_row.items():
@@ -206,10 +208,11 @@ def test_coefficients_sum_to_one_per_target():
     merge, _ = router._coefficients(x, 0)
     assert merge.shape == (
         4,
+        6,
         len(router.targets),
         4,
-    ), "coefficients must stay per-example"
-    torch.testing.assert_close(merge.sum(dim=-1), torch.ones(4, len(router.targets)))
+    ), "coefficients must be per example AND per position"
+    torch.testing.assert_close(merge.sum(dim=-1), torch.ones(4, 6, len(router.targets)))
 
 
 def test_sharpening_concentrates_without_changing_shape():
@@ -250,7 +253,7 @@ def test_shared_trunk_gets_full_gradient_under_collapsed_routing():
         lora_b.grad[3].abs().sum() < lora_b.grad[0].abs().sum()
     )  # a starved one does not
 
-    # ...and a batch-mean target behaves the same way.
+    # ...and a depth-prior target behaves the same way.
     bank = router.deltas[router._key("attn_norm.weight")]
     assert bank.grad[0].abs().sum() > 0
     assert block.attn_norm.weight.grad.abs().sum() > 0
@@ -280,10 +283,10 @@ def test_repulsion_is_a_scalar_and_training_only():
 
 
 def test_factored_deviations_are_cheaper_than_whole_copies():
-    """The point of the redesign: N deviations must cost less than N blocks."""
+    """N deviations must cost less than N blocks."""
     router, block = make(n=4)
     block_params = sum(p.numel() for p in block.parameters())
-    # What the old design would have paid for the same expert count.
+    # What whole-block copies would cost for the same expert count.
     smear_cost = 3 * block_params
     assert router.delta_numel < smear_cost, (router.delta_numel, smear_cost)
 
@@ -391,9 +394,7 @@ def test_coefficient_scope_is_released():
 
 def test_untargeted_parameters_are_absent_from_the_merge():
     router, block = make()
-    x = torch.randn(2, 5, Cfg.hidden_size)
-    merge, _ = router._coefficients(x, 0)
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
+    merged = router._merged_state_dict(block, router._depth_prior(0))
     assert not any(k.startswith("ffn.") for k in merged)
 
 
@@ -460,8 +461,8 @@ def test_layout_is_shared_so_the_decoder_builds_one_block():
     assert _router_layout("smear") == "shared"
     assert _router_layout("vear") == "shared"
     assert not _wants_expert_bank("smear")
-    # Distance is the only bank router left (praxis/routers/bank.py).
-    assert _router_layout("distance") == "bank"
+    assert _router_layout("distance") == "shared"
+    assert not _wants_expert_bank("distance")
 
 
 # --- expert dropout (the paper's load-balancing mechanism) --------------------
@@ -498,7 +499,9 @@ def test_all_dropped_falls_back_to_base_rather_than_zeroing_the_block():
     merge, _ = router._coefficients(x, 0)
     assert torch.all(merge == 0)
 
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
+    prior = router._depth_prior(0)
+    assert torch.all(prior == 0)
+    merged = router._merged_state_dict(block, prior)
     for name, tensor in merged.items():
         assert torch.equal(tensor, _get_param(block, name))
 
@@ -519,7 +522,9 @@ def test_diagnostics_are_computed_before_dropout():
     router.train()
     x = torch.randn(64, 5, Cfg.hidden_size)
     _, probs = router._coefficients(x, 0)
-    torch.testing.assert_close(probs.sum(dim=-1), torch.ones(64, len(router.targets)))
+    torch.testing.assert_close(
+        probs.sum(dim=-1), torch.ones(64, 5, len(router.targets))
+    )
     assert (probs > 0).all(), "diagnostics saw a post-dropout distribution"
 
 
@@ -549,7 +554,7 @@ def test_reduction_shapes():
     """Each reduction changes what the coefficients are indexed by."""
     x = torch.randn(4, 6, Cfg.hidden_size)
     for reduction, want in (
-        ("example", (4, None, 4)),
+        ("example", (4, 6, None, 4)),
         ("token", (4, 6, None, 4)),
         ("batch", (4, None, 4)),
     ):
@@ -560,13 +565,12 @@ def test_reduction_shapes():
         merge, _ = r._coefficients(x, 0)
         expected = tuple(len(r.targets) if d is None else d for d in want)
         assert merge.shape == expected, f"{reduction}: {merge.shape} != {expected}"
-        # Elementwise targets always collapse to one geometry per forward.
-        assert r._flatten(merge).shape == (len(r.targets), 4)
+        # Elementwise targets always hold one geometry per forward.
+        assert r._depth_prior(0).shape == (len(r.targets), 4)
 
 
 def test_batch_reduction_gives_every_example_the_same_routing():
-    """The legacy behaviour, and the reason a constant router was its fixed
-    point: no gradient path can distinguish two examples."""
+    """The control arm: one input-free geometry for every example."""
     cfg = Cfg()
     block = Block(cfg.hidden_size)
     r = SMEAR(cfg, block=block, num_experts=4, reduction="batch", verbose=False)
@@ -617,6 +621,103 @@ def test_unknown_reduction_is_rejected():
         SMEAR(cfg, block=Block(cfg.hidden_size), reduction="sequence", verbose=False)
 
 
+# --- causality: no position reads a later one, no row reads another ----------
+
+
+def _reading(reduction="example"):
+    """A router whose routing and deviations are far from identity, so a leak
+    would show up rather than hide behind a zero-init merge."""
+    cfg = Cfg()
+    block = Block(cfg.hidden_size)
+    r = SMEAR(cfg, block=block, num_experts=4, reduction=reduction, verbose=False)
+    r.EXPERT_DROPOUT = 0.0
+    with torch.no_grad():
+        nn.init.normal_(r.router.weight, std=1.0)
+        nn.init.normal_(r.router.bias, std=1.0)
+        for w in r.wrappers.values():
+            nn.init.normal_(w.lora_b, std=0.2)
+        for p in r.deltas.values():
+            nn.init.normal_(p, std=0.05)
+    return r, block
+
+
+@pytest.mark.parametrize("reduction", ["token", "example", "batch"])
+def test_forward_reads_no_later_position(reduction):
+    """The test Block mixes nothing across positions, so any change before
+    ``p`` could only come from the routing."""
+    r, block = _reading(reduction)
+    x = torch.randn(3, 9, Cfg.hidden_size)
+    p = 5
+    xp = x.clone()
+    xp[:, p] += torch.randn_like(xp[:, p])  # a direction, not a shift LayerNorm erases
+    with torch.no_grad():
+        a = r(*router_args(block, x))[0]
+        b = r(*router_args(block, xp))[0]
+    torch.testing.assert_close(a[:, :p], b[:, :p], rtol=0.0, atol=1e-6)
+    assert not torch.allclose(a[:, p], b[:, p])
+
+
+@pytest.mark.parametrize("reduction", ["token", "example", "batch"])
+def test_rows_do_not_read_each_other(reduction):
+    r, block = _reading(reduction)
+    x = torch.randn(3, 9, Cfg.hidden_size)
+    xp = x.clone()
+    xp[0] += torch.randn_like(xp[0])
+    with torch.no_grad():
+        a = r(*router_args(block, x))[0]
+        b = r(*router_args(block, xp))[0]
+    torch.testing.assert_close(a[1:], b[1:], rtol=0.0, atol=1e-6)
+
+
+def test_last_position_routes_on_the_papers_pooled_input():
+    """At the last position the running mean IS the sequence mean SMEAR pools."""
+    r, _ = _reading()
+    x = torch.randn(3, 7, Cfg.hidden_size)
+    merge, _ = r._coefficients(x, 0)
+    pooled = torch.softmax(r._route_logits(r.router_norm(x.mean(dim=1)), 0), dim=-1)
+    torch.testing.assert_close(merge[:, -1], pooled)
+
+
+class _Cache:
+    """The two lookups SMEAR makes on a PraxisCache, with a settable length."""
+
+    def __init__(self):
+        self.head_states, self.length = {}, 0
+
+    def get_head_state(self, key):
+        return self.head_states.get(key)
+
+    def set_head_state(self, key, state):
+        self.head_states[key] = state
+
+    def get_seq_length(self, layer_idx=0):
+        return self.length
+
+
+def test_cached_decode_continues_the_prefix():
+    """A suffix routed on the carried running sum matches the same positions
+    routed inside the full sequence."""
+    r, _ = _reading()
+    x = torch.randn(2, 8, Cfg.hidden_size)
+    full, _ = r._coefficients(x, 0)
+    cache = _Cache()
+    r._coefficients(x[:, :5], 0, cache)  # prefill
+    cache.length = 5  # the trunk has written the prefill at this depth
+    step, _ = r._coefficients(x[:, 5:], 0, cache)
+    torch.testing.assert_close(step, full[:, 5:])
+
+
+def test_stale_decode_state_falls_back_to_the_suffix():
+    r, _ = _reading()
+    x = torch.randn(2, 8, Cfg.hidden_size)
+    cache = _Cache()
+    r._coefficients(x[:, :5], 0, cache)
+    cache.length = 3  # rolled back: the carried sum no longer lines up
+    step, _ = r._coefficients(x[:, 5:], 0, cache)
+    alone, _ = r._coefficients(x[:, 5:], 0)
+    torch.testing.assert_close(step, alone)
+
+
 def test_num_experts_comes_from_the_config():
     """One registry entry per router; the count is config, not a key suffix."""
     cfg = Cfg()
@@ -633,14 +734,8 @@ def test_routes_a_block_containing_functorch_transforms():
     """A module that runs vmap + grad + its own functional_call must survive
     being routed, across several recurrent depths.
 
-    This is the Titans memory's shape (praxis/memory/neural_memory.py). Three
-    crashes on abstractinator-m were once blamed on nesting the router's
-    ``functional_call`` around it, and this router was rewritten onto
-    ``torch.nn.utils.parametrize`` to avoid the nesting. That diagnosis was
-    WRONG - the cause was a web probe calling ``functional_call`` on live
-    modules from the API thread (praxis/web/routes/dynamics.py) - and the
-    parametrization cost more in attribute-interception overhead than the whole
-    merge did. So the nesting is back, and this pins that it is in fact fine.
+    This is the Titans memory's shape (praxis/memory/neural_memory.py), nested
+    inside the router's own ``functional_call``.
     """
     from torch.func import functional_call, grad, vmap
 
@@ -707,8 +802,8 @@ def test_routing_does_not_rename_module_classes():
 # `smear_expert_utilization` averages the coefficients over the batch BEFORE
 # scoring them, so on its own it cannot say why a target is concentrated. VEAR
 # exists to make routing discrete, so "one deviation dominates" is its INTENDED
-# outcome when different examples pick different deviations, and its documented
-# failure (abstractinator-g's dead experts) when they do not. Sharpness and
+# outcome when different examples pick different deviations, and a failure
+# (dead experts) when they do not. Sharpness and
 # diversity separate those two, which is what makes a vear-vs-smear run legible.
 
 
@@ -720,6 +815,9 @@ class _Probe(SMEAR):
         self.num_experts = num_experts
         self.targets = [type("G", (), {"label": f"t{i}"})() for i in range(targets)]
         self.SHARPEN = sharpen
+        # Every row routes on the input here; the selection metrics read only
+        # the rows that do.
+        self._wrapper_row = {f"t{i}": i for i in range(targets)}
         self._metrics = {}
         self._accum = {}
         self._passes = 0
@@ -786,7 +884,7 @@ def test_selection_metrics_are_measured_before_expert_dropout():
     assert router.EXPERT_DROPOUT > 0 and router.training
 
     x = torch.randn(8, 6, router.hidden_size)
-    inputs = router.router_norm(x.mean(dim=1))
+    inputs = router.router_norm(router._prefix_mean(x, None, 0))
     probs = torch.softmax(router._route_logits(inputs, 0), dim=-1)
 
     merge, reported = router._coefficients(x, 0)
@@ -839,12 +937,8 @@ def test_vear_sharpens_a_real_forward_relative_to_smear():
 
 
 def test_diagnostics_cover_every_recurrent_depth():
-    """The sampler used to log only when `_tick % METRICS_INTERVAL == 0` while
-    `_tick` advances once per recurrent PASS, so at depth 6 and interval 10 it
-    reported depths 0, 2 and 4 and never 1, 3 or 5. Since the per-depth bias
-    makes those passes genuinely different (router_depth_specialization ~0.78 on
-    abstractinator-n), that turned depth variation into an apparent oscillation
-    over time."""
+    """`_tick` advances once per recurrent PASS, so a sampler keyed on it must
+    still report every depth, not a fixed subset of them."""
     from praxis.routers.smear import METRICS_INTERVAL
 
     router, block = make(depth=6)
@@ -994,3 +1088,28 @@ def test_delta_scale_never_raises_into_forward():
     router, block = make()
     router._delta_scale_inner = lambda *a, **k: 1 / 0
     router(*router_args(block, torch.randn(4, 6, router.hidden_size)))
+
+
+# --- Distance: SMEAR plus a parameter-distance loss ---------------------------
+
+
+def test_distance_pushes_expert_deviations_apart():
+    """Zero at init, where every deviation is zero; negative once they move,
+    pushing each expert away from expert 0; and it reaches the deviations."""
+    from praxis.routers.distance import Distance
+
+    router, _ = make(Distance)
+    router.train()
+    assert float(router.diversity_loss()) == 0.0
+    with torch.no_grad():
+        for w in router.wrappers.values():
+            nn.init.normal_(w.lora_b, std=0.1)
+        for p in router.deltas.values():
+            nn.init.normal_(p, std=0.1)
+    aux = router.router_aux_loss()
+    assert set(aux) == {"distance_diversity"}
+    assert float(aux["distance_diversity"]) < 0.0
+    aux["distance_diversity"].backward()
+    assert router.wrappers["attn_qkv"].lora_b.grad.abs().sum() > 0
+    router.eval()
+    assert router.router_aux_loss() == {}

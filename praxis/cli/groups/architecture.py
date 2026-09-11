@@ -41,7 +41,9 @@ class ArchitectureGroup:
         group.add_argument(
             "--encoder-type",
             type=str,
-            choices=list(ENCODER_REGISTRY.keys()),
+            # The registry itself: `in` accepts every name it resolves, and
+            # listing shows only the listed ones.
+            choices=ENCODER_REGISTRY,
             default=None,
             help="Encoder integration to use",
         )

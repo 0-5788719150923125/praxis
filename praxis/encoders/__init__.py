@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Any, Dict
 
 from praxis.encoders.abstractinator import (
     AbstractinatorCALM,
@@ -35,8 +36,12 @@ ByteLatentTransformer = partial(
     embeddings="byte_hash",
 )
 
-# BLT + residual VQ bottleneck (abstractinator defaults)
-Abstractinator = partial(
+# Abstractinator profiles: BLT plus a residual-VQ bottleneck on the patch
+# vectors, versioned. The registry lists the versioned names; descriptive names
+# resolve through ENCODER_REGISTRY.unlisted.
+
+# The reference Abstractinator: a plain residual VQ on the pooled patch vectors.
+AbstractinatorRVQ = partial(
     AbstractinatorEncoder,
     local_architecture="conv",
     patching_mode="space",
@@ -46,138 +51,26 @@ Abstractinator = partial(
     vq_codebook_size=16384,
 )
 
-# Abstractinator with the residual VQ moved into the CALM harmonic coordinate
-# frame: patch latents rotate into the standing-wave basis (the same
-# harmonic_matrix the HarmonicCodec builds its mix from), are energy-normalized
-# there, and the residual codes quantize harmonic AMPLITUDES - the paper
-# addendum's conjecture (residual codes read as amplitudes in the harmonic
-# basis) made concrete. The objective stays byte CE end-to-end: single-stage,
-# never frozen, no KL - byte-latent convergence with a CALM-shaped latent
-# geometry. bottleneck_ratio=0.5 keeps the frame lossy (a low-frequency
-# spectral budget, the codec's latent_dim < K*E mechanism).
+# The residual VQ in the CALM harmonic frame: patch latents rotate into the
+# standing-wave basis (praxis/encoders/basis.py), are RMS-normalized there, and
+# the residual codes quantize harmonic amplitudes. bottleneck_ratio=0.5 keeps a
+# low-frequency spectral budget. Every versioned profile below builds on it.
 AbstractinatorHarmonic = partial(
-    Abstractinator,
+    AbstractinatorRVQ,
     bottleneck="harmonic",
     bottleneck_ratio=0.5,
 )
 
-# Serpent variant: a learned periodic nonlinearity after the analysis
-# transform, mirroring codec_kind="harmonic_serpent" (the calm-d lineage
-# codec) - the encode into the spectral frame is learnable rather than a
-# fixed rotation. Still single-stage and never frozen.
-AbstractinatorHarmonicSerpent = partial(
-    AbstractinatorHarmonic,
-    bottleneck="harmonic_serpent",
-)
+# v0: a learned Serpent activation on the analysis transform, 16384 codes,
+# space patching. Serpent is periodic, so it can alias two patch latents onto
+# one point in front of the quantizer.
+AbstractinatorV0 = partial(AbstractinatorHarmonic, bottleneck="harmonic_serpent")
 
-# Mean-pooled variant. The default "max" pooling (pooling_downsample ->
-# patch_reduce with "amax") carries a systematic length bias: the expectation of
-# a max over n vectors grows like sqrt(2 ln n), so under space patching - where
-# n runs from 1 to 10+ - the patch vector's magnitude encodes how many bytes
-# fell in the patch before any content does. HarmonicResidualVQ then
-# RMS-normalizes onto the sphere, erasing the magnitude but not the direction
-# bias it induced.
-#
-# Mean pooling is not magnitude-neutral either (a mean over n shrinks like
-# 1/sqrt(n), the INVERSE bias), but the difference that matters is in DIRECTION,
-# which survives the RMS normalization. A mean is an unbiased estimate of the
-# patch's content direction at every n; only its variance depends on n. A max is
-# an order statistic, so which coordinates it selects - and therefore where it
-# points - shifts systematically as n grows.
-#
-# The pooling mode is matched by substring in pooling_downsample: the key is
-# "avg", not "mean"; "mean" matches nothing and trips its assert.
-AbstractinatorHarmonicSerpentAvg = partial(
-    AbstractinatorHarmonicSerpent,
-    downsampling_method="avg",
-)
-
-# Codebook sized to the token vocabulary instead of the inherited 16384. `None`
-# selects AbstractinatorEncoder's documented default (config.vocab_size).
-# Measured on -h/-i at step 6k-10k: roughly 470 and 218 effective codes in use
-# at stages 0 and 1 against K=16384 - under 3% utilization, with ~140k
-# cumulative dead-code resets, eight full turnovers of the bank.
-#
-# Not capacity-matched, deliberately: this REMOVES parameters. The codebook is
-# an nn.Parameter (vector_quantizer.py), so the bank costs optimizer state as
-# well as weights.
-#
-# Caveat: tying K to vocab_size is a coincidence of scale, not a principle - the
-# bank indexes patch latents, not tokens. It lands right here because the
-# measurements say ~1k AND vocab_size is 1024. If the tokenizer changes, K
-# should be pinned explicitly.
-AbstractinatorHarmonicSerpentVocabBank = partial(
-    AbstractinatorHarmonicSerpent,
-    vq_codebook_size=None,
-)
-
-# Both VQ-side fixes at once (abstractinator-i), bundled because with a fixed
-# compute budget the efficient search is coarse-to-fine: group the changes that
-# push the same direction on the same suspected fault - here, a bottleneck not
-# earning its parameters.
-#
-#   1. K = config.vocab_size (1024) instead of 16384. See the entry above.
-#   2. NO Serpent on the analysis transform (`AbstractinatorHarmonic`, not
-#      ...Serpent). Serpent is PERIODIC and sits immediately before
-#      quantization, and a periodic map is not injective: two distinct patch
-#      latents can land on the same point, which attacks the one thing a
-#      quantizer exists to do. Removing it makes the frame a pure rotation plus
-#      the sphere projection.
-#
-# `bottleneck_ratio` stays 0.5: a smaller codebook wants a smaller latent space
-# (N codes give ~N^(1/d) resolution per axis), and -h's telemetry exonerates the
-# ratio anyway - dead fraction fell monotonically to 0.27/0.097 at ratio 0.5.
-#
-# The bundle stays readable because K's effect is PREDICTABLE. -h used ~470
-# codes at stage 0, so K alone predicts vq_dead_frac_s0 settling near 0.5.
-# Meaningfully below 0.5 means dropping Serpent contributed; at 0.5 means K did
-# the work and Serpent was neutral.
-AbstractinatorHarmonicVocabBank = partial(
-    AbstractinatorHarmonic,
-    vq_codebook_size=None,
-)
-
-# -i plus a learned compander in place of the fixed RMS normalization
-# (abstractinator-j). The sphere projection is the ISOTROPIC SPECIAL CASE of GDN
-# - gamma_ij = 1/L, beta = 1e-5 - so the module initializes bit-identical to -i
-# and the run measures only whether anisotropy earns anything.
-#
-# Classical quantization theory says a fixed codebook should spend resolution
-# where the source density is, and a monotonic warp is how you arrange that
-# (mu-law; GDN is the learned multivariate version, and what neural image codecs
-# put in front of their quantizer). The measured fault in this stack is that
-# patch directions CONCENTRATE and the bank starves - -i's avg-pooling run drove
-# dead fraction to 0.85 - and max pooling's only virtue is that its order
-# statistic disperses them by accident. A compander does it deliberately.
-#
-# Curvature, not periodicity: companding needs INVERTIBILITY, so the warp must
-# be monotonic. A periodic map is not injective and can alias two distinct patch
-# latents onto one point, which is why Serpent stays out of the bottleneck.
-AbstractinatorHarmonicGDNVocabBank = partial(
-    AbstractinatorHarmonic,
-    bottleneck="harmonic_gdn",
-    vq_codebook_size=None,
-)
-
-# The GDN vocab-bank profile on FIXED-SIZE patches instead of space patching.
-#
-# Static patching is the worst-performing mode in BLT's own ablations, so this
-# is a deliberate contrarian test. The reason to run it: a harmonic model builds
-# a PERIODIC latent, and patch-time is a resampling of byte-time. A fixed patch
-# size makes that resampling UNIFORM, where space and entropy patching make the
-# sampling lattice depend on content - non-uniform sampling, which smears the
-# frequency axis. BLT measured bits-per-byte on a non-periodic transformer,
-# where an irregular lattice costs nothing structural.
-#
-# PATCH_SIZE is compute-matched: space patching on this repo's own source
-# measures a mean patch length of 7.25 bytes (median 6, p25 4, p75 9), so 8
-# keeps the global decoder's sequence length within ~10% of what the space
-# patcher produces; 6 would lengthen it by ~21% and confound a patching change
-# with a compute change.
-#
-# Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
-# Free of BOE tokens: see Patcher._static_patching and ByteLatentEncoder.nb_boe.
-AbstractinatorHarmonicGDNVocabBankStatic = partial(
+# v1: no Serpent, a codebook sized from config (codebook_size, else
+# vocab_size), fixed 8-byte patches - a uniform resampling of byte-time for a
+# periodic latent, compute-matched to space patching's 7.25-byte mean - and a
+# GDN compander in front of the quantizer.
+AbstractinatorV1 = partial(
     AbstractinatorHarmonic,
     bottleneck="harmonic_gdn",
     vq_codebook_size=None,
@@ -185,42 +78,40 @@ AbstractinatorHarmonicGDNVocabBankStatic = partial(
     patch_size=8,
 )
 
-# abstractinator-p: the profile above, run BESIDE a second codec - CALM's
-# autoencoder - into the same trunk. Two encoders side by side, each with its
-# own objective and therefore independently optimizable:
-#
-#   patch features h
-#     |
-#     +-- analysis -> HarmonicResidualVQ -> synthesis --> z_q   discrete codec
-#     |
-#     +-- PatchVAE.encode -> (mu, logvar) -> z_c                continuous codec
-#     |     +-- PatchVAE.decode -> h_hat, relative recon error
-#     |     +-- free-bits KL
-#     v
-#   z = z_q + gate * z_c  ->  trunk
-#     |
-#     +-- EnergyHead: predict the next VAE LATENT (CALM's energy score)
-#     +-- code CE:    predict the next RVQ code (the dense signal that pays)
-#
-# THIS IS ONLY WELL-POSED BECAUSE THE PATCHING IS STATIC. Both codecs emit
-# exactly one latent per patch at `patch_size=8`, so `z_q + z_c` is an alignable
-# merge. Two encoders with different chunking would emit different numbers of
-# latents in different units.
-#
-# A real VAE and not an `nn.Linear(D, 2*D)`, because CALM's VAE does three jobs.
-# Compressing K tokens into one vector is the one the Abstractinator's local
-# encoder genuinely already does. Supplying a continuous, KL-regularized,
-# unit-scale, STATIONARY latent space and a per-patch POSTERIOR for the energy
-# score's target draws are the two an RVQ does not.
-#
-# Near-silent at step 0, not bit-identical: `arm_gate` starts at sigmoid(-6), so
-# z_c enters at ~0.25% of ||z_q||. `calm_arm_ratio` is the receipt.
-AbstractinatorHarmonicGDNVocabBankStaticCALM = partial(
+# v1 with a continuous CALM arm beside the discrete codec: a
+# PatchVAE over the same patch features, z = z_q + gate * z_c into the trunk, an
+# energy head on the next VAE latent and a CE on the next RVQ code. Static
+# patching is what makes the two codecs' latents align one per patch. See
+# praxis/encoders/abstractinator/calm.py.
+AbstractinatorV1CALM = partial(
     AbstractinatorCALM,
     bottleneck="harmonic_gdn",
     vq_codebook_size=None,
     patching_mode="static",
     patch_size=8,
+)
+
+# v2: v1 with plain RMS normalization in front of the quantizer instead of the
+# GDN compander - the commitment loss rewards a smaller quantizer input, and a
+# fixed normalization leaves no scale to shrink - and the byte path and the
+# trunk blended by a gate over RMS-normalized streams instead of added
+# (praxis/encoders/byte_latent/merge.py).
+AbstractinatorV2 = partial(
+    AbstractinatorHarmonic,
+    vq_codebook_size=None,
+    patching_mode="static",
+    patch_size=8,
+    merge="gated",
+)
+
+# Unlisted profiles, built by descriptive name: v0 mean-pooled, v0 with a
+# config-sized codebook, and the harmonic frame with a config-sized codebook
+# under RMS and under GDN, both space-patched.
+AbstractinatorV0Avg = partial(AbstractinatorV0, downsampling_method="avg")
+AbstractinatorV0Bank = partial(AbstractinatorV0, vq_codebook_size=None)
+AbstractinatorHarmonicBank = partial(AbstractinatorHarmonic, vq_codebook_size=None)
+AbstractinatorHarmonicGDNBank = partial(
+    AbstractinatorHarmonic, bottleneck="harmonic_gdn", vq_codebook_size=None
 )
 
 # CALM profiles. Defaults track the paper (arXiv 2510.27688). Tokenizer-
@@ -449,56 +340,101 @@ def is_byte_latent_encoder(encoder_type: str) -> bool:
     return issubclass(actual_cls, ByteLatentEncoder)
 
 
-ENCODER_REGISTRY = dict(
-    # Base class (use with explicit arguments)
-    byte_latent=ByteLatentEncoder,
-    # Recommended profiles
-    byte_latent_conv=ByteLatentConv,
-    byte_latent_conv_small=ByteLatentConvSmall,
-    byte_latent_transformer=ByteLatentTransformer,
-    # BLT + residual VQ bottleneck
-    abstractinator=Abstractinator,
-    # Residual codes as harmonic amplitudes (the CALM-bridge conjecture, run)
-    abstractinator_harmonic=AbstractinatorHarmonic,
-    abstractinator_harmonic_serpent=AbstractinatorHarmonicSerpent,
-    abstractinator_harmonic_serpent_avg=AbstractinatorHarmonicSerpentAvg,
-    abstractinator_harmonic_serpent_vocab_bank=AbstractinatorHarmonicSerpentVocabBank,
-    abstractinator_harmonic_vocab_bank=AbstractinatorHarmonicVocabBank,
-    abstractinator_harmonic_gdn_vocab_bank=AbstractinatorHarmonicGDNVocabBank,
-    # Same, on a uniform patch lattice (see the profile's note).
-    abstractinator_harmonic_gdn_vocab_bank_static=AbstractinatorHarmonicGDNVocabBankStatic,
-    # ...plus a continuous CALM arm beside the discrete one (abstractinator-p).
-    # Identical to the profile above at initialization - the posterior is
-    # zero-initialized, so z_c starts at exactly 0 - which makes the swap an A/B
-    # rather than a reroll. See praxis/encoders/abstractinator/calm.py for why
-    # the discrete arm is what pays for the continuous one's conditional.
-    abstractinator_harmonic_gdn_vocab_bank_static_calm=AbstractinatorHarmonicGDNVocabBankStaticCALM,
-    # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
-    # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
-    # calm_small is the smoke-test profile.
-    calm=CALM,
-    calm_small=CALMSmall,
-    calm_byte=CALMByte,
-    calm_byte_small=CALMByteSmall,
-    calm_byte_small_harmonic=CALMByteSmallHarmonic,
-    calm_byte_ref=CALMByteRef,
-    calm_byte_flow=CALMByteFlow,
-    calm_byte_harmonic=CALMByteHarmonic,
-    calm_byte_fixed=CALMByteFixed,
-    calm_byte_hybrid=CALMByteHybrid,
-    calm_byte_harmonic_codec=CALMByteHarmonicCodec,
-    calm_byte_harmonic_serpent=CALMByteHarmonicSerpent,
-    calm_tm_ref=CALMTmRef,
-    calm_bpe=CALMBpe,
-    # # Entropy-based patching
-    # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,
-    # # Lightweight variants
-    # byte_latent_transformer_light=ByteLatentTransformerLight,
-    # byte_latent_recurrent=ByteLatentRecurrent,
-    # byte_latent_entropy_conv=ByteLatentEntropyConv,
-    # byte_latent_entropy_recurrent=ByteLatentEntropyRecurrent,
-    # byte_latent_light_conv=ByteLatentLightConv,
-    # byte_latent_light_recurrent=ByteLatentLightRecurrent,
-    # # Experimental
-    # byte_latent_cross_attn=ByteLatentCrossAttn,
+def encoder_traits(encoder_type: str) -> Dict[str, bool]:
+    """What a profile is built from, for callers that must not parse its name:
+    an Abstractinator at all, one whose bottleneck quantizes harmonic
+    amplitudes, and one carrying the continuous CALM arm."""
+    profile = ENCODER_REGISTRY.get(encoder_type)
+    cls = getattr(profile, "func", profile)
+    if not isinstance(cls, type) or not issubclass(cls, AbstractinatorEncoder):
+        return {
+            "abstractinator": False,
+            "harmonic_bottleneck": False,
+            "calm_arm": False,
+        }
+    bottleneck = getattr(profile, "keywords", {}).get("bottleneck", "rvq")
+    return {
+        "abstractinator": True,
+        "harmonic_bottleneck": str(bottleneck).startswith("harmonic"),
+        "calm_arm": issubclass(cls, AbstractinatorCALM),
+    }
+
+
+class EncoderRegistry(dict):
+    """Profiles by name. ``unlisted`` maps further names - the ones checkpoints
+    and configs may carry - to a listed name or to a profile of their own; they
+    resolve on lookup but are not listed."""
+
+    def __init__(self, profiles: Dict[str, Any], unlisted: Dict[str, Any]) -> None:
+        super().__init__(profiles)
+        self.unlisted = unlisted
+
+    def __missing__(self, key: str) -> Any:
+        target = self.unlisted[key]
+        return self[target] if isinstance(target, str) else target
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: object) -> bool:
+        return dict.__contains__(self, key) or key in self.unlisted
+
+
+ENCODER_REGISTRY = EncoderRegistry(
+    dict(
+        # Base class (use with explicit arguments)
+        byte_latent=ByteLatentEncoder,
+        # Recommended profiles
+        byte_latent_conv=ByteLatentConv,
+        byte_latent_conv_small=ByteLatentConvSmall,
+        byte_latent_transformer=ByteLatentTransformer,
+        # BLT + residual VQ bottleneck, by generation (see each profile's note).
+        abstractinator_rvq=AbstractinatorRVQ,
+        abstractinator_v0=AbstractinatorV0,
+        abstractinator_v1=AbstractinatorV1,
+        abstractinator_v1_calm=AbstractinatorV1CALM,
+        abstractinator_v2=AbstractinatorV2,
+        # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
+        # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
+        # calm_small is the smoke-test profile.
+        calm=CALM,
+        calm_small=CALMSmall,
+        calm_byte=CALMByte,
+        calm_byte_small=CALMByteSmall,
+        calm_byte_small_harmonic=CALMByteSmallHarmonic,
+        calm_byte_ref=CALMByteRef,
+        calm_byte_flow=CALMByteFlow,
+        calm_byte_harmonic=CALMByteHarmonic,
+        calm_byte_fixed=CALMByteFixed,
+        calm_byte_hybrid=CALMByteHybrid,
+        calm_byte_harmonic_codec=CALMByteHarmonicCodec,
+        calm_byte_harmonic_serpent=CALMByteHarmonicSerpent,
+        calm_tm_ref=CALMTmRef,
+        calm_bpe=CALMBpe,
+        # # Entropy-based patching
+        # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,
+        # # Lightweight variants
+        # byte_latent_transformer_light=ByteLatentTransformerLight,
+        # byte_latent_recurrent=ByteLatentRecurrent,
+        # byte_latent_entropy_conv=ByteLatentEntropyConv,
+        # byte_latent_entropy_recurrent=ByteLatentEntropyRecurrent,
+        # byte_latent_light_conv=ByteLatentLightConv,
+        # byte_latent_light_recurrent=ByteLatentLightRecurrent,
+        # # Experimental
+        # byte_latent_cross_attn=ByteLatentCrossAttn,
+    ),
+    unlisted=dict(
+        abstractinator="abstractinator_rvq",
+        abstractinator_harmonic_serpent="abstractinator_v0",
+        abstractinator_harmonic_gdn_vocab_bank_static="abstractinator_v1",
+        abstractinator_harmonic_gdn_vocab_bank_static_calm="abstractinator_v1_calm",
+        abstractinator_harmonic=AbstractinatorHarmonic,
+        abstractinator_harmonic_serpent_avg=AbstractinatorV0Avg,
+        abstractinator_harmonic_serpent_vocab_bank=AbstractinatorV0Bank,
+        abstractinator_harmonic_vocab_bank=AbstractinatorHarmonicBank,
+        abstractinator_harmonic_gdn_vocab_bank=AbstractinatorHarmonicGDNBank,
+    ),
 )

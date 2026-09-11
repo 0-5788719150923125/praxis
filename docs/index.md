@@ -13,8 +13,8 @@ Praxis is built around 54 pluggable registries. The feature categories below lin
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
 - [Expert mixing](mixing.md) (6) - How a remote-expert pool combines its members at inference. Named by the chosen orchestration profile, not by a flag of its own.
 - [Feedforward experts](dense.md) (10) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
-- [Halting / early exit](halting.md) (3) - Per-token mechanisms for early exit from recurrent depth loops.
-- [Input encoders](encoders.md) (27) - Front-end encoders, including the byte-latent and abstractinator variants.
+- [Halting / early exit](halting.md) (4) - Per-token mechanisms for early exit from recurrent depth loops.
+- [Input encoders](encoders.md) (23) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Long-term memory](memory.md) (16) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (11) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.

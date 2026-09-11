@@ -548,7 +548,7 @@ def test_nats_to_bits_helper_is_codec_only_and_correct():
         (
             "abstractinator",
             {
-                "encoder_type": "abstractinator_harmonic_gdn_vocab_bank_static",
+                "encoder_type": "abstractinator_v1",
                 "vocab_size": 1024,
                 "codebook_size": 256,
             },

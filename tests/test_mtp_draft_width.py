@@ -26,7 +26,7 @@ def model():
         depth=2,
         decoder_type="sequential",
         head_type="forward",
-        encoder_type="abstractinator_harmonic_gdn_vocab_bank_static",
+        encoder_type="abstractinator_v1",
         tokenizer_type="byte_level",
         byte_offset=0,
         byte_vocab_size=256,

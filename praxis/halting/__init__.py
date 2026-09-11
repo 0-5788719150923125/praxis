@@ -2,6 +2,7 @@ from functools import partial
 
 from praxis.halting.base import BaseHalting
 from praxis.halting.kl import KLDivergenceHalting
+from praxis.halting.reinject import ReinjectedKLHalting
 
 HALTING_REGISTRY = {
     "none": BaseHalting,
@@ -15,4 +16,9 @@ HALTING_REGISTRY = {
     # ramp (P(r=1) < P(r=2)) and makes full depth rare rather than routine; see
     # LOOP_PRIORS in praxis/halting/kl.py for the measured curves.
     "kl_log": partial(KLDivergenceHalting, prior="log"),
+    # Geiping et al.'s recurrence under the log prior: the state starts from
+    # noise, every step re-reads the decoder input through an adapter, and at
+    # inference each position exits on its own against a scale set by the first
+    # refinement rather than the step out of noise. See praxis/halting/reinject.py.
+    "kl_log_reinject": partial(ReinjectedKLHalting, prior="log"),
 }

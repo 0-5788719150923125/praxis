@@ -113,6 +113,20 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": True,
         },
     },
+    "val_copy_gain": {
+        "description": (
+            "Bits per token saved on a passage's second copy (each row's first "
+            "half, repeated). 0 = no use of long-range context; near the first "
+            "copy's cost = copies from context."
+        ),
+        "chart": {
+            "title": "In-Context Copy Gain",
+            "y_label": "bits per token saved",
+            "y_scale": "linear",
+            "order": 52,
+            "is_validation": True,
+        },
+    },
     "val_codec_bpb": {
         "description": (
             "Teacher-forced reconstruction bits/byte for codec encoders (CALM). "
@@ -822,8 +836,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
         # Row = decoder layer, column = expert. The capture groups are what the
         # heatmap renderer reads; without them it can form no grid.
         #
-        # No live router emits this key shape any more - it survives so the
-        # runs that DO carry it stay readable, and auto-hides everywhere else.
+        # Auto-hides on runs that do not carry this key shape.
         "key_pattern": r"^layer_(\d+)_expert_(\d+)_routing_weight$",
         "stepped": True,
         "order": 110,
@@ -1137,7 +1150,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
 # of per-layer / per-expert / per-bucket keys matched by ``key_pattern``;
 # the frontend detects presence, extracts layer indices, and dispatches to
 # a bespoke builder by ``type`` - all from this list, so the metric-name
-# regexes no longer live in JS. Fields:
+# regexes live here rather than in JS. Fields:
 #
 # * ``key`` / ``type``: identifier and the renderer the frontend selects.
 # * ``title`` / ``subtitle``: card title and subtitle. The subtitle is a

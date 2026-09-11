@@ -1,151 +1,64 @@
+"""Distance router: SMEAR with a parameter-distance loss between experts.
+
+A diversity term pushes every expert's parameters away from expert 0's, so the
+merged experts cannot collapse toward one geometry:
+
+    L_div = -(1 / (N - 1)) * sum_{i >= 1} sum_params ||theta_i - theta_0||_2
+
+Built on the modular router (praxis/routers/smear.py) and its causal routing. In
+that router's base-plus-deviation basis expert ``e`` is ``base + delta_e``, so
+``theta_i - theta_0 == delta_i - delta_0`` and the term reads the deviations
+directly. It is parameter-only, so it rides ``router_aux_loss`` - collected once
+per step, outside the recurrent forward - as VEAR's repulsion does.
 """
-Distance Router: SMEAR with Parameter Distance Loss
 
-Extends SMEAR with a diversity loss that encourages experts to maintain
-different parameters from the base (expert 0). This addresses the challenge
-that merged experts in SMEAR can collapse toward similar parameter values,
-limiting gradient manipulation options.
-
-The distance loss computes L2 distance between each expert's parameters
-and the base expert's parameters, encouraging divergence.
-"""
-
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List
 
 import torch
-import torch.nn as nn
+from torch import Tensor
 
-from praxis.routers.bank import ExpertBank
+from praxis.routers.smear import SMEAR
 
 
-class Distance(ExpertBank):
-    """
-    Distance Router: SMEAR with Parameter Diversity Loss.
+class Distance(SMEAR):
+    """SMEAR whose experts are pushed apart in parameter space."""
 
-    Extends SMEAR's soft parameter merging with an auxiliary loss that
-    encourages experts to maintain distinct parameters from the base expert.
-    This prevents expert collapse and enables better gradient manipulation.
-
-    The diversity loss is:
-        L_div = -Σ ||θ_i - θ_0||_2 for i in [1, num_experts)
-
-    Where θ_i are the parameters of expert i and θ_0 are base expert parameters.
-    The negative sign encourages distance (higher loss = more similar).
-    """
-
-    def __init__(
-        self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
-    ):
-        """
-        Initialize Distance router with parameter diversity loss.
-
-        Args:
-            config: Configuration object with diversity_loss_coef attribute
-            layout: Layout type (not used, kept for compatibility)
-            *args: Additional arguments
-            **kwargs: Additional keyword arguments including 'experts' list
-        """
-        super().__init__(config, layout, *args, **kwargs)
-
-        # Diversity loss coefficient - controls strength of parameter distance loss
+    def __init__(self, config: Any, *args: Any, **kwargs: Any) -> None:
+        super().__init__(config, *args, **kwargs)
         self.diversity_loss_coef = getattr(config, "diversity_loss_coef", 0.01)
-
-        print("[DISTANCE] Parameter diversity loss enabled")
-        print(f"  Num experts: {len(self.experts)}")
-        print(f"  Diversity coefficient: {self.diversity_loss_coef}")
-        print(f"  Base expert: 0, comparing against experts 1-{len(self.experts)-1}")
-
-    def _router_forward(
-        self,
-        layer: nn.Module,
-        inputs: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[Union[torch.Tensor, List, Dict]],
-        current_state: Optional[torch.Tensor],
-        current_depth: int,
-        block_ids: Optional[torch.Tensor],
-    ) -> Tuple[
-        torch.Tensor,
-        Optional[Union[torch.Tensor, List, Dict]],
-        Optional[torch.Tensor],
-        float,
-    ]:
-        """Router mode forward pass with diversity loss."""
-        # Call parent's router forward
-        output, pkv, state, aux_loss = super()._router_forward(
-            layer,
-            inputs,
-            attention_mask,
-            past_key_values,
-            current_state,
-            current_depth,
-            block_ids,
-        )
-
-        # Compute and add diversity loss
-        diversity_loss = self._compute_diversity_loss()
-        total_aux_loss = aux_loss + self.diversity_loss_coef * diversity_loss
-
-        # Store diversity loss in metrics
-        self._metrics["routing/diversity_loss"] = diversity_loss.item()
-
-        return output, pkv, state, total_aux_loss
-
-    def _direct_forward(
-        self,
-        inputs: torch.Tensor,
-        current_state: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
-        """Direct mode forward pass with diversity loss."""
-        # Call parent's direct forward
-        output, state, aux_loss = super()._direct_forward(inputs, current_state)
-
-        # Compute and add diversity loss
-        diversity_loss = self._compute_diversity_loss()
-        total_aux_loss = aux_loss + self.diversity_loss_coef * diversity_loss
-
-        # Store diversity loss in metrics
-        self._metrics["routing/diversity_loss"] = diversity_loss.item()
-
-        return output, state, total_aux_loss
-
-    def _compute_diversity_loss(self) -> torch.Tensor:
-        """
-        Compute parameter distance loss encouraging expert diversity.
-
-        Measures L2 distance between each expert's parameters and the base
-        expert (expert 0). Returns negative sum to encourage maximizing distance.
-
-        Returns:
-            Scalar diversity loss (negative distance sum)
-        """
-        if len(self.experts) <= 1:
-            # No diversity loss if only one expert
-            return torch.tensor(0.0, device=next(self.experts[0].parameters()).device)
-
-        base_params = list(self.experts[0].parameters())
-        diversity_loss = torch.tensor(
-            0.0, device=base_params[0].device, dtype=base_params[0].dtype
-        )
-
-        # Compare each expert to the base expert
-        for expert_idx in range(1, len(self.experts)):
-            expert_params = list(self.experts[expert_idx].parameters())
-
-            for base_p, expert_p in zip(base_params, expert_params):
-                # Compute L2 distance between parameters
-                distance = torch.norm(expert_p - base_p)
-                # Negative to encourage distance (minimize negative = maximize distance)
-                diversity_loss -= distance
-
-        # Normalize by number of comparisons
-        num_comparisons = len(self.experts) - 1
-        diversity_loss = diversity_loss / num_comparisons
-
-        return diversity_loss
 
     def __repr__(self) -> str:
         return (
-            f"Distance(num_experts={len(self.experts)}, "
-            f"diversity_coef={self.diversity_loss_coef})"
+            f"{self.__class__.__name__}(targets={len(self.targets)}, "
+            f"num_experts={self.num_experts}, diversity_coef={self.diversity_loss_coef})"
         )
+
+    def _expert_deviations(self) -> List[Tensor]:
+        """Every target's deviations, ``[N, *param_shape]`` each."""
+        out: List[Tensor] = []
+        for wrapper in self.wrappers.values():
+            out.append(torch.einsum("eor,eri->eoi", wrapper.lora_b, wrapper.lora_a))
+        for pname in self._param_row:
+            key = self._key(pname)
+            if self._factored[pname]:
+                b, a = self.deltas[key + "__b"], self.deltas[key + "__a"]
+                out.append(torch.einsum("eor,eri->eoi", b, a))
+            else:
+                out.append(self.deltas[key])
+        return out
+
+    def diversity_loss(self) -> Tensor:
+        """``-(1 / (N - 1)) * sum ||delta_i - delta_0||`` over experts and targets."""
+        deviations = self._expert_deviations()
+        loss = deviations[0].new_zeros(())
+        for delta in deviations:
+            flat = delta.reshape(delta.shape[0], -1)
+            loss = loss - (flat[1:] - flat[:1]).norm(dim=-1).sum()
+        return loss / (self.num_experts - 1)
+
+    def router_aux_loss(self) -> Dict[str, Tensor]:
+        if not self.training or self.num_experts < 2:
+            return {}
+        loss = self.diversity_loss()
+        self._metrics["routing/diversity_loss"] = float(loss.detach())
+        return {"distance_diversity": self.diversity_loss_coef * loss}

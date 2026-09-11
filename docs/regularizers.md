@@ -31,9 +31,9 @@ Presets:
 
 ## `dissonance`, `dissonance_probe` - Dissonance
 
-Reward beating between the field's temporal modes, held by a dual.
+Hold the field's roughness at or above its input's, by a dual.
 
-Source: [praxis/losses/dissonance.py:181](../praxis/losses/dissonance.py#L181)
+Source: [praxis/losses/dissonance.py:147](../praxis/losses/dissonance.py#L147)
 
 Presets:
 - `dissonance` - class defaults

@@ -3,7 +3,7 @@
 
 Per-token mechanisms for early exit from recurrent depth loops.
 
-Registry: ``praxis.HALTING_REGISTRY`` (3 entries)
+Registry: ``praxis.HALTING_REGISTRY`` (4 entries)
 
 ## `kl`, `kl_log` - KLDivergenceHalting
 
@@ -21,6 +21,15 @@ Source: [praxis/halting/kl.py:44](../praxis/halting/kl.py#L44)
 Presets:
 - `kl` - class defaults
 - `kl_log` - `prior='log'`
+
+## `kl_log_reinject` - ReinjectedKLHalting
+
+KL halting over a noise-initialized loop that re-reads its input.
+
+Source: [praxis/halting/reinject.py:46](../praxis/halting/reinject.py#L46)
+
+Presets:
+- `kl_log_reinject` - `prior='log'`
 
 ## `none` - BaseHalting
 

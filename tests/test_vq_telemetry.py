@@ -59,7 +59,7 @@ def test_encoder_metrics_and_cards_end_to_end():
         num_heads=4,
         num_layers=2,
         depth=2,
-        encoder_type="abstractinator_harmonic_serpent",
+        encoder_type="abstractinator_v0",
         tokenizer_type="byte_level",
         decoder_type="sequential",
         activation="serpent",

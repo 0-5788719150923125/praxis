@@ -13,6 +13,7 @@ from torch import nn
 from ..base import BaseEncoder
 from .config import ByteLatentConfig, create_base_config
 from .constants import BOE_ID, EOS_ID
+from .merge import PatchMerge
 from .patcher import (
     Patcher,
     PatcherConfig,
@@ -44,6 +45,14 @@ class ByteLatentEncoder(BaseEncoder):
     it has been difficult to standardize. This could be a lot cleaner.
     """
 
+    # The byte/trunk merge's readings, published under the encoder because the
+    # dashboard discovers encoder chart hints here (praxis/metrics/descriptions.py).
+    metric_descriptions = dict(PatchMerge.metric_descriptions)
+
+    def training_metrics(self) -> dict:
+        merge = getattr(getattr(self, "decoder", None), "merge", None)
+        return merge.training_metrics() if merge is not None else {}
+
     def __init__(
         self,
         config: ConfigType,
@@ -64,6 +73,8 @@ class ByteLatentEncoder(BaseEncoder):
         # Cross attention (advanced)
         cross_attn_encoder: bool = False,
         cross_attn_decoder: bool = False,
+        # How the local decoder combines the byte path and the trunk
+        merge: str = "add",
         # Other options
         downsampling_method: str = "max",
     ) -> None:
@@ -83,6 +94,8 @@ class ByteLatentEncoder(BaseEncoder):
             entropy_model_layers: Number of layers in entropy model
             cross_attn_encoder: Enable cross-attention in encoder
             cross_attn_decoder: Enable cross-attention in decoder
+            merge: How the local decoder combines the byte path with the trunk's
+                patch output, "add" (BLT) or "gated" (see merge.py)
             downsampling_method: Downsampling method ("max", "mean", "min", "topk:N")
         """
         super().__init__()
@@ -99,7 +112,15 @@ class ByteLatentEncoder(BaseEncoder):
         self.byte_config.n_layers_local_encoder = n_layers_encoder
         self.byte_config.n_layers_local_decoder = n_layers_decoder
         self.byte_config.cross_attn_encoder = cross_attn_encoder
+        if cross_attn_decoder:
+            # The local decoders implement no cross-attention layers, so the flag
+            # would drop the trunk's patch output entirely rather than attend to it.
+            raise NotImplementedError(
+                "cross_attn_decoder has no implementation in the local decoders; "
+                "it would disconnect the trunk. Use merge='add' or 'gated'."
+            )
         self.byte_config.cross_attn_decoder = cross_attn_decoder
+        self.byte_config.merge = merge
         self.byte_config.downsampling_by_pooling = downsampling_method
 
         # Input embeddings: a profile key resolved against EMBEDDING_REGISTRY.
@@ -198,12 +219,8 @@ class ByteLatentEncoder(BaseEncoder):
 
         * ``space`` cuts on character class, and the patcher forces the opening
           cut, so its first patch is already 1.
-        * ``static`` now emits ``[1, P, P, ...]`` for the same reason (see
-          ``Patcher._static_patching``). It previously kept uniform patches and
-          paid for the lag with ``P - 1`` prepended BOE tokens; under a
-          256-byte alphabet those have no spare id and land as literal 0x00
-          bytes, so the patching mode with the most predictable boundaries was
-          the one injecting the most meaningless tokens.
+        * ``static`` emits ``[1, P, P, ...]`` for the same reason (see
+          ``Patcher._static_patching``).
 
         ``entropy`` still needs the prefix: its boundaries follow the entropy
         model, so a length-1 first patch is not guaranteed.
@@ -435,10 +452,7 @@ class ByteLatentEncoder(BaseEncoder):
         h, aux_loss = self._post_downsample(h, aux_loss)
 
         # Project the token-level document boundaries onto patches so the
-        # global decoder is isolated the same way the local encoder is. This
-        # used to return None, which left the global transformer attending
-        # freely across every document in a packed sequence - the packing was
-        # only ever half-applied.
+        # global decoder is isolated the same way the local encoder is.
         patch_block_ids = (
             None
             if local_block_ids is None
@@ -812,9 +826,8 @@ def patch_entropies_for_special_tokens(
     Args:
         input_ids: Token IDs of shape [batch_size, seq_len]
         entropy_scores: Original entropy values of shape [batch_size, seq_len]
-        special_tokens: Ids to force a boundary at. No default - it used to be
-            ``[0]``, which is ``PAD_ID``/``BOE_ID`` rather than any separator
-            the data contains.
+        special_tokens: Ids to force a boundary at. No default: ``0`` is
+            ``PAD_ID``/``BOE_ID``, not a separator the data contains.
         high_entropy_value: Value to assign at special token positions
 
     Returns:
@@ -944,11 +957,9 @@ def create_patch_block_ids(
     it can gate the GLOBAL decoder's attention the way the token-level ids gate
     the local encoder's.
 
-    ``special_tokens`` has no default. It used to default to ``[0]``, which is
-    ``PAD_ID``/``BOE_ID`` - padding, not a document separator - so the default
-    produced one block per padded region and no boundary at all at real
-    document ends. Pass the separator explicitly (``EOS_ID`` for the formats
-    that write one; see ``ChatFormat.document_separator``).
+    ``special_tokens`` has no default: pass the separator explicitly
+    (``EOS_ID`` for the formats that write one; see
+    ``ChatFormat.document_separator``).
 
     Args:
         input_ids: Token IDs of shape [batch_size, seq_len]
@@ -1238,7 +1249,7 @@ class RecurrentDecoder(nn.Module):
         self.dim = config.dim_token_emb
 
         # Final feature norm. The LM head owns classification, so the
-        # decoder no longer carries an output projection.
+        # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 
         # Patch embedding projection
@@ -1247,6 +1258,7 @@ class RecurrentDecoder(nn.Module):
             self.patch_embedding_projection = nn.Linear(
                 config.dim_global, config.dim_token_emb, bias=False
             )
+        self.merge = PatchMerge(config.dim_token_emb, getattr(config, "merge", "add"))
 
         self.layers = nn.ModuleList(
             [
@@ -1295,7 +1307,7 @@ class RecurrentDecoder(nn.Module):
                 )
 
         if patch_embeds is not None and not self.cross_attn_decoder:
-            h = h + patch_embeds
+            h = self.merge(h, patch_embeds)
 
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
@@ -1529,7 +1541,7 @@ class ConvDecoder(nn.Module):
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
 
         # Final feature norm. The LM head owns classification, so the
-        # decoder no longer carries an output projection.
+        # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 
         # Patch embedding projection
@@ -1538,6 +1550,7 @@ class ConvDecoder(nn.Module):
             self.patch_embedding_projection = nn.Linear(
                 config.dim_global, config.dim_token_emb, bias=False
             )
+        self.merge = PatchMerge(config.dim_token_emb, getattr(config, "merge", "add"))
 
         self.layers = nn.ModuleList()
         for i in range(config.n_layers_local_decoder):
@@ -1595,7 +1608,7 @@ class ConvDecoder(nn.Module):
                 )
 
         if patch_embeds is not None and not self.cross_attn_decoder:
-            h = h + patch_embeds
+            h = self.merge(h, patch_embeds)
 
         for layer in self.layers:
             h = self.dropout(h)
@@ -1867,7 +1880,7 @@ class TransformerDecoder(nn.Module):
         self.dim = config.dim_token_emb
 
         # Final feature norm. The LM head owns classification, so the
-        # decoder no longer carries an output projection.
+        # decoder carries no output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
 
         # Patch embedding projection
@@ -1876,6 +1889,7 @@ class TransformerDecoder(nn.Module):
             self.patch_embedding_projection = nn.Linear(
                 config.dim_global, config.dim_token_emb, bias=False
             )
+        self.merge = PatchMerge(config.dim_token_emb, getattr(config, "merge", "add"))
 
         # Transformer layers with sliding window attention
         window_size = getattr(config, "sliding_window_size", 512)
@@ -1927,7 +1941,7 @@ class TransformerDecoder(nn.Module):
                 )
 
         if patch_embeds is not None and not self.cross_attn_decoder:
-            h = h + patch_embeds
+            h = self.merge(h, patch_embeds)
 
         h = F.dropout(h, p=self.dropout, training=self.training)
 

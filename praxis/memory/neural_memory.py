@@ -629,7 +629,7 @@ class NeuralMemory(nn.Module):
         worth writing but never that none of them are. ``tilt`` is a slow EMA
         over a fast one, both from COMPLETED prior passes, so it reads above 1
         while the memory's forecasting is improving and the bar lifts off the
-        local mean. Same dual-EMA shape the dissonance multiplier uses.
+        local mean.
 
         ``prior`` is the ``(sum, count)`` over REAL tokens before this row, so
         the sequential path can walk chunk by chunk and land on the mask the

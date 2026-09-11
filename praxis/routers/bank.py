@@ -4,21 +4,16 @@ This is SMEAR's mechanism (https://arxiv.org/abs/2306.03745) in its original
 shape - hold ``num_experts`` copies of a module, ask a router for a distribution
 over them, and merge their parameters into a single executing copy.
 
-It is CORRECT at the size the paper uses it: the paper's experts are adapters
-inserted after self-attention and the feed-forward, and a bank of small modules
-is exactly that. Its consumers here are all that size - a bank of min-GRU cells
-(praxis/blocks/recurrent.py), a bank of CrystalClassifiers
-(praxis/heads/crystal.py).
+The paper's experts are adapters inserted after self-attention and the
+feed-forward, and the consumers here are that size: a bank of min-GRU cells
+(praxis/blocks/recurrent.py) and a bank of CrystalClassifiers
+(praxis/heads/crystal.py). Whole blocks are merged by praxis/routers/smear.py.
 
-It is WRONG at the size this repo used to apply it: ``router_type: smear`` once
-built ``num_experts`` copies of an entire decoder block and merged all of them
-under a single scalar, having first averaged the routing over the batch. See
-praxis/routers/smear.py for what replaced that, and why. Nothing in this file
-should be pointed at a whole block again.
-
-The merge is per-BATCH (``routing_probs.mean(dim=0)`` -> one geometry per
-forward), which the paper is not; that limitation is inherited by every consumer
-here and is the reason praxis/routers/smear.py does not build on this file.
+The merge is one geometry per forward, shared by every position and every row.
+In a causal model a geometry every position shares cannot read any position
+without reading the future of the ones before it, so the routing reads no
+input: the router's bias plus the balance state, the same input-free prior
+praxis/routers/smear.py gives its elementwise targets.
 """
 
 import copy
@@ -172,12 +167,7 @@ class ExpertBank(nn.Module):
         float,
     ]:
         """Router mode forward pass."""
-        # Get routing probabilities with proper normalization
-        router_input = inputs.mean(dim=1)  # Average across sequence length
-        router_input = self.router_norm(router_input)  # Layer norm on input
-
-        logits = self._route_logits(router_input, current_depth)
-
+        logits = self._prior_logits(inputs, current_depth)
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
         # The router's OWN opinion, captured before expert dropout and before any
@@ -425,8 +415,7 @@ class ExpertBank(nn.Module):
                 )
 
         # The expert structure is fixed once the experts exist, so this walk is
-        # done once rather than on every merge. It used to be rebuilt here on
-        # each call - the assignment reads like a cache but was recomputed.
+        # done once rather than on every merge.
         if not self.parameter_names:
             names = self._collect_parameter_names(self.experts[0])
             # Drop anything the bank SHARES by reference (today: the long-term
@@ -468,19 +457,22 @@ class ExpertBank(nn.Module):
             #
             # The merge is launch-bound, not FLOP-bound: measured 880 aten ops
             # per forward (320 select, 320 mul, 240 add) to do 2.66 MFLOP, ~250x
-            # over the bandwidth floor. This rewrite is worth 1.4x on the merge
-            # forward and 1.9x fwd+bwd - NOT the 4x an isolated loop benchmark
-            # suggested, because it leaves untouched the ~1.9ms of pure-python
-            # `_get_module_parameter` attribute walks (320 getattr chains).
-            # End to end that is ~5% of step time on abstractinator-g, and it is
-            # a small-model eager effect: at greater width, or under
-            # torch.compile, the launches would fuse and this would not matter.
+            # over the bandwidth floor. One stack + tensordot per parameter
+            # collapses those launches; at greater width, or under
+            # torch.compile, they would fuse anyway.
             stacked = torch.stack(params)  # [num_experts, *param_shape]
             merged_state_dict[param_name] = torch.tensordot(
                 expert_weights.to(stacked.dtype), stacked, dims=([0], [0])
             )
 
         return merged_state_dict
+
+    def _prior_logits(self, inputs: torch.Tensor, current_depth: int) -> torch.Tensor:
+        """Input-free routing logits, ``[batch, num_experts]``: ``_route_logits``
+        of a zero input, which leaves the router's bias, any depth term a
+        subclass adds, and the balance state. See the module docstring."""
+        blank = inputs.new_zeros(inputs.shape[0], self.hidden_size)
+        return self._route_logits(blank, current_depth)
 
     def _route_logits(
         self, router_input: torch.Tensor, current_depth: int
@@ -538,9 +530,7 @@ class ExpertBank(nn.Module):
 
         ``clamp_min``, NOT ``+ eps``. Adding an epsilon pushes a weight of exactly
         1.0 above 1, which makes ``log`` positive and the resulting "entropy"
-        slightly NEGATIVE. That artifact is how the old routing_entropy reported
-        ``-0.00000`` under VEAR, and a negative entropy is also the tell that the
-        distribution had saturated to one-hot in float.
+        slightly NEGATIVE.
         """
         p = probs.clamp_min(1e-12)
         # clamp_min(0) on the result too: a single-expert router gives
@@ -766,14 +756,9 @@ class ExpertBank(nn.Module):
         current_state: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
         """Direct mode forward pass for RecurrentBlock usage."""
-        # Get routing probabilities with proper normalization
-        router_input = inputs.mean(dim=1)  # Average across sequence length
-        router_input = self.router_norm(router_input)  # Layer norm on input
-
         # Direct mode has no recurrent depth of its own; depth 0 keeps
         # depth-aware subclasses well-defined here.
-        logits = self._route_logits(router_input, 0)
-
+        logits = self._prior_logits(inputs, 0)
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
         # Router's own opinion, before dropout and before any subclass transform.

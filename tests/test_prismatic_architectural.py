@@ -146,8 +146,11 @@ class TestArchitecturalDiversity:
         # Get routing probabilities
         routing_probs = prismatic._compute_routing(inputs)
 
-        assert routing_probs.shape == (batch_size, 2)
-        assert torch.allclose(routing_probs.sum(dim=-1), torch.ones(batch_size))
+        # One distribution per POSITION, read from its prefix mean.
+        assert routing_probs.shape == (batch_size, seq_len, 2)
+        assert torch.allclose(
+            routing_probs.sum(dim=-1), torch.ones(batch_size, seq_len)
+        )
 
     def test_gradient_flow(self, config):
         """Test that gradients flow through merged parameters."""
@@ -200,8 +203,9 @@ class TestArchitecturalDiversity:
 
         # Routing should be input-dependent (may or may not differ significantly)
         # Just verify both are valid distributions
-        assert torch.allclose(routing_1.sum(dim=-1), torch.ones(batch_size))
-        assert torch.allclose(routing_2.sum(dim=-1), torch.ones(batch_size))
+        ones = torch.ones(batch_size, seq_len)
+        assert torch.allclose(routing_1.sum(dim=-1), ones)
+        assert torch.allclose(routing_2.sum(dim=-1), ones)
 
 
 if __name__ == "__main__":

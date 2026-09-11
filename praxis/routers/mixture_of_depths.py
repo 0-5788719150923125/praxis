@@ -14,24 +14,23 @@ from praxis.utils import (
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
-MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
+MOD_LAYOUT: Dict[str, Callable[[int], List[float]]] = {
     "standard": lambda depth: generate_alternating_values(
         size=depth, interval=1, capacity=0.125
     ),
-    "decayed": lambda config: generate_decay_values(
+    # generate_decay_values rises with depth unless reversed.
+    "decayed": lambda depth: generate_decay_values(
         depth, reverse=True, center=0.5, lower_bound=0.125
     ),
-    "project": lambda config: generate_decay_values(
-        config.depth, center=0.5, lower_bound=0.125
-    ),
-    "u": lambda config: generate_u_shape_values(
+    "ramped": lambda depth: generate_decay_values(depth, center=0.5, lower_bound=0.125),
+    "u": lambda depth: generate_u_shape_values(
         depth,
         decay_point=0.1,
         ramp_point=0.9,
         lower_bound=0.125,
         steepness=2.0,
     ),
-    "skip_2": lambda config: generate_alternating_values(
+    "skip_2": lambda depth: generate_alternating_values(
         size=depth, interval=2, capacity=0.125
     ),
 }
@@ -46,6 +45,14 @@ class MixtureOfDepths(nn.Linear):
     The ``layout`` controls how per-layer capacity varies with depth - flat,
     decayed, U-shaped, ramped, or skip-every-N. See
     https://arxiv.org/abs/2404.02258.
+
+    CAUSALITY follows the paper (Sec. 3.5). Expert-choice top-k is non-causal -
+    whether a token is among the top-k depends on the tokens after it - so the
+    paper trains with it and SAMPLES with a causal rule instead: a token is
+    routed iff its own router output clears 0.5 after the sigmoid, which the
+    auxiliary BCE loss (``aux_loss``) trains the router to predict. Training here
+    uses top-k and inference uses that rule, so every eval forward - validation
+    and generation - is causal; training keeps the paper's non-causal selection.
     """
 
     def __init__(
@@ -62,7 +69,11 @@ class MixtureOfDepths(nn.Linear):
         Subclasses (e.g. ``ArcMixture``) override to key the schedule to a
         different axis, such as the physical layer index.
         """
-        return MOD_LAYOUT.get(layout)(config.depth)
+        if layout not in MOD_LAYOUT:
+            raise ValueError(
+                f"Unknown mixture-of-depths layout {layout!r}; known: {sorted(MOD_LAYOUT)}"
+            )
+        return MOD_LAYOUT[layout](config.depth)
 
     def forward(
         self,
@@ -121,22 +132,29 @@ class MixtureOfDepths(nn.Linear):
             inputs, current_depth
         )  # -> batch, seq_len, 1
 
-        #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
-        token_weights, token_indices = torch.topk(
-            router_logits,
-            k,
-            dim=1,
-            sorted=False,
-        )
+        valid = None
+        if self.training:
+            #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
+            token_weights, token_indices = torch.topk(
+                router_logits,
+                k,
+                dim=1,
+                sorted=False,
+            )
 
-        # Sort indices by position and get the sorting indices
-        token_indices, sort_indices = torch.sort(token_indices, dim=1)
+            # Sort indices by position and get the sorting indices
+            token_indices, sort_indices = torch.sort(token_indices, dim=1)
 
-        # Re-order the weights to match the sorted indices
-        token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
+            # Re-order the weights to match the sorted indices
+            token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
 
-        # compute aux loss, in order to enforce causality in the top-k operation
-        router_loss = self.aux_loss(router_logits, token_indices)
+            # The paper's auxiliary BCE: teaches the router's own output to
+            # predict the top-k choice, which is the rule inference routes on.
+            router_loss = self.aux_loss(router_logits, token_indices)
+        else:
+            token_indices, token_weights, valid = self._causal_selection(router_logits)
+            if token_indices is None:
+                return inputs, past_key_values, current_state, router_loss
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
@@ -175,6 +193,12 @@ class MixtureOfDepths(nn.Linear):
             token_weights,
         )
 
+        if valid is not None:
+            # Padding slots carry unselected tokens; they sit after every real
+            # selection, so causal attention never lets them reach one, and their
+            # outputs are dropped here.
+            layer_outputs = torch.where(valid, layer_outputs, filtered_inputs)
+
         # reintegrate the processed tokens with our residual stream
         outputs = torch.scatter(
             input=inputs,
@@ -184,6 +208,27 @@ class MixtureOfDepths(nn.Linear):
         )
 
         return outputs, layer_kv, state_update, aux_loss + router_loss
+
+    def _causal_selection(self, router_logits: Tensor):
+        """Inference routing: each token routes iff its own logit is positive.
+
+        Returns ``(indices, weights, valid)`` with every row's selected tokens
+        first, in order, padded to the batch's largest selection; ``valid`` marks
+        the real slots. ``(None, None, None)`` when no token routes.
+        """
+        selected = router_logits.squeeze(-1) > 0  # [batch, seq]
+        counts = selected.sum(dim=1)
+        widest = int(counts.max())
+        if widest == 0:
+            return None, None, None
+        seq = selected.shape[1]
+        position = torch.arange(seq, device=selected.device)
+        order = torch.argsort((~selected).long() * seq + position, dim=1)[:, :widest]
+        indices = order.unsqueeze(-1)  # [batch, widest, 1]
+        slot = torch.arange(widest, device=selected.device)
+        valid = (slot.unsqueeze(0) < counts.unsqueeze(1)).unsqueeze(-1)
+        weights = torch.gather(router_logits, dim=1, index=indices)
+        return indices, weights, valid
 
     def _capacity_for(self, current_depth: int) -> float:
         """Token capacity for this step.

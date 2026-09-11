@@ -2,14 +2,15 @@
 Prismatic Attention: Architectural Diversity via Sparse Routing
 
 v8.1 - Top-2 Positional Encoding Diversity with Switch Transformers Loss:
-Routes sequences to k=2 experts with different positional encoding strategies:
+Routes every POSITION to k=2 experts with different positional encoding strategies:
 - Expert 0: ALiBi (Attention with Linear Biases)
 - Expert 1: RoPE (Rotary Position Embedding)
 - Expert 2: ALiBi
 - Expert 3: RoPE
 
-Each sequence is processed by 2 experts, blending complementary architectural strengths.
-This prevents the degradation issues of k=1 while maintaining architectural diversity.
+Each position blends 2 experts, chosen from the running mean of the positions up
+to it, so no position's routing reads a later one. An expert any position
+selects runs on the whole batch.
 
 Load balancing uses Switch Transformers auxiliary loss (importance × load) which
 strongly encourages exploration and prevents expert collapse.
@@ -30,16 +31,16 @@ class Prismatic(nn.Module):
     """
     Prismatic router with architectural diversity (ALiBi vs RoPE).
 
-    Routes entire sequences to k=2 experts with different positional encodings:
+    Routes every position to k=2 experts with different positional encodings:
     - Expert 0: ALiBi (linear distance bias)
     - Expert 1: RoPE (rotational encoding)
     - Expert 2: ALiBi
     - Expert 3: RoPE
 
     The router:
-    1. Computes routing probabilities per sequence
-    2. Selects TOP-2 experts per sequence (sparse, top-k)
-    3. Executes selected experts and blends outputs
+    1. Computes routing probabilities per position, from the prefix mean
+    2. Selects TOP-2 experts per position (sparse, top-k)
+    3. Executes every selected expert on the batch and blends per position
     4. Applies load balancing loss to encourage balanced usage
 
     Key design: Clean architectural diversity. Different encoding per expert,
@@ -88,10 +89,10 @@ class Prismatic(nn.Module):
         for i in range(len(self.experts)):
             arch = self.architectures[i % len(self.architectures)]
             print(f"  Expert {i}: {arch.upper()}")
-        print(f"  Routing: Sequence-level, top-{self.top_k} sparse")
+        print(f"  Routing: per position on the prefix mean, top-{self.top_k}")
         print(f"  Masking: Standard causal (no temporal tricks)")
 
-        # Router: learns to select ALiBi vs RoPE per sequence
+        # Router: learns to select ALiBi vs RoPE per position
         self.router_norm = nn.LayerNorm(self.hidden_size)
         self.router = nn.Linear(self.hidden_size, self.num_experts)
 
@@ -135,10 +136,12 @@ class Prismatic(nn.Module):
         return output, cache, aux_loss
 
     def _compute_routing(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Compute per-sequence routing probabilities over experts."""
-        seq_repr = inputs.mean(dim=1)
-        seq_repr = self.router_norm(seq_repr)
-        logits = self.router(seq_repr)
+        """Per-position routing probabilities ``[batch, seq_len, num_experts]``,
+        each read from the running mean of the positions up to it."""
+        x = inputs.float()
+        count = torch.arange(1, x.shape[1] + 1, device=x.device, dtype=x.dtype)
+        prefix = (x.cumsum(dim=1) / count.view(1, -1, 1)).to(inputs.dtype)
+        logits = self.router(self.router_norm(prefix))
         return F.softmax(logits, dim=-1)
 
     def _router_forward(
@@ -157,89 +160,53 @@ class Prismatic(nn.Module):
         float,
     ]:
         """
-        Router mode: select expert per sequence based on architectural suitability.
+        Router mode: blend each position's top-k experts.
 
         Args:
             layer: The LocalLayer wrapper (unused in sparse routing)
             inputs: Input tensor [batch, seq_len, hidden_size]
             attention_mask: Optional padding mask
-            past_key_values: KV cache (if using)
+            past_key_values: KV cache (not used; experts run cache-free)
             current_state: Current hidden state
             current_depth: Current layer depth
             block_ids: Block IDs for attention
 
         Returns:
             output: [batch, seq_len, hidden_size]
-            past_key_values: Updated cache
-            current_state: Updated state (None for now)
+            past_key_values: Unchanged cache
+            current_state: Unchanged state
             aux_loss: Load balancing loss
         """
-        batch_size, seq_len, _ = inputs.shape
+        probs = self._compute_routing(inputs)  # [batch, seq_len, num_experts]
+        top_k_probs, expert_indices = torch.topk(probs, self.top_k, dim=-1)
+        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)
+        # Each position's blend weights, zero outside its own top-k.
+        weights = torch.zeros_like(probs).scatter(-1, expert_indices, top_k_probs)
 
-        # Compute routing probabilities per sequence
-        probs = self._compute_routing(inputs)  # [batch, num_experts]
-
-        # Top-k expert selection (sparse)
-        top_k_probs, expert_indices = torch.topk(
-            probs, self.top_k, dim=-1
-        )  # [batch, k]
-
-        # Normalize top-k probabilities to sum to 1
-        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # [batch, k]
-
-        # Execute experts in parallel (efficient sparse MoE)
-        # Group samples by expert selection and execute each expert once
         output = torch.zeros_like(inputs)
         total_aux_loss = 0.0
-
         for expert_idx in range(self.num_experts):
-            # Find which samples selected this expert (in any of their top-k positions)
-            expert_mask = expert_indices == expert_idx  # [batch, k]
-
-            if not expert_mask.any():
-                continue
-
-            # Get batch indices that selected this expert
-            selected_samples = expert_mask.any(dim=1)  # [batch]
-            batch_indices = selected_samples.nonzero(as_tuple=False).squeeze(1)
-
-            # Handle scalar case (single sample selected this expert)
-            if batch_indices.dim() == 0:
-                batch_indices = batch_indices.unsqueeze(0)
-
-            # Gather inputs for all samples that selected this expert
-            expert_inputs = inputs[batch_indices]  # [n_samples, seq_len, hidden]
-
-            # Execute expert once on all its samples
+            weight = weights[..., expert_idx]  # [batch, seq_len]
+            if not bool((weight > 0).any()):
+                continue  # no position chose it; its output would be unused
             expert_output, _, _, expert_aux = self.experts[expert_idx](
-                expert_inputs,
+                inputs,
                 attention_mask=attention_mask,
                 past_key_values=None,
                 current_state=None,
                 current_depth=current_depth,
                 block_ids=block_ids,
             )
+            output = (
+                output + weight.unsqueeze(-1).to(expert_output.dtype) * expert_output
+            )
+            total_aux_loss = total_aux_loss + expert_aux * weight.mean()
 
-            # Scatter results back with proper routing weights
-            for i, batch_idx in enumerate(batch_indices):
-                batch_idx = batch_idx.item()
-                # Get weight for this expert in this sample's top-k
-                # (handle case where expert appears multiple times in top-k)
-                sample_expert_mask = expert_indices[batch_idx] == expert_idx
-                expert_weight = top_k_probs[batch_idx][sample_expert_mask].sum()
-
-                output[batch_idx] += expert_weight * expert_output[i]
-
-            # Accumulate aux loss weighted by total routing probability to this expert
-            expert_total_weight = top_k_probs[expert_mask].sum()
-            total_aux_loss += expert_aux * expert_total_weight / batch_size
-
-        # Compute load balancing loss
-        balance_loss = self._compute_balance_loss(probs, expert_indices)
+        flat_probs = probs.reshape(-1, self.num_experts)
+        flat_indices = expert_indices.reshape(-1, self.top_k)
+        balance_loss = self._compute_balance_loss(flat_probs, flat_indices)
         total_aux_loss = total_aux_loss + self.balance_loss_coef * balance_loss
-
-        # Update metrics
-        self._update_metrics(expert_indices, probs, balance_loss)
+        self._update_metrics(flat_indices, flat_probs, balance_loss)
 
         return output, past_key_values, current_state, total_aux_loss
 

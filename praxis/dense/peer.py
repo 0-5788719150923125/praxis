@@ -210,10 +210,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # width. The one arithmetic contact, `hidden_size // (2 * num_heads)`,
         # is a floor already guarded by MIN_KEY_DIMS. Reference product-key
         # implementations assert on evenness because they project to `dim` and
-        # `.chunk(2)` it; this one does not, so the assert that used to live
-        # here was inherited, not earned. Verified at odd widths (111, 65, 257,
-        # 33, 3): correct output shape, finite grads, and the same expert
-        # count and key_dims as the neighbouring even width.
+        # `.chunk(2)` it; this one does not.
 
         class Permute(nn.Module):
             """Permute dimensions of tensor for product key memory."""
@@ -233,30 +230,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 """
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
-        # BatchNorm for combined partitions and heads
-        class BatchNorm1d(nn.BatchNorm1d):
-            """BatchNorm1d that handles sequence dimension."""
-
-            def __init__(self, *args: Any, **kwargs: Any):
-                super().__init__(*args, **kwargs)
-
-            def forward(self, x: Tensor) -> Tensor:
-                """
-                Apply batch norm across batch and sequence dimensions.
-
-                Args:
-                    x: Input tensor of shape [batch_size, seq_len, dim]
-
-                Returns:
-                    Normalized tensor of same shape
-                """
-                b, s, d = x.shape
-                x = x.view(b * s, d)
-                x = super().forward(x)
-                return x.view(b, s, d)
-
+        # No BatchNorm on the query, unlike the paper: its batch statistics make
+        # each token's retrieved experts depend on later tokens and other rows.
+        # lucidrains' PEER-pytorch omits it too; the block's pre-norm already
+        # normalizes each token.
         self.queries = nn.Sequential(
-            BatchNorm1d(hidden_size),
             nn.Linear(hidden_size, key_dims * self.num_heads * 2, bias=False),
             nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),

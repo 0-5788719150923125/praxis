@@ -56,28 +56,31 @@ def stretch(
     """
     Stretches tensor values using linear interpolation.
     At least one target bound must be specified.
+
+    The range is each position's own, over the feature axis: a range taken over
+    the whole tensor would let a later token, or another row, rescale this one.
     """
     assert (
         target_min is not None or target_max is not None
     ), "At least one target bound must be specified"
 
-    max_val = x.max()
-    min_val = x.min()
+    max_val = x.amax(dim=-1, keepdim=True)
+    min_val = x.amin(dim=-1, keepdim=True)
+    span = (max_val - min_val).clamp_min(torch.finfo(x.dtype).eps)
+
+    progress = (x - min_val) / span
 
     # If only target_min specified
     if target_max is None:
         # Keep max_val fixed, stretch everything else to target_min
-        progress = (x - min_val) / (max_val - min_val)
         return target_min + progress * (max_val - target_min)
 
     # If only target_max specified
     if target_min is None:
         # Keep min_val fixed, stretch everything else to target_max
-        progress = (x - min_val) / (max_val - min_val)
         return min_val + progress * (target_max - min_val)
 
     # If both targets specified
-    progress = (x - min_val) / (max_val - min_val)
     return target_min + progress * (target_max - target_min)
 
 

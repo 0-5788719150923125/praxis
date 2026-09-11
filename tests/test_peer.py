@@ -113,12 +113,8 @@ def test_repr_names_the_expert_form():
 
 
 def test_repr_is_a_field_list():
-    """It read ``num_experts=289 (17^2)`` - a parenthetical inside a value.
-
-    ``print(model)`` is a field listing; the product-key grid is real
-    information, but it is a field of its own, not an annotation glued to a
-    number that no longer parses as one.
-    """
+    """``print(model)`` is a field listing: the product-key grid is a field of
+    its own, not an annotation glued to ``num_experts``."""
     peer = ParameterEfficientExpertRetrieval(make_config())
     fields = [part.strip() for part in peer.extra_repr().split(",")]
     for field in fields:
@@ -153,10 +149,8 @@ def test_sparse_gated_banks_stay_sparse():
 
 
 # ── odd hidden_size ─────────────────────────────────────────────────────────
-# There used to be an `assert (hidden_size % 2) == 0` here, inherited from
-# reference product-key implementations that project to `dim` and `.chunk(2)`
-# it. This one emits `key_dims * num_heads * 2` from the query net instead, so
-# the halving never touches the model width. These pin that.
+# The query net emits `key_dims * num_heads * 2` rather than halving the model
+# width, so any hidden_size works. These pin that.
 
 ODD_WIDTHS = [33, 65, 111, 257]
 
@@ -250,3 +244,23 @@ def test_output_scale_is_stable_across_widths():
     assert min(ratios) > 0.2, f"PEER is attenuating its input: {ratios}"
     assert max(ratios) < 3.0, f"PEER is amplifying its input: {ratios}"
     assert max(ratios) / min(ratios) < 2.5, f"scale tracks bank size: {ratios}"
+
+
+@pytest.mark.parametrize("expert", ["peer", "peer_glu"])
+def test_training_forward_is_causal_and_row_independent(expert):
+    """Retrieval is per token: in TRAINING mode, changing one position must
+    leave every earlier position and every other row untouched. A batch
+    statistic anywhere on the query path breaks both, and top-k retrieval
+    turns even a small shift into different experts."""
+    torch.manual_seed(0)
+    module = DENSE_REGISTRY[expert](make_config(hidden_size=64, num_heads=4)).train()
+    x = torch.randn(3, 12, 64)
+    p = 7
+    xp = x.clone()
+    xp[0, p] += torch.randn(64)
+    with torch.no_grad():
+        a = module(x, 0)
+        b = module(xp, 0)
+    torch.testing.assert_close(a[0, :p], b[0, :p], rtol=0.0, atol=0.0)
+    torch.testing.assert_close(a[1:], b[1:], rtol=0.0, atol=0.0)
+    assert not torch.allclose(a[0, p], b[0, p])

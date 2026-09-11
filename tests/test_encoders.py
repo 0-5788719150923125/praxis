@@ -301,15 +301,8 @@ def test_mask_entropy_preds_at_special_tokens():
 
 
 def test_packed_rnn():
-    """Every packed document is processed, each with a fresh hidden state.
-
-    This test previously asserted the opposite - that positions after the first
-    EOS came back as ZEROS - which pinned a silent bug as the contract. Under
-    ``chat_format: default`` nothing emitted ``[EOS]``, so the truncation was a
-    no-op and the assertion held vacuously; ``prose`` made the packer's document
-    separator real and the same code started dropping every document after the
-    first, returning the bare residual for it with no error.
-    """
+    """Every packed document is processed, each with a fresh hidden state -
+    positions after an EOS are never dropped or zeroed."""
     batch_size, seq_len, feature_dim = 2, 5, 3
     hidden_dim = 4
 
@@ -534,6 +527,38 @@ def test_topk_mean_pooling():
 #     )
 
 
+# ------------------------------------------------------- registry names
+
+
+def test_unlisted_encoder_names_resolve_but_are_not_listed():
+    """Descriptive names build the same profiles as the listed names they map
+    to; only the listed names reach the CLI choices and the docs."""
+    from praxis.encoders import ENCODER_REGISTRY
+
+    listed = set(ENCODER_REGISTRY)
+    for name, target in ENCODER_REGISTRY.unlisted.items():
+        assert name in ENCODER_REGISTRY and name not in listed, name
+        if isinstance(target, str):
+            assert target in listed, target
+            assert ENCODER_REGISTRY[name] is ENCODER_REGISTRY[target]
+        else:
+            assert ENCODER_REGISTRY.get(name) is target
+    assert ENCODER_REGISTRY.get("no_such_encoder") is None
+
+
+def test_unlisted_encoder_name_is_accepted_on_the_command_line():
+    import argparse
+
+    from praxis.cli.groups.architecture import ArchitectureGroup
+
+    parser = argparse.ArgumentParser()
+    ArchitectureGroup.add_arguments(parser)
+    name = "abstractinator_harmonic_gdn_vocab_bank_static"
+    assert parser.parse_args(["--encoder-type", name]).encoder_type == name
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--encoder-type", "no_such_encoder"])
+
+
 # ------------------------------------------------------- static patching
 
 
@@ -553,7 +578,7 @@ class TestStaticPatchingNeedsNoBOE:
         from praxis import ENCODER_REGISTRY, PraxisConfig
 
         name = (
-            "abstractinator_harmonic_gdn_vocab_bank_static"
+            "abstractinator_v1"
             if mode == "static"
             else "abstractinator_harmonic_gdn_vocab_bank"
         )

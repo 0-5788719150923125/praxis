@@ -22,11 +22,8 @@ from praxis.width import WIDTH_REGISTRY
 def _wants_expert_bank(router_type: Optional[str]) -> bool:
     """Whether this router is built with a BANK of experts to merge.
 
-    Asks the registered class, not a hardcoded name list: bank routers raise at
-    construction without ``experts=``, so a subclass that was not in the list
-    silently got the single-block branch and then failed to build. Distance is
-    the only such router left (praxis/routers/bank.py); the SMEAR/VEAR routers
-    moved to the targeted merge and build one block, not a bank.
+    Asks the registered class rather than a name list, since bank routers raise
+    at construction without ``experts=``.
     """
     if not router_type:
         return False
@@ -35,25 +32,20 @@ def _wants_expert_bank(router_type: Optional[str]) -> bool:
 
     cls = ROUTER_REGISTRY.get(router_type)
     cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
-    return router_type == "distance" or (
-        isinstance(cls, type) and issubclass(cls, ExpertBank)
-    )
+    return isinstance(cls, type) and issubclass(cls, ExpertBank)
 
 
 def _router_layout(router_type: Optional[str]) -> str:
     """How the layer stack should be built for this router.
 
-    ``"bank"``      - N whole-block copies under one shared LocalLayer, for the
-                      SMEAR/VEAR/Distance parameter-merging routers.
+    ``"bank"``      - N whole-block copies under one shared LocalLayer, for
+                      ExpertBank routers.
     ``"shared"``    - ONE block, reused at every layer position, with the router
-                      constructed against it. The modular SMEAR routers need this: they merge
-                      deviations onto a single block, so replicating the block
-                      would be exactly the waste it exists to remove.
+                      constructed against it. The SMEAR routers need this: they
+                      merge deviations onto a single block.
     ``"per_position"`` - a distinct block and router per position (the default).
 
-    Asked of the registered class via ``LAYER_LAYOUT`` rather than a name list,
-    for the same reason ``_wants_expert_bank`` asks: a new subclass that is not
-    in the list silently gets the wrong construction and then fails to build.
+    Asked of the registered class via ``LAYER_LAYOUT`` rather than a name list.
     """
     if not router_type:
         return "per_position"

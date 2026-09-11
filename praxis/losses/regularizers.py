@@ -29,11 +29,9 @@ REGULARIZER_REGISTRY = {
     # Pairs with `activation: ouroboros`; a no-op without it. See
     # praxis/activations/ouroboros.py and next/ouroboros.md.
     "ouroboros_budget": OuroborosBudget,
-    # The counterweight to the field's own smoothness prior: reward Plomp-Levelt
-    # roughness between the harmonic field's temporal modes, held by a dual
-    # variable against whatever the language-modelling task will still pay.
-    # Needs a harmonic field under the head; inert otherwise. See
-    # praxis/losses/dissonance.py.
+    # Hold the harmonic field's Plomp-Levelt roughness at or above that of the
+    # signal it multiplies, by a dual variable. Needs a harmonic field under the
+    # head; inert otherwise. See praxis/losses/dissonance.py.
     "dissonance": Dissonance,
     # The same spectrum readings with ZERO gradient - what the field is doing
     # before deciding to push on it. Pair it with a config that drops

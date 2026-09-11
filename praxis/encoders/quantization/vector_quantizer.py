@@ -77,8 +77,12 @@ class VectorQuantizer(nn.Module):
         # Codebook and EMA stats
         self.codebook = nn.Parameter(torch.randn(self.K, self.D))
         if self.ema:
+            # One pseudo-observation per code, the count the reset path seeds a
+            # replacement with, so weight_sum / size IS the codebook until data
+            # arrives. A zero count under a non-zero sum would scale every code
+            # the first batch misses by ~decay / eps.
             self.register_buffer(
-                "ema_cluster_size", torch.zeros(self.K, dtype=torch.float32)
+                "ema_cluster_size", torch.ones(self.K, dtype=torch.float32)
             )
             self.register_buffer(
                 "ema_weight_sum", self.codebook.data.clone().to(torch.float32)
@@ -174,9 +178,10 @@ class VectorQuantizer(nn.Module):
         new_cb_f32 = self.ema_weight_sum / stabilized.unsqueeze(1)  # (K,D) float32
         self.codebook.data.copy_(new_cb_f32.to(self.codebook.dtype))
 
-        # Track recency of usage for reset gating
+        # Track recency of usage for reset gating (the tracker exists only
+        # when resets do).
         hits = cluster > 0
-        if hits.any():
+        if self.reset_codes and hits.any():
             idx = hits.nonzero(as_tuple=False).squeeze(1)
             self.last_hit_step.index_copy_(0, idx, self.step.expand(idx.size(0)))
 
@@ -272,17 +277,43 @@ class VectorQuantizer(nn.Module):
         self.reset_count_total.add_(resets_t)
         self.dead_code_count.copy_(dead_mask.to(torch.int64).sum())
 
-        # No console log here, deliberately. Every number the old INFO line
-        # printed is already a chart off the two buffers above - vq_resets_s{s}
-        # from reset_count_total and vq_dead_frac_s{s} from dead_code_count,
-        # declared in praxis/encoders/abstractinator/encoder.py - so printing it
-        # was duplicating a card into the terminal AND forcing four .item()
-        # device syncs on the reset cadence to build a string nobody reads.
-        # Codebook health is a time series; read it as one.
+        # No console log: the two buffers above are charted (vq_resets_s{s},
+        # vq_dead_frac_s{s}; praxis/encoders/abstractinator/encoder.py), and
+        # printing would force device syncs on the reset cadence.
 
         # Zero the step counter when reset actually fired
         keep = (~do_reset).to(self.steps_since_last_reset.dtype)
         self.steps_since_last_reset.mul_(keep)
+
+    def nearest(self, flat: torch.Tensor) -> torch.Tensor:
+        """Index of the nearest allowed code (squared L2) for each row."""
+        x2 = (flat * flat).sum(dim=1, keepdim=True)  # (N,1)
+        e2 = (self.codebook * self.codebook).sum(dim=1)  # (K,)
+        xe = F.linear(flat, self.codebook)  # (N,K)
+        distances = x2 - 2 * xe + e2.unsqueeze(0)  # (N,K)
+        if self.forbidden_mask.any():
+            big = torch.finfo(distances.dtype).max
+            distances = distances.masked_fill(self.forbidden_mask.unsqueeze(0), big)
+        return distances.argmin(dim=1)
+
+    @torch.no_grad()
+    def seed(self, codes: torch.Tensor) -> None:
+        """Replace every unprotected code with a row of ``codes`` (K, D), each
+        as a fresh running mean of one observation."""
+        keep = self.protected_mask.unsqueeze(1)
+        new = torch.where(keep, self.codebook.data, codes.to(self.codebook.dtype))
+        self.codebook.data.copy_(new)
+        if self.ema:
+            self.ema_weight_sum.copy_(new.to(torch.float32))
+            self.ema_cluster_size.copy_(
+                torch.where(
+                    self.protected_mask,
+                    self.ema_cluster_size,
+                    torch.ones_like(self.ema_cluster_size),
+                )
+            )
+        if self.reset_codes:
+            self.last_hit_step.copy_(self.step.expand_as(self.last_hit_step))
 
     # ---------------------------
     # Forward
@@ -308,16 +339,7 @@ class VectorQuantizer(nn.Module):
         if self.training and self.reset_codes:
             self._update_replacement_buffer_tensor(flat.detach())
 
-        # Nearest neighbors (squared L2)
-        x2 = (flat * flat).sum(dim=1, keepdim=True)  # (N,1)
-        e2 = (self.codebook * self.codebook).sum(dim=1)  # (K,)
-        xe = F.linear(flat, self.codebook)  # (N,K)
-        distances = x2 - 2 * xe + e2.unsqueeze(0)  # (N,K)
-        if self.forbidden_mask.any():
-            big = torch.finfo(distances.dtype).max
-            distances = distances.masked_fill(self.forbidden_mask.unsqueeze(0), big)
-        indices = distances.argmin(dim=1)
-
+        indices = self.nearest(flat)
         z_q = F.embedding(indices, self.codebook).view(B, Q, self.D)
 
         # VQ losses
@@ -434,6 +456,9 @@ class MultiStageResidualVQ(nn.Module):
         # Sentinel pad vector in the D-space
         self.register_buffer("pad_vector", torch.zeros(D))
 
+        # Whether the codebooks have been seeded from data (see `_seed`).
+        self.register_buffer("seeded", torch.zeros((), dtype=torch.bool))
+
         # Last per-stage perplexities, stashed detached each forward for the
         # dashboard (float conversion happens only at the metrics interval).
         self._last_stage_ppl: list = []
@@ -500,7 +525,38 @@ class MultiStageResidualVQ(nn.Module):
 
         self._last_stage_ppl = [p.detach() for p in ppl_list]
 
+        if self.training and not bool(self.seeded):
+            self._seed(z.detach(), is_pad)
+
         return z_hat, total_loss, idx_comp, perplexity.detach()
+
+    @torch.no_grad()
+    def _seed(self, z: torch.Tensor, is_pad: torch.Tensor) -> None:
+        """Seed each stage's codebook from the first training batch - stage s
+        from the residuals the already-seeded stages leave - as SoundStream seeds
+        its RVQ from the first batch (arXiv:2107.03312). Random codes start far
+        from the data, where the nearest few absorb every patch and the rest
+        never get an assignment to move them.
+
+        Runs after the batch has been quantized, so no position's code reads
+        another position's input. A batch with fewer vectors than codes repeats
+        rows; the jitter splits the repeats apart."""
+        r = z.reshape(-1, self.D)[~is_pad.reshape(-1)]
+        if r.shape[0] == 0:
+            return
+        for stage in self.stages:
+            order = torch.randperm(r.shape[0], device=r.device)
+            rows = order[torch.arange(stage.K, device=r.device) % r.shape[0]]
+            codes = r[rows]
+            scale = codes.float().pow(2).mean().sqrt().clamp_min(1e-12)
+            stage.seed(codes + 1e-3 * scale * torch.randn_like(codes))
+            r = r - stage.codebook[stage.nearest(r)]
+        self.seeded.fill_(True)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # A checkpoint without the flag holds trained codebooks; never reseed.
+        state_dict.setdefault(prefix + "seeded", torch.ones((), dtype=torch.bool))
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     @torch.no_grad()
     def telemetry(self) -> Dict[str, float]:
