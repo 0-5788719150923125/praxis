@@ -55,7 +55,11 @@ def _post(app, path, generator, **body):
 
 def test_input_generation(generation_app, mock_generator):
     response = _post(
-        generation_app, "/input", mock_generator, prompt="Hello, world!", max_new_tokens=50
+        generation_app,
+        "/input",
+        mock_generator,
+        prompt="Hello, world!",
+        max_new_tokens=50,
     )
     assert response.status_code == 200
     assert "Generated response" in response.get_json()["response"]
@@ -522,8 +526,14 @@ def old_run(tmp_path):
     for step in range(10):
         conn.execute(
             "INSERT INTO metrics VALUES (?, ?, ?, ?, ?, ?)",
-            (step, 1000.0 + step, 3.0 - 0.1 * step, 2.9 if step == 9 else None,
-             1000.0 * step, 0.5),
+            (
+                step,
+                1000.0 + step,
+                3.0 - 0.1 * step,
+                2.9 if step == 9 else None,
+                1000.0 * step,
+                0.5,
+            ),
         )
     conn.commit()
     conn.close()

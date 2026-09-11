@@ -60,7 +60,7 @@ class ExpertBank(nn.Module):
     # already routes its own parameters, so discovering its N expert copies as
     # separate targets would stack a second routing on the first - and would
     # route the bank's own router weights too. Surfaced by
-    # tests/test_smear_integration.py, where a RecurrentBlock holding a bank had
+    # tests/routers/test_smear.py, where a RecurrentBlock holding a bank had
     # all six of its inner expert projections targeted.
     MERGE_OPAQUE: bool = True
 

@@ -1,10 +1,5 @@
-"""Smoke tests for praxis.orchestration: the remote-expert pooling layer.
-
-Uses trivially small in-process experts (LocalExpert wrapping a plain Linear
-block) so the pool's mechanics - capacity reporting, non-blocking detached
-training, stochastic-sampled inference, and the mixing strategies - are
-exercised without any transport or real model.
-"""
+"""LocalExpert (praxis/orchestration/base.py): an in-process expert that
+trains its own block."""
 
 import torch
 from torch import nn

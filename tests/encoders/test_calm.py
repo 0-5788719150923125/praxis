@@ -139,29 +139,20 @@ def test_calm_with_crystal_head():
 
 
 def test_calm_harmonic_head_trains():
-    # Full CALM model with head_kind="harmonic" (overriding the profile's flow);
-    # the harmonic head trains through the shared flow loss path.
-    import functools
-
-    cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
-    orig = registry.lookup("encoders", "calm_byte_flow")
-    registry.namespace("encoders")["calm_byte_flow"] = functools.partial(
-        orig, head_kind="harmonic"
+    # CALM with head_kind="harmonic": the harmonic head trains through the
+    # shared flow loss path.
+    cfg = _tiny_config(encoder_type="calm_byte_harmonic", tokenizer_type="byte_level")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    model.encoder.requires_pretraining = False  # joint mode: head trains now
+    assert type(model.encoder.energy_head).__name__ == "HarmonicLatentHead"
+    ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
+    out.loss.backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.encoder.energy_head.net.parameters()
     )
-    try:
-        model = PraxisForCausalLM(cfg)
-        model.train()
-        model.encoder.requires_pretraining = False  # joint mode: head trains now
-        assert type(model.encoder.energy_head).__name__ == "HarmonicLatentHead"
-        ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
-        out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
-        out.loss.backward()
-        assert any(
-            p.grad is not None and p.grad.abs().sum() > 0
-            for p in model.encoder.energy_head.net.parameters()
-        )
-    finally:
-        registry.namespace("encoders")["calm_byte_flow"] = orig
 
 
 def test_fixed_codec_deterministic_drop_in():
@@ -193,29 +184,20 @@ def test_fixed_codec_deterministic_drop_in():
 
 
 def test_calm_fixed_codec_trains_single_stage():
-    # Full CALM model with codec_kind="fixed", single-stage (ae_freeze_steps=0):
-    # the learned decoder trains against the stationary fixed latent.
-    import functools
-
-    cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
-    orig = registry.lookup("encoders", "calm_byte_flow")
-    registry.namespace("encoders")["calm_byte_flow"] = functools.partial(
-        orig, codec_kind="fixed", ae_freeze_steps=0
+    # CALM with codec_kind="fixed", single-stage (ae_freeze_steps=0): the
+    # learned decoder trains against the stationary fixed latent.
+    cfg = _tiny_config(encoder_type="calm_byte_fixed", tokenizer_type="byte_level")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    assert type(model.encoder.vae).__name__ == "FixedCodec"
+    ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
+    out.loss.backward()
+    # decoder learns; the fixed encode path carries no gradients
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.encoder.vae.dec_in.parameters()
     )
-    try:
-        model = PraxisForCausalLM(cfg)
-        model.train()
-        assert type(model.encoder.vae).__name__ == "FixedCodec"
-        ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
-        out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
-        out.loss.backward()
-        # decoder learns; the fixed encode path carries no gradients
-        assert any(
-            p.grad is not None and p.grad.abs().sum() > 0
-            for p in model.encoder.vae.dec_in.parameters()
-        )
-    finally:
-        registry.namespace("encoders")["calm_byte_flow"] = orig
 
 
 def test_harmonic_codec_variants():
@@ -563,6 +545,24 @@ def test_calm_vae_reference_dropouts():
     z = torch.ones(2, 8, 8)
     outs = [vae.decode(z) for _ in range(2)]
     assert not torch.equal(outs[0], outs[1])  # latent dropout active
+
+
+def test_patch_vae_perturbs_both_reference_sites_in_training_only():
+    """PatchVAE (AbstractinatorCALM's codec) drops input features in encode and
+    the sampled latent in decode, the reference's ae_dropout, so the decoder
+    learns to map a NEIGHBOURHOOD of z - the latent the energy head predicts at
+    generation - to the right features. Eval applies neither."""
+    from praxis.encoders.calm.vae import PatchVAE
+
+    torch.manual_seed(0)
+    vae = PatchVAE(feature_dim=32, latent_dim=32, hidden_dim=32, dropout=0.15)
+    h, z = torch.randn(2, 8, 32), torch.randn(2, 8, 32)
+    vae.eval()
+    assert torch.equal(vae.encode(h)[0], vae.encode(h)[0])
+    assert torch.equal(vae.decode(z), vae.decode(z))
+    vae.train()
+    assert not torch.equal(vae.encode(h)[0], vae.encode(h)[0])
+    assert not torch.equal(vae.decode(z), vae.decode(z))
 
 
 def test_calm_halo_geometric_mode():

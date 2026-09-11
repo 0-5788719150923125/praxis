@@ -65,9 +65,7 @@ def test_sparse_policy_drops_heads_in_a_block():
     """The sparse policy reaches attention through a containing module."""
     pol = registry.lookup("width", "helical_sparse")()
     attn = ArcAttention(
-        PraxisConfig(
-            hidden_size=128, num_heads=4, num_queries=2, depth=8, dropout=0.0
-        )
+        PraxisConfig(hidden_size=128, num_heads=4, num_queries=2, depth=8, dropout=0.0)
     )
     holder = nn.Module()
     holder.attn = attn

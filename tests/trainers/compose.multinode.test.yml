@@ -7,12 +7,12 @@
 # Each node gets its own build/ volume to avoid run-directory races.
 #
 # Usage:
-#   docker compose -f tests/compose.multinode.yml up --build
-#   docker compose -f tests/compose.multinode.yml down -v
+#   docker compose -f tests/trainers/compose.multinode.test.yml up --build
+#   docker compose -f tests/trainers/compose.multinode.test.yml down -v
 
 services:
   node-0:
-    build: ..
+    build: ../..
     working_dir: /workspace
     command:
       - ./launch
@@ -34,7 +34,7 @@ services:
       - --master-port
       - "29500"
     volumes:
-      - ..:/workspace:rw
+      - ../..:/workspace:rw
       - venv:/workspace/.venv
       - cache:/root/.cache
       - build-node0:/workspace/build
@@ -44,7 +44,7 @@ services:
       PYTHONUNBUFFERED: 1
 
   node-1:
-    build: ..
+    build: ../..
     working_dir: /workspace
     command:
       - ./launch
@@ -66,7 +66,7 @@ services:
       - --master-port
       - "29500"
     volumes:
-      - ..:/workspace:rw
+      - ../..:/workspace:rw
       - venv:/workspace/.venv
       - cache:/root/.cache
       - build-node1:/workspace/build

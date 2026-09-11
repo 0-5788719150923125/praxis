@@ -675,7 +675,7 @@ class NoCompressiveMemory:
 
         Mirrors the parent's decode arithmetic (ghostmax included) with the
         memory retrieval and the blend removed, so cached generation stays
-        equivalent to a full recompute - the property tests/test_kv_cache.py
+        equivalent to a full recompute - the property tests/attention/test_cache.py
         checks.
         """
         seg_k = torch.cat([state["k"], k], dim=2)

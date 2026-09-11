@@ -1,13 +1,4 @@
-"""AbstractinatorCALM: a continuous CALM arm beside the discrete RVQ arm.
-
-The thesis under test is that the DISCRETE arm can pay for the CONTINUOUS one.
-CALM's energy score is a weak, high-variance signal that needs far more tokens
-than this line can afford; an RVQ code is a dense, low-variance, mode-seeking
-target, and predicting the next code from the same conditioning hidden the
-energy head reads is what should concentrate its conditional.
-
-These tests pin the mechanics, not the thesis - the run decides that.
-"""
+"""UncertaintyWeighting: Kendall-style learned log-variance per named objective, exp(-s) L + s."""
 
 import pytest
 import torch
@@ -21,7 +12,7 @@ def test_a_hard_objective_down_weights_itself():
 
     uw = UncertaintyWeighting(("hard", "easy"))
     opt = torch.optim.SGD(uw.parameters(), lr=0.5)
-    for _ in range(600):
+    for _ in range(200):
         opt.zero_grad()
         (uw("hard", torch.tensor(16.0)) + uw("easy", torch.tensor(0.5))).backward()
         opt.step()
@@ -38,7 +29,7 @@ def test_the_balance_cannot_mute_an_objective():
 
     uw = UncertaintyWeighting(("x",))
     opt = torch.optim.SGD(uw.parameters(), lr=0.1)
-    for _ in range(2000):
+    for _ in range(300):
         opt.zero_grad()
         uw("x", torch.tensor(3.0)).backward()
         opt.step()

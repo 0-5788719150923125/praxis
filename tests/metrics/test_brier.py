@@ -1,8 +1,4 @@
-"""CALM encoder + energy head + LF-temperature sanity tests.
-
-These are shape / plumbing checks rather than training-quality
-assertions. The smoke-test in the CALM README covers the latter.
-"""
+"""BrierLM (praxis.metrics.compute_brier_lm): 100 for exact agreement, 0 for none."""
 
 import pytest
 

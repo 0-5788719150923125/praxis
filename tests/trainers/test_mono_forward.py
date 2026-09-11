@@ -1,23 +1,21 @@
-"""Mono-Forward (in-process + Ray) correctness tests.
+"""Mono-Forward trainers (praxis/trainers/mono_forward/): the Ray-pipelined
+``MonoForwardTrainer``, the in-process backend, and the ``MonoForwardLM`` face
+the generator decodes through.
 
-Consolidated test suite for everything MF-related: the in-process
-math harness, the Ray-based pipelined trainer, checkpoint roundtrip,
-and the Phase 5 live-inference-during-training hook. See
-``PHASE_5.md`` for the project plan and decision rationale (D1..D8).
+``MonoForwardTrainer`` imports without Ray (``fit`` imports it lazily), so only
+tests that actually start actors are gated behind ``requires_ray``. Ray has no
+wheels for Python >= 3.14; run the gated tests in the project's docker image
+after ``pip install -e '.[ray]'``:
 
-Tests that don't need Ray (the in-process math + detach checks) run
-anywhere. Everything else is gated behind ``requires_ray`` so the host
-venv (Python >= 3.14, no Ray wheels) skips them cleanly; run under
-Docker compose to exercise the full suite:
-
-    docker compose -f compose.yml run --rm --no-deps agent \\
-        /workspace/.venv/bin/python -m pytest tests/test_mono_forward.py -v
+    ./launch compose test tests/trainers/test_mono_forward.py
 """
 
 from __future__ import annotations
 
 import json
+import signal
 import sqlite3
+import sys
 
 import pytest
 import torch
@@ -25,7 +23,8 @@ from torch.utils.data import IterableDataset
 
 from praxis import PraxisConfig
 from praxis.modeling import PraxisForCausalLM
-from praxis.trainers.mono_forward import InProcessMonoForwardTrainer
+from praxis.trainers.mono_forward import InProcessMonoForwardTrainer, MonoForwardTrainer
+from praxis.trainers.mono_forward.hf_model import MonoForwardLM
 
 try:
     import ray  # noqa: F401
@@ -36,12 +35,16 @@ except ImportError:
 
 requires_ray = pytest.mark.skipif(not HAS_RAY, reason="Ray is not installed")
 
-# Import the Ray trainer lazily so module import on non-Ray hosts still
-# runs (the in-process math tests below don't need it).
-if HAS_RAY:
-    from praxis.trainers.mono_forward import MonoForwardTrainer
-else:
-    MonoForwardTrainer = None  # type: ignore[assignment]
+
+@pytest.fixture(autouse=True)
+def _restore_signal_handlers():
+    """fit() installs SIGINT/SIGTERM handlers and only restores them on the
+    success path; a fit that raises during validation would leave them set."""
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    yield
+    for sig, handler in saved.items():
+        signal.signal(sig, handler)
+
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -104,18 +107,24 @@ class _SyntheticDataModule:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2/3: Ray fit loop, checkpoint roundtrip, pipeline overlap, metrics.db
+# fit loop, checkpoint roundtrip, pipeline overlap, metrics.db
 # ---------------------------------------------------------------------------
 
 
-@requires_ray
-def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
-    """End-to-end Phase 2 smoke + Phase 2 checkpoint roundtrip in one run.
+BACKENDS = [
+    pytest.param(InProcessMonoForwardTrainer, id="inprocess"),
+    pytest.param(MonoForwardTrainer, id="ray", marks=requires_ray),
+]
 
-    Phase 2 exit criteria: Ray fit() reduces loss, writes a monolithic
-    checkpoint, and that checkpoint loads cleanly into a fresh vanilla
-    ``PraxisForCausalLM`` producing bit-for-bit identical logits.
-    """
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fit_reduces_loss_and_checkpoint_roundtrips(backend, tmp_path, monkeypatch):
+    """fit() reduces every layer's loss, writes a structured checkpoint, and that
+    checkpoint loads into a fresh vanilla ``PraxisForCausalLM`` with identical
+    logits."""
+    if backend is InProcessMonoForwardTrainer:
+        # The in-process backend's whole point is zero Ray dependency.
+        monkeypatch.setitem(sys.modules, "ray", None)
     torch.manual_seed(0)
     config = _mf_config(num_layers=2)
     model = PraxisForCausalLM(config)
@@ -123,16 +132,18 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
     dataset = _FixedBatchDataset(
         vocab_size=config.vocab_size, batch_size=2, seq_len=16, seed=1
     )
-    trainer = MonoForwardTrainer(
-        max_steps=20, log_every_n_steps=10, cache_dir=str(tmp_path)
+    trainer = backend(
+        max_steps=20, log_every_n_steps=10, cache_dir=str(tmp_path), device="cpu"
     )
     result = trainer.fit(model, _SyntheticDataModule(dataset))
 
     assert result["steps"] == 20
     assert result["final_loss"] < result["first_loss"], (
-        f"MF-Ray did not reduce loss "
+        f"MF did not reduce loss "
         f"(start={result['first_loss']:.4f}, end={result['final_loss']:.4f})"
     )
+    for layer_idx, losses in result["per_layer_loss_history"].items():
+        assert losses[-1] < losses[0], f"layer {layer_idx} did not learn: {losses}"
 
     checkpoint_path = tmp_path / "mono_forward.pt"
     assert checkpoint_path.exists()
@@ -147,12 +158,12 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
 
     reloaded = PraxisForCausalLM(_mf_config(num_layers=2))
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    # Structured checkpoint format: model weights live under "model_state_dict".
     assert "model_state_dict" in checkpoint, "expected structured checkpoint format"
     assert "completed_batches" in checkpoint
     assert "projection_states" in checkpoint
-    state = checkpoint["model_state_dict"]
-    _missing, unexpected = reloaded.load_state_dict(state, strict=False)
+    _missing, unexpected = reloaded.load_state_dict(
+        checkpoint["model_state_dict"], strict=False
+    )
     assert not unexpected, f"unexpected keys in MF checkpoint: {unexpected}"
 
     reloaded.eval()
@@ -167,8 +178,8 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
     )
 
 
-@requires_ray
-def test_depth_less_than_num_layers_hard_errors():
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_depth_less_than_num_layers_hard_errors(backend):
     """depth < num_layers must hard-error at fit time."""
     torch.manual_seed(0)
     bad_config = PraxisConfig(
@@ -188,21 +199,20 @@ def test_depth_less_than_num_layers_hard_errors():
     dataset = _FixedBatchDataset(
         vocab_size=bad_config.vocab_size, batch_size=1, seq_len=8, seed=2
     )
-    trainer = MonoForwardTrainer(max_steps=1, cache_dir=None)
+    trainer = backend(max_steps=1, cache_dir=None, device="cpu")
     with pytest.raises(RuntimeError, match="depth >= num_layers"):
         trainer.fit(model, _SyntheticDataModule(dataset))
 
 
 @requires_ray
 def test_pipeline_fills_and_logs_metrics(tmp_path):
-    """Phase 3 exit criterion: pipelined training overlaps, logs, syncs.
+    """Pipelined training overlaps and logs.
 
     One run covers:
     - in-flight pipeline actually filled up (``pipeline_in_flight_max >=
       num_layers - 1``)
     - every layer produced at least one loss value
     - loss trend downward
-    - head sync ran at the expected cadence
     - ``metrics.db`` contains per-layer losses + pipeline metrics in
       ``extra_metrics`` JSON
     """
@@ -214,13 +224,11 @@ def test_pipeline_fills_and_logs_metrics(tmp_path):
     )
 
     num_batches = 40
-    head_sync_every = 20
     trainer = MonoForwardTrainer(
         max_steps=num_batches,
         log_every_n_steps=10,
         cache_dir=str(tmp_path),
         ray_pipeline_api="manual",
-        ray_head_sync_every=head_sync_every,
     )
     result = trainer.fit(model, _SyntheticDataModule(dataset))
 
@@ -270,7 +278,6 @@ def test_compiled_api_not_implemented():
         trainer.fit(model, _SyntheticDataModule(dataset))
 
 
-@requires_ray
 def test_ray_num_replicas_per_layer_rejected_above_one():
     """--ray-num-replicas-per-layer > 1 is a stub; hard-error at init."""
     with pytest.raises(RuntimeError, match=r"ray.num.replicas.per.layer"):
@@ -278,11 +285,11 @@ def test_ray_num_replicas_per_layer_rejected_above_one():
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 Task 2: live inference during training
+# live inference during training
 # ---------------------------------------------------------------------------
 
 
-class _RecordingTrainer(MonoForwardTrainer if HAS_RAY else object):
+class _RecordingTrainer(MonoForwardTrainer):
     """Captures periodic-inference-hook output for assertion.
 
     The production hook prints the generated ids; tests want a
@@ -296,10 +303,8 @@ class _RecordingTrainer(MonoForwardTrainer if HAS_RAY else object):
         self.captured_generations: list = []
 
     def _maybe_run_inference_hook(self, completed_batches, config):  # type: ignore[override]
-        # Test-only override: fires on every final-hop boundary, with
-        # no wall-clock gating, so the captured count is deterministic.
-        # The production time-gated path is covered by the inline
-        # unit check in ``test_inference_hook_fires_*`` below.
+        # Fires on every final-hop boundary, with no wall-clock gating, so
+        # the captured count is deterministic.
         if self.inference_prompt is None:
             return
         prompt = self.inference_prompt
@@ -373,7 +378,6 @@ def test_inference_hook_fires_during_training(tmp_path):
     )
 
 
-@requires_ray
 def test_generate_outside_active_fit_raises():
     """Calling generate() without a live actor set is a hard error."""
     trainer = MonoForwardTrainer(max_steps=1, cache_dir=None)
@@ -381,7 +385,7 @@ def test_generate_outside_active_fit_raises():
         list(trainer.generate(torch.tensor([[1, 2, 3]]), max_new_tokens=2))
 
 
-class _IdleGenerateTrainer(MonoForwardTrainer if HAS_RAY else object):
+class _IdleGenerateTrainer(MonoForwardTrainer):
     """Runs ``generate`` between training and teardown.
 
     Production ``fit`` clears ``self._actors`` in its ``finally`` block,
@@ -395,10 +399,10 @@ class _IdleGenerateTrainer(MonoForwardTrainer if HAS_RAY else object):
         super().__init__(**kwargs)
         self.idle_tokens: list = []
 
-    def _save_checkpoint(self, model_host, actors):  # type: ignore[override]
+    def _save_checkpoint(self, model_host, actors, **kwargs):  # type: ignore[override]
         prompt = torch.tensor([[7, 8, 9]], dtype=torch.long)
         self.idle_tokens = [t.tolist() for t in self.generate(prompt, max_new_tokens=4)]
-        super()._save_checkpoint(model_host, actors)
+        super()._save_checkpoint(model_host, actors, **kwargs)
 
 
 @requires_ray
@@ -444,12 +448,81 @@ class _StubTrainer:
         return logits
 
 
+# ---------------------------------------------------------------------------
+# multi-raylet scheduling
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_node_cluster():
+    """An in-process Ray cluster with two raylets of 2 CPUs each.
+
+    ``fit`` sizes each actor at cluster_cpus / num_layers, so 4 layers take one
+    CPU apiece and cannot all fit on the head: two must land on the second node.
+    """
+    import ray
+    from ray.cluster_utils import Cluster
+
+    if ray.is_initialized():
+        ray.shutdown()
+    store = 100 * 1024**2
+    cluster = Cluster(
+        initialize_head=True,
+        head_node_args={"num_cpus": 2, "object_store_memory": store},
+    )
+    cluster.add_node(num_cpus=2, object_store_memory=store)
+    cluster.wait_for_nodes()
+    yield cluster
+    if ray.is_initialized():
+        ray.shutdown()
+    cluster.shutdown()
+
+
+class _PlacementTrainer(MonoForwardTrainer):
+    """Records the node each layer actor runs on, while the actors are alive."""
+
+    def _save_checkpoint(self, model_host, actors, **kwargs):  # type: ignore[override]
+        import ray
+
+        self.actor_nodes = ray.get(
+            [
+                actor.__ray_call__.remote(
+                    lambda _self: ray.get_runtime_context().get_node_id()
+                )
+                for actor in actors
+            ]
+        )
+        self.cluster_nodes = {n["NodeID"] for n in ray.nodes() if n["Alive"]}
+        super()._save_checkpoint(model_host, actors, **kwargs)
+
+
+@requires_ray
+def test_training_spans_two_raylets_and_writes_a_checkpoint(two_node_cluster, tmp_path):
+    """Layer actors spread across both raylets, train, and checkpoint."""
+    torch.manual_seed(0)
+    config = _mf_config(num_layers=4)
+    model = PraxisForCausalLM(config)
+    dataset = _FixedBatchDataset(
+        vocab_size=config.vocab_size, batch_size=2, seq_len=16, seed=1
+    )
+    trainer = _PlacementTrainer(
+        max_steps=8,
+        log_every_n_steps=8,
+        cache_dir=str(tmp_path),
+        ray_address=two_node_cluster.address,
+    )
+    result = trainer.fit(model, _SyntheticDataModule(dataset))
+
+    assert result["completed_batches"] == 8
+    assert (tmp_path / "mono_forward.pt").exists()
+    assert len(trainer.cluster_nodes) == 2
+    assert set(trainer.actor_nodes) == trainer.cluster_nodes, trainer.actor_nodes
+
+
 def test_mono_forward_face_reports_a_device_with_no_parameters_of_its_own():
     """`PreTrainedModel.device` walks `parameters()`, and this module has none -
     the weights are on the actors. Left inherited it raised StopIteration the
     first time the backend asked where to put a prompt."""
-    from praxis.trainers.mono_forward.hf_model import MonoForwardLM
-
     lm = MonoForwardLM(_StubTrainer())
     assert list(lm.parameters()) == []
     assert lm.device == torch.device("cpu")
@@ -461,80 +534,12 @@ def test_mono_forward_face_reports_a_device_with_no_parameters_of_its_own():
 def test_mono_forward_face_always_forwards_the_whole_prefix():
     """Prefill-every-step: the actors hold no KV cache, so a cache-shortened
     tail would feed them a one-token sequence and generate from nothing."""
-    from praxis.trainers.mono_forward.hf_model import MonoForwardLM
-
     trainer = _StubTrainer()
     lm = MonoForwardLM(trainer)
     ids = torch.tensor([[1, 2, 3, 4]])
     prepared = lm.prepare_inputs_for_generation(ids, past_key_values=object())
     assert torch.equal(prepared["input_ids"], ids)
     assert prepared["use_cache"] is False
-
-
-# ---------------------------------------------------------------------------
-# In-process backend (no Ray). These run anywhere - the whole point of the
-# in-process backend is that it has zero Ray dependency.
-# ---------------------------------------------------------------------------
-
-
-def test_inprocess_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
-    """End-to-end smoke for the in-process backend.
-
-    Mirrors :func:`test_fit_reduces_loss_and_checkpoint_roundtrips` for
-    the Ray path: training reduces loss, a structured checkpoint lands on
-    disk, and reloading the model_state_dict into a fresh
-    ``PraxisForCausalLM`` reproduces the trained-model logits exactly.
-    """
-    torch.manual_seed(0)
-    config = _mf_config(num_layers=2)
-    model = PraxisForCausalLM(config)
-
-    dataset = _FixedBatchDataset(
-        vocab_size=config.vocab_size, batch_size=2, seq_len=16, seed=1
-    )
-    trainer = InProcessMonoForwardTrainer(
-        max_steps=20,
-        log_every_n_steps=10,
-        cache_dir=str(tmp_path),
-        device="cpu",
-    )
-    result = trainer.fit(model, _SyntheticDataModule(dataset))
-
-    assert result["steps"] == 20
-    assert result["final_loss"] < result["first_loss"], (
-        f"In-process MF did not reduce loss "
-        f"(start={result['first_loss']:.4f}, end={result['final_loss']:.4f})"
-    )
-
-    checkpoint_path = tmp_path / "mono_forward.pt"
-    assert checkpoint_path.exists()
-
-    model.eval()
-    probe = torch.randint(
-        0, config.vocab_size, (1, 8), generator=torch.Generator().manual_seed(42)
-    )
-    with torch.no_grad():
-        trained_logits = model(input_ids=probe).logits.detach().clone()
-
-    reloaded = PraxisForCausalLM(_mf_config(num_layers=2))
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    assert "model_state_dict" in checkpoint
-    assert "completed_batches" in checkpoint
-    assert "projection_states" in checkpoint
-    state = checkpoint["model_state_dict"]
-    _missing, unexpected = reloaded.load_state_dict(state, strict=False)
-    assert not unexpected, f"unexpected keys in MF checkpoint: {unexpected}"
-
-    reloaded.eval()
-    with torch.no_grad():
-        reloaded_logits = reloaded(input_ids=probe).logits
-    torch.testing.assert_close(
-        reloaded_logits,
-        trained_logits,
-        rtol=1e-5,
-        atol=1e-5,
-        msg="MF in-process checkpoint logits do not match reloaded vanilla model",
-    )
 
 
 def test_inprocess_recurrent_depth_routes_through_layers():

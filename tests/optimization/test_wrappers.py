@@ -1,4 +1,4 @@
-"""The ``wrappers`` registry, SequentialWrapper, and the GatedScheduleFree optimizer."""
+"""SequentialWrapper: folding registry wrappers onto a base optimizer in order."""
 
 import torch
 import torch.nn as nn

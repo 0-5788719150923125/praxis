@@ -528,16 +528,12 @@ def test_payload_is_json_serialisable_end_to_end():
 # optional telemetry into a fatal error.
 
 
-def test_profiler_quiet_logs_survives_a_closed_stdout():
+def test_profiler_quiet_logs_survives_a_closed_stdout(monkeypatch):
     """The fd-level redirect is the point; a broken sys.stdout must not raise."""
     from praxis.metrics.compute import _quiet_native_logs
 
-    original = sys.stdout
     closed = io.StringIO()
     closed.close()
-    sys.stdout = closed
-    try:
-        with _quiet_native_logs():
-            pass  # must not raise
-    finally:
-        sys.stdout = original
+    monkeypatch.setattr(sys, "stdout", closed)
+    with _quiet_native_logs():
+        pass  # must not raise

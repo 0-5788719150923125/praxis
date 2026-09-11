@@ -4,7 +4,6 @@ import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import nn
 
 from praxis.heads import HaloHead
 from praxis.heads.halo import HaloClassifier
@@ -49,28 +48,37 @@ def test_composite_exceeds_plain_ce():
     loss_fn, clf, embeddings, logits, labels = _composite_setup()
     loss = loss_fn(logits=logits, labels=labels, embeddings=embeddings, classifier=clf)
     ce = F.cross_entropy(logits.reshape(-1, 32), labels.reshape(-1))
-    assert float(loss) > float(ce)
+    assert loss.item() > ce.item()
 
 
 def test_composite_respects_ignore_index_and_weights():
+    """Perturbing the -100 column and the zero-weight column changes nothing;
+    perturbing a live column does."""
     loss_fn, clf, embeddings, logits, labels = _composite_setup()
     labels[:, 0] = -100
     weights = torch.ones_like(labels, dtype=torch.float32)
     weights[:, 1] = 0.0
-    loss = loss_fn(
-        logits=logits,
-        labels=labels,
-        embeddings=embeddings,
-        classifier=clf,
-        loss_weights=weights,
-    )
-    assert torch.isfinite(loss)
+
+    def score(col=None):
+        e, l = embeddings.detach().clone(), logits.detach().clone()
+        if col is not None:
+            e[:, col] += 5.0 * torch.randn_like(e[:, col])
+            l[:, col] += 5.0 * torch.randn_like(l[:, col])
+        return loss_fn(
+            logits=l, labels=labels, embeddings=e, classifier=clf, loss_weights=weights
+        ).item()
+
+    base = score()
+    assert math.isfinite(base)
+    assert score(0) == pytest.approx(base, rel=1e-6)
+    assert score(1) == pytest.approx(base, rel=1e-6)
+    assert score(2) != pytest.approx(base, rel=1e-3)
 
 
 # ── HALOLoss: legacy side-loss mode ──────────────────────────────────────
 
 
-def test_legacy_linear_classifier_still_works():
+def test_legacy_linear_classifier_trains():
     torch.manual_seed(0)
     H, V = 16, 32
     classifier = nn.Linear(H, V)

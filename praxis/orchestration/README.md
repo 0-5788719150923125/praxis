@@ -93,7 +93,7 @@ out = pool.infer(acts)          # sample 3, mix by standing wave
 Done: the pool, experts, mixing registry, capacity reporting wired to both
 dashboards, `--orchestration-type` profile registry, Node sidecar + Python
 proxy, the `ExpertPoolCallback` that drives it during training, tests
-(`tests/test_orchestration.py`). Wired into `experiments/calm-c.yml`
+(`tests/orchestration/`). Wired into `experiments/calm-c.yml`
 (`orchestration_type: swarm`).
 
 Next (transport): a `RemoteExpert` subclass that forwards `forward`/`train_step`

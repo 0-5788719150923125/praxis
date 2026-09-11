@@ -1,7 +1,12 @@
+"""Sweep over the decoders registry.
+
+Every (decoder_type, block_type) pair runs once. The other axes are assigned
+round-robin over the pairs, so every controller, residual, hidden size and
+layer count is hit without building the full product. Routers are not an
+axis here: the causality sweep in tests/test_modeling.py builds every router.
+"""
+
 import itertools
-import os
-import random
-from typing import List
 
 import pytest
 import torch
@@ -9,81 +14,57 @@ import torch
 from praxis import PraxisConfig, registry
 from praxis.containers import LossContainer
 
-TEST_PARAMS = {
-    "debug": [True, False],
-    "hidden_size": [64, 128],
-    "num_heads": [2],
-    "mod": list(registry.namespace("routers").keys()),
-    "depth": [3],
-    "num_experts": [3, 5],
-    "decoder_type": list(registry.namespace("decoders").keys()),
-    "block_type": list(registry.namespace("blocks").keys()),
-    "controller_type": list(registry.namespace("controllers").keys()),
-    "residual_type": list(registry.namespace("residuals").keys()),
-}
-PARAM_KEYS = list(TEST_PARAMS.keys())
-
-# Full Cartesian product is ~34k cases; sample a stratified subset so every
-# (decoder_type, block_type) pair still gets coverage but the suite finishes
-# in seconds. Override with PRAXIS_DECODER_FULL=1 to run the full grid.
-SAMPLES_PER_PAIR = int(os.environ.get("PRAXIS_DECODER_SAMPLES", "2"))
-SAMPLE_SEED = 0xDEC0
+DECODERS = list(registry.namespace("decoders"))
+BLOCKS = list(registry.namespace("blocks"))
+CONTROLLERS = list(registry.namespace("controllers"))
+RESIDUALS = list(registry.namespace("residuals"))
+HIDDEN_SIZES = [64, 128]
+# Shuffling controllers draw depth layers without replacement: keep >= depth.
+NUM_LAYERS = [3, 5]
 
 
-def get_decoder_configs() -> List[PraxisConfig]:
-    """Generate valid configurations."""
-    param_value_lists = [TEST_PARAMS[key] for key in PARAM_KEYS]
-    configs = []
-    for combo in itertools.product(*param_value_lists):
-        if combo[PARAM_KEYS.index("block_type")] != "mru":
-            params = dict(zip(PARAM_KEYS, combo))
-            # Set num_layers to match num_experts for these tests
-            params["num_layers"] = params["num_experts"]
-            configs.append(PraxisConfig(**params))
-    return configs
+def _cases():
+    cases = []
+    for i, (decoder, block) in enumerate(itertools.product(DECODERS, BLOCKS)):
+        params = dict(
+            decoder_type=decoder,
+            block_type=block,
+            controller_type=CONTROLLERS[i % len(CONTROLLERS)],
+            residual_type=RESIDUALS[i % len(RESIDUALS)],
+            hidden_size=HIDDEN_SIZES[i % len(HIDDEN_SIZES)],
+            num_layers=NUM_LAYERS[(i // 2) % len(NUM_LAYERS)],
+        )
+        cases.append(pytest.param(params, id="-".join(str(v) for v in params.values())))
+    return cases
 
 
-def _sampled_decoder_configs() -> List[PraxisConfig]:
-    """Stratified sample: SAMPLES_PER_PAIR configs per (decoder_type, block_type).
-
-    Set PRAXIS_DECODER_FULL=1 to fall back to the full Cartesian product.
-    """
-    configs = get_decoder_configs()
-    if os.environ.get("PRAXIS_DECODER_FULL"):
-        return configs
-
-    buckets: dict = {}
-    for cfg in configs:
-        buckets.setdefault((cfg.decoder_type, cfg.block_type), []).append(cfg)
-
-    rng = random.Random(SAMPLE_SEED)
-    sampled = []
-    for key in sorted(buckets):
-        pool = buckets[key]
-        rng.shuffle(pool)
-        sampled.extend(pool[:SAMPLES_PER_PAIR])
-    return sampled
+CASES = _cases()
 
 
-@pytest.fixture(params=_sampled_decoder_configs())
-def module_setup(request):
-    config = request.param
-    decoder = registry.namespace("decoders").get(config.decoder_type)(config)
-    return decoder, config.hidden_size, config.num_experts
+def test_the_round_robin_covers_every_axis_value():
+    seen = [c.values[0] for c in CASES]
+    for key, values in (
+        ("controller_type", CONTROLLERS),
+        ("residual_type", RESIDUALS),
+        ("hidden_size", HIDDEN_SIZES),
+        ("num_layers", NUM_LAYERS),
+    ):
+        assert {p[key] for p in seen} == set(values), key
 
 
-def test_forward_pass(module_setup):
-    """Test forward pass with valid parameter combinations."""
-    decoder, hidden_size, num_experts = module_setup
-    batch_size = 4
-    seq_len = 16
+@pytest.mark.parametrize("params", CASES)
+def test_forward_pass(params):
+    extra = {"num_heads": 2}
+    if params["block_type"] == "mru":
+        # mru's state head (hidden_size / num_heads) must be a perfect square.
+        hidden = params["hidden_size"]
+        extra = {"num_heads": hidden // 64, "embed_size": hidden}
+    config = PraxisConfig(depth=3, num_experts=params["num_layers"], **params, **extra)
+    decoder = registry.lookup("decoders", config.decoder_type)(config)
+    inputs = torch.randn(4, 16, config.hidden_size)
+    block_ids = torch.full((4, 16), 100, dtype=torch.long)
 
-    # Create input tensor
-    inputs = torch.randn(batch_size, seq_len, hidden_size)
-    block_ids = torch.full(size=(batch_size, seq_len), fill_value=100, dtype=torch.long)
-
-    # Run forward pass
-    hidden_states, past_key_values, current_state, aux_loss = decoder(
+    hidden_states, _, _, _ = decoder(
         hidden_states=inputs,
         attention_mask=None,
         past_key_values=None,
@@ -91,8 +72,5 @@ def test_forward_pass(module_setup):
         block_ids=block_ids,
         losses=LossContainer(),
     )
-
-    # Verify output shape
     assert hidden_states.shape == inputs.shape
-    # Verify correct number of layers/experts
-    assert num_experts == len(decoder.locals)
+    assert len(decoder.locals) == config.num_layers

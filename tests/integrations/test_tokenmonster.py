@@ -29,11 +29,22 @@ def _load_integration():
 
 @pytest.fixture(scope="module")
 def tm():
-    module = _load_integration()
     # Avoid network in CI: only run when the vocab is already cached.
     if not (REPO_ROOT / "build/tokenmonster" / f"{VOCAB_NAME}.vocab").exists():
         pytest.skip("tokenmonster vocab not cached locally")
-    return module
+    from praxis.tokenizers import VOCAB_SIZE_CHOICES
+
+    # Importing the integration registers its tokenizers and vocab sizes
+    # process-wide; undo that when the module is done.
+    tokenizers = registry.namespace("tokenizers")
+    saved_keys, saved_sizes = set(tokenizers), list(VOCAB_SIZE_CHOICES)
+    loaded_here = "staging_tokenmonster" not in sys.modules
+    yield _load_integration()
+    for key in set(tokenizers) - saved_keys:
+        del tokenizers[key]
+    VOCAB_SIZE_CHOICES[:] = saved_sizes
+    if loaded_here:
+        sys.modules.pop("staging_tokenmonster", None)
 
 
 @pytest.fixture(scope="module")

@@ -1,7 +1,7 @@
 # The acuity half of the limits discussion, for runs whose dictionary is SPLIT
 # across two coordinate systems. Mutually exclusive with -ratio (order 28),
 # which states the same cost as unpaid. Every number here is measured in
-# tests/test_kaleidoscope.py rather than derived.
+# tests/attention/test_kaleidoscope.py rather than derived.
 section: harmonic
 order: 28
 requires:

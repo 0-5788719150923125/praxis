@@ -50,9 +50,7 @@ def test_codec_mode_resolves_as_expected(experiment, expected_mode):
 @pytest.mark.parametrize("section", EXCLUSIVE_SECTIONS)
 def test_exactly_one_variant_per_exclusive_section(experiment, section):
     active = [
-        f.id
-        for f in active_fragments(_config(experiment))
-        if f.section == section
+        f.id for f in active_fragments(_config(experiment)) if f.section == section
     ]
     assert (
         len(active) == 1

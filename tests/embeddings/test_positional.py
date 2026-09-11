@@ -7,9 +7,7 @@ from praxis import PraxisConfig
 from praxis.embeddings.positional import PositionalEmbedding
 
 
-@pytest.mark.parametrize(
-    "embed,hidden", [(64, 128), (32, 256), (512, 64), (128, 128)]
-)
+@pytest.mark.parametrize("embed,hidden", [(64, 128), (32, 256), (512, 64), (128, 128)])
 def test_positional_embedding_projects_to_hidden_and_trains(
     embedding_config, embed, hidden
 ):

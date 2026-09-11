@@ -8,6 +8,7 @@ file and killed abstractinator-m at its first step.
 
 import sys
 
+
 def test_capture_model_architecture_leaves_stdout_alone():
     """The spec payload must render the model without touching the global."""
     from praxis.web.spec_data import _capture_model_architecture

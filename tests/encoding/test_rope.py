@@ -8,9 +8,7 @@ from praxis.encoding.rope import RoPE
 
 def test_scores_are_invariant_to_a_shared_offset():
     """Shifting Q and K by the same offset leaves every q.k score unchanged."""
-    enc = RoPE(
-        PraxisConfig(hidden_size=64, num_heads=4, num_queries=1, block_size=256)
-    )
+    enc = RoPE(PraxisConfig(hidden_size=64, num_heads=4, num_queries=1, block_size=256))
     torch.manual_seed(0)
     q = torch.randn(1, 4, 8, 16)
     k = torch.randn(1, 4, 8, 16)

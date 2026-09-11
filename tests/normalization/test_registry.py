@@ -38,6 +38,6 @@ def test_each_mode_normalizes_exactly_the_positions_the_entry_fills(key):
 
     expected = {"pre": pre, "post": post, "direct": pre or post, "none": False}
     for mode, normalizes in expected.items():
-        assert torch.equal(norm(x, mode=mode), x) is not normalizes, (
-            f"{key} mode={mode} should {'' if normalizes else 'not '}normalize"
-        )
+        assert (
+            torch.equal(norm(x, mode=mode), x) is not normalizes
+        ), f"{key} mode={mode} should {'' if normalizes else 'not '}normalize"

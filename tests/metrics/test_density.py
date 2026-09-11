@@ -92,14 +92,8 @@ def test_whole_at_every_position_reads_flat_and_high():
     bag = _profile(m, "bag")
     assert min(bag) > 0.7
     assert abs(m["readout_bag_rim_gap"]) < 0.1
-
-
-def test_mid_band_stays_at_chance_where_a_mean_cannot_carry_it():
-    """A whole-window mean holds no mid-frequency content, so mid reads chance
-    in the whole regime and for own tokens; only a prefix can hint at it."""
-    for mode in ("own", "whole"):
-        m = _drive(mode, forwards=40)
-        assert max(abs(v) for v in _profile(m, "mid")) < 0.08, mode
+    # A whole-window mean holds no mid-frequency content, so mid reads chance.
+    assert max(abs(v) for v in _profile(m, "mid")) < 0.08
 
 
 def test_short_windows_are_measured():

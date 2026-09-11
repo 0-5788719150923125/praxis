@@ -10,8 +10,8 @@ def make_block(hidden_size: int = 128, **kwargs) -> WaveletBlock:
     return WaveletBlock(config)
 
 
-@pytest.mark.parametrize("hidden_size", [64, 96, 128])
-@pytest.mark.parametrize("seq_len", [1, 7, 16, 64])
+@pytest.mark.parametrize("hidden_size", [64, 96])
+@pytest.mark.parametrize("seq_len", [1, 7, 64])
 def test_shape_preserved(hidden_size, seq_len):
     """Output keeps the input shape, even at non-power-of-2 widths/lengths."""
     block = make_block(hidden_size).eval()

@@ -1,9 +1,18 @@
-"""GNS batch governor: estimator math, tier control, Lightning wiring."""
+"""Sweeps over the ``governors`` registry."""
 
 import pytest
 
 from praxis import registry
 from praxis.callbacks.lightning.governor import GNSBatchGovernor
+from praxis.data.batch_schedule import BatchSchedule
+
+
+@pytest.fixture(autouse=True)
+def _clean_schedule():
+    """The schedule is class-level state a governor writes on construction."""
+    BatchSchedule.reset()
+    yield
+    BatchSchedule.reset()
 
 
 def test_registry_builds_callback_with_ceiling():

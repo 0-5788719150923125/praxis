@@ -1,4 +1,4 @@
-from itertools import product
+"""Sweeps over every entry of the ``encoders`` registry."""
 
 import pytest
 import torch
@@ -6,25 +6,13 @@ import torch
 from praxis import registry
 from praxis.modeling import resolve_head_type
 
-# Define test parameters
-MODULE_CLASSES = list(registry.namespace("encoders").values())
-META_MODES = [
-    ["space", "ngram"],
-    ["space"],
-    # ["entropy"] # currently fails
-]
-
-# Create parameter combinations
-MODULE_PARAMS = list(product(MODULE_CLASSES, META_MODES))
+ENCODER_KEYS = sorted(registry.namespace("encoders"))
 
 
-@pytest.fixture(params=MODULE_PARAMS)
+@pytest.fixture(params=ENCODER_KEYS)
 def module_setup(request, config):
-    module_class, meta_mode = request.param
-    # Use the update method from our existing config
-    setattr(config, "meta", meta_mode)
     setattr(config, "device_map", "cpu")
-    module = module_class(config)
+    module = registry.lookup("encoders", request.param)(config)
     # Mirror PraxisModel: build and inject input embeddings from the registry
     # for encoders that name an embedding profile.
     profile = getattr(module, "embedding_profile", None)
@@ -45,10 +33,11 @@ def module_setup(request, config):
 
 
 def test_forward_pass(module_setup):
-    """Test using parametrized module and dimensions."""
+    """Every listed encoder encodes and decodes back to one feature (or logit)
+    vector per input token."""
     module, config = module_setup
     # Create sample input
-    batch_size = 32
+    batch_size = 2
     seq_len = 16  # Should be less than max_seq_len (512)
     # For ByteLatent encoder, vocab_size is 260 (256 bytes + 4 special tokens)
     # Use a smaller value for input_ids to avoid out of bounds
@@ -79,91 +68,6 @@ def test_forward_pass(module_setup):
         out, expected_dim = logits, config.vocab_size
     assert len(out.shape) == 3, "Expected 3D output from decoder"
     assert out.shape == (batch_size, seq_len, expected_dim)
-
-
-# def test_topk_mean_pooling():
-#     """Test the correctness of topk_mean_pooling function."""
-#     # Setup a simple test case
-#     batch_size = 2
-#     seq_len = 6
-#     emb_dim = 2
-#     max_num_patches = 3
-#     k = 2
-
-#     # Create input tensor with known values
-#     h = torch.tensor(
-#         [
-#             # Batch 1
-#             [
-#                 [1.0, 1.0],  # Patch 0
-#                 [2.0, 2.0],  # Patch 0
-#                 [3.0, 3.0],  # Patch 1
-#                 [4.0, 4.0],  # Patch 1
-#                 [5.0, 5.0],  # Patch 2
-#                 [6.0, 6.0],
-#             ],  # Patch 2
-#             # Batch 2
-#             [
-#                 [2.0, 2.0],  # Patch 0
-#                 [4.0, 4.0],  # Patch 0
-#                 [6.0, 6.0],  # Patch 1
-#                 [8.0, 8.0],  # Patch 1
-#                 [10.0, 10.0],  # Patch 2
-#                 [12.0, 12.0],
-#             ],  # Patch 2
-#         ],
-#         dtype=torch.float32,
-#     )
-
-#     # Define patch assignments
-#     patch_ids = torch.tensor(
-#         [
-#             [0, 0, 1, 1, 2, 2],  # Batch 1
-#             [0, 0, 1, 1, 2, 2],  # Batch 2
-#         ],
-#         dtype=torch.long,
-#     )
-
-#     # Call the function
-#     result = topk_mean_pooling(h, max_num_patches, k, patch_ids)
-
-#     # Expected results (mean of top-k values in each patch):
-#     # Batch 1:
-#     # - Patch 0: mean of [1.0, 2.0] = [1.5, 1.5]
-#     # - Patch 1: mean of [3.0, 4.0] = [3.5, 3.5]
-#     # - Patch 2: mean of [5.0, 6.0] = [5.5, 5.5]
-#     # Batch 2:
-#     # - Patch 0: mean of [2.0, 4.0] = [3.0, 3.0]
-#     # - Patch 1: mean of [6.0, 8.0] = [7.0, 7.0]
-#     # - Patch 2: mean of [10.0, 12.0] = [11.0, 11.0]
-#     expected = torch.tensor(
-#         [[[1.5, 1.5], [3.5, 3.5], [5.5, 5.5]], [[3.0, 3.0], [7.0, 7.0], [11.0, 11.0]]],
-#         dtype=torch.float32,
-#     )
-
-#     # Verify results
-#     assert torch.allclose(result, expected, rtol=1e-5), (
-#         f"Mismatch in topk_mean_pooling results.\n"
-#         f"Got:\n{result}\n"
-#         f"Expected:\n{expected}"
-#     )
-
-#     # Add variable patch size test
-#     patch_ids_var = torch.tensor(
-#         [
-#             [0, 0, 0, 1, 1, 2],  # Batch 1: patches of size 3,2,1
-#             [0, 1, 1, 1, 2, 2],  # Batch 2: patches of size 1,3,2
-#         ],
-#         dtype=torch.long,
-#     )
-
-#     result_var = topk_mean_pooling(h, max_num_patches, k, patch_ids_var)
-
-#     # Verify shape
-#     assert result_var.shape == (batch_size, max_num_patches, emb_dim), (
-#         f"Incorrect output shape for variable patch sizes. "
-#         f"Got {result_var.shape}, expected {(batch_size, max_num_patches, emb_dim)}"
-#     )
 
 
 # ------------------------------------------------------- registry names

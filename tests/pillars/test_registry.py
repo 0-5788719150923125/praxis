@@ -21,7 +21,9 @@ def test_every_projection_renders(name, monkeypatch):
 
 
 def test_the_named_threads_are_discovered():
-    assert {"blind_watchmaking", "good_get_gooder"} <= set(registry.namespace("threads"))
+    assert {"blind_watchmaking", "good_get_gooder"} <= set(
+        registry.namespace("threads")
+    )
 
 
 @pytest.mark.parametrize("key", list(registry.namespace("threads")))

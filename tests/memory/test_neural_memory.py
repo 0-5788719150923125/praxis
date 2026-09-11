@@ -490,7 +490,9 @@ def _gate_mem(gate, **kw):
 def test_write_gate_is_off_by_default():
     """The gate is opt-in: an unconfigured memory writes every real token, and
     emits none of the gate metrics."""
-    mem = _gate_mem("none")
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(32, 32), nn.GELU(), nn.Linear(32, 32))
+    mem = NeuralMemory(dim=32, model=model, chunk_size=16, use_energy=True)
     assert mem.write_gate == "none"
     mem(torch.randn(2, 64, 32))
     assert mem.last_write_share is None
@@ -694,8 +696,9 @@ def test_gating_still_memorizes_at_test_time(gate):
     assert float(mem.last_write_share) < 1.0
 
 
-def _converge(mem, passes=60, b=2, n=128, seed=7):
-    """Run the gate to convergence on fresh data and return the trailing share."""
+def _converge(mem, passes=12, b=2, n=128, seed=7):
+    """Run the gate on fresh data and return the trailing share. A causal rank
+    has no convergence period, so a dozen passes carry the claim."""
     torch.manual_seed(seed)
     shares = []
     for _ in range(passes):

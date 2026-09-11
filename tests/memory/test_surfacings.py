@@ -185,24 +185,37 @@ def test_standard_mode_keeps_the_outer_loss_connected_to_the_memory_net():
     assert (s_hi / s_lo) > 2.0 * (e_hi / e_lo)
 
 
-def test_standard_mode_supports_the_predictive_target_and_stop_grads_it():
+def test_standard_mode_supports_the_predictive_target_and_stop_grads_it(monkeypatch):
     """The predictive (NextLat) objective is no longer gated on energy mode, but
     its target MUST stay stop-gradded: a differentiable next-latent target lets
     the encoder minimize surprise by collapsing the stream rather than by
-    memorizing it."""
+    memorizing it. The recon target (W_V, trained in the outer loop) is the
+    contrast that shows the spy can see a graph."""
     from praxis.memory import build_memory
 
     mem = build_memory(_mag_block_config("mag_standard"))
     mem.train()
     assert mem.mem.predictive and not mem.mem.use_energy
+    targets = []
+    real = mem.mem._surprise_grads
+
+    def spy(weights, keys, values, lr):
+        targets.append(values.requires_grad)
+        return real(weights, keys, values, lr)
+
+    monkeypatch.setattr(mem.mem, "_surprise_grads", spy)
     x = torch.randn(2, 32, 64)
     out, _ = mem(x, x, None, current_depth=0)
     out.pow(2).mean().backward()
     # It still trains (standard mode's store projections receive gradient)...
     assert mem.mem.to_keys.weight.grad is not None
     # ...and the target carries no graph.
-    tgt = mem.mem._shift_targets(mem.mem.store_norm(x), 32).detach()
-    assert not tgt.requires_grad
+    assert targets and not any(targets)
+
+    targets.clear()
+    mem.mem.predictive = False
+    mem(x, x, None, current_depth=0)
+    assert targets and all(targets)
 
 
 def test_static_control_matches_its_live_twin_except_for_the_write():

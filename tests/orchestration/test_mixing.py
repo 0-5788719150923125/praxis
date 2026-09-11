@@ -1,27 +1,31 @@
-"""Smoke tests for praxis.orchestration: the remote-expert pooling layer.
+"""Mixing strategies (praxis/orchestration/mixing.py), which declares the
+``mixing`` registry namespace: each reduces ``[E, ...]`` expert outputs to one."""
 
-Uses trivially small in-process experts (LocalExpert wrapping a plain Linear
-block) so the pool's mechanics - capacity reporting, non-blocking detached
-training, stochastic-sampled inference, and the mixing strategies - are
-exercised without any transport or real model.
-"""
-
+import pytest
 import torch
 
+from praxis import registry
 from praxis.orchestration import build_mixer
 from praxis.orchestration.mixing import _sample, _wave
 
 VOCAB = 16
 
 
-def test_mixers_shapes_and_weighting():
+@pytest.mark.parametrize("key", list(registry.namespace("mixing")))
+def test_every_mixer_reduces_the_expert_axis(key):
     outputs = torch.randn(5, 2, 6, VOCAB)
-    assert build_mixer("mean")(outputs).shape == (2, 6, VOCAB)
-    assert build_mixer("vote")(outputs).shape == (2, 6, VOCAB)
-    assert _wave(outputs, freq=1.0).shape == (2, 6, VOCAB)
-    # sample keeps >=1 expert and averages
+    mixed = build_mixer(key)(outputs)
+    assert mixed.shape == (2, 6, VOCAB)
+    assert torch.isfinite(mixed).all()
+
+
+def test_mean_mixer_is_the_mean_and_sample_keeps_a_subset():
+    outputs = torch.randn(5, 2, 6, VOCAB)
+    torch.testing.assert_close(build_mixer("mean")(outputs), outputs.mean(dim=0))
     g = torch.Generator().manual_seed(1)
-    assert _sample(outputs, keep=0.4, generator=g).shape == (2, 6, VOCAB)
+    kept = _sample(outputs, keep=0.4, generator=g)
+    assert kept.shape == (2, 6, VOCAB)
+    assert not torch.allclose(kept, outputs.mean(dim=0)), "sample kept every expert"
 
 
 def test_wave_single_expert_is_identity():

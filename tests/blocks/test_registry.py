@@ -1,65 +1,47 @@
+"""Sweep over the blocks registry: every block runs forward and backward."""
+
 import itertools
-from typing import List
+import math
 
 import pytest
 import torch
 
 from praxis import PraxisConfig, registry
 
-MODULE_CLASSES = list(registry.namespace("blocks").keys())
-MODULE_CLASSES.remove("mru")
-
-# Define test parameters in a more structured way
-TEST_PARAMS = {
-    "hidden_sizes": [64, 128, 256],
-    "num_heads": [1, 2, 3],
-}
+BLOCK_KEYS = list(registry.namespace("blocks"))
+HIDDEN_SIZES = [64, 128]
+NUM_HEADS = [1, 2]
+# mru's state head (hidden_size / num_heads) must be a perfect square, and it
+# needs embed_size == hidden_size.
+SQUARE_BLOCKS = {"mru"}
 
 
-def get_block_configs() -> List[PraxisConfig]:
-    """Generate valid attention configurations using itertools.product."""
-    return [
-        PraxisConfig(hidden_size=hidden_size, num_heads=num_heads)
-        for hidden_size, num_heads in itertools.product(
-            TEST_PARAMS["hidden_sizes"], TEST_PARAMS["num_heads"]
-        )
-    ]
+def _square(hidden_size, num_heads):
+    return math.isqrt(hidden_size // num_heads) ** 2 == hidden_size // num_heads
 
 
-@pytest.fixture(params=list(itertools.product(MODULE_CLASSES, get_block_configs())))
-def module_setup(request, config):
-    """
-    Parametrized fixture that provides module and its configuration.
-
-    Args:
-        request: pytest request object containing the parameter tuple
-        config: the base config fixture from conftest.py
-
-    Returns:
-        tuple: (module instance, config)
-    """
-    module_class, block_config = request.param
-
-    setattr(config, "hidden_size", block_config.hidden_size)
-    setattr(config, "num_heads", block_config.num_heads)
-
-    module = registry.namespace("blocks").get(module_class)(config)
-    return module, block_config
+CASES = [
+    (key, h, n)
+    for key, h, n in itertools.product(BLOCK_KEYS, HIDDEN_SIZES, NUM_HEADS)
+    if key not in SQUARE_BLOCKS or _square(h, n)
+]
 
 
-def test_forward_pass(module_setup):
-    """Test forward pass with valid parameter combinations."""
-    module, block_config = module_setup
-    batch_size = 32
-    seq_len = 16
+def test_every_block_is_swept():
+    assert {key for key, _, _ in CASES} == set(BLOCK_KEYS)
 
-    # Create input tensor
-    x = torch.randn(batch_size, seq_len, block_config.hidden_size)
 
-    # Run forward pass
-    output, layer_kv, prev_state, aux_loss = module(
+@pytest.mark.parametrize("key,hidden_size,num_heads", CASES)
+def test_forward_and_backward(key, hidden_size, num_heads):
+    extra = {"embed_size": hidden_size} if key in SQUARE_BLOCKS else {}
+    config = PraxisConfig(hidden_size=hidden_size, num_heads=num_heads, **extra)
+    module = registry.lookup("blocks", key)(config)
+
+    x = torch.randn(4, 16, hidden_size, requires_grad=True)
+    output, _, _, _ = module(
         x, attention_mask=None, router_weights=None, current_state=None, current_depth=0
     )
+    assert output.shape == x.shape
 
-    # Verify output shape
-    assert output.shape == (batch_size, seq_len, block_config.hidden_size)
+    output.sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()

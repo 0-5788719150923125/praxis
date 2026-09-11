@@ -6,9 +6,7 @@ import torch
 from praxis.embeddings.projected import ProjectedEmbedding
 
 
-@pytest.mark.parametrize(
-    "embed,hidden", [(64, 256), (128, 128), (32, 128), (1024, 32)]
-)
+@pytest.mark.parametrize("embed,hidden", [(64, 256), (128, 128), (32, 128), (1024, 32)])
 def test_projection_exists_iff_the_widths_differ(embedding_config, embed, hidden):
     config = embedding_config(embed_size=embed, hidden_size=hidden)
     embedding = ProjectedEmbedding(config)

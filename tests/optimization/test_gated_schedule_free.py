@@ -1,4 +1,4 @@
-"""The ``wrappers`` registry, SequentialWrapper, and the GatedScheduleFree optimizer."""
+"""GatedScheduleFree: schedule-free averaging with a per-coordinate gradient-SNR gate."""
 
 import torch
 import torch.nn as nn
@@ -56,14 +56,10 @@ def test_gate_stays_in_unit_interval():
     assert 0.0 <= opt.gate_mean <= 1.0
 
 
-def test_gate_one_recovers_schedulefree_averaging():
-    # With the gate pinned to 1, the gated averaging is plain schedule-free
-    # averaging: x tracks the iterate exactly as the scalar method would.
+def test_deterministic_gradient_opens_the_gate():
     model, X, Y = _quadratic_problem()
     opt = GatedScheduleFree(torch.optim.SGD(model.parameters(), lr=0.05), momentum=0.9)
     opt.train()
-    # Force gate to 1 by monkeypatching the SNR (consistent gradient => g~1
-    # anyway on this deterministic problem, but pin it to be exact).
     opt.zero_grad()
     ((model(X) - Y) ** 2).mean().backward()
     opt.step()

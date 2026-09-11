@@ -30,7 +30,7 @@ Praxis is organized as 51 registry namespaces. The feature categories below link
 - [Expert mixing](docs/mixing.md) (6)
 - [Feedforward experts](docs/dense.md) (10)
 - [Halting / early exit](docs/halting.md) (4)
-- [Input encoders](docs/encoders.md) (23)
+- [Input encoders](docs/encoders.md) (24)
 - [Layer-routing controllers](docs/controllers.md) (8)
 - [Long-term memory](docs/memory.md) (16)
 - [Loss functions](docs/losses.md) (11)

@@ -1,4 +1,4 @@
-"""The ``wrappers`` registry, SequentialWrapper, and the GatedScheduleFree optimizer."""
+"""WaveScheduleFree: schedule-free averaging gated by a standing wave over the index."""
 
 import torch
 import torch.nn as nn

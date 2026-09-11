@@ -71,6 +71,7 @@ def test_caption_names_the_head_the_run_actually_used():
     reader it was looking at prismatic4's bank. The head name now comes from the
     run's own spec, and falls back to naming no head at all rather than guessing.
     """
+
     def geo(head_type):
         return {
             "name": "abstractinator-n",

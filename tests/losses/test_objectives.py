@@ -63,7 +63,12 @@ def test_require_fails_loudly_rather_than_falling_back():
 def test_regularizers_are_the_terms_that_shape_the_representation():
     o = _terms()
     assert [type(r).__name__ for r in o.regularizers()] == ["ContrastiveIsotropyLoss"]
-    o.reset()  # the unconditional per-forward drop; must reach only those
+    # The unconditional per-forward drop must reach exactly those.
+    reset = []
+    for name, term in o.terms():
+        term.reset = lambda name=name: reset.append(name)
+    o.reset()
+    assert reset == ["contrastive"]
 
 
 def test_metrics_and_descriptions_come_from_every_term():
@@ -75,39 +80,26 @@ def test_metrics_and_descriptions_come_from_every_term():
         keys.update(descs)
     assert "contrastive_loss" in keys
     assert "repr_anisotropy" in keys
+    # And the live values aggregate the same way.
+    o.get("contrastive")(torch.randn(2, 8, 16), None)
+    assert {"contrastive_loss", "repr_anisotropy"} <= set(o.training_metrics())
 
 
 # ── the model wiring ───────────────────────────────────────────────────────
 
 
-def _model(**overrides):
-    from praxis import PraxisConfig
-    from praxis.modeling import PraxisForCausalLM
-
-    cfg = dict(
-        vocab_size=1024,
-        hidden_size=32,
-        embed_size=96,
-        num_heads=4,
-        num_layers=1,
-        depth=2,
-        encoder_type="abstractinator_v0",
-        tokenizer_type="byte_level",
-        decoder_type="sequential",
-        head_type="prismatic5",
-        residual_type="smear",
-        byte_level=True,
-        loss_func="halo",
-        mtp_type="per_depth",
-        mtp_depth=2,
-    )
-    cfg.update(overrides)
-    torch.manual_seed(0)
-    return PraxisForCausalLM(PraxisConfig(**cfg))
+# An abstractinator encoder plus MTP on the shared tiny model, so heads and the
+# MTP stack both declare terms of their own.
+_ENCODER_AND_MTP = dict(
+    encoder_type="abstractinator_v0",
+    byte_level=True,
+    mtp_type="per_depth",
+    mtp_depth=2,
+)
 
 
-def test_the_model_declares_every_term_in_one_place():
-    m = _model()
+def test_the_model_declares_every_term_in_one_place(tiny_model):
+    m = tiny_model(**_ENCODER_AND_MTP)
     names = [name for name, _ in m.criterion.terms()]
     assert names[0] == "main"
     # The terms other modules compute are declared here too, not inline.
@@ -115,10 +107,10 @@ def test_the_model_declares_every_term_in_one_place():
     assert "contrastive" in names
 
 
-def test_a_producer_reads_its_term_back_rather_than_owning_it():
+def test_a_producer_reads_its_term_back_rather_than_owning_it(tiny_model):
     """Held off the producer's module tree, so nothing is printed - or
     checkpointed - twice."""
-    m = _model()
+    m = tiny_model(**_ENCODER_AND_MTP)
     assert m.mtp.criterion is m.criterion.mtp
     assert sum(1 for mod in m.modules() if mod is m.criterion.mtp) == 1
     assert "CrossEntropyLoss" not in repr(m.mtp)
@@ -127,21 +119,28 @@ def test_a_producer_reads_its_term_back_rather_than_owning_it():
     assert clone.mtp.criterion is clone.criterion.mtp
 
 
-def test_a_pre_container_checkpoint_still_resumes():
+def test_a_pre_container_checkpoint_still_resumes(tiny_model):
     """``criterion.*`` for the main term, ``reg.<index>.*`` for the
-    regularizers. Only terms with parameters of their own ever wrote a key."""
-    m = _model(regularizers=["contrastive_isotropy"])
+    regularizers. Only terms with state of their own ever wrote a key: HALO's
+    gamma, and the dissonance dual."""
+    m = tiny_model(regularizers=["dissonance"])
+    with torch.no_grad():
+        m.criterion.dissonance.rho.fill_(-1.25)
     legacy = {}
     for key, value in m.state_dict().items():
         if key.startswith("criterion.main."):
             legacy["criterion." + key[len("criterion.main.") :]] = value
+        elif key.startswith("criterion.dissonance."):
+            legacy["reg.0." + key[len("criterion.dissonance.") :]] = value
         else:
             legacy[key] = value
-    assert "criterion.gamma" in legacy
-    fresh = _model(regularizers=["contrastive_isotropy"])
+    assert "criterion.gamma" in legacy and "reg.0.rho" in legacy
+
+    fresh = tiny_model(regularizers=["dissonance"])
     with torch.no_grad():
         fresh.criterion.main.gamma.fill_(0.0)
     missing, unexpected = fresh.load_state_dict(legacy, strict=False)
     assert not [k for k in missing if k.startswith("criterion")]
     assert not [k for k in unexpected if k.startswith(("criterion", "reg."))]
     assert torch.equal(fresh.criterion.main.gamma, m.criterion.main.gamma)
+    assert float(fresh.criterion.dissonance.rho) == -1.25

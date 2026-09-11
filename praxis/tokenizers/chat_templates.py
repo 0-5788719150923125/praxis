@@ -195,7 +195,7 @@ class ChatFormat:
         Tokenizing segment by segment and concatenating sidesteps offsets
         entirely: each segment's own token count IS its span. The join must be
         byte-identical to what the Jinja template renders, which
-        ``tests/test_chat_formats.py`` asserts for both formats.
+        ``tests/tokenizers/test_chat_templates.py`` asserts for both formats.
         """
         segments: List[Tuple[str, bool]] = []
         if not messages:

@@ -14,6 +14,7 @@ from praxis.transforms.ghost import AUTO_ORDER, pick_algebra
 
 # --- the walker -------------------------------------------------------------
 
+
 def test_ghostify_hits_exactly_the_profiled_targets(toy_model):
     model = toy_model()
     stats = apply_transform(model, "ghost_conv_complex")

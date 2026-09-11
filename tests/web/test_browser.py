@@ -86,7 +86,9 @@ def _open(browser, app_url, **context_args):
     context.route(
         "**/*",
         lambda route: (
-            route.continue_() if route.request.url.startswith(app_url) else route.abort()
+            route.continue_()
+            if route.request.url.startswith(app_url)
+            else route.abort()
         ),
     )
     context.route(
@@ -645,7 +647,10 @@ def test_a_reset_clears_the_text_but_not_the_chips(page, app_url):
             ("gen_reset", {}),
             ("gen_delta", {"text": "it says 42"}),
         ],
-        response={"response": "it says 42", "tools": [{"name": "read_file", "count": 1}]},
+        response={
+            "response": "it says 42",
+            "tools": [{"name": "read_file", "count": 1}],
+        },
     )
     # Measured MID-STREAM, the only place the rule is visible: the response's
     # own tally would restore the chips at the end either way.
@@ -664,10 +669,15 @@ def test_repeated_use_of_one_tool_is_counted_not_repeated(page, app_url):
     _send(
         page,
         app_url,
-        frames=[("gen_tool", {"name": n}) for n in ("read_file", "search", "read_file")],
+        frames=[
+            ("gen_tool", {"name": n}) for n in ("read_file", "search", "read_file")
+        ],
         response={
             "response": "done",
-            "tools": [{"name": "read_file", "count": 2}, {"name": "search", "count": 1}],
+            "tools": [
+                {"name": "read_file", "count": 2},
+                {"name": "search", "count": 1},
+            ],
         },
     )
     # First-use order, and the count only shows past one.

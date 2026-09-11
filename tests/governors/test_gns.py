@@ -1,8 +1,7 @@
-"""GNS batch governor: estimator math, tier control, Lightning wiring."""
+"""GNS governor math (praxis/governors/gns.py): the noise-scale estimator and the tier controller."""
 
 import math
 
-import pytest
 import torch
 
 from praxis.governors.gns import BatchTierController, GradientNoiseEstimator
@@ -93,8 +92,7 @@ def test_controller_regulates_against_delivered_rows():
 def test_controller_hysteresis_prevents_immediate_flap():
     """Moving a tier shifts the reference an octave, so net hysteresis is
     2*deadband - 1. A measurement that just triggered an up-move must not be
-    able to trigger the down-move from the new tier (the 32<->64 flapping
-    observed in abstractinator-f under the old 0.75 deadband)."""
+    able to trigger the down-move from the new tier."""
     ctl = BatchTierController(max_rows=512)
     # Up-threshold of the 32-row tier is the next tier (64 rows).
     assert ctl.desired_rows(32, 63.0) == 32

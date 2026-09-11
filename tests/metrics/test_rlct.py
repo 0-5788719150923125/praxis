@@ -90,7 +90,7 @@ def test_probe_restores_params_and_buffers_exactly():
 
     for n, p in model.named_parameters():
         assert torch.equal(p, before[n]), f"param {n} not restored"
-        assert p.grad is None or torch.count_nonzero(p.grad) == 0 or True
+        assert p.grad is None, f"probe gradient left on {n}"
     assert torch.equal(model.ticks, buf_before), "buffer not restored"
 
 

@@ -79,6 +79,8 @@ AbstractinatorV2 = partial(
     merge="normalized",
 )
 
+AbstractinatorV2Additive = partial(AbstractinatorV2, merge="add")
+
 AbstractinatorV0Avg = partial(AbstractinatorV0, downsampling_method="avg")
 AbstractinatorV0Bank = partial(AbstractinatorV0, vq_codebook_size=None)
 AbstractinatorHarmonicBank = partial(AbstractinatorHarmonic, vq_codebook_size=None)
@@ -344,6 +346,14 @@ registry.declare(
                 "leaves the commitment loss no scale to shrink, and with the byte path "
                 "and the trunk each RMS-normalized before they are added, so neither "
                 "can outgrow the other."
+            ),
+        ),
+        "abstractinator_v2_additive": Entry(
+            AbstractinatorV2Additive,
+            (
+                "abstractinator_v2 with BLT's plain sum of the byte path and the "
+                "trunk, h = h_encoder + patch_embeds, and nothing holding the two on "
+                "one scale."
             ),
         ),
         "calm": Entry(

@@ -118,22 +118,12 @@ def test_readout_summary_cards_carry_every_band():
 def test_composite_orders_do_not_collide():
     """Ties fall back to declaration order, which is invisible in the source."""
     orders = [e.get("order", 0) for e in COMPOSITE_METRIC_REGISTRY]
-    dupes = {o for o in orders if orders.count(o) > 1}
-    # Pre-existing ties are grandfathered; the point is that new cards do not
-    # silently join them. Assert only that the ones we placed are clean.
-    for key in (
-        "readout_profile",
-        "readout_rim_gap",
-        "readout_depth_gain",
-        "smear_coefficients",
-        "smear_target_dispersion",
-        "smear_input_dependence",
-        "smear_expert_utilization",
-    ):
-        entry = next(e for e in COMPOSITE_METRIC_REGISTRY if e["key"] == key)
-        assert (
-            entry["order"] not in dupes
-        ), f"{key} at order {entry['order']} ties with another card"
+    ties = {
+        o: [e["key"] for e in COMPOSITE_METRIC_REGISTRY if e.get("order", 0) == o]
+        for o in orders
+        if orders.count(o) > 1
+    }
+    assert not ties, f"composite cards share an order: {ties}"
 
 
 # --- x axes ------------------------------------------------------------------

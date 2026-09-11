@@ -328,7 +328,7 @@ def test_the_cap_is_soft_so_the_silent_start_survives():
     assert enc._calm_diag["calm_arm_ratio"] < 0.05
     assert enc._calm_diag["calm_arm_gate"] < 0.01
     _, logvar = enc._last_posterior
-    assert float(logvar.mean()) > -4.0
+    assert float(logvar.detach().mean()) > -4.0
 
 
 def test_the_cap_does_not_let_the_arm_widen_by_shrinking_z_q(monkeypatch):

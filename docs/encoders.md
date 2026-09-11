@@ -3,11 +3,11 @@
 
 Front-end encoders between the tokenizer and the decoder: the byte-latent (BLT) family, the Abstractinator (BLT plus a residual VQ bottleneck on the patch vectors, versioned v0 to v2), and CALM (a token-chunk VAE plus a next-latent head; K, the tokens per latent, scales with tokenizer granularity: BPE 4, char 8, byte 16). Unset, tokens are embedded directly. Set, an encoder turns the input into the sequence the decoder sees, maps the decoder's output back and adds its own term to the loss; runs with an encoder skip the KV cache and cannot use the tied head. The byte-latent and Abstractinator encoders read raw bytes, so they switch the tokenizer to ``byte_level`` on their own. Descriptive Abstractinator names resolve to the versioned profiles.
 
-Namespace: ``registry.namespace("encoders")``, declared in ``praxis.encoders`` (23 entries)
+Namespace: ``registry.namespace("encoders")``, declared in ``praxis.encoders`` (24 entries)
 
 Selected with ``--encoder-type`` (default: unset).
 
-## `abstractinator_rvq`, `abstractinator_v0`, `abstractinator_v1`, `abstractinator_v2` - AbstractinatorEncoder
+## `abstractinator_rvq`, `abstractinator_v0`, `abstractinator_v1`, `abstractinator_v2`, `abstractinator_v2_additive` - AbstractinatorEncoder
 
 BLT encoder with a multi-stage residual VQ bottleneck between the local encoder and the
 global transformer.
@@ -23,6 +23,7 @@ Presets:
 - `abstractinator_v0` (`bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`) - The residual VQ in the harmonic frame (patch latents rotated into the standing-wave basis, RMS-normalized, residual codes on harmonic amplitudes) with a learned Serpent activation on the analysis transform, 16384 codes and space patching. Serpent is periodic, so it can alias two patch latents onto one point in front of the quantizer.
 - `abstractinator_v1` (`bottleneck='harmonic_gdn', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`) - The harmonic frame without Serpent: a codebook sized from config (--codebook-size, else --vocab-size), fixed 8-byte patches - a uniform resampling of byte time for a periodic latent, compute-matched to space patching's mean patch length - and a GDN compander in front of the quantizer.
 - `abstractinator_v2` (`bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', merge='normalized', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`) - abstractinator_v1 with plain RMS normalization in front of the quantizer instead of the GDN compander, since a fixed normalization leaves the commitment loss no scale to shrink, and with the byte path and the trunk each RMS-normalized before they are added, so neither can outgrow the other.
+- `abstractinator_v2_additive` (`bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', merge='add', n_layers_decoder=3, n_layers_encoder=3, patch_size=8, patching_mode='static', vq_codebook_size=None`) - abstractinator_v2 with BLT's plain sum of the byte path and the trunk, h = h_encoder + patch_embeds, and nothing holding the two on one scale.
 
 ## `abstractinator_v1_calm` - AbstractinatorCALM
 

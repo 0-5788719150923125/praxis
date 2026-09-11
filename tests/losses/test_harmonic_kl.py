@@ -1,16 +1,12 @@
+"""HarmonicKLRegularizer: KL between the output readout and a slow EMA of itself."""
+
+import copy
+
 import pytest
 import torch
 import torch.nn as nn
 
-from praxis.losses.harmonic_kl import KL_WEIGHT, MAX_POSITIONS, HarmonicKLRegularizer
-
-# ------------------------------------------------------------------------------
-# harmonic_kl
-# ------------------------------------------------------------------------------
-# Tests for the harmonic drift penalty (praxis/losses/harmonic_kl.py).
-#
-# The regularizer was written while the shell was unavailable, so this file is the first
-# execution it gets. Run it before enabling `harmonic_kl` in any experiment.
+from praxis.losses.harmonic_kl import KL_WEIGHT, HarmonicKLRegularizer
 
 
 def _readout(vocab=17, dim=8, bias=True):
@@ -66,7 +62,7 @@ def test_works_on_a_readout_without_a_weight_attribute():
         clf.centers.add_(torch.randn_like(clf.centers))
     h = _hidden()
     loss = reg(h, None, classifier=clf)
-    assert float(loss) > 0
+    assert loss.item() > 0
     loss.backward()
     assert h.grad is not None and torch.isfinite(h.grad).all()
     assert clf.centers.grad is not None and torch.isfinite(clf.centers.grad).all()
@@ -87,22 +83,12 @@ def test_drift_is_positive_after_the_readout_moves():
     reg(_hidden(), None, classifier=clf)  # seed
     with torch.no_grad():
         clf.weight.add_(torch.randn_like(clf.weight))
-    loss = reg(_hidden(), None, classifier=clf)
-    m = reg.training_metrics()
-    assert m["harmonic_drift"] > 0
-    assert float(loss) > 0
-    assert float(loss) == pytest.approx(KL_WEIGHT * m["harmonic_drift"], rel=1e-5)
-    assert set(m) == {"harmonic_kl_loss", "harmonic_drift", "harmonic_live_entropy"}
-
-
-def test_gradient_reaches_hidden_states_and_the_readout():
-    reg = HarmonicKLRegularizer()
-    clf = _readout()
-    reg(_hidden(), None, classifier=clf)  # seed
-    with torch.no_grad():
-        clf.weight.add_(torch.randn_like(clf.weight))
     h = _hidden()
     loss = reg(h, None, classifier=clf)
+    m = reg.training_metrics()
+    assert m["harmonic_drift"] > 0
+    assert loss.item() == pytest.approx(KL_WEIGHT * m["harmonic_drift"], rel=1e-5)
+    assert set(m) == {"harmonic_kl_loss", "harmonic_drift", "harmonic_live_entropy"}
     loss.backward()
     assert h.grad is not None and torch.isfinite(h.grad).all()
     assert clf.weight.grad is not None and torch.isfinite(clf.weight.grad).all()
@@ -166,27 +152,55 @@ def test_buffers_are_non_persistent():
     assert reg.state_dict() == {}
 
 
-def test_position_subsampling_caps_cost():
+class _RowCounter(nn.Linear):
+    """A Linear readout that records how many positions each call scores."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rows = []
+
+    def forward(self, x):
+        self.rows.append(x.shape[0])
+        return super().forward(x)
+
+
+def test_position_subsampling_caps_cost(monkeypatch):
+    monkeypatch.setattr("praxis.losses.harmonic_kl.MAX_POSITIONS", 8)
     reg = HarmonicKLRegularizer()
-    clf = _readout()
-    big = torch.randn(4, MAX_POSITIONS, 8, requires_grad=True)
-    reg(big, None, classifier=clf)  # seed
+    clf = _RowCounter(8, 17)
+    h = _hidden(b=2, t=6)  # 12 positions > the cap
+    reg(h, None, classifier=clf)  # seed
     with torch.no_grad():
         clf.weight.add_(torch.randn_like(clf.weight))
-    loss = reg(big, None, classifier=clf)
-    assert torch.isfinite(loss) and float(loss) > 0
+    loss = reg(h, None, classifier=clf)
+    assert loss.item() > 0
+    # Live and teacher readouts both scored the capped subsample.
+    assert clf.rows == [8, 8]
 
 
 def test_pad_positions_are_dropped_when_ids_align():
+    """Padded positions change nothing; a live one does. Each reading is
+    scored against its own copy of the same seeded teacher."""
     reg = HarmonicKLRegularizer(pad_id=0)
     clf = _readout()
-    h = _hidden(b=2, t=6)
+    h = torch.randn(2, 6, 8)
     ids = torch.ones(2, 6, dtype=torch.long)
     ids[:, 3:] = 0  # padded tail
     reg(h, ids, classifier=clf)  # seed
     with torch.no_grad():
         clf.weight.add_(torch.randn_like(clf.weight))
-    assert torch.isfinite(reg(h, ids, classifier=clf))
+
+    def score(states):
+        return copy.deepcopy(reg)(states, ids, classifier=clf).item()
+
+    base = score(h)
+    padded = h.clone()
+    padded[:, 3:] += 5.0 * torch.randn(2, 3, 8)
+    live = h.clone()
+    live[:, 0] += 5.0 * torch.randn(2, 8)
+    assert base > 0
+    assert score(padded) == pytest.approx(base, rel=1e-6)
+    assert score(live) != pytest.approx(base, rel=1e-3)
     # All-pad is a no-op rather than an empty reduction.
     assert torch.isfinite(reg(h, torch.zeros(2, 6, dtype=torch.long), classifier=clf))
 
@@ -201,60 +215,12 @@ def test_bias_free_readout_is_supported():
     assert float(reg(_hidden(), None, classifier=clf)) > 0
 
 
-# ------------------------------------------------------------------------------
-# dissonance
-# ------------------------------------------------------------------------------
-# The dissonance term, and the instrument it was built beside.
-#
-# `harmonic_kl` is named for a claim about the harmonic basis but EMAs whatever the head
-# hands over as its readout - HALO's centroids on the prismatic line - so a near-zero
-# drift there says nothing about the field. These tests pin what each term actually
-# watches, pin the roughness kernel to the published Plomp-Levelt curve and its scale to
-# the true ceiling, and pin the dual to its constraint: the roughness of the signal the
-# field multiplies.
-
-
-def _model(**overrides):
-    from praxis import PraxisConfig
-    from praxis.modeling import PraxisForCausalLM
-
-    cfg = dict(
-        vocab_size=1024,
-        hidden_size=32,
-        embed_size=96,
-        num_heads=4,
-        num_layers=1,
-        depth=2,
-        tokenizer_type="byte_level",
-        decoder_type="sequential",
-        head_type="prismatic5",
-        residual_type="smear",
-        loss_func="halo",
-    )
-    cfg.update(overrides)
-    torch.manual_seed(0)
-    return PraxisForCausalLM(PraxisConfig(**cfg)).train()
-
-
-def _step(model, opt=None):
-    ids = torch.randint(4, 900, (2, 24))
-    out = model(input_ids=ids, labels=ids[..., 1:].contiguous())
-    if opt is not None:
-        opt.zero_grad()
-        out.loss.backward()
-        opt.step()
-    return out
-
-
-# ── what each term watches ─────────────────────────────────────────────────
-
-
-def test_harmonic_kl_names_the_readout_it_actually_watches():
+def test_harmonic_kl_names_the_readout_it_actually_watches(tiny_model, train_step):
     """The misreading this exists to stop: on a multi-arm head the target is
     HALO's centroids, not the harmonic field."""
-    m = _model(regularizers=["harmonic_kl"])
+    m = tiny_model(regularizers=["harmonic_kl"])
     assert repr(m.criterion.harmonic_kl) == "HarmonicKLRegularizer(target=readout)"
-    _step(m)
+    train_step(m)
     target = m.criterion.harmonic_kl._target
     assert target.startswith("HaloClassifier(")
     assert "centers" in target and "gamma" in target

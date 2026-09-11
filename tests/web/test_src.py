@@ -14,7 +14,6 @@ whole ``hsl()`` goes invalid, and the swatch renders with no background.
 import re
 from pathlib import Path
 
-
 SRC = Path(__file__).resolve().parents[2] / "praxis" / "web" / "src"
 STATE_JS = SRC / "js" / "state.js"
 CHARTS_JS = SRC / "js" / "charts.js"

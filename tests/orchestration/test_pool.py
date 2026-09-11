@@ -1,11 +1,8 @@
-"""Smoke tests for praxis.orchestration: the remote-expert pooling layer.
-
-Uses trivially small in-process experts (LocalExpert wrapping a plain Linear
-block) so the pool's mechanics - capacity reporting, non-blocking detached
-training, stochastic-sampled inference, and the mixing strategies - are
-exercised without any transport or real model.
+"""ExpertPool (praxis/orchestration/pool.py): capacity reporting, training
+dispatch, and sampled inference over small in-process LocalExperts.
 """
 
+import pytest
 import torch
 from torch import nn
 
@@ -26,6 +23,9 @@ def _batch():
     return acts, labels
 
 
+pytestmark = pytest.mark.usefixtures("pools")
+
+
 def test_pool_capacity_tracks_membership():
     pool = build_pool([_make_expert(f"e{i}") for i in range(4)], mixing="mean")
     cap = pool.capacity()
@@ -38,7 +38,7 @@ def test_pool_capacity_tracks_membership():
     assert pool.capacity()["experts_total"] == 3
 
 
-def test_pool_train_step_nonblocking_and_detached():
+def test_pool_train_step_updates_every_live_expert():
     pool = build_pool([_make_expert(f"e{i}") for i in range(5)], mixing="mean")
     acts, labels = _batch()
     res = pool.train_step(acts, labels)
@@ -79,6 +79,5 @@ def test_dead_expert_drops_out():
     pool = build_pool([_make_expert(f"e{i}") for i in range(3)], mixing="mean")
     pool.experts[1]._alive = False
     assert pool.capacity()["experts_alive"] == 2
-    acts, labels = pool.experts[0].block, None  # unused
     res = pool.train_step(*_batch())
     assert res["dispatched"] == 2  # the dead one is skipped

@@ -852,7 +852,9 @@ def _schedulefree(model):
     # Outermost wrapper, as praxis builds it; one step to create the z iterate.
     from pytorch_optimizer.optimizer import ScheduleFreeWrapper
 
-    sf = ScheduleFreeWrapper(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.98)
+    sf = ScheduleFreeWrapper(
+        torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.98
+    )
     sf.train()
     model(torch.randn(2, 8)).sum().backward()
     sf.step()
@@ -1647,9 +1649,11 @@ def test_rlct_probe_unpacks_the_whole_batch_and_forwards_block_ids():
         "assistant_mask": torch.ones(4, 16, dtype=torch.uint8),
         "block_ids": torch.ones(4, 16, dtype=torch.long),
     }
-    RLCTLandscapeCallback(
-        {"probe_seqs": 2, "probe_len": 8, "manifold_grid": 2, "field_grid": 2}
-    )._probe(pl_module, batch, 0, 0)
+    # The smallest landscape: this is about the unpacking, not the probe.
+    cheap = {"grid": 2, "chain_steps": 1, "manifold_grid": 2, "field_grid": 2}
+    RLCTLandscapeCallback({"probe_seqs": 2, "probe_len": 8, **cheap})._probe(
+        pl_module, batch, 0, 0
+    )
 
     assert captured.get("block_ids") is not None
     assert captured["block_ids"].shape == captured["input_ids"].shape

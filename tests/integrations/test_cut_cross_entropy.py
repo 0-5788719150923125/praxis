@@ -1,51 +1,35 @@
-import math
+"""The cut_cross_entropy integration (integrations/cut_cross_entropy/main.py)."""
 
 import pytest
 import torch
 from torch import nn
 
+pytest.importorskip("cut_cross_entropy")
 
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="impl='cce' is a CUDA/Triton kernel"
+)
 def test_cut_cross_entropy_with_tied_weights():
-    """Test cut_cross_entropy with tied weights (no bias)."""
-    # Import from integration
-    try:
-        from integrations.cut_cross_entropy.main import CutCrossEntropyLoss
-    except ImportError:
-        pytest.skip("cut_cross_entropy integration not installed")
+    """A tied classifier has a weight and no bias; the loss must not need one."""
+    from integrations.cut_cross_entropy.main import CutCrossEntropyLoss
 
-    hidden_size = 128
-    vocab_size = 1024
-    batch_size = 4
-    seq_len = 16
+    hidden_size, vocab_size, batch_size, seq_len = 128, 1024, 4, 16
+    device = torch.device("cuda")
 
-    # Use GPU if available (required for cce implementation)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Create a classifier without bias (like TiedClassifier)
-    class MockTiedClassifier(nn.Module):
+    class TiedClassifier(nn.Module):
         def __init__(self, weight):
             super().__init__()
             self.weight = weight
 
-    embedding_weight = torch.randn(vocab_size, hidden_size, device=device)
-    classifier = MockTiedClassifier(embedding_weight)
-
-    loss_function = CutCrossEntropyLoss()
-    # Use FULL UNSHIFTED embeddings - cut_cross_entropy handles shifting with shift=1
+    classifier = TiedClassifier(torch.randn(vocab_size, hidden_size, device=device))
     embeddings = torch.randn(batch_size, seq_len, hidden_size, device=device)
-    labels = torch.randint(
-        low=0, high=vocab_size, size=(batch_size, seq_len), device=device
-    )
+    labels = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
 
-    # Should not raise AttributeError for missing bias
-    # Pass full unshifted tensors - shift=1 handles it internally
-    loss = loss_function(
-        embeddings=embeddings,
-        classifier=classifier,
-        labels=labels,
-        input_ids=labels,  # Unshifted targets
+    # Full unshifted tensors: the kernel shifts internally (shift=1).
+    loss = CutCrossEntropyLoss()(
+        embeddings=embeddings, classifier=classifier, labels=labels, input_ids=labels
     )
-
     assert torch.is_tensor(loss)
-    assert not math.isnan(loss)
-    assert loss.item() > 0  # Cross-entropy should be positive
+    assert torch.isfinite(loss)
+    assert loss.item() > 0
