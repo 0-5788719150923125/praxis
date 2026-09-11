@@ -100,7 +100,9 @@ class RunningStatsBatchNorm(nn.BatchNorm1d):
         scale = torch.rsqrt(self.running_var.float() + self.eps)
         shift = self.running_mean.float()
         if self.affine:
-            out = (x.float() - shift) * (scale * self.weight.float()) + self.bias.float()
+            out = (x.float() - shift) * (
+                scale * self.weight.float()
+            ) + self.bias.float()
         else:
             out = (x.float() - shift) * scale
         return out.to(x.dtype)

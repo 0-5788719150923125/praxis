@@ -54,7 +54,9 @@ class _Model(nn.Module):
 
 
 def _rows(b=4, t=16):
-    return torch.stack([torch.full((t,), r % VOCAB, dtype=torch.long) for r in range(b)])
+    return torch.stack(
+        [torch.full((t,), r % VOCAB, dtype=torch.long) for r in range(b)]
+    )
 
 
 def test_swap_costs_bits_when_the_trunk_is_read():
