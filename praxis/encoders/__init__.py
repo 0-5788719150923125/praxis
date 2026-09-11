@@ -81,6 +81,8 @@ AbstractinatorV2 = partial(
 
 AbstractinatorV2Additive = partial(AbstractinatorV2, merge="add")
 
+AbstractinatorV3 = partial(AbstractinatorV1, next_code="halo")
+
 AbstractinatorV0Avg = partial(AbstractinatorV0, downsampling_method="avg")
 AbstractinatorV0Bank = partial(AbstractinatorV0, vq_codebook_size=None)
 AbstractinatorHarmonicBank = partial(AbstractinatorHarmonic, vq_codebook_size=None)
@@ -346,6 +348,16 @@ registry.declare(
                 "leaves the commitment loss no scale to shrink, and with the byte path "
                 "and the trunk each RMS-normalized before they are added, so neither "
                 "can outgrow the other."
+            ),
+        ),
+        "abstractinator_v3": Entry(
+            AbstractinatorV3,
+            (
+                "abstractinator_v1 with an objective of its own on the trunk, as "
+                "the reference's top model has: the trunk output at each patch "
+                "classifies the next patch's code at every residual stage, scored "
+                "by HALO (a projection per stage feeding a HaloClassifier over that "
+                "stage's codes, lengths left free so the abstain class can act)."
             ),
         ),
         "abstractinator_v2_additive": Entry(

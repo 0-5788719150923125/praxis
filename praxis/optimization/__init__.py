@@ -64,22 +64,57 @@ def _split_muon_params(model):
     orthogonalize the embedding and output matrices (the classic instability).
     A ``vocab_size`` dimension in the shape flags embeddings, the head, and any
     tied weight at once; ``nn.Embedding`` membership is the belt-and-suspenders.
+    The config's size is not the only vocabulary, though: a byte-latent head
+    classifies the encoder's byte vocabulary, so every module that declares its
+    own ``vocab_size`` also flags the parameters under it that carry that size.
+    Shapes are read LOGICALLY: a parametrized weight (a ghost transform) stores
+    a factor of a different shape, so both checks look at the tensor the module
+    computes with, and a lookup table's parametrization counts as the table.
     On doubt we route to AdamW (safe) rather than Muon.
     """
+    import torch
     import torch.nn as nn
+    from torch.nn.utils import parametrize
+
+    shapes = {}  # id(param) -> the logical shape it stands for
+    with torch.no_grad():
+        for m in model.modules():
+            if parametrize.is_parametrized(m):
+                for name, plist in m.parametrizations.items():
+                    logical = tuple(getattr(m, name).shape)
+                    for p in plist.parameters():
+                        shapes[id(p)] = logical
+
+    def shape(p):
+        return shapes.get(id(p), tuple(p.shape))
 
     vocab = getattr(getattr(model, "config", None), "vocab_size", None)
     emb_ids = {
         id(p)
         for m in model.modules()
-        if isinstance(m, nn.Embedding)
-        for p in m.parameters(recurse=False)
+        if isinstance(m, (nn.Embedding, nn.EmbeddingBag))
+        for p in m.parameters()
     }
+    # A classifier's matrix is [vocab, width]; requiring the width as well keeps
+    # a tensor that only happens to share the vocabulary's size (a sequence
+    # period, a rank) on the matrix path.
+    config = getattr(model, "config", None)
+    widths = {getattr(config, k, None) for k in ("hidden_size", "embed_size")}
+    head_ids = set()
+    for m in model.modules():
+        size = getattr(m, "vocab_size", None)
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            continue
+        own = widths | {getattr(m, "hidden_size", None)}
+        for p in m.parameters():
+            s = shape(p)
+            if len(s) == 2 and size in s and (s[0] in own or s[1] in own):
+                head_ids.add(id(p))
     muon_params, adamw_params = [], []
     for p in model.parameters():
         if not p.requires_grad:
             continue
-        is_vocab = vocab is not None and vocab in tuple(p.shape)
+        is_vocab = (vocab is not None and vocab in shape(p)) or id(p) in head_ids
         if p.ndim < 2 or is_vocab or id(p) in emb_ids:
             adamw_params.append(p)
         else:

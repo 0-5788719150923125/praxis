@@ -361,5 +361,16 @@ registry.declare(
                 "and _pcgrad in praxis/heads/parallel.py."
             ),
         ),
+        "prismatic10": Entry(
+            partial(SurgicalParallelHead, branches=[CrystalHead, CrystalHead]),
+            (
+                "Two CrystalClassifiers reading the trunk directly: no harmonic stem "
+                "and no HALO arm, trained as prismatic9 trains its arms. Each arm "
+                "learns from its own harmonic cross-entropy, the trunk from their "
+                "PCGrad-combined gradient, and the gate from the mixture. The arms "
+                "differ only by initialization, so the gate's split and "
+                "arm_cos_01 say whether two geometries are worth more than one."
+            ),
+        ),
     },
 )

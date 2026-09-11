@@ -40,6 +40,72 @@ MIN_KEY_DIMS: int = 16
 TOP_K: int = 8
 
 
+class RunningStatsBatchNorm(nn.BatchNorm1d):
+    """BatchNorm over ``[b, s, d]`` that normalizes with its RUNNING statistics
+    in training as well as in eval.
+
+    Product-key retrieval (arXiv:1907.05242, and PEER after it) batch-normalizes
+    the query: centering each feature across tokens removes the component every
+    token shares, which would otherwise hand every token the same keys. Batch
+    statistics would make a token's experts depend on later tokens and other
+    rows, so a forward normalizes with statistics committed before it began and
+    folds in its own only when the next forward starts. The recurrent loop calls
+    this once per pass with a rising depth, so a depth that does not rise is a
+    new forward.
+    """
+
+    def __init__(self, num_features: int, **kwargs: Any) -> None:
+        super().__init__(num_features, **kwargs)
+        self._pending: Optional[Tuple[Tensor, Tensor, int]] = None
+        self._last_depth: Optional[int] = None
+
+    @torch.compiler.disable
+    @torch.no_grad()
+    def begin(self, current_depth: int) -> None:
+        """Commit the previous forward's statistics if this call starts a new one."""
+        if not self.training:
+            return
+        depth = int(current_depth)
+        if self._last_depth is None or depth <= self._last_depth:
+            self._commit()
+        self._last_depth = depth
+
+    def _commit(self) -> None:
+        if self._pending is None:
+            return
+        total, sq, count = self._pending
+        self._pending = None
+        mean = total / count
+        var = (sq / count - mean.pow(2)).clamp_min(0.0) * count / max(count - 1, 1)
+        m = self.momentum if self.momentum is not None else 0.1
+        self.running_mean.mul_(1.0 - m).add_(mean.to(self.running_mean.dtype), alpha=m)
+        self.running_var.mul_(1.0 - m).add_(var.to(self.running_var.dtype), alpha=m)
+        self.num_batches_tracked.add_(1)
+
+    @torch.compiler.disable
+    @torch.no_grad()
+    def _accumulate(self, x: Tensor) -> None:
+        flat = x.reshape(-1, x.shape[-1]).float()
+        total, sq = flat.sum(dim=0), flat.pow(2).sum(dim=0)
+        count = flat.shape[0]
+        if self._pending is not None:
+            total = total + self._pending[0]
+            sq = sq + self._pending[1]
+            count = count + self._pending[2]
+        self._pending = (total, sq, count)
+
+    def forward(self, x: Tensor) -> Tensor:
+        if self.training:
+            self._accumulate(x.detach())
+        scale = torch.rsqrt(self.running_var.float() + self.eps)
+        shift = self.running_mean.float()
+        if self.affine:
+            out = (x.float() - shift) * (scale * self.weight.float()) + self.bias.float()
+        else:
+            out = (x.float() - shift) * scale
+        return out.to(x.dtype)
+
+
 class ParameterEfficientExpertRetrieval(BaseDense):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
@@ -230,11 +296,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 """
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
-        # No BatchNorm on the query, unlike the paper: its batch statistics make
-        # each token's retrieved experts depend on later tokens and other rows.
-        # lucidrains' PEER-pytorch omits it too; the block's pre-norm already
-        # normalizes each token.
+        # The block's pre-norm normalizes each token over its features, which
+        # leaves a direction every token shares; only a norm across tokens
+        # removes it. See RunningStatsBatchNorm.
         self.queries = nn.Sequential(
+            RunningStatsBatchNorm(hidden_size),
             nn.Linear(hidden_size, key_dims * self.num_heads * 2, bias=False),
             nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),
@@ -273,6 +339,20 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             self.num_experts * self.num_sets, hidden_size, mode="sum", sparse=sparse
         )
         self.init_weights()
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs) -> None:
+        """Checkpoints written without the query norm hold the query Linear at
+        ``queries.0``; move it to ``queries.1`` and start the norm fresh."""
+        head = prefix + "queries.0."
+        if head + "running_mean" not in state_dict and any(
+            key.startswith(head) for key in state_dict
+        ):
+            for key in [k for k in state_dict if k.startswith(head)]:
+                moved = prefix + "queries.1." + key[len(head) :]
+                state_dict[moved] = state_dict.pop(key)
+            for name, value in self.queries[0].state_dict().items():
+                state_dict[head + name] = value.clone()
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def init_weights(self, keys_std: float = 0.02) -> None:
         """Init the product keys and the expert banks by their TRUE fan-in.
@@ -407,6 +487,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             Output tensor of shape [batch_size, seq_len, hidden_size]
         """
         # Generate queries
+        self.queries[0].begin(current_depth)
         queries = self.queries(
             inputs
         )  # Shape: (2, batch_size, seq_len, heads, dim_key)

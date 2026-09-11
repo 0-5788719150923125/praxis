@@ -8,6 +8,7 @@ survive the cosine scheduler's per-group flattening as a fixed ratio.
 
 from types import SimpleNamespace
 
+import torch
 import torch.nn as nn
 
 from praxis.optimization import (
@@ -65,6 +66,63 @@ def test_split_routes_tied_weight_to_adamw():
     muon, adamw = _split_muon_params(model)
     assert "embed.weight" in _names(model, adamw)
     assert all("embed" not in n and "lm_head" not in n for n in _names(model, muon))
+
+
+class ByteHead(nn.Module):
+    """A head sized to its own vocabulary, as a byte-latent encoder's head is."""
+
+    def __init__(self, vocab=24, hidden=16, period=24):
+        super().__init__()
+        self.vocab_size = vocab
+        self.hidden_size = hidden
+        self.centers = nn.Parameter(torch.randn(vocab, hidden))
+        self.lm_head = nn.Linear(hidden, vocab, bias=False)
+        # Shares the vocabulary's size without facing it (a sequence period).
+        self.field = nn.Parameter(torch.randn(period, 4))
+
+
+class ByteLM(nn.Module):
+    def __init__(self, config_vocab=50, vocab=24, hidden=16):
+        super().__init__()
+        self.config = SimpleNamespace(vocab_size=config_vocab, hidden_size=hidden)
+        self.embed = nn.Embedding(vocab, hidden)
+        self.bank = nn.EmbeddingBag(32, hidden)
+        self.h1 = nn.Linear(hidden, hidden)
+        self.head = ByteHead(vocab, hidden)
+
+
+def test_split_finds_a_head_sized_to_its_own_vocabulary():
+    """The config's vocab_size is not the byte head's: its classifiers still
+    leave the matrix path, and a tensor that merely shares the size stays."""
+    model = ByteLM()
+    muon, adamw = _split_muon_params(model)
+    adamw_names = _names(model, adamw)
+    for n in ("head.centers", "head.lm_head.weight", "embed.weight", "bank.weight"):
+        assert n in adamw_names, n
+    assert _names(model, muon) == ["h1.weight", "head.field"]
+
+
+class _Halve(nn.Module):
+    """Stores a weight as half its rows, as the ghost transforms do."""
+
+    def forward(self, x):
+        return torch.cat([x, x], dim=0)
+
+    def right_inverse(self, w):
+        return w[: w.shape[0] // 2]
+
+
+def test_split_reads_parametrized_weights_by_their_logical_shape():
+    from torch.nn.utils import parametrize
+
+    model = ByteLM()
+    parametrize.register_parametrization(model.head.lm_head, "weight", _Halve())
+    parametrize.register_parametrization(model.embed, "weight", _Halve())
+    muon, adamw = _split_muon_params(model)
+    adamw_names = _names(model, adamw)
+    assert "head.lm_head.parametrizations.weight.original" in adamw_names
+    assert "embed.parametrizations.weight.original" in adamw_names
+    assert _names(model, muon) == ["h1.weight", "head.field"]
 
 
 # --------------------------------------------------------------------------

@@ -35,7 +35,10 @@ extra cost. Elementwise and indexed targets (norms, residual gates, the
 per-depth table) can hold only one geometry per forward, and a geometry shared
 by every position cannot read any of them, so they merge on the input-free
 depth prior - the paper never routes layernorm parameters either. Lory
-(arXiv:2405.03133) takes the segment-level route to the same constraint.
+(arXiv:2405.03133) meets the same constraint a segment at a time: segment k
+routes on the mean of segment k-1, and the first segment on itself behind a
+stop-gradient, which still reads that segment's later tokens in the forward.
+The running mean here is the one-token limit of that rule with no exception.
 
 Sharpening is OFF by default: ``p**4`` drives losing deviations to zero
 gradient, which is the dead-expert mechanism. ``VEAR`` re-enables it for the
@@ -173,6 +176,7 @@ class MergedLinear(nn.Module):
         # scope; None means "run as a plain Linear", which is what inference
         # paths and any caller that bypasses the router get.
         self._coeff: Optional[Tensor] = None
+        self._warned = False
 
     def extra_repr(self) -> str:
         return (
@@ -193,9 +197,19 @@ class MergedLinear(nn.Module):
         # far worse than routing nothing.
         # Leading axes must line up: [B, N] against [B, ..., in] for
         # per-example routing, [B, S, N] against [B, S, in] for per-token.
-        if coeff is None or tuple(coeff.shape[:-1]) != tuple(
-            x.shape[: coeff.dim() - 1]
-        ):
+        if coeff is None:
+            return y
+        if tuple(coeff.shape[:-1]) != tuple(x.shape[: coeff.dim() - 1]):
+            # Training never reshapes between routing and here, so a mismatch
+            # there means this target's input is not laid out [B, T, ...] and
+            # its deviations would train on nothing, silently.
+            if self.training and not self._warned:
+                self._warned = True
+                print(
+                    f"[SMEAR] a routed Linear received input {tuple(x.shape)} "
+                    f"that does not line up with its {tuple(coeff.shape)} "
+                    "coefficients; it runs unrouted."
+                )
             return y
         # [B, ..., N, r] - each deviation's low-rank projection of the input.
         u = torch.einsum("...i,eri->...er", x, self.lora_a.to(x.dtype))

@@ -314,6 +314,26 @@ class HALOLoss(nn.Module):
             weights,
         )
 
+    def on_features(
+        self, features: Tensor, targets: Tensor, classifier: nn.Module
+    ) -> Tensor:
+        """The HALO objective on ``[N, D]`` features used as they are.
+
+        No RMS normalization, which is the reference's contract: a feature's
+        length stays free, so the abstain class can claim the low-confidence
+        ones near the origin. For a classifier with its own projection, whose
+        output can sit on the unit scale the calibration assumes without being
+        pinned there.
+        """
+        self._D = float(features.shape[-1])
+        return self._halo_terms(
+            features.float(),
+            targets,
+            classifier.centroids(),
+            classifier.gamma_value(),
+            float(classifier.abstain_bias),
+        )
+
     def _halo_terms(
         self,
         pos: Tensor,

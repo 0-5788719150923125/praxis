@@ -671,3 +671,46 @@ def test_the_vote_temperature_is_not_the_sampler_temperature(monkeypatch):
     gc.calm_vote_temperature = 1.0
     m.generate(ids, generation_config=gc)
     assert seen == [1.0]
+
+
+# ── the next-code objective (abstractinator_v3) ───────────────────────────
+
+
+def _next_code(m):
+    """Quantize a fresh ``h`` and register the objective on it, as decode does."""
+    torch.manual_seed(2)
+    h = torch.randn(2, 8, m.config.hidden_size, requires_grad=True)
+    m.encoder._post_downsample(h, torch.zeros(()))
+    m.encoder._register_next_code(h)
+    return h, m.encoder.consume_pending_losses()
+
+
+def test_next_code_trains_the_trunk_and_nothing_at_eval():
+    m = _build("abstractinator_v3")
+    out = _step(m)
+    assert torch.isfinite(out.loss)
+    h, pending = _next_code(m)
+    loss = pending["next_code_halo"]
+    (grad,) = torch.autograd.grad(loss, h, allow_unused=True)
+    assert grad is not None and float(grad.abs().sum()) > 0
+    # Position p predicts patch p+1's code, so the last position has no target.
+    assert float(grad[:, -1].abs().sum()) == 0.0
+    m.eval()
+    with torch.no_grad():
+        _step(m)
+    assert m.encoder.consume_pending_losses() == {}
+
+
+def test_next_code_is_divided_by_log_k():
+    """The term's size must not grow with the codebook: at init it sits at a
+    few units of log K, not at tens of nats."""
+    m = _build("abstractinator_v3")
+    _, pending = _next_code(m)
+    assert 0.5 < float(pending["next_code_halo"]) < 5.0
+
+
+def test_next_code_is_off_on_the_parent():
+    m = _build(PARENT)
+    assert m.encoder.next_code is None
+    _step(m)
+    assert "next_code_acc" not in m.encoder.training_metrics()

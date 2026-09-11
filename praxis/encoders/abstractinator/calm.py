@@ -313,16 +313,6 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         self._calm_diag["calm_arm_gate"] = float(ceiling.detach())
         return z, aux
 
-    def _stage_indices(self) -> Optional[list]:
-        """Per-stage code ids for the last forward, if the bank exposes them."""
-        core = getattr(self.quantizer, "quantizer", self.quantizer)
-        codec = getattr(core, "codec", None)
-        idx = getattr(self, "_last_vq_indices", None)
-        if codec is None or idx is None:
-            return None
-        digits, _ = codec.decompose(idx)
-        return digits
-
     def decode(self, h, *args: Any, **kwargs: Any):
         """Register the CALM-side objectives, then decode as the parent does.
 
@@ -456,10 +446,6 @@ class AbstractinatorCALM(AbstractinatorEncoder):
         if hasattr(core, "_compose_indices"):
             return core._compose_indices(digits).reshape(-1)
         return digits[0]
-
-    def consume_pending_losses(self) -> Dict[str, torch.Tensor]:
-        out, self._pending = self._pending, {}
-        return out
 
     def training_metrics(self) -> dict:
         out = super().training_metrics()

@@ -256,20 +256,100 @@ def test_training_forward_is_causal_and_row_independent(expert):
     leave every earlier position and every other row untouched. A batch
     statistic anywhere on the query path breaks both, and top-k retrieval
     turns even a small shift into different experts."""
+    import copy
+
     torch.manual_seed(0)
     module = registry.lookup("dense", expert)(
         make_config(hidden_size=64, num_heads=4)
     ).train()
+    # Earlier batches may move the query norm's running statistics; give it some
+    # history, then compare two forwards from the same state.
+    with torch.no_grad():
+        for _ in range(3):
+            module(torch.randn(3, 12, 64) + 2.0, 0)
     x = torch.randn(3, 12, 64)
     p = 7
     xp = x.clone()
     xp[0, p] += torch.randn(64)
     with torch.no_grad():
-        a = module(x, 0)
-        b = module(xp, 0)
+        a = copy.deepcopy(module)(x, 0)
+        b = copy.deepcopy(module)(xp, 0)
     torch.testing.assert_close(a[0, :p], b[0, :p], rtol=0.0, atol=0.0)
     torch.testing.assert_close(a[1:], b[1:], rtol=0.0, atol=0.0)
     assert not torch.allclose(a[0, p], b[0, p])
+
+
+def _retrieved(module, x):
+    """Distinct experts the batch retrieves, by the module's own query path."""
+    queries = module.queries(x)
+    sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, module.keys)
+    scores, idx = sim.topk(module.k, dim=-1)
+    pairs = (scores[0].unsqueeze(-1) + scores[1].unsqueeze(-2)).flatten(-2)
+    grid = (idx[0].unsqueeze(-1) * module.num_keys + idx[1].unsqueeze(-2)).flatten(-2)
+    return grid.gather(-1, pairs.topk(module.k, dim=-1)[1]).unique().numel()
+
+
+def test_query_norm_keeps_a_shared_offset_from_collapsing_retrieval():
+    """A direction every token shares hands every token the same experts; the
+    query norm's running statistics remove it."""
+    torch.manual_seed(0)
+    config = make_config(hidden_size=64, num_heads=1)
+    module = registry.lookup("dense", "peer_glu")(config)
+    offset = 20.0 * torch.randn(64)
+
+    def batch():
+        return offset + torch.randn(4, 32, 64)
+
+    with torch.no_grad():
+        fresh = _retrieved(module.eval(), batch())
+        module.train()
+        for _ in range(60):
+            module(batch(), 0)
+        fitted = _retrieved(module.eval(), batch())
+    assert fresh <= 2 * module.k
+    assert fitted > 4 * fresh
+
+
+def test_query_norm_commits_its_statistics_once_per_forward():
+    """Every recurrent pass contributes, and none of it lands until the next
+    forward begins - a pass never reads statistics that include later tokens."""
+    module = registry.lookup("dense", "peer")(make_config(hidden_size=64, num_heads=4))
+    norm = module.queries[0]
+    module.train()
+    with torch.no_grad():
+        for depth in range(3):
+            module(torch.randn(2, 8, 64) + 5.0, depth)
+            assert float(norm.running_mean.abs().max()) == 0.0
+            assert int(norm.num_batches_tracked) == 0
+        module(torch.randn(2, 8, 64), 0)
+    assert int(norm.num_batches_tracked) == 1
+    assert float(norm.running_mean.mean()) > 0.3
+
+
+def test_query_norm_changes_nothing_in_eval():
+    module = registry.lookup("dense", "peer")(make_config(hidden_size=64, num_heads=4))
+    module.eval()
+    with torch.no_grad():
+        module(torch.randn(2, 8, 64) + 5.0, 0)
+        module(torch.randn(2, 8, 64), 0)
+    assert int(module.queries[0].num_batches_tracked) == 0
+
+
+def test_checkpoints_without_the_query_norm_still_load():
+    """Checkpoints written without the norm hold the query Linear at
+    ``queries.0``; it loads into ``queries.1`` and the norm starts fresh."""
+    torch.manual_seed(0)
+    source = registry.lookup("dense", "peer")(make_config(hidden_size=64, num_heads=4))
+    state = {
+        key.replace("queries.1.", "queries.0."): value
+        for key, value in source.state_dict().items()
+        if not key.startswith("queries.0.")
+    }
+    target = registry.lookup("dense", "peer")(make_config(hidden_size=64, num_heads=4))
+    result = target.load_state_dict(state, strict=True)
+    assert not result.missing_keys and not result.unexpected_keys
+    torch.testing.assert_close(target.queries[1].weight, source.queries[1].weight)
+    assert int(target.queries[0].num_batches_tracked) == 0
 
 
 # ------------------------------------------------------------------------------

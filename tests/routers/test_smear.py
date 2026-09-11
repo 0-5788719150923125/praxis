@@ -20,6 +20,8 @@ Target discovery itself (opaque subtrees, tied and frozen parameters) is
 tests/transforms/test_targeting.py.
 """
 
+from itertools import product
+
 import pytest
 import torch
 import torch.nn as nn
@@ -218,6 +220,27 @@ def test_merged_linear_equals_the_explicit_merged_weight():
         ]
     )
     torch.testing.assert_close(got, want, rtol=1e-4, atol=1e-5)
+
+
+def test_merged_linear_equals_the_explicit_merged_weight_per_position():
+    """Causal routing hands each position its own coefficients, ``[B, T, N]``;
+    each position must see exactly its own merged weight."""
+    router, block = make()
+    w = router.wrappers["attn_qkv"]
+    nn.init.normal_(w.lora_b, std=0.05)
+    coeff = torch.softmax(torch.randn(2, 4, w.num_experts), dim=-1)
+    x = torch.randn(2, 4, w.in_features)
+
+    w._coeff = coeff
+    got = w(x)
+    w._coeff = None
+
+    for b, t in product(range(2), range(4)):
+        merged = w.weight + sum(
+            coeff[b, t, e] * (w.lora_b[e] @ w.lora_a[e]) for e in range(w.num_experts)
+        )
+        want = torch.nn.functional.linear(x[b, t], merged, w.bias)
+        torch.testing.assert_close(got[b, t], want, rtol=1e-4, atol=1e-5)
 
 
 def test_per_example_routing_gives_examples_different_geometries():

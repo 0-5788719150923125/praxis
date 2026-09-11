@@ -68,7 +68,7 @@ Source: [praxis/routers/prismatic.py:30](../praxis/routers/prismatic.py#L30)
 
 Soft-merging of experts, at the granularity the paper uses.
 
-Source: [praxis/routers/smear.py:222](../praxis/routers/smear.py#L222)
+Source: [praxis/routers/smear.py:236](../praxis/routers/smear.py#L236)
 
 Presets:
 - `smear` - Soft-merging of experts at the paper's granularity: targets discovered per module, Linear targets routed per example, expert dropout, one shared block plus ``num_experts`` low-rank deviations. One entry, not a family: the expert count comes from ``num_experts``, the per-recurrent-pass bias is folded in (zero-init, so it is absent until it learns otherwise), and the reduction is an argument.

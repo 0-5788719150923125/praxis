@@ -12,10 +12,18 @@ The bottleneck's coordinate frame is selectable: the default quantizes raw
 patch features, while the "harmonic" variants quantize amplitudes in the CALM
 standing-wave basis (see praxis/encoders/quantization/harmonic_bottleneck.py).
 
+``next_code`` gives the trunk an objective of its own, as the reference's top
+model has: its output at patch ``p`` classifies patch ``p+1``'s code at every
+residual stage. Without it the trunk learns only through the local decoder.
+
 Based on: https://github.com/OilProducts/abstractinator
 """
 
-from typing import Optional, TypeVar
+import math
+from typing import Dict, Optional, TypeVar
+
+import torch
+import torch.nn as nn
 
 from praxis.encoders.byte_latent.encoder import ByteLatentEncoder
 from praxis.encoders.quantization import (
@@ -23,8 +31,12 @@ from praxis.encoders.quantization import (
     LearnedQueryAttention,
     MultiStageResidualVQ,
 )
+from praxis.heads.halo import HaloClassifier
+from praxis.losses.halo import HALOLoss
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
+NEXT_CODE_OBJECTIVES = (None, "halo")
 
 
 class AbstractinatorEncoder(ByteLatentEncoder):
@@ -77,6 +89,8 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         # Learned query pooling
         use_learned_queries: bool = False,
         num_queries_per_segment: int = 1,
+        # Trunk objective on the next patch's codes: None, or "halo".
+        next_code: Optional[str] = None,
     ) -> None:
         super().__init__(
             config,
@@ -134,6 +148,32 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         else:
             raise ValueError(f"Unknown abstractinator bottleneck: {bottleneck!r}")
 
+        # Scored with HALO: per stage, a projection of the normalized trunk
+        # output feeds a HaloClassifier over that stage's K codes. The projection
+        # starts on the unit per-coordinate scale HALO's calibration assumes,
+        # and is left unnormalized after that, as in the reference.
+        if next_code not in NEXT_CODE_OBJECTIVES:
+            raise ValueError(
+                f"Unknown next_code objective {next_code!r}; "
+                f"known: {list(NEXT_CODE_OBJECTIVES)}"
+            )
+        self.next_code = next_code
+        self._pending: Dict[str, torch.Tensor] = {}
+        self._next_code_diag: Dict[str, torch.Tensor] = {}
+        if next_code == "halo":
+            core = getattr(self.quantizer, "quantizer", self.quantizer)
+            depth, codes = int(getattr(core, "depth", 1)), int(core.K)
+            self.next_code_norm = nn.LayerNorm(D)
+            self.next_code_proj = nn.ModuleList(
+                [nn.Linear(D, D, bias=False) for _ in range(depth)]
+            )
+            for proj in self.next_code_proj:
+                nn.init.normal_(proj.weight, std=D**-0.5)
+            self.next_code_heads = nn.ModuleList(
+                [HaloClassifier(D, codes) for _ in range(depth)]
+            )
+            self.next_code_loss = HALOLoss(vocab_size=codes, learn_gamma=False)
+
         # Optional learned query pooling
         self.use_learned_queries = use_learned_queries
         if use_learned_queries:
@@ -164,6 +204,66 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         self._last_vq_perplexity = vq_perplexity
         return z_q, aux_loss + vq_loss
 
+    def _stage_indices(self) -> Optional[list]:
+        """Per-stage code ids for the last forward, if the bank exposes them."""
+        core = getattr(self.quantizer, "quantizer", self.quantizer)
+        codec = getattr(core, "codec", None)
+        idx = getattr(self, "_last_vq_indices", None)
+        if codec is None or idx is None:
+            return None
+        digits, _ = codec.decompose(idx)
+        return digits
+
+    def decode(self, h, *args, **kwargs):
+        """Register the next-code objective, then decode. ``h`` is the trunk
+        output over patches, so position ``p`` conditions patch ``p+1``."""
+        if (
+            self.next_code is not None
+            and self.training
+            and torch.is_grad_enabled()
+            and h.shape[1] >= 2
+        ):
+            self._register_next_code(h)
+        return super().decode(h, *args, **kwargs)
+
+    def _register_next_code(self, h: torch.Tensor) -> None:
+        digits = self._stage_indices()
+        if digits is None:
+            return
+        x = self.next_code_norm(h[:, :-1, :])
+        total, correct, abstain, stages = None, [], [], 0
+        for s, (proj, head) in enumerate(zip(self.next_code_proj, self.next_code_heads)):
+            if s >= len(digits) or tuple(digits[s].shape) != tuple(h.shape[:2]):
+                break
+            target = digits[s][:, 1:].reshape(-1)
+            feats = proj(x).reshape(-1, x.shape[-1]).float()
+            loss = self.next_code_loss.on_features(feats, target, head)
+            total = loss if total is None else total + loss
+            stages += 1
+            with torch.no_grad():
+                # Nearest centroid on the features as scored, not through the
+                # classifier's RMS-normalized inference path.
+                cen = head.centroids()
+                score = 2.0 * feats.detach() @ cen.T - cen.pow(2).sum(-1)
+                correct.append((score.argmax(-1) == target).float().mean())
+                stats = self.next_code_loss._last_stats or {}
+                abstain.append(stats.get("abstain_rate", 0.0))
+        if total is None:
+            return
+        # Divided by log K, as CALM's code loss is, so the term's size does not
+        # grow with the codebook. HALO's distance logits start sharper than a
+        # chance classifier, so it opens at 2-3x this scale, not at 1.0.
+        chance = math.log(max(2, self.next_code_heads[0].vocab_size))
+        self._pending["next_code_halo"] = total / stages / chance
+        self._next_code_diag = {
+            "next_code_acc": torch.stack(correct).mean(),
+            "next_code_abstain": sum(abstain) / stages,
+        }
+
+    def consume_pending_losses(self) -> Dict[str, torch.Tensor]:
+        out, self._pending = self._pending, {}
+        return out
+
     def training_metrics(self) -> dict:
         """VQ health for the dashboard (read by DynamicsLogger at the log
         interval - the same numbers the reset path prints to the terminal,
@@ -177,6 +277,8 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         ppl = getattr(self, "_last_vq_perplexity", None)
         if ppl is not None:
             out["vq_perplexity"] = float(ppl)
+        for key, value in self._next_code_diag.items():
+            out[key] = float(value)
         # Compander anisotropy, when a GDN is in the frame. gamma starts flat at
         # 1/L (the isotropic sphere projection), so the coefficient of variation
         # over gamma is exactly 0 at init and rises only if the normalizer has
@@ -193,6 +295,35 @@ class AbstractinatorEncoder(ByteLatentEncoder):
     # 4 residual stages; absent stages simply never emit their key.
     metric_descriptions = {
         **ByteLatentEncoder.metric_descriptions,
+        "next_code_acc": {
+            "description": (
+                "Share of patches whose next code the trunk's HALO classifier "
+                "names exactly, averaged over residual stages. Chance is 1/K. "
+                "The direct read on whether the trunk predicts anything."
+            ),
+            "chart": {
+                "title": "Next-Code Accuracy",
+                "y_label": "accuracy",
+                "y_scale": "logarithmic",
+                "group": "next_code",
+                "group_order": 75,
+                "order": 0,
+            },
+        },
+        "next_code_abstain": {
+            "description": (
+                "Probability mass the next-code HALO classifier puts on its abstain "
+                "class. High = the trunk's features sit near the origin, unsure "
+                "which code comes next."
+            ),
+            "chart": {
+                "title": "Next-Code Abstain",
+                "y_label": "abstain probability",
+                "y_scale": "linear",
+                "group": "next_code",
+                "order": 1,
+            },
+        },
         "vq_gdn_anisotropy": {
             "description": (
                 "Coefficient of variation of the GDN compander's gamma. 0 = still the "
