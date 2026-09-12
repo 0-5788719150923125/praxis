@@ -157,6 +157,30 @@ class ExperimentLoader:
 
         return self.configs
 
+    def format_tracked_files(self):
+        """Rewrite the git-tracked experiments in the documented format.
+
+        Called once per launch. Idempotent - a file already in the format is left
+        byte-identical - so in practice it only does anything after a flag's
+        documentation changes. A user's own experiments are gitignored and never
+        read here.
+
+        It documents against ``documentation_parser()`` rather than the parser
+        this run launched with, so the committed files do not depend on which
+        integration conditions this particular argv satisfied."""
+        from praxis.cli.annotated_config import (
+            documentation_parser,
+            format_tracked_experiments,
+        )
+
+        try:
+            parser = documentation_parser()
+            for path in format_tracked_experiments(parser, self.experiments_dir):
+                print(f"Formatted {path}")
+        except Exception as e:
+            # Documentation upkeep is never worth failing a run over.
+            print(f"Warning: could not format tracked experiments: {e}")
+
     def apply_experiments(self, args, explicitly_provided=None):
         """
         Apply experiment configurations to parsed arguments.

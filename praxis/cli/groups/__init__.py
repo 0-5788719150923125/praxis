@@ -3,6 +3,7 @@
 from .architecture import ArchitectureGroup
 from .data import DataGroup
 from .hardware import HardwareGroup
+from .inference import InferenceGroup
 from .logging import LoggingGroup
 from .models import ModelsGroup
 from .networking import NetworkingGroup
@@ -19,6 +20,7 @@ ARGUMENT_GROUPS = [
     ArchitectureGroup,
     ModelsGroup,
     TrainingGroup,
+    InferenceGroup,
     OptimizationGroup,
     NetworkingGroup,
     DataGroup,
@@ -65,6 +67,7 @@ __all__ = [
     "ArchitectureGroup",
     "ModelsGroup",
     "TrainingGroup",
+    "InferenceGroup",
     "OptimizationGroup",
     "NetworkingGroup",
     "DataGroup",

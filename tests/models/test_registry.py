@@ -149,6 +149,12 @@ def test_the_shipped_foreign_experiment_parses(parser):
             skipped.append(key)
             continue
         flag = f"--{key.replace('_', '-')}"
+        if isinstance(value, dict):
+            # A mapping an experiment YAML can express but argparse cannot
+            # (generation_kwargs). Covered by tests/inference/test_prompts.py,
+            # which validates it the way the CLI actually does.
+            skipped.append(key)
+            continue
         if value is True:
             argv.append(flag)
         elif isinstance(value, list):
@@ -158,7 +164,12 @@ def test_the_shipped_foreign_experiment_parses(parser):
         else:
             argv.extend([flag, str(value)])
 
-    assert sorted(skipped) == ["discord", "discord_nickname"]
+    # Assert what is skipped is skipped for a REASON, not that the list has a
+    # particular shape: integration flags come and go with what is installed,
+    # and a brittle equality here would fail on somebody else's checkout.
+    for key in skipped:
+        assert key not in known or isinstance(config[key], dict), key
+    assert "attention_type" not in skipped, "an architecture flag would be a bug"
 
     args = parser.parse_args(argv)
     reject_incompatible_flags(args, parser)

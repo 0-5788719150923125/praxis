@@ -18,6 +18,7 @@ class OtherGroup:
             "--seed",
             type=int,
             default=int(65536 * (2 * math.acos(1 - random.random()) / math.pi) ** 6.66),
+            volatile_default=True,
             help="Global seed used for reproducibility",
         )
 

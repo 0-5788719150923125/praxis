@@ -111,30 +111,10 @@ export const FORM_FIELDS = {
             parse: String
         },
         {
-            id: 'max-tokens',
-            stateKey: 'settings.maxTokens',
+            id: 'generation-kwargs',
+            stateKey: 'settings.generationKwargs',
             type: 'value',
-            parse: parseInt,
-            validate: (v) => v >= 50 && v <= 1000
-        },
-        {
-            id: 'temperature',
-            stateKey: 'settings.temperature',
-            type: 'value',
-            parse: parseFloat,
-            displayId: 'temperature-value'
-        },
-        {
-            id: 'repetition-penalty',
-            stateKey: 'settings.repetitionPenalty',
-            type: 'value',
-            parse: parseFloat,
-            displayId: 'repetition-penalty-value'
-        },
-        {
-            id: 'do-sample',
-            stateKey: 'settings.doSample',
-            type: 'checked'
+            parse: String
         },
         {
             id: 'debug-logging',
@@ -143,6 +123,31 @@ export const FORM_FIELDS = {
         }
     ]
 };
+
+/**
+ * The non-empty, non-comment lines of the generation-kwargs form, as the
+ * server's own `key=value` list. Not parsed here: `parse_generation_kwargs`
+ * on the server reads the values as YAML and rejects unknown keys, and having
+ * one parser rather than two is what keeps the form honest about what a run
+ * would actually decode with.
+ * @param {string} text - Raw textarea contents
+ * @returns {string[]} One `key=value` entry per meaningful line
+ */
+export const generationKwargLines = (text) =>
+    String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#'));
+
+/**
+ * Render a `{key: value}` mapping as the `key=value` lines the form shows.
+ * @param {Object} mapping - Parameters as sent by the server
+ * @returns {string} Textarea contents
+ */
+export const generationKwargText = (mapping) =>
+    Object.entries(mapping || {})
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n');
 
 /**
  * Get nested property from object using dot notation

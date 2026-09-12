@@ -12,7 +12,7 @@ import { connectRealtime, setupLiveReload, renderCurrentMetrics } from './websoc
 import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe, setupTerminalPullRelease, setupLogTouchScroll } from './mobile.js';
-import { storage, FORM_FIELDS, applyFormValues, updateRangeDisplay } from './config.js';
+import { storage, FORM_FIELDS, applyFormValues, updateRangeDisplay, generationKwargText } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
 import { beginPrewarm, endPrewarm } from './prefetch.js';
@@ -394,6 +394,48 @@ function setupWindowResizeHandler() {
 }
 
 /**
+ * Adopt a run-supplied default unless this browser edited the value.
+ *
+ * The stored value is compared against the default it was SEEDED with, not
+ * against the new one: a value that still matches its seed was never touched,
+ * so a run that changes its `--developer-prompt` shows up immediately, while a
+ * prompt somebody wrote in the box survives a relaunch.
+ *
+ * @param {string} key - localStorage key for the live value
+ * @param {string} serverDefault - What this run says the value should be
+ * @param {string} fallback - Value to use when neither side has an opinion
+ * @returns {string} The value to apply
+ */
+function resolveDefault(key, serverDefault, fallback) {
+    const stored = storage.get(key);
+    const seed = storage.get(`${key}:default`);
+    storage.set(`${key}:default`, serverDefault);
+
+    const edited = stored !== null && stored !== undefined && stored !== seed;
+    if (edited) return stored;
+    if (serverDefault) return serverDefault;
+    return stored ?? fallback;
+}
+
+/**
+ * Read the run's inference defaults, rendered into the page by the server.
+ * @returns {{developerPrompt: string, generationKwargs: string}}
+ */
+function readRunDefaults() {
+    const raw = document.querySelector('meta[name="praxis-defaults"]')?.content || '{}';
+    let parsed = {};
+    try {
+        parsed = JSON.parse(raw) || {};
+    } catch (e) {
+        console.warn('[Settings] Could not read run defaults:', e);
+    }
+    return {
+        developerPrompt: parsed.developerPrompt || '',
+        generationKwargs: generationKwargText(parsed.generationKwargs)
+    };
+}
+
+/**
  * Load settings from localStorage using centralized storage utilities
  */
 function loadSettings() {
@@ -403,11 +445,14 @@ function loadSettings() {
         state.theme = savedTheme;
     }
 
-    // Load system prompt
-    const savedPrompt = storage.get('developerPrompt');
-    if (savedPrompt) {
-        state.settings.systemPrompt = savedPrompt;
-    }
+    // What this run asked for, and what this browser has done with it.
+    state.defaults = readRunDefaults();
+    state.settings.systemPrompt = resolveDefault(
+        'developerPrompt', state.defaults.developerPrompt, DEFAULT_SYSTEM_PROMPT
+    );
+    state.settings.generationKwargs = resolveDefault(
+        'generationKwargs', state.defaults.generationKwargs, ''
+    );
 
     // Load API URL
     const savedApiUrl = storage.get('apiUrl');
@@ -417,12 +462,6 @@ function loadSettings() {
         if (!proxied) {
             state.settings.apiUrl = savedApiUrl;
         }
-    }
-
-    // Load generation params
-    const savedParams = storage.get('genParams');
-    if (savedParams) {
-        Object.assign(state.settings, savedParams);
     }
 
     // Load debug flag
@@ -439,13 +478,7 @@ function saveSettings() {
     storage.set('theme', state.theme);
     storage.set('developerPrompt', state.settings.systemPrompt);
     storage.set('apiUrl', state.settings.apiUrl);
-    storage.set('genParams', {
-        maxTokens: state.settings.maxTokens,
-        temperature: state.settings.temperature,
-        repetitionPenalty: state.settings.repetitionPenalty,
-        doSample: state.settings.doSample,
-        useCache: state.settings.useCache
-    });
+    storage.set('generationKwargs', state.settings.generationKwargs);
     storage.set('debugLogging', state.settings.debugLogging);
 }
 

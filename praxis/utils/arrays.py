@@ -1,7 +1,7 @@
 """Array and list generation utilities."""
 
 import json
-from typing import Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -35,6 +35,39 @@ def coerce_to_list(value: Any) -> List[str]:
                 continue
         result.extend(p.strip() for p in text.split(",") if p.strip())
     return result
+
+
+def coerce_to_mapping(value: Any) -> Dict[str, Any]:
+    """Normalize a mapping, a list of ``key=value`` strings, or one such string
+    into a dict with YAML-typed values.
+
+    The list-of-strings form is what argparse can express; the mapping form is
+    what an experiment YAML can express. Both reach the same place, so a flag
+    like ``--generation-kwargs`` can be written either way without the config
+    and the command line meaning different things.
+
+    Values are read as YAML, so ``do_sample=true`` arrives as a bool and
+    ``temperature=0.7`` as a float rather than as strings the consumer has to
+    guess at.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+
+    import yaml
+
+    pairs = value if isinstance(value, (list, tuple)) else [value]
+    out: Dict[str, Any] = {}
+    for pair in pairs:
+        if isinstance(pair, dict):  # a YAML list of one-key mappings
+            out.update(pair)
+            continue
+        key, sep, raw = str(pair).partition("=")
+        if not sep:
+            raise ValueError(f"expected key=value, got {pair!r}")
+        out[key.strip()] = yaml.safe_load(raw)
+    return out
 
 
 def generate_alternating_values(

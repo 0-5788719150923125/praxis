@@ -30,3 +30,14 @@ def test_generation_mode_is_not_part_of_the_model_hash():
     assert compute_args_hash(base) == compute_args_hash(
         base + ["--generation-mode", "vote"]
     )
+
+
+def test_a_foreign_exclusion_does_not_suppress_the_real_ones(toy_parser):
+    """`toy_parser` declares an `exclude_hash` flag of its own, which used to
+    count as "the arguments have been declared" and leave every real
+    inference-only flag back in the run hash - silently forking a checkpoint
+    directory the first time one was passed."""
+    base = ["--encoder-type", "x"]
+    assert compute_args_hash(base) == compute_args_hash(
+        base + ["--generation-mode", "vote", "--system-prompt", "be brief"]
+    )

@@ -7,6 +7,7 @@ This module re-exports all utilities for backward compatibility.
 # Re-export everything from submodules for backward compatibility
 from praxis.utils.arrays import (
     coerce_to_list,
+    coerce_to_mapping,
     generate_alternating_values,
     generate_decay_values,
     generate_u_shape_values,
@@ -41,6 +42,7 @@ from praxis.utils.tensors import create_block_ids, norm_scaling
 __all__ = [
     # Arrays
     "coerce_to_list",
+    "coerce_to_mapping",
     "generate_alternating_values",
     "generate_decay_values",
     "generate_u_shape_values",

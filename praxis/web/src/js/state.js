@@ -195,12 +195,22 @@ export const state = {
     settings: {
         systemPrompt: 'Write thy wrong.',
         apiUrl: '',  // Will be set on init
-        maxTokens: 256,
-        temperature: 0.5,
-        repetitionPenalty: 1.2,
-        doSample: true,
-        useCache: true,
+        // The decode knobs, as the `key=value` lines the Settings form shows.
+        // Kept as TEXT rather than parsed fields on purpose: the server takes
+        // the same spelling `--generation-kwargs` does and owns the only
+        // parser, so the browser never has to guess a type or keep a list of
+        // valid keys in sync with transformers.
+        generationKwargs: '',
         debugLogging: false
+    },
+
+    // What the RUN said these should be, read from the page at load. Kept
+    // beside the live values so an edit can be told apart from a default: a
+    // stored value that still equals the default it was seeded with yields to
+    // a new one, and a value the user actually changed does not.
+    defaults: {
+        developerPrompt: '',
+        generationKwargs: ''
     },
 
     // Modal state

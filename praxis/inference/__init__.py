@@ -30,6 +30,11 @@ from praxis.inference.streaming import (
     random_text_seed,
 )
 
+from praxis.inference.prompts import (
+    apply_standing_prompts,
+    parse_generation_kwargs,
+)
+
 __all__ = [
     # the loop
     "Generator",
@@ -56,6 +61,9 @@ __all__ = [
     "ContextBlock",
     "ContextStreams",
     "DEFAULT_CONTEXT_BLOCKS",
+    # standing instructions + decode knobs
+    "apply_standing_prompts",
+    "parse_generation_kwargs",
     # wiring
     "bos_prompt",
     "swap_inference_generator",

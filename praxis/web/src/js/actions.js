@@ -402,13 +402,7 @@ export const ACTION_HANDLERS = {
         storage.set('theme', state.theme);
         storage.set('developerPrompt', state.settings.systemPrompt);
         storage.set('apiUrl', state.settings.apiUrl);
-        storage.set('genParams', {
-            maxTokens: state.settings.maxTokens,
-            temperature: state.settings.temperature,
-            repetitionPenalty: state.settings.repetitionPenalty,
-            doSample: state.settings.doSample,
-            useCache: state.settings.useCache
-        });
+        storage.set('generationKwargs', state.settings.generationKwargs);
         storage.set('debugLogging', state.settings.debugLogging);
 
         // Show confirmation

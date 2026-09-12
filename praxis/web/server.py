@@ -57,6 +57,9 @@ class APIServer:
         config_file=None,
         donations="",
         author=None,
+        system_prompt=None,
+        developer_prompt=None,
+        generation_kwargs=None,
     ):
         """Initialize the API server.
 
@@ -74,6 +77,11 @@ class APIServer:
             dashboard: Dashboard instance for terminal streaming
             launch_command: Command used to launch the model
             config_file: Path to experiment config file
+            system_prompt: Run-level ``system`` message for served conversations
+            developer_prompt: Run-level ``developer`` message, and the default
+                the web app's editable prompt is seeded with
+            generation_kwargs: Run-level decoding parameters, and the defaults
+                the web app's Settings form is seeded with
         """
         self.generator = generator
         self.dashboard = dashboard
@@ -91,6 +99,11 @@ class APIServer:
         self.donations = donations
         self.author = author
         self.dev_mode = dev_mode
+        # Inference-time defaults. Served paths apply them, and the web app
+        # seeds its editable forms from them (praxis/inference/prompts.py).
+        self.system_prompt = system_prompt
+        self.developer_prompt = developer_prompt
+        self.generation_kwargs = dict(generation_kwargs or {})
         self.launch_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         self.server_thread = None
@@ -216,6 +229,9 @@ class APIServer:
         app.config["config_file"] = self.config_file
         app.config["donations"] = self.donations
         app.config["author"] = self.author
+        app.config["system_prompt"] = self.system_prompt
+        app.config["developer_prompt"] = self.developer_prompt
+        app.config["generation_kwargs"] = self.generation_kwargs
         app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
 
         # Precompute the expensive model-probing endpoints off the request path

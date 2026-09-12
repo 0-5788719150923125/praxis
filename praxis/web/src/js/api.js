@@ -4,6 +4,7 @@
  */
 
 import { state } from './state.js';
+import { generationKwargLines } from './config.js';
 import { openStream } from './websocket.js';
 
 /**
@@ -28,17 +29,25 @@ import { openStream } from './websocket.js';
  * @returns {Promise<Object>} API response
  */
 export async function sendMessage(messages, opts = {}) {
+    // The editable developer prompt rides along as a real `developer` turn.
+    // The server injects the run's own only when the conversation carries
+    // none, so sending it here is exactly what makes the box an override -
+    // and a format with no `developer` role folds it into the system message
+    // server-side rather than rendering a role it cannot.
+    const preamble = state.settings.systemPrompt
+        ? [{ role: 'developer', content: state.settings.systemPrompt }]
+        : [];
+
     const payload = {
-        messages: messages.map(m => ({
+        messages: [...preamble, ...messages].map(m => ({
             role: m.role,
             content: m.content
         })),
-        max_new_tokens: opts.maxNewTokens ?? state.settings.maxTokens,
-        temperature: state.settings.temperature,
-        repetition_penalty: state.settings.repetitionPenalty,
-        do_sample: state.settings.doSample,
-        use_cache: state.settings.useCache
+        // Sent as the server's own `key=value` list so ONE parser decides what
+        // these mean. An empty box sends nothing and the run's defaults stand.
+        generation_kwargs: generationKwargLines(state.settings.generationKwargs)
     };
+    if (opts.maxNewTokens) payload.max_new_tokens = opts.maxNewTokens;
     // Loop/short turns can cap generation time so "thinking" doesn't drag.
     if (opts.timeout) payload.timeout = opts.timeout;
 
@@ -134,10 +143,9 @@ export async function printAsk(reroll = false) {
     const response = await fetch(`${state.settings.apiUrl}/api/print/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            ...(reroll ? { reroll: true } : {}),
-            max_new_tokens: state.settings.maxTokens,
-        })
+        // No length here: Print is its own stage with its own server-side
+        // budget, not the chat, so the Settings box does not reach it.
+        body: JSON.stringify(reroll ? { reroll: true } : {})
     });
     if (!response.ok) throw new Error(`Print ask error: ${response.status}`);
     return response.json();
@@ -182,7 +190,8 @@ export async function loopGenerate(task) {
     const response = await fetch(`${state.settings.apiUrl}/api/loop/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task, max_new_tokens: state.settings.maxTokens })
+        // Same as Print: the Loop stage carries its own server-side budget.
+        body: JSON.stringify({ task })
     });
     if (!response.ok) throw new Error(`Loop generate error: ${response.status}`);
     return response.json();

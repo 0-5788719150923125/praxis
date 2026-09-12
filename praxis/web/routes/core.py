@@ -84,8 +84,21 @@ def home():
     host = request.host.split(":")[0] if ":" in request.host else request.host
     proxied = _is_public_host(host, current_app.config)
 
+    # The run's inference defaults, rendered into the page rather than fetched:
+    # the client seeds its editable prompt and Settings form from them before
+    # the first paint, so there is no window where the forms show stale values
+    # and no race with localStorage restore.
+    defaults = json.dumps(
+        {
+            "developerPrompt": current_app.config.get("developer_prompt") or "",
+            "generationKwargs": current_app.config.get("generation_kwargs") or {},
+        }
+    )
+
     response = make_response(
-        render_template("index.html", donations=donations, proxied=proxied)
+        render_template(
+            "index.html", donations=donations, proxied=proxied, defaults=defaults
+        )
     )
     response.headers["Content-Security-Policy"] = build_csp_policy(csp_sources)
     return response

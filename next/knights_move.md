@@ -6,7 +6,9 @@
 > stays structural ... induction wants a discrete pointer" - how that block gets
 > *some* content into its scores without paying `T^2 * d` for a QK product.
 > Sibling to [surrogate_geometry.md](surrogate_geometry.md), where `const [t, t]`
-> started.
+> started, and to [differential_mirrors.md](differential_mirrors.md), which owns
+> the other half of the same question: this note adds content to the logits,
+> that one changes how logits become weights.
 
 ## Where this came from
 

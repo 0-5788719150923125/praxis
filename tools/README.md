@@ -12,6 +12,7 @@ A shared toolbox of small CLI utilities, callable directly by both the human and
 ## Available tools
 
 - `fetch_metrics.py` - hits the running web app's `/api/metrics` (and `/api/dynamics` with `--dynamics`) and prints a per-series summary table (n, latest, first, min/max, slope per 1k steps, missing count, unicode sparkline) for the current run or `--run <hash>`. Pass `--filter <regex>` to narrow series, `--json` for machine output, `--host host:port` to point at a non-default server.
+- `format_experiments.py` - rewrites the git-tracked experiment configs in the documented format (the same pass `./launch` runs on startup), so a change to a flag's documentation can be reviewed as a diff. `--check` reports which files are stale without writing. Gitignored experiments are never touched.
 - `generate_print_samples.py` - materializes the default `print` data (25 formats x N) and traces the engagement reward over it, to eyeball the dynamics before any model exists.
 - `index_kb.py` - builds the knowledge-base FTS5 search index the web app serves at `/api/kb/search`, reading `docs/`, `next/`, and `build/runs/` directly.
 

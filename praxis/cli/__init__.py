@@ -64,6 +64,11 @@ def initialize_cli():
     # Parse arguments
     args = parser.parse_args()
 
+    # Keep the experiments this repo publishes in the documented format. Only
+    # git-tracked files are touched: every other experiment in the directory is
+    # gitignored, belongs to whoever wrote it, and is left alone.
+    experiment_loader.format_tracked_files()
+
     # Get explicitly provided arguments
     explicitly_provided = ArgumentProcessor.get_explicitly_provided()
 

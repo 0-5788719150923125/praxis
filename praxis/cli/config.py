@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from praxis.inference.prompts import parse_generation_kwargs
 from praxis.models import parse_model_kwargs
 from praxis.trainers.precision import (
     DEFAULT_PRECISION,
@@ -67,6 +68,13 @@ class RunConfig:
     # assistant mask, the halting contract and the tool-call layout together
     # (praxis/tokenizers/chat_templates.py); None = "default" (ChatML).
     chat_format: Optional[str] = None
+
+    # Inference-time standing instructions and decode knobs. Defaults the
+    # served paths apply and the web app seeds its forms from; a caller that
+    # sends its own wins. See praxis/inference/prompts.py.
+    system_prompt: Optional[str] = None
+    developer_prompt: Optional[str] = None
+    generation_kwargs: Dict[str, Any] = field(default_factory=dict)
     no_docs: bool = False
 
     # Shortcut modes
@@ -180,6 +188,9 @@ class RunConfig:
             encoder_type=encoder_type,
             tokenizer_type=get("tokenizer_type"),
             chat_format=get("chat_format"),
+            system_prompt=get("system_prompt"),
+            developer_prompt=get("developer_prompt"),
+            generation_kwargs=parse_generation_kwargs(get("generation_kwargs")),
             no_docs=get("no_docs", False),
             list_runs=get("list_runs", False),
             train_tokenizer=get("train_tokenizer", False),

@@ -179,6 +179,10 @@ def print_training_banner(bundle, services):
         print(f"[TRAINING] API available at {url}")
 
 
+# 128 + SIGTERM(15), the shell's convention for "killed by this signal".
+_SIGTERM_EXIT = 143
+
+
 def run_training(
     trainer, train_model, dataintegration, ckpt_path, services, progress_bar
 ):
@@ -187,6 +191,16 @@ def run_training(
     Lightning usually drains its own SIGINT and returns into the success
     branch; the KeyboardInterrupt branch only runs when an interrupt escapes
     the trainer (e.g. during dataset setup).
+
+    SIGTERM is the separate case, and the one every container stop takes:
+    Lightning raises ``SIGTERMException``, which subclasses ``SystemExit`` and
+    therefore ``BaseException``. It matches neither ``KeyboardInterrupt`` nor
+    ``Exception``, so it used to sail through both branches and out of
+    ``main()`` - skipping ``graceful_shutdown`` entirely (the API server,
+    Discord, the snapshot publisher and the dataloaders left to process exit)
+    and, because it carries no code, reporting **exit 0** for a run that was
+    killed. `docker events` recorded a terminated run as `exitCode=0`, which is
+    the kind of lie a supervisor acts on.
     """
     import traceback
 
@@ -216,6 +230,18 @@ def run_training(
         signal.signal(signal.SIGTERM, cleanup_signal_handler)
         graceful_shutdown(api_server, exit_code=130, reason="interrupted")
         return 130
+
+    except SystemExit as e:
+        # Lightning's SIGTERMException, or any other deliberate exit raised
+        # from inside the fit. 143 = 128 + SIGTERM, the shell convention, and
+        # the same shape as 130 above for SIGINT; an exit that carried its own
+        # non-zero code keeps it.
+        code = e.code if isinstance(e.code, int) and e.code else _SIGTERM_EXIT
+        print(f"\n[TRAIN] Terminated (signal); exiting {code}")
+        signal.signal(signal.SIGINT, cleanup_signal_handler)
+        signal.signal(signal.SIGTERM, cleanup_signal_handler)
+        graceful_shutdown(api_server, exit_code=code, reason="terminated")
+        return code
 
     except Exception:
         # A shutdown already in flight reclassifies this as a cancellation.

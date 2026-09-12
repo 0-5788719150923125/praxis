@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from praxis.inference.prompts import apply_standing_prompts
 from praxis.inference.reply import (  # noqa: F401  (re-exported)
     EMPTY_REPLY_PLACEHOLDER,
     extract_assistant_reply,
@@ -36,6 +37,9 @@ def generate_from_messages(
     on_text: Optional[Callable[[str], None]] = None,
     on_reset: Optional[Callable[[], None]] = None,
     on_tool: Optional[Callable[[str], None]] = None,
+    system_prompt: Optional[str] = None,
+    developer_prompt: Optional[str] = None,
+    generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Generate a response from a list of messages.
 
@@ -61,12 +65,30 @@ def generate_from_messages(
             runs. NOT recoverable from the return value below - the reply
             extractor strips the tool exchange - so a caller that wants to
             report tool use has to pass this.
+        system_prompt: Run-level ``system`` message, prepended unless
+            ``messages`` already carries one.
+        developer_prompt: Run-level ``developer`` message, same rule. Folded
+            into the system message under a format with no ``developer`` role.
+        generation_kwargs: Run-level decoding parameters, merged OVER the
+            named arguments above so a run can raise ``top_p`` or drop
+            ``do_sample`` without every call site growing a parameter. A
+            caller that wants to win passes the value here itself.
 
     Returns:
         Generated assistant reply, or None on failure
     """
     if not messages:
         return None
+
+    # The run's standing instructions, if it has any. A caller's own message of
+    # that role wins, which is what makes the web app's editable developer
+    # prompt an override rather than a second copy.
+    messages = apply_standing_prompts(
+        messages,
+        system_prompt=system_prompt,
+        developer_prompt=developer_prompt,
+        chat_format=tokenizer,
+    )
 
     # Format messages using chat template
     try:
@@ -94,6 +116,13 @@ def generate_from_messages(
 
     if truncate_to is not None:
         kwargs["truncate_to"] = truncate_to
+
+    # The run's decode knobs, last so they win over the defaults above. The
+    # route has already folded any per-request override into this dict, so
+    # there is exactly one precedence rule and it lives at the call site.
+    kwargs.update(generation_kwargs or {})
+    # Not a generate() parameter - the deadline below is what bounds the decode.
+    timeout = float(kwargs.pop("timeout", timeout))
 
     # Queue the generation request, with the deadline attached rather than kept
     # here. The wait below is client-side only: the queued path is served inside

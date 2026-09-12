@@ -747,6 +747,41 @@
     border-color: var(--primary);
 }
 
+/* The generation-parameters form: `key=value` lines, so monospace and a
+   resize handle rather than a fixed height - the set of keys a run cares
+   about is open-ended. */
+.settings-textarea {
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    background-color: var(--input-bg, var(--assistant-message-bg));
+    color: var(--input-text, #333333);
+    resize: vertical;
+    min-height: 6rem;
+}
+
+.settings-textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.form-hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-muted, var(--text));
+    opacity: 0.75;
+}
+
+.form-hint code {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.95em;
+}
+
 .save-button, .reset-button {
     color: white;
     border: none;

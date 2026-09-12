@@ -16,6 +16,11 @@ class _HashAwareContainer:
     it uses at inference) must be kept out of it, or toggling it forks a new
     empty run. Declared on the argument, the fact cannot drift from the flag.
 
+    ``volatile_default=True`` marks a default that is computed fresh each
+    process (``--seed``). The annotated config prints it as random rather than
+    as the number this process happened to draw, which would otherwise churn the
+    committed experiment files on every launch.
+
     ``registry`` names the registry namespace (or tuple of names) a flag's
     values are keys of. A single namespace also becomes the flag's ``choices``
     unless the call passes its own (``choices=None`` for a flag that takes
@@ -29,7 +34,13 @@ class _HashAwareContainer:
     """
 
     def add_argument(
-        self, *args, exclude_hash=False, doc=None, registry=None, **kwargs
+        self,
+        *args,
+        exclude_hash=False,
+        doc=None,
+        registry=None,
+        volatile_default=False,
+        **kwargs,
     ):
         if registry is not None and doc is not None:
             raise ValueError(
@@ -43,6 +54,7 @@ class _HashAwareContainer:
         action.exclude_hash = exclude_hash
         action.doc = doc
         action.registry = registry
+        action.volatile_default = volatile_default
         if exclude_hash:
             if not action.option_strings:
                 # The hasher keys positionals by index (_pos_N), not by name,

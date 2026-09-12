@@ -5,6 +5,8 @@ import time
 
 from flask import Blueprint, current_app, jsonify, request
 
+from praxis.inference.prompts import parse_generation_kwargs
+
 from ..utils import generate_from_messages
 from ..websocket import stream_callbacks
 
@@ -74,19 +76,47 @@ def generate_messages():
             if emit_tool is not None:
                 emit_tool(name)
 
+        # Decode knobs, in precedence order: the route's historical defaults,
+        # then the run's --generation-kwargs, then whatever this request sent.
+        # The client's own Settings form is an OVERRIDE of the run's values, and
+        # it expresses that by sending them here - so the rule is just "last
+        # writer wins" and there is nothing to reconcile server-side.
+        run_kwargs = dict(current_app.config.get("generation_kwargs") or {})
+        try:
+            request_kwargs = parse_generation_kwargs(data.get("generation_kwargs"))
+        except ValueError as e:
+            return jsonify({"response": "", "error": str(e)}), 400
+        run_kwargs.update(request_kwargs)
+
+        # Legacy top-level fields from older clients, applied at the same
+        # precedence as an explicit override.
+        for key, payload_key in (
+            ("max_new_tokens", "max_new_tokens"),
+            ("temperature", "temperature"),
+            ("repetition_penalty", "repetition_penalty"),
+            ("do_sample", "do_sample"),
+            ("use_cache", "use_cache"),
+            ("timeout", "timeout"),
+        ):
+            if payload_key in data:
+                run_kwargs[key] = data[payload_key]
+
         # Use unified generation function
         assistant_reply = generate_from_messages(
             messages=messages,
             generator=generator,
             tokenizer=tokenizer,
-            max_new_tokens=data.get("max_new_tokens", 256),
-            temperature=data.get("temperature", 0.4),
-            repetition_penalty=data.get("repetition_penalty", 1.15),
-            do_sample=data.get("do_sample", True),
-            timeout=float(data.get("timeout", 60.0)),
+            max_new_tokens=256,
+            temperature=0.4,
+            repetition_penalty=1.15,
+            do_sample=True,
+            timeout=60.0,
             on_text=on_text,
             on_reset=on_reset,
             on_tool=on_tool,
+            system_prompt=current_app.config.get("system_prompt"),
+            developer_prompt=current_app.config.get("developer_prompt"),
+            generation_kwargs=run_kwargs,
         )
 
         # A baby/untrained model may produce nothing or gibberish - never 500 over

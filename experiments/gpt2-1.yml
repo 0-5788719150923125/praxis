@@ -1,47 +1,1201 @@
-# GPT-2 replication baseline (POC-size, for ablations).
-# Faithful to the original architecture; data and training method may differ.
-# Tokenizer is TokenMonster (pretrained, external) rather than GPT-2's BPE,
-# keeping the baseline independent of our in-house tokenizer suite.
-seed: 42
+# gpt2-1 - a Praxis experiment
+#
+#     ./launch --gpt2-1
+#
+# Every key is a CLI flag with dashes written as underscores (block_size is
+# --block-size), and a flag given on the command line wins over this file.
+#
+# The keys this experiment sets come first, with any `extends` bases merged in.
+# Every other flag follows at the bottom, commented out.
+#
+# Praxis formats this file: the prose under each key is generated from the flag
+# and the registry, so an edit to it is overwritten. Anything written by hand is
+# kept, folded into the `Note:` paragraph above its key.
+#
+# Note: GPT-2 replication baseline (POC-size, for ablations). Faithful to the
+#     original architecture; data and training method may differ. Tokenizer is
+#     TokenMonster (pretrained, external) rather than GPT-2's BPE, keeping the
+#     baseline independent of our in-house tokenizer suite.
+
+
+# ==============================================================================
+# SET BY THIS EXPERIMENT
+# ==============================================================================
+
+
+# --- hardware -----------------------------------------------------------------
+
+
+# Device to use.
+#
+# Default: cpu
+
 device: cuda:0
 
-# Dimensions - GPT-2 small scaled down to 1/4 size (for faster iteration in ablations).
-block_size: 512
-# Auto-raised to cover sequence-multiplied (2x/4x/8x) batches when too small.
-max_position_embeddings: 4096
+
+# Batch size to use for training.
+#
+# Rows per microbatch, the unit that has to fit in memory. --target-batch-size
+# sets rows per optimizer step, reached by accumulating microbatches. Larger
+# batches also unlock the longer sequence-length tiers (see --block-size).
+#
+# Default: 1
+
 batch_size: 16
+
+
+# --- architecture -------------------------------------------------------------
+
+
+# How to process layers in the decoder.
+#
+# How the stack of blocks is composed (sequential, parallel, weighted, ...).
+#
+# Options: sequential, parallel_mean, parallel_variance, parallel_weighted
+# Default: sequential
+#
+# sequential: The default decoder. Walks layers one at a time, with the
+#     controller picking the next expert at each step and the halting strategy
+#     deciding when to stop. Supports multi-cycle "reasoning" passes through the
+#     expert pool when ``meta`` contains ``use_reason``.
+
+decoder_type: sequential
+
+
+# The type of block to use for every intermediate decoder layer.
+#
+# Top-level layer types the decoder stacks. Mix attention-based and recurrent
+# designs freely.
+#
+# Options: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet
+# Default: transformer
+#
+# transformer: A standard transformer block, with adjustable feedforward
+#     "experts".
+#
+# Note: Architecture - vanilla causal MHA, learned absolute positions (wte +
+#     wpe), pre-LN LayerNorm, 4x GELU MLP, tied LM head
+
+block_type: transformer
+
+
+# The feedforward-network implementation to use within each block.
+#
+# How a block's feedforward path is realized: MLP, GLU, KAN, polynomial,
+# scatter, PEER, ... Entries are feedforward structure only; the activation a
+# feedforward gates through is set on ``--activation-type``, where the run's
+# Arguments card shows it.
+#
+# Options: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline
+# Default: glu
+#
+# mlp: A multi-layer perceptron mapping ``input_dim -> input_dim``.
+
+ffn_type: mlp
+
+
+# The base attention implementation to use.
+#
+# Self-attention variants, from vanilla causal MHA to compressive-memory and
+# per-depth-biased variants, plus the Q/K-free kaleidoscope and SSOG fields.
+# Entries may be ``functools.partial`` profiles of one class; a profile is the
+# variant, not a flag.
+#
+# Options: 34 of them, described in docs/attention.md
+# Default: modular
+#
+# vanilla: Standard multi-head attention implementation using PyTorch's
+#     nn.MultiheadAttention.
+
+attention_type: vanilla
+
+
+# The positional encoding to use for sequence length extrapolation.
+#
+# RoPE, ALiBi, NoPE and friends - the rotational / additive position priors
+# injected into attention.
+#
+# Options: nope, alibi, rope, hope, arc
+# Default: rope
+#
+# nope: Implementation of NoPE (No Position Encoding) with head-wise attention
+#     scaling. https://arxiv.org/abs/2404.12224
+
+encoding_type: nope
+
+
+# Remote-expert pool profile: backend sidecar of tiny experts (joinable from the
+# web Stage tab) + a mixing strategy.
+#
+# Pool profiles for the distributed swarm. Each profile bundles whether to spawn
+# the backend sidecar, the starter expert count and the inference mixing
+# strategy, so new variants are entries, not new flags. The expert block types a
+# pool member can wrap are the feedforward experts (the ``dense`` registry).
+#
+# Options: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only
+# Default: none
+#
+# swarm: An in-process pool of 4 tiny experts, joinable from the web Stage tab,
+#     mixed at inference by the CALM-style expert vote.
+
+orchestration_type: swarm
+
+
+# The style of residual connection to use.
+#
+# Standard residuals vs. hyper-connections, and the per-depth gains and mixtures
+# between them.
+#
+# Options: standard, hyper, rezero, smear
+# Default: standard
+#
+# standard: Base class for residual connections that connect hidden states
+#     across layers.
+
+residual_type: standard
+
+
+# The activation function to use. A bare name here; an experiment config may
+# instead give a `{type, values}` mixture - see praxis/activations.
+#
+# Pointwise nonlinearities used inside blocks and classifiers. Concrete
+# nonlinearities only: how several combine at a gate is a separate axis
+# (``activation_types``), so every entry here is something you can put in
+# ``values``. In a config file the value is a bare name or a mapping, ``{type,
+# values, linear}``: ``type`` says how the ``values`` combine (``single``, or
+# one of the learned mixtures), ``values`` lists activation names and may nest
+# further specs, and ``linear`` fills the linear half of a GLU or PEER gate.
+#
+# Options: 33 of them, described in docs/activations.md
+# Default: mish
+#
+# gelu: Original Implementation of the GELU activation function in Google BERT
+#     repo when initially created. For information: OpenAI GPT's GELU is
+#     slightly different (and gives slightly different results): 0.5 * x * (1 +
+#     torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+#     This is now written in C in nn.functional Also see the Gaussian Error
+#     Linear Units paper: https://huggingface.co/papers/1606.08415
+
+activation_type: gelu
+
+
+# The type of normalization to use.
+#
+# LayerNorm/RMSNorm variants, including SandwichNorm (required for stable
+# recurrent-depth bias). Each transformer sublayer (attention, feedforward) has
+# two norm positions: pre, on its input, and post, on its output before it joins
+# the residual. An entry decides which positions are filled and with what. There
+# is no final norm before the classifier.
+#
+# Options: none, layer_norm, rms_norm, post_rms_norm, sandwich, sandwich_tied,
+#     hero, hero_inverted
+# Default: rms_norm
+#
+# layer_norm: LayerNorm at the pre position only.
+
+norm_type: layer_norm
+
+
+# The actual batch size to use, including accumulation steps.
+#
+# Rows per optimizer step. When it exceeds --batch-size, gradients accumulate
+# over ceil(target / batch_size) microbatches. It also sets the default warmup
+# (4x this value) and scales the validation cadence. Under --governor gns_batch
+# it becomes the ceiling the governor may grow the effective batch to.
+#
+# Default: 256
+
 target_batch_size: 128
-num_layers: 4
-depth: 4
+
+
+# The base sequence length to train with.
+#
+# Tokens per training sequence. When --batch-size is large enough, some batches
+# trade rows for length: a multiplier of 2, 4 or 8 stretches the sequence and
+# divides the row count by its square, keeping attention cost flat.
+# --seq-curriculum chooses how often each multiplier is drawn.
+#
+# Default: 512
+#
+# Note: Dimensions - GPT-2 small scaled down to 1/4 size (for faster iteration
+#     in ablations).
+
+block_size: 512
+
+
+# Maximum positional capacity (unset = the model config's own default)
+#
+# Positional capacity for the modules that keep a table or count of positions
+# (learned position embeddings, byte-latent and abstractinator encoders). An
+# explicit value too small for the longest sequence-multiplied batch is raised
+# to fit, with a notice.
+#
+# Default: unset
+#
+# Note: Auto-raised to cover sequence-multiplied (2x/4x/8x) batches when too
+#     small.
+
+max_position_embeddings: 4096
+
+
+# The absolute vocab size to use, though some architectures might scale it
+# differently.
+#
+# Options: 1024, 2048, 4096, 8000, 8192, 16000, 16384, 24000, 32000, 32768,
+#     40000, 50256, 65536, 100256
+# Default: 16384
+
 vocab_size: 4096
-embed_size: 256
+
+
+# The max number of experts to route through (defaults to num_layers)
+#
+# Block calls per forward pass. With depth above --num-layers the pass cycles
+# through the same blocks again (recurrent depth); below it, only the first
+# depth blocks run. Per-depth modules (residuals, router biases) are sized by
+# it, and --halting-type may stop a pass before it.
+#
+# Default: unset
+
+depth: 4
+
+
+# Number of distinct blocks in the decoder stack.
+#
+# Distinct blocks built. --depth sets how many calls a forward pass makes; when
+# it is larger, the pass reuses these blocks in order, so num_layers is the
+# unique-parameter count and depth the compute.
+#
+# Default: 2
+
+num_layers: 4
+
+
+# The size of the model's hidden dimensions.
+#
+# Width of the residual stream every block reads and writes. When --embed-size
+# differs, the embedding and the tied classifier add a projection between the
+# two.
+#
+# Default: 256
+
 hidden_size: 256
-num_heads: 16
-num_queries: 1
+
+
+# The size of the model's embedding dimension (if applicable)
+#
+# Width of the token embedding. Equal to --hidden-size, the projection between
+# them is left out; the byte-latent encoders and byte-level MTP also work at
+# this width.
+#
+# Default: 192
+
+embed_size: 256
+
+
+# The percentage of neurons to drop-out during training.
+#
+# Default: 0.0
+
 dropout: 0.1
 
-# Architecture - vanilla causal MHA, learned absolute positions (wte + wpe),
-# pre-LN LayerNorm, 4x GELU MLP, tied LM head
-block_type: transformer
-decoder_type: sequential
-attention_type: vanilla
-encoding_type: nope
-embeddings: positional
-norm_type: layer_norm
-ffn_type: mlp
-activation_type: gelu
-residual_type: standard
-tie_weights: true
-contrastive_isotropy: false
 
-tokenizer_type: tokenmonster
-loss_func: cross_entropy
+# Number of attention heads.
+#
+# Default: 4
+
+num_heads: 16
+
+
+# Number of queries per attention head (for GQA/MQA)
+#
+# Default: 2
+
+num_queries: 1
+
+
+# Tie embedding and output projection weights to reduce parameters.
+#
+# Default: false
+
+tie_weights: true
+
+
+# Additive representation-shaping losses to apply.
+#
+# Additive representation-shaping losses layered beside the main criterion, each
+# computed from the final hidden states during training; ``--strategy`` decides
+# how the terms combine. The model runs every name listed, so a new option is an
+# entry here rather than a new flag. Listing any names replaces the default
+# rather than adding to it, and passing the flag with no values disables all.
+# The ``*_probe`` variants observe only: they log their metric without
+# contributing to the loss.
+#
+# Options: contrastive_isotropy, isotropy_probe, activation, harmonic_kl,
+#     ouroboros_budget, dissonance, dissonance_probe
+# Default: [contrastive_isotropy]
+
+regularizers: []
+
+
+# --- optimization -------------------------------------------------------------
+
+
+# The optimizer profile to use.
+#
+# Named optimizer presets built on pytorch-optimizer (settings reference:
+# https://pytorch-optimizers.readthedocs.io/en/latest/optimizer). Each entry
+# carries its concrete settings (lr, betas, weight decay, ...). Names are
+# case-insensitive.
+#
+# Options: AdamW, Lion, MARS, Muon, MuonGeo, LionGeo, Prodigy
+# Default: Lion
+#
+# AdamW: AdamW with decoupled weight decay: the conventional baseline.
+
 optimizer: AdamW
 
-train_datasets: [focused, print, joke]
+
+# The loss function to use.
+#
+# Per-token training criteria. Most accept optional ``loss_weights`` for
+# task-weighted training.
+#
+# Options: 13 of them, described in docs/losses.md
+# Default: cross_entropy
+#
+# cross_entropy: Standard cross-entropy with two optional extras: an
+#     anti-duplication penalty (``penalty_weight``) that up-weights tokens the
+#     model is about to predict equal to one already in the prompt, and
+#     per-token ``loss_weights`` for task-weighted training.
+
+loss_func: cross_entropy
+
+
+# Optimizer wrappers to stack, in order.
+#
+# Composable wrappers layered onto the base optimizer, listed in order and
+# applied innermost-first. Each entry is a factory ``(optimizer) -> wrapped
+# optimizer``, and wrappers nest, so any stack is itself an optimizer. The
+# schedule-free family runs without an LR schedule; the others keep it.
+#
+# Options: trac, ortho, lookahead, schedule_free, gated_schedule_free,
+#     wave_schedule_free, half_lion, low_rank_moment
+# Default: []
+#
+# schedule_free: Schedule-Free: Polyak-style averaging in place of an LR
+#     schedule. The base iterate z is averaged into a running average x, which
+#     is what eval deploys. The base lr is doubled and weight decay moves from
+#     the base optimizer to z.
+
 optimizer_wrappers: [schedule_free]
-orchestration_type: swarm
-spider: { profile: ghost }
+
+
+# --- networking ---------------------------------------------------------------
+
+
+# Enable the background web spider. Bare '--spider' uses the gentle profile;
+# KEY=VALUE entries override it, e.g. '--spider profile=gentle tick_seconds=600
+# max_sites=8'. See the spider registry for profiles.
+#
+# Pacing presets for the background crawler that grounds the knowledge base in a
+# watchlist of sites. Each profile is a set of fixed, model-agnostic pacing
+# constants. Enabled with ``--spider``; bare use takes ``gentle``, and
+# ``KEY=VALUE`` entries override any field.
+#
+# Options: gentle, ghost
+# Default: unset
+#
+# ghost: Development pacing, for when waiting 5 minutes per fetch is unusable:
+#     one request every 15 seconds, at most one hit per host a minute, and a
+#     re-fetch every 6 hours.
+
+spider: {profile: ghost}
+
+
+# Enable Discord bot integration.
+#
+# Default: false
 
 discord: true
+
+
+# Bot's display name for prompt formatting (defaults to bot's Discord username)
+#
+# Default: unset
+
 discord_nickname: Q
+
+
+# --- data ---------------------------------------------------------------------
+
+
+# Named dataset collections to train on.
+#
+# Options: base, chat, cot, dev, focused, git_history, joke, phi, pile, print,
+#     rl, slimpajama, tools, validation
+# Default: [base]
+
+train_datasets: [focused, print, joke]
+
+
+# --- tokenizer ----------------------------------------------------------------
+
+
+# Tokenizer implementation from the tokenizers registry. Unset = default
+# ('unigram').
+#
+# Named tokenizer implementations. Each entry is a callable that takes
+# ``vocab_size=...`` and keyword arguments; ``bpe`` and ``unigram`` dispatch to
+# the same ``StandardTokenizer`` with different training models, and
+# ``byte_level`` is listed only when the byte-latent stack imports. Unset uses
+# ``unigram``. Not consulted at all under ``--model-name``: a published
+# checkpoint's weights only mean anything against its own tokenizer, which is
+# loaded verbatim instead.
+#
+# Options: char_level, bpe, unigram, byte_level, tokenmonster,
+#     tokenmonster:english-clean, tokenmonster:englishcode-consistent,
+#     tokenmonster:code-consistent
+# Default: unset
+#
+# tokenmonster: TokenMonster pretrained vocabularies as a Praxis tokenizer.
+
+tokenizer_type: tokenmonster
+
+
+# --- other --------------------------------------------------------------------
+
+
+# Global seed used for reproducibility.
+#
+# Default: drawn fresh each run
+
+seed: 42
+
+
+# --- keys without a flag ------------------------------------------------------
+
+
+# Read from the config by the code that uses them, or flags of an integration
+# this checkout does not load.
+
+
+# Token embeddings.
+#
+# positional: Learned absolute position embeddings (GPT2-style), for choosing
+#     explicitly through ``config.embeddings`` rather than by block type.
+
+embeddings: positional
+
+
+# ==============================================================================
+# EVERYTHING ELSE, AT ITS DEFAULT
+# ==============================================================================
+
+
+# Uncomment a line to set it; the value shown is the default. Flags kept out of
+# the run hash (logging, serving) are not listed.
+
+
+# --- hardware -----------------------------------------------------------------
+
+
+# Numeric precision for weights, gradients and matmul kernels. Common spellings
+# (fp16, bf16, half, ...) resolve to these names.
+#
+# One setting drives the dtype parameters are built in, the precision Lightning
+# steps at (which decides whether gradients are low-precision) and the float32
+# matmul kernel policy, so the three cannot drift apart. A level the hardware
+# cannot honor is downgraded to the nearest one that runs, with a notice.
+#
+# Options: 16 of them, described in docs/precision.md
+
+# precision: float32
+
+
+# Apply gradient checkpointing every X layers.
+
+# checkpoint_every: null
+
+
+# --- persistence --------------------------------------------------------------
+
+
+# Paths to a directory where artifacts will be saved.
+
+# cache_dir: build
+
+
+# Save a checkpoint every N completed batches.
+
+# save_every: 256
+
+
+# Disable the periodic research-paper rebuild (research/main.pdf, regenerated on
+# the --save-every cadence as a background task)
+
+# no_paper: false
+
+
+# --- architecture -------------------------------------------------------------
+
+
+# Encoder integration to use.
+#
+# Front-end encoders between the tokenizer and the decoder: the byte-latent
+# (BLT) family, the Abstractinator (BLT plus a residual VQ bottleneck on the
+# patch vectors, versioned v0 to v2), and CALM (a token-chunk VAE plus a
+# next-latent generator; K, the tokens per latent, scales with tokenizer
+# granularity: BPE 4, char 8, byte 16). Unset, tokens are embedded directly.
+# Set, an encoder turns the input into the sequence the decoder sees, maps the
+# decoder's output back and adds its own term to the loss; runs with an encoder
+# skip the KV cache and cannot use the tied classifier. The byte-latent and
+# Abstractinator encoders read raw bytes, so they switch the tokenizer to
+# ``byte_level`` on their own. Descriptive Abstractinator names resolve to the
+# versioned profiles.
+#
+# Options: 25 of them, described in docs/encoders.md
+
+# encoder_type: null
+
+
+# Titans-style long-term memory profile.
+#
+# Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced
+# as a layer (MAL) or a gate (MAG). A memory is built inside every transformer
+# block and runs between the attention and feedforward sublayers, carrying its
+# state across depth steps. Each profile bundles a surfacing and its
+# hyperparameters, so new variants never add flags; the ``surfacing`` key picks
+# the implementing module. Unrelated to ``--memory``, which puts a compressive
+# memory inside attention.
+#
+# Options: 16 of them, described in docs/memory.md
+
+# memory_type: none
+
+
+# Various methods used to route inputs through experts in the decoder.
+#
+# Decide which expert / block a token visits at each depth. Enables out-of-order
+# layers and graph-style routing.
+#
+# Options: base, layer_shuffle, graph, pathfinder, shortcutter, attention,
+#     counter_attention, neural
+
+# controller_type: base
+
+
+# How to route tokens at every layer.
+#
+# Token-routing mechanisms, including the Mixture-of-Depths family that skips a
+# fraction of tokens per layer and the SMEAR family that soft-merges expert
+# parameters. Unset runs no router.
+#
+# Options: 15 of them, described in docs/routers.md
+
+# router_type: null
+
+
+# Halting strategy for recurrent depth loops.
+#
+# Per-token mechanisms for early exit from recurrent depth loops. A loop is one
+# trip through all ``--num-layers`` blocks and a run has ``depth // num_layers``
+# of them, so halting only has something to cut when depth is at least twice
+# num_layers. Unset always runs full depth. Only the sequential decoder consults
+# it.
+#
+# Options: none, kl, kl_log, kl_log_reinject
+
+# halting_type: null
+
+
+# Mixture-of-widths policy: deflate each recurrent step's inner rank to a
+# helically-precessing slice. Presets tune the floor/peak of the arch (none =
+# full width)
+#
+# Per-depth deflation of each block's inner rank over the recurrent loop (a
+# helically-precessing low-rank slice), turning deep recurrence into a
+# population of narrow voters. The ``helical`` variants mask channels under a
+# full matmul, which proves the dynamics; the ``helical_sparse`` variants slice
+# the weights so the matmul shrinks, a real FLOP reduction.
+#
+# Options: none, helical, helical_late, helical_steady, helical_tight,
+#     helical_sparse, helical_sparse_tight
+
+# width_type: null
+
+
+# Model-transform profile: walk the module tree and rewrite the matched
+# parameters in place. `tie_*` stores 1/d of a weight and derives the rest by
+# fixed signed permutation.
+#
+# Ghost features: profiles that walk the assembled module tree and rewrite
+# matched parameters in place, storing 1/d of a weight and deriving the rest by
+# a fixed signed permutation. Each profile is a target regex plus an algebra.
+#
+# Options: none, ghost_conv_complex, ghost_conv_quaternion, ghost_conv_random,
+#     ghost_mtp_complex, ghost_mtp_random, ghost_all_complex,
+#     ghost_all_quaternion, ghost_all_random, ghost_all_auto,
+#     ghost_all_greedy_complex
+
+# transform_type: none
+
+
+# The type of sequence compression to use.
+#
+# Strategies for reducing sequence length between layers.
+#
+# Options: none, linear, nearest
+
+# compression_type: none
+
+
+# The type of feature sorting to use.
+#
+# Optional reordering operations applied to the sequence. The slot also hosts
+# differentiable positional-bias fields (``decay_bias``, ``amplitude_field``)
+# that reuse the hook without permuting anything; a module's ``permutes``
+# attribute says which kind it is.
+#
+# Options: none, decay_bias, amplitude_field, native, sinkhorn
+
+# sorting_type: none
+
+
+# The type of classifier to use.
+#
+# Classifiers map features to logits over a discrete vocabulary: untied and tied
+# linear classifiers, the harmonic field, the crystal distance classifier, and
+# the prismatic compositions of them, whose gate-combined parallel arms split
+# the bias and variance axes. Multi-token prediction modules are a separate
+# registry, ``mtp``; continuous-output modules live in ``generators``.
+#
+# Options: 17 of them, described in docs/classifiers.md
+
+# classifier_type: forward
+
+
+# Buckets per n-gram hash table in the byte-latent input embedding: one value,
+# or one per window size (e.g. 1024 1024 2048 for 3-, 4- and 5-byte windows).
+# Independent of vocab_size, which under a byte tokenizer is a constant 256.
+# Defaults to vocab_size when unset.
+
+# hash_buckets: null
+
+
+# Entries in the encoder's VQ codebook (abstractinator bottleneck). Defaults to
+# vocab_size when unset.
+
+# codebook_size: null
+
+
+# Number of experts per layer (1 = no MoE)
+#
+# Not a feedforward mixture-of-experts. It is read by the routers: SMEAR-style
+# routers reuse one block at every position and give each weight num_experts
+# low-rank deviations to merge; the prismatic router keeps num_experts full
+# copies of the block. Without a --router-type it has almost no effect.
+
+# num_experts: 1
+
+
+# Specify the inner head dimension.
+
+# head_size: null
+
+
+# A sparse MoE, controlling the number of heads to sample. Should be smaller
+# than num_heads to enable.
+
+# k_heads: null
+
+
+# Set this value to factorize key/value projections, making them low-rank. A
+# value of 1 is lowest.
+
+# kv_rank: null
+
+
+# Sliding window size for attention (None = full attention). Only used with hex
+# attention.
+
+# window_size: null
+
+
+# Use a Linear (O(n)) attention mechanism.
+
+# linear: false
+
+
+# Use a Differential Attention mechanism.
+
+# differential: false
+
+
+# Use a Stickbreaking Attention mechanism.
+
+# stickbreaking: false
+
+
+# Use a long-term episodic memory module.
+
+# memory: false
+
+
+# Use Multi-Head Latent Attention (MLA)
+
+# mla: false
+
+
+# Use Multi-Token Attention (MTA)
+
+# mta: false
+
+
+# Equip the attention mechanism with exponentially-moving average-based gating.
+
+# mega: false
+
+
+# Add a gating network to attention outputs.
+
+# gated: false
+
+
+# Use a genomic bottleneck.
+
+# evolve: false
+
+
+# Scale the output of each layer by the inverse square root of its depth.
+
+# scaled: false
+
+
+# Enable bidirectional language modeling (forward and backward prediction)
+
+# bidirectional: false
+
+
+# MTP module type (omit to disable MTP)
+#
+# Depth modules for multi-token prediction in DeepSeek-V3's sequential form:
+# depth k takes the previous depth's hidden and the ground-truth embedding and
+# predicts the token at offset k+2, as an auxiliary loss in training and as
+# speculative drafts at inference. Unset, no MTP runs; ``--mtp-depth`` sets the
+# depth count. These entries build one independent module per depth.
+# ``--mtp-type`` also accepts three bank types, each one module owning every
+# depth: ``vear`` (a shared pool of light harmonic experts, sliding-window
+# merged per depth), ``serpent_rnn`` (one shared gated serpent cell unrolled K
+# times) and ``per_depth`` (K independent light harmonic transforms, nothing
+# shared). The entries here are context-dependent, so byte-latent encoders,
+# which draft one position at a time with no cache, require a bank type.
+#
+# Options: transformer, conv, vear, serpent_rnn, per_depth
+
+# mtp_type: null
+
+
+# Number of Multi-Token Prediction depths.
+
+# mtp_depth: 1
+
+
+# Mono-forward graph cutting in the sequential decoder: detach hidden states on
+# a cut schedule and train each segment from a local goodness score (omit to
+# disable)
+#
+# Sequential-decoder graph cutting: detach hidden states on a cut schedule and
+# train each segment from a local goodness score (vocab CE for token models,
+# next-patch-embedding prediction for encoder models). Entries are cut
+# schedules; selection flows through ``build_mono``, never a per-knob flag.
+# Unset, nothing is cut.
+#
+# Options: layer, cycle, final
+
+# mono_type: null
+
+
+# --- models -------------------------------------------------------------------
+
+
+# Published model to load instead of building one.
+#
+# Load this published checkpoint (a Hugging Face repo id or a local directory)
+# instead of building a model from the Praxis registries. The checkpoint brings
+# its own architecture, config, vocabulary and chat template, all used verbatim
+# - so the Praxis architecture flags do not apply and passing one is an error
+# rather than a silent no-op. Everything about the RUN still applies: optimizer,
+# batch, precision, losses, regularizers, task weights, RL policies and the
+# whole data pipeline.
+
+# model_name: null
+
+
+# Revision of --model-name to load.
+#
+# Git revision (branch, tag or commit) of ``--model-name`` to load. Part of the
+# run's identity, because two revisions of one repo are two different models.
+
+# model_revision: null
+
+
+# Which task family --model-name is loaded as.
+#
+# HuggingFace task families a published checkpoint can be loaded as, selected
+# with ``--model-task``. Each entry pairs the ``Auto*`` class that loads the
+# weights with the Praxis wrapper that supplies the objectives for that task.
+#
+# Options: causal_lm
+
+# model_task: causal_lm
+
+
+# Key=value forwarded verbatim to from_pretrained.
+#
+# A keyword argument forwarded VERBATIM to the checkpoint's ``from_pretrained``
+# (repeatable). This is the whole escape hatch for model-specific options -
+# Praxis deliberately has no translation layer between its own names and a
+# foreign model's, because an alias that disagrees with what lands in
+# ``config.json`` eventually becomes a lie about what ran. Values are read as
+# YAML, so ``trust_remote_code=true`` and ``num_labels=3`` arrive as the types
+# transformers expects.
+
+# model_kwarg: null
+
+
+# Adapter profile to finetune --model-name with.
+#
+# Adapter profiles for finetuning a published checkpoint (``--peft-type``). Each
+# entry freezes the loaded weights and trains a small adapter in their place,
+# and bundles everything that defines the variant - the method, the rank, the
+# scaling rule and which modules are adapted - so an experiment arm is one key.
+# Requires the optional ``peft`` package, installed on demand when a profile is
+# selected.
+#
+# Options: lora, lora_attention, rslora, dora
+
+# peft_type: null
+
+
+# --- training -----------------------------------------------------------------
+
+
+# Training strategy to use. 'backpropagation' is standard gradient descent. The
+# Mono-Forward profiles share the same training math (each layer trains locally
+# against a per-layer projection matrix, O(1) activation memory in depth) and
+# differ only in worker backend: 'mono_forward' runs every layer in the driver
+# process under a single CUDA context (single host, low VRAM overhead), while
+# 'mono_forward_ray' spawns one Ray actor per layer (multi-host capable,
+# ~300-500 MB CUDA context per actor).
+#
+# The training loop that updates the model. The Mono-Forward profiles share one
+# training math - each layer trains locally against a per-layer projection
+# matrix, with O(1) activation memory in depth - and differ only in worker
+# backend.
+#
+# Options: backpropagation, mono_forward, mono_forward_ray
+
+# trainer_type: backpropagation
+
+
+# Training-loop governor: a feedback controller over a loop knob, driven by an
+# endogenous signal. 'gns_batch' governs the gradient-accumulation factor by
+# tracking the measured gradient noise scale (target_batch_size becomes the
+# ceiling). Default None keeps the static accumulation factor. Can also be set
+# in experiment YAML as 'governor'.
+#
+# Feedback controllers over loop-level knobs, each driven by an endogenous
+# signal native to its knob - a feedback device, not a search. Each entry is a
+# builder ``(batch_size, target_batch_size, val_every,
+# sequence_multiplier_tiers) -> Callback``. Unset keeps the static accumulation
+# factor.
+#
+# Options: gns_batch
+
+# governor: null
+
+
+# Maximum number of training steps (None for infinite training)
+
+# max_steps: null
+
+
+# LR warmup horizon in optimizer steps. Also gates the CALM KL anneal and
+# codec-freeze floor. Default: target_batch_size * 4.
+
+# warmup_steps: null
+
+
+# Disable torch.compile of the model (slower, but cleaner stack traces and lower
+# memory)
+
+# no_compile: false
+
+
+# Run validation every N effective steps (multiplied by target_batch_size /
+# batch_size internally to get the raw-batch cadence). Default 1024 matches the
+# historical Lightning default. Lower values like 64 or 128 give faster feedback
+# at the cost of more validation overhead. Can also be set in experiment YAML as
+# 'val_every'.
+
+# val_every: 1024
+
+
+# Ray cluster address for --trainer-type mono_forward. Default None means 'start
+# a fresh in-process Ray cluster' - correct for both the single-host Phase 2/3
+# path and the Phase 4 multi-raylet compose test (which exports
+# RAY_ADDRESS=127.0.0.1:6379 in the environment, taking precedence over this
+# flag). Pass an explicit address like '127.0.0.1:6379' to join a pre-existing
+# cluster. Do NOT pass 'auto' unless a cluster definitely exists - 'auto' errors
+# loud if nothing is running.
+
+# ray_address: null
+
+
+# Number of LayerActor replicas to spawn per Mono-Forward layer. Phase 3 keeps
+# this at 1; replica-level data parallelism is a Phase 5+ concern.
+
+# ray_num_replicas_per_layer: 1
+
+
+# Number of batches between shared-head synchronization rounds across actors
+# (only meaningful for --trainer-type mono_forward).
+
+# ray_head_sync_every: 50
+
+
+# Whether to drive the Mono-Forward pipeline with Ray's experimental_compile()
+# DAG API ('compiled') or with a manual ray.wait()-based driver loop ('manual').
+# Default is 'manual' because it only uses stable Ray APIs. Only applies to
+# --trainer-type mono_forward_ray.
+#
+# Options: compiled, manual
+
+# ray_pipeline_api: manual
+
+
+# --- optimization -------------------------------------------------------------
+
+
+# The multitask objective strategy to use for loss combination.
+#
+# How a run's loss terms (the main loss, regularizers, encoder and auxiliary
+# losses) fold into one scalar to backpropagate: ``naive`` sums them unweighted;
+# the others reweight each term, by its own magnitude, by learned uncertainty,
+# or (``capped``) by shrinking any term whose gradient at the trunk out-pulls
+# the main loss. A strategy only runs when there is more than one term.
+#
+# Options: naive, real_time, weighted, weighted_clamped, capped
+
+# strategy: naive
+
+
+# Named per-task loss weighting strategy from the task_weights registry. Unset =
+# identity (every task at 1.0). Fixed variants use constant scalars; learnable
+# variants use a sigmoid-gated per-task parameter with an L2 anchor.
+#
+# How each token's loss is reweighted by its task tag, the source category it
+# came from (pretraining, instruction, conversation, ...). Each entry is a
+# factory taking no arguments that returns a configured TaskLossWeighter. Unset
+# weights every task equally, as ``flat`` does.
+#
+# Options: flat, bias_pretrain, learnable_bias_pretrain,
+#     difficulty_bias_pretrain
+
+# task_weights: null
+
+
+# Drop the assistant_mask before composing loss weights so every token
+# contributes (the pre-2bc2cd4 language-modeling objective). Default off,
+# meaning prompts are masked. Useful for small models that lack the capacity for
+# the SFT-style prompt-conditional split.
+
+# no_mask_prompts: false
+
+
+# Use a fixed (constant) learning rate schedule.
+
+# fixed_schedule: false
+
+
+# Global gradient-norm clip threshold. Watch the optimizer card's Clip Rate to
+# tell whether it's binding. Ignored by trainers that don't support clipping
+# (mono_forward/pipeline).
+
+# gradient_clip_val: 10.0
+
+
+# --- networking ---------------------------------------------------------------
+
+
+# URL the web app's donations icon links to (empty string hides it)
+
+# donations: https://buymeacoffee.com/vectorrent
+
+
+# Paper thread (layout) the living paper builds: the title block, master
+# document, and which content generators run. See the threads registry in
+# praxis/pillars/thread.py.
+#
+# Layouts of the living paper, one per yaml document under
+# ``praxis/pillars/threads/``: the title block, which content generators run,
+# and the prose components the unified ``research/body.tex`` plugs in at its
+# hooks. Unset builds ``blind_watchmaking``.
+#
+# Options: blind_watchmaking, good_get_gooder
+
+# title: null
+
+
+# Authors written to the living paper's \author block. The original author is
+# always preserved and listed first. Pass additional names to append them.
+
+# author: [Ryan J. Brooks]
+
+
+# Discord bot token (can also be set via DISCORD_TOKEN env var)
+
+# discord_token: null
+
+
+# --- data ---------------------------------------------------------------------
+
+
+# Paths to directories of files to use as training data (can be specified
+# multiple times)
+
+# data_path: null
+
+
+# Named dataset collections to use for validation. Same format as
+# --train-datasets.
+
+# validation_datasets: [validation]
+
+
+# Enable reinforcement learning with specified algorithm. Note: Current GRPO
+# implementation uses static dataset rewards (not true RL). True RL with
+# generation will be added in a future update.
+#
+# Reinforcement-learning policy losses for post-training: forward-path policies
+# that reweight the LM's own log-probabilities, and weight-editing controllers
+# driven by a callback. The same flag also takes the controller profiles in
+# ``rl_profiles``, and several names may be combined with commas.
+#
+# Options: cot, engagement, grpo, harmonic_weight, harmonic_weight_anchor,
+#     harmonic_weight_wave, joke, preference, reinforce
+
+# rl_type: null
+
+
+# Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via
+# per-sequence CE), 'tasker' (sample each dataset by its task's learned loss
+# weight from --task-weights; pairs with a 'difficulty' weighter to upsample
+# hard tasks), 'novelty' (bigram novelty via Count-Min Sketch), 'dynamic' (EMA
+# of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), or
+# 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS).
+#
+# How datasets are interleaved during training. Praxis trains on multiple
+# datasets at once: at every step the trainer picks a dataset, draws a document,
+# and tokenizes it (see ``InterleaveDataManager`` in
+# ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how*
+# that pick is biased - either statically from configured weights, or adaptively
+# based on document length, novelty, or per-dataset loss. Each entry is a mode
+# string that ``InterleaveDataManager`` interprets.
+#
+# Options: novelty, dynamic, static, loss, tasker, uniform
+
+# sampler_mode: loss
+
+
+# Sequence-length curriculum. 'fixed' rolls the static per-tier chances. 'probe'
+# fits the mix by regressing a held-out probe's improvement onto the arm mixture
+# that produced it, so each length's value is measured in held-out loss. See
+# praxis/data/seq_probe.py.
+#
+# How the per-batch sequence-length multiplier is chosen. Every batch trades
+# batch size for sequence length at constant attention cost; this picks the mix.
+#
+# Options: fixed, probe
+
+# seq_curriculum: fixed
+
+
+# --- logging ------------------------------------------------------------------
+
+
+# Max context length (in tokens/bytes) for inference during training.
+
+# infer_context: null
+
+
+# --- tokenizer ----------------------------------------------------------------
+
+
+# Chat format from the chat_formats registry. The entry owns the turn
+# boundaries, the assistant mask, the halting contract and the tool-call layout
+# as one unit. Unset = 'default' (ChatML).
+#
+# A chat format is more than a Jinja string: each entry pairs a chat template
+# with the turn boundaries, assistant mask, halting contract and tool-call
+# layout that have to agree with it, so they move together.
+#
+# Options: default, prose, hf_native
+
+# chat_format: null
+
+
+# Train a new tokenizer and exit (shortcut mode)
+
+# train_tokenizer: false
+
+
+# The type of tokenizer to train.
+#
+# Options: bpe, unigram
+
+# tokenizer_train_type: unigram
+
+
+# The number of examples to use for tokenizer training.
+
+# tokenizer_num_examples: 5000000
+
+
+# The vocab size for tokenizer training.
+#
+# Options: 1024, 2048, 4096, 8192, 16384, 32768, 65536
+
+# tokenizer_train_vocab_size: 16384
+
+
+# --- other --------------------------------------------------------------------
+
+
+# Append keywords to a list at 'config.meta'. Used for model development. You
+# probably don't need this.
+
+# meta: []
+
+
+# Run partial evaluation every N validation intervals.
+
+# eval_every: null
+
+
+# Run a subset of evaluation tests after each validation step. This can be slow.
+
+# eval_tasks: helm|hellaswag|2|1,lighteval|glue:cola|2|1,lighteval|coqa|2|1
+
+
+# Skip auto-regeneration of docs/ from praxis registries at launch.
+
+# no_docs: false
+
+
+# Use fewer resources (3 layers, smaller datasets, etc), always start from a new
+# model (i.e. force '--reset'), and never conflict/remove existing, saved
+# models. Can be used simultaneously alongside an active, running 'live' model.
+
+# dev: false

@@ -672,27 +672,14 @@ export function createSettingsModal(settings) {
         <h4 class="modal-subheading">Generation Parameters</h4>
 
         <div class="form-group">
-            <label for="max-tokens">Max New Tokens (50-1000)</label>
-            <input type="number" id="max-tokens" min="50" max="1000" value="${settings.maxTokens}">
-        </div>
-
-        <div class="form-group">
-            <label for="temperature">Temperature (0.1-2.0)</label>
-            <input type="range" id="temperature" min="0.1" max="2.0" step="0.05" value="${settings.temperature}">
-            <span id="temperature-value">${settings.temperature}</span>
-        </div>
-
-        <div class="form-group">
-            <label for="repetition-penalty">Repetition Penalty (1.0-2.0)</label>
-            <input type="range" id="repetition-penalty" min="1.0" max="2.0" step="0.05" value="${settings.repetitionPenalty}">
-            <span id="repetition-penalty-value">${settings.repetitionPenalty}</span>
-        </div>
-
-        <div class="form-group">
-            <label>
-                <input type="checkbox" id="do-sample" ${settings.doSample ? 'checked' : ''}>
-                Enable Sampling
-            </label>
+            <label for="generation-kwargs">One <code>key=value</code> per line. Overrides the run's own.</label>
+            <textarea id="generation-kwargs" class="settings-textarea" rows="8" spellcheck="false"
+                placeholder="max_new_tokens=128&#10;temperature=0.7">${escapeHtml(settings.generationKwargs)}</textarea>
+            <p class="form-hint">Any transformers <code>GenerationConfig</code> field, plus
+            <code>use_cache</code>, <code>timeout</code>, <code>truncate_to</code> and
+            <code>skip_special_tokens</code>. Seeded from this run's
+            <code>--generation-kwargs</code>; clear the box to fall back to them.
+            The Terminal tab's rolling contexts are not affected.</p>
         </div>
 
         <h4 class="modal-subheading">Developer Options</h4>

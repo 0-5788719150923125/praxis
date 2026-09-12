@@ -37,9 +37,19 @@ def _ensure_declared():
     arguments, so define them against a throwaway parser: nothing is parsed,
     nothing is kept, and integrations (which only register when loaded)
     contribute nothing here, exactly as before.
+
+    The guard is ``_declared`` ALONE. "The exclusion set is non-empty" used to
+    count as declared too, and it is not the same thing: anything that defines a
+    single ``exclude_hash`` flag first - a test fixture's throwaway parser, a
+    tool building its own - made this return with the real flags never declared,
+    and every one of them silently rejoined the run hash. A flag that is
+    supposed to be inference-only then forks a checkpoint directory. Re-running
+    the declaration is idempotent (the set is keyed by flag string) and adds
+    nothing an integration registered, so the worst case here is one throwaway
+    parser built twice.
     """
     global _declared
-    if _declared or _HASH_EXCLUSIONS:
+    if _declared:
         return
     _declared = True
     try:
