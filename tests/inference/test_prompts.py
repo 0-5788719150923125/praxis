@@ -151,3 +151,28 @@ def test_the_decay_penalty_survives_the_web_forms_round_trip():
     value has to come back as a sequence rather than a string."""
     parsed = parse_generation_kwargs(["exponential_decay_length_penalty=[64, 1.03]"])
     assert list(parsed["exponential_decay_length_penalty"]) == [64, 1.03]
+
+
+@pytest.mark.parametrize(
+    "value", ["64,1.03", "64", "[64]", "[64, 1.03, 2]", "[a, b]"], ids=repr
+)
+def test_a_malformed_decay_penalty_is_named_not_swallowed(value):
+    """Anything but a numeric pair raises inside the logits processor, where the
+    route reports it as an empty reply - so the model looks broken and the
+    setting looks fine. `64,1.03` is the one the web form used to produce: YAML
+    reads a bare comma as a string."""
+    with pytest.raises(ValueError, match=r"\[start, factor\] pair"):
+        parse_generation_kwargs([f"exponential_decay_length_penalty={value}"])
+
+
+def test_the_decay_penalty_reaches_the_processor_intact():
+    """The end of the wire: transformers indexes [0] and [1] and adds the first
+    to the prompt length, which is what a string silently breaks."""
+    from transformers.generation.logits_process import ExponentialDecayLengthPenalty
+
+    parsed = parse_generation_kwargs(["exponential_decay_length_penalty=[64, 1.03]"])
+    processor = ExponentialDecayLengthPenalty(
+        parsed["exponential_decay_length_penalty"], 2, 21
+    )
+    assert processor.regulation_start == 64 + 21
+    assert processor.regulation_factor == 1.03

@@ -88,6 +88,16 @@ export async function sendMessage(messages, opts = {}) {
             console.log('[API] Response:', data);
         }
 
+        // A server-side failure that produced no text is reported as an error,
+        // not as an empty turn. The route answers 200 with `{response: "",
+        // error}` on purpose - a baby model really can say nothing, and that
+        // must not be a 500 - but a malformed generation kwarg lands in the
+        // same shape, and "(model produced an empty turn)" sent the reader
+        // looking at the model instead of at the setting that broke.
+        if (data.error && !(data.response || data.content)) {
+            throw new Error(data.error);
+        }
+
         return data;
     } finally {
         // Released on every path, so a delta produced after the final answer

@@ -15,10 +15,18 @@ export const STORAGE_KEYS = {
     theme: 'praxis_theme',
     developerPrompt: 'praxis_developer_prompt',
     apiUrl: 'praxis_api_url',
-    genParams: 'praxis_gen_params',
+    generationKwargs: 'praxis_generation_kwargs',
     debugLogging: 'praxis_debug_logging',
     chatHistory: 'chatHistory',
-    researchXAxis: 'praxis_research_x_axis'
+    researchXAxis: 'praxis_research_x_axis',
+    // What the RUN said a value should be, recorded beside the live value so
+    // `resolveDefault` can tell an edit from an untouched default: a stored
+    // value that still equals its seed yields to a new one, an edited value
+    // does not. Registered here like any other key - `storage` silently
+    // no-ops on a key it does not know, which is exactly how the Settings
+    // form stopped persisting at all.
+    'developerPrompt:default': 'praxis_developer_prompt_default',
+    'generationKwargs:default': 'praxis_generation_kwargs_default'
 };
 
 /**
@@ -146,7 +154,17 @@ export const generationKwargLines = (text) =>
  */
 export const generationKwargText = (mapping) =>
     Object.entries(mapping || {})
-        .map(([key, value]) => `${key}=${value}`)
+        // JSON for anything that is not a scalar. Template interpolation turns
+        // [64, 1.03] into "64,1.03" - brackets gone - and the server reads that
+        // back as a STRING, which then blows up inside the logits processor and
+        // surfaces as an empty reply. A scalar is written bare so the common
+        // line stays `temperature=0.7` rather than a quoted value.
+        .map(([key, value]) => {
+            const rendered = (value !== null && typeof value === 'object')
+                ? JSON.stringify(value)
+                : String(value);
+            return `${key}=${rendered}`;
+        })
         .join('\n');
 
 /**

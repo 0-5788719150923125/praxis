@@ -128,3 +128,56 @@ def test_cross_run_charts_do_not_match_points_by_array_index():
         "expected exactly one 'index' mode - crossRunInteraction's fallback - "
         f"but found {index_modes}"
     )
+
+
+# ---------------------------------------------------------------------------
+# localStorage keys
+# ---------------------------------------------------------------------------
+
+CONFIG_JS = SRC / "js" / "config.js"
+
+
+def _registered_storage_keys() -> set:
+    body = re.search(
+        r"export const STORAGE_KEYS = \{(.*?)\n\};", CONFIG_JS.read_text(), re.S
+    )
+    assert body, "STORAGE_KEYS not found in config.js"
+    return set(re.findall(r"^\s*'?([\w:]+)'?\s*:", body.group(1), re.M))
+
+
+def test_every_storage_key_used_is_registered():
+    """`storage.get`/`set` look the key up in STORAGE_KEYS and, on a miss,
+    console.warn and return without touching localStorage. That is silent by
+    design in the browser, and it is exactly how the Settings form stopped
+    persisting: the generation-kwargs keys were read and written all run and
+    never stored. A miss has to fail here instead."""
+    registered = _registered_storage_keys()
+    used = {}
+    for path in sorted((SRC / "js").glob("*.js")):
+        for key in re.findall(r"storage\.(?:get|set|remove)\(\s*[\'\"`]([\w:]+)", path.read_text()):
+            used.setdefault(key, path.name)
+
+    missing = sorted(f"{k} (used in {used[k]})" for k in used if k not in registered)
+    assert not missing, (
+        "localStorage keys used but not registered in STORAGE_KEYS, so every "
+        f"read and write of them is a silent no-op: {missing}"
+    )
+
+
+def test_registered_storage_keys_map_to_distinct_slots():
+    """Two names sharing one localStorage slot would overwrite each other."""
+    body = re.search(
+        r"export const STORAGE_KEYS = \{(.*?)\n\};", CONFIG_JS.read_text(), re.S
+    ).group(1)
+    slots = re.findall(r":\s*\'([^\']+)\'", body)
+    assert len(slots) == len(set(slots)), f"duplicate localStorage slots: {slots}"
+
+
+def test_a_run_default_has_a_seed_slot_beside_it():
+    """`resolveDefault` tells an edit from an untouched default by comparing the
+    stored value against the default it was SEEDED with, so every value seeded
+    from the run needs its `:default` companion registered too."""
+    registered = _registered_storage_keys()
+    for key in ("developerPrompt", "generationKwargs"):
+        assert key in registered
+        assert f"{key}:default" in registered, f"{key} has no seed slot"

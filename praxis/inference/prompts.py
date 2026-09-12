@@ -68,6 +68,25 @@ def parse_generation_kwargs(value: Any) -> Dict[str, Any]:
             "use exponential_decay_length_penalty=[start, factor]."
         )
 
+    # Shape, not just spelling. `exponential_decay_length_penalty` takes a
+    # (start, factor) pair, and a value that reaches it as anything else raises
+    # deep inside the logits processor - where the route reports it as an empty
+    # reply rather than as the configuration mistake it is. The spelling that
+    # gets here wrong is `64,1.03` (a bare comma), which YAML reads as a string.
+    pair = kwargs.get("exponential_decay_length_penalty")
+    if pair is not None:
+        ok = isinstance(pair, (list, tuple)) and len(pair) == 2
+        ok = ok and all(isinstance(v, (int, float)) for v in pair)
+        if not ok:
+            raise ValueError(
+                f"exponential_decay_length_penalty={pair!r} must be a "
+                "[start, factor] pair of numbers, e.g. [64, 1.03] - start is "
+                "how many generated tokens to wait before pushing EOS, factor "
+                "is the per-token growth. Write the brackets: a bare 64,1.03 "
+                "reads as a string."
+            )
+        kwargs["exponential_decay_length_penalty"] = tuple(pair)
+
     unknown = sorted(key for key in kwargs if key not in known)
     if unknown:
         raise ValueError(
