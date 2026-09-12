@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and classifiers. Concrete nonlinearities only: how several combine at a gate is a separate axis (``activation_types``), so every entry here is something you can put in ``values``. In a config file the value is a bare name or a mapping, ``{type, values, linear}``: ``type`` says how the ``values`` combine (``single``, or one of the learned mixtures), ``values`` lists activation names and may nest further specs, and ``linear`` fills the linear half of a GLU or PEER gate.
 
-Namespace: ``registry.namespace("activations")``, declared in ``praxis.activations`` (33 entries)
+Namespace: ``registry.namespace("activations")``, declared in ``praxis.activations`` (35 entries)
 
 Selected with ``--activation-type`` (default: ``mish``).
 
@@ -62,6 +62,21 @@ This implementation is equivalent to NewGELU and FastGELU but much faster. Howev
 is not an exact numerical match due to rounding errors.
 
 Source: `transformers.activations` (external dependency)
+
+## `hardswish` - Hardswish
+
+Applies the Hardswish function, element-wise.
+
+Method described in the paper: `Searching for MobileNetV3
+<https://arxiv.org/abs/1905.02244>`_.
+
+Hardswish is defined as:
+
+.. math::     \text{Hardswish}(x) = \begin{cases}         0 & \text{if~} x \le -3, \\
+x & \text{if~} x \ge +3, \\         x \cdot (x + 3) /6 & \text{otherwise}
+\end{cases}
+
+Source: `torch.nn.modules.activation` (external dependency)
 
 ## `jagged_sin` - JaggedSine
 
@@ -279,6 +294,12 @@ Snake activation ``x + sin^2(a*x) / a`` with a learnable per-feature frequency `
 match the input's feature dimension.
 
 Source: [praxis/activations/snake.py:41](../praxis/activations/snake.py#L41)
+
+## `sqrtsoftplus` - SqrtSoftplusActivation
+
+sqrt(softplus(x)) — the router scoring function used by DeepSeek V4.
+
+Source: `transformers.activations` (external dependency)
 
 ## `swish` - SiLU
 

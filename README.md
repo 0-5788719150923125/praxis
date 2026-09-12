@@ -21,7 +21,7 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, burstable, f
 Praxis is organized as 51 registry namespaces. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
 
 - [Activation combination types](docs/activation-types.md) (5)
-- [Activation functions](docs/activations.md) (33)
+- [Activation functions](docs/activations.md) (35)
 - [Attention mechanisms](docs/attention.md) (34)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Chat formats](docs/chat-formats.md) (3)
@@ -35,7 +35,7 @@ Praxis is organized as 51 registry namespaces. The feature categories below link
 - [Input encoders](docs/encoders.md) (25)
 - [Layer-routing controllers](docs/controllers.md) (8)
 - [Long-term memory](docs/memory.md) (16)
-- [Loss functions](docs/losses.md) (11)
+- [Loss functions](docs/losses.md) (13)
 - [Mixture-of-widths](docs/width.md) (7)
 - [Model transforms](docs/transforms.md) (10)
 - [Mono-forward graph cutting](docs/mono.md) (3)

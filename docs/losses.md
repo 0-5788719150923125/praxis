@@ -3,7 +3,7 @@
 
 Per-token training criteria. Most accept optional ``loss_weights`` for task-weighted training.
 
-Namespace: ``registry.namespace("losses")``, declared in ``praxis.losses`` (11 entries)
+Namespace: ``registry.namespace("losses")``, declared in ``praxis.losses`` (13 entries)
 
 Selected with ``--loss-func`` (default: ``cross_entropy``).
 
@@ -72,6 +72,22 @@ reconstruction stays CE and HALO steers the energy generator through the frozen 
 keeping HALO off the centroid-shaping reconstruction path.
 
 Source: [praxis/losses/halo.py:18](../praxis/losses/halo.py#L18)
+
+## `hem`, `hem_plus` - HighErrorMarginLoss
+
+Margin loss on raw logits: every non-target logit is penalized for coming within
+``margin`` of the target's, and only the above-average violations are averaged, so a
+handful of near-misses still costs as much as a lone one. Gradient stops once a token is
+separated, which is where the calibration and continual-learning behavior comes from.
+
+Set ``adaptive_margin`` for the paper's HEM+ variant: each target's margin scales as
+``1/sqrt(n * p)`` against a running unigram estimate, widening the ...
+
+Source: [praxis/losses/high_error_margin.py:23](../praxis/losses/high_error_margin.py#L23)
+
+Presets:
+- `hem` - High Error Margin: a margin loss on raw logits that averages only the above-average violations, so a token stops producing gradient once its target logit leads the field by the margin. Trades calibrated probabilities for lower confidence and less forgetting; perplexity is not comparable to a cross-entropy run.
+- `hem_plus` (`adaptive_margin=True`) - HEM+: the same loss with the paper's per-class margin, scaled by ``1/sqrt(n * p)`` against a running unigram estimate so rare tokens are held further from their competitors than frequent ones.
 
 ## `mile` - MiLeLoss
 
