@@ -229,6 +229,41 @@ def test_padding_is_never_sampled_but_the_models_own_tokens_are():
     assert tok.eos_token_id not in suppressed
 
 
+def test_a_shared_pad_and_eos_id_is_not_suppressed():
+    """The bug this pins: published checkpoints routinely reuse EOS as PAD -
+    SmolLM2 sets both to 2, and every base model Praxis gives a pad token to
+    ends up the same way. Skipping `eos_token_id` by NAME and then suppressing
+    `pad_token_id` banned the model's own turn terminator, so generation could
+    never halt: every reply ran to max_new_tokens, and a length penalty aimed
+    at EOS pushed on a logit already pinned at -inf."""
+
+    class _SharedPadAndEos(_ForeignTokenizer):
+        pad_token_id = _ForeignTokenizer.eos_token_id
+
+    tok = _SharedPadAndEos()
+    assert tok.pad_token_id == tok.eos_token_id
+    assert HF_NATIVE_FORMAT.suppressed_token_ids(tok) == []
+
+
+def test_distinct_ids_still_suppress_the_pad():
+    """The fix must not disarm the suppression it exists for."""
+    tok = _ForeignTokenizer()
+    assert tok.pad_token_id != tok.eos_token_id
+    assert HF_NATIVE_FORMAT.suppressed_token_ids(tok) == [tok.pad_token_id]
+
+
+@pytest.mark.network
+def test_the_proof_of_concept_checkpoint_can_end_its_own_turn():
+    """End of the wire, on the model this was found with."""
+    from praxis.tokenizers import create_tokenizer
+
+    tok = create_tokenizer(model_name="HuggingFaceTB/SmolLM2-135M-Instruct")
+    fmt = chat_format_of(tok)
+    assert tok.pad_token_id == tok.eos_token_id, "the condition that triggers it"
+    assert tok.eos_token_id not in fmt.suppressed_token_ids(tok)
+    assert tok.eos_token_id in fmt.stop_token_ids(tok)
+
+
 def test_the_foreign_contract_claims_no_template():
     """Leaving it empty is deliberate: nothing here is a trained target, and a
     populated template would make it look like a format to train against.

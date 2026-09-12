@@ -314,15 +314,34 @@ class ChatFormat:
         The document separator is deliberately NOT suppressed: the packer
         writes it and the model is trained to produce it, so emitting it is the
         model correctly ending a document.
+
+        Names are resolved to IDS before anything is excluded, because two
+        names can share one id and suppression happens by id. Published
+        checkpoints routinely reuse EOS as PAD - SmolLM2 sets both to 2, and so
+        does every base model Praxis gives a pad token to - so skipping
+        ``eos_token_id`` by NAME and then suppressing ``pad_token_id`` banned
+        the model's own turn terminator. Generation could not halt, every reply
+        ran to ``max_new_tokens``, and a length penalty aimed at EOS pushed on a
+        token that was already at -inf.
         """
-        produced = set(self.produced_token_names())
+        produced_names = set(self.produced_token_names())
+        produced_ids = set()
+        for name in produced_names:
+            tid = getattr(tokenizer, name, None)
+            if tid is not None:
+                produced_ids.add(int(tid))
+
         ids: List[int] = []
         for name in self._NAMED_CONTROL_IDS:
-            if name in produced:
+            if name in produced_names:
                 continue
             tid = getattr(tokenizer, name, None)
-            if tid is not None and int(tid) not in ids:
-                ids.append(int(tid))
+            if tid is None:
+                continue
+            tid = int(tid)
+            if tid in produced_ids or tid in ids:
+                continue
+            ids.append(tid)
         return ids
 
     def tool_call_messages(
