@@ -63,6 +63,16 @@ registry.declare(
                 "to reach for unless an ablation says otherwise."
             ),
         ),
+        "lora_wide": Entry(
+            dict(_LORA_BASE, r=64, lora_alpha=128),
+            (
+                "LoRA with a rank-64 adapter (alpha held at the conventional "
+                "2r), four times the default's capacity over the same modules. "
+                "For a finetune that has to move the model further than a style "
+                "shift - more data, or data further from what it was pretrained "
+                "on - at four times the adapter parameters and optimizer state."
+            ),
+        ),
         "lora_attention": Entry(
             dict(_LORA_BASE, target_modules=["q_proj", "v_proj"]),
             (

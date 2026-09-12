@@ -154,7 +154,9 @@ def test_every_storage_key_used_is_registered():
     registered = _registered_storage_keys()
     used = {}
     for path in sorted((SRC / "js").glob("*.js")):
-        for key in re.findall(r"storage\.(?:get|set|remove)\(\s*[\'\"`]([\w:]+)", path.read_text()):
+        for key in re.findall(
+            r"storage\.(?:get|set|remove)\(\s*[\'\"`]([\w:]+)", path.read_text()
+        ):
             used.setdefault(key, path.name)
 
     missing = sorted(f"{k} (used in {used[k]})" for k in used if k not in registered)

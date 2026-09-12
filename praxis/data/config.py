@@ -157,6 +157,12 @@ DATASET_COLLECTIONS = dict(
     git_history={
         "git-history": DEFAULT_WEIGHT,
     },
+    # This repo's own source, alone. `base` and `focused` already carry it
+    # alongside their web corpora; this is the collection for a run that wants
+    # the source and not those - a finetune blending it into a chat mix, say.
+    praxis={
+        "praxis": DIR_WEIGHT,
+    },
 )
 
 # Dataset configurations. Each entry has a `type` (default "huggingface");

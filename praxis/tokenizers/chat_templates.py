@@ -47,7 +47,7 @@ so the assistant's ``{% generation %}`` block covers its reply *plus* the
 and it is a trained target - which is the whole point.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from praxis import registry
@@ -153,11 +153,46 @@ class ChatFormat:
     result_role: str = "tool"
     reply_role: str = "assistant"
     document_separator: Optional[str] = "eos_token_id"
+    # Roles this format cannot say, and what to say instead, as
+    # ``{emitted role: substitute}``. See :meth:`coerce_roles`.
+    role_aliases: Dict[str, str] = field(default_factory=dict)
 
     @property
     def text_boundaries(self) -> bool:
         """True when turns are delimited by text rather than control tokens."""
         return self.boundary_style == "text"
+
+    def coerce_roles(
+        self, messages: List[Dict[str, str]]
+    ) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+        """``messages`` with every role rewritten to one this format can say.
+
+        The data layer emits roles the way PRAXIS thinks about a document -
+        ``developer`` for the standing instruction, ``tool`` for a file's
+        contents, ``call`` for a tool call - and a foreign template knows only
+        its own. SmolLM2's ChatML will happily render ``<|im_start|>developer``:
+        it does not error, it just trains the checkpoint on a role word it has
+        no prior for. Mapping here rather than in each formatter is what keeps
+        the data layer model-agnostic - a formatter says what a turn IS, and the
+        format decides how to spell it.
+
+        A role the format already knows is untouched, so ``default`` and
+        ``prose`` - which know all of them - come through unchanged. An
+        undeclared role falls back to ``user``, because an unplaceable turn must
+        not become a training target; the returned mapping names every
+        substitution so the run can report it rather than do it in silence.
+        """
+        applied: Dict[str, str] = {}
+        out: List[Dict[str, str]] = []
+        for message in messages:
+            role = message.get("role", "")
+            if role in self.roles:
+                out.append(message)
+                continue
+            substitute = self.role_aliases.get(role, "user")
+            applied[role] = substitute
+            out.append({**message, "role": substitute})
+        return out, applied
 
     @property
     def describes_boundaries(self) -> bool:
@@ -421,6 +456,11 @@ DEFAULT_FORMAT = ChatFormat(
     boundary_style="tokens",
     stop_token_names=("eos_token_id", "sep_token_id"),
     tool_style="tokens",
+    # A tool CALL under this format is not a role - it is the atomic
+    # [TOOL_CALL] markers inside an assistant turn - so a `call` message is the
+    # assistant speaking. Declared rather than left to the fallback, which
+    # would file it under `user` and drop it out of the assistant mask.
+    role_aliases={"call": "assistant"},
 )
 
 PROSE_FORMAT = ChatFormat(
@@ -472,6 +512,16 @@ HF_NATIVE_FORMAT = ChatFormat(
     stop_token_names=("eos_token_id",),
     tool_style="tokens",
     document_separator="eos_token_id",
+    # A published template knows system/user/assistant and nothing else. The
+    # standing instruction is a system message; a tool's output is something
+    # the assistant reads, so it enters as user; a tool CALL is the assistant
+    # speaking. None of these is a perfect fit - they are the closest thing the
+    # format actually has, which beats a role word the model has never seen.
+    role_aliases={
+        "developer": "system",
+        "tool": "user",
+        "call": "assistant",
+    },
 )
 
 registry.declare(

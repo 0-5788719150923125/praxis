@@ -205,7 +205,7 @@ model_kwarg: [attn_implementation=sdpa]
 # Requires the optional ``peft`` package, installed on demand when a profile is
 # selected.
 #
-# Options: lora, lora_attention, rslora, dora
+# Options: lora, lora_wide, lora_attention, rslora, dora
 # Default: unset
 #
 # lora: Low-Rank Adaptation (Hu et al. 2021) at rank 16 over every linear layer
@@ -385,8 +385,8 @@ discord_nickname: Karma
 
 # Named dataset collections to train on.
 #
-# Options: base, chat, cot, dev, focused, git_history, joke, phi, pile, print,
-#     rl, slimpajama, tools, validation
+# Options: base, chat, cot, dev, focused, git_history, joke, phi, pile, praxis,
+#     print, rl, slimpajama, tools, validation
 # Default: [base]
 #
 # Note: The anchor mix. `chat` (smoltalk + wildchat) rather than `base` (raw

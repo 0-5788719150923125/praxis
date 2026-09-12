@@ -47,7 +47,7 @@ Praxis is organized as 54 registry namespaces. The feature categories below link
 - [Optimizer profiles](docs/optimizers.md) (7)
 - [Optimizer wrappers](docs/wrappers.md) (8)
 - [Paper threads](docs/threads.md) (2)
-- [Parameter-efficient finetuning](docs/peft-profiles.md) (4)
+- [Parameter-efficient finetuning](docs/peft-profiles.md) (5)
 - [Per-task loss weighting](docs/task-weights.md) (4)
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)

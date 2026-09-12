@@ -269,3 +269,83 @@ def test_the_foreign_contract_claims_no_template():
     populated template would make it look like a format to train against.
     Rendering always goes through the tokenizer's own `apply_chat_template`."""
     assert HF_NATIVE_FORMAT.template == ""
+
+
+# ---------------------------------------------------------------------------
+# role coercion
+# ---------------------------------------------------------------------------
+
+EVERY_ROLE = [
+    {"role": "system", "content": "s"},
+    {"role": "developer", "content": "d"},
+    {"role": "user", "content": "u"},
+    {"role": "assistant", "content": "a"},
+    {"role": "call", "content": "c"},
+    {"role": "tool", "content": "t"},
+]
+
+
+@pytest.mark.parametrize("name", sorted(registry.namespace("chat_formats")))
+def test_no_format_renders_a_role_it_cannot_say(name):
+    """The data layer names what a turn IS; the format decides how to spell it.
+    A role outside `roles` reaches a foreign template as a literal word the
+    checkpoint has never seen - SmolLM2 renders `<|im_start|>developer` without
+    complaint and trains on it."""
+    fmt = registry.lookup("chat_formats", name)
+    coerced, _ = fmt.coerce_roles(EVERY_ROLE)
+    assert all(m["role"] in fmt.roles for m in coerced)
+
+
+@pytest.mark.parametrize("name", sorted(registry.namespace("chat_formats")))
+def test_a_role_the_format_knows_is_left_alone(name):
+    """Coercion must not rewrite turns a format can already say, or this
+    silently changes every existing run's data."""
+    fmt = registry.lookup("chat_formats", name)
+    known = [{"role": role, "content": role} for role in fmt.roles]
+    coerced, applied = fmt.coerce_roles(known)
+    assert coerced == known
+    assert applied == {}
+
+
+def test_a_tool_call_stays_the_assistant_speaking():
+    """`call` is a role under `prose` and atomic markers inside an assistant
+    turn under `default`. Either way it is the model's own output, so it must
+    never land on a role the assistant mask excludes."""
+    for name in sorted(registry.namespace("chat_formats")):
+        fmt = registry.lookup("chat_formats", name)
+        coerced, _ = fmt.coerce_roles([{"role": "call", "content": "c"}])
+        assert coerced[0]["role"] in fmt.generated_roles, name
+
+
+def test_the_foreign_format_maps_onto_what_it_has():
+    coerced, applied = HF_NATIVE_FORMAT.coerce_roles(EVERY_ROLE)
+    assert applied == {
+        "developer": "system",
+        "call": "assistant",
+        "tool": "user",
+    }
+    assert [m["role"] for m in coerced] == [
+        "system",
+        "system",
+        "user",
+        "assistant",
+        "assistant",
+        "user",
+    ]
+
+
+def test_an_undeclared_role_never_becomes_a_training_target():
+    """`messages`-format datasets carry whatever roles their source used, so
+    the set is open. An unplaceable turn lands on a role that is never
+    generated rather than one that is."""
+    coerced, applied = HF_NATIVE_FORMAT.coerce_roles(
+        [{"role": "narrator", "content": "x"}]
+    )
+    assert applied == {"narrator": "user"}
+    assert coerced[0]["role"] not in HF_NATIVE_FORMAT.generated_roles
+
+
+def test_coercion_does_not_mutate_the_caller():
+    messages = [{"role": "developer", "content": "d"}]
+    HF_NATIVE_FORMAT.coerce_roles(messages)
+    assert messages == [{"role": "developer", "content": "d"}]

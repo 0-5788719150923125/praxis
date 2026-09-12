@@ -432,8 +432,8 @@ discord_nickname: Q
 
 # Named dataset collections to train on.
 #
-# Options: base, chat, cot, dev, focused, git_history, joke, phi, pile, print,
-#     rl, slimpajama, tools, validation
+# Options: base, chat, cot, dev, focused, git_history, joke, phi, pile, praxis,
+#     print, rl, slimpajama, tools, validation
 # Default: [base]
 
 train_datasets: [focused, print, joke]
@@ -873,7 +873,7 @@ embeddings: positional
 # Requires the optional ``peft`` package, installed on demand when a profile is
 # selected.
 #
-# Options: lora, lora_attention, rslora, dora
+# Options: lora, lora_wide, lora_attention, rslora, dora
 
 # peft_type: null
 

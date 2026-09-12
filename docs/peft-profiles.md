@@ -3,7 +3,7 @@
 
 Adapter profiles for finetuning a published checkpoint (``--peft-type``). Each entry freezes the loaded weights and trains a small adapter in their place, and bundles everything that defines the variant - the method, the rank, the scaling rule and which modules are adapted - so an experiment arm is one key. Requires the optional ``peft`` package, installed on demand when a profile is selected.
 
-Namespace: ``registry.namespace("peft_profiles")``, declared in ``praxis.models.peft`` (4 entries)
+Namespace: ``registry.namespace("peft_profiles")``, declared in ``praxis.models.peft`` (5 entries)
 
 Selected with ``--peft-type`` (default: unset).
 
@@ -23,6 +23,13 @@ embeddings: the default, and the one to reach for unless an ablation says otherw
 LoRA on the query and value projections only - the original paper's setting, and the
 cheapest arm. Names the modules explicitly, so it only applies to architectures that use
 the conventional projection names.
+
+## `lora_wide`
+
+LoRA with a rank-64 adapter (alpha held at the conventional 2r), four times the
+default's capacity over the same modules. For a finetune that has to move the model
+further than a style shift - more data, or data further from what it was pretrained on -
+at four times the adapter parameters and optimizer state.
 
 ## `rslora`
 

@@ -7,6 +7,7 @@ import torch
 from transformers import PreTrainedTokenizer
 
 from praxis.data.validators import ChatTemplateValidator
+from praxis.tokenizers.chat_templates import chat_format_of
 from praxis.tasks import DEFAULT_TASK
 
 # Sentinel for "separator id not looked up yet", so that a legitimate None
@@ -100,6 +101,9 @@ class MessageQueueManager:
         self._carry_tokens: Optional[torch.Tensor] = None
         self._carry_task_ids: Optional[torch.Tensor] = None
         self._carry_assistant_mask: Optional[torch.Tensor] = None
+        # Roles already announced as substituted, so the notice is one line per
+        # role for the run rather than one per document.
+        self._reported_role_substitutions: set = set()
         self._carry_pair_ids: Optional[torch.Tensor] = None
         self._carry_metadata: List[Dict] = []
 
@@ -148,6 +152,21 @@ class MessageQueueManager:
 
         if not messages:
             return None
+
+        # Spell every role the way the ACTIVE format can say it. The formatters
+        # name what a turn is (`developer` for a standing instruction, `tool`
+        # for a file's contents); the format decides how that is rendered. A
+        # no-op under `default` and `prose`, which know every role - it matters
+        # for a published checkpoint's own template, which knows three and would
+        # otherwise be trained on role words it has never seen.
+        messages, substituted = chat_format_of(self.tokenizer).coerce_roles(messages)
+        for role, substitute in substituted.items():
+            if role not in self._reported_role_substitutions:
+                self._reported_role_substitutions.add(role)
+                print(
+                    f"[DATA] role {role!r} is not in this chat format; "
+                    f"rendering it as {substitute!r}."
+                )
 
         # Tokenizers whose character-to-token map is not 1:1 (byte, char) get the
         # mask built segment-wise. HuggingFace's return_assistant_tokens_mask

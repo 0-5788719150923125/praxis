@@ -72,8 +72,7 @@ def test_the_saved_value_is_what_the_next_request_sends(page):
     _save_generation_kwargs(page, "max_new_tokens=42")
     _reload(page)
 
-    sent = page.evaluate(
-        """async () => {
+    sent = page.evaluate("""async () => {
             const api = await import('./static/js/api.js');
             let body = null;
             const real = window.fetch;
@@ -85,8 +84,7 @@ def test_the_saved_value_is_what_the_next_request_sends(page):
             catch (e) { /* the reply does not matter, the payload does */ }
             window.fetch = real;
             return body;
-        }"""
-    )
+        }""")
     assert sent is not None, "the chat never issued a request"
     assert "max_new_tokens=42" in sent["generation_kwargs"]
 
@@ -107,8 +105,7 @@ def test_clearing_the_box_falls_back_to_the_runs_defaults(page):
     _save_generation_kwargs(page, "")
     _reload(page)
 
-    sent = page.evaluate(
-        """async () => {
+    sent = page.evaluate("""async () => {
             const api = await import('./static/js/api.js');
             let body = null;
             const real = window.fetch;
@@ -120,8 +117,7 @@ def test_clearing_the_box_falls_back_to_the_runs_defaults(page):
             catch (e) { /* payload only */ }
             window.fetch = real;
             return body;
-        }"""
-    )
+        }""")
     assert sent["generation_kwargs"] == [], "an empty box must send nothing"
 
 
@@ -129,14 +125,12 @@ def test_the_developer_prompt_survives_a_refresh(page):
     """It saves on blur rather than through the modal, so it is a separate
     path through the same broken helper."""
     page.wait_for_selector("#developer-prompt", timeout=5000)
-    page.evaluate(
-        """() => {
+    page.evaluate("""() => {
             const el = document.getElementById('developer-prompt');
             el.focus();
             el.textContent = 'speak only in haiku';
             el.blur();
-        }"""
-    )
+        }""")
     page.wait_for_timeout(200)
     _reload(page)
 
@@ -148,25 +142,21 @@ def test_a_list_valued_kwarg_round_trips_through_the_form(page):
     and the server reads that back as a STRING, which raises inside the logits
     processor and surfaces as "(model produced an empty turn)". The form has to
     write a value the server can parse back to a list."""
-    rendered = page.evaluate(
-        """async () => {
+    rendered = page.evaluate("""async () => {
             const cfg = await import('./static/js/config.js');
             return cfg.generationKwargText({
                 temperature: 0.7,
                 exponential_decay_length_penalty: [64, 1.03],
             });
-        }"""
-    )
+        }""")
     assert "exponential_decay_length_penalty=[64,1.03]" in rendered
     # Scalars stay bare - the common line must not become a quoted value.
     assert "temperature=0.7" in rendered
 
-    lines = page.evaluate(
-        f"""async () => {{
+    lines = page.evaluate(f"""async () => {{
             const cfg = await import('./static/js/config.js');
             return cfg.generationKwargLines({rendered!r});
-        }}"""
-    )
+        }}""")
     from praxis.inference import parse_generation_kwargs
 
     parsed = parse_generation_kwargs(lines)
