@@ -268,9 +268,14 @@ class DiscordBot:
 
     def _call_generator(self, messages: list) -> Optional[str]:
         """Call the generator synchronously (runs in thread pool)."""
-        from praxis.web.utils import generate_from_messages
+        from praxis.web.utils import generate_from_messages, serving_defaults
 
         try:
+            # The run's standing prompts and decode knobs, the same ones the web
+            # chat gets. Without them Discord decoded with no length pressure
+            # and no system prompt, so a reply ran the full MAX_NEW_TOKENS as
+            # one uninterrupted burst inside a training step - long enough on a
+            # display-attached GPU for the driver's channel watchdog to fire.
             result = generate_from_messages(
                 messages=messages,
                 generator=self.generator,
@@ -279,6 +284,7 @@ class DiscordBot:
                 temperature=0.7,
                 do_sample=True,
                 truncate_to=PROMPT_BUDGET,
+                **serving_defaults(),
             )
             return result
         except Exception as e:

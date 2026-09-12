@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from praxis.inference.prompts import parse_generation_kwargs
 
-from ..utils import generate_from_messages
+from ..utils import generate_from_messages, serving_defaults
 from ..websocket import stream_callbacks
 
 generation_bp = Blueprint("generation", __name__)
@@ -81,7 +81,8 @@ def generate_messages():
         # The client's own Settings form is an OVERRIDE of the run's values, and
         # it expresses that by sending them here - so the rule is just "last
         # writer wins" and there is nothing to reconcile server-side.
-        run_kwargs = dict(current_app.config.get("generation_kwargs") or {})
+        defaults = serving_defaults()
+        run_kwargs = dict(defaults.get("generation_kwargs") or {})
         try:
             request_kwargs = parse_generation_kwargs(data.get("generation_kwargs"))
         except ValueError as e:
@@ -114,8 +115,8 @@ def generate_messages():
             on_text=on_text,
             on_reset=on_reset,
             on_tool=on_tool,
-            system_prompt=current_app.config.get("system_prompt"),
-            developer_prompt=current_app.config.get("developer_prompt"),
+            system_prompt=defaults.get("system_prompt"),
+            developer_prompt=defaults.get("developer_prompt"),
             generation_kwargs=run_kwargs,
         )
 

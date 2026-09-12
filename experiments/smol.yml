@@ -304,7 +304,7 @@ generation_kwargs:
   repetition_penalty: 1.1
   exponential_decay_length_penalty:
   - 64
-  - 1.03
+  - 1.01
 
 
 # --- optimization -------------------------------------------------------------

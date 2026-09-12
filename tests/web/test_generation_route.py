@@ -140,3 +140,57 @@ def test_the_page_serves_the_run_defaults(client):
     defaults = json.loads(html_module.unescape(match.group(1)))
     assert defaults["developerPrompt"] == "chat casually"
     assert defaults["generationKwargs"]["max_new_tokens"] == 64
+
+
+# ---------------------------------------------------------------------------
+# every served path, not just the route
+# ---------------------------------------------------------------------------
+
+
+def test_serving_defaults_are_available_off_a_request_thread(client):
+    """Discord generates on its own thread with no request context bound. It
+    used to pass none of these, so it decoded with no system prompt and no
+    length pressure - a full-length reply inside one training step, which on a
+    display-attached GPU is long enough for the driver's channel watchdog."""
+    from praxis.web import app as web_app
+    from praxis.web.utils import serving_defaults
+
+    web_app.config.update(
+        system_prompt="You are terse.",
+        developer_prompt="chat casually",
+        generation_kwargs={"max_new_tokens": 64},
+    )
+    try:
+        defaults = serving_defaults()  # no app context: the Discord case
+    finally:
+        for key in ("system_prompt", "developer_prompt", "generation_kwargs"):
+            web_app.config.pop(key, None)
+
+    assert defaults["system_prompt"] == "You are terse."
+    assert defaults["generation_kwargs"]["max_new_tokens"] == 64
+
+
+def test_serving_defaults_prefer_the_app_actually_being_served(client):
+    """Inside a request the bound app wins, so a route never reads another
+    app's configuration."""
+    from praxis.web.utils import serving_defaults
+
+    with client.application.app_context():
+        defaults = serving_defaults()
+    assert defaults["system_prompt"] == "You are terse."
+    assert defaults["developer_prompt"] == "chat casually"
+
+
+def test_the_discord_path_passes_them_through():
+    """Pinned at the call site: the integration must hand serving_defaults() to
+    generate_from_messages, not re-specify a subset of its own."""
+    import inspect
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "integrations" / "discord" / "main.py"
+    ).read_text()
+    body = source[source.index("def _call_generator") :]
+    body = body[: body.index("\n    def ")]
+    assert "serving_defaults()" in body
+    assert "**serving_defaults()" in body, "must spread, not pass as one kwarg"

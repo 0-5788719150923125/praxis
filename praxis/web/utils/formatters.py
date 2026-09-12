@@ -24,6 +24,47 @@ api_logger = logging.getLogger("praxis.web")
 PARTIAL_TURN_GRACE = 5.0
 
 
+def serving_defaults() -> Dict[str, Any]:
+    """The run's inference defaults, as ``generate_from_messages`` kwargs.
+
+    Every served path - the web route, Discord, anything added next - reads them
+    from here rather than from the Flask config directly, so a new consumer gets
+    the run's standing prompts and decode knobs by calling one function instead
+    of by remembering three config keys. Discord forgetting them is what let a
+    256-token reply run uninterrupted inside a training step, long enough for
+    the driver's channel watchdog to kill the process.
+
+    Resolved from the bound application context when there is one - that is a
+    request, and it keeps the route reading the app it is actually serving - and
+    from the app object otherwise. The fallback is what the Discord bot needs:
+    it runs on its own thread with no context bound, and it is the caller whose
+    omission of these let a full-length reply decode inside a training step.
+
+    Empty when neither is available, which is correct: a caller with no app has
+    no run to inherit from.
+    """
+    config = None
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context():
+            config = current_app.config
+    except Exception:
+        config = None
+    if config is None:
+        try:
+            from praxis.web import app
+
+            config = app.config
+        except Exception:
+            return {}
+    return {
+        "system_prompt": config.get("system_prompt"),
+        "developer_prompt": config.get("developer_prompt"),
+        "generation_kwargs": dict(config.get("generation_kwargs") or {}),
+    }
+
+
 def generate_from_messages(
     messages: List[Dict[str, str]],
     generator: Any,
