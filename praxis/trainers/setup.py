@@ -216,14 +216,20 @@ def _load_foreign(cfg, config, profile):
         model_kwargs=model_kwargs,
     )
 
-    hosted = model.config
-    for field in ("vocab_size", "hidden_size", "max_position_embeddings"):
-        value = getattr(hosted, field, None)
-        if value is not None:
-            setattr(config, field, value)
-    config.num_hidden_layers = getattr(hosted, "num_hidden_layers", config.depth)
+    # The checkpoint is authoritative about itself, and says so through the
+    # wrapper rather than through a list kept here - see
+    # ForeignModel.CONFIG_OVERRIDES.
+    applied = model.reconcile_praxis_config(config)
+    if applied:
+        print(
+            "[MODEL] Reconciled from the checkpoint: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(applied.items()))
+        )
     config.model_name = cfg.model_name
     config.model_revision = cfg.model_revision
+    # RunConfig carries its own copy, read by the model-info panel and the data
+    # pipeline, and it was resolved before the checkpoint was on disk.
+    cfg.vocab_size = config.vocab_size
 
     if cfg.peft_type:
         apply_peft(model, cfg.peft_type)

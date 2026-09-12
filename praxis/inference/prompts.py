@@ -56,6 +56,18 @@ def parse_generation_kwargs(value: Any) -> Dict[str, Any]:
     from transformers import GenerationConfig
 
     known = set(GenerationConfig().to_dict()) | set(PRAXIS_GENERATION_KEYS)
+    # Valid, and inert unless beams are on. transformers logs its own notice
+    # ("generation flags are not valid and may be ignored"), which is easy to
+    # lose in a dashboard run - and the setting looks exactly like the fix for
+    # runaway replies, so it gets reached for first. Not an error: it is real
+    # under beam search.
+    if kwargs.get("length_penalty") is not None and not kwargs.get("num_beams"):
+        print(
+            "[GENERATION] length_penalty only ranks finished beams and does "
+            "nothing under sampling. For shorter replies without a hard cap "
+            "use exponential_decay_length_penalty=[start, factor]."
+        )
+
     unknown = sorted(key for key in kwargs if key not in known)
     if unknown:
         raise ValueError(

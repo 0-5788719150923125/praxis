@@ -272,10 +272,14 @@ developer_prompt: Reply in one or two short sentences. Be casual and direct. Do 
 # ``top_p``, ``top_k``, ``min_p``, ``repetition_penalty``,
 # ``no_repeat_ngram_size``, ``do_sample``, ...), plus ``use_cache``,
 # ``timeout``, ``truncate_to`` and ``skip_special_tokens``. An unknown key is an
-# error, because transformers would accept and silently drop it. These become
-# the defaults the web app's Settings form is seeded with; edits there override
-# them for that browser. The Terminal tab's rolling contexts are NOT affected -
-# they are a fixed probe with their own arguments.
+# error, because transformers would accept and silently drop it. To shorten
+# replies without a hard cap, reach for
+# ``exponential_decay_length_penalty=[start, factor]`` (it boosts the EOS score
+# after ``start`` generated tokens) - NOT ``length_penalty``, which only ranks
+# finished beams and does nothing at all under sampling. These become the
+# defaults the web app's Settings form is seeded with; edits there override them
+# for that browser. The Terminal tab's rolling contexts are NOT affected - they
+# are a fixed probe with their own arguments.
 #
 # Default: unset
 #
@@ -298,6 +302,9 @@ generation_kwargs:
   temperature: 0.7
   min_p: 0.05
   repetition_penalty: 1.1
+  exponential_decay_length_penalty:
+  - 64
+  - 1.03
 
 
 # --- optimization -------------------------------------------------------------

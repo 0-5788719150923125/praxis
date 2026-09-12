@@ -129,3 +129,25 @@ def test_the_shipped_experiment_validates():
     config = yaml.safe_load(path.read_text())
     assert parse_generation_kwargs(config["generation_kwargs"])
     assert config["system_prompt"] and config["developer_prompt"]
+
+
+def test_length_penalty_under_sampling_is_called_out(capsys):
+    """It is the obvious-looking fix for a runaway reply and it does nothing:
+    transformers only applies it when ranking finished beams. Measured on
+    SmolLM2 - identical median and max length with and without it, and
+    transformers itself logs the flag as ignored."""
+    parse_generation_kwargs(["length_penalty=2.0"])
+    assert "nothing under sampling" in capsys.readouterr().out
+
+
+def test_length_penalty_is_quiet_when_beams_are_on(capsys):
+    """Then it is a real knob, and saying otherwise would be the noise."""
+    parse_generation_kwargs(["length_penalty=2.0", "num_beams=4"])
+    assert capsys.readouterr().out == ""
+
+
+def test_the_decay_penalty_survives_the_web_forms_round_trip():
+    """The Settings box renders each kwarg as one `key=value` line, so a tuple
+    value has to come back as a sequence rather than a string."""
+    parsed = parse_generation_kwargs(["exponential_decay_length_penalty=[64, 1.03]"])
+    assert list(parsed["exponential_decay_length_penalty"]) == [64, 1.03]

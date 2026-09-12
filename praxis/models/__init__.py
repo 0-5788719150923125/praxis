@@ -86,6 +86,10 @@ class ModelAdapter:
     # Jinja expression naming the assistant message content in this family's
     # chat template, when the generic rewrite cannot find it.
     assistant_content_expr: Optional[str] = None
+    # Corrections to ForeignModel.CONFIG_OVERRIDES, as
+    # ``{praxis field: hosted config field}``, for a family that names one of
+    # them unconventionally (``n_layer`` rather than ``num_hidden_layers``, say).
+    config_fields: Dict[str, str] = field(default_factory=dict)
 
 
 registry.declare(

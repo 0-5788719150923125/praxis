@@ -170,3 +170,68 @@ def test_generate_delegates_to_the_hosted_model(foreign):
 def test_full_checkpoint_without_an_adapter(foreign):
     assert foreign.partial_checkpoint is False
     assert any("lora" not in key for key in foreign.state_dict())
+
+
+# ---------------------------------------------------------------------------
+# config reconciliation
+# ---------------------------------------------------------------------------
+
+
+def test_the_checkpoint_overwrites_the_praxis_defaults(hosted, praxis_config):
+    """`depth: 2` on a 30-layer model was the bug: the foreign trunk never
+    reads these, but the blueprint, the model-info panel, the run spec and
+    config.json all DISPLAY them, so a CLI default reads as a fact."""
+    # Stand-ins for the CLI defaults, chosen so they cannot coincide with the
+    # tiny hosted fixture's real shape.
+    praxis_config.depth = 99
+    praxis_config.num_layers = 99
+    praxis_config.num_heads = 99
+
+    model = ForeignCausalLM(copy.deepcopy(hosted), praxis_config)
+    applied = model.reconcile_praxis_config(praxis_config)
+
+    layers = model.config.num_hidden_layers
+    assert praxis_config.depth == layers
+    assert praxis_config.num_layers == layers
+    assert praxis_config.num_heads == model.config.num_attention_heads
+    assert praxis_config.hidden_size == model.config.hidden_size
+    assert praxis_config.embed_size == model.config.hidden_size
+    # Reports only what it CHANGED, so the run can say so rather than silently
+    # differ - and stays quiet about fields that already agreed.
+    assert applied["depth"] == layers
+    assert applied["num_heads"] == model.config.num_attention_heads
+    assert "hidden_size" not in applied, "the fixture already agreed on this one"
+
+
+def test_reconciliation_skips_what_the_checkpoint_does_not_describe(
+    hosted, praxis_config
+):
+    """A field the hosted config lacks is left alone, never guessed."""
+    model = ForeignCausalLM(copy.deepcopy(hosted), praxis_config)
+    del model.config.max_position_embeddings
+    praxis_config.max_position_embeddings = 1234
+
+    model.reconcile_praxis_config(praxis_config)
+    assert praxis_config.max_position_embeddings == 1234
+
+
+def test_an_adapter_can_correct_the_field_names(hosted, praxis_config, monkeypatch):
+    """The escape hatch for a family that calls it `n_layer`."""
+    from praxis.models import ModelAdapter
+
+    model = ForeignCausalLM(copy.deepcopy(hosted), praxis_config)
+    model.config.n_layer = 7
+    monkeypatch.setattr(
+        "praxis.models.get_adapter",
+        lambda model_type: ModelAdapter(config_fields={"depth": "n_layer"}),
+    )
+
+    model.reconcile_praxis_config(praxis_config)
+    assert praxis_config.depth == 7
+
+
+def test_every_override_names_a_real_praxis_field(praxis_config):
+    """A typo here would write a field nothing displays, which is exactly the
+    silent-no-op failure this whole path is built to avoid."""
+    for praxis_field in ForeignCausalLM.CONFIG_OVERRIDES:
+        assert hasattr(praxis_config, praxis_field), praxis_field

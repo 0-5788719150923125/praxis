@@ -58,6 +58,40 @@ class ForeignModel(PreTrainedModel):
     # ``model_tasks`` key this wrapper implements. Set by the subclass.
     TASK: str = ""
 
+    # Praxis config fields the HOSTED model is authoritative about, as
+    # ``{praxis field: hosted config field}``.
+    #
+    # The foreign trunk never reads these - it built itself from its own config
+    # - but Praxis DISPLAYS them, in the blueprint, the model-info panel, the
+    # run spec, the annotated config download and `config.json`. Left at the
+    # CLI defaults they are simply wrong: a 30-layer SmolLM2 reported
+    # `depth: 2` because 2 is what `--num-layers` defaults to. A number nobody
+    # reads is still a number somebody believes.
+    #
+    # Declared here rather than listed at the call site so a task wrapper can
+    # extend it, and keyed on the names every HuggingFace config uses so
+    # discovery works without per-family knowledge; `model_adapters` carries
+    # the corrections for a family that names one of them differently. A field
+    # the hosted config does not have is skipped, never guessed.
+    CONFIG_OVERRIDES: Dict[str, str] = {
+        "vocab_size": "vocab_size",
+        "hidden_size": "hidden_size",
+        # Praxis splits the embedding width from the trunk width; a standard
+        # decoder embeds straight into the residual stream, so they are one.
+        "embed_size": "hidden_size",
+        "max_position_embeddings": "max_position_embeddings",
+        # Praxis's `depth` is recurrent passes and `num_layers` is distinct
+        # blocks; a foreign stack runs each of its layers once, so both are the
+        # layer count. `num_hidden_layers` is what HF's cache reads.
+        "depth": "num_hidden_layers",
+        "num_layers": "num_hidden_layers",
+        "num_hidden_layers": "num_hidden_layers",
+        "num_heads": "num_attention_heads",
+        "head_size": "head_dim",
+        "activation": "hidden_act",
+        "epsilon": "rms_norm_eps",
+    }
+
     def __init__(
         self,
         model: PreTrainedModel,
@@ -78,6 +112,30 @@ class ForeignModel(PreTrainedModel):
     # ------------------------------------------------------------------
     # identity
     # ------------------------------------------------------------------
+
+    def reconcile_praxis_config(self, praxis_config) -> Dict[str, Any]:
+        """Overwrite the Praxis fields this checkpoint is authoritative about.
+
+        Returns ``{field: value}`` for everything it changed, so the caller can
+        report it. See :attr:`CONFIG_OVERRIDES` for why this exists and what
+        governs the mapping.
+        """
+        from praxis.models import get_adapter
+
+        mapping = dict(self.CONFIG_OVERRIDES)
+        mapping.update(
+            get_adapter(getattr(self.config, "model_type", None)).config_fields
+        )
+
+        applied: Dict[str, Any] = {}
+        for praxis_field, hosted_field in mapping.items():
+            value = getattr(self.config, hosted_field, None)
+            if value is None:
+                continue  # this family does not describe itself that way
+            if getattr(praxis_config, praxis_field, None) != value:
+                applied[praxis_field] = value
+            setattr(praxis_config, praxis_field, value)
+        return applied
 
     @property
     def objective_config(self):
