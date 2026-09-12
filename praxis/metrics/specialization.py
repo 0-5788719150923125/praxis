@@ -140,11 +140,14 @@ def _activation_modules(root) -> Iterator:
     module walk is the only way to reach them. ``nn.Module`` defines no
     ``training_metrics``, so the attribute check alone selects the opted-in
     ones (currently Servant and ActivationMixture); the rest of the registry is
-    skipped.
+    skipped. ``DepthActivation`` is included explicitly: it is a wrapper rather
+    than a registry entry, so it is not in ``activation_classes()``, but it is
+    the module that knows whether the passes are specializing.
     """
     from praxis.activations import activation_classes
+    from praxis.activations.depth import DepthActivation
 
-    classes = activation_classes()
+    classes = tuple(activation_classes()) + (DepthActivation,)
     for module in root.modules():
         if isinstance(module, classes) and hasattr(module, "training_metrics"):
             yield module

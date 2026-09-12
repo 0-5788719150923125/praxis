@@ -36,6 +36,7 @@ from praxis.trainers.runtime import (
     print_training_banner,
     resolve_training_logger,
     run_training,
+    serve_model,
 )
 from praxis.trainers.seed import reset_seed, seed_everything
 from praxis.trainers.setup import (
@@ -180,6 +181,7 @@ __all__ = [
     "resolve_training_logger",
     "print_training_banner",
     "run_training",
+    "serve_model",
     # Trainers
     "BackpropagationTrainer",
     "Trainer",

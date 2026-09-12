@@ -18,10 +18,10 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, burstable, f
 
 <!-- AUTODOC:FEATURES:BEGIN -->
 
-Praxis is organized as 51 registry namespaces. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
+Praxis is organized as 54 registry namespaces. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
 
 - [Activation combination types](docs/activation-types.md) (5)
-- [Activation functions](docs/activations.md) (35)
+- [Activation functions](docs/activations.md) (33)
 - [Attention mechanisms](docs/attention.md) (34)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Chat formats](docs/chat-formats.md) (3)
@@ -30,6 +30,8 @@ Praxis is organized as 51 registry namespaces. The feature categories below link
 - [Decoder block layouts](docs/blocks.md) (9)
 - [Expert mixing](docs/mixing.md) (6)
 - [Feedforward experts](docs/dense.md) (10)
+- [Foreign model adapters](docs/model-adapters.md) (1)
+- [Foreign model tasks](docs/model-tasks.md) (1)
 - [Generators](docs/generators.md) (3)
 - [Halting / early exit](docs/halting.md) (4)
 - [Input encoders](docs/encoders.md) (25)
@@ -45,6 +47,7 @@ Praxis is organized as 51 registry namespaces. The feature categories below link
 - [Optimizer profiles](docs/optimizers.md) (7)
 - [Optimizer wrappers](docs/wrappers.md) (8)
 - [Paper threads](docs/threads.md) (2)
+- [Parameter-efficient finetuning](docs/peft-profiles.md) (4)
 - [Per-task loss weighting](docs/task-weights.md) (4)
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
@@ -207,6 +210,34 @@ outputs = model.generate(input_ids, do_sample=True)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
+
+## train somebody else's model
+
+It goes the other way too. `--model-name` loads any published `transformers`
+checkpoint and trains it under the Praxis objectives - the criterion and its
+regularizers, the assistant mask, the task weighter, the forward-path RL
+policies - with the whole data pipeline, dashboard and web stack around it:
+
+```sh
+./launch --model-name HuggingFaceTB/SmolLM2-135M-Instruct \
+         --peft-type lora --rl-type preference --optimizer-wrappers schedule_free
+```
+
+[`experiments/smol.yml`](experiments/smol.yml) is that run as a config, with the
+reasoning written down: `./launch --smol`.
+
+The checkpoint is authoritative about itself. Its architecture, config,
+vocabulary and chat template are used verbatim, and there is no translation
+layer between Praxis's argument names and its own - `--model-kwarg key=value`
+forwards anything else straight to `from_pretrained`. Because of that, the
+Praxis *architecture* flags cannot apply, and passing one is an error rather
+than a silent no-op. Everything that describes the RUN still does.
+
+`--peft-type` freezes the loaded weights and trains an adapter in their place
+(`lora`, `lora_attention`, `rslora`, `dora`); checkpoints then hold only the
+adapter, since the base comes back from the hub. `--no-train` skips the
+training loop entirely and just serves the model, which is often all a
+published checkpoint needs.
 
 </details>
 

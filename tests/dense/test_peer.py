@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from praxis import PraxisConfig, registry
+from praxis.activations.depth import base_activation
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.peer import (
     BANK_WIDTH_MULTIPLE,
@@ -433,9 +434,10 @@ def test_peer_split_partitions_the_bank_by_expert():
     torch.manual_seed(0)
     split = registry.lookup("dense", "peer_glu")(_peer_cfg(activation=SPLIT))
 
-    assert isinstance(split.act, ActivationMixture)
-    assert split.act.type_name == "mix_split" and split.act.wants_keys
-    assert split.act.names == ("servant", "swish")
+    assert isinstance(base_activation(split.act), ActivationMixture)
+    assert base_activation(split.act).type_name == "mix_split"
+    assert split.act.wants_keys
+    assert base_activation(split.act).names == ("servant", "swish")
     assert split.act_value is None
 
     x = torch.randn(2, 16, 64)
@@ -478,7 +480,9 @@ def test_peer_split_keys_the_activation_to_the_expert_not_the_rank():
     # from retrieval.
     front, back = 0, m.num_experts - 1
     indices = torch.tensor([[[[front, back] * 4] * 4]])  # [1, 1, 4, 8]
-    weights = m.act._partition((indices % m.num_experts) / m.num_experts)
+    weights = base_activation(m.act)._partition(
+        (indices % m.num_experts) / m.num_experts
+    )
 
     took_front = weights[..., 0::2, :]
     took_back = weights[..., 1::2, :]
@@ -515,10 +519,11 @@ def test_peer_mix_routes_through_an_activation_bank():
     plain = build("peer_glu")
     mixed = build("peer_glu", activation=MIX)
 
-    assert isinstance(mixed.act, ActivationMixture)
+    assert isinstance(base_activation(mixed.act), ActivationMixture)
     # Continuous, not the `keyed` partition `peer_split` runs - that is the one
     # variable between the two arms.
-    assert mixed.act.type_name == "mix_gated" and not mixed.act.wants_keys
+    assert base_activation(mixed.act).type_name == "mix_gated"
+    assert not mixed.act.wants_keys
     # The GLU's linear value branch is untouched: nonlinear DEPTH is unchanged,
     # only the function class in the existing slot.
     assert mixed.act_value is None

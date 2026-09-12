@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.activations import ActivationSpec, build_activation, linear_activation
+from praxis.activations.depth import DepthActivation, build_depth_activation
 from praxis.dense.base import BaseDense
 from praxis.transforms import aligned_size
 
@@ -322,7 +323,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             if glu
             else None
         )
-        self.act = build_activation(spec)
+        self.act = build_depth_activation(spec, config)
         # THE ACTIVATION MAY WANT THE EXPERT INDEX. An earlier version of this
         # module carried an `act_alt` flag that split the bank in half and gave
         # each half its own activation, keyed on the expert index. That logic
@@ -336,6 +337,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # discrete at all - swap `mix_split` for `mix_gated` and the same
         # call site routes continuously instead.
         self._keyed: bool = getattr(self.act, "wants_keys", False)
+        # Only the depth-specializing wrapper takes a pass index; a plain
+        # activation is a bare `R -> R` and would reject the kwarg.
+        self._depth_aware: bool = isinstance(self.act, DepthActivation)
         self.dropout = nn.Dropout(config.dropout)
         self.up = nn.EmbeddingBag(
             self.num_experts * self.num_sets, hidden_size, mode="sum", sparse=sparse
@@ -440,7 +444,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         projected = inputs @ bank.weight.T  # [b, n, num_experts * num_sets]
         return projected.gather(-1, indices.reshape(b, n, -1)).view_as(indices)
 
-    def _activate(self, projected: Tensor, indices: Tensor) -> Tensor:
+    def _activate(
+        self, projected: Tensor, indices: Tensor, current_depth: int = 0
+    ) -> Tensor:
         """Apply the expert activation to ``[b, n, h, k]``, handing it the key.
 
         The key is the expert's position in the bank as a FRACTION, which is the
@@ -466,9 +472,14 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         bank row: an expert trains under one activation for the whole run and
         specializes into it.
         """
+        extra = {"current_depth": current_depth} if self._depth_aware else {}
         if not self._keyed:
-            return self.act(projected)
-        return self.act(projected, keys=(indices % self.num_experts) / self.num_experts)
+            return self.act(projected, **extra)
+        return self.act(
+            projected,
+            keys=(indices % self.num_experts) / self.num_experts,
+            **extra,
+        )
 
     def forward(
         self,
@@ -482,8 +493,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
-            current_depth: unused - retrieval is depth-agnostic, but the
-                BaseDense contract passes it to every FFN.
+            current_depth: which recurrent pass this is. Retrieval itself is
+                depth-agnostic, but the expert ACTIVATION specializes per pass
+                (praxis/activations/depth.py), so the index is threaded to it.
 
         Returns:
             Output tensor of shape [batch_size, seq_len, hidden_size]
@@ -537,7 +549,9 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             if self.act_value is not None:
                 outputs = self.act_value(outputs)
             outputs = (
-                self._activate(self._project(inputs, self.gate, indices), indices)
+                self._activate(
+                    self._project(inputs, self.gate, indices), indices, current_depth
+                )
                 * outputs
             )
         else:

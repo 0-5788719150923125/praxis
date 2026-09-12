@@ -19,6 +19,7 @@ from .chat_templates import (
     get_chat_template,
     resolve_chat_format,
 )
+from .pretrained import load_pretrained_tokenizer
 from .standard import StandardTokenizer
 
 # ByteLevel depends on the byte-latent stack; tolerate its absence.
@@ -40,7 +41,9 @@ registry.declare(
             "``vocab_size=...`` and keyword arguments; ``bpe`` and ``unigram`` dispatch to "
             "the same ``StandardTokenizer`` with different training models, and "
             "``byte_level`` is listed only when the byte-latent stack imports. Unset uses "
-            "``unigram``."
+            "``unigram``. Not consulted at all under ``--model-name``: a published "
+            "checkpoint's weights only mean anything against its own tokenizer, "
+            "which is loaded verbatim instead."
         )
     ),
     entries={
@@ -146,6 +149,8 @@ def create_tokenizer(
     tokenizer_type: Optional[str] = None,
     cache_dir: Optional[str] = None,
     chat_format: Optional[str] = None,
+    model_name: Optional[str] = None,
+    model_revision: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
     """Create a tokenizer instance from the ``tokenizers`` registry.
@@ -165,6 +170,19 @@ def create_tokenizer(
     # Validate before building anything: a typo here should fail the run
     # immediately, not after a tokenizer download.
     requested_format = resolve_chat_format(chat_format)
+    if model_name:
+        # A foreign model brings its own vocabulary, so it also brings its own
+        # tokenizer; nothing Praxis could train would match it. The RAW
+        # chat_format is forwarded (not `requested_format`) because unset has
+        # to stay distinguishable from an explicit 'default' - the checkpoint
+        # picks its own contract when the run does not.
+        return load_pretrained_tokenizer(
+            model_name,
+            chat_format=chat_format,
+            revision=model_revision,
+            cache_dir=cache_dir,
+            **kwargs,
+        )
     if tokenizer_type is None:
         tokenizer_type = DEFAULT_TOKENIZER
 

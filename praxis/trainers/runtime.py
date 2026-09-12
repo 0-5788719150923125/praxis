@@ -2,6 +2,7 @@
 
 import os
 import signal
+import threading
 
 
 def resolve_training_logger(cfg, run, ckpt_path):
@@ -245,3 +246,37 @@ def run_training(
             traceback.print_exc()
         graceful_shutdown(api_server, exit_code=1, reason="fatal error")
         return 1
+
+
+def serve_model(services, generator) -> int:
+    """Hold the process open with the model served but never trained.
+
+    The ``--no-train`` path. Everything a training run stands up is already
+    running by the time this is called - the API server, the web stack, the
+    generator - so all that is left is to not start a training loop and not
+    exit. Requests are answered on the Flask thread (the generator is built
+    synchronous for this path), because the loop that would otherwise drain the
+    queue is exactly the thing we are skipping.
+    """
+    from praxis.utils import graceful_shutdown
+
+    api_server = services.api_server
+    addr = api_server.get_api_addr() if api_server else None
+    if addr:
+        url = addr if addr.startswith(("http://", "https://")) else f"http://{addr}"
+        print(f"[SERVE] Not training (--no-train). Model available at {url}/")
+    else:
+        print("[SERVE] Not training (--no-train). No API server is running.")
+
+    stop = threading.Event()
+
+    def _stop(signum, frame):
+        stop.set()
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    stop.wait()
+
+    print("\n[SERVE] Interrupted by user")
+    graceful_shutdown(api_server, exit_code=0, reason="serve stopped")
+    return 0

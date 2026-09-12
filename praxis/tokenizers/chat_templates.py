@@ -119,8 +119,10 @@ class ChatFormat:
             and to bound the set of text boundaries we scan for.
         generated_roles: Roles wrapped in ``{% generation %}`` - the positions
             the training loss keeps (see ``assistant_mask``).
-        boundary_style: ``"tokens"`` (control-token turn markers) or
-            ``"text"`` (role name on its own line).
+        boundary_style: ``"tokens"`` (control-token turn markers),
+            ``"text"`` (role name on its own line), or ``"native"`` (the
+            checkpoint's own layout, which Praxis does not describe - so
+            nothing may claim to validate it).
         stop_token_names: Tokenizer attributes (``"eos_token_id"`` style)
             whose ids halt generation. Empty for text boundaries.
         stop_roles: Roles whose boundary ends the model's turn. Text style
@@ -156,6 +158,16 @@ class ChatFormat:
     def text_boundaries(self) -> bool:
         """True when turns are delimited by text rather than control tokens."""
         return self.boundary_style == "text"
+
+    @property
+    def describes_boundaries(self) -> bool:
+        """Whether Praxis knows where this format's turn boundaries are.
+
+        False for ``native``, where the checkpoint's own template writes them.
+        Checking a foreign layout against Praxis's would report violations of a
+        contract nobody agreed to, so the validator stands down instead.
+        """
+        return self.boundary_style in ("tokens", "text")
 
     @property
     def uses_tool_tokens(self) -> bool:
@@ -437,7 +449,7 @@ HF_NATIVE_FORMAT = ChatFormat(
     template="",
     roles=("system", "user", "assistant"),
     generated_roles=("assistant",),
-    boundary_style="tokens",
+    boundary_style="native",
     stop_token_names=("eos_token_id",),
     tool_style="tokens",
     document_separator="eos_token_id",
@@ -609,7 +621,11 @@ def apply_chat_format(tokenizer, name_or_format: Any = None) -> ChatFormat:
         else resolve_chat_format(name_or_format)
     )
     tokenizer.chat_format = fmt
-    tokenizer.chat_template = fmt.template
+    # An empty template is a format that DECLARES none (hf_native: the
+    # checkpoint's own template renders the prompt). Assigning it would erase
+    # the very template the format exists to defer to.
+    if fmt.template:
+        tokenizer.chat_template = fmt.template
     return fmt
 
 

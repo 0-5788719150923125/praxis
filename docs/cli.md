@@ -43,7 +43,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
+| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, swish, tanh, xielu) |
 | `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc, arc_dropoff, arc_dropoff_always, arc_single, arc_single_dropoff, arc_nomem, arc_single_nomem, arc_single_dropoff_nomem, arc_single_dropoff_always_nomem, kaleido, kaleido_dropoff, kaleido_dropoff_always, kaleido_pink, kaleido_pink_dropoff_always, kaleido_split, kaleido_split_dropoff_always, kaleido_pink_split_dropoff_always, kaleido_12_dropoff_always, kaleido_24_dropoff_always, kaleido_zoom_dropoff_always, kaleido_12_zoom_dropoff_always, kaleido_norm_dropoff_always, kaleido_12_norm_dropoff_always, kaleido_24_norm_dropoff_always, ssog, arc_ssog, arc_ssog_wide, arc_ssog_null) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
@@ -97,6 +97,16 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight, helical_sparse, helical_sparse_tight) |
 | `--window-size` | int | `None` | Sliding window size for attention (None = full attention). Only used with hex attention. |
 
+### models
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--model-kwarg` |  | `None` | key=value forwarded verbatim to from_pretrained (repeatable) |
+| `--model-name` | str | `None` | Published model to load instead of building one |
+| `--model-revision` | str | `None` | Revision of --model-name to load |
+| `--model-task` | str | `causal_lm` | Which task family --model-name is loaded as (choices: causal_lm) |
+| `--peft-type` | str | `None` | Adapter profile to finetune --model-name with (choices: lora, lora_attention, rslora, dora) |
+
 ### training
 
 | Flag | Type | Default | Description |
@@ -104,6 +114,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--governor` | str | `None` | Training-loop governor: a feedback controller over a loop knob, driven by an endogenous signal. 'gns_batch' governs the gradient-accumulation factor by tracking the measured gradient noise scale (target_batch_size becomes the ceiling). Default None keeps the static accumulation factor. Can also be set in experiment YAML as 'governor'. (choices: gns_batch) |
 | `--max-steps` | int | `None` | Maximum number of training steps (None for infinite training) |
 | `--no-compile` | bool | `False` | Disable torch.compile of the model (slower, but cleaner stack traces and lower memory) |
+| `--no-train` | bool | `False` | Serve the model without training it |
 | `--ray-address` | str | `None` | Ray cluster address for --trainer-type mono_forward. Default None means 'start a fresh in-process Ray cluster' - correct for both the single-host Phase 2/3 path and the Phase 4 multi-raylet compose test (which exports RAY_ADDRESS=127.0.0.1:6379 in the environment, taking precedence over this flag). Pass an explicit address like '127.0.0.1:6379' to join a pre-existing cluster. Do NOT pass 'auto' unless a cluster definitely exists - 'auto' errors loud if nothing is running. |
 | `--ray-head-sync-every` | int | `50` | Number of batches between shared-head synchronization rounds across actors (only meaningful for --trainer-type mono_forward). |
 | `--ray-num-replicas-per-layer` | int | `1` | Number of LayerActor replicas to spawn per Mono-Forward layer. Phase 3 keeps this at 1; replica-level data parallelism is a Phase 5+ concern. |

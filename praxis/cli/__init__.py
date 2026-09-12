@@ -81,6 +81,15 @@ def initialize_cli():
     # Process arguments through all groups
     args = process_all_arguments(args)
 
+    # A foreign model brings its own architecture, so the Praxis architecture
+    # flags cannot apply to it. Checked here, before any download: an ignored
+    # --attention-type is worse than an error, because transformers accepts
+    # unknown kwargs and drops them, so nothing downstream would ever notice.
+    if getattr(args, "model_name", None):
+        from praxis.models import reject_incompatible_flags
+
+        reject_incompatible_flags(args, parser)
+
     # Finalize integration loading
     integration_bridge.finalize_loading(args)
 

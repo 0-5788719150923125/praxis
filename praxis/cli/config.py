@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from praxis.models import parse_model_kwargs
 from praxis.trainers.precision import (
     DEFAULT_PRECISION,
     PrecisionProfile,
@@ -49,6 +50,16 @@ class RunConfig:
     # model dtype, the Lightning precision plugin and the matmul policy
     # together; read it through `precision_profile`, never by name.
     precision: str = DEFAULT_PRECISION
+
+    # Foreign model: a published checkpoint loaded in place of a Praxis-built
+    # one. ``model_kwargs`` is forwarded verbatim to its ``from_pretrained``.
+    model_name: Optional[str] = None
+    model_revision: Optional[str] = None
+    model_task: str = "causal_lm"
+    model_kwargs: Dict[str, Any] = field(default_factory=dict)
+    # ``peft_profiles`` key; None = train every loaded weight.
+    peft_type: Optional[str] = None
+    no_train: bool = False
 
     encoder_type: Optional[str] = None
     tokenizer_type: Optional[str] = None
@@ -160,6 +171,12 @@ class RunConfig:
             device=processed_args["device"],
             precision=get("precision", DEFAULT_PRECISION) or DEFAULT_PRECISION,
             target_batch_size=get("target_batch_size", batch_size),
+            model_name=get("model_name"),
+            model_revision=get("model_revision"),
+            model_task=get("model_task", "causal_lm") or "causal_lm",
+            model_kwargs=parse_model_kwargs(get("model_kwarg")),
+            peft_type=get("peft_type"),
+            no_train=get("no_train", False),
             encoder_type=encoder_type,
             tokenizer_type=get("tokenizer_type"),
             chat_format=get("chat_format"),

@@ -154,7 +154,11 @@ def assemble_model(cfg, config) -> ModelBundle:
     # forward is what materializes the lazy modules, and they are built under
     # the same mixed rules.
     with init_context(profile):
-        model = AutoModelForCausalLM.from_config(config)
+        model = (
+            _load_foreign(cfg, config, profile)
+            if cfg.model_name
+            else AutoModelForCausalLM.from_config(config)
+        )
         # Ghosting rebinds submodules, so it runs BEFORE the dtype cast and
         # before the lazy-init forward: the wrappers must be the modules those
         # two passes actually see, or the derived weight is left in the build
@@ -182,6 +186,49 @@ def assemble_model(cfg, config) -> ModelBundle:
         total_params=total_params,
         num_params=num_params,
     )
+
+
+def _load_foreign(cfg, config, profile):
+    """Load ``--model-name`` and reconcile the run config against it.
+
+    The loaded checkpoint is authoritative about itself. Its vocabulary,
+    positional capacity and width overwrite whatever the CLI inferred, because
+    every one of those was derived from Praxis defaults or from a tokenizer that
+    is now the model's own - and the criterion, the optimizer's vocab-facing
+    split and the data pipeline all read them back off this config.
+    """
+    from praxis.models import load_foreign_model
+    from praxis.models.peft import apply_peft, ensure_peft, peft_summary
+
+    ensure_peft(cfg.peft_type)
+
+    model_kwargs = dict(cfg.model_kwargs)
+    # The run's precision, unless the caller named a dtype themselves. Loading
+    # in the run's dtype avoids materializing the checkpoint twice.
+    if profile.torch_dtype is not None:
+        model_kwargs.setdefault("dtype", profile.torch_dtype)
+
+    model = load_foreign_model(
+        cfg.model_name,
+        config,
+        task=cfg.model_task,
+        revision=cfg.model_revision,
+        model_kwargs=model_kwargs,
+    )
+
+    hosted = model.config
+    for field in ("vocab_size", "hidden_size", "max_position_embeddings"):
+        value = getattr(hosted, field, None)
+        if value is not None:
+            setattr(config, field, value)
+    config.num_hidden_layers = getattr(hosted, "num_hidden_layers", config.depth)
+    config.model_name = cfg.model_name
+    config.model_revision = cfg.model_revision
+
+    if cfg.peft_type:
+        apply_peft(model, cfg.peft_type)
+        print(peft_summary(model))
+    return model
 
 
 def _encoder_patch_size(encoder_type) -> int:

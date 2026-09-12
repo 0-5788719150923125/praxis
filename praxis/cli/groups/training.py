@@ -52,6 +52,23 @@ class TrainingGroup:
         )
 
         group.add_argument(
+            "--no-train",
+            action="store_true",
+            default=False,
+            exclude_hash=True,
+            doc=(
+                "Skip the training loop and serve the model as-is. The run "
+                "still builds, still starts the web stack and the terminal, and "
+                "still answers generation requests - it just never calls fit(). "
+                "For a published checkpoint that is already usable, and for "
+                "inspecting a run's blueprint without spending a step. Excluded "
+                "from the run hash, so it shares a run directory with the "
+                "training run of the same model rather than forking one."
+            ),
+            help="Serve the model without training it",
+        )
+
+        group.add_argument(
             "--warmup-steps",
             type=int,
             default=None,

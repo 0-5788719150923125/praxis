@@ -41,6 +41,12 @@ class BackpropagationTrainer(LightningModule):
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
         )
 
+        # A model whose checkpoints hold only part of its weights (an adapter
+        # over frozen foreign weights) cannot satisfy a strict load: the base
+        # comes back from the hub, not from the checkpoint.
+        if getattr(model, "partial_checkpoint", False):
+            self.strict_loading = False
+
         # Try to compile the model automatically with fallback
         self.model = try_compile(model, hparams)
 

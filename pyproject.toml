@@ -41,6 +41,11 @@ dependencies = [
 # bleeding-edge distributions (e.g. Arch) where python3.14 is the system
 # Python version.
 ray = ["ray[default]>=2.30"]
+# PEFT is only required by --peft-type, which only applies to --model-name
+# (a published checkpoint). Installed at runtime by praxis.models.peft when a
+# profile is actually selected, so a run that never finetunes one never pays
+# for it.
+peft = ["peft>=0.14"]
 
 [tool.setuptools]
 packages = ["praxis"]

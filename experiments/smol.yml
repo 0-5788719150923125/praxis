@@ -1,0 +1,130 @@
+# smol: the foreign-model path, end to end.
+#
+# SmolLM2-135M-Instruct loaded verbatim from the hub, finetuned with a LoRA
+# adapter on Anthropic/hh-rlhf through Praxis's own preference objective, and
+# served to Discord as "Karma". Nothing here builds a Praxis architecture - the
+# trunk is somebody else's - so every architecture flag is REJECTED on this
+# path rather than silently ignored (praxis/models/reject_incompatible_flags).
+# Everything that describes the RUN still applies, and that is the whole point:
+# the criterion, the regularizers, the assistant mask, the task weighter, the
+# RL policies and the entire data pipeline are Praxis's.
+#
+# See next/foreign_models.md for the design and what it cost.
+
+seed: 42
+device: cuda:0
+
+# ── the model ────────────────────────────────────────────────────────────────
+# The Instruct variant, not the base one, on purpose: it ships a chat template,
+# so the run gets `hf_native` (the checkpoint's own turn layout, its own EOS)
+# instead of falling back to `prose`. Praxis rewrites that template to mark its
+# assistant spans with `{% generation %}` - verified to render byte-identically -
+# which is what makes the prompt-loss mask real. Without it the mask is all
+# zeros, `weighted_reduce` returns 0.0 with the graph intact, and the run trains
+# on nothing without raising. The base checkpoint works too, on `prose`.
+model_name: HuggingFaceTB/SmolLM2-135M-Instruct
+
+# Pin the revision before this is a result anyone cites. Two revisions of one
+# repo are two different models, and both are part of the run hash.
+# model_revision: <commit sha>
+
+# Forwarded VERBATIM to from_pretrained. There is no translation layer between
+# Praxis argument names and a foreign model's - an alias that disagrees with
+# what lands in config.json eventually becomes a lie about what ran - so this
+# is the whole escape hatch for model-specific options.
+#
+# `sdpa` is already what transformers picks for Llama-family models here, and
+# it is the fast path: PyTorch's fused kernel dispatches to the flash and cuDNN
+# backends on its own (measured - forcing FLASH/CUDNN-only changed the loss by
+# zero). It is named anyway so an upstream default change cannot quietly alter
+# this run. flash_attn is NOT installed and is not worth a dependency: the
+# fused SDPA path already gets the kernel.
+model_kwarg:
+  - attn_implementation=sdpa
+
+# ── adapter ──────────────────────────────────────────────────────────────────
+# Freeze the 139M published weights, train 4.88M of LoRA (3.5%). Two reasons
+# beyond cost: full-rank finetuning of somebody else's weights is the easiest
+# way to destroy them, and checkpoints then hold only the adapter since the base
+# is reproducible from model_name + model_revision, both hashed - a measured
+# 29MB last.ckpt (adapter + Lion momentum) instead of 280MB of frozen weights.
+# Arms: lora_attention (q/v only, the original paper's setting), rslora
+# (alpha/sqrt(r) scaling), dora (magnitude/direction split).
+peft_type: lora
+
+# ── objective ────────────────────────────────────────────────────────────────
+# `preference` is both necessary and sufficient to get hh-rlhf: the dataset
+# declares `requires_rl_type` and the policy injects it via `dataset_weights`,
+# so the policy is the only door in. The card permits preference modeling and
+# nothing else, and this is the objective that honors it - a reference-free
+# SimPO/ORPO-shaped margin: chosen text trains through the main CE, rejected
+# text is excluded from it entirely and appears only in the margin.
+#
+# HONEST LIMIT, do not oversell this run: the formatter emits ONE side per
+# document, chosen 50/50 at random, so a pair's two halves are never co-resident
+# and the margin contrasts one conversation's chosen text against a DIFFERENT
+# conversation's rejected text. The SFT anchor on chosen text is doing most of
+# the work. Real pairing needs a formatter change (next/rl.md 4.7).
+rl_type: preference
+
+# The anchor mix. `chat` (smoltalk + wildchat) rather than `base` (raw
+# fineweb-edu) because SmolLM2-Instruct was instruction-tuned on smoltalk, so
+# this keeps it in its own distribution while hh-rlhf supplies the preference
+# signal. Training a chat model on raw web text is a different experiment.
+train_datasets:
+  - chat
+
+# Off, deliberately. The default `contrastive_isotropy` reshapes the trunk's
+# representation geometry, which is a reasonable thing to do to a model you are
+# training from scratch and an uncontrolled variable when you are finetuning
+# somebody else's. Delete this key to get the Praxis default back.
+regularizers: []
+
+# ── training ─────────────────────────────────────────────────────────────────
+# Lion at the house profile - the one already settled at this scale - wrapped in
+# Schedule-Free. Nothing here invents a hyperparameter: the profile carries its
+# own lr and betas, and Schedule-Free replaces the decay curve with Polyak-style
+# averaging (the averaged iterate x is what eval deploys). What remains is a
+# plain warmup ramp, and its horizon is derived from target_batch_size rather
+# than picked - 256 optimizer steps here, so the first few logged learning rates
+# are near zero on purpose.
+#
+# NOT Prodigy, despite it being the obvious "estimates its own step size"
+# answer for a model whose right LR nobody knows: it almost always collapses
+# here.
+optimizer: Lion
+optimizer_wrappers:
+  - schedule_free
+
+precision: bfloat16
+block_size: 512
+batch_size: 8
+target_batch_size: 64
+
+# torch.compile stays ON (the Praxis default). Measured on this exact model at
+# batch 4 x 512: 321 -> 140 ms/step and peak VRAM 3681 -> 3216 MiB, for a
+# one-time ~207s compile. Pass --no-compile for readable stack traces.
+#
+# Eager VRAM at batch 8 x 512 is 7.0 GiB, so this fits a 16GB card alongside
+# something else. Raise batch_size if the card is yours alone.
+
+# ── serving ──────────────────────────────────────────────────────────────────
+# The bot reads DISCORD_TOKEN from the environment or from the repo's .env
+# (--discord-token overrides both), and pushes this nickname to every guild it
+# can. With no token it says so and the run continues untouched. Must be
+# launched from the repo root either way: the integration loader reads
+# ./integrations relative to the working directory.
+discord: true
+discord_nickname: Karma
+
+infer_every: 10
+
+# ── traps worth knowing ──────────────────────────────────────────────────────
+# * Do NOT set `loss_func: cut_cross_entropy` here. It never materializes full
+#   logits, and PreferencePolicy degrades to a silent no-op without them - the
+#   run would look identical and score nothing.
+# * `--no-train` serves this model without training it at all, which is often
+#   all a published instruct checkpoint needs. It is excluded from the run hash,
+#   so it shares a run directory with the training run rather than forking one.
+# * mtp_type and bidirectional are hard errors on a foreign model: both need a
+#   Praxis-built classifier to attach to.

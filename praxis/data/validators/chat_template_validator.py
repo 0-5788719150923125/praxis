@@ -129,6 +129,12 @@ class ChatTemplateValidator:
         Returns:
             Tuple of (is_valid, violations_list)
         """
+        if not self.chat_format.describes_boundaries:
+            # A foreign checkpoint's own layout. Praxis has no model of where
+            # its boundaries belong, and scanning for Praxis's would report
+            # violations of a contract the data was never written against.
+            return True, []
+
         if self.chat_format.text_boundaries:
             return self._validate_text_boundaries(token_ids, messages)
 

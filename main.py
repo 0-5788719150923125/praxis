@@ -32,6 +32,7 @@ from praxis.trainers import (
     ensure_ray,
     print_training_banner,
     run_training,
+    serve_model,
     setup_environment,
 )
 from praxis.utils import (
@@ -70,6 +71,10 @@ def main():
         tokenizer_type=cfg.tokenizer_type,
         cache_dir=run.cache_dir,
         chat_format=cfg.chat_format,
+        # Set only on the foreign-model path, where the checkpoint's own
+        # tokenizer is the only one its weights mean anything against.
+        model_name=cfg.model_name,
+        model_revision=cfg.model_revision,
     )
     # The tokenizer owns vocab_size, so the config reconciles against it.
     config = create_praxis_config(args, tokenizer)
@@ -79,7 +84,11 @@ def main():
     model_info = build_model_info(cfg, config, bundle, run)
     ckpt_path = resolve_resume_checkpoint(run.cache_dir, cfg.reset)
 
-    generator = Generator(bundle.model, tokenizer, device=cfg.device)
+    # --no-train has no training loop to drain the request queue, so the
+    # generator answers each request in place, on the caller's thread.
+    generator = Generator(
+        bundle.model, tokenizer, device=cfg.device, synchronous=cfg.no_train
+    )
     # Pay any one-time decode setup (compiling the decode-time memory bodies at
     # every bucket rung) HERE, where nothing is waiting on it. The alternative
     # is that it lands inside the first request, and the web chat gives up
@@ -95,6 +104,15 @@ def main():
     services = start_services(
         cfg, run, generator, tokenizer, integration_loader, param_stats, ckpt_path
     )
+
+    if cfg.no_train:
+        # Everything a run needs to be inspectable is up; the training loop is
+        # the only thing skipped. Snapshot the spec as a fit would, so the
+        # Identity tab reads the same either way.
+        snapshot_run_spec(cfg, run, generator, param_stats, services)
+        show_launch_animation(bundle.model, run.truncated_hash)
+        update_license_timestamp()
+        return serve_model(services, generator)
 
     dataintegration = get_datamodules(
         cfg.seed,

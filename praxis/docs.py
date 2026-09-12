@@ -78,6 +78,12 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
     ),
     ("layers", "Shared low-level layer building blocks."),
     ("logging", "Logging utilities and formatters."),
+    (
+        "models",
+        "Foreign models: loading a published ``transformers`` checkpoint and "
+        "training it under the Praxis objectives (the ``model_tasks``, "
+        "``model_adapters`` and ``peft_profiles`` namespaces).",
+    ),
     ("metrics", "Metrics descriptions and bookkeeping for the dashboards."),
     (
         "modeling",

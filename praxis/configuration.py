@@ -54,6 +54,11 @@ class PraxisConfig(PretrainedConfig):
         max_position_embeddings: int = 32768,
         block_size: int = 512,
         activation: str = "mish",
+        # One activation instance per recurrent pass, so a reused block can
+        # shape its nonlinearity differently at each depth. Free for
+        # parameter-free activations (they collapse to one shared instance)
+        # and inert on non-recurrent stacks. Set false to ablate.
+        depth_activations: bool = True,
         block_type: str = "transformer",
         embeddings: Optional[str] = None,  # override block_type-keyed embedding choice
         expert: str = "glu",
