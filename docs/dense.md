@@ -69,7 +69,7 @@ Every dimension is derived from ``config`` unless explicitly overridden, so the 
 fits whatever model it is dropped into (see the two invariants on
 ``BANK_WIDTH_MULTIPLE`` and ...
 
-Source: [praxis/dense/peer.py:109](../praxis/dense/peer.py#L109)
+Source: [praxis/dense/peer.py:111](../praxis/dense/peer.py#L111)
 
 Presets:
 - `peer` - class defaults

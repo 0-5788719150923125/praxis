@@ -1,5 +1,6 @@
 """ReZero residual: per-depth zero-init gains on the block branches."""
 
+import pytest
 import torch
 
 from praxis import PraxisConfig
@@ -70,3 +71,34 @@ def test_transformer_block_learns_force():
     # Other depths are still fully dampened.
     out0, _, _, _ = block(x, None, current_depth=0)
     torch.testing.assert_close(out0, x)
+
+
+def test_gains_report_alpha_per_depth():
+    """`gains()` reports one reading per depth, keyed so the dashboard can chart
+    it, and tracks alpha rather than a copy of it."""
+    from praxis.residuals import ReZeroConnection
+
+    conn = ReZeroConnection(8, num_depths=3)
+    assert conn.gains() == {
+        "residual/rezero_alpha_d0": 0.0,
+        "residual/rezero_alpha_d1": 0.0,
+        "residual/rezero_alpha_d2": 0.0,
+    }
+
+    with torch.no_grad():
+        conn.alpha[1] = 0.25
+    assert conn.gains()["residual/rezero_alpha_d1"] == pytest.approx(0.25)
+
+
+def test_gains_are_readable_inside_a_smear_mix():
+    """The smear share alone cannot give the effective branch gain - that is
+    (w_std + w_rz*alpha) - so alpha must stay readable when ReZero is nested."""
+    from praxis.residuals import ReZeroConnection, SmearResidual
+
+    mixer = SmearResidual(8, num_depths=2)
+    nested = [m for m in mixer.modules() if isinstance(m, ReZeroConnection)]
+    assert nested, "smear mix should hold a ReZero child"
+    assert set(nested[0].gains()) == {
+        "residual/rezero_alpha_d0",
+        "residual/rezero_alpha_d1",
+    }

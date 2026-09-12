@@ -1170,6 +1170,18 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "order": 254,
     },
     {
+        "key": "rezero_alpha",
+        "type": "multi_expert_line",
+        "title": "ReZero Branch Gain (alpha)",
+        "y_label": "alpha",
+        "description": (
+            "Learned branch gain per depth, zero-init. Flat at 0 = the blocks never "
+            "learned to contribute and the identity path is the model."
+        ),
+        "key_pattern": r"^residual/rezero_alpha_d\d+$",
+        "order": 255,
+    },
+    {
         "key": "depth/jump_concentration",
         "type": "line",
         "title": "Depth Jump Concentration (discrete vs smooth)",

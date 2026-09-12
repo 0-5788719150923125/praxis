@@ -26,3 +26,14 @@ class ReZeroConnection(ResidualConnection):
     ) -> Tensor:
         idx = min(int(current_depth), self.alpha.numel() - 1)
         return mix_h + self.alpha[idx] * h_o
+
+    @torch.no_grad()
+    def gains(self) -> dict:
+        """Per-depth branch gain. Zero-init, so a run that never moves these off
+        0 is one whose blocks never learned to contribute - the identity path is
+        the whole model. Deterministic in the parameters, so free at metric
+        time."""
+        alpha = self.alpha.detach().float().cpu()  # one sync
+        return {
+            f"residual/rezero_alpha_d{d}": float(alpha[d]) for d in range(alpha.numel())
+        }

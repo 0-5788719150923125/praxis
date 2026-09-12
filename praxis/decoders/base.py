@@ -398,17 +398,28 @@ class BaseDecoder(nn.Module):
         # Residual-mix shares (SmearResidual): per-depth softmax over styles,
         # averaged across instances (attn/ffn seams, all blocks). Dedupe by id
         # - the smear/vear branch shares one block across positions.
-        from praxis.residuals import SmearResidual
+        # ReZero branch gains ride the same transport, and are collected whether
+        # the connection stands alone or sits inside a SmearResidual - without
+        # alpha the smear share alone cannot tell you the effective branch gain,
+        # since that is (w_std + w_rz * alpha).
+        from praxis.residuals import ReZeroConnection, SmearResidual
 
         mix_sums: Dict[str, float] = {}
         mix_counts: Dict[str, int] = {}
         seen_mixers: set = set()
         for module in self.modules():
-            if isinstance(module, SmearResidual) and id(module) not in seen_mixers:
-                seen_mixers.add(id(module))
-                for key, value in module.style_shares().items():
-                    mix_sums[key] = mix_sums.get(key, 0.0) + value
-                    mix_counts[key] = mix_counts.get(key, 0) + 1
+            if id(module) in seen_mixers:
+                continue
+            if isinstance(module, SmearResidual):
+                readings = module.style_shares()
+            elif isinstance(module, ReZeroConnection):
+                readings = module.gains()
+            else:
+                continue
+            seen_mixers.add(id(module))
+            for key, value in readings.items():
+                mix_sums[key] = mix_sums.get(key, 0.0) + value
+                mix_counts[key] = mix_counts.get(key, 0) + 1
         extras.update({k: mix_sums[k] / mix_counts[k] for k in mix_sums})
 
         # The remote count includes the live expert pool (orchestration), so the

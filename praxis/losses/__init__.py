@@ -9,6 +9,7 @@ from praxis.losses.contrastive_token import ContrastiveTokenLoss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.focal import FocalLoss
 from praxis.losses.halo import HALOLoss
+from praxis.losses.high_error_margin import HighErrorMarginLoss
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.losses.mile import MiLeLoss
 from praxis.losses.objectives import Objectives
@@ -82,6 +83,24 @@ registry.declare(
                 "its deviation above the modal loss, so the consensus band gets "
                 "floor-level gradient only and tokens above it get pressure in "
                 "proportion to their deviation."
+            ),
+        ),
+        "hem": Entry(
+            HighErrorMarginLoss,
+            (
+                "High Error Margin: a margin loss on raw logits that averages only "
+                "the above-average violations, so a token stops producing gradient "
+                "once its target logit leads the field by the margin. Trades "
+                "calibrated probabilities for lower confidence and less forgetting; "
+                "perplexity is not comparable to a cross-entropy run."
+            ),
+        ),
+        "hem_plus": Entry(
+            partial(HighErrorMarginLoss, adaptive_margin=True),
+            (
+                "HEM+: the same loss with the paper's per-class margin, scaled by "
+                "``1/sqrt(n * p)`` against a running unigram estimate so rare tokens "
+                "are held further from their competitors than frequent ones."
             ),
         ),
         "mile": Entry(
