@@ -122,7 +122,10 @@ class EngagementPolicy(nn.Module):
         labels: torch.Tensor,
         assistant_mask: Optional[torch.Tensor] = None,
         task_type_ids: Optional[torch.Tensor] = None,
+        pair_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[Optional[torch.Tensor], dict]:
+        # `pair_ids` is the preference channel; accepted and unused here, because
+        # every recall policy is called with every channel.
         # Needs full per-token logits and an assistant mask; degrade to a no-op
         # rather than guess if either is missing or misshapen.
         if (

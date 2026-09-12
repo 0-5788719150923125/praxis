@@ -43,7 +43,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, swish, tanh, xielu) |
+| `--activation-type` | str | `mish` | The activation function to use. A bare name here; an experiment config may instead give a `{type, values}` mixture - see praxis/activations (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, ouroboros, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, servant, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
 | `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc, arc_dropoff, arc_dropoff_always, arc_single, arc_single_dropoff, arc_nomem, arc_single_nomem, arc_single_dropoff_nomem, arc_single_dropoff_always_nomem, kaleido, kaleido_dropoff, kaleido_dropoff_always, kaleido_pink, kaleido_pink_dropoff_always, kaleido_split, kaleido_split_dropoff_always, kaleido_pink_split_dropoff_always, kaleido_12_dropoff_always, kaleido_24_dropoff_always, kaleido_zoom_dropoff_always, kaleido_12_zoom_dropoff_always, kaleido_norm_dropoff_always, kaleido_12_norm_dropoff_always, kaleido_24_norm_dropoff_always, ssog, arc_ssog, arc_ssog_wide, arc_ssog_null) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
@@ -122,6 +122,14 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--trainer-type` | str | `backpropagation` | Training strategy to use. 'backpropagation' is standard gradient descent. The Mono-Forward profiles share the same training math (each layer trains locally against a per-layer projection matrix, O(1) activation memory in depth) and differ only in worker backend: 'mono_forward' runs every layer in the driver process under a single CUDA context (single host, low VRAM overhead), while 'mono_forward_ray' spawns one Ray actor per layer (multi-host capable, ~300-500 MB CUDA context per actor). (choices: backpropagation, mono_forward, mono_forward_ray) |
 | `--val-every` | int | `1024` | Run validation every N effective steps (multiplied by target_batch_size / batch_size internally to get the raw-batch cadence). Default 1024 matches the historical Lightning default. Lower values like 64 or 128 give faster feedback at the cost of more validation overhead. Can also be set in experiment YAML as 'val_every'. |
 | `--warmup-steps` | int | `None` | LR warmup horizon in optimizer steps. Also gates the CALM KL anneal and codec-freeze floor. Default: target_batch_size * 4. |
+
+### inference
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--developer-prompt` | str | `None` | Developer message prepended to every served conversation |
+| `--generation-kwargs` |  | `None` | key=value decoding parameters for served generation |
+| `--system-prompt` | str | `None` | System message prepended to every served conversation |
 
 ### optimization
 

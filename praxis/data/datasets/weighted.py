@@ -104,6 +104,7 @@ class WeightedIterableDataset(IterableDataset):
             task_type_ids = result.get("task_type_ids")
             assistant_mask = result.get("assistant_mask")
             block_ids = result.get("block_ids")
+            pair_ids = result.get("pair_ids")
             row_continues = result.get("row_continues")
 
             # Stack batch tensors
@@ -113,6 +114,7 @@ class WeightedIterableDataset(IterableDataset):
                 torch.stack(assistant_mask) if assistant_mask else None
             )
             block_ids_tensor = torch.stack(block_ids) if block_ids else None
+            pair_ids_tensor = torch.stack(pair_ids) if pair_ids else None
             row_continues_tensor = (
                 torch.as_tensor(row_continues, dtype=torch.bool)
                 if row_continues is not None
@@ -133,6 +135,8 @@ class WeightedIterableDataset(IterableDataset):
                 extras["assistant_mask"] = assistant_mask_tensor
             if block_ids_tensor is not None:
                 extras["block_ids"] = block_ids_tensor
+            if pair_ids_tensor is not None:
+                extras["pair_ids"] = pair_ids_tensor
             if row_continues_tensor is not None:
                 extras["row_continues"] = row_continues_tensor
 

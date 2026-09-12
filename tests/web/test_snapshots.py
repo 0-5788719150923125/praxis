@@ -222,3 +222,73 @@ def test_classifier_snapshots_recipe_merges_a_stashed_landscape(bare_model):
     out = _recipe_classifier_snapshots(bare_model)
     assert out["status"] == "ok"
     assert "rlct_landscape" in out["snapshots"]
+
+
+# ---------------------------------------------------------------------------
+# ETag validity across runs
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_app(store):
+    """A throwaway app whose one route is served from ``store``."""
+    from flask import Flask
+
+    from praxis.web.snapshots import serve_snapshot
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    app.config["snapshot_store"] = store
+
+    @app.route("/api/thing")
+    def thing():
+        return serve_snapshot("thing", lambda: {"status": "no_data"})
+
+    return app
+
+
+def test_two_runs_never_share_an_etag():
+    """The version counter restarts at 1 in every process, so it cannot be the
+    whole validator: two runs' FIRST snapshots collided, and a browser
+    revalidating at the same origin (localhost:2100 for every run) got a 304
+    and kept rendering the previous run's data. That is how one model's
+    activation curves appeared on a different model's dashboard."""
+    from praxis.web.snapshots import SnapshotStore
+
+    first, second = SnapshotStore(), SnapshotStore()
+    first.set("thing", {"model": "abstractinator"})
+    second.set("thing", {"model": "smollm"})
+
+    # Same version - which is exactly why the version alone was not enough.
+    assert first.get("thing")["version"] == second.get("thing")["version"]
+
+    old_etag = _snapshot_app(first).test_client().get("/api/thing").headers["ETag"]
+    response = _snapshot_app(second).test_client().get(
+        "/api/thing", headers={"If-None-Match": old_etag}
+    )
+
+    assert response.status_code == 200, "a new run must not answer 304 to an old ETag"
+    assert response.get_json() == {"model": "smollm"}
+
+
+def test_the_same_run_still_revalidates_cheaply():
+    """The 304 path is the point of the ETag; only cross-run reuse is wrong."""
+    from praxis.web.snapshots import SnapshotStore
+
+    store = SnapshotStore()
+    store.set("thing", {"model": "smollm"})
+    client = _snapshot_app(store).test_client()
+
+    etag = client.get("/api/thing").headers["ETag"]
+    assert client.get("/api/thing", headers={"If-None-Match": etag}).status_code == 304
+
+
+def test_a_changed_payload_breaks_the_etag_within_a_run():
+    from praxis.web.snapshots import SnapshotStore
+
+    store = SnapshotStore()
+    store.set("thing", {"step": 1})
+    client = _snapshot_app(store).test_client()
+    etag = client.get("/api/thing").headers["ETag"]
+
+    store.set("thing", {"step": 2})
+    assert client.get("/api/thing", headers={"If-None-Match": etag}).status_code == 200

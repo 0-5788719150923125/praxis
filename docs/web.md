@@ -41,9 +41,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Core
 
 - **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L77))
-- **GET** `/api/config` - Get current experiment configuration as annotated YAML. ([source](../praxis/web/routes/core.py#L172))
-- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L94))
-- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L101))
+- **GET** `/api/config` - Get current experiment configuration as annotated YAML. ([source](../praxis/web/routes/core.py#L185))
+- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L107))
+- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L114))
 
 ### Data metrics
 
@@ -59,8 +59,8 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Generation
 
-- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L109))
-- **POST** `/messages` / `/messages/` - Handle message-based generation. ([source](../praxis/web/routes/generation.py#L27))
+- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L139))
+- **POST** `/messages` / `/messages/` - Handle message-based generation. ([source](../praxis/web/routes/generation.py#L29))
 
 ### Git HTTP backend
 

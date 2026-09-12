@@ -21,6 +21,7 @@ from praxis.data.datasets.message_queue import MessageQueueManager
 from praxis.data.datasets.novelty import CountMinSketch, NoveltyTracker
 from praxis.data.datasets.weighted import WeightedIterableDataset
 from praxis.interface.state.live_metrics import LiveMetrics
+from praxis.tasks import TaskType
 from praxis.tasks.weighter import DifficultyTaskLossWeighter
 from praxis.tokenizers.chat_templates import chat_format_of
 
@@ -769,18 +770,116 @@ def test_prose_documents_end_on_their_own_text(prose_tokenizer):
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "yo"},
     ]
-    ids, mask = manager._tokenize_doc(
+    ids, mask, _ = manager._tokenize_doc(
         {"messages": ends_generated, "metadata": {}}, omit_leading_bos=False
     )
     assert prose_tokenizer.decode(ids).endswith("yo\n\n")
     assert int(mask[-1]) == 1  # the halting boundary is a trained target
 
     ends_prompt = [{"role": "user", "content": "unanswered"}]
-    ids, mask = manager._tokenize_doc(
+    ids, mask, _ = manager._tokenize_doc(
         {"messages": ends_prompt, "metadata": {}}, omit_leading_bos=False
     )
     assert prose_tokenizer.decode(ids).endswith("unanswered\n\n")
     assert int(mask[-1]) == 0
+
+
+def _preference_docs(pair_id=7):
+    """The two halves of one pair, as format_preference_pair emits them: a
+    shared prompt and one divergent assistant turn each."""
+    prompt = [
+        {"role": "user", "content": "What is the capital of France?"},
+        {"role": "assistant", "content": "I am not sure about that one."},
+        {"role": "user", "content": "Guess anyway."},
+    ]
+    sides = []
+    for task, answer in (
+        (TaskType.PREF_CHOSEN, "Paris, though I would check."),
+        (TaskType.PREF_REJECTED, "No."),
+    ):
+        sides.append(
+            {
+                "messages": prompt + [{"role": "assistant", "content": answer}],
+                "metadata": {"task_type": int(task), "pair_id": pair_id},
+            }
+        )
+    return sides
+
+
+def test_pair_ids_mark_only_the_divergent_response(prose_tokenizer):
+    """The pair channel covers the answer the two sides do NOT share, and
+    nothing else. The prompt is identical text on both sides, so scoring it
+    would push a response down for the question it was answering; the assistant
+    header is identical framing, which would hand the shorter answer a
+    length-normalization bonus it did not earn."""
+    manager = MessageQueueManager(
+        tokenizer=prose_tokenizer, block_size=4096, enable_chat_validation=False
+    )
+    for doc in _preference_docs():
+        manager.add_document(doc)
+    batch = manager.get_batch(batch_size=1)
+
+    ids = batch["batch"][0]
+    pair_ids = batch["pair_ids"][0]
+    assistant_mask = batch["assistant_mask"][0]
+
+    assert set(pair_ids.unique().tolist()) == {0, 7}
+    # Marked positions are a strict subset of the assistant spans: both
+    # divergent answers, neither shared turn.
+    assert bool((pair_ids.bool() <= assistant_mask.bool()).all())
+    assert int(pair_ids.bool().sum()) < int(assistant_mask.sum())
+
+    task_ids = batch["task_type_ids"][0]
+    for task, answer in (
+        (TaskType.PREF_CHOSEN, "Paris, though I would check."),
+        (TaskType.PREF_REJECTED, "No."),
+    ):
+        span = pair_ids.bool() & (task_ids == int(task))
+        text = prose_tokenizer.decode(ids[span])
+        assert text.startswith(answer), text
+        assert "capital of France" not in text
+
+
+def test_pair_ids_survive_a_row_boundary(prose_tokenizer):
+    """A document cut across two rows keeps its id on both halves - the policy
+    buckets over the whole microbatch, so a split response still gets scored."""
+    sides = _preference_docs()
+    manager = MessageQueueManager(
+        tokenizer=prose_tokenizer, block_size=4096, enable_chat_validation=False
+    )
+    for doc in sides:
+        manager.add_document(doc)
+    whole = manager.get_batch(batch_size=1)["pair_ids"][0]
+    marked = int(whole.bool().sum())
+
+    # A block size that lands mid-document forces the carry path.
+    cut = int((whole != 0).nonzero()[0]) + 4
+    manager = MessageQueueManager(
+        tokenizer=prose_tokenizer, block_size=cut, enable_chat_validation=False
+    )
+    for doc in sides:
+        manager.add_document(doc)
+    rows = manager.get_batch(batch_size=8)["pair_ids"]
+    assert sum(int(r.bool().sum()) for r in rows) == marked
+
+
+def test_unpaired_documents_carry_no_pair_id(prose_tokenizer):
+    """Every other dataset in the mix packs alongside preference data, and none
+    of it may end up in a comparison."""
+    manager = MessageQueueManager(
+        tokenizer=prose_tokenizer, block_size=512, enable_chat_validation=False
+    )
+    manager.add_document(
+        {
+            "messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ],
+            "metadata": {},
+        }
+    )
+    batch = manager.get_batch(batch_size=1)
+    assert int(batch["pair_ids"][0].sum()) == 0
 
 
 def test_per_document_tokenization(default_tokenizer):

@@ -782,6 +782,18 @@
     font-size: 0.95em;
 }
 
+/* Underlined rather than recolored: the hint is already low-contrast, and an
+   accent-colored link inside it reads as the emphasis of the paragraph. */
+.form-hint-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.form-hint-link:hover {
+    color: var(--primary);
+}
+
 .save-button, .reset-button {
     color: white;
     border: none;

@@ -34,6 +34,7 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from typing import Callable, NamedTuple
 
 api_logger = logging.getLogger("praxis.web")
@@ -51,10 +52,22 @@ class SnapshotStore:
         self._lock = threading.Lock()
         self._data = {}
         self._version = 0
+        # Per-store nonce, mixed into every ETag. The version counter alone is
+        # NOT a safe validator: it restarts at 1 in every process, so run B's
+        # first snapshot carried the same ETag as run A's, and a browser
+        # revalidating at the same origin (localhost:2100 for every run) got a
+        # 304 and kept rendering run A's data. That showed up as one model's
+        # activation curves on a completely different model's dashboard.
+        self._nonce = uuid.uuid4().hex[:8]
         # Optional fn(name, version), called after a slot actually changes.
         # The server wires this to a websocket "invalidate" broadcast so
         # clients refresh on change instead of polling on a timer.
         self.notify = None
+
+    @property
+    def nonce(self) -> str:
+        """Identifies THIS store, so an ETag cannot collide across runs."""
+        return self._nonce
 
     def set(self, name, payload):
         with self._lock:
@@ -122,7 +135,8 @@ def serve_snapshot(name, fallback, cache_seconds=5, touches_model=False):
         resp.headers["Cache-Control"] = f"max-age={cache_seconds}"
         return resp
 
-    etag = f'W/"{name}.{entry["version"]}"'
+    # The nonce is what makes this unique to this run; see SnapshotStore.
+    etag = f'W/"{store.nonce}.{name}.{entry["version"]}"'
     if request.headers.get("If-None-Match") == etag:
         resp = current_app.response_class(status=304)
         resp.headers["ETag"] = etag

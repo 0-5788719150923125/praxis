@@ -39,6 +39,15 @@ class TaskType(IntEnum):
 
 DEFAULT_TASK = TaskType.PRETRAIN
 
+# Size of the pair-id pool carried by the ``pair_ids`` channel, which marks
+# which preference comparison a token takes part in (0 = none). Ids cycle
+# through the pool so the preference policy can bucket them with a fixed-size
+# scatter instead of a data-dependent ``unique()``. Only ids co-resident in one
+# microbatch can collide, and a handful of pairs against this many slots makes
+# that vanishingly rare; a collision merges two comparisons into one, which is
+# degraded rather than wrong.
+PAIR_ID_SLOTS = 4096
+
 TASK_NAMES = tuple(t.name.lower() for t in TaskType)
 TASK_NAME_TO_ID = {name: i for i, name in enumerate(TASK_NAMES)}
 

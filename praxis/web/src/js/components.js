@@ -675,8 +675,11 @@ export function createSettingsModal(settings) {
             <label for="generation-kwargs">One <code>key=value</code> per line. Overrides the run's own.</label>
             <textarea id="generation-kwargs" class="settings-textarea" rows="8" spellcheck="false"
                 placeholder="max_new_tokens=128&#10;temperature=0.7">${escapeHtml(settings.generationKwargs)}</textarea>
-            <p class="form-hint">Any transformers <code>GenerationConfig</code> field, plus
-            <code>use_cache</code>, <code>timeout</code>, <code>truncate_to</code> and
+            <p class="form-hint">Any <a class="form-hint-link"
+            href="https://huggingface.co/docs/transformers/en/main_classes/text_generation#transformers.GenerationConfig"
+            target="_blank" rel="noopener noreferrer">transformers
+            <code>GenerationConfig</code></a> field, plus <code>use_cache</code>,
+            <code>timeout</code>, <code>truncate_to</code> and
             <code>skip_special_tokens</code>. Seeded from this run's
             <code>--generation-kwargs</code>; clear the box to fall back to them.
             The Terminal tab's rolling contexts are not affected.</p>

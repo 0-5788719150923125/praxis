@@ -166,7 +166,7 @@ residual_type: standard
 # one of the learned mixtures), ``values`` lists activation names and may nest
 # further specs, and ``linear`` fills the linear half of a GLU or PEER gate.
 #
-# Options: 33 of them, described in docs/activations.md
+# Options: 35 of them, described in docs/activations.md
 # Default: mish
 #
 # gelu: Original Implementation of the GELU activation function in Google BERT
@@ -1052,6 +1052,11 @@ embeddings: positional
 # always preserved and listed first. Pass additional names to append them.
 
 # author: [Ryan J. Brooks]
+
+
+# Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)
+
+# ngrok_auth_token: null
 
 
 # Discord bot token (can also be set via DISCORD_TOKEN env var)

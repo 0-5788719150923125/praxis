@@ -171,7 +171,6 @@ class ObjectiveMixin:
             metrics.update(self._engagement_metrics)
         return metrics
 
-
     def _build_loss_weights(
         self,
         labels: torch.Tensor,
@@ -293,6 +292,7 @@ class CausalObjectiveMixin(ObjectiveMixin):
         token_weights: Optional[torch.Tensor] = None,
         task_type_ids: Optional[torch.Tensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
+        pair_ids: Optional[torch.Tensor] = None,
         backward_logits: Optional[torch.Tensor] = None,
         patch_embeds: Optional[torch.Tensor] = None,
         skip_logits: bool = False,
@@ -304,7 +304,7 @@ class CausalObjectiveMixin(ObjectiveMixin):
         ``hidden_states`` from the RL policy) call the stages directly.
         """
         self._apply_recall_policies(
-            losses, logits, labels, assistant_mask, task_type_ids, skip_logits
+            losses, logits, labels, assistant_mask, task_type_ids, skip_logits, pair_ids
         )
         hidden_states = self._apply_rl_policy(
             losses,
@@ -339,7 +339,6 @@ class CausalObjectiveMixin(ObjectiveMixin):
             patch_embeds,
         )
         return self._finalize_loss(loss, losses, labels, hidden_states)
-
 
     def _compute_loss(
         self,
@@ -430,10 +429,14 @@ class CausalObjectiveMixin(ObjectiveMixin):
         assistant_mask: Optional[torch.Tensor],
         task_type_ids: Optional[torch.Tensor],
         skip_logits: bool,
+        pair_ids: Optional[torch.Tensor] = None,
     ) -> None:
-        """Recall-style forward policies (engagement / joke): each computes its
-        own reward from the answer labels over the assistant region. Any number
-        may coexist; each emits its own namespaced loss and metrics."""
+        """Recall-style forward policies (engagement / joke / preference): each
+        computes its own reward from the answer labels over the assistant
+        region. Any number may coexist; each emits its own namespaced loss and
+        metrics. Every channel reaches every policy - a policy that has no use
+        for one accepts and ignores it, so adding a channel is one signature
+        rather than a dispatch table."""
         if not self.policies or labels is None:
             return
         self._engagement_metrics = {}
@@ -443,6 +446,7 @@ class CausalObjectiveMixin(ObjectiveMixin):
                 labels=labels,
                 assistant_mask=assistant_mask,
                 task_type_ids=task_type_ids,
+                pair_ids=pair_ids,
             )
             if pol_loss is not None:
                 losses.add_loss(f"{name}_policy", pol_loss)
@@ -677,6 +681,4 @@ class CausalObjectiveMixin(ObjectiveMixin):
         # Last, so the sampler sees every objective this step actually carries.
         # Stashed rather than returned: the dynamics callback drains it on its
         # own cadence, the same contract the governor and compute profiler use.
-        self._conflict_metrics = self._conflict.measure(
-            losses.loss_dict, hidden_states
-        )
+        self._conflict_metrics = self._conflict.measure(losses.loss_dict, hidden_states)

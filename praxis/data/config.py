@@ -200,10 +200,12 @@ DATASETS = {
         format=DataFormat.PERSONACHAT,
     ),
     # Preference dataset, per the card's contract: never plain SFT. Each draw
-    # emits one side of a chosen/rejected pair, tagged PREF_CHOSEN or
-    # PREF_REJECTED per token. Chosen trains as conversation data AND anchors
-    # the preference margin; rejected is contrast-only (excluded from main CE,
-    # pushed down by rl_type: preference - praxis/policies/preference.py).
+    # emits BOTH sides of a chosen/rejected pair, truncated at the turn where
+    # they diverge and sharing one prompt, tagged PREF_CHOSEN / PREF_REJECTED
+    # per token and carrying a shared pair id over the divergent response.
+    # Chosen trains as conversation data AND anchors the preference margin;
+    # rejected is contrast-only (excluded from main CE, pushed down by
+    # rl_type: preference - praxis/policies/preference.py).
     # The dataset card forbids use outside preference modeling, so the entry
     # is bound to the policy that honors it: only `rl_type: preference`
     # (PreferencePolicy.dataset_weights) can pull it into a mixture, and

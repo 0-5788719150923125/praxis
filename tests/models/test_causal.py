@@ -79,18 +79,41 @@ def test_preference_policy_runs_on_a_foreign_model(hosted, praxis_config):
     ids = torch.randint(0, VOCAB, (rows, length))
     tags = torch.full((rows, length), int(TaskType.PREF_CHOSEN))
     tags[rows // 2 :] = int(TaskType.PREF_REJECTED)
+    # The margin contrasts WITHIN a pair id, so rows 0/2 and 1/3 are the two
+    # halves of two pairs. Without this channel the policy is a deliberate
+    # no-op - which is the behaviour the next test pins.
+    pairs = torch.tensor([1, 2, 1, 2]).unsqueeze(1).expand(rows, length)
 
     out = model(
         input_ids=ids,
         labels=ids[..., 1:].contiguous(),
         task_type_ids=tags,
         assistant_mask=torch.ones_like(ids),
+        pair_ids=pairs,
     )
     out.loss.backward()
     metrics = model.policies["preference"].get_metrics()
+    assert metrics["preference_pairs"] == 2
     assert metrics["preference_chosen_tokens"] > 0
     assert metrics["preference_rejected_tokens"] > 0
     assert "preference_margin" in metrics
+
+
+def test_preference_is_a_no_op_without_the_pairing(hosted, praxis_config):
+    """A batch carrying no pair ids cannot be contrasted, and the policy says so
+    by scoring nothing rather than inventing a pairing."""
+    config = copy.deepcopy(praxis_config)
+    config.rl_type = "preference"
+    model = ForeignCausalLM(copy.deepcopy(hosted), config).train()
+
+    ids = torch.randint(0, VOCAB, (4, 96))
+    model(
+        input_ids=ids,
+        labels=ids[..., 1:].contiguous(),
+        task_type_ids=torch.full_like(ids, int(TaskType.PREF_CHOSEN)),
+        assistant_mask=torch.ones_like(ids),
+    )
+    assert model.policies["preference"].get_metrics() == {}
 
 
 def test_rejected_tokens_leave_the_main_objective(hosted, praxis_config):

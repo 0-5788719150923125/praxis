@@ -17,6 +17,7 @@ from praxis import registry
 from praxis.registry import Entry
 from praxis.tasks.types import (
     DEFAULT_TASK,
+    PAIR_ID_SLOTS,
     TASK_NAME_TO_ID,
     TASK_NAMES,
     TaskType,
@@ -150,6 +151,7 @@ def resolve_task_weighter(name) -> TaskLossWeighter:
 __all__ = [
     "BIAS_PRETRAIN_TARGETS",
     "DEFAULT_TASK",
+    "PAIR_ID_SLOTS",
     "TASK_NAMES",
     "TASK_NAME_TO_ID",
     "TaskType",

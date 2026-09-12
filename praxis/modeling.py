@@ -454,6 +454,7 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
         task_type_ids: Optional[torch.LongTensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        pair_ids: Optional[torch.LongTensor] = None,
         row_continues: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
@@ -544,7 +545,13 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
         )
 
         self._apply_recall_policies(
-            outputs.losses, logits, labels, assistant_mask, task_type_ids, skip_logits
+            outputs.losses,
+            logits,
+            labels,
+            assistant_mask,
+            task_type_ids,
+            skip_logits,
+            pair_ids,
         )
         hidden_states = self._apply_rl_policy(
             outputs.losses,

@@ -720,6 +720,88 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    # Preference policy (rl_type=preference). Read accuracy first: a margin can
+    # drift for reasons that have nothing to do with preference, and an earlier
+    # run spent its whole length with the margin shrinking and rejected text
+    # growing MORE likely without anything saying so.
+    "preference_accuracy": {
+        "description": (
+            "Fraction of scored pairs the model already ranks correctly (chosen "
+            "above rejected). 0.5 is chance; this is the headline signal."
+        ),
+        "chart": {
+            "title": "Preference Accuracy",
+            "y_label": "fraction correct",
+            "y_scale": "linear",
+            "order": 460,
+            "is_validation": False,
+        },
+    },
+    "preference_margin": {
+        "description": (
+            "Mean per-pair gap in mean per-token log-probability, chosen minus "
+            "rejected. The quantity the logistic margin pushes up."
+        ),
+        "chart": {
+            "title": "Preference Margin",
+            "y_label": "log-prob gap",
+            "y_scale": "linear",
+            "order": 462,
+            "is_validation": False,
+        },
+    },
+    "preference_pairs": {
+        "description": (
+            "Comparisons scored this batch: both responses present and each above "
+            "the per-side floor. Zero means the term contributed nothing."
+        ),
+        "chart": {
+            "title": "Preference Pairs Scored",
+            "y_label": "pairs",
+            "y_scale": "linear",
+            "order": 464,
+            "is_validation": False,
+        },
+    },
+    "preference_chosen_logp": {
+        "description": (
+            "Mean per-token log-probability of the chosen responses. Should rise; "
+            "it is also trained by the main CE."
+        ),
+        "chart": {
+            "title": "Preference Chosen Log-prob",
+            "y_label": "log-prob / token",
+            "y_scale": "linear",
+            "order": 466,
+            "is_validation": False,
+        },
+    },
+    "preference_rejected_logp": {
+        "description": (
+            "Mean per-token log-probability of the rejected responses. Excluded "
+            "from the main CE, so only the margin touches it - it should fall."
+        ),
+        "chart": {
+            "title": "Preference Rejected Log-prob",
+            "y_label": "log-prob / token",
+            "y_scale": "linear",
+            "order": 468,
+            "is_validation": False,
+        },
+    },
+    "preference_share": {
+        "description": (
+            "Scored preference tokens as a fraction of all supervised positions - "
+            "what the policy's loss is scaled by, so rl_weight stays honest."
+        ),
+        "chart": {
+            "title": "Preference Batch Share",
+            "y_label": "fraction of batch",
+            "y_scale": "linear",
+            "order": 470,
+            "is_validation": False,
+        },
+    },
 }
 
 

@@ -421,27 +421,72 @@ def test_human_assistant_empty_and_garbage_inputs():
     assert out["messages"] == []
 
 
-def test_preference_pair_emits_one_side_per_call(seeded_random):
-    """Each call returns a single side, picked 50/50, so a pair's two halves are
-    never co-resident in a batch (see next/rl.md section 4.2). This pins that
-    contract, so a switch to paired emission shows up here."""
+def test_preference_pair_emits_both_sides_of_one_pair(seeded_random):
+    """Both halves travel together under ``pair_with``, so they can reach the
+    model in one batch. Without that the margin contrasts one conversation
+    against an unrelated one, which is a difficulty gap, not a preference."""
     chosen, rejected = int(TaskType.PREF_CHOSEN), int(TaskType.PREF_REJECTED)
     doc = {
         "chosen": "\n\nHuman: Hi there\n\nAssistant: Good answer",
         "rejected": "\n\nHuman: Hi there\n\nAssistant: Bad answer",
     }
-    seen = set()
-    for _ in range(40):
+    for _ in range(20):
         out = format_preference_pair(doc, ["chosen", "rejected"], tokenizer=None)
-        assert out["messages"], "pair side must parse to messages"
-        tag = out["metadata"]["task_type"]
-        seen.add(tag)
-        text = out["messages"][-1]["content"]
-        if tag == chosen:
-            assert "Good" in text
-        else:
-            assert tag == rejected and "Bad" in text
-    assert seen == {chosen, rejected}
+        other = out["pair_with"]
+        assert out["metadata"]["task_type"] == chosen
+        assert other["metadata"]["task_type"] == rejected
+        assert "Good" in out["messages"][-1]["content"]
+        assert "Bad" in other["messages"][-1]["content"]
+
+
+def test_preference_pair_shares_one_prompt(seeded_random):
+    """Everything before the divergent turn is character-identical across the
+    pair - including the developer prompt, which is SAMPLED, so formatting the
+    two sides independently would hand them different instructions."""
+    doc = {
+        "chosen": "\n\nHuman: A\n\nAssistant: B\n\nHuman: C\n\nAssistant: yes",
+        "rejected": "\n\nHuman: A\n\nAssistant: B\n\nHuman: C\n\nAssistant: no",
+    }
+    prompts = set()
+    for _ in range(20):
+        out = format_preference_pair(doc, ["chosen", "rejected"], tokenizer=None)
+        this, other = out["messages"], out["pair_with"]["messages"]
+        assert this[:-1] == other[:-1]
+        assert this[-1]["role"] == other[-1]["role"] == "assistant"
+        prompts.add(this[1]["content"])
+    assert len(prompts) > 1, "developer prompts should still vary across pairs"
+
+
+def test_preference_pair_truncates_at_the_divergence():
+    """Turns after the divergence belong to a context the other side never saw,
+    so they cannot take part in the comparison and are dropped."""
+    doc = {
+        "chosen": "\n\nHuman: A\n\nAssistant: yes\n\nHuman: D\n\nAssistant: after-c",
+        "rejected": "\n\nHuman: A\n\nAssistant: no\n\nHuman: E\n\nAssistant: after-r",
+    }
+    out = format_preference_pair(doc, ["chosen", "rejected"], tokenizer=None)
+    assert out["messages"][-1]["content"] == "yes"
+    assert out["pair_with"]["messages"][-1]["content"] == "no"
+    for side in (out["messages"], out["pair_with"]["messages"]):
+        assert not any("after" in m["content"] for m in side)
+
+
+def test_preference_pair_skips_what_it_cannot_compare():
+    """Two different questions have no shared context to score against, and an
+    identical pair has nothing to tell apart."""
+    different = {
+        "chosen": "\n\nHuman: A\n\nAssistant: x",
+        "rejected": "\n\nHuman: B\n\nAssistant: y",
+    }
+    assert (
+        format_preference_pair(different, ["chosen", "rejected"], None)["messages"]
+        == []
+    )
+    same = {
+        "chosen": "\n\nHuman: A\n\nAssistant: x",
+        "rejected": "\n\nHuman: A\n\nAssistant: x",
+    }
+    assert format_preference_pair(same, ["chosen", "rejected"], None)["messages"] == []
 
 
 # ------------------------------------------------------------------------------

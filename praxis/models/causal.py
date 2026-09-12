@@ -53,6 +53,7 @@ class ForeignCausalLM(ForeignModel, CausalObjectiveMixin):
         task_type_ids: Optional[torch.LongTensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        pair_ids: Optional[torch.LongTensor] = None,
         row_continues: Optional[torch.Tensor] = None,
         current_state: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -98,6 +99,7 @@ class ForeignCausalLM(ForeignModel, CausalObjectiveMixin):
             token_weights=token_weights,
             task_type_ids=task_type_ids,
             assistant_mask=assistant_mask,
+            pair_ids=pair_ids,
         )
 
         return CausalLMOutputWithPast(

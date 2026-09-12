@@ -424,6 +424,7 @@ class BackpropagationTrainer(LightningModule):
             task_type_ids = batch.get("task_type_ids", None)
             assistant_mask = batch.get("assistant_mask", None)
             block_ids = batch.get("block_ids", None)
+            pair_ids = batch.get("pair_ids", None)
             row_continues = batch.get("row_continues", None)
 
             # Log interesting batch events (only for generation batches to avoid spam)
@@ -458,6 +459,7 @@ class BackpropagationTrainer(LightningModule):
             task_type_ids = None
             assistant_mask = None
             block_ids = None
+            pair_ids = None
             row_continues = None
 
         return (
@@ -468,6 +470,7 @@ class BackpropagationTrainer(LightningModule):
                 "task_type_ids": task_type_ids,
                 "assistant_mask": assistant_mask,
                 "block_ids": block_ids,
+                "pair_ids": pair_ids,
                 "row_continues": row_continues,
             },
             False,

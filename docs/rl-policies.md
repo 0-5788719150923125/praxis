@@ -49,11 +49,13 @@ Source: [praxis/policies/engagement.py:254](../praxis/policies/engagement.py#L25
 
 ## `preference` - PreferencePolicy
 
-Forward-path reference-free preference margin over chosen/rejected task tags: pushes the
-mean per-token log-probability of chosen text above that of rejected text. It is the
-preference-modeling use that the hh-rlhf dataset card permits.
+Forward-path reference-free preference margin over paired responses: pushes the mean
+per-token log-probability of the chosen answer above that of the rejected answer to the
+SAME prompt, by a target margin. Both sides of a pair reach the model in one batch and
+only what they do not share is scored. It is the preference-modeling use that the
+hh-rlhf dataset card permits.
 
-Source: [praxis/policies/preference.py:43](../praxis/policies/preference.py#L43)
+Source: [praxis/policies/preference.py:38](../praxis/policies/preference.py#L38)
 
 ## `reinforce` - REINFORCE
 

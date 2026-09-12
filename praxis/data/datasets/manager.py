@@ -11,6 +11,7 @@ from praxis.data.datasets.message_queue import MessageQueueManager
 from praxis.data.datasets.novelty import NoveltyTracker
 from praxis.data.formatters import _rl_logger
 from praxis.logging.data_metrics_logger import DataMetricsLogger
+from praxis.tasks import PAIR_ID_SLOTS
 
 # Valid weighting modes (kept in sync with the ``samplers`` registry).
 WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "tasker", "uniform")
@@ -81,10 +82,21 @@ class InterleaveDataManager:
     # None when not in loss mode; empty dict before first loss report
     shared_losses = None
 
+    # Rolling source of pair ids for the ``pair_ids`` channel. Cycles through
+    # PAIR_ID_SLOTS so the preference policy can bucket with a fixed-size
+    # scatter; see the note on the constant.
+    _pair_counter = 0
+
     # Per-task learned weights for tasker mode (list indexed by TaskType id).
     # None when not in tasker mode; the model's loss weighter already smooths
     # these (EMA / sigmoid-gated), so we store the latest snapshot directly.
     shared_task_weights = None
+
+    @classmethod
+    def _next_pair_id(cls) -> int:
+        """The next id for a preference pair, 1-based (0 means "not paired")."""
+        cls._pair_counter = cls._pair_counter % (PAIR_ID_SLOTS - 1) + 1
+        return cls._pair_counter
 
     @classmethod
     def update_task_weights(cls, weights) -> None:
@@ -400,8 +412,24 @@ class InterleaveDataManager:
                                 sampler_idx, token_ids
                             )
 
+                    # A preference pair travels as one unit. Both sides are
+                    # enqueued adjacently under a shared id so they land in the
+                    # same microbatch, which is what makes the margin a
+                    # comparison rather than a contrast between two unrelated
+                    # documents (praxis/policies/preference.py). A pair split
+                    # across two get_batch calls is simply not scored.
+                    pair = document_data.pop("pair_with", None)
+                    if pair is not None:
+                        pair_id = InterleaveDataManager._next_pair_id()
+                        document_data["metadata"]["pair_id"] = pair_id
+                        pair.setdefault("metadata", {})
+                        pair["metadata"]["pair_id"] = pair_id
+                        pair["metadata"]["dataset"] = dataset_name
+
                     # Add to message queue
                     self.message_queue.add_document(document_data)
+                    if pair is not None:
+                        self.message_queue.add_document(pair)
 
                     # Update adaptive weights
                     if self.weighting_mode == "dynamic":

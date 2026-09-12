@@ -126,7 +126,7 @@ the plan.
 
 **Fixed:** now a persistent buffer.
 
-### 1.6 The preference contrast is not paired (documented; needs a formatter change)
+### 1.6 The preference contrast was not paired (fixed 2026-09-11)
 
 `abstractinator-d.yml` used to claim *"The dataset entry now emits BOTH sides of
 each pair"*. It never did. `format_preference_pair`
@@ -151,7 +151,7 @@ The metrics agree it was not working: `preference_rejected_logp` **rose** over t
 run (+0.170/1k - rejected text becoming *more* likely) while `preference_margin`
 shrank (-0.223/1k).
 
-**Not repaired** - the fix belongs in the formatter. Specified in §4.2.
+**Repaired**, in the formatter and the three defects it was hiding. See §4.2.
 
 ### 1.7 Nothing in the RL path bounded anything (partly addressed)
 
@@ -172,7 +172,7 @@ path never had.
 |---|---|---|---|
 | `engagement` | `EngagementPolicy` | **off**, bounded | not a policy gradient (§1.2); reward gameable (§1.3) |
 | `joke` | `JokePolicy` | **off**, bounded | subclass of engagement; inherits every defect |
-| `preference` | `PreferencePolicy` | **off**, guarded | bounded by `logsigmoid`, so never destructive; unpaired (§1.6) |
+| `preference` | `PreferencePolicy` | **off**, guarded | bounded by `logsigmoid`, so never destructive; paired as of 2026-09-11 (§1.6) |
 | `grpo` | `GRPO` | never enabled | takes `rewards` from the dataset, not from rollouts; KL is dead code |
 | `reinforce` | `REINFORCE` | never enabled | needs a `rewards` tensor from an RL dataset |
 | `cot` | `ChainOfThought` | never enabled | supervised weighted loss, not RL |
@@ -185,12 +185,12 @@ Also touched by this work:
 - `praxis/losses/harmonic_kl.py` - new, opt-in (§3).
 - `praxis/modeling.py` - passes `classifier` to regularizers as context.
 
-**Known observability gap:** `preference_margin`, `preference_chosen_logp`,
-`preference_rejected_logp`, `preference_chosen_tokens`, `preference_rejected_tokens`
-and `joke_activation_rate` have no entries in
-`praxis/metrics/training_metrics.py`, so they stream but never chart. That is part
-of why a term drifting the wrong way went unnoticed for a whole run. Worth fixing
-before preference is re-enabled.
+**Known observability gap:** `joke_activation_rate` has no entry in
+`praxis/metrics/training_metrics.py`, so it streams but never charts. The
+`preference_*` keys had the same gap, which is part of why a term drifting the
+wrong way went unnoticed for a whole run; they are registered now, headed by
+`preference_accuracy` - the fraction of pairs already ranked correctly, which is
+the one number a margin cannot fake.
 
 ---
 
@@ -388,24 +388,49 @@ Sketch:
 Precondition: the model has to be able to hold a format long enough for a
 continuation to mean something. Right now it cannot (§4.4).
 
-### 4.2 Real preference pairing (formatter change)
+### 4.2 Real preference pairing (DONE 2026-09-11)
 
-To make `preference` a genuine objective rather than a difficulty contrast between
-unrelated documents:
+Built as specified, plus three defects the missing pairing was hiding. All four
+were measured against 4k real hh-rlhf pairs before anything was written.
 
-1. `format_preference_pair` emits **both** sides, with a shared pair id in
-   metadata.
-2. Thread the pair id per-token alongside the task tags, the same way
-   `PREF_CHOSEN` / `PREF_REJECTED` already travel.
-3. `PreferencePolicy` contrasts **within** a pair id and averages over pairs.
+1. **The pairing.** `format_preference_pair` emits **both** sides under
+   `pair_with`; `InterleaveDataManager` enqueues them adjacently under a shared
+   id from a cycling pool (`PAIR_ID_SLOTS`); the packer carries a `pair_ids`
+   channel beside `task_type_ids`; `PreferencePolicy` buckets by it with a
+   fixed-size `index_add_` and averages the margin over pairs. Measured: 13
+   pairs per 8x512 microbatch, both sides co-resident in 13/13.
 
-Until then the existing guards (`MIN_SIDE_TOKENS`, batch-share scaling) keep it
-from doing damage, but it should not be expected to teach anything.
+2. **Scope the comparison to what the two sides do not share.** 100% of hh-rlhf
+   pairs share a turn prefix and diverge on an assistant turn; 99.7% diverge at
+   the FINAL turn, so the formatter truncates there and loses nothing. This was
+   the bigger defect: the doc-level task tag was broadcast over every token, so
+   **42% of the assistant tokens scored on a rejected draw were
+   character-identical to chosen text** and the margin was pushing them down.
+   70.8% of pairs have at least one assistant turn before the divergence.
 
-Also worth reconsidering: hh-rlhf is post-training data. A preference margin on a
-model that cannot yet form sentences is teaching a distinction it has no way to
-represent. It is defensible as scaffolding for building the RL path; it is not
-defensible as a source of capability at this scale.
+3. **Exclude the shared framing from the length normalization.** The span opens
+   after the generation prompt, so `<|im_start|>assistant\n` is not in the mean -
+   a handful of near-certain tokens divided by a short response is a large
+   per-token bonus, and rejected responses run longer here (mean 51 tokens
+   against chosen's 40), so the bonus landed systematically on chosen. This is
+   where TRL's DPO draws the prompt/completion line too. The span end stays at
+   the turn boundary: knowing when to stop is part of the answer.
+
+4. **Recalibrate the guard.** `MIN_SIDE_TOKENS` was 32, set when a "side" meant
+   a whole transcript. Real divergent responses have a median of 20 tokens on
+   their shorter side, so 32 would have discarded **70.7%** of pairs; it is 4
+   now, which discards 2.4%. A per-pair mean handles the noise the old floor was
+   guarding against.
+
+Also added: SimPO's target margin `GAMMA` (the loss was `-logsigmoid(beta *
+margin)` with no `gamma`), per-pair rather than pooled means (a long document
+could outvote a short one), and the `preference_accuracy` metric.
+
+Still true, and unchanged by any of this: hh-rlhf is post-training data. A
+preference margin on a model that cannot yet form sentences is teaching a
+distinction it has no way to represent. That is why the first run of this is on
+`experiments/smol.yml`, against a published instruct checkpoint that already
+holds the format - not on a byte-latent model trained from scratch.
 
 ### 4.3 Rewarding coherent conversation
 
@@ -480,19 +505,25 @@ doubling step cost is the user's call, and because the cheap version's measureme
 is worth having first: if readout drift turns out to be large on real data, the
 cheap version was enough.
 
-### 4.7 hh-rlhf's rejected half is now dead weight
+### 4.7 hh-rlhf's rejected half is now dead weight (obsolete)
 
-With `rl_type: []` there is no `PreferencePolicy`, but `format_preference_pair`
-still emits the rejected side on ~50% of hh-rlhf draws, and rejected tokens are
-excluded from the main CE twice over (the hard zero in `_build_loss_weights` plus
-`pref_rejected: 0.0` in the task table). So those positions train nothing.
+Written when a `rl_type: []` run could still draw hh-rlhf and emit rejected text
+that trained nothing. It cannot any more: `DATASETS["hh-rlhf"]` declares
+`requires_rl_type=("preference",)` and `add_collection` refuses it from any other
+source, so the dataset only appears when the policy that consumes it is on.
 
-Bounded: hh-rlhf is 1 of 12 datasets and packing means the rest of each row still
-trains, so this is a few percent of positions, not of steps. Do NOT fix it by
-giving `pref_rejected` a positive weight - training on rejected text is the card
-violation the preference work existed to undo. The correct fix is for the
-formatter to emit only the chosen side when no preference policy is active, which
-needs the formatter to see that config.
+The live version of the concern was different and is fixed in §4.2: with the
+policy on, the rejected side was emitted on ~50% of draws and did nothing useful
+either, because the margin it fed was comparing it against an unrelated
+document. Pairing is what gives it a job.
+
+What has NOT changed is the contract: rejected tokens stay out of the main CE
+(the hard zero in `_build_loss_weights` plus `pref_rejected: 0.0` in the task
+table). Do NOT fix anything by giving `pref_rejected` a positive weight -
+training on rejected text is the card violation this whole line of work exists
+to undo. Note the pairing roughly doubles hh-rlhf's token footprint, since both
+sides now carry the prompt; that is the price of a conditional comparison and
+every DPO implementation pays it.
 
 ### 4.8 Routing metrics were measuring VEAR's exponent (fixed 2026-08-04)
 

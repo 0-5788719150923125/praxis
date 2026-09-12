@@ -3,7 +3,7 @@
 import json
 import random
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from transformers import PreTrainedTokenizer
 
@@ -52,7 +52,10 @@ def format_conversation(
 
 
 def format_messages(
-    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+    document: Dict,
+    keys: List[str],
+    tokenizer: PreTrainedTokenizer,
+    developer_prompt: Optional[str] = None,
 ) -> Dict:
     """Convert already formatted messages with unified system/developer prompts.
 
@@ -60,6 +63,9 @@ def format_messages(
         document: Dictionary containing the document data
         keys: List of keys to extract from document
         tokenizer: Tokenizer with chat template support
+        developer_prompt: Use this developer prompt instead of sampling one.
+            The two sides of a preference pair have to carry an IDENTICAL
+            prompt, and sampling is random.
 
     Returns:
         Dictionary with messages and metadata
@@ -77,10 +83,11 @@ def format_messages(
     processed_messages.append({"role": "system", "content": SYSTEM_PROMPT})
 
     # Determine developer prompt based on content
-    if any(msg.get("role") == "user" for msg in messages):
-        developer_prompt = sample_developer_prompt("engage_conversation")
-    else:
-        developer_prompt = sample_developer_prompt("continue_text")
+    if developer_prompt is None:
+        if any(msg.get("role") == "user" for msg in messages):
+            developer_prompt = sample_developer_prompt("engage_conversation")
+        else:
+            developer_prompt = sample_developer_prompt("continue_text")
 
     processed_messages.append({"role": "developer", "content": developer_prompt})
 
@@ -106,60 +113,118 @@ def format_messages(
     }
 
 
+# A "\n\nHuman: ... \n\nAssistant: ..." transcript turn. The leading separator
+# a caller prepends guarantees the first marker matches even after strip().
+_TRANSCRIPT_TURN = re.compile(
+    r"\n\n(Human|Assistant): (.*?)(?=\n\n(?:Human|Assistant): |\Z)", flags=re.S
+)
+
+
+def parse_transcript(transcript: str) -> List[Dict]:
+    """Raw "Human:/Assistant:" transcript -> chat messages, empty turns dropped."""
+    turns = _TRANSCRIPT_TURN.findall("\n\n" + (transcript or "").strip())
+    return [
+        {"role": "user" if speaker == "Human" else "assistant", "content": text}
+        for speaker, text in turns
+        if text.strip()
+    ]
+
+
 def format_human_assistant(
-    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+    document: Dict,
+    keys: List[str],
+    tokenizer: PreTrainedTokenizer,
+    developer_prompt: Optional[str] = None,
 ) -> Dict:
     """Parse a raw "\\n\\nHuman: ... \\n\\nAssistant: ..." transcript (e.g. the
     Anthropic/hh-rlhf `chosen` column) into chat messages, then reuse the
     messages pipeline so it gets the unified system/developer prompts.
     """
-    transcript = document.get(keys[0], "") or ""
-    # Leading separator guarantees the first marker matches even after strip.
-    turns = re.findall(
-        r"\n\n(Human|Assistant): (.*?)(?=\n\n(?:Human|Assistant): |\Z)",
-        "\n\n" + transcript.strip(),
-        flags=re.S,
-    )
-    messages = [
-        {"role": "user" if speaker == "Human" else "assistant", "content": text}
-        for speaker, text in turns
-        if text.strip()
-    ]
+    messages = parse_transcript(document.get(keys[0], "") or "")
     if not messages:
         return {"messages": [], "metadata": {}}
-    return format_messages({"messages": messages}, ["messages"], tokenizer)
+    return format_messages(
+        {"messages": messages},
+        ["messages"],
+        tokenizer,
+        developer_prompt=developer_prompt,
+    )
 
 
 def format_preference_pair(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Preference pair (e.g. Anthropic/hh-rlhf ``chosen``/``rejected``): emit
-    ONE side per call, picked 50/50 at random, tagged with its preference task
-    so downstream consumers can tell the sides apart per token.
+    BOTH sides of one pair, truncated at their first divergent turn and sharing
+    a character-identical prompt, so the margin compares two answers to the
+    same question.
 
-    The card-compliant contract this implements: chosen text is tagged
-    ``PREF_CHOSEN`` (trains as conversation data and anchors the preference
-    margin); rejected text is tagged ``PREF_REJECTED`` (contrast-only - the
-    main CE excludes it, the preference policy pushes its likelihood down).
-    Byte-level block packing chunks documents arbitrarily, so the pairing is
-    carried per-token by task tags rather than per-row alignment; the
-    preference loss contrasts the two tag populations within a batch.
+    The rejected side rides along under ``pair_with``; the manager enqueues the
+    two adjacently under a shared ``pair_id`` and the packer carries that id on
+    the divergent response only (see ``MessageQueueManager.get_batch``). Both
+    halves are needed: without them co-resident the margin contrasts one
+    conversation against an unrelated one, and without the truncation it
+    contrasts a transcript against its own shared prefix - measured at 42% of
+    the assistant tokens on a rejected draw, text character-identical to the
+    chosen side that the margin was pushing DOWN.
+
+    Task tags stay per document, which is what keeps the card's contract
+    simple: chosen text is ``PREF_CHOSEN`` (trains as conversation data and
+    anchors the margin), rejected text is ``PREF_REJECTED`` (contrast-only -
+    the main CE excludes ALL of it, including the duplicated prompt, so the
+    shared context is never trained twice).
     """
-    import random as _random
+    from praxis.tasks import TaskType
 
     chosen_key = keys[0] if keys else "chosen"
     rejected_key = keys[1] if len(keys) > 1 else "rejected"
-    take_rejected = _random.random() < 0.5
-    side_key = rejected_key if take_rejected else chosen_key
 
-    result = format_human_assistant(document, [side_key], tokenizer)
-    if result.get("messages"):
-        from praxis.tasks import TaskType
+    chosen = parse_transcript(document.get(chosen_key, ""))
+    rejected = parse_transcript(document.get(rejected_key, ""))
 
-        result.setdefault("metadata", {})["task_type"] = int(
-            TaskType.PREF_REJECTED if take_rejected else TaskType.PREF_CHOSEN
+    # Find the shared prompt. Measured over 4k hh-rlhf pairs: 100% share a turn
+    # prefix and diverge on an assistant turn, and 99.7% diverge at the final
+    # turn, so truncating at the divergence costs almost nothing. A pair that
+    # diverges on a user turn is asking two different questions and has no
+    # shared context to score against.
+    split = 0
+    while split < min(len(chosen), len(rejected)) and chosen[split] == rejected[split]:
+        split += 1
+    if split >= len(chosen) or split >= len(rejected):
+        return {"messages": [], "metadata": {}}
+    if chosen[split]["role"] != "assistant" or rejected[split]["role"] != "assistant":
+        return {"messages": [], "metadata": {}}
+
+    # Sampled ONCE. Formatting the sides independently draws a different
+    # developer prompt for each (sample_developer_prompt is random), which is a
+    # difference between the two that has nothing to do with the preference.
+    developer_prompt = sample_developer_prompt("engage_conversation")
+
+    def build_side(messages: List[Dict], task: "TaskType") -> Optional[Dict]:
+        side = format_messages(
+            {"messages": messages[: split + 1]},
+            ["messages"],
+            tokenizer,
+            developer_prompt=developer_prompt,
         )
-    return result
+        if not side.get("messages"):
+            return None
+        # The packer reads the pair span off the document's LAST assistant run,
+        # which is the divergent turn only because of the truncation above.
+        # text_formatter can empty a turn, and format_messages drops it, which
+        # would leave a SHARED turn last - so check rather than assume.
+        if side["messages"][-1].get("role") != "assistant":
+            return None
+        side["metadata"]["task_type"] = int(task)
+        return side
+
+    chosen_side = build_side(chosen, TaskType.PREF_CHOSEN)
+    rejected_side = build_side(rejected, TaskType.PREF_REJECTED)
+    if chosen_side is None or rejected_side is None:
+        return {"messages": [], "metadata": {}}
+
+    chosen_side["pair_with"] = rejected_side
+    return chosen_side
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:

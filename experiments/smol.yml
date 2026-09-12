@@ -404,10 +404,12 @@ train_datasets: [chat]
 #     harmonic_weight_wave, joke, preference, reinforce
 # Default: unset
 #
-# preference: Forward-path reference-free preference margin over chosen/rejected
-#     task tags: pushes the mean per-token log-probability of chosen text above
-#     that of rejected text. It is the preference-modeling use that the hh-rlhf
-#     dataset card permits.
+# preference: Forward-path reference-free preference margin over paired responses:
+#     pushes the mean per-token log-probability of the chosen answer above that
+#     of the rejected answer to the SAME prompt, by a target margin. Both sides
+#     of a pair reach the model in one batch and only what they do not share is
+#     scored. It is the preference-modeling use that the hh-rlhf dataset card
+#     permits.
 #
 # Note: `preference` is both necessary and sufficient to get hh-rlhf: the
 #     dataset declares `requires_rl_type` and the policy injects it via
@@ -417,12 +419,32 @@ train_datasets: [chat]
 #     through the main CE, rejected text is excluded from it entirely and
 #     appears only in the margin.
 #
-#     HONEST LIMIT, do not oversell this run: the formatter emits ONE side per
-#     document, chosen 50/50 at random, so a pair's two halves are never
-#     co-resident and the margin contrasts one conversation's chosen text
-#     against a DIFFERENT conversation's rejected text. The SFT anchor on chosen
-#     text is doing most of the work. Real pairing needs a formatter change
-#     (next/rl.md 4.7).
+#     The pairing became real on 2026-09-11 (next/rl.md 4.2). Both sides of a
+#     pair are emitted together, truncated at the turn where they diverge and
+#     sharing a character-identical prompt, and only the divergent response is
+#     scored - so the margin compares two answers to one question instead of two
+#     unrelated documents, and it no longer pushes down text the chosen side
+#     contains verbatim (that was 42% of what it scored).
+#
+#     READ `preference_accuracy` FIRST, not the margin: it is the fraction of
+#     pairs the model already ranks correctly, 0.5 is chance, and a margin can
+#     drift for reasons that have nothing to do with preference. Watch
+#     `preference_pairs` too - zero means the term contributed nothing that step.
+#     A previous run spent its whole length with the margin shrinking and
+#     rejected text growing MORE likely, and nothing said so.
+#
+#     Step 0 on this checkpoint measures accuracy ~0.25 and margin ~-0.24 over
+#     ~12-13 pairs per 8x512 microbatch. BELOW chance is the expected start, not
+#     a bug: hh-rlhf prefers the careful answer, and the fluent, direct,
+#     confidently-wrong one is what a 135M instruct model finds more likely.
+#     That gap IS the signal. Accuracy climbing toward and past 0.5 is the run
+#     working; accuracy flat at 0.25 while the loss falls means the CE anchor is
+#     doing everything and the margin is not landing.
+#
+#     Honest about what this run is: the SFT anchor on chosen text still does a
+#     lot of the work, and hh-rlhf is post-training data. This is the right
+#     model to try it on for exactly that reason - SmolLM2-Instruct already
+#     holds the chat format, so the distinction has something to attach to.
 
 rl_type: preference
 
@@ -695,7 +717,7 @@ seed: 42
 # one of the learned mixtures), ``values`` lists activation names and may nest
 # further specs, and ``linear`` fills the linear half of a GLU or PEER gate.
 #
-# Options: 33 of them, described in docs/activations.md
+# Options: 35 of them, described in docs/activations.md
 
 # activation_type: mish
 
@@ -1164,6 +1186,11 @@ seed: 42
 # always preserved and listed first. Pass additional names to append them.
 
 # author: [Ryan J. Brooks]
+
+
+# Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)
+
+# ngrok_auth_token: null
 
 
 # Discord bot token (can also be set via DISCORD_TOKEN env var)

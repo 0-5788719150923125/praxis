@@ -14,6 +14,26 @@ from praxis.tasks import DEFAULT_TASK
 _UNRESOLVED = object()
 
 
+def last_generated_run(assistant_mask: torch.Tensor) -> Optional[slice]:
+    """Slice of the document's final contiguous assistant run, or None.
+
+    For a preference document truncated at its divergent turn
+    (``format_preference_pair``) this run is the divergent turn: everything
+    before it is the prompt both sides share, and a transcript alternates
+    speakers so the run cannot reach back past it. ``_pair_span`` trims its
+    head to the turn's content.
+    """
+    generated = assistant_mask != 0
+    marked = generated.nonzero()
+    if marked.numel() == 0:
+        return None
+    end = int(marked[-1]) + 1
+    # The run opens just after the last unmarked position before ``end``.
+    gaps = (~generated[:end]).nonzero()
+    start = int(gaps[-1]) + 1 if gaps.numel() else 0
+    return slice(start, end)
+
+
 class MessageQueueManager:
     """
     Manages a queue of messages and packs them into training sequences.
@@ -41,6 +61,12 @@ class MessageQueueManager:
         block_ids: 1-based document index per token, restarting at 1 in
                         every sequence. Gates attention so one packed
                         document cannot read another.
+        pair_ids:       which preference comparison a token takes part in,
+                        0 for the overwhelming majority that take part in
+                        none. Set on the divergent response only - the two
+                        sides of a pair share a prompt, and contrasting that
+                        prompt against its own copy is not a preference.
+                        Consumed by praxis/policies/preference.py.
     """
 
     def __init__(
@@ -74,6 +100,7 @@ class MessageQueueManager:
         self._carry_tokens: Optional[torch.Tensor] = None
         self._carry_task_ids: Optional[torch.Tensor] = None
         self._carry_assistant_mask: Optional[torch.Tensor] = None
+        self._carry_pair_ids: Optional[torch.Tensor] = None
         self._carry_metadata: List[Dict] = []
 
         self.chat_validator = None
@@ -106,13 +133,15 @@ class MessageQueueManager:
 
     def _tokenize_doc(
         self, doc: Dict[str, Any], omit_leading_bos: bool
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor, Optional[slice]]]:
         """Tokenize one document, optionally dropping the leading BOS.
 
-        Returns (tokens, assistant_mask) or None if chat-template
+        Returns (tokens, assistant_mask, pair_span) or None if chat-template
         application fails or per-doc validation rejects the document
         (and strict mode is off). assistant_mask is the same shape as
-        tokens, with 1 marking assistant-generated positions.
+        tokens, with 1 marking assistant-generated positions. pair_span is
+        the divergent response of a preference document, and None for every
+        document that is not one half of a pair.
         """
         messages = doc["messages"]
         metadata = doc["metadata"]
@@ -204,7 +233,77 @@ class MessageQueueManager:
                 self.validation_stats["documents_skipped"] += 1
                 return None
 
-        return self._terminate_doc(doc_tokens, assistant_mask)
+        doc_tokens, assistant_mask = self._terminate_doc(doc_tokens, assistant_mask)
+        pair_span = None
+        if doc["metadata"].get("pair_id"):
+            pair_span = self._pair_span(
+                doc["messages"], doc_tokens, assistant_mask, omit_leading_bos
+            )
+        return doc_tokens, assistant_mask, pair_span
+
+    def _generation_prompt_length(
+        self,
+        messages: List[Dict],
+        doc_tokens: torch.Tensor,
+        omit_leading_bos: bool,
+    ) -> Optional[int]:
+        """Tokens before the final turn's CONTENT, or None if unrecoverable.
+
+        Rendering the document without its last message but WITH the generation
+        prompt yields everything up to and including the assistant header. That
+        is only usable if it really is a token prefix of the document, which a
+        merge straddling the header boundary would break - so it is checked
+        rather than assumed.
+        """
+        try:
+            encoded = self.tokenizer.apply_chat_template(
+                messages[:-1],
+                tokenize=True,
+                add_generation_prompt=True,
+                omit_leading_bos=omit_leading_bos,
+                return_dict=True,
+            )
+        except Exception:
+            return None
+        ids = encoded["input_ids"]
+        if isinstance(ids, list) and ids and isinstance(ids[0], list):
+            ids = ids[0]
+        length = len(ids)
+        if length == 0 or length >= doc_tokens.numel():
+            return None
+        prefix = torch.as_tensor(list(ids), dtype=doc_tokens.dtype)
+        if not torch.equal(doc_tokens[:length], prefix):
+            return None
+        return length
+
+    def _pair_span(
+        self,
+        messages: List[Dict],
+        doc_tokens: torch.Tensor,
+        assistant_mask: torch.Tensor,
+        omit_leading_bos: bool,
+    ) -> Optional[slice]:
+        """Token slice of a preference document's divergent response.
+
+        The response is what the two sides of a pair do NOT share. It ends with
+        the document's final assistant run - the answer plus the turn boundary
+        the model has to learn to emit - and opens after the assistant header,
+        which is shared framing. Folding a handful of near-certain header
+        tokens into a length-normalized mean hands the SHORTER response a bonus
+        it did not earn, and rejected responses run longer here (mean 51 tokens
+        against chosen's 40), so that bonus would land systematically on
+        chosen. This is the prompt/completion split TRL's DPO draws in the same
+        place.
+        """
+        run = last_generated_run(assistant_mask)
+        if run is None:
+            return None
+        start = self._generation_prompt_length(messages, doc_tokens, omit_leading_bos)
+        if start is None or not run.start <= start < run.stop:
+            # Framing inside the mean is a weaker comparison; no span at all is
+            # no comparison. Keep the whole run.
+            return run
+        return slice(start, run.stop)
 
     def _terminate_doc(
         self, doc_tokens: torch.Tensor, assistant_mask: torch.Tensor
@@ -257,7 +356,7 @@ class MessageQueueManager:
         Returns:
             Dictionary with 'batch' (list of tensors) and 'metadata' (list of
             dicts), plus the per-token side channels 'task_type_ids',
-            'assistant_mask' and 'block_ids'.
+            'assistant_mask', 'block_ids' and 'pair_ids'.
 
             ``block_ids`` labels which packed document each position belongs
             to, and is what gates attention so one document cannot read
@@ -277,6 +376,7 @@ class MessageQueueManager:
         task_id_seqs: List[torch.Tensor] = []
         assistant_mask_seqs: List[torch.Tensor] = []
         block_id_seqs: List[torch.Tensor] = []
+        pair_id_seqs: List[torch.Tensor] = []
         batch_metadata: List[Dict] = []
         # Per-row flag: this row opens by draining the previous row's carryover,
         # i.e. it CONTINUES the document the previous row was cut off in the
@@ -292,6 +392,7 @@ class MessageQueueManager:
             seq_task_parts: List[torch.Tensor] = []
             seq_mask_parts: List[torch.Tensor] = []
             seq_block_parts: List[torch.Tensor] = []
+            seq_pair_parts: List[torch.Tensor] = []
             seq_meta: List[Dict] = []
             seq_len = 0
             # Block ids are per-SEQUENCE and 1-based, matching
@@ -306,6 +407,7 @@ class MessageQueueManager:
                 seq_parts.append(self._carry_tokens)
                 seq_task_parts.append(self._carry_task_ids)
                 seq_mask_parts.append(self._carry_assistant_mask)
+                seq_pair_parts.append(self._carry_pair_ids)
                 # The carryover is the tail of a document that was split across
                 # sequences. It is a document in its own right here: attention
                 # cannot reach back to the half that landed in the previous row.
@@ -318,6 +420,7 @@ class MessageQueueManager:
                 self._carry_tokens = None
                 self._carry_task_ids = None
                 self._carry_assistant_mask = None
+                self._carry_pair_ids = None
                 self._carry_metadata = []
                 first_doc_in_seq = False
             else:
@@ -349,7 +452,7 @@ class MessageQueueManager:
                         break
                     continue
 
-                doc_tokens, doc_mask = tokenized
+                doc_tokens, doc_mask, pair_span = tokenized
                 # A new document opens a new attention block. The packer is the
                 # only place that KNOWS where documents meet, so it says so
                 # directly instead of leaving the model to infer it from a
@@ -365,6 +468,14 @@ class MessageQueueManager:
                 except (TypeError, ValueError):
                     task_id_val = int(DEFAULT_TASK)
                 doc_task = torch.full(doc_tokens.shape, task_id_val, dtype=torch.uint8)
+                # Which preference comparison this document takes part in, over
+                # its divergent response only. Built on the WHOLE document,
+                # before the overflow split below, so a response cut across two
+                # rows keeps its id on both halves.
+                doc_pair = torch.zeros(doc_tokens.shape, dtype=torch.long)
+                pair_id = doc["metadata"].get("pair_id")
+                if pair_id and pair_span is not None:
+                    doc_pair[pair_span] = int(pair_id)
 
                 remaining = effective_block_size - seq_len
                 if len(doc_tokens) <= remaining:
@@ -372,6 +483,7 @@ class MessageQueueManager:
                     seq_task_parts.append(doc_task)
                     seq_mask_parts.append(doc_mask)
                     seq_block_parts.append(doc_block)
+                    seq_pair_parts.append(doc_pair)
                     seq_meta.extend([doc["metadata"]] * len(doc_tokens))
                     seq_len += len(doc_tokens)
                     first_doc_in_seq = False
@@ -386,6 +498,7 @@ class MessageQueueManager:
                     seq_task_parts.append(fitting_task)
                     seq_mask_parts.append(fitting_mask)
                     seq_block_parts.append(doc_block[:remaining])
+                    seq_pair_parts.append(doc_pair[:remaining])
                     seq_meta.extend([doc["metadata"]] * len(fitting_tokens))
                     seq_len += len(fitting_tokens)
                     # Preserve the tail for the next sequence rather than
@@ -393,6 +506,7 @@ class MessageQueueManager:
                     self._carry_tokens = overflow_tokens
                     self._carry_task_ids = overflow_task
                     self._carry_assistant_mask = overflow_mask
+                    self._carry_pair_ids = doc_pair[remaining:]
                     self._carry_metadata = [doc["metadata"]] * len(overflow_tokens)
                     break
 
@@ -406,6 +520,7 @@ class MessageQueueManager:
                     torch.full((pad,), int(DEFAULT_TASK), dtype=torch.uint8)
                 )
                 seq_mask_parts.append(torch.zeros(pad, dtype=torch.uint8))
+                seq_pair_parts.append(torch.zeros(pad, dtype=torch.long))
                 # Padding is its own block, so it cannot attend into the last
                 # real document (nor that document into it).
                 seq_block_parts.append(
@@ -417,10 +532,12 @@ class MessageQueueManager:
             task_seq = torch.cat(seq_task_parts)[:effective_block_size]
             mask_seq = torch.cat(seq_mask_parts)[:effective_block_size]
             block_seq = torch.cat(seq_block_parts)[:effective_block_size]
+            pair_seq = torch.cat(seq_pair_parts)[:effective_block_size]
             sequences.append(sequence)
             task_id_seqs.append(task_seq)
             assistant_mask_seqs.append(mask_seq)
             block_id_seqs.append(block_seq)
+            pair_id_seqs.append(pair_seq)
             batch_metadata.append(seq_meta[0] if seq_meta else {})
 
         return {
@@ -428,6 +545,7 @@ class MessageQueueManager:
             "task_type_ids": task_id_seqs,
             "assistant_mask": assistant_mask_seqs,
             "block_ids": block_id_seqs,
+            "pair_ids": pair_id_seqs,
             "row_continues": row_continues,
             "metadata": batch_metadata,
         }

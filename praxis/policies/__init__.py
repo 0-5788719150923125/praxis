@@ -66,10 +66,12 @@ registry.declare(
         "preference": Entry(
             PreferencePolicy,
             (
-                "Forward-path reference-free preference margin over chosen/rejected "
-                "task tags: pushes the mean per-token log-probability of chosen text "
-                "above that of rejected text. It is the preference-modeling use that "
-                "the hh-rlhf dataset card permits."
+                "Forward-path reference-free preference margin over paired responses: "
+                "pushes the mean per-token log-probability of the chosen answer above "
+                "that of the rejected answer to the SAME prompt, by a target margin. "
+                "Both sides of a pair reach the model in one batch and only what they "
+                "do not share is scored. It is the preference-modeling use that the "
+                "hh-rlhf dataset card permits."
             ),
         ),
         "harmonic_weight": Entry(

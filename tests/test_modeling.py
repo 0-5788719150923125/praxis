@@ -443,11 +443,15 @@ def test_byte_latent_forward_with_preference():
     task = torch.full((2, 128), CHOSEN, dtype=torch.long)
     task[1] = REJECTED
     mask = torch.ones(2, 128, dtype=torch.uint8)
+    # Both rows are the two sides of one comparison. Without the pair channel
+    # the policy has no comparison to score and correctly contributes nothing.
+    pair_ids = torch.ones(2, 128, dtype=torch.long)
     out = model(
         input_ids=ids,
         labels=ids[..., 1:].contiguous(),
         task_type_ids=task,
         assistant_mask=mask,
+        pair_ids=pair_ids,
     )
     assert torch.isfinite(out.loss)
     metrics = model.policies["preference"].get_metrics()
