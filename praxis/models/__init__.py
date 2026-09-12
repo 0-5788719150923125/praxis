@@ -218,9 +218,7 @@ def reject_unsupported(wrapper: type, praxis_config) -> None:
         if value:
             offenders.append(f"  {key}={value!r}: {reason}")
     if offenders:
-        raise ValueError(
-            f"{wrapper.__name__} cannot host:\n" + "\n".join(offenders)
-        )
+        raise ValueError(f"{wrapper.__name__} cannot host:\n" + "\n".join(offenders))
 
 
 def parse_model_kwargs(pairs: Optional[List[str]]) -> Dict[str, Any]:

@@ -61,8 +61,8 @@ def test_loss_function_is_the_praxis_one(hosted, praxis_config, batch):
         config = copy.deepcopy(praxis_config)
         config.loss_func = name
         model = ForeignCausalLM(copy.deepcopy(hosted), config)
-        assert type(model.criterion.main).__name__.lower().startswith(
-            name.split("_")[0]
+        assert (
+            type(model.criterion.main).__name__.lower().startswith(name.split("_")[0])
         )
         losses[name] = float(model(input_ids=ids, labels=labels).loss)
     assert losses["cross_entropy"] != losses["focal"]

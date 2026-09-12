@@ -404,12 +404,12 @@ train_datasets: [chat]
 #     harmonic_weight_wave, joke, preference, reinforce
 # Default: unset
 #
-# preference: Forward-path reference-free preference margin over paired responses:
-#     pushes the mean per-token log-probability of the chosen answer above that
-#     of the rejected answer to the SAME prompt, by a target margin. Both sides
-#     of a pair reach the model in one batch and only what they do not share is
-#     scored. It is the preference-modeling use that the hh-rlhf dataset card
-#     permits.
+# preference: Forward-path reference-free preference margin over paired
+#     responses: pushes the mean per-token log-probability of the chosen answer
+#     above that of the rejected answer to the SAME prompt, by a target margin.
+#     Both sides of a pair reach the model in one batch and only what they do
+#     not share is scored. It is the preference-modeling use that the hh-rlhf
+#     dataset card permits.
 #
 # Note: `preference` is both necessary and sufficient to get hh-rlhf: the
 #     dataset declares `requires_rl_type` and the policy injects it via
@@ -429,8 +429,8 @@ train_datasets: [chat]
 #     READ `preference_accuracy` FIRST, not the margin: it is the fraction of
 #     pairs the model already ranks correctly, 0.5 is chance, and a margin can
 #     drift for reasons that have nothing to do with preference. Watch
-#     `preference_pairs` too - zero means the term contributed nothing that step.
-#     A previous run spent its whole length with the margin shrinking and
+#     `preference_pairs` too - zero means the term contributed nothing that
+#     step. A previous run spent its whole length with the margin shrinking and
 #     rejected text growing MORE likely, and nothing said so.
 #
 #     Step 0 on this checkpoint measures accuracy ~0.25 and margin ~-0.24 over

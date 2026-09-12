@@ -262,8 +262,10 @@ def test_two_runs_never_share_an_etag():
     assert first.get("thing")["version"] == second.get("thing")["version"]
 
     old_etag = _snapshot_app(first).test_client().get("/api/thing").headers["ETag"]
-    response = _snapshot_app(second).test_client().get(
-        "/api/thing", headers={"If-None-Match": old_etag}
+    response = (
+        _snapshot_app(second)
+        .test_client()
+        .get("/api/thing", headers={"If-None-Match": old_etag})
     )
 
     assert response.status_code == 200, "a new run must not answer 304 to an old ETag"
