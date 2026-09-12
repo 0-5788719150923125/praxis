@@ -255,6 +255,19 @@ registry.declare(
                 "thing they are."
             ),
         ),
+        "kaleido_12_zoom": Entry(
+            partial(KaleidoscopeAttention, num_mirrors=12, zoom=True),
+            (
+                "kaleido_12_zoom_dropoff_always with the dropoff sink removed - the "
+                "control the every-pass schedule never had. next/dropoff.md sizes the "
+                "warp at 0.6% of V mass, but does so at BYTE scale; the trunk runs on "
+                "patches at ~8x compression, so at block_size 256 its sequence is "
+                "~33-65 long and the same 6-position envelope covers 9-18% of "
+                "positions and 12-23% of the tip quarter that ``depth/tilt_d*`` "
+                "measures. Train-only, so a trunk trained under a sunk tip is read at "
+                "validation without one."
+            ),
+        ),
         "kaleido_norm_dropoff_always": Entry(
             partial(
                 KaleidoscopeAttention, mix_norm=True, dropoff="warp", dropoff_every=True

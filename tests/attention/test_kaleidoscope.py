@@ -432,13 +432,26 @@ def test_turn_depth_specialization_reads_collapse():
 
 
 # ------------------------------------------------- SMEAR targeting interaction
-def test_block_is_merge_opaque_to_the_smear_target_walker():
-    """The block routes its own parameters per token, so a per-example SMEAR
-    merge wrapped around it is the case MERGE_OPAQUE exists to exclude: SMEAR
-    would wrap ``turn.weight`` in a MergedLinear routed per EXAMPLE, and
+def test_only_the_routing_machinery_is_opaque_to_the_smear_target_walker():
+    """The TURN routes its own parameters per token, so a per-example SMEAR
+    merge around it is the case the opt-out exists for: SMEAR would wrap
+    ``turn.weight`` in a MergedLinear routed per EXAMPLE and
     ``kaleido_turn_dependence`` would read SMEAR's routing rather than this
-    block's. The walker honouring the flag is tests/routers/test_smear.py's."""
-    assert KaleidoscopeAttention.MERGE_OPAQUE is True
+    block's. The projections route nothing and stay mergeable."""
+    from praxis.transforms.targeting import discover_targets
+    from praxis import registry
+
+    assert not getattr(KaleidoscopeAttention, "MERGE_OPAQUE", False)
+    parts = set(KaleidoscopeAttention.MERGE_OPAQUE_PARTS)
+    assert parts == {"turn", "turn_static", "facet_u", "facet_v"}
+
+    groups, skipped = discover_targets(
+        _attn(), registry.lookup("target_profiles", "all")
+    )
+    reached = {p for g in groups for p in g.params}
+    assert {"value.weight", "gate.weight", "output.weight"} <= reached
+    assert not any(p.startswith(tuple(parts)) for p in reached)
+    assert skipped["opaque"] == 4  # turn.weight, turn_static.weight, facet_u/v
 
 
 # ------------------------------------------------- the blend is a span, not a hull

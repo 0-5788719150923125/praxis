@@ -44,6 +44,29 @@ def test_opaque_subtree_is_never_targeted():
     assert skipped["opaque"] == 2  # Opaque.big weight + bias
 
 
+def test_partial_opt_out_protects_only_the_named_parts():
+    """A module where only part of the subtree routes itself names those parts
+    and keeps the rest mergeable - the Kaleidoscope case, where the turn is a
+    per-token router but value/gate/output are ordinary projections."""
+
+    class Partial(nn.Module):
+        MERGE_OPAQUE_PARTS = ("turn", "facet")
+
+        def __init__(self, d=32):
+            super().__init__()
+            self.turn = nn.Linear(d, d, bias=False)
+            self.facet = nn.Parameter(torch.zeros(d))
+            self.value = nn.Linear(d, d, bias=False)
+
+    block = Block()
+    block.attn = Partial()
+    groups, skipped = _discover(block)
+    reached = {p for g in groups for p in g.params}
+    assert "attn.value.weight" in reached
+    assert not any(p.startswith(("attn.turn", "attn.facet")) for p in reached)
+    assert skipped["opaque"] == 4  # turn.weight, facet, and Opaque.big's two
+
+
 def test_tied_parameters_are_merged_at_most_once():
     block = Block()
     block.attn.output.weight = block.attn.qkv.weight  # tie by reference

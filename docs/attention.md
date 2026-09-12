@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants, plus the Q/K-free kaleidoscope and SSOG fields. Entries may be ``functools.partial`` profiles of one class; a profile is the variant, not a flag.
 
-Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (34 entries)
+Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (35 entries)
 
 Selected with ``--attention-type`` (default: ``modular``).
 
@@ -94,7 +94,7 @@ attention output.
 
 Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
-## `kaleido`, `kaleido_12_dropoff_always`, `kaleido_12_norm_dropoff_always`, `kaleido_12_zoom_dropoff_always`, `kaleido_24_dropoff_always`, `kaleido_24_norm_dropoff_always`, `kaleido_dropoff`, `kaleido_dropoff_always`, `kaleido_norm_dropoff_always`, `kaleido_pink`, `kaleido_pink_dropoff_always`, `kaleido_pink_split_dropoff_always`, `kaleido_split`, `kaleido_split_dropoff_always`, `kaleido_zoom_dropoff_always` - KaleidoscopeAttention
+## `kaleido`, `kaleido_12_dropoff_always`, `kaleido_12_norm_dropoff_always`, `kaleido_12_zoom`, `kaleido_12_zoom_dropoff_always`, `kaleido_24_dropoff_always`, `kaleido_24_norm_dropoff_always`, `kaleido_dropoff`, `kaleido_dropoff_always`, `kaleido_norm_dropoff_always`, `kaleido_pink`, `kaleido_pink_dropoff_always`, `kaleido_pink_split_dropoff_always`, `kaleido_split`, `kaleido_split_dropoff_always`, `kaleido_zoom_dropoff_always` - KaleidoscopeAttention
 
 N frozen ``[T, T]`` mixing matrices, blended per token by a router.
 
@@ -104,6 +104,7 @@ Presets:
 - `kaleido` - Kaleidoscope: N frozen ``[T, T]`` mixing matrices, blended per token by a router, with a per-depth rank-1 deformation on the mirrors themselves. There is no Q or K - the matrix is the parameter, so there is nothing to project from. Synthesizer (arXiv:2005.00743) covers one frozen matrix, one trained matrix, and N mixed by static learned scalars; an input-conditional blend is the cell it leaves open. See praxis/attention/kaleidoscope.py for why the mix is pre-softmax and why the per-depth bias goes on the mirrors rather than on the inputs.
 - `kaleido_12_dropoff_always` (`dropoff='warp', dropoff_every=True, num_mirrors=12`) - kaleido_dropoff_always with a 12-mirror dictionary. With no Q/K, N frozen patterns and a signed router over them are all the expressive capacity the block has, and the default 4 is very few. The merge is linear in N and the block is launch-overhead-bound at small widths, so the wider dictionary costs little step time. Read ``kaleido_turn_modes`` against N: it separates a router that saturates at 2-3 patterns however many it is offered from four iid draws being redundant.
 - `kaleido_12_norm_dropoff_always` (`dropoff='warp', dropoff_every=True, mix_norm=True, num_mirrors=12`) - kaleido_12_dropoff_always with the 1/sqrt(N) mix scale of ``kaleido_norm_dropoff_always``.
+- `kaleido_12_zoom` (`num_mirrors=12, zoom=True`) - kaleido_12_zoom_dropoff_always with the dropoff sink removed - the control the every-pass schedule never had. next/dropoff.md sizes the warp at 0.6% of V mass, but does so at BYTE scale; the trunk runs on patches at ~8x compression, so at block_size 256 its sequence is ~33-65 long and the same 6-position envelope covers 9-18% of positions and 12-23% of the tip quarter that ``depth/tilt_d*`` measures. Train-only, so a trunk trained under a sunk tip is read at validation without one.
 - `kaleido_12_zoom_dropoff_always` (`dropoff='warp', dropoff_every=True, num_mirrors=12, zoom=True`) - kaleido_zoom_dropoff_always at 12 mirrors, spanning zoom 1/6 to 7. With a derived ladder, dictionary width and granularity are one axis, so this tests "more dictionary" and "more granularity" as the single thing they are.
 - `kaleido_24_dropoff_always` (`dropoff='warp', dropoff_every=True, num_mirrors=24`) - kaleido_12_dropoff_always at 24 mirrors.
 - `kaleido_24_norm_dropoff_always` (`dropoff='warp', dropoff_every=True, mix_norm=True, num_mirrors=24`) - kaleido_24_dropoff_always with the 1/sqrt(N) mix scale of ``kaleido_norm_dropoff_always``.

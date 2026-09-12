@@ -101,7 +101,7 @@ ffn_type: arc
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 34 of them, described in docs/attention.md
+# Options: 35 of them, described in docs/attention.md
 # Default: modular
 #
 # arc: InfiniAttention subclass that adds per-depth learned biases.

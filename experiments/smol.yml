@@ -572,7 +572,7 @@ seed: 42
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 34 of them, described in docs/attention.md
+# Options: 35 of them, described in docs/attention.md
 
 # attention_type: modular
 

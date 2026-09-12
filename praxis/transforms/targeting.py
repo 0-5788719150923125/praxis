@@ -19,6 +19,14 @@ off:
     wrapped around it, and replicating it is expensive. The flag is read off the
     class, the same "ask the registered class, not a hardcoded name list" idiom
     ``_wants_expert_bank`` uses in praxis/decoders/base.py.
+  * ``MERGE_OPAQUE_PARTS``, for a module where only PART of the subtree routes
+    itself. Kaleidoscope is the case: ``turn``/``turn_static`` are the per-token
+    router and the facets are the geometry it blends, but ``value``, ``gate``
+    and ``output`` are ordinary projections that gain from being merged like any
+    other. The parts are qualnames relative to the declaring module, matched as
+    prefixes against PARAMETER paths so a bare ``nn.Parameter`` and a child
+    module are named the same way. A whole-subtree opt-out inside a partial one
+    still applies (PEER's bank carries its own ``MERGE_OPAQUE``).
   * Parameters shared BY REFERENCE. The long-term memory is tied across the
     block, and a tied tensor reached twice must be merged at most once or two
     coefficient rows fight over it. Deduplicated by ``id``, which also catches
@@ -137,6 +145,21 @@ def _opaque_prefixes(root: nn.Module) -> List[str]:
     ]
 
 
+def _protected_params(root: nn.Module) -> List[str]:
+    """Parameter-path prefixes opted out by ``MERGE_OPAQUE_PARTS``.
+
+    A part is a qualname relative to the declaring module and names everything
+    beneath it, so ``"turn"`` covers ``turn.weight`` and ``"facet_u"`` covers
+    itself. Absolute here, so they can be matched against the walker's own
+    fully-qualified parameter names.
+    """
+    prefixes: List[str] = []
+    for name, module in root.named_modules():
+        for part in getattr(module, "MERGE_OPAQUE_PARTS", ()):
+            prefixes.append(f"{name}.{part}" if name else str(part))
+    return prefixes
+
+
 def _under(name: str, prefixes: List[str]) -> bool:
     return any(name == p or name.startswith(p + ".") for p in prefixes)
 
@@ -156,6 +179,7 @@ def discover_targets(
     silently targeting less than it thinks.
     """
     opaque = _opaque_prefixes(root)
+    protected = _protected_params(root)
     seen_ids: set = set()
     groups: List[TargetGroup] = []
     skipped: Dict[str, int] = {
@@ -181,6 +205,10 @@ def discover_targets(
         names: List[str] = []
         numel = 0
         for pname, param in direct:
+            qualname = f"{mod_name}.{pname}" if mod_name else pname
+            if _under(qualname, protected):
+                skipped["opaque"] += 1
+                continue
             if isinstance(param, UninitializedParameter):
                 skipped["lazy"] += 1
                 continue
@@ -200,7 +228,7 @@ def discover_targets(
                 skipped["oversized"] += 1
                 continue
             seen_ids.add(id(param))
-            names.append(f"{mod_name}.{pname}" if mod_name else pname)
+            names.append(qualname)
             numel += param.numel()
 
         if names:

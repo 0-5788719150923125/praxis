@@ -200,16 +200,22 @@ _EPS: float = 1e-9
 class KaleidoscopeAttention(nn.Module):
     """N frozen ``[T, T]`` mixing matrices, blended per token by a router."""
 
-    # This block already routes its own parameters PER TOKEN, which is the
-    # structural exclusion praxis/routers/targeting.py names. Without the flag
-    # SMEAR wraps the turn in a per-EXAMPLE MergedLinear - a coarser router
-    # around a finer one - and `kaleido_turn_modes` would then measure SMEAR's
-    # router rather than this one.
+    # The TURN routes its own parameters per token, which is the structural
+    # exclusion praxis/transforms/targeting.py names: wrap `turn` in a
+    # per-EXAMPLE MergedLinear and it is a coarser router around a finer one,
+    # with `kaleido_turn_modes` then reading SMEAR's routing rather than this
+    # block's. The facets are the geometry that turn blends and are indexed by
+    # depth, so a second per-example blend over them has the same problem.
     #
-    # The flag covers the whole subtree, so `value`, `gate` and `output` are
-    # excluded too. Recovering them would mean splitting the geometry machinery
-    # into an opaque submodule, changing parameter qualnames.
-    MERGE_OPAQUE: bool = True
+    # `value`, `gate` and `output` are ordinary projections and are NOT
+    # excluded - nothing about them routes itself, and they are most of the
+    # block's mergeable parameters.
+    MERGE_OPAQUE_PARTS: Tuple[str, ...] = (
+        "turn",
+        "turn_static",
+        "facet_u",
+        "facet_v",
+    )
 
     num_mirrors: int = NUM_MIRRORS
     resolution: int = MIRROR_RES
