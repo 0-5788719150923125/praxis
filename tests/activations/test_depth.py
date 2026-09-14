@@ -116,9 +116,35 @@ def test_base_activation_unwraps_for_introspection():
     assert base_activation(bare) is bare
 
 
-def test_depth_passes_matches_arc_glu():
-    """The pass count is the same ceil(depth / num_layers) ArcGLU uses, so the
-    two mechanisms cannot disagree about how many passes exist."""
+def test_depth_passes_matches_arc_glu_on_a_stacked_layout():
+    """With distinct blocks per position, the count is the same
+    ceil(depth / num_layers) ArcGLU indexes by, so the two cannot disagree."""
     assert depth_passes(_cfg(depth=6, num_layers=1)) == 6
     assert depth_passes(_cfg(depth=6, num_layers=4)) == 2
     assert depth_passes(_cfg(depth=3, num_layers=3)) == 1
+
+
+def test_depth_passes_follows_a_shared_block_per_execution():
+    """A router that reuses ONE block at every position gives that block a
+    different routed geometry at every execution - SMEAR keys its depth bias on
+    ``current_depth % depth``. A bank sized per sweep would then hold a single
+    instance against four geometries, which is a shared activation wearing the
+    name of a specialized one.
+    """
+    assert depth_passes(_cfg(depth=4, num_layers=4, router_type="smear")) == 4
+    assert depth_passes(_cfg(depth=6, num_layers=3, router_type="smear")) == 6
+    # Unchanged where the two conventions already agreed.
+    assert depth_passes(_cfg(depth=6, num_layers=1, router_type="smear")) == 6
+
+
+def test_shared_block_bank_indexes_by_execution():
+    """Each execution must select its own instance, not share one per sweep."""
+    act = build_depth_activation("serpent", _cfg(depth=4, num_layers=4, router_type="smear"))
+    assert len(act.passes) == 4
+    assert [act.pass_index(d) for d in range(4)] == [0, 1, 2, 3]
+
+
+def test_stacked_bank_still_indexes_by_sweep():
+    act = build_depth_activation("serpent", _cfg(depth=6, num_layers=3))
+    assert len(act.passes) == 2
+    assert [act.pass_index(d) for d in range(6)] == [0, 0, 0, 1, 1, 1]

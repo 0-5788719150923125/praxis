@@ -31,10 +31,33 @@ from torch.nn.parameter import UninitializedParameter
 
 
 def depth_passes(config) -> int:
-    """How many times one block is revisited: ``ceil(depth / num_layers)``."""
+    """How many distinct shapes the bank needs: one per geometry the block takes.
+
+    A block that is REUSED at every layer position takes a different routed
+    geometry at every execution, so the count is ``depth``. A stack of distinct
+    blocks already carries one activation per position, so its bank only has to
+    vary per sweep - ``ceil(depth / num_layers)``, which is what ArcGLU indexes
+    by. The two agree whenever ``num_layers`` is 1.
+
+    Reading the layout rather than assuming it is what keeps this in step with
+    the router: SMEAR keys its depth bias on ``current_depth % depth``, and a
+    bank sized per sweep would hold one instance against four geometries.
+    """
     num_layers = max(1, int(getattr(config, "num_layers", 1) or 1))
     depth = max(1, int(getattr(config, "depth", 1) or 1))
+    if _shares_one_block(config):
+        return depth
     return max(1, math.ceil(depth / num_layers))
+
+
+def _shares_one_block(config) -> bool:
+    """Whether the router reuses a single block at every layer position."""
+    router = getattr(config, "router_type", None)
+    if not router:
+        return False
+    from praxis.decoders.base import _router_layout, _wants_expert_bank
+
+    return _wants_expert_bank(router) or _router_layout(router) in ("bank", "shared")
 
 
 class DepthActivation(nn.Module):
@@ -89,7 +112,9 @@ class DepthActivation(nn.Module):
         super().__init__()
         from praxis.activations import build_activation
 
-        self.num_layers = max(1, int(num_layers))
+        # 0 is meaningful here: it selects per-execution indexing for a shared
+        # block. Anything else is the stride of a stacked layout.
+        self.num_layers = max(0, int(num_layers))
         first = build_activation(spec, **kwargs)
         # A parameter-free activation is the same function at every depth, so N
         # copies would be N identical modules and N curves saying one thing.
@@ -103,6 +128,10 @@ class DepthActivation(nn.Module):
         self.wants_keys: bool = getattr(first, "wants_keys", False)
 
     def pass_index(self, current_depth: int) -> int:
+        # ``num_layers`` of 0 marks a shared block, whose bank is indexed by
+        # execution the way the router's depth bias is.
+        if not self.num_layers:
+            return int(current_depth) % len(self.passes)
         return (int(current_depth) // self.num_layers) % len(self.passes)
 
     def _pending(self) -> bool:
@@ -193,7 +222,11 @@ def build_depth_activation(
     return DepthActivation(
         spec,
         num_passes=passes,
-        num_layers=max(1, int(getattr(config, "num_layers", 1) or 1)),
+        num_layers=(
+            0
+            if _shares_one_block(config)
+            else max(1, int(getattr(config, "num_layers", 1) or 1))
+        ),
         **kwargs,
     )
 
