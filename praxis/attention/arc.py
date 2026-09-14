@@ -28,6 +28,12 @@ class ArcAttention(InfiniAttention):
     output (Qiu et al. 2025, arXiv:2505.06708), which introduces non-linearity
     and input-dependent sparsity between the attention output and W_o.
     """
+    # Causality here is the ARCHITECTURE, not a mask: this module carries state
+    # forward across the sequence, so clearing ``config.causal`` cannot make it
+    # read backwards. An objective that needs bidirectional attention is refused
+    # at assembly rather than silently given a left-to-right model.
+    supports_bidirectional = False
+
 
     # Depth-specialization diagnostics (see praxis.metrics.specialization),
     # averaged across ArcAttention layers and surfaced to the Dynamics tab.
@@ -130,7 +136,7 @@ class ArcAttention(InfiniAttention):
         self, k: Tensor, v: Tensor, current_depth: int
     ) -> Tuple[Tensor, Tensor]:
         # Dropoff ablation: optionally withhold the causal tip at one depth
-        # step (inherited from CausalAttention; no-op unless dropoff_step set).
+        # step (inherited from SelfAttention; no-op unless dropoff_step set).
         return self._maybe_dropoff(k, v, current_depth)
 
     def _finalize_output(

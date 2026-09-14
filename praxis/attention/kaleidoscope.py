@@ -458,7 +458,7 @@ class KaleidoscopeAttention(nn.Module):
         self.pos_type = "kaleido"
 
         # Dropoff ablation (next/dropoff.md). Same schedule options as
-        # CausalAttention - see its __init__ for why the two exist and why
+        # SelfAttention - see its __init__ for why the two exist and why
         # neither is measured.
         self.dropoff_mode = dropoff
         self.dropoff_every = bool(dropoff_every)
@@ -731,15 +731,15 @@ class KaleidoscopeAttention(nn.Module):
         The envelope itself is imported rather than reimplemented: it is one
         idea, and a second copy of it would drift from the one the arc configs
         have been running. The training gate and the two schedules mirror
-        ``CausalAttention._maybe_dropoff`` for the same reason.
+        ``SelfAttention._maybe_dropoff`` for the same reason.
         """
         if self.dropoff_step is None or not self.training:
             return v
         if not self.dropoff_every and current_depth != self.dropoff_step:
             return v
-        from praxis.attention.causal import CausalAttention
+        from praxis.attention.self_attention import SelfAttention
 
-        return CausalAttention._dropoff_warp_value(v)
+        return SelfAttention._dropoff_warp_value(v)
 
     def _scores(self, w: Tensor, mirrors: Tensor) -> Tensor:
         """Blend the dictionary per query position.

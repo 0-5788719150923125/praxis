@@ -66,6 +66,14 @@ class TerminalDashboard:
         self.previous_frame = None
         self.fullscreen_log_mode = False  # Flag for fullscreen log mode
         self.log_scroll_offset = 0  # Scroll position for fullscreen log view
+        # Freeze ('f'): stop writing to the screen so a terminal text selection
+        # survives. The terminal owns the selection, not us - there is no escape
+        # sequence that preserves one across a rewrite of the selected cells, and
+        # the LOGS panel SCROLLS, so every line in it changes every frame even
+        # under differential rendering. Not drawing at all is the only thing that
+        # actually works. Nothing is lost: the log buffer keeps filling and the
+        # screen resyncs on unfreeze.
+        self.frozen = False
 
         # Correlation animation state
         self.correlation_frame = 0  # Frame counter for animations
@@ -703,6 +711,20 @@ class TerminalDashboard:
 
     def _handle_keyboard_input(self, key):
         """Handle keyboard input for dashboard controls."""
+        # Freeze the screen with 'f' or 'F', in either mode. Checked first so it
+        # works from fullscreen log view, which is where copying happens.
+        if key.lower() == "f":
+            self.frozen = not self.frozen
+            if self.frozen:
+                # Say so BEFORE freezing, and on the bottom border row - one
+                # line, written once, far from anything being selected. A frozen
+                # dashboard that looked hung would be worse than the problem.
+                self._draw_freeze_banner(True)
+            else:
+                self._draw_freeze_banner(False)
+                self.resync_screen()
+            return
+
         # Toggle fullscreen log mode with 'l' or 'L' key
         if key.lower() == "l":
             self.fullscreen_log_mode = not self.fullscreen_log_mode
@@ -713,7 +735,10 @@ class TerminalDashboard:
                 self.log_scroll_offset = 0
             # Add a notification to the log
             mode_name = "fullscreen log" if self.fullscreen_log_mode else "dashboard"
-            self.add_log(f"Switched to {mode_name} mode (press 'L' to toggle)")
+            self.add_log(
+                f"Switched to {mode_name} mode (press 'L' to toggle, "
+                "'f' to freeze the screen for copying)"
+            )
 
         # Handle scrolling in fullscreen log mode
         elif self.fullscreen_log_mode:
@@ -834,6 +859,31 @@ class TerminalDashboard:
 
         return frame
 
+    def _draw_freeze_banner(self, frozen: bool) -> None:
+        """Write the freeze state onto the bottom border, once.
+
+        On the border row rather than in the panel, because the point of
+        freezing is that the rows someone is selecting do not get written to.
+        Wrapped in its own try: a dashboard that crashed while announcing a
+        freeze would be a poor trade for the feature.
+        """
+        try:
+            width, height = self._get_terminal_size()
+            label = (
+                " FROZEN - press 'f' to resume "
+                if frozen
+                else "═" * len(" FROZEN - press 'f' to resume ")
+            )
+            col = max(2, (width - len(label)) // 2)
+            print(
+                f"\033[{height};{col + 1}H{self.term.white}{label}",
+                end="",
+                file=self.dashboard_output,
+            )
+            self.dashboard_output.flush()
+        except Exception:
+            pass
+
     def _run_dashboard(self):
         """Main dashboard rendering loop."""
         frames = 0
@@ -846,13 +896,20 @@ class TerminalDashboard:
                         # is sane, but nothing stops another process writing to
                         # our terminal. This heals that without a visible clear.
                         frames += 1
-                        if frames % 300 == 0:
+                        if frames % 300 == 0 and not self.frozen:
                             self.resync_screen()
 
                         # Check for keyboard input (non-blocking)
                         key = self.term.inkey(timeout=0.01)
                         if key:
                             self._handle_keyboard_input(key)
+
+                        # Frozen: write nothing at all. Logs still accumulate in
+                        # the buffer and every metric still updates; only the
+                        # screen is held still, so a selection stays selectable.
+                        if self.frozen:
+                            time.sleep(0.1)
+                            continue
 
                         # Check for inactivity
                         inactive_time = self.activity_monitor.check_inactivity()

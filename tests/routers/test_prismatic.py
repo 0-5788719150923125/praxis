@@ -11,7 +11,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 from praxis.configuration import PraxisConfig
 from praxis.routers.prismatic import Prismatic
 
@@ -125,8 +125,8 @@ def test_rope_and_alibi_produce_different_outputs():
     rope_config, alibi_config = copy.copy(config), copy.copy(config)
     rope_config.encoding = "rope"
     alibi_config.encoding = "alibi"
-    attention_rope = CausalAttention(rope_config)
-    attention_alibi = CausalAttention(alibi_config)
+    attention_rope = SelfAttention(rope_config)
+    attention_alibi = SelfAttention(alibi_config)
     attention_alibi.load_state_dict(attention_rope.state_dict(), strict=False)
 
     inputs = torch.randn(2, 16, config.hidden_size)

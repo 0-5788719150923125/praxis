@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 
 from praxis import PraxisConfig, registry
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 from praxis.attention.infini import _DEFAULT_SEGMENT_SIZE
 from praxis.attention.modular import ModularAttention
 from praxis.attention.syntaxes import SyntaxesAttention
@@ -34,14 +34,13 @@ def _class(key):
 READS_ENCODING = [
     key
     for key in ATTENTION
-    if issubclass(_class(key), (ModularAttention, SyntaxesAttention, CausalAttention))
+    if issubclass(_class(key), (ModularAttention, SyntaxesAttention, SelfAttention))
 ]
 HAS_METRICS = [key for key in ATTENTION if hasattr(_class(key), "metric_descriptions")]
 
 
 def _build(key, **fields):
     config = PraxisConfig(hidden_size=HIDDEN, num_heads=2, num_queries=1, dropout=0.0)
-    config.causal = True  # modeling.py sets this at assembly; the bare config is False
     for name, value in fields.items():
         setattr(config, name, value)
     torch.manual_seed(0)
@@ -124,10 +123,10 @@ EDITS = (SEQ - SYNTAXES_CONTEXT, SEQ - SYNTAXES_CONTEXT // 2, _DEFAULT_SEGMENT_S
 TOLERANCE = 1e-6
 
 
-def _movement(key, train):
+def _movement(key, train, **fields):
     """Worst change before an edited position and in the other row, over all
     edits, and the largest change the edits made where they may."""
-    pristine = _build(key)
+    pristine = _build(key, **fields)
     with torch.no_grad():
         for p in pristine.parameters():
             if p.is_floating_point():
@@ -160,6 +159,80 @@ def test_causal(key, train):
     assert reached > 0, "no edit moved anything, so the check cannot see a leak"
     assert before <= TOLERANCE, f"an output before the edit moved by {before:.3e}"
     assert other_row <= TOLERANCE, f"an output in another row moved by {other_row:.3e}"
+
+
+BIDIRECTIONAL = [
+    key
+    for key in ATTENTION
+    if getattr(_class(key), "supports_bidirectional", True)
+]
+STRUCTURALLY_CAUSAL = [key for key in ATTENTION if key not in BIDIRECTIONAL]
+
+
+@pytest.mark.parametrize("key", BIDIRECTIONAL)
+def test_non_causal_opens_the_receptive_field(key):
+    """The complement of ``test_causal``, and the reason both exist.
+
+    A module that never reads ``config.causal`` still passes the causal check -
+    it just masks unconditionally, and a diffusion run would silently get a
+    left-to-right model whose loss scores positions it cannot see around. Only
+    asking for the OTHER answer catches that; it is how VanillaMHA's hardcoded
+    ``is_causal=True`` was found.
+
+    Rows stay independent either way: bidirectional means across the sequence,
+    never across the batch.
+    """
+    before, other_row, reached = _movement(key, False, diffusion_type="masked")
+    assert reached > 0, "no edit moved anything, so the check cannot see anything"
+    assert before > TOLERANCE, (
+        "nothing before the edit moved, so this module masks the future whatever "
+        "config.causal says - either it does not read the flag, or its causality "
+        "is architectural and it should declare supports_bidirectional = False"
+    )
+    assert other_row <= TOLERANCE, (
+        f"an output in another row moved by {other_row:.3e}; bidirectional is "
+        "across the sequence, not across the batch"
+    )
+
+
+@pytest.mark.parametrize("key", STRUCTURALLY_CAUSAL)
+def test_structurally_causal_entries_stay_shut(key):
+    """A module that declares ``supports_bidirectional = False`` must mean it.
+
+    The declaration is what the assembly guard refuses on, so a module that
+    actually COULD read backwards would be excluded from diffusion for no
+    reason - and one that declares nothing while masking unconditionally is the
+    silent failure the guard exists to prevent. Checking the claim against the
+    behaviour keeps the two from drifting.
+    """
+    before, _, reached = _movement(key, False, diffusion_type="masked")
+    assert reached > 0, "no edit moved anything, so the check cannot see anything"
+    assert before <= TOLERANCE, (
+        "this module reads backwards when asked, so it should not declare "
+        "supports_bidirectional = False"
+    )
+
+
+@pytest.mark.parametrize("key", STRUCTURALLY_CAUSAL)
+def test_diffusion_refuses_a_structurally_causal_attention(key):
+    """Assembly fails loudly rather than training the wrong thing."""
+    from praxis.modeling import PraxisForCausalLM
+
+    config = PraxisConfig(
+        hidden_size=HIDDEN,
+        num_heads=2,
+        num_queries=1,
+        dropout=0.0,
+        depth=1,
+        num_layers=1,
+        attention_type=key,
+        diffusion_type="masked",
+        mask_token_id=256,
+        vocab_size=257,
+        encoder_type=None,
+    )
+    with pytest.raises(ValueError, match="carries state forward"):
+        PraxisForCausalLM(config)
 
 
 # ------------------------------------------------------------------------------

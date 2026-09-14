@@ -429,8 +429,14 @@ def initialize_lazy_modules(model, device):
         # Create dummy batch for initialization
         dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
 
-        # Standard autoregressive shifting for all models
-        dummy_labels = dummy_input[..., 1:].contiguous()
+        # Labels the way this model's objective wants them. A diffusion model
+        # scores a position against the token that was replaced THERE, so its
+        # labels are unshifted; every other objective predicts the successor.
+        # The model answers which, exactly as the trainer asks it.
+        if getattr(model, "outputs_are_aligned", False):
+            dummy_labels = dummy_input.contiguous()
+        else:
+            dummy_labels = dummy_input[..., 1:].contiguous()
 
         # Do a dummy forward pass to initialize lazy parameters
         model.train()

@@ -1,7 +1,7 @@
 """PraxisCache: cached decode must reproduce full-recompute outputs.
 
 Covers the vanilla path (gpt2-1.yml), the Infini/Arc memory-state cache, and
-the safe fallback for cache-less attentions (CausalAttention). The head-side
+the safe fallback for cache-less attentions (SelfAttention). The head-side
 cache state of the harmonic heads is checked logit for logit in
 tests/classifiers/test_harmonic.py.
 """
@@ -54,7 +54,7 @@ def greedy(model, ids, use_cache):
         # Memory-free Arc: a plain growing KV cache, no memory fold.
         dict(attention_type="arc_nomem", encoding="arc", window_size=8),
         dict(attention_type="arc_single_dropoff_nomem", encoding="arc", window_size=8),
-        # CausalAttention never writes the cache; use_cache=True must still be
+        # SelfAttention never writes the cache; use_cache=True must still be
         # correct (full recompute each step), just without the speedup.
         dict(attention_type="causal", encoding="rope"),
     ],

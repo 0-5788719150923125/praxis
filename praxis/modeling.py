@@ -252,7 +252,22 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
     model_type = "praxis"
 
     def __init__(self, config: PraxisConfig):
-        config.causal = True
+        if getattr(config, "diffusion_type", None):
+            if getattr(config, "mtp_type", None):
+                raise ValueError(
+                    "--mtp-type assumes a left-to-right factorisation and cannot "
+                    "be combined with --diffusion-type"
+                )
+            entry = registry.lookup("attention", config.attention_type)
+            attention = getattr(entry, "func", entry)
+            if not getattr(attention, "supports_bidirectional", True):
+                raise ValueError(
+                    f"--attention-type {config.attention_type!r} carries state "
+                    "forward across the sequence, so it stays causal whatever "
+                    "config.causal says. A diffusion objective scores positions "
+                    "it must be able to read around; pairing them would train a "
+                    "left-to-right model against a loss that assumes otherwise."
+                )
         super().__init__(config)
 
         # Build the classifier, passing the encoder reference so classifiers
@@ -298,6 +313,28 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
         # Tie weights if requested
         if config.tie_word_embeddings and self.classifier is not None:
             self.tie_weights()
+
+    @property
+    def is_diffusion(self) -> bool:
+        """True when this run trains a non-autoregressive diffusion objective.
+
+        Three things follow from it and are asserted in tests: attention is
+        bidirectional, labels are unshifted, and generation is iterative
+        refinement rather than next-token sampling.
+        """
+        return bool(getattr(self.config, "diffusion_type", None))
+
+    @property
+    def outputs_are_aligned(self) -> bool:
+        """Whether logits line up with labels position-for-position.
+
+        Diffusion scores a position against the token that was REPLACED there,
+        so there is no shift - regardless of what the encoder would otherwise
+        say. The trainer reads this to decide how to build labels.
+        """
+        if self.is_diffusion:
+            return True
+        return bool(getattr(self.encoder, "outputs_are_aligned", False))
 
     def get_metrics(self) -> dict:
         metrics = super().get_metrics()
@@ -523,6 +560,22 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
                     input_ids, attention_mask
                 )
 
+        # Diffusion corruption happens HERE, not in the collator. Lightning
+        # builds batch N+1 before the hooks for batch N run, so a level sampled
+        # upstream would be logged against the wrong step and every schedule
+        # chart would be off by one. `labels` stays clean; `input_ids` becomes
+        # the corrupted view the denoiser actually sees, and everything
+        # downstream that reads input_ids should see that view.
+        #
+        # Only when labels exist. A label-free forward is inference, where the
+        # caller (the iterative-unmask loop) has already placed the masks.
+        diffusion = self.criterion.main if self.is_diffusion else None
+        noise_mask = noise_level = None
+        if diffusion is not None and labels is not None:
+            input_ids, noise_mask, noise_level = diffusion.corrupt(
+                input_ids, attention_mask
+            )
+
         outputs = super().forward(
             input_ids=input_ids,
             current_state=current_state,
@@ -544,36 +597,49 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
             outputs, input_ids, skip_logits, attention_mask
         )
 
-        self._apply_recall_policies(
-            outputs.losses,
-            logits,
-            labels,
-            assistant_mask,
-            task_type_ids,
-            skip_logits,
-            pair_ids,
-        )
-        hidden_states = self._apply_rl_policy(
-            outputs.losses,
-            hidden_states,
-            logits,
-            labels,
-            rewards,
-            attention_mask,
-            token_weights,
-        )
+        if diffusion is not None:
+            # The recall and RL policies are next-token devices (they read a
+            # position's logits against the token that follows it), so they do
+            # not apply. The diffusion term owns which positions are scored.
+            loss = 0
+            if labels is not None:
+                loss = outputs.losses.add_loss(
+                    "main",
+                    diffusion.compute_loss(
+                        logits, labels, noise_mask, noise_level, attention_mask
+                    ),
+                )
+        else:
+            self._apply_recall_policies(
+                outputs.losses,
+                logits,
+                labels,
+                assistant_mask,
+                task_type_ids,
+                skip_logits,
+                pair_ids,
+            )
+            hidden_states = self._apply_rl_policy(
+                outputs.losses,
+                hidden_states,
+                logits,
+                labels,
+                rewards,
+                attention_mask,
+                token_weights,
+            )
 
-        loss = self._main_loss(
-            outputs.losses,
-            logits,
-            labels,
-            hidden_states,
-            scorer,
-            input_ids,
-            backward_logits,
-            task_type_ids,
-            assistant_mask,
-        )
+            loss = self._main_loss(
+                outputs.losses,
+                logits,
+                labels,
+                hidden_states,
+                scorer,
+                input_ids,
+                backward_logits,
+                task_type_ids,
+                assistant_mask,
+            )
         self._collect_aux_losses(
             outputs.losses,
             hidden_states,
@@ -701,6 +767,14 @@ class PraxisForCausalLM(PraxisModel, CausalObjectiveMixin, GenerationMixin):
         autoregresses over PATCHES rather than tokens, so no token-level loop
         can express it at all.
         """
+        # Diffusion wins outright: there is no next-token distribution to
+        # sample from, so neither the encoder's loop nor speculative decode nor
+        # `_sample` can express what generation means here.
+        if self.is_diffusion and not self.training:
+            from praxis.diffusion.decoding import unmask_decoding
+
+            return unmask_decoding
+
         if self.encoder and not self.training:
             method = self.encoder.decoding_method(generation_config)
             if method is not None:

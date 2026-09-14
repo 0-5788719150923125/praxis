@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from praxis import registry
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 from praxis.attention.kaleidoscope import (
     FACET_SCALE,
     MIRROR_RES,
@@ -410,7 +410,7 @@ def test_dropoff_envelope_is_the_shared_one_not_a_copy():
     a.train()
     a.dropoff_mode, a.dropoff_step = "warp", 1
     v = torch.randn(1, 1, 8, 4)
-    assert torch.equal(a._maybe_dropoff(v, 1), CausalAttention._dropoff_warp_value(v))
+    assert torch.equal(a._maybe_dropoff(v, 1), SelfAttention._dropoff_warp_value(v))
 
 
 # ------------------------------------------------------- static blend (base)

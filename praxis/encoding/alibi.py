@@ -136,7 +136,7 @@ class ALiBi(NoPE):
         """Build a FlexAttention score_mod that applies ALiBi bias.
 
         Mirrors the inline closure previously hand-rolled in
-        ``CausalAttention`` / ``InfiniAttention``: when ``ghost_offset`` is
+        ``SelfAttention`` / ``InfiniAttention``: when ``ghost_offset`` is
         nonzero, the first ``ghost_offset`` key positions are sink/ghost
         tokens and receive no bias.
         """

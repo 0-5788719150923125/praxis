@@ -1713,7 +1713,7 @@ class TransformerBlock(nn.Module):
         super().__init__()
 
         # Import proper components from praxis
-        from praxis.attention import CausalAttention
+        from praxis.attention import SelfAttention
         from praxis.dense import MultiLayerPerceptron
 
         # Create attention config with window_size for sliding window support
@@ -1723,7 +1723,9 @@ class TransformerBlock(nn.Module):
                 self.num_heads = getattr(base_config, "num_heads", 8)
                 self.num_queries = 1  # Standard MHA
                 self.dropout = base_config.dropout
-                self.causal = True
+                # A masked position needs the bytes on both sides of it, so
+                # these local blocks follow the objective like everything else.
+                self.causal = getattr(base_config, "causal", True)
                 self.head_size = None  # Will use default: hidden_size // num_heads
                 self.encoding = getattr(base_config, "encoding", "rope")
                 self.window_size = window_size
@@ -1733,9 +1735,9 @@ class TransformerBlock(nn.Module):
                 # single depth to index.
                 self.depth = 1
 
-        # CausalAttention with sliding window
+        # SelfAttention with sliding window
         attn_config = AttentionConfig(config, window_size)
-        self.attention = CausalAttention(attn_config)
+        self.attention = SelfAttention(attn_config)
 
         # Layer normalization
         self.norm1 = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
@@ -1769,7 +1771,7 @@ class TransformerBlock(nn.Module):
         Args:
             x: Input tensor of shape [batch_size, seq_len, dim]
             input_ids: Token IDs (unused, kept for API compatibility)
-            block_ids: Optional block IDs forwarded to CausalAttention so it
+            block_ids: Optional block IDs forwarded to SelfAttention so it
                 can build block-diagonal masks when supported.
 
         Returns:

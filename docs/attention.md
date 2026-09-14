@@ -23,7 +23,7 @@ Source: [praxis/attention/arc.py:19](../praxis/attention/arc.py#L19)
 
 Presets:
 - `arc` - class defaults
-- `arc_dropoff` (`dropoff='warp'`) - Arc with the dropoff ablation: the ``warp`` value sink withholds the causal tip at step ``depth - num_layers``, so the model leans on delayed context for that beat and the remaining layers recorrect. Under KL halting the training depth budget is sampled, so this step is rarely reached; ``arc_dropoff_always`` is the arm that applies the ablation at a real rate. Training only. See CausalAttention.__init__.
+- `arc_dropoff` (`dropoff='warp'`) - Arc with the dropoff ablation: the ``warp`` value sink withholds the causal tip at step ``depth - num_layers``, so the model leans on delayed context for that beat and the remaining layers recorrect. Under KL halting the training depth budget is sampled, so this step is rarely reached; ``arc_dropoff_always`` is the arm that applies the ablation at a real rate. Training only. See SelfAttention.__init__.
 - `arc_dropoff_always` (`dropoff='warp', dropoff_every=True`) - arc_dropoff with the sink at every recurrent pass. It fires about 44x as often as the single-pass schedule, which makes dropoff a real intervention rather than a rounding error. The cost is that the tip is absent from the value path at every depth, a recency prior rather than an ablation.
 
 ## `arc_nomem` - ArcNoMemAttention
@@ -36,7 +36,7 @@ where a sequence fits in one segment, and costs wall-clock that grows with lengt
 it spans several, since the segment loop is serial Python. On the memory arm,
 ``attn_memory_share`` at its 0.5 init says the blend is not using it.
 
-Source: [praxis/attention/arc.py:161](../praxis/attention/arc.py#L161)
+Source: [praxis/attention/arc.py:167](../praxis/attention/arc.py#L167)
 
 ## `arc_single`, `arc_single_dropoff` - SingleHeadArcAttention
 
@@ -75,17 +75,9 @@ Presets:
 - `arc_ssog_null` (`null_atom=True`) - arc_ssog plus a per-depth null atom: one learned logit per pass whose value is zero, so a query can decline to contribute. Nothing below the head knows absolute position - the logit is a function of lag alone - so without it a query near the start has an atom's truncated tail renormalized onto the oldest token, a sink that looks exactly like a real long-range read. See ArcSSOGAttention._apply_null.
 - `arc_ssog_wide` (`mu_init_max=128.0, num_atoms=12`) - arc_ssog with twelve atoms over lag 0.5 to 128 instead of four over 0.5 to 32. Attention weights are the mixture normalized over causal keys, so twelve atoms dilute each other to about 0.083 per atom against 0.25, and atoms centred beyond the live window are truncated and renormalized onto the oldest tokens. It keeps the bank-size and ladder-span question measurable against the small bank.
 
-## `causal` - CausalAttention
-
-Causal self-attention using PyTorch's FlexAttention API. Provides efficient attention
-computation with customizable block masking. Supports optional sliding window for
-efficient long-sequence inference.
-
-Source: [praxis/attention/causal.py:21](../praxis/attention/causal.py#L21)
-
 ## `infini` - InfiniAttention
 
-CausalAttention subclass that adds segment-level compressive memory.
+SelfAttention subclass that adds segment-level compressive memory.
 
 The sequence is split into segments. Each segment gets local causal attention (with
 ghostmax, RoPE/ALiBi, GQA from the parent). Between segments, an ELU+1 kernel memory
@@ -109,7 +101,7 @@ Presets:
 - `kaleido_24_dropoff_always` (`dropoff='warp', dropoff_every=True, num_mirrors=24`) - kaleido_12_dropoff_always at 24 mirrors.
 - `kaleido_24_norm_dropoff_always` (`dropoff='warp', dropoff_every=True, mix_norm=True, num_mirrors=24`) - kaleido_24_dropoff_always with the 1/sqrt(N) mix scale of ``kaleido_norm_dropoff_always``.
 - `kaleido_dropoff` (`dropoff='warp'`) - kaleido with the ``warp`` dropoff sink at the first layer of the last recurrent pass, the schedule ``arc_dropoff`` runs. Only ``warp``: the ``shift`` mode moves K as well as V, and there is no K here to move.
-- `kaleido_dropoff_always` (`dropoff='warp', dropoff_every=True`) - kaleido with the ``warp`` dropoff sink at every recurrent pass, like ghostmax. See CausalAttention.__init__ for the argument on both sides of the schedule.
+- `kaleido_dropoff_always` (`dropoff='warp', dropoff_every=True`) - kaleido with the ``warp`` dropoff sink at every recurrent pass, like ghostmax. See SelfAttention.__init__ for the argument on both sides of the schedule.
 - `kaleido_norm_dropoff_always` (`dropoff='warp', dropoff_every=True, mix_norm=True`) - kaleido_dropoff_always with 1/sqrt(N) on the mix. ``scores`` sums N mirror terms with no normalization, so at equal per-mirror router magnitude a wider dictionary opens sharper, not richer: effective attention support falls from 181 to 65 to 25 positions going N = 4, 12, 24 at T=257. The scale also divides the per-token modulation ceiling, so this is the N=4 matched control, and an N sweep needs it on in every arm or in none.
 - `kaleido_pink` (`alpha=1.0`) - kaleido with a 1/k^alpha envelope (alpha 1) over the dictionary, the pink-noise prior HarmonicField puts on its frequency grid. The flat dictionary is the alpha=0 corner of the paper's interference-capacity proposition; this is the corner where the prior costs capacity unless the blend spends amplitude against it, which ``kaleido_envelope_fight`` measures. Same seed and same draw as ``kaleido``, so the A/B isolates the envelope.
 - `kaleido_pink_dropoff_always` (`alpha=1.0, dropoff='warp', dropoff_every=True`) - kaleido_pink with the ``warp`` dropoff sink at every recurrent pass.
@@ -135,6 +127,15 @@ bank queried at every step, decoupling memory size from sequence length.
 Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
+
+## `self_attention` - SelfAttention
+
+Plain self-attention on FlexAttention, with an optional sliding window. Masking is NOT
+part of what this entry selects: whether a causal mask is applied is ``config.causal``,
+which every entry in this namespace reads and which ``PraxisForCausalLM`` sets to ``not
+diffusion_type``. Under a diffusion objective this runs fully bidirectional.
+
+Source: [praxis/attention/self_attention.py:21](../praxis/attention/self_attention.py#L21)
 
 ## `ssog` - SSOGAttention
 

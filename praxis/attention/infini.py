@@ -1,8 +1,8 @@
 """
-InfiniAttention: CausalAttention with segment-level compressive memory.
+InfiniAttention: SelfAttention with segment-level compressive memory.
 
 Processes sequences in segments, computing local attention within each
-segment (via CausalAttention mechanics) while maintaining a compressive memory
+segment (via SelfAttention mechanics) while maintaining a compressive memory
 that accumulates context across segments. Later segments retrieve from
 memory to access a summary of all prior segments, providing global context
 even with bounded local attention.
@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 
 _DEFAULT_SEGMENT_SIZE = 256
 
@@ -81,15 +81,21 @@ def _check_memory_finite(name: str, **tensors: Tensor) -> None:
             return
 
 
-class InfiniAttention(CausalAttention):
+class InfiniAttention(SelfAttention):
     """
-    CausalAttention subclass that adds segment-level compressive memory.
+    SelfAttention subclass that adds segment-level compressive memory.
 
     The sequence is split into segments. Each segment gets local causal
     attention (with ghostmax, RoPE/ALiBi, GQA from the parent). Between
     segments, an ELU+1 kernel memory accumulates key-value context and a
     learned gate blends memory retrieval with local attention output.
     """
+    # Causality here is the ARCHITECTURE, not a mask: this module carries state
+    # forward across the sequence, so clearing ``config.causal`` cannot make it
+    # read backwards. An objective that needs bidirectional attention is refused
+    # at assembly rather than silently given a left-to-right model.
+    supports_bidirectional = False
+
 
     metric_descriptions = {
         "attn_span": {
@@ -210,7 +216,7 @@ class InfiniAttention(CausalAttention):
             self._attn_span = (span[..., keep] / uniform[keep]).mean()
 
     def training_metrics(self) -> dict:
-        # CausalAttention declares none, so this is the root of the chain;
+        # SelfAttention declares none, so this is the root of the chain;
         # ArcAttention chains up to it.
         out: dict = {}
         if self._attn_span is not None:
@@ -626,7 +632,7 @@ class NoCompressiveMemory:
         abstractinator-t it read 0.4999 with a slope of 8.8e-4 per 1k steps
         at step 450 - the gate had not moved off its init at all.
 
-    Why a mixin rather than putting the per-depth biases on CausalAttention
+    Why a mixin rather than putting the per-depth biases on SelfAttention
     directly: the point of the variant is an A/B, and duplicating Arc's
     machinery onto another base would change more than the one thing under
     test. Subclassing keeps every other code path bit-identical.

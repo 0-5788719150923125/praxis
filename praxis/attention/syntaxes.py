@@ -17,6 +17,12 @@ class SyntaxesAttention(nn.Module):
     share the same reduced K/V context, dropping complexity from O(n^2) to
     O(n * c) where ``c`` is ``syntaxes_context_size`` (default 128).
     """
+    # Causality here is the ARCHITECTURE, not a mask: this module carries state
+    # forward across the sequence, so clearing ``config.causal`` cannot make it
+    # read backwards. An objective that needs bidirectional attention is refused
+    # at assembly rather than silently given a left-to-right model.
+    supports_bidirectional = False
+
 
     def __init__(self, config) -> None:
         super().__init__()

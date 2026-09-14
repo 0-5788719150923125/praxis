@@ -1,4 +1,4 @@
-"""CausalAttention and what its subclasses (Infini, Arc) inherit from it: packed
+"""SelfAttention and what its subclasses (Infini, Arc) inherit from it: packed
 document isolation, the block-mask cache, the head-budget recipe, and the dropoff
 gate."""
 
@@ -6,14 +6,13 @@ import pytest
 import torch
 
 from praxis import PraxisConfig, registry
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 
 ENCODINGS = sorted(registry.namespace("encoding"))
 
 
 def _config(**fields):
     config = PraxisConfig(hidden_size=64, num_heads=2, num_queries=1, dropout=0.0)
-    config.causal = True  # modeling.py sets this at assembly; the bare config is False
     for name, value in fields.items():
         setattr(config, name, value)
     return config
@@ -84,7 +83,7 @@ def test_block_mask_cache_is_batch_independent():
     Document masks depend on batch contents, so they are rebuilt every
     forward; only the batch-independent causal mask may be cached.
     """
-    module = CausalAttention(_config(encoding="nope")).eval()
+    module = SelfAttention(_config(encoding="nope")).eval()
     if module.create_block_mask is None:
         pytest.skip("FlexAttention unavailable")
 
@@ -102,7 +101,7 @@ def test_block_mask_cache_is_batch_independent():
 
 def test_ignores_mismatched_block_ids():
     """Wrong-shaped block_ids are declined, not masked with."""
-    module = CausalAttention(_config(encoding="nope")).eval()
+    module = SelfAttention(_config(encoding="nope")).eval()
     x = torch.randn(4, 16, 64)
     too_short = torch.ones(4, 8, dtype=torch.long)
     with torch.no_grad():
@@ -156,7 +155,7 @@ def test_head_budget_grads_only_kept_heads():
 
 
 def test_dropoff_is_training_only_and_the_always_schedule_fires_every_pass():
-    """The gate lives in CausalAttention, so every dropoff user inherits it."""
+    """The gate lives in SelfAttention, so every dropoff user inherits it."""
     cfg = _config(depth=6, num_layers=1, encoding="nope", head_size=16)
     a = registry.lookup("attention", "arc_single_dropoff_always_nomem")(cfg)
     assert a.dropoff_every is True and a.dropoff_step == 5

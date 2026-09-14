@@ -128,7 +128,7 @@ class SingleHeadArcAttention(ArcAttention):
         overridden here; ``head_size`` is a width and belongs to the config.
 
         Width therefore falls out of the standing rule
-        (``head_size or hidden_size // num_heads``, as CausalAttention and the
+        (``head_size or hidden_size // num_heads``, as SelfAttention and the
         encoding modules both apply it) with ``num_heads`` already corrected to
         1 - so an unset ``head_size`` gives one head spanning the full hidden
         size, exactly what that rule predicts for a single head. Set

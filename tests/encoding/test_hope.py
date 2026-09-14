@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from praxis import PraxisConfig
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 from praxis.attention.infini import InfiniAttention
 from praxis.encoding.hope import HoPE
 from praxis.encoding.rope import RoPE
@@ -24,7 +24,6 @@ def _config(context_length):
         dropout=0.0,
         encoding="hope",
     )
-    config.causal = True
     return config
 
 
@@ -73,7 +72,7 @@ def test_matches_rope_when_threshold_keeps_all_bands():
     torch.testing.assert_close(y_hope, y_rope)
 
 
-@pytest.mark.parametrize("host", [CausalAttention, InfiniAttention])
+@pytest.mark.parametrize("host", [SelfAttention, InfiniAttention])
 def test_cutoff_resolves_through_an_attention_forward(host):
     """The band cutoff is resolved on first call, so a forward through each host
     proves the registry path really reached ``before_scores``."""

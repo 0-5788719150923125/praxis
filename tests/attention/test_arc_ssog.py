@@ -13,7 +13,6 @@ from praxis.attention.ssog import NULL_LOGIT_INIT, SIGMA_FLOOR, _inv_softplus
 
 def _module(num_atoms=None, mu_init_max=None, null_atom=False, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0, depth=4)
-    cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)
@@ -31,7 +30,6 @@ def test_registered_profiles():
     assert wide.func is ArcSSOGAttention
     assert wide.keywords == {"num_atoms": 12, "mu_init_max": 128.0}
     cfg = PraxisConfig(hidden_size=64, num_heads=2, dropout=0.0, depth=3)
-    cfg.causal = True
     built = wide(cfg)
     assert built.num_atoms == 12 and built.mu_init_max == 128.0
     # The wide ladder runs past the ~88 where log(expm1(y)) overflows float32.

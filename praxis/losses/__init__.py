@@ -140,7 +140,20 @@ def build_objectives(config, encoder=None) -> Objectives:
     model to call.
     """
     objectives = Objectives()
-    if not (encoder and getattr(encoder, "handles_loss", False)):
+    if getattr(config, "diffusion_type", None):
+        # The diffusion objective IS the main criterion - it owns the
+        # corruption that decides which positions are scored, so there is no
+        # per-token criterion for the model to call separately. `loss_func` is
+        # ignored under diffusion, which is why the blueprint shows the
+        # diffusion term in `main` rather than a cross-entropy that never runs.
+        objectives.register(
+            "main",
+            registry.lookup("diffusion", config.diffusion_type)(
+                mask_token_id=config.mask_token_id,
+                vocab_size=config.vocab_size,
+            ),
+        )
+    elif not (encoder and getattr(encoder, "handles_loss", False)):
         objectives.register(
             "main", get_loss_function(config.loss_func, config.vocab_size)
         )

@@ -32,8 +32,15 @@ class BackpropagationTrainer(LightningModule):
         self.train_step_ema = None
         self.tokenizer = tokenizer
         # Check if model has an encoder with aligned outputs
-        self.outputs_are_aligned = hasattr(model, "encoder") and getattr(
-            model.encoder, "outputs_are_aligned", False
+        # The model answers this now: diffusion is aligned whatever its encoder
+        # says, because it scores a position against the token replaced there.
+        self.outputs_are_aligned = bool(
+            getattr(
+                model,
+                "outputs_are_aligned",
+                hasattr(model, "encoder")
+                and getattr(model.encoder, "outputs_are_aligned", False),
+            )
         )
         self.byte_level = byte_level  # Track byte-level for metrics (bits_per_byte)
         self.last_logged_step = -1  # Track last step we logged a document

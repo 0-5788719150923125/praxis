@@ -650,6 +650,26 @@ seed: 42
 # halting_type: null
 
 
+# Train as a non-autoregressive diffusion model: the sequence is corrupted and
+# reconstructed in place, attention is bidirectional, labels are unshifted, and
+# generation is iterative refinement. Unset = ordinary next-token training.
+#
+# Non-autoregressive objectives. The model sees the whole sequence, corrupted,
+# and reconstructs it; generation is iterative refinement. Unset means ordinary
+# next-token training.
+#
+# Options: masked, masked_coarse
+
+# diffusion_type: null
+
+
+# Refinement steps per sample at generation time. Fewer steps commits more
+# positions at once, which assumes they are conditionally independent;
+# quality-vs-steps is the first thing worth measuring.
+
+# diffusion_steps: 16
+
+
 # Mixture-of-widths policy: deflate each recurrent step's inner rank to a
 # helically-precessing slice. Presets tune the floor/peak of the arch (none =
 # full width)

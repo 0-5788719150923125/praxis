@@ -83,6 +83,16 @@ class PraxisConfig(PretrainedConfig):
         # See praxis/ghost/__init__.py. "none" = store every weight.
         transform_type: str = "none",
         halting_type: Optional[str] = None,
+        # Non-autoregressive training. When set, the model is bidirectional
+        # (``causal`` stays False), labels are unshifted, and generation is
+        # iterative refinement. Incompatible with MTP, speculative decode and
+        # the KV cache, all of which assume a left-to-right factorisation.
+        diffusion_type: Optional[str] = None,
+        diffusion_steps: int = 16,
+        # The id written in place of a corrupted token. Derived by the CLI from
+        # the tokenizer's alphabet (one past the last real id); only set here
+        # when a checkpoint carries it.
+        mask_token_id: Optional[int] = None,
         width_type: Optional[str] = None,
         # INFERENCE-ONLY, and excluded from the run hash on purpose. Both
         # decoding paths are trained by the same objectives, so which one a run
@@ -136,6 +146,9 @@ class PraxisConfig(PretrainedConfig):
         # Configs saved before a rename (a checkpoint's config.json) carry the
         # old key, which would otherwise land in kwargs and be ignored.
         legacy = pop_legacy_config_keys(kwargs)
+        # Derived below, so a stored value from a checkpoint's config is
+        # ignored rather than assigned to a read-only property.
+        kwargs.pop("causal", None)
 
         # Snapshot the declared arguments so each can be assigned automatically.
         declared = dict(locals())
@@ -164,4 +177,14 @@ class PraxisConfig(PretrainedConfig):
         # Derived / constant attributes that aren't direct argument copies.
         self.depth = depth if depth is not None else num_layers
         self.num_hidden_layers = self.depth  # HF cache expects this name
-        self.causal = False
+
+    @property
+    def causal(self) -> bool:
+        """Whether attention masks the future, derived from the objective.
+
+        A next-token loss requires the mask; a diffusion loss requires its
+        absence, because the token being scored was replaced with an absorbing
+        symbol before the model saw the sequence. The two cannot be set
+        independently without the model reading its own answer.
+        """
+        return not getattr(self, "diffusion_type", None)

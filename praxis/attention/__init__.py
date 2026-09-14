@@ -7,7 +7,7 @@ from torch import nn
 from praxis import registry
 from praxis.attention.arc import ArcAttention, ArcNoMemAttention
 from praxis.attention.arc_ssog import ArcSSOGAttention
-from praxis.attention.causal import CausalAttention
+from praxis.attention.self_attention import SelfAttention
 from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.kaleidoscope import KaleidoscopeAttention
@@ -19,7 +19,7 @@ from praxis.attention.single import (
 )
 from praxis.attention.ssog import SSOGAttention
 from praxis.attention.syntaxes import SyntaxesAttention
-from praxis.registry import Entry
+from praxis.registry import Alias, Entry
 
 registry.declare(
     "attention",
@@ -37,7 +37,19 @@ registry.declare(
         "vanilla": VanillaMHA,
         "pk": ProductKeyAttention,
         "syntaxes": SyntaxesAttention,
-        "causal": CausalAttention,
+        "self_attention": Entry(
+            SelfAttention,
+            (
+                "Plain self-attention on FlexAttention, with an optional sliding "
+                "window. Masking is NOT part of what this entry selects: whether a "
+                "causal mask is applied is ``config.causal``, which every entry in "
+                "this namespace reads and which ``PraxisForCausalLM`` sets to ``not "
+                "diffusion_type``. Under a diffusion objective this runs fully "
+                "bidirectional."
+            ),
+        ),
+        # Configs and checkpoints written before the rename.
+        "causal": Alias("self_attention"),
         "infini": InfiniAttention,
         "arc": ArcAttention,
         "arc_dropoff": Entry(
@@ -48,7 +60,7 @@ registry.declare(
                 "delayed context for that beat and the remaining layers recorrect. "
                 "Under KL halting the training depth budget is sampled, so this step "
                 "is rarely reached; ``arc_dropoff_always`` is the arm that applies the "
-                "ablation at a real rate. Training only. See CausalAttention.__init__."
+                "ablation at a real rate. Training only. See SelfAttention.__init__."
             ),
         ),
         "arc_dropoff_always": Entry(
@@ -136,7 +148,7 @@ registry.declare(
             partial(KaleidoscopeAttention, dropoff="warp", dropoff_every=True),
             (
                 "kaleido with the ``warp`` dropoff sink at every recurrent pass, like "
-                "ghostmax. See CausalAttention.__init__ for the argument on both sides "
+                "ghostmax. See SelfAttention.__init__ for the argument on both sides "
                 "of the schedule."
             ),
         ),

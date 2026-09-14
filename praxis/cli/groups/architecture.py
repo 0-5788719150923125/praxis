@@ -105,6 +105,27 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
+            "--diffusion-type",
+            type=str,
+            registry="diffusion",
+            default=None,
+            help="Train as a non-autoregressive diffusion model: the sequence "
+            "is corrupted and reconstructed in place, attention is "
+            "bidirectional, labels are unshifted, and generation is iterative "
+            "refinement. Unset = ordinary next-token training",
+        )
+
+        group.add_argument(
+            "--diffusion-steps",
+            type=int,
+            default=16,
+            help="Refinement steps per sample at generation time. Fewer steps "
+            "commits more positions at once, which assumes they are "
+            "conditionally independent; quality-vs-steps is the first thing "
+            "worth measuring",
+        )
+
+        group.add_argument(
             "--width-type",
             type=str,
             registry="width",

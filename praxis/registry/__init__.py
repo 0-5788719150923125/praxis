@@ -9,7 +9,7 @@ each key means. A module declares its namespace where the entries live::
     registry.declare(
         "attention",
         {
-            "causal": CausalAttention,
+            "causal": SelfAttention,
             "arc_dropoff": Entry(
                 partial(ArcAttention, dropoff="warp"),
                 "Arc with the causal tip withheld at one recurrent pass.",

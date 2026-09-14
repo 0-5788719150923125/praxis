@@ -106,6 +106,6 @@ class NoPE(nn.Module):
             num_heads: Number of query heads (for slope sizing in subclasses).
             device: Device to place captured tensors on.
             ghost_offset: Number of ghost / sink tokens prepended to keys
-                (1 for the ghostmax convention in CausalAttention, else 0).
+                (1 for the ghostmax convention in SelfAttention, else 0).
         """
         return None

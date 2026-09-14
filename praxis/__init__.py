@@ -10,6 +10,7 @@ import praxis.data  # noqa: F401
 import praxis.decoders  # noqa: F401
 import praxis.decoders.mono  # noqa: F401
 import praxis.dense  # noqa: F401
+import praxis.diffusion  # noqa: F401
 import praxis.embeddings  # noqa: F401
 import praxis.encoders  # noqa: F401
 import praxis.encoding  # noqa: F401

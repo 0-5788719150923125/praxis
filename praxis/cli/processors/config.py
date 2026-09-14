@@ -177,7 +177,60 @@ class ConfigBuilder:
                 and byte_vocab > 0
                 and "byte_vocab_size" in valid_config_params
             ):
+                # Left at the tokenizer's own width here. Under diffusion the
+                # block below widens it by one for the absorbing symbol, and
+                # owns both halves of that so the id and the width cannot
+                # disagree - widening in two places put the mask id one past
+                # its own table.
                 config_kwargs["byte_vocab_size"] = byte_vocab
+
+            # Diffusion needs one id the data can never contain: the absorbing
+            # state a corrupted position is replaced with. It goes one past the
+            # alphabet, so every existing id keeps its meaning and the width
+            # grows by exactly 1. The extra logit is never a target - that is
+            # the cost of not stealing a real token.
+            #
+            # Derived for ANY tokenizer, not just byte ones. It used to live
+            # inside the byte_alphabet_size branch above, which a subword
+            # tokenizer (tokenmonster, bpe) never enters - so `mask_token_id`
+            # stayed None and the diffusion module masked with None.
+            if getattr(args, "diffusion_type", None) and (
+                "mask_token_id" in valid_config_params
+            ):
+                # `vocab_size` is not always the highest id a tokenizer can
+                # emit: HF registers ADDED tokens past it, and `len(tokenizer)`
+                # is the number that counts them. Taking the max means the mask
+                # symbol lands past every real id rather than on top of an added
+                # one - which would be silent, since a collision only shows up
+                # as the model being asked to reconstruct a token that is also
+                # the symbol for "reconstruct me".
+                if isinstance(byte_vocab, int) and byte_vocab > 0:
+                    alphabet = byte_vocab  # already counts the tool specials
+                else:
+                    alphabet = config_kwargs.get(
+                        "vocab_size", getattr(args, "vocab_size", 0)
+                    )
+                    try:
+                        alphabet = max(alphabet, len(tokenizer))
+                    except TypeError:
+                        pass
+                if not isinstance(alphabet, int) or alphabet <= 0:
+                    raise ValueError(
+                        "--diffusion-type needs a sized vocabulary to place its mask "
+                        f"symbol past; the tokenizer reported {alphabet!r}"
+                    )
+                config_kwargs["mask_token_id"] = alphabet
+                if args is not None:
+                    setattr(args, "mask_token_id", alphabet)
+                # Widen whichever width the model actually indexes with: the
+                # byte alphabet when there is one (it sizes the byte embedding
+                # table and the classifier), otherwise the model vocab.
+                if isinstance(byte_vocab, int) and byte_vocab > 0:
+                    config_kwargs["byte_vocab_size"] = alphabet + 1
+                else:
+                    config_kwargs["vocab_size"] = alphabet + 1
+                    if args is not None:
+                        setattr(args, "vocab_size", alphabet + 1)
 
             # The byte->id offset travels with the alphabet: a tokenizer that
             # registered no control tokens reports 0, and every byte-arithmetic

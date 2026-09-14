@@ -1,5 +1,5 @@
 """
-CausalAttention module for causal language modeling using PyTorch's FlexAttention.
+SelfAttention module for causal language modeling using PyTorch's FlexAttention.
 Based on the efficient attention implementation with block masking support.
 """
 
@@ -18,7 +18,7 @@ from praxis import registry
 os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
 
 
-class CausalAttention(nn.Module):
+class SelfAttention(nn.Module):
     """
     Causal self-attention using PyTorch's FlexAttention API.
     Provides efficient attention computation with customizable block masking.
@@ -32,7 +32,7 @@ class CausalAttention(nn.Module):
         dropoff_every: bool = False,
     ) -> None:
         """
-        Initialize CausalAttention module.
+        Initialize SelfAttention module.
 
         Args:
             config: Configuration object containing attention parameters.
@@ -229,7 +229,7 @@ class CausalAttention(nn.Module):
             self.create_block_mask = create_block_mask
             self.and_masks = and_masks
         except ImportError:
-            print("[CausalAttention] FlexAttention not available, using SDPA fallback")
+            print("[SelfAttention] FlexAttention not available, using SDPA fallback")
             self.flex_attention = None
             self.create_block_mask = None
             self.and_masks = None
@@ -607,7 +607,7 @@ class CausalAttention(nn.Module):
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
                 print(
-                    "[CausalAttention] Using manual ghost-aware SDPA fallback "
+                    "[SelfAttention] Using manual ghost-aware SDPA fallback "
                     "(CPU device - flex_attention not supported)"
                 )
                 self._cpu_fallback_warned = True

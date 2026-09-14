@@ -18,7 +18,7 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, burstable, f
 
 <!-- AUTODOC:FEATURES:BEGIN -->
 
-Praxis is organized as 54 registry namespaces. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
+Praxis is organized as 55 registry namespaces. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
 
 - [Activation combination types](docs/activation-types.md) (5)
 - [Activation functions](docs/activations.md) (35)
@@ -28,6 +28,7 @@ Praxis is organized as 54 registry namespaces. The feature categories below link
 - [Classifiers](docs/classifiers.md) (17)
 - [Data sampler strategies](docs/samplers.md) (6)
 - [Decoder block layouts](docs/blocks.md) (9)
+- [Diffusion objectives](docs/diffusion.md) (2)
 - [Expert mixing](docs/mixing.md) (6)
 - [Feedforward experts](docs/dense.md) (10)
 - [Foreign model adapters](docs/model-adapters.md) (1)

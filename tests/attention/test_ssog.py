@@ -14,7 +14,6 @@ from praxis.attention.ssog import COLD_GATE_INIT, NUM_ATOMS, SSOGAttention
 
 def _module(cls=SSOGAttention, **overrides):
     cfg = PraxisConfig(hidden_size=64, num_heads=2, num_queries=2, dropout=0.0)
-    cfg.causal = True  # modeling.py sets this at assembly; the bare config is False
     for k, v in overrides.items():
         setattr(cfg, k, v)
     torch.manual_seed(0)

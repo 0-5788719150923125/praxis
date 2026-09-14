@@ -16,7 +16,6 @@ def test_segment_loop_runs_under_every_encoding(cls, encoding):
     config = PraxisConfig(
         hidden_size=64, num_heads=4, num_queries=1, depth=2, dropout=0.0
     )
-    config.causal = True  # modeling.py sets this at assembly; the bare config is False
     config.encoding = encoding
     config.window_size = 32  # repurposed as segment_size by InfiniAttention
     attn = cls(config).eval()

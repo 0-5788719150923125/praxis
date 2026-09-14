@@ -415,6 +415,10 @@ class VanillaMHA(nn.MultiheadAttention):
             bias=False,
             batch_first=True,
         )
+        # Honour the flag instead of hardcoding a mask. Every other attention
+        # module in the registry reads ``config.causal``; this one did not, so a
+        # non-causal run (diffusion) was silently causal here.
+        self.causal = config.causal
 
     def forward(
         self,
@@ -451,17 +455,18 @@ class VanillaMHA(nn.MultiheadAttention):
 
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)
-        # Create causal mask
-        causal_mask = torch.triu(
-            torch.ones((seq_len, seq_len), device=inputs.device), diagonal=1
-        ).bool()
+        causal_mask = None
+        if self.causal:
+            causal_mask = torch.triu(
+                torch.ones((seq_len, seq_len), device=inputs.device), diagonal=1
+            ).bool()
         # Compute SDPA
         outputs, _ = super().forward(
             query=inputs,
             key=inputs,
             value=inputs,
             need_weights=False,
-            is_causal=True,
+            is_causal=bool(self.causal),
             attn_mask=causal_mask,
         )
         layer_kv: Optional[Tensor] = None
@@ -488,7 +493,8 @@ class VanillaMHA(nn.MultiheadAttention):
         k, v = cache.update(k, v, current_depth)
 
         # Prefill is causal; decode (q_len < kv_len) attends to everything.
-        is_causal = q.size(2) == k.size(2) and q.size(2) > 1
+        # A non-causal model never masks, cached or not.
+        is_causal = self.causal and q.size(2) == k.size(2) and q.size(2) > 1
         outputs = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
         outputs = outputs.transpose(1, 2).reshape(batch_size, seq_len, embed_dim)
         return self.out_proj(outputs), cache, 0
