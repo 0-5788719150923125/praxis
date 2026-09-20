@@ -50,8 +50,10 @@ def weighted_reduce(
         active = (labels.reshape(-1) != -100).to(flat_loss.dtype)
         flat_w = flat_w * active
 
+    # torch.where, not a Python branch: `if denom <= 0` on a device tensor
+    # forces a sync and breaks the compiled graph on every step. Weights are
+    # non-negative, so a zero denominator means a zero numerator as well -
+    # dividing by one then yields 0.0 with the autograd graph intact.
     denom = flat_w.sum()
-    if denom <= 0:
-        # Preserve the autograd graph so the backward pass still runs.
-        return (flat_loss * flat_w).sum()
-    return (flat_loss * flat_w).sum() / denom
+    safe_denom = torch.where(denom > 0, denom, torch.ones_like(denom))
+    return (flat_loss * flat_w).sum() / safe_denom

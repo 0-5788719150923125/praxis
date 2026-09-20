@@ -1215,11 +1215,6 @@ seed: 42
 # author: [Ryan J. Brooks]
 
 
-# Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)
-
-# ngrok_auth_token: null
-
-
 # Discord bot token (can also be set via DISCORD_TOKEN env var)
 
 # discord_token: null

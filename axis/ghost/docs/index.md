@@ -172,7 +172,7 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 ### Synthesis (voice)
 
-Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
+Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the source of the words (the text box, or a Markdown file on disk re-read at every Speak, whose frontmatter carries the voice), the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`text_norm.gd`](../scripts/text_norm.gd) **TextNorm** - turn written English into speakable words, before anything else.
@@ -182,6 +182,8 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
 - [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
+- [`doc_source.gd`](../scripts/doc_source.gd) **DocSource** - where a reading's words come from: the text box, or a file on disk.
+- [`front_matter.gd`](../scripts/front_matter.gd) **FrontMatter** - YAML frontmatter on a Markdown document, read and (carefully) written.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 - [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
 - [`generative_editor.gd`](../scripts/generative_editor.gd) **GenerativeEditor** - the neural synthesis path (VOICE_PLAN.md P4).

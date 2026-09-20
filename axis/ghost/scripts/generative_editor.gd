@@ -292,6 +292,7 @@ const TONE_PRESETS := {
 
 var _host: VoiceHost
 var _panel: PanelContainer
+var _doc: DocSource
 var _text: TextEdit
 var _voices: OptionButton
 var _go: Button
@@ -514,12 +515,22 @@ func _build_panel() -> void:
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
 
+	# WHERE THE WORDS COME FROM, above the box because it decides what the box IS: a draft
+	# to type in, or a live view of a file on disk that is re-read at every Speak.
+	_doc = preload("res://scripts/doc_source.gd").new()
+	_doc.setup("generative", "generative")
+	_doc.capture = _doc_capture
+	_doc.apply = _doc_apply
+	box.add_child(_doc)
+
 	_text = TextEdit.new()
 	_text.custom_minimum_size = Vector2(360, 180)
 	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_text.placeholder_text = "Once upon a time..."
 	_text.tooltip_text = "The script to read. Paste a whole chapter - it is cut into sentences and only a couple are ever synthesized ahead, so the first words play within seconds however long it is. Square brackets pin a pronunciation: [B IY1 UW0 K S]. A line of its own reading <!-- speaker: 2 --> (or [speaker: 2]) reads everything after it with tab 2's settings; any other HTML comment is stripped rather than spoken. A template macro reads its default and never its own text: ${CHAPTERS_BEFORE_IN_WORDS:twenty-one} is read as \"twenty-one\"."
 	_text.text_changed.connect(func() -> void:
+		if _doc.is_quiet():
+			return          # the document being shown, not the author typing
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec()
 		if not _chunks.is_empty():
@@ -888,7 +899,7 @@ func _persist() -> void:
 	# is already in _slots. Capture before writing or the tab being edited saves
 	# whatever it held when it was last switched away from.
 	_capture_slot()
-	Settings.write("generative", "text", _text.text)
+	Settings.write("generative", "text", _doc.draft())
 	Settings.write("generative", "slots", _slots)
 	Settings.write("generative", "turn", _turn.value)
 	Settings.write("generative", "tab", _slot)
@@ -897,7 +908,6 @@ func _persist() -> void:
 func _load_persisted() -> void:
 	var have := true
 	if have:
-		_text.text = str(Settings.read("generative", "text", ""))
 		_syncing = true
 		_turn.value = clampf(float(Settings.read("generative", "turn", 1.0)), 0.0, MAX_TURN_SCALE)
 		_syncing = false
@@ -932,6 +942,60 @@ func _load_persisted() -> void:
 	# wrote its own suggestions there when it was picked), so this is the one place
 	# the loaded session's room is applied.
 	_apply_fx(_fx, _cfg(_slot))
+	# ...and NOW the box is filled, after the cast is loaded: the source may be pointing at
+	# a document, in which case what belongs in the box is that document's body and the
+	# draft goes into its keeping. It reads the WORDS at boot and not the voice - the voice
+	# that was in this panel when ghost last closed is the one the author left there, and
+	# ⟳ is how a voice edited in the document gets taken instead.
+	_doc.bind_text(_text)
+
+
+# --- the document's own voice -------------------------------------------------
+
+
+## THE WHOLE CAST, for [DocSource] to store in a document's frontmatter.
+##
+## Every tab, not just the one showing: a chapter with three readers in it is three tabs,
+## and a stored "voice" that held one of them would restore two thirds of a reading. The
+## controls are captured into the current slot first, because they - not [member _slots] -
+## are the truth for the tab on screen.
+func _doc_capture() -> Dictionary:
+	_capture_slot()
+	var voices: Array = []
+	for i in _slots.size():
+		voices.append(_cfg(i))
+	return {"turn": _turn.value, "tab": _slot, "voices": voices}
+
+
+## ...and back the other way, when a document that carries one is opened.
+##
+## A BLOCK WITH NO CAST CHANGES NOTHING. `_merge` gives every row every key, so a voice
+## written by an older build arrives with sane defaults rather than half-applied - but a
+## block with no `voices` at all is a document that has never been given a voice, and
+## silently blanking the panel's cast for it would be the opposite of the feature.
+func _doc_apply(cfg: Dictionary) -> void:
+	var rows: Variant = cfg.get("voices", [])
+	var slots: Array = []
+	if rows is Array:
+		for row in rows as Array:
+			if row is Dictionary and slots.size() < MAX_SLOTS:
+				slots.append(_merge(row as Dictionary))
+	if slots.is_empty():
+		return
+	_slots = slots
+	_syncing = true
+	_turn.value = clampf(float(cfg.get("turn", _turn.value)), 0.0, MAX_TURN_SCALE)
+	_syncing = false
+	_slot = clampi(int(cfg.get("tab", 0)), 0, _slots.size() - 1)
+	_rebuild_tabs()
+	_apply_slot(_slot)
+	# The room, once, exactly as [method _load_persisted] does it: the chain is stateful
+	# and a tab switch alone does not re-dial it.
+	_apply_fx(_fx, _cfg(_slot))
+	# Whatever is on the stream was cut against the PREVIOUS cast.
+	_mark_stale()
+	_dirty = true
+	_last_edit_ms = Time.get_ticks_msec()
 
 
 # --- voices, plural -----------------------------------------------------------
@@ -1676,7 +1740,10 @@ func _show_voice_license() -> void:
 func _on_speak() -> void:
 	if _host == null or not _host.is_up() or _voices.selected < 0:
 		return
-	var body := _text.text.strip_edges()
+	# THE REAL-TIME READ. In sync mode this is the file as it is on disk RIGHT NOW, not as
+	# it was when the document was opened - which is what lets the author keep writing in
+	# their own editor with ghost open beside it.
+	var body := _doc.pull().strip_edges()
 	if body.is_empty():
 		_set_status("Nothing to speak yet.")
 		return
@@ -1697,7 +1764,7 @@ func _on_speak() -> void:
 ## request map, so replies still in flight for the old voice are dropped on
 ## arrival rather than spliced in.
 func _restart_speaking() -> void:
-	var body := _text.text.strip_edges()
+	var body := _doc.pull().strip_edges()
 	if body.is_empty():
 		return
 	_plan(body)
@@ -2376,7 +2443,7 @@ func can_export_take() -> bool:
 ## the entire reading including the part not yet spoken, and must not disturb a
 ## reading in progress.
 func export_take() -> String:
-	var body := _text.text.strip_edges()
+	var body := _doc.pull().strip_edges()
 	if body.is_empty() or _voices.selected < 0:
 		return ""
 	var chunks := _build_chunks(body)

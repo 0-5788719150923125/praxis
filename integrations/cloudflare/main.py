@@ -861,10 +861,9 @@ class Integration(BaseIntegration):
             exclude_hash=True,
         )
 
-    def on_api_server_start(self, app: Any, args: Any) -> None:
-        # The loader invokes this hook as ``hook(host, port)`` - the positional
-        # params are NOT the Flask app / parsed args (a legacy signature). Pull
-        # the real ones from the framework, the way the ngrok integration does.
+    def on_api_server_start(self, host: str, port: int) -> None:
+        # Neither positional is needed here - the publisher works off the Flask
+        # app and the parsed args, which come from the framework below.
         try:
             from praxis.cli import get_cli_args
 

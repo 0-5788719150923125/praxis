@@ -181,6 +181,7 @@ var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
 var end_stream: Callable            # set by main: () -> void, tears the session down
 
 var _panel: PanelContainer
+var _doc: DocSource
 var _text: TextEdit
 var _status: Label
 var _stream: VoiceStream = null
@@ -250,6 +251,9 @@ func _ready() -> void:
 	_load_persisted()
 	# the Collection is never empty: force a seed in if there is nothing to slot
 	_ensure_collection()
+	# The box is the source's to fill: in sync mode it shows the open document's body and
+	# the pasted draft goes into the source's keeping instead.
+	_doc.bind_text(_text)
 	var args := OS.get_cmdline_user_args()
 	var i := args.find("--synth")
 	if i >= 0 and i + 1 < args.size() and FileAccess.file_exists(args[i + 1]):
@@ -299,6 +303,14 @@ func _build_panel() -> void:
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
+
+	# WHERE THE WORDS COME FROM, above the box because it decides what the box IS: a draft
+	# to type in, or a live view of a file on disk that is re-read at every cast.
+	_doc = preload("res://scripts/doc_source.gd").new()
+	_doc.setup("synth", "synthesis")
+	_doc.capture = _doc_capture
+	_doc.apply = _doc_apply
+	box.add_child(_doc)
 
 	_text = TextEdit.new()
 	_text.custom_minimum_size = Vector2(360, 180)
@@ -469,7 +481,7 @@ func can_export_take() -> bool:
 
 
 func export_take() -> String:
-	var text := _text.text.strip_edges()
+	var text := _doc.pull().strip_edges()
 	if text.is_empty():
 		return ""
 	# The export is independent of the realtime game: with nothing cast, the
@@ -1958,6 +1970,8 @@ func _seed_tooltip(e: Dictionary) -> String:
 
 
 func _mark_structural() -> void:
+	if _doc.is_quiet():
+		return              # the document being shown, not the author typing
 	_dirty = true
 	_restart_pending = true
 	_last_edit_ms = Time.get_ticks_msec()
@@ -2167,7 +2181,7 @@ func _persist() -> void:
 	if _autopilot:
 		return
 	_dirty = false
-	Settings.write("synth", "text", _text.text)
+	Settings.write("synth", "text", _doc.draft())
 	Settings.write("synth", "traits", _traits)
 	Settings.write("synth", "lineage", _lineage)
 	Settings.write("synth", "belt", _belt)
@@ -2179,7 +2193,6 @@ func _persist() -> void:
 
 func _load_persisted() -> void:
 	if true:
-		_text.text = Settings.read("synth", "text", "")
 		_traits = Settings.read("synth", "traits", {})
 		_lineage = Settings.read("synth", "lineage", [1])
 		_belt = Settings.read("synth", "belt", [])
@@ -2209,6 +2222,61 @@ func _load_persisted() -> void:
 	_rebuild_belt()
 
 
+# ---- the document's own voice ----------------------------------------------
+
+
+## THE WORKING VOICE, for [DocSource] to store in a document's frontmatter.
+##
+## THE COLLECTION IS NOT IN IT, and that is the line: a seed belt and a reserve are what
+## the player has CAUGHT, which belongs to the player and not to any one chapter - a
+## document that restored them would hand out (or take away) a session's fishing every
+## time it was opened. What a document owns is the voice it is read IN: the lineage that
+## names it, the traits that are it, the genome it carries and the reception it is heard at.
+func _doc_capture() -> Dictionary:
+	return {
+		"lineage": _lineage.duplicate(),
+		"traits": _traits.duplicate(),
+		"genome": _working_genome.duplicate(),
+		"reception": _working_loc.duplicate(),
+	}
+
+
+## ...and back, when a document that carries one is opened. A block with no lineage is a
+## document that has never been given a voice, and leaves the water exactly as it was.
+func _doc_apply(cfg: Dictionary) -> void:
+	var lineage: Variant = cfg.get("lineage", null)
+	if not (lineage is Array) or (lineage as Array).is_empty():
+		return
+	var lin: Array = []
+	for v in lineage as Array:
+		lin.append(int(v))
+	_lineage = lin
+	_traits = _floats(cfg.get("traits", {}))
+	_working_genome = _floats(cfg.get("genome", {}))
+	_working_loc = _floats(cfg.get("reception", {}))
+	if _traits.is_empty():
+		_traits = _background_traits()
+	_update_reading_label()
+	_update_slot_highlights()
+	# Whatever is in the water is being spoken by the voice that was there a moment ago.
+	# The restart goes through the ordinary debounce rather than straight to [method _apply]
+	# so opening a document costs one re-synthesis and not two.
+	_dirty = true
+	_restart_pending = true
+	_last_edit_ms = Time.get_ticks_msec()
+
+
+## A stored map -> floats. A trait read back out of YAML is an int wherever it landed on a
+## whole number, and every consumer of these dictionaries multiplies them.
+func _floats(v: Variant) -> Dictionary:
+	var out := {}
+	if not (v is Dictionary):
+		return out
+	for k in v as Dictionary:
+		out[str(k)] = float((v as Dictionary)[k])
+	return out
+
+
 ## The population-average background: the voice before any seed exists.
 func _background_traits() -> Dictionary:
 	var t := {}
@@ -2236,7 +2304,9 @@ func _apply() -> void:
 		# silent until a voice is actually cast into it
 		_status.text = "the water is silent - throw to cast a voice"
 		return
-	var text := _text.text.strip_edges()
+	# THE REAL-TIME READ, in sync mode: the file as it is on disk right now, so the author
+	# can keep writing in their own editor and hear the change at the next cast.
+	var text := _doc.pull().strip_edges()
 	if text.is_empty():
 		_status.text = "write something, then throw"
 		return

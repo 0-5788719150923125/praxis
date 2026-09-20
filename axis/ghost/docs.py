@@ -192,7 +192,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "Text to narrated audio in two paths: ghost's own source-filter "
         "synthesizer (no models, no weights, fully inspectable, and the only "
         "path that can sing), and a small local neural voice run by a "
-        "subprocess host. Shared between them: the text front end and its "
+        "subprocess host. Shared between them: the source of the words (the "
+        "text box, or a Markdown file on disk re-read at every Speak, whose "
+        "frontmatter carries the voice), the text front end and its "
         "normalization, the threaded real-time stream, karaoke subtitles, and "
         "the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the "
         "repo root.",
@@ -205,6 +207,8 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "voice_stream.gd",
             "synth_editor.gd",
             "voice_sampler.gd",
+            "doc_source.gd",
+            "front_matter.gd",
             "subtitles.gd",
             "voice_host.gd",
             "generative_editor.gd",

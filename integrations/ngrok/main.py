@@ -23,6 +23,18 @@ def _static_domain_suffix():
     return domain.lstrip(".")
 
 
+def _forward_host(host):
+    """A local address to forward the tunnel to.
+
+    ``host_name`` may be the run's public https:// URL (routes/core.py treats
+    it that way), which is not something the tunnel can forward to. The server
+    binds 0.0.0.0 on this machine either way, so fall back to localhost.
+    """
+    if not host or host.startswith(("http://", "https://")):
+        return "localhost"
+    return host
+
+
 class NgrokTunnel:
     """Manages ngrok tunnel for the API server using the Python SDK."""
 
@@ -233,6 +245,23 @@ def create_socketio_path_middleware(wsgi_app, ngrok_secret):
     return middleware
 
 
+def _add_url_rule_late(app, rule, view, methods, defaults=None):
+    """Attach a route to an app that is already serving.
+
+    ``app.route``/``add_url_rule`` refuse to run once Flask has handled its
+    first request, and this integration only learns the tunnel's secret after
+    the API server is up - by then something has always hit the app already.
+    Writing the rule and view straight onto the map is what ``add_url_rule``
+    does anyway, minus that guard; ``Map.add`` flags itself for a re-sort, so
+    the next request routes against the new rule.
+    """
+    from werkzeug.routing import Rule
+
+    endpoint = f"ngrok_proxy_{len(app.url_map._rules)}"
+    app.url_map.add(Rule(rule, endpoint=endpoint, methods=methods, defaults=defaults))
+    app.view_functions[endpoint] = view
+
+
 def setup_ngrok_routes(app, ngrok_secret):
     """Setup catch-all routes for ngrok secret-prefixed paths.
 
@@ -245,16 +274,8 @@ def setup_ngrok_routes(app, ngrok_secret):
     # Add WSGI middleware to handle Socket.IO WebSocket upgrades
     app.wsgi_app = create_socketio_path_middleware(app.wsgi_app, ngrok_secret)
 
-    # Create a catch-all route for the secret prefix
-    @app.route(
-        f"/{ngrok_secret}/",
-        defaults={"path": ""},
-        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-    )
-    @app.route(
-        f"/{ngrok_secret}/<path:path>",
-        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-    )
+    methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+
     def ngrok_proxy(path):
         """Proxy requests from ngrok secret URLs to the real endpoints."""
         # Build the real path
@@ -328,6 +349,9 @@ def setup_ngrok_routes(app, ngrok_secret):
 
             return abort(404)
 
+    _add_url_rule_late(app, f"/{ngrok_secret}/", ngrok_proxy, methods, {"path": ""})
+    _add_url_rule_late(app, f"/{ngrok_secret}/<path:path>", ngrok_proxy, methods)
+
 
 class Integration(BaseIntegration):
     """Ngrok tunnel integration for exposing the API server."""
@@ -362,28 +386,28 @@ class Integration(BaseIntegration):
             type=str,
             default=None,
             help="Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)",
+            exclude_hash=True,
         )
 
-    def on_api_server_start(self, app: Any, args: Any) -> None:
-        """Hook called when API server starts.
+    def on_api_server_start(self, host: str, port: int) -> None:
+        """Hook called when the API server starts.
 
         Args:
-            app: Flask application instance
-            args: Command-line arguments
+            host: Configured host of the running server
+            port: Port the server actually bound (may differ from --port)
         """
-        # Extract host and port from the app or args as needed
-        host = getattr(args, "host_name", "localhost")
-        port = getattr(args, "port", 2100)
         global _tunnel
 
-        # Check if ngrok is actually enabled
+        # CLI args are registered for every integration, so re-check the flag:
+        # the hook must no-op unless the user actually asked for a tunnel.
         try:
             from praxis.cli import get_cli_args
 
-            args = get_cli_args()
-            if not getattr(args, "ngrok", False):
-                return
-        except:
+            cli_args = get_cli_args()
+        except Exception:
+            return
+
+        if not getattr(cli_args, "ngrok", False):
             return
 
         if _tunnel is not None:
@@ -399,7 +423,7 @@ class Integration(BaseIntegration):
             pass
 
         # Get auth token from args or environment
-        auth_token = getattr(args, "ngrok_auth_token", None) or os.getenv(
+        auth_token = getattr(cli_args, "ngrok_auth_token", None) or os.getenv(
             "NGROK_AUTHTOKEN"
         )
 
@@ -409,8 +433,9 @@ class Integration(BaseIntegration):
             )
             return
 
-        print(f"🚀 Starting ngrok tunnel for {host}:{port}")
-        _tunnel = NgrokTunnel(host, port, auth_token)
+        forward_host = _forward_host(host)
+        print(f"🚀 Starting ngrok tunnel for {forward_host}:{port}")
+        _tunnel = NgrokTunnel(forward_host, port, auth_token)
         success = _tunnel.start()
 
         if success:
@@ -419,7 +444,7 @@ class Integration(BaseIntegration):
 
             print(f"🌐 Ngrok tunnel active: {base_url}")
             print(f"🔐 Protected URL: {protected_url}")
-            print(f"📡 Local server: http://{host}:{port}")
+            print(f"📡 Local server: http://{forward_host}:{port}")
 
             # Wire the tunnel into the running Flask app.
             try:

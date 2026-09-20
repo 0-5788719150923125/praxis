@@ -376,3 +376,143 @@ class _Parser:
 		if t.is_valid_float():
 			return t.to_float()
 		return t
+
+
+## THE OTHER DIRECTION: a Variant back out as the same subset [method parse] reads.
+##
+## Added for the frontmatter block a document carries its voice in (see [FrontMatter]),
+## which is written by ghost and read by a human, so neither JSON-on-one-line nor a
+## dependency would do. The contract is a ROUND TRIP: everything this emits, `parse`
+## reads back equal - the gate holds both halves to it - which is what makes it safe to
+## write into someone's file.
+##
+## Block style throughout, two spaces per level. Empty collections emit as flow (`{}`,
+## `[]`) because a block map with no keys has no representation at all.
+static func emit(value: Variant, indent := 0) -> String:
+	var pad := " ".repeat(indent)
+	var out := ""
+	if value is Dictionary:
+		var d := value as Dictionary
+		if d.is_empty():
+			return pad + "{}\n"
+		for k in d:
+			var key := _emit_key(str(k))
+			var v: Variant = d[k]
+			var flow := _flow(v)
+			if not flow.is_empty():
+				out += "%s%s: %s\n" % [pad, key, flow]
+			elif (v is Dictionary and not (v as Dictionary).is_empty()) \
+					or (v is Array and not (v as Array).is_empty()):
+				out += "%s%s:\n%s" % [pad, key, emit(v, indent + 2)]
+			else:
+				out += "%s%s: %s\n" % [pad, key, _scalar(v)]
+		return out
+	if value is Array:
+		var a := value as Array
+		if a.is_empty():
+			return pad + "[]\n"
+		for v in a:
+			if v is Dictionary and not (v as Dictionary).is_empty():
+				# `- key: value` with the rest of the map aligned beneath it: the item
+				# dash occupies the first two columns of the child's indent.
+				var block := emit(v, indent + 2)
+				out += pad + "- " + block.substr(indent + 2)
+			elif v is Array and not (v as Array).is_empty():
+				out += "%s-\n%s" % [pad, emit(v, indent + 2)]
+			else:
+				out += "%s- %s\n" % [pad, _scalar(v)]
+		return out
+	return pad + _scalar(value) + "\n"
+
+
+## A short list of NUMBERS on one line, or "" when the value is not one.
+##
+## Readability, and only that: a seed lineage as a block list is five lines that say
+## `[1, 9]`, in a file a human opens to edit the prose around it. Restricted to numbers,
+## booleans and nulls because a string inside a flow collection would need its own
+## quoting rules for the comma and the bracket - a block list already handles those, and
+## nothing is worth a second escaping path in a writer that edits someone's manuscript.
+static func _flow(v: Variant) -> String:
+	if not (v is Array) or (v as Array).is_empty():
+		return ""
+	var parts: Array = []
+	for item in v as Array:
+		match typeof(item):
+			TYPE_INT, TYPE_FLOAT, TYPE_BOOL, TYPE_NIL:
+				parts.append(_scalar(item))
+			_:
+				return ""
+	var out := "[" + ", ".join(parts) + "]"
+	return out if out.length() <= 72 else ""
+
+
+## A mapping key. Keys here are ours - registry names and setting ids - but a key that
+## would not survive the round trip is quoted rather than trusted.
+static func _emit_key(k: String) -> String:
+	if k.is_empty() or k != k.strip_edges() or k.contains(":") or k.contains("#") \
+			or k.contains("\n") or k.begins_with("-") or k.begins_with("?"):
+		return _quote(k)
+	return k
+
+
+static func _scalar(v: Variant) -> String:
+	match typeof(v):
+		TYPE_NIL:
+			return "null"
+		TYPE_BOOL:
+			return "true" if v else "false"
+		TYPE_INT:
+			return str(v)
+		TYPE_FLOAT:
+			# A DECIMAL POINT, ALWAYS. `parse` returns an int for an integral literal, so
+			# a float that happens to sit on a whole number would come back a different
+			# type than it went in - which is a round trip this file promises not to break.
+			var f := float(v)
+			if not is_finite(f):
+				return _quote(str(f))
+			# `str()` and not a format string: GDScript's `%` has no `%g`, and the
+			# alternatives are a fixed number of decimals (which pads 0.5 out to
+			# 0.500000 and truncates 1e-07 to 0.000000). `str` gives the shortest
+			# form that reads back as the same float.
+			var s := str(f)
+			if not (s.contains(".") or s.contains("e") or s.contains("E")):
+				s += ".0"
+			return s
+		TYPE_DICTIONARY:
+			return "{}"
+		TYPE_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, \
+		TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY:
+			return "[]"
+		_:
+			var s := str(v)
+			return _quote(s) if _needs_quote(s) else s
+
+
+## Quote a string only when a bare one would come back as something else: a number, a
+## boolean, a null, an empty, or anything carrying syntax.
+static func _quote(s: String) -> String:
+	var out := "\""
+	for i in s.length():
+		var c := s[i]
+		match c:
+			"\\": out += "\\\\"
+			"\"": out += "\\\""
+			"\n": out += "\\n"
+			"\t": out += "\\t"
+			_: out += c
+	return out + "\""
+
+
+static func _needs_quote(s: String) -> bool:
+	if s.is_empty() or s != s.strip_edges():
+		return true
+	if s.is_valid_int() or s.is_valid_float():
+		return true
+	if s in ["true", "True", "false", "False", "null", "Null", "~"]:
+		return true
+	for c in ["#", ":", "-", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "%",
+			"@", "`", "\"", "'", "\n", "\t"]:
+		if s.begins_with(c):
+			return true
+	# `a#b` is a bare scalar; `a #b` is a scalar with a comment attached to it.
+	return s.contains(" #") or s.contains(": ") or s.ends_with(":")
