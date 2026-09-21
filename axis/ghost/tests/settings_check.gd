@@ -72,7 +72,63 @@ func _run() -> void:
 	if not is_equal_approx(_on_disk("camera", 0.0), 1.75):
 		_fail("Director.set_camera did not persist")
 
-	# 5. nothing but Settings owns the file
+	# 5. A CONTAINER SETTING IS NOT SHARED WITH THE CONFIG, in either direction.
+	#
+	# Reported as "I keep restarting and losing my settings. Sometimes filters are toggled off,
+	# sometimes their values are reset, it's not consistent between restarts" - and the
+	# inconsistency is the tell. A Dictionary is a REFERENCE in GDScript and ConfigFile keeps
+	# the reference it is given, so a live dictionary the app goes on mutating IS the config's
+	# copy; `write`'s no-op guard then compares it with itself, finds no change, and never marks
+	# the file dirty. The setting reaches the disk only when some OTHER write happens to carry
+	# the file there in the same breath, which is why it survived some restarts and not others.
+	#
+	# Everything below fails on that build and passes on this one, which is what makes it a
+	# check rather than a demonstration.
+	_restore["filters"] = Settings.read("director", "filters", null)
+	var live := {"monochrome": 1.0}
+	Settings.write("director", "filters", live)
+	Settings.flush()
+	# (a) the config does not alias what it was handed
+	live["grain"] = 0.4
+	var stored: Variant = Settings.read("director", "filters", {})
+	if (stored as Dictionary).has("grain"):
+		_fail("the config aliases the dictionary it was given - a caller mutating its own "
+			+ "copy is editing the settings through a side door")
+	# (b) ...so writing the mutated one is seen as a CHANGE and reaches the disk
+	Settings.write("director", "filters", live)
+	Settings.flush()
+	var on_disk: Dictionary = _on_disk_dict("filters")
+	if not on_disk.has("grain"):
+		_fail("a mutated dictionary written again never reached the disk - the no-op guard "
+			+ "is comparing the stored value with itself")
+	elif not is_equal_approx(float(on_disk.get("monochrome", 0.0)), 1.0):
+		_fail("the dictionary that reached the disk lost a key it had: %s" % str(on_disk))
+	else:
+		print("settings_check: a filter set survives being mutated and rewritten (%s)"
+			% str(on_disk))
+	# (c) nor does READ hand out the config's own object
+	var got: Dictionary = Settings.read("director", "filters", {})
+	got["bloom"] = 0.9
+	if (Settings.read("director", "filters", {}) as Dictionary).has("bloom"):
+		_fail("read() handed back the config's own dictionary - mutating what you read "
+			+ "edits the settings")
+	# (d) and the guard still works, or a drag writes the file every frame
+	var before_dirty := Settings._dirty
+	Settings.flush()
+	Settings.write("director", "filters", Settings.read("director", "filters", {}))
+	if Settings._dirty:
+		_fail("writing an unchanged dictionary marked the config dirty - the no-op guard is "
+			+ "gone and a slider drag will hit the disk every frame")
+	# (e) NESTED containers are copied too: a voice slot list is an Array of Dictionaries.
+	var rows := [{"pace": 1.0}]
+	Settings.write("generative", "__probe_slots", rows)
+	(rows[0] as Dictionary)["pace"] = 2.0
+	var back: Array = Settings.read("generative", "__probe_slots", [])
+	if not is_equal_approx(float((back[0] as Dictionary).get("pace", 0.0)), 1.0):
+		_fail("the copy was shallow - the rows inside an array are still shared")
+	Settings._cfg.erase_section_key("generative", "__probe_slots")
+
+	# 6. nothing but Settings owns the file
 	var writers := _writers()
 	if writers > 0:
 		_fail("%d script(s) still open the config themselves" % writers)
@@ -91,6 +147,14 @@ func _run() -> void:
 	for _i in 3:
 		await get_tree().process_frame
 	get_tree().quit(_fails.size())
+
+
+func _on_disk_dict(key: String) -> Dictionary:
+	var cfg := ConfigFile.new()
+	if cfg.load(Settings.PATH) != OK:
+		return {}
+	var v: Variant = cfg.get_value("director", key, {})
+	return v as Dictionary if v is Dictionary else {}
 
 
 ## Read the file FRESH off the disk - never Settings' own copy, which would pass whether

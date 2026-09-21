@@ -90,22 +90,59 @@ func allow_writes_for_test() -> void:
 	_read_only = false
 
 
+## THE CONFIG'S COPY IS NEVER SHARED, in either direction, and this is the reason both of
+## these functions duplicate containers.
+##
+## A Dictionary and an Array are REFERENCE types in GDScript, and `ConfigFile.set_value` keeps
+## the reference it is handed rather than a copy (measured, not assumed). Everything that
+## follows from that is silent:
+##
+##   THE NO-OP GUARD BELOW STOPS WORKING. It exists so a slider drag does not mark the file
+##   dirty sixty times a second, and it compares the stored value with the incoming one - but
+##   once the two are THE SAME OBJECT it is comparing a dictionary with itself, which is always
+##   equal. So the change is already in the in-memory config (by aliasing) and nothing is ever
+##   marked dirty, so nothing is ever flushed. The setting then survives a restart only when
+##   some OTHER setting happened to be written in the same breath and carried the file to disk
+##   with it. Reported exactly that way: "I keep restarting and losing my settings. Sometimes
+##   filters are toggled off, sometimes their values are reset, it's not consistent."
+##
+##   AND A READER CAN EDIT THE CONFIG BY ACCIDENT. `read` handing back the stored object means
+##   a caller that keeps it and mutates it - which is what every one of these settings is, a
+##   live dictionary the app works in - is writing into the config through a side door, with
+##   the same result.
+##
+## Duplicating on both sides costs a small copy of a small container and makes the guard, the
+## dirty flag and the flush all mean what they say again. Scalars are values already and are
+## passed through untouched.
+##
 ## The stored value for [param section]/[param key], or [param dflt] when it has never been
 ## set. Reads come from the in-memory copy, so they are free.
 func read(section: String, key: String, dflt: Variant) -> Variant:
-	return _cfg.get_value(section, key, dflt)
+	return _own(_cfg.get_value(section, key, dflt))
 
 
 ## Remember [param value]. Writing an unchanged value is a no-op, so this is safe to call
 ## from a signal that fires every frame of a drag.
 func write(section: String, key: String, value: Variant) -> void:
+	# Compared BEFORE the copy is taken: against an independent stored copy this is a real
+	# content comparison, which is what the guard was always supposed to be.
 	if _cfg.has_section_key(section, key) and _cfg.get_value(section, key) == value:
 		return
-	_cfg.set_value(section, key, value)
+	_cfg.set_value(section, key, _own(value))
 	_edit_ms = Time.get_ticks_msec()
 	if not _dirty:
 		_dirty_since = _edit_ms
 	_dirty = true
+
+
+## A container the caller and the config cannot both hold. Deep, because these nest - a voice
+## slot list is an Array of Dictionaries and a shallow copy would share every row.
+func _own(v: Variant) -> Variant:
+	if v is Dictionary:
+		return (v as Dictionary).duplicate(true)
+	if v is Array:
+		return (v as Array).duplicate(true)
+	return v
 
 
 ## Write now, whatever the debounce thinks. Called at every exit path; safe to call when

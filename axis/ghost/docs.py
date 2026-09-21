@@ -286,6 +286,23 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         False,
     ),
     (
+        "--clock-watch",
+        "",
+        "Report when the show's clock stops advancing while frames keep being "
+        "written - the shape a frozen recording takes. On automatically in every "
+        "render; useful on a plain session because that runs at the speed of the "
+        "audio rather than the encoder.",
+        False,
+    ),
+    (
+        "--until",
+        "<seconds>",
+        "Stop at this point on the show clock. Renders a slice instead of the "
+        "whole thing, which is how a defect deep in a long export is reproduced "
+        "without paying for the whole export.",
+        False,
+    ),
+    (
         "--storyboard",
         "<name>",
         "Manual mode: play `storyboards/<name>.yaml` (or `.json`).",

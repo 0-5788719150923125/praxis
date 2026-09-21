@@ -9,6 +9,10 @@ extends Node2D
 
 const Bake := preload("res://scripts/bake.gd")
 
+## How long the show clock may stand still in a render before it is reported, in seconds of
+## render time. Comfortably above a single slow frame and well under the shortest stall seen.
+const CLOCK_STALL_WARN := 0.5
+
 var _splash: Node = null
 var _feedback: Node = null
 var _chrome: Node = null             # shared session furniture (exporter/assistant/feedback)
@@ -67,6 +71,24 @@ const STAGE_GOOD_MS := 14.0          # under this, sustained -> de-escalate
 # ends, so the recorded movie starts and stops with the music.
 var _export_mode := false
 var _filter_said := ""               # last look printed, so a resize does not repeat it
+## --until <seconds>: stop there. 0 means "the whole thing".
+var _until := 0.0
+## Whether to report a stalled show clock. On for every render, and available to a PLAIN
+## session with `--clock-watch` - which is the cheap way to ask the question, because it needs
+## no encoder and runs at the speed of the audio rather than the speed of the renderer.
+var _clock_watch := false
+# THE RENDER CLOCK WATCH. The show's picture - every scene and the karaoke line - is driven by
+# `Spectrum.current.time`, and a render writes one video frame per engine iteration. So if that
+# clock stops advancing while iterations continue, the OUTPUT holds a still while the audio
+# track plays on, which is exactly what was reported: a subtitle card sitting nineteen seconds
+# past the end of its own sentence with the karaoke fill frozen mid-word.
+#
+# Six hours of render is too expensive to bisect by watching, and the render's own log rotates
+# away, so the render says so itself. Export only: a live session drops frames for a hundred
+# ordinary reasons and this would be noise there.
+var _clock_t := -1.0
+var _clock_stuck := 0.0
+var _clock_frames := 0
 
 func _ready() -> void:
 	# window-close is handled by _shutdown (see _notification): the WM close
@@ -92,6 +114,9 @@ func _ready() -> void:
 		_open_mask_editor(_arg_value(args, "--mask-edit"))
 		return
 	_export_mode = args.has("--export")
+	if not _arg_value(args, "--until").is_empty():
+		_until = float(_arg_value(args, "--until"))
+	_clock_watch = _export_mode or args.has("--clock-watch")
 	if _export_mode:
 		# Background render: Boot (first autoload) already hid the window as early as
 		# possible, and the exporter's override.cfg has set the output resolution + stretch
@@ -306,6 +331,35 @@ func _sync_filters() -> void:
 		print("ghost: look %s" % said)
 
 
+## Say so when the show's clock stops while the render keeps writing frames.
+##
+## Reports the FIRST frame of a stall and again when it ends, with what the audio player was
+## doing at the time - because `Spectrum` takes the clock from `get_playback_position()` and
+## the two possible faults look identical in the finished video: a player that stopped, and a
+## player that is playing but reporting a position that does not move.
+func _watch_render_clock(delta: float) -> void:
+	var t := Spectrum.current.time
+	_clock_frames += 1
+	if t > _clock_t + 0.0001:
+		if _clock_stuck >= CLOCK_STALL_WARN:
+			print("ghost: CLOCK RESUMED at %.2fs after %.2fs of render (%d frames) held at %.2fs"
+				% [t, _clock_stuck, _clock_frames, _clock_t])
+		_clock_t = t
+		_clock_stuck = 0.0
+		_clock_frames = 0
+		return
+	_clock_stuck += delta
+	# Once per stall, on the frame it crosses the threshold - not every frame of it.
+	if _clock_stuck >= CLOCK_STALL_WARN and _clock_stuck - delta < CLOCK_STALL_WARN:
+		var pos := -1.0
+		var playing := false
+		if Spectrum._player != null:
+			playing = Spectrum._player.playing
+			pos = Spectrum._player.get_playback_position()
+		print("ghost: CLOCK STALLED at %.2fs (%d frames) - player.playing=%s position=%.3f"
+			% [_clock_t, _clock_frames, str(playing), pos])
+
+
 ## Rebuild the vehicle if the setting changed since the last session. Director.set_vehicle
 ## says the change lands on the NEXT session, and this is where "next session" happens - the
 ## stage is built once and reused for every take, so without this the picker would write the
@@ -347,6 +401,12 @@ func _process(delta: float) -> void:
 	Films.pump()
 	# The background render reports its progress (playback position / length) so the
 	# live app's exporter can show a percentage in the status notification.
+	if _clock_watch:
+		_watch_render_clock(delta)
+	if _until > 0.0 and Spectrum.current.time >= _until:
+		print("ghost: --until %.1fs reached" % _until)
+		get_tree().quit()
+		return
 	if _export_mode:
 		_status_t += delta
 		if _status_t >= 0.3:

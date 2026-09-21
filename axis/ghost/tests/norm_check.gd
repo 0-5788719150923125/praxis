@@ -29,6 +29,35 @@ const TextNorm_ := preload("res://scripts/text_norm.gd")
 const Phonemes_ := preload("res://scripts/phonemes.gd")
 
 # expected substrings, because the surrounding punctuation is preserved
+## INITIALISMS, as SWITCHES and HOLDS - the same discipline the homograph gates use, and for
+## the same reason. `IT` is the field and `it` is the pronoun and they are the same letters, so
+## the holds are the safety net and there are deliberately more of them than switches: an
+## override that fires on the wrong token does not error, it reads "eye tee" in the middle of
+## an ordinary sentence, forty minutes into a chapter, and nothing but a listener notices.
+const INITIALISM_SWITCHES := [
+	["The CIA never answered.", "see eye eigh"],
+	["She works in IT.", "eye tee"],
+	["He bought an eSIM abroad.", "ee sim"],
+	# with the wrappers and punctuation the pass has to see through
+	["\"eSIM,\" he said.", "ee sim"],
+	["Was it an eSIM?", "ee sim"],
+	# plural and possessive, carried onto the last spoken word
+	["Two eSIMs, both dead.", "ee sims"],
+	["The eSIM's profile.", "ee sims"],
+]
+## ...and what must NEVER be rewritten. Case is the only thing separating these from the
+## switches above, and it is the whole safety of the table.
+const INITIALISM_HOLDS := [
+	["it was raining", "it"],
+	["It was raining.", "It"],
+	["Its cover was blown.", "Its"],
+	# words that merely CONTAIN an initialism
+	["They flew to Italy.", "Italy"],
+	["The circuit was fine.", "circuit"],
+	["He sent a bit of it.", "bit"],
+	["He resimulated the run.", "resim"],
+]
+
 const CASES := [
 	# numerals - these used to disappear entirely
 	["I counted 42 of them.", "forty two"],
@@ -62,7 +91,7 @@ const CASES := [
 	["He played H8.", "aitch eight"],
 	["the v2 build", "vee two"],
 	["a 3D print", "three dee"],
-	["page A4.", "ay four"],
+	["page A4.", "eigh four"],
 	["COVID19 rules", "COVID nineteen"],
 	["Mr. Blake arrived.", "mister"],
 	["Dr. Vane left.", "doctor"],
@@ -124,6 +153,58 @@ const PAUSE_CASES := [
 
 func _init() -> void:
 	var fails := 0
+
+	# INITIALISMS. Switches first, then the holds that keep the table from firing on ordinary
+	# words - and one check that the READER still sees what was written, because an override
+	# that reached the subtitles would put "see eye ay" on the page where "CIA" was typed.
+	for c in INITIALISM_SWITCHES:
+		var got: String = TextNorm_.normalize(String(c[0]))
+		if not got.contains(String(c[1])):
+			print("norm_check: FAIL  initialism %-28s -> %s   (wanted %s)" % [c[0], got, c[1]])
+			fails += 1
+	for c in INITIALISM_HOLDS:
+		var got: String = TextNorm_.normalize(String(c[0]))
+		if not got.contains(String(c[1])) or got.contains("ee sim") \
+				or got.contains("eye tee") or got.contains("see eye eigh"):
+			print("norm_check: FAIL  initialism HOLD %-23s -> %s   (must keep %s untouched)"
+				% [c[0], got, c[1]])
+			fails += 1
+	var marked: Dictionary = TextNorm_.normalize_marked("He bought an eSIM.")
+	var spans: Array = marked["spans"]
+	if not String(marked["text"]).contains("ee sim"):
+		fails += 1
+		print("norm_check: FAIL  normalize_marked did not expand the initialism")
+	# The span carries the token AS WRITTEN, its punctuation included - the same thing an
+	# abbreviation's span carries, and what the reader is shown in place of the expansion.
+	var kept_src := ""
+	for m in spans:
+		if String((m as Dictionary).get("src", "")).begins_with("eSIM"):
+			kept_src = String((m as Dictionary).get("src", ""))
+	if kept_src != "eSIM.":
+		print("norm_check: FAIL  an expanded initialism left no usable span - the subtitle "
+			+ "would read 'ee sim' where 'eSIM' was written (spans: %s)" % str(spans))
+		fails += 1
+
+	# NO INITIALISM MAY BE SPELLED WITH `ay`. It phonemizes to ˈaɪ - the word "aye" - where the
+	# letter A is ˈeɪ, and that one respelling is what turned the override for CIA into "see eye
+	# eye". The table is small and hand-written, so this is the check that keeps the next entry
+	# from repeating it.
+	for k in TextNorm_.INITIALISMS:
+		var spelled := String(TextNorm_.INITIALISMS[k])
+		if spelled.split(" ").has("ay") or spelled.split(" ").has("aye"):
+			print("norm_check: FAIL  initialism '%s' is spelled '%s' - `ay` reads as ˈaɪ, "
+				% [k, spelled] + "the word 'aye', not as the letter A (use `eigh`)")
+			fails += 1
+
+	# THE LETTER A, for the same reason one level down. It reaches every alphanumeric token:
+	# "A4" would have read "aye four".
+	if String(TextNorm_.LETTER_NAMES["a"]) == "ay":
+		print("norm_check: FAIL  the letter A is spelled 'ay', which eSpeak reads as ˈaɪ")
+		fails += 1
+	if not TextNorm_.normalize("Square A4 was open.").contains("eigh four"):
+		print("norm_check: FAIL  A4 -> %s (wanted the letter A, not 'aye')"
+			% TextNorm_.normalize("Square A4 was open."))
+		fails += 1
 
 	for c in CASES:
 		var got: String = TextNorm_.normalize(String(c[0]))

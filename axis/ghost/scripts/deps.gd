@@ -183,12 +183,13 @@ const TOOLS := [
 		"name": "xvfb-run",
 		"bins": ["xvfb-run"],
 		"no_version": true,
-		"tier": TIER_EXTRA,
+		"tier": TIER_FEATURE,
 		"platforms": ["linux"],
-		"dev": true,
-		"used_for": "Development only: the pixel-readback gates in tests/ need a real "
-			+ "GPU context and therefore a display, and tests/run_quiet.sh gives them a "
-			+ "virtual one so no window ever appears.",
+		"used_for": "Giving a video export a display of its own, so the recording cannot "
+			+ "be frozen by the desktop: Godot stops rendering whenever the compositor "
+			+ "stops drawing its window, and the movie writer then re-captures the last "
+			+ "frame while the audio keeps advancing. Also what the pixel-readback gates "
+			+ "in tests/ use (tests/run_quiet.sh), so no window ever appears for those.",
 		"install": {
 			"linux": "sudo pacman -S xorg-server-xvfb   ·   sudo apt install xvfb",
 		},

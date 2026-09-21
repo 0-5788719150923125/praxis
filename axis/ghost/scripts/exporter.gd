@@ -83,6 +83,10 @@ var _state := "idle"     # idle | baking | rendering | transcoding | done
 var _bake_pid := -1
 var _render_pid := -1
 var _transcode_pid := -1
+## True when this render is running on the real desktop rather than a display of its own -
+## the state in which burying the window corrupts the picture. Shown to the user, because a
+## six-hour job that can be spoiled by another window needs to say so BEFORE it is spoiled.
+var _note_no_virtual_display := false
 var _out := ""           # the final file the user chose (.mp4)
 var _avi := ""           # the intermediate Movie Maker AVI (transcoded away, then deleted)
 var _song := ""
@@ -271,8 +275,13 @@ func _process(dt: float) -> void:
 					# sit still for minutes on heavy scenes, which reads as a
 					# freeze. A moving number is the difference between "slow"
 					# and "hung" for the person watching it.
-					_set_status("⏺  Rendering %s …  %.1f%%" % [
-						_out.get_file(), maxf(_stall_frac, 0.0) * 100.0],
+					# THE WARNING RIDES THE PROGRESS LINE, not a one-shot notice: this is
+					# the only text on screen for hours, and "leave the render window
+					# alone" is advice that has to still be visible at hour five.
+					var how := " …  %.1f%%" % (maxf(_stall_frac, 0.0) * 100.0)
+					if _note_no_virtual_display:
+						how += "   ⚠ leave the render window visible (no xvfb-run)"
+					_set_status("⏺  Rendering %s%s" % [_out.get_file(), how],
 						Color(0.95, 0.92, 0.7))
 			else:
 				_clear_override()                # render finished -> restore live resolution
@@ -538,7 +547,49 @@ func _start_render() -> void:
 	# clean, exactly as a plain song does.
 	if _synth_autoplay:
 		args.append("--synth-autopilot")
-	_render_pid = Subprocess.start(exe, args, "render")
+	# A DISPLAY OF ITS OWN, so the desktop cannot freeze the recording.
+	#
+	# THE BUG THIS IS FOR, reported as "the newly-exported video is freezing in some places -
+	# the scene and subtitles pause while the audio continues uninterrupted, and it recovers
+	# after 20 seconds or so". Measured on the delivered file: a subtitle card sitting
+	# nineteen seconds past the end of its own sentence with the karaoke fill frozen
+	# mid-word, then snapping back into sync, while the audio ran smoothly through it.
+	#
+	# Godot does not render while the compositor is not drawing its window
+	# (`window_can_draw()`), and the movie writer then re-captures the LAST BUFFER while the
+	# audio clock keeps advancing - so the film holds a still for exactly as long as the
+	# window was minimised, covered or throttled. boot.gd has carried that explanation since
+	# the "4K exports partially freeze for seconds" bug, along with the remedy it could not
+	# reach at the time: "avoidable without a virtual display; this gets it as close as
+	# possible". Shrinking the window to a 480x270 floater got close - it is drawable, and it
+	# is also easy to bury under another window for an hour without thinking about it.
+	#
+	# A render that takes six hours cannot ask for the machine to be left alone for six
+	# hours. On its own X display there is no compositor, nothing to minimise and nothing to
+	# throttle: the NVIDIA driver still renders on the real GPU (tests/run_quiet.sh has
+	# relied on exactly that for the pixel gates), and the desktop is free.
+	#
+	# It is NOT required. Without xvfb the render works as it always has and the caller is
+	# told what that costs, because a silent fallback here is a six-hour job that may quietly
+	# come out wrong.
+	var runner := exe
+	var run_args := args
+	var virtual := Deps.resolve("xvfb-run")
+	if not virtual.is_empty():
+		runner = virtual
+		# -a picks a free display number; the screen must be at least the size of the
+		# WINDOW (the 480x270 floater), never of the recorded viewport - the movie records
+		# the viewport, which is independent of the window in "viewport" stretch mode.
+		run_args = PackedStringArray(["-a", "-s", "-screen 0 960x540x24", exe])
+		run_args.append_array(args)
+		print("ghost export: rendering on a virtual display - the desktop cannot freeze it")
+	else:
+		push_warning("ghost export: no xvfb-run; the render window must stay drawable for "
+			+ "the WHOLE render. Minimising or burying it freezes the recorded picture "
+			+ "while the audio keeps going. Install it: "
+			+ "sudo pacman -S xorg-server-xvfb")
+		_note_no_virtual_display = true
+	_render_pid = Subprocess.start(runner, run_args, "render")
 	if _render_pid > 0:
 		_state = "rendering"
 		_stall_t = 0.0

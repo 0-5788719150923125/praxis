@@ -39,6 +39,47 @@ var current: AudioFeatures = AudioFeatures.new()
 ## A stable hash of the loaded audio's path - scenes seed from this so the same
 ## song always renders the same video. 0 when nothing is loaded.
 var song_hash: int = 0
+## A CLOCK SUPPLIED FROM OUTSIDE, in seconds; negative means "use the audio player", which is
+## every normal session and every render.
+##
+## It exists because a six-hour export cannot be re-run to find out what it did. The show is a
+## pure function of the seed and the baked spectrum, so the whole schedule can be replayed with
+## no audio device and no encoder - but only if something can stand in for the playback
+## position. This is that, and it is deliberately ONE branch in `_process` rather than a second
+## code path: the energy, the beat, the tempo, the flux and the movement are all derived below
+## it, and a replay that computed those itself would be measuring a copy of this file rather
+## than this file. See tests/show_timeline_probe.gd.
+var virtual_clock: float = -1.0
+## THE RENDER CLOCK: in an export, the show's time is COUNTED FROM FRAMES rather than asked of
+## the audio player. True only in a render.
+##
+## Reported as a finished video freezing for up to twenty seconds at a time while the audio
+## played on. The picture - every scene and the karaoke line - is driven by `current.time`, and
+## Movie Maker writes exactly one video frame per engine iteration; so if that clock stops
+## while iterations continue, the OUTPUT holds a still. Measured on the artefact: a subtitle
+## card sitting nineteen seconds past the end of its own sentence with the karaoke fill frozen
+## mid-word, then snapping back into sync - a clock that STOPPED and RESUMED, not one that
+## lagged. The same session played back live, with the clock watched, never stalls; only the
+## render does.
+##
+## `get_playback_position()` answers for a device that is mixing in blocks, and under Movie
+## Maker there is no device pacing anything - the engine is running as fast as it can and the
+## audio is written per frame. Under `--fixed-fps` a frame IS 1/fps of show time, exactly, so
+## counting frames is not an approximation of the truth here, it is the definition of it: the
+## output has exactly that many frames per second whatever any device says.
+##
+## THE MASKING RENDER ALREADY DID THIS, and its comment says why in almost these words - "in
+## render mode the movie is driven by accumulated fixed-fps time (_render_t), NOT the
+## video/audio stream positions - those can drift a little, stall". That lesson never reached
+## this file, which is the whole of the defect.
+##
+## A/V CANNOT DRIFT UNDER IT, which is the property that makes it safe rather than merely
+## different: Movie Maker writes the audio at the same fixed rate it writes the frames, so the
+## counted clock and the written audio advance by the same amount every iteration by
+## construction. Live playback keeps asking the player, where a real device really is the
+## authority on where the sound is.
+var render_clock := false
+var _render_t := 0.0
 var _sig: HarmonicSignature = null       # rolling perceptual harmonic descriptor + content seed
 var _sig_fast: HarmonicSignature = null  # short-memory twin for the Echo re-localizer: recognizing
                                          # that the audio moved (a loop seam) must not wait out the
@@ -177,6 +218,12 @@ func begin(path := "") -> void:
 		_override_path = path
 	_load_audio()
 	if _has_audio:
+		# A render counts its own time (see `render_clock`). Same flag the rest of the app
+		# uses to know it is a render, read here rather than pushed in from main so nothing
+		# has to remember to set it.
+		render_clock = OS.get_cmdline_user_args().has("--export")
+		if render_clock:
+			print("ghost: render clock - show time counted from frames, not the audio player")
 		var bake_file := _arg_value("--bake-file")
 		if not bake_file.is_empty():
 			# Pre-built cache (the export render's normal path): load it and start -
@@ -655,8 +702,22 @@ func _process(delta: float) -> void:
 			_tailing = false
 			song_finished.emit()
 
-	if _has_audio and _player.playing:
-		f.time = _clock_offset() + _player.get_playback_position()
+	if virtual_clock >= 0.0:
+		# A CLOCK FROM OUTSIDE - see `virtual_clock`. Everything below this branch runs
+		# exactly as it does in a render; only where the time came from is different.
+		f.time = virtual_clock
+		if _baked:
+			_fill_bands_baked(f)
+		else:
+			_fill_bands(f)
+	elif _has_audio and _player.playing:
+		# THE RENDER CLOCK. A render is driven by ACCUMULATED FIXED-FPS TIME, never by the
+		# audio player's reported position - see `render_clock`.
+		if render_clock:
+			_render_t += delta
+			f.time = _clock_offset() + _render_t
+		else:
+			f.time = _clock_offset() + _player.get_playback_position()
 		if _baked:
 			_fill_bands_baked(f)
 		else:

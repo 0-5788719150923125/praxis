@@ -107,11 +107,63 @@ const ABBREV := {
 ## IT IS NEVER APPLIED TO A WORD ON ITS OWN. `a`, `I` and `O` are real English words, and putting
 ## letter names in the lexicon would have read every article as "ay". Only a single-letter run
 ## INSIDE a token that also contains a digit is a letter being named.
+## `a` is `eigh` and not `ay`, which is not a typo. Asked of eSpeak, `ay` comes back ˈaɪ - the
+## word "aye" - while the letter A is ˈeɪ, and `eigh` is the spelling that gets there. Every
+## other entry below was put to the same test against the letter's own reading and agreed with
+## it; this was the only one that did not.
 const LETTER_NAMES := {
-	"a": "ay", "b": "bee", "c": "see", "d": "dee", "e": "ee", "f": "ef", "g": "gee",
+	"a": "eigh", "b": "bee", "c": "see", "d": "dee", "e": "ee", "f": "ef", "g": "gee",
 	"h": "aitch", "i": "eye", "j": "jay", "k": "kay", "l": "el", "m": "em", "n": "en",
 	"o": "oh", "p": "pee", "q": "cue", "r": "ar", "s": "ess", "t": "tee", "u": "you",
 	"v": "vee", "w": "double you", "x": "ex", "y": "why", "z": "zee",
+}
+
+
+## INITIALISMS eSPEAK GETS WRONG. Respelled, so they are said the way they are read.
+##
+## THE PHONEMES WERE NEVER THE PROBLEM - THE DURATIONS WERE, and this table exists for that.
+## It took three passes to find, and the two wrong answers are worth keeping because both were
+## reasonable:
+##
+##   PASS 1 assumed eSpeak was misreading the spellings and respelled all three. One of the
+##   respellings was wrong - `ay` phonemizes to ˈaɪ, the word "aye", where the letter A is ˈeɪ -
+##   and the report came back "CIA is still being pronounced as see eye eye".
+##
+##   PASS 2 asked eSpeak, found it already returns sˌiːˌaɪˈeɪ for `CIA` and ˌaɪtˈiː for `IT`,
+##   concluded the overrides were pure harm and removed them. The phonemes really are correct.
+##   The report came back that all three were still wrong.
+##
+##   PASS 3 rendered them through the checkpoint and measured the audio, which is the only
+##   thing that could have settled it:
+##
+##       IT    ˌaɪtˈiː        0.21 s      eye tee        ˈaɪ tˈiː      0.59 s
+##       CIA   sˌiːˌaɪˈeɪ     0.46 s      see eye eigh   sˈiː ˈaɪ ˈeɪ  0.73 s
+##
+##   Two letter names in a fifth of a second is a blip, not a word. en_US-libritts-high reads
+##   a SHORT TOKEN as a fast function word, which is what `it` is in every sentence it was
+##   trained on, and no amount of correct phonemes changes that. Giving each letter its own
+##   word gives the duration predictor a word to time.
+##
+## So these are spelled out for PACING, not for pronunciation, and the respellings must
+## phonemize to the letter's own reading - `eigh` and not `ay`, asked of eSpeak and checked by
+## the gate.
+##
+## MATCHED ON THE EXACT SPELLING, CASE AND ALL. `IT` is the field and `it` is the pronoun and
+## they are the same letters; `eSIM` and `esim` are different words to eSpeak (ˈiː sˈɪm against
+## ˈɛsɪm). The case is the only evidence there is, so nothing but the case may decide. A
+## sentence set entirely in capitals is the one reading this gets wrong; an inline `[IH1 T]`
+## overrides it.
+##
+## KEPT SHORT AND HAND-WRITTEN ON PURPOSE, which is the opposite of the rule this project
+## usually follows. There is no corpus of "initialisms this backend says wrong" to source it
+## from - it is a property of the voice, not of English. It is not a general abbreviation
+## dictionary and must not grow into one: anything a rule can settle belongs in a rule,
+## anything one-off belongs inline in the script as `[IY1 S IH1 M]`, and anything already
+## correct belongs NOWHERE.
+const INITIALISMS := {
+	"CIA": "see eye eigh",
+	"eSIM": "ee sim",
+	"IT": "eye tee",
 }
 
 
@@ -808,6 +860,29 @@ static func _expand_abbrev(text: String, marks: Array = []) -> String:
 		while body.length() > 0 and body[body.length() - 1] in "\"')" + EMPH_MARKS:
 			tail = body[body.length() - 1] + tail
 			body = body.substr(0, body.length() - 1)
+		# INITIALISMS FIRST, and against `body` rather than `lower`: the case IS the match.
+		# Trailing sentence punctuation is moved into the tail so `CIA.` still finds `CIA`,
+		# and a possessive or plural `s` is carried onto the last spoken word.
+		var mark := ""
+		var stem := body
+		while stem.length() > 0 and stem[stem.length() - 1] in ".,;:!?":
+			mark = stem[stem.length() - 1] + mark
+			stem = stem.substr(0, stem.length() - 1)
+		var plural := ""
+		if stem.ends_with("'s") and INITIALISMS.has(stem.substr(0, stem.length() - 2)):
+			plural = "s"
+			stem = stem.substr(0, stem.length() - 2)
+		elif stem.length() > 1 and stem.ends_with("s") \
+				and INITIALISMS.has(stem.substr(0, stem.length() - 1)):
+			plural = "s"
+			stem = stem.substr(0, stem.length() - 1)
+		if INITIALISMS.has(stem):
+			var spoken := head + String(INITIALISMS[stem]) + plural + mark + tail
+			marks.append({"at": at, "len": spoken.length(), "src": strip_emphasis(tok)})
+			out.append(spoken)
+			at += spoken.length() + 1
+			continue
+
 		var lower := body.to_lower()
 		var matched := false
 		for key in ABBREV:

@@ -33,11 +33,23 @@ const MARGIN := 16.0
 ## Never collapse below this, however small the window gets. A panel scrolled down to nothing
 ## is not more usable than one that overflows.
 const MIN_HEIGHT := 140.0
+## Clear space kept to the right of the content, BESIDE the scrollbar rather than under it.
+##
+## A [ScrollContainer] lays its child out at the full width and draws the scrollbar ON TOP, so
+## the right-hand end of every row is underneath it - which on this panel is where the value
+## readouts sit, and they were being written over. Reported as "the vertical scroll bar on the
+## left-side panel overwrites the label text in a lot of places".
+##
+## The gutter is held whether the bar is showing or not. Sizing it to the live bar would move
+## every row sideways at the moment a row is added or the window is resized, which is a worse
+## artifact than a few pixels of margin on a panel that happens to fit.
+const GUTTER := 4.0
 
 ## THE CONTAINER TO FILL. Everything a panel shows goes in here.
 var body: VBoxContainer
 
 var _scroll: ScrollContainer
+var _pad: MarginContainer
 
 
 func _init(width := 380.0) -> void:
@@ -52,9 +64,13 @@ func _init(width := 380.0) -> void:
 	# invisible.
 	_scroll.follow_focus = true
 	add_child(_scroll)
+	# The content sits inside a margin so the scrollbar has somewhere of its own to be.
+	_pad = MarginContainer.new()
+	_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(_pad)
 	body = VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_scroll.add_child(body)
+	_pad.add_child(body)
 
 
 func _ready() -> void:
@@ -85,8 +101,13 @@ func _fit() -> void:
 func _apply() -> void:
 	if not is_inside_tree() or _scroll == null or not is_instance_valid(_scroll):
 		return
+	# The bar's own width, asked of the bar rather than guessed - a theme decides it, and a
+	# hard-coded 12 is wrong the moment one is applied.
+	var bar := _scroll.get_v_scroll_bar()
+	var w: int = int(bar.get_combined_minimum_size().x + GUTTER) if bar != null else int(GUTTER)
+	_pad.add_theme_constant_override("margin_right", w)
 	var room: float = get_viewport().get_visible_rect().size.y - position.y - MARGIN
-	var want: float = body.get_combined_minimum_size().y
+	var want: float = _pad.get_combined_minimum_size().y
 	# `want` when it fits, the room when it does not, and never below the floor. Taking the
 	# minimum is what keeps a short panel short: this must not become a full-height sidebar
 	# on a panel with four rows in it.

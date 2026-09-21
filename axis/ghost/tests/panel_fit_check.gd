@@ -125,6 +125,20 @@ func _check_fits(name: String, panel: SidePanel_) -> void:
 			"%s at window %d: scrolled to the bottom, the last row sits at %.0f..%.0f "
 			% [name, h, row.position.y, row.end.y]
 			+ "outside the %.0f..%.0f the panel shows" % [view.position.y, view.end.y])
+		# THE BAR HAS CLEAR SPACE BESIDE IT, and CLEARANCE is the measurement rather than
+		# non-overlap. Measured: a ScrollContainer does reserve the bar's width, so the content
+		# already stopped exactly AT the bar's left edge - touching it, with nothing between
+		# them, which is what the right-aligned value readouts were running into. An assertion
+		# that only forbade overlap was therefore true before the gutter existed and passed on
+		# a build with no gutter at all; it proved nothing. This one fails on that build.
+		var bar_rect: Rect2 = bar.get_global_rect()
+		var content: Rect2 = panel.body.get_global_rect()
+		_ok(bar.visible, "the control is wrong - the bar is not showing, so there is nothing "
+			+ "for the content to be crowded by")
+		var gap: float = bar_rect.position.x - content.end.x
+		_ok(gap >= SidePanel_.GUTTER - 1.0,
+			"%s at window %d: only %.0f px between the last column of text and the scrollbar "
+			% [name, h, gap] + "(want at least %.0f)" % SidePanel_.GUTTER)
 		panel._scroll.scroll_vertical = 0
 		await _settle()
 	if not overflowed:
