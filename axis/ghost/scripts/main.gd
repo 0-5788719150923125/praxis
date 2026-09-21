@@ -66,6 +66,7 @@ const STAGE_GOOD_MS := 14.0          # under this, sustained -> de-escalate
 # mode (--export). It runs the session clean (no overlays) and quits when the song
 # ends, so the recorded movie starts and stops with the music.
 var _export_mode := false
+var _filter_said := ""               # last look printed, so a resize does not repeat it
 
 func _ready() -> void:
 	# window-close is handled by _shutdown (see _notification): the WM close
@@ -265,6 +266,10 @@ func _stage_host() -> Node:
 	_stage_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_stage_view)
 	move_child(_stage_view, 0)       # the stage is the backdrop, always
+	# THE LOOK (see filters.gd). The stage view is the one place the whole show exists as a
+	# single picture, so a material here is a post-process over every scene at once - and
+	# over nothing else, which is what leaves the panels and the karaoke line unfiltered.
+	Director.filters_changed.connect(_sync_filters)
 	get_viewport().size_changed.connect(_sync_stage_size)
 	_sync_vehicle()
 	# every scene gets a FRESH measurement: without this, a light scene that
@@ -282,6 +287,23 @@ func _stage_host() -> Node:
 			print("ghost: stage governor -> level 0 (scene cut)"))
 	_sync_stage_size()
 	return _stage
+
+
+## Hand the Director's look to the stage view. Called when a filter changes, when the frame
+## is resized, and once as the stage is built - including in an export render, which boots
+## this same code against the same settings file and so inherits the look with no flag.
+func _sync_filters() -> void:
+	if _stage_view == null or not is_instance_valid(_stage_view):
+		return
+	var look := Director.resolved_filters()
+	Filters.apply(_stage_view, look, _stage_view.size)
+	# Said once per CHANGE, not per call - this is also reached by every window resize and
+	# every frame of a dial being dragged. It is the line that tells a render's log what look
+	# it inherited, which is otherwise invisible in a process nobody is watching.
+	var said := Filters.describe(look)
+	if said != _filter_said:
+		_filter_said = said
+		print("ghost: look %s" % said)
 
 
 ## Rebuild the vehicle if the setting changed since the last session. Director.set_vehicle
@@ -307,6 +329,9 @@ func _sync_stage_size() -> void:
 	_stage.size = Vector2i(base.round())
 	_stage_view.position = Vector2.ZERO
 	_stage_view.size = base
+	# The dot lattice and the grain are sized in pixels, so the look has to be told when the
+	# frame changes size - otherwise a resized window renders a different picture.
+	_sync_filters()
 	if _vehicle != null and is_instance_valid(_vehicle):
 		_vehicle.on_stage_resized(base)
 

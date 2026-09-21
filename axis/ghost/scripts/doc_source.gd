@@ -23,16 +23,37 @@ class_name DocSource
 ##
 ## FRONTMATTER IS NOT SPOKEN, AND IT IS WHERE THE VOICE LIVES. [FrontMatter] cuts the YAML
 ## block off the top before a word reaches the synthesizer, and ghost keeps its own key in
-## there: the reader, the tone, the room, the whole cast of a multi-speaker chapter. Picking
-## a document restores its voice; ↑ writes the panel's current one back. Neither happens on
-## its own - an import that fired at every Speak would undo a dial the author had just
-## moved, and an export that fired on every change would be ghost writing to someone's
-## manuscript without being asked.
+## there: the reader, the tone, the room, the whole cast of a multi-speaker chapter.
+##
+## THE TWO DIRECTIONS ARE NOT SYMMETRIC, and that is deliberate rather than an oversight.
+## SAVING IS AUTOMATIC - a dial moved is a dial written, on a quiet period, exactly the way
+## the rest of ghost saves (see [Settings], whose whole argument is that persistence should
+## be a property rather than something to remember). LOADING IS NOT: it happens when a
+## document is opened and when ⟳ is pressed, and never on its own, because an import firing
+## by itself would undo a dial the author had just moved.
+##
+## What makes the automatic direction safe is not that the write is small, it is that the
+## write is CHECKED: [method FrontMatter.write_block] re-reads from disk, replaces one key
+## textually, refuses outright if the body or any other key would change, and renames a
+## verified temp file over the original. Doing that on a timer is the same operation as
+## doing it on a button, minus the button.
+##
+## ...AND NOT IN AN UNATTENDED PROCESS. An export render boots this whole app against the
+## author's settings, which is exactly how a render would come to edit a manuscript nobody
+## is watching. Automatic saving is refused wherever [Settings] is read-only - a render, the
+## offline analyzer, a test probe. The ↑ button is not, because a button press is a person.
 ##
 ## The panel supplies the two halves it alone can know, as Callables: [member capture]
 ## returns the settings to store, [member apply] takes the ones a document carried.
 
 const FrontMatter_ := preload("res://scripts/front_matter.gd")
+
+## How long the settings must stop moving before the document is written, in ms. Longer than
+## [constant Settings.DEBOUNCE_MS] on purpose: ghost's own config is a file nobody else has
+## open, and the author's manuscript may well be open in their editor right now.
+const AUTOSAVE_MS := 1200
+## How often the snapshot is taken. Comparing it is cheap, but not free enough to do per frame.
+const POLL_MS := 250
 
 ## A document was opened and its voice (if it had one) applied.
 signal opened(path: String)
@@ -59,6 +80,20 @@ var _draft := ""                 # the pasted text, kept aside while a document 
 var _body := ""                  # the last body successfully read from _path
 var _dialog: FileDialog = null
 var _syncing := false            # a programmatic write to the box must not mark it edited
+# AUTOSAVE. `_seen` is the last settings snapshot observed, `_saved` the last one written to
+# the document, and `_settled_ms` when `_seen` stopped changing. Three values rather than one
+# flag because a drag must not be written mid-drag: a quiet period is "unchanged since", which
+# a dirty bit cannot express.
+var _seen := ""
+var _saved := ""
+var _settled_ms := 0
+var _polled_ms := 0
+var _autosave_note := ""         # last failure said, so a retry does not repeat it
+## Let a gate that is specifically testing the autosave run it in a probe. Mirrors - and is
+## deliberately separate from - [method Settings.allow_writes_for_test]: flipping the global
+## would also let the gate write the author's real config, and the thing under test here is a
+## file of the gate's own.
+var _autosave_for_test := false
 
 
 ## Build the widget and restore the last source. Call before [method bind_text].
@@ -101,10 +136,12 @@ func setup(section: String, block: String) -> void:
 	_row.add_child(_tool("⟳", "Re-read the file now, and take the voice from its "
 		+ "frontmatter again. A Speak re-reads the WORDS on its own; this is for when the "
 		+ "settings in the document have changed too.", func() -> void: reload()))
-	_row.add_child(_tool("↑", "Write the panel's current settings into the document's "
-		+ "frontmatter, under one `ghost:` key of ghost's own. Nothing else in the file is "
-		+ "touched - not the body, not another key, not a comment - and the edit is refused "
-		+ "outright if it would be.", func() -> void: save()))
+	_row.add_child(_tool("↑", "Save the voice into the document NOW. You should not need "
+		+ "this - the settings are written to the document's frontmatter on their own, a "
+		+ "moment after you stop adjusting them - but it forces the write and says plainly "
+		+ "whether it worked. Either way only one `ghost:` key of ghost's own is touched: "
+		+ "not the body, not another key, not a comment, and the edit is refused outright if "
+		+ "it would be.", func() -> void: save()))
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -126,13 +163,22 @@ func setup(section: String, block: String) -> void:
 ##
 ## Deliberately separate from [method setup] so the widget can be built above the box it
 ## drives - the toggle belongs over the text, and a Control is added where it is shown.
+##
+## IN SYNC MODE THE DOCUMENT IS THE SOURCE OF TRUTH, from the first frame, and that is a
+## correction the autosave forced. This used to read only the BODY at boot and leave the
+## voice as ghost's own settings had it - on the argument that the panel's last state is what
+## the author left there. That is defensible while saving is a button and indefensible once it
+## is automatic: the panel would come up holding the LAST document's voice and write it over
+## THIS one's a second later. Whichever way the asymmetry falls it has to fall the same way in
+## both directions, and for a file the author owns, the file wins.
 func bind_text(te: TextEdit) -> void:
 	_text = te
 	_draft = str(Settings.read(_section, "text", ""))
 	if is_sync():
-		# The body only - reading the frontmatter aloud is the first thing this prevents.
-		var body := _read_body()
-		_show(body if not body.is_empty() else _draft)
+		# The body AND the voice - and `reload` seeds the autosave's snapshot, so opening
+		# ghost on a document is not followed by ghost writing that document.
+		if not reload():
+			_show(_draft)
 	else:
 		_show(_draft)
 	_apply_editable()
@@ -207,24 +253,92 @@ func save() -> bool:
 	if not capture.is_valid():
 		_note("This panel cannot save a voice.")
 		return false
-	var block: Variant = capture.call()
-	if not (block is Dictionary):
+	if not (capture.call() is Dictionary):
 		_note("This panel cannot save a voice.")
 		return false
 	# READ-MODIFY-WRITE OF ONE KEY. Whatever the document says about the OTHER panel's
 	# voice is carried through untouched, so a chapter can hold both.
-	var raw: Variant = _read_raw()
-	if raw == null:
-		return false
-	var res := FrontMatter_.read_block(String(raw))
-	var ghost: Dictionary = (res.data as Dictionary).duplicate(true)
-	ghost[_block] = block
-	var err := FrontMatter_.write_block(_path, ghost)
+	var err := FrontMatter_.write_block(_path, _merged_block())
 	if not err.is_empty():
+		_autosave_note = err
 		_note("⚠  " + err)
 		return false
+	# The autosave must not now write the same thing again a moment later.
+	_seen = _snapshot()
+	_saved = _seen
+	_autosave_note = ""
 	_note("✓  Voice saved into %s" % _path.get_file())
 	return true
+
+
+## THE AUTOSAVE, polled rather than wired to each control.
+##
+## WIRED WOULD HAVE MEANT TEN CALL SITES AND A RULE TO REMEMBER, and the panel already proves
+## that does not hold: of the Generative panel's controls, the text box, the tabs, the voice,
+## the speaker and the tone mark it dirty and the ten VALUE DIALS - pace, pause, dynamics,
+## arc, effort, echo, room, resonance, presence, ambience - do not. Those are precisely the
+## ones an author adjusts while listening, so a wired autosave would have saved everything
+## except the thing being asked for. Polling a snapshot cannot be forgotten by a control
+## added later, which is the same argument [method Settings.bind] is built on.
+##
+## It is a QUIET PERIOD, not a debounce from the first change: the snapshot has to stop moving
+## before anything is written, so a slider dragged for ten seconds is one write at the end and
+## not twelve along the way.
+func _process(_delta: float) -> void:
+	if not is_sync() or not capture.is_valid():
+		return
+	# An export render, the offline analyzer and a test probe all boot the whole app against
+	# the author's own settings - and would find their own document open. A person pressing ↑
+	# is a person; a background process is not.
+	if Settings.is_read_only() and not _autosave_for_test:
+		return
+	var now := Time.get_ticks_msec()
+	if now - _polled_ms < POLL_MS:
+		return
+	_polled_ms = now
+	var snap := _snapshot()
+	if snap != _seen:
+		_seen = snap
+		_settled_ms = now
+		return
+	if snap == _saved or now - _settled_ms < AUTOSAVE_MS:
+		return
+	# Marked saved BEFORE the attempt, not after: a write that fails for a standing reason (the
+	# file is read-only, the directory is gone) must not be retried four times a second for the
+	# rest of the session. The next actual change moves the snapshot and tries again.
+	_saved = snap
+	var err := FrontMatter_.write_block(_path, _merged_block())
+	if err.is_empty():
+		_autosave_note = ""
+		return
+	# A FAILURE IS LOUD. The whole value of the verify is knowing when it refused.
+	if err != _autosave_note:
+		_autosave_note = err
+		_note("⚠  " + err)
+
+
+## See [member _autosave_for_test]. Nothing but a gate may call this.
+func allow_autosave_for_test() -> void:
+	_autosave_for_test = true
+
+
+## The panel's settings as a stable string, for comparing one frame to the next.
+func _snapshot() -> String:
+	var block: Variant = capture.call()
+	return JSON.stringify(block) if block is Dictionary else ""
+
+
+## Our block merged onto whatever the document already says, so the OTHER panel's voice - and
+## any key a later build adds - is carried through a save rather than dropped by it.
+func _merged_block() -> Dictionary:
+	var raw: Variant = _read_raw()
+	var ghost := {}
+	if raw != null:
+		var res := FrontMatter_.read_block(String(raw))
+		if res.data is Dictionary:
+			ghost = (res.data as Dictionary).duplicate(true)
+	ghost[_block] = capture.call()
+	return ghost
 
 
 # --- internals ----------------------------------------------------------------
@@ -356,8 +470,15 @@ func _import(raw: String) -> void:
 		apply.call(mine as Dictionary)
 		_note("Read %s and restored its voice." % _path.get_file())
 	else:
-		_note("Read %s. It carries no voice yet - press ↑ to put this one in it."
+		_note("Read %s. It carries no voice yet - adjust anything and it will be written in."
 			% _path.get_file())
+	# THE SNAPSHOT IS SEEDED HERE, after the panel has taken the document's voice. Without it
+	# the autosave sees "the panel does not match what we last wrote" the instant a document is
+	# opened and writes it straight back - touching a file the author has only just opened, and
+	# doing it every time, which is exactly the behaviour a careful writer is built to avoid.
+	_seen = _snapshot()
+	_saved = _seen
+	_settled_ms = Time.get_ticks_msec()
 
 
 func _open_dialog() -> void:

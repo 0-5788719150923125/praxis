@@ -1,6 +1,7 @@
 extends Node
 
 signal scene_cut                      # a new scene just took the stage (see main's governor)
+signal filters_changed                # the look over the whole picture changed (see [Filters])
 
 ## Director - the scene registry, scheduler, and transition engine (autoload).
 ##
@@ -254,6 +255,16 @@ var camera: float = 1.0
 ## `--vehicle NAME` overrides it for one run (tests, and a render of a session that was
 ## deliberately not the remembered setting).
 var vehicle := "full"
+## THE LOOK - a post-process over the whole picture, as `{filter key: amount}` with only the
+## live ones present (see [Filters]). Combinable by construction: monochrome AND grain is one
+## dictionary with two entries, not a choice between two modes.
+##
+## Held here for exactly the reasons `vehicle` is: it is a property of the show, it must
+## persist between sessions, and the export render is a SEPARATE PROCESS that reads
+## `user://ghost.cfg` on boot - so a look that lives in this file is inherited by a render
+## with no flag to pass and nothing to keep in sync. `--filter KEY=AMOUNT,...` (or
+## `--filter none`) overrides it for one run.
+var filters: Dictionary = {}
 const FLOURISH_MIN := 0.0
 const FLOURISH_MAX := 4.0
 ## Bounds on the camera severity. 0 really is "as gentle as it goes" - a camera that drifts
@@ -539,6 +550,41 @@ func set_vehicle(key: String) -> void:
 	_save_pacing()
 
 
+## SET ONE FILTER'S AMOUNT, 0 being off (see [Filters.REGISTRY] for the keys).
+##
+## Takes effect IMMEDIATELY and on the running session, unlike the vehicle - the material
+## lives on the stage view rather than inside any scene, so there is nothing to re-host and
+## nothing to re-plan. That is the point of it being a post-process: a look is something you
+## dial while watching it.
+func set_filter(key: String, amount: float) -> void:
+	if not Filters.REGISTRY.has(key):
+		return
+	var a := clampf(amount, 0.0, 1.0)
+	var had: float = float(filters.get(key, 0.0))
+	if is_equal_approx(a, had):
+		return
+	if a > 0.0:
+		filters[key] = a
+	else:
+		filters.erase(key)
+	_save_pacing()
+	filters_changed.emit()
+
+
+## How strongly [param key] is applied right now, 0 when it is off.
+func filter_amount(key: String) -> float:
+	return float(filters.get(key, 0.0))
+
+
+## The look this run actually uses: `--filter ...` if given, else the remembered set. Read by
+## [main] when it builds the stage and whenever the set changes.
+func resolved_filters() -> Dictionary:
+	var over: Variant = Filters.from_args(OS.get_cmdline_user_args())
+	if over is Dictionary:
+		return over as Dictionary
+	return Filters.sanitize(filters)
+
+
 ## The vehicle this run actually uses: `--vehicle NAME` if given and known, else the
 ## remembered setting. Read by [main] when it builds the stage.
 func resolved_vehicle() -> String:
@@ -560,6 +606,10 @@ func _load_pacing() -> void:
 	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
 	var v := String(Settings.read("director", "vehicle", "full"))
 	vehicle = v if Vehicle.REGISTRY.has(v) else "full"
+	# Through `sanitize`, always: a filter dropped from the registry between builds comes back
+	# as a key nothing declares a uniform for, and writing one is a silent no-op rather than
+	# an error - so it is discarded here instead of being carried around forever.
+	filters = Filters.sanitize(Settings.read("director", "filters", {}))
 
 
 ## Hand the current values to [Settings], which owns the file and the flushing. There is no
@@ -572,6 +622,7 @@ func _save_pacing() -> void:
 	Settings.write("director", "intro", intro_hold)
 	Settings.write("director", "outro", outro_hold)
 	Settings.write("director", "vehicle", vehicle)
+	Settings.write("director", "filters", filters)
 
 
 func attach(host: Node, vehicle: Vehicle = null) -> void:

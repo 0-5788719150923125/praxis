@@ -367,6 +367,11 @@ var _epoch := 0                # bumped on a pace change; stale replies are drop
 # seconds. A timeline has to know how long the thing is before it plays it.
 var _repace_timer: Timer
 var _vehicle_pick: OptionButton
+## Rows that belong to a vehicle feature: tag -> the Controls to show or hide together.
+## Filled by [method _director_slider] and [method _build_films]; read by [method _sync_vehicle_rows].
+var _vehicle_rows := {}
+var _filter_summary: Label
+var _filter_rows := {}     # filter key -> {box: CheckBox, slider: HSlider}
 var _film_list: VBoxContainer
 var _film_freq: HSlider
 var _film_status: Label
@@ -486,13 +491,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _build_panel() -> void:
-	_panel = PanelContainer.new()
-	_panel.position = Vector2(16, 16)
-	_panel.custom_minimum_size = Vector2(380, 0)
+	# A [SidePanel] rather than a bare PanelContainer: this panel has outgrown the window,
+	# and a Control outside a container is never asked to fit anything - the rows past the
+	# bottom edge were unreachable rather than clipped. See side_panel.gd.
+	_panel = preload("res://scripts/side_panel.gd").new(380.0)
 	add_child(_panel)
-	var box := VBoxContainer.new()
+	var box: VBoxContainer = _panel.body
 	box.add_theme_constant_override("separation", 8)
-	_panel.add_child(box)
 
 	var title_row := HBoxContainer.new()
 	box.add_child(title_row)
@@ -860,8 +865,11 @@ func _build_panel() -> void:
 		+ "behaviour. 0 is a slow gentle drift that barely turns and never cuts; 1 is the "
 		+ "default; 2 is fast, restless and cinematic, with real jump cuts. It scales how far "
 		+ "a shot may swing, how many shots that swing is spread over, how long a move lasts "
-		+ "and how deep a push goes. The full-frame show has no camera and ignores it.",
-		func(v: float) -> void: Director.set_camera(v))
+		+ "and how deep a push goes. It is shown only for the vehicles that fly a camera.",
+		func(v: float) -> void: Director.set_camera(v), "camera")
+	_build_filters(box)
+	# Now that every tagged row exists, show the ones this vehicle can actually use.
+	_sync_vehicle_rows()
 	_intro = _director_slider(box, "Intro", Director.INTRO_MIN, Director.INTRO_MAX, 0.5,
 		Director.intro_hold,
 		"Seconds of held opening before the narration starts, so the video fades up onto "
@@ -942,11 +950,10 @@ func _load_persisted() -> void:
 	# wrote its own suggestions there when it was picked), so this is the one place
 	# the loaded session's room is applied.
 	_apply_fx(_fx, _cfg(_slot))
-	# ...and NOW the box is filled, after the cast is loaded: the source may be pointing at
-	# a document, in which case what belongs in the box is that document's body and the
-	# draft goes into its keeping. It reads the WORDS at boot and not the voice - the voice
-	# that was in this panel when ghost last closed is the one the author left there, and
-	# ⟳ is how a voice edited in the document gets taken instead.
+	# ...and NOW the box is filled, after the cast is loaded, because a document that is open
+	# OVERRULES what was loaded above: in sync mode the file is the source of truth for both
+	# the words and the voice, which is what makes it safe for the panel to write back to it
+	# on its own. See DocSource.bind_text.
 	_doc.bind_text(_text)
 
 
@@ -1212,8 +1219,10 @@ func _notification(what: int) -> void:
 ## One labelled slider that drives the [Director] directly. Unlike the voice controls these need
 ## no re-plan and no persistence here - the Director clamps, applies immediately to the scene on
 ## screen, and owns its own saved value.
+## [param tag] names the vehicle feature this row belongs to (see [constant Vehicle.USES]);
+## an untagged row is one every vehicle uses and is always shown.
 func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, step: float,
-		initial: float, tip: String, apply: Callable) -> HSlider:
+		initial: float, tip: String, apply: Callable, tag := "") -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	box.add_child(row)
@@ -1232,18 +1241,145 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	sl.value_changed.connect(apply)
 	row.add_child(sl)
 	_slider_readout(row, sl)
+	if not tag.is_empty():
+		(_vehicle_rows.get_or_add(tag, []) as Array).append(row)
 	return sl
+
+
+## Show only what the chosen vehicle can use.
+##
+## ASKED OF THE DIRECTOR, NOT OF THE OPTIONBUTTON. The first cut read `_vehicle_pick.selected`,
+## on the reasoning that the rows should follow what is being CHOSEN rather than what is
+## running - and that is still the intent, it is just not what that property says. Selecting
+## an item and the `item_selected` signal are separate things in Godot, so a picker driven
+## from code (which is how it is exercised, and how a restored setting arrives) has the signal
+## without the index and the rows stayed on the previous vehicle. `Director.vehicle` is set by
+## that same callback, synchronously, one line above this call. Going through
+## `resolved_vehicle` also means a run launched with `--vehicle comic` shows the comic's
+## controls even though the stored setting says otherwise, which the picker alone cannot know.
+##
+## The rows move IMMEDIATELY even though the vehicle itself takes effect at the next reading:
+## a control that stayed hidden until a restart would read as the picker not having worked.
+func _sync_vehicle_rows() -> void:
+	var key := Director.resolved_vehicle()
+	for tag in _vehicle_rows:
+		var on := Vehicle.uses(key, String(tag))
+		for row in _vehicle_rows[tag] as Array:
+			if is_instance_valid(row):
+				(row as Control).visible = on
+
+
+# --- the look: a post-process over the whole picture --------------------------
+#
+# THIS SITS WITH THE PICTURE SETTINGS, under Camera, because that is what it is - it belongs
+# beside Vehicle and Scene hold rather than beside the voice dials. Like them it is the
+# DIRECTOR'S, so a look set here is the look of every session: a reading, a synthesis take,
+# a song in Auto mode, and an export render, which boots a second process against the same
+# settings file and inherits it with no flag to pass.
+
+
+## The filter block: one row per entry in [constant Filters.REGISTRY], built off the registry
+## so a filter added there appears here with no wiring.
+##
+## A CHECKBOX AND A DIAL, NOT A PICKER, and that is the design rather than the layout. Being
+## asked to choose between monochrome and grain is the wrong question - black and white film
+## HAS grain - so every filter is independently switchable and they are all applied in one
+## pass, in the registry's order.
+##
+## The dial is greyed rather than hidden while its filter is off: a control that vanishes
+## takes its value with it as far as anyone looking can tell, and the value is kept.
+func _build_filters(box: VBoxContainer) -> void:
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	box.add_child(head)
+	var title := Label.new()
+	title.text = "Look"
+	title.custom_minimum_size = Vector2(72, 0)
+	title.add_theme_font_size_override("font_size", 12)
+	head.add_child(title)
+	_filter_summary = Label.new()
+	_filter_summary.add_theme_font_size_override("font_size", 11)
+	_filter_summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_filter_summary.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_filter_summary.modulate = Color(1, 1, 1, 0.6)
+	head.add_child(_filter_summary)
+
+	for key in Filters.REGISTRY:
+		var k := String(key)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		box.add_child(row)
+		var cb := CheckBox.new()
+		cb.text = String(Filters.LABELS.get(k, k))
+		cb.custom_minimum_size = Vector2(128, 0)
+		cb.add_theme_font_size_override("font_size", 12)
+		cb.tooltip_text = String(Filters.BLURBS.get(k, ""))
+		row.add_child(cb)
+		var sl := HSlider.new()
+		sl.min_value = 0.0
+		sl.max_value = 1.0
+		sl.step = 0.01
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sl.tooltip_text = ("How much of it. The top of every range here is deliberately too "
+			+ "much, so the interesting settings are in the middle.\n\n"
+			+ String(Filters.BLURBS.get(k, "")))
+		row.add_child(sl)
+		var readout := _slider_readout(row, sl)
+		var live := Director.filter_amount(k)
+		cb.set_pressed_no_signal(live > 0.0)
+		_put_slider(sl, readout, live if live > 0.0 else float(Filters.DEFAULTS.get(k, 0.5)))
+		sl.editable = live > 0.0
+		# TICKING A FILTER ON MUST DO SOMETHING VISIBLE. A box whose dial happens to be at 0
+		# reads as a broken checkbox, so switching on with nothing dialled in lands on the
+		# registry's own starting point rather than on silence.
+		cb.toggled.connect(func(on: bool) -> void:
+			if on and sl.value <= 0.0:
+				_put_slider(sl, readout, float(Filters.DEFAULTS.get(k, 0.5)))
+			sl.editable = on
+			Director.set_filter(k, sl.value if on else 0.0)
+			_refresh_filters())
+		sl.value_changed.connect(func(v: float) -> void:
+			if not cb.button_pressed:
+				return          # a greyed dial keeps its value and changes nothing
+			Director.set_filter(k, v)
+			_refresh_filters())
+		_filter_rows[k] = {"box": cb, "slider": sl}
+	_refresh_filters()
+
+
+## The one-line summary beside the heading - what is actually on, in pipeline order.
+func _refresh_filters() -> void:
+	if _filter_summary == null or not is_instance_valid(_filter_summary):
+		return
+	var text := Filters.describe(Director.resolved_filters())
+	_filter_summary.text = text
+	_filter_summary.tooltip_text = ("Applied to the WHOLE picture, in this order, after "
+		+ "every scene has drawn - and to nothing above it, so the subtitles stay clean. "
+		+ "It is a Director setting like Vehicle, so it is also the look of a song in Auto "
+		+ "mode and of an export render.\n\nOn now: " + text)
 
 
 # --- films: real footage in a comic panel -------------------------------------
 #
 # THIS SITS UNDER THE VEHICLE PICKER because it only means anything to the comic, and a
-# setting is easiest to understand next to the thing it qualifies. It is not hidden when
-# another vehicle is picked: a viewer building a library before switching over should not
-# have to discover that the controls exist somewhere else first.
+# setting is easiest to understand next to the thing it qualifies.
+#
+# IT IS ALSO HIDDEN WHEN THE VEHICLE CANNOT USE IT, which reverses an earlier decision worth
+# recording rather than quietly overwriting. The argument for always showing it was that
+# someone building a library before switching over should not have to discover that the
+# controls exist somewhere else first. That is answered by WHERE it sits: the picker is the
+# row directly above, so the controls appear the moment the comic is chosen, in the place the
+# eye is already looking. The argument against it was the stronger one - "there are a number
+# of settings currently being displayed that ONLY work with the comic book vehicle" - because
+# a control that does nothing teaches nothing, and there were two of them.
 
-## The film library block: the list, an import button, and the frequency dial.
-func _build_films(box: VBoxContainer) -> void:
+## The film library block: the list, an import button, and the frequency dial. Built into a
+## group of its own so the whole block can be shown or hidden as one (see Vehicle.USES).
+func _build_films(outer: VBoxContainer) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	outer.add_child(box)
+	(_vehicle_rows.get_or_add("films", []) as Array).append(box)
 	var head := Label.new()
 	head.text = "Films"
 	head.add_theme_font_size_override("font_size", 12)
@@ -1432,6 +1568,10 @@ func _vehicle_option(box: VBoxContainer) -> OptionButton:
 	opt.select(maxi(0, keys.find(Director.vehicle)))
 	opt.item_selected.connect(func(i: int) -> void:
 		Director.set_vehicle(String(keys[i]))
+		# The rows follow the PICKER immediately, even though the vehicle itself lands at the
+		# next reading: a control that stayed hidden until a restart would read as the picker
+		# not having worked.
+		_sync_vehicle_rows()
 		_note("Vehicle: %s - takes effect on the next reading." % Vehicle.LABELS.get(keys[i], keys[i])))
 	row.add_child(opt)
 	return opt
@@ -1558,6 +1698,20 @@ func _place_chunks(out: Array, body: String) -> void:
 ##
 ## Wired to `value_changed`, which Godot also emits for programmatic sets, so the readout follows
 ## a slot being loaded as well as a drag.
+## SHOW a value on a slider without telling anyone it changed.
+##
+## `set_value_no_signal` is the right call whenever the panel is DISPLAYING a stored value
+## rather than receiving a new one - writing it back through the signal would be a change
+## nobody made - but the readout built by [method _slider_readout] follows `value_changed`,
+## so on its own it leaves the label saying whatever it was built with. That pair is a
+## reported bug and it had two instances: every filter's readout said 0.00 until its dial was
+## touched, including filters that were on and working, and ticking one on landed its default
+## on the slider while the label went on saying 0.00.
+func _put_slider(sl: HSlider, readout: Label, v: float, suffix := "") -> void:
+	sl.set_value_no_signal(v)
+	readout.text = ("%.2f" % v) + suffix
+
+
 func _slider_readout(row: HBoxContainer, sl: HSlider, suffix := "") -> Label:
 	var v := Label.new()
 	v.custom_minimum_size = Vector2(42, 0)

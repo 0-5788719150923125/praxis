@@ -49,6 +49,36 @@ const LABELS := {
 	"comic": "Comic book",
 }
 
+## WHICH OPTIONAL SETTINGS EACH VEHICLE ACTUALLY USES, as a list of tags per key.
+##
+## A vehicle decides what the show is presented AS, so some of the Director's picture
+## settings mean nothing to some of them: the full-frame show has no camera to be severe with
+## and no panels to cut footage into, and the two controls for those sat on the panel doing
+## nothing whichever vehicle was chosen. Reported as "there are a number of settings
+## currently being displayed that ONLY work with the comic book vehicle".
+##
+## DECLARED HERE RATHER THAN BRANCHED ON IN THE PANEL, which is the same rule the rest of this
+## file follows: adding a presentation is an entry in these tables, never new control flow
+## somewhere else. A vehicle added later says what it uses and the panel follows; a panel that
+## asked `if key == "comic"` would have to be found and edited instead, and it is not the file
+## anyone would think to look in.
+##
+## Tags are the panel's own group names - a setting that EVERY vehicle uses (scene hold,
+## flourishes, the Look filters, the bookend holds) needs no tag and is never listed.
+const USES := {
+	"full": [],
+	"comic": ["camera", "films"],
+}
+
+## Does [param key]'s vehicle use the [param feature] group? Unknown vehicles and unknown
+## features answer TRUE, deliberately: the failure of a wrong answer here is a control the
+## author cannot find, and showing a setting that does nothing is the lesser of the two.
+static func uses(key: String, feature: String) -> bool:
+	if not USES.has(key):
+		return true
+	return feature in (USES[key] as Array)
+
+
 ## One line each, for the toggle's tooltip and docs/vehicles.md. Deliberately ONE string
 ## literal per entry, not a `+` continuation: docs.py reads this table with a regex and a
 ## continuation silently truncates the blurb at the first line.

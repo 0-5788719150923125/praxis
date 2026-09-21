@@ -86,11 +86,13 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "deps.gd",
             "deps_panel.gd",
             "chrome.gd",
+            "side_panel.gd",
             "console.gd",
             "splash.gd",
             "director.gd",
             "settings.gd",
             "vehicle.gd",
+            "filters.gd",
             "comic_page.gd",
             "comic_spread.gd",
             "films.gd",
@@ -273,6 +275,14 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         "What the show is carried on for this run: `full` (one scene filling "
         "the frame) or `comic` (a comic page). Overrides the remembered "
         "setting; see [vehicles.md](vehicles.md).",
+        False,
+    ),
+    (
+        "--filter",
+        "<k=v,...>",
+        "The look over the whole picture for this run - `--filter "
+        "monochrome=1,grain=0.3`, or `--filter none`. Overrides the remembered "
+        "set; see [filters.md](filters.md).",
         False,
     ),
     (
@@ -501,8 +511,17 @@ def _parse_header(text: str) -> Tuple[Optional[str], Optional[str], List[str]]:
 
 
 def _md(text: str) -> str:
-    """GDScript doc markup -> markdown: `[param x]` -> `x`, `[Class]` -> `Class`."""
-    text = re.sub(r"\[param (\w+)\]", r"`\1`", text)
+    """GDScript doc markup -> markdown: `[param x]` -> `x`, `[Class]` -> `Class`.
+
+    The tag list is not decoration: `[constant X]` was leaking into docs/scenes.md
+    verbatim, eighteen times, because only `[param ]` was handled."""
+    text = re.sub(r"\[code\](.*?)\[/code\]", r"`\1`", text, flags=re.S)
+    text = re.sub(
+        r"\[(?:param|constant|method|member|signal|enum|annotation) "
+        r"([\w.]+)\]",
+        r"`\1`",
+        text,
+    )
     return re.sub(r"\[([A-Z]\w*(?:\.\w+)*)\]", r"`\1`", text)
 
 
@@ -872,6 +891,86 @@ def _render_vehicles_doc(base: Script) -> str:
             warn(
                 f"scripts/vehicles/{path.stem}.gd is not registered in "
                 "Vehicle.REGISTRY - it can never be selected"
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_filters_doc(base: Script) -> str:
+    """docs/filters.md, from Filters.REGISTRY + LABELS/BLURBS and the shader's own header.
+
+    Not _render_registry_page: a filter is neither an inner class nor a script, it is a
+    uniform and a block of GLSL - so the per-entry text comes from BLURBS and the how
+    comes from the shader file's header, which is where the pipeline is written down.
+
+    It also CHECKS the pair, which is this table's own failure mode: a registry key whose
+    uniform the shader does not declare ships as a control that does nothing, because
+    `set_shader_parameter` on an unknown name is silent. tests/stage_filter_check.gd
+    asserts the same thing at runtime; this is so a docs run says it too."""
+    pairs = re.findall(r'"(\w+)":\s*"(u_\w+)"', _const_block(base.text, "REGISTRY"))
+    if not pairs:
+        warn("could not parse Filters.REGISTRY")
+    labels = dict(
+        re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "LABELS"))
+    )
+    blurbs = dict(
+        re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "BLURBS"))
+    )
+    defaults = dict(
+        re.findall(r'"(\w+)":\s*([0-9.]+)', _const_block(base.text, "DEFAULTS"))
+    )
+    shader_path = ROOT / "shaders" / "stage_filter.gdshader"
+    shader_src = shader_path.read_text() if shader_path.exists() else ""
+    if not shader_src:
+        warn("shaders/stage_filter.gdshader is missing - the filters cannot render")
+    lines = [
+        AUTOGEN_HEADER,
+        "# Filters: the look over the whole picture",
+        "",
+        "A post-process applied to the finished frame, after every scene has drawn "
+        "and under everything on a CanvasLayer - so the show is filtered and the "
+        "subtitles and panels are not. Filters COMBINE: each has its own 0..1 dial "
+        "and they are all applied, in one pass, in the order below.",
+        "",
+        _full_doc(base.doc),
+        "",
+        f"Registry: `Filters.REGISTRY` in {_source_link(base.rel)} "
+        f"({len(pairs)} entries), rendered by "
+        f"{_source_link('shaders/stage_filter.gdshader')}. Select with "
+        "`--filter key=amount,...` (or `--filter none`), or the Look rows in the "
+        "Generative panel (persisted to `user://ghost.cfg`, `[director] filters`).",
+        "",
+        "| # | Key | Name | Uniform | Default |",
+        "| - | --- | ---- | ------- | ------- |",
+    ]
+    for i, (key, uniform) in enumerate(pairs, start=1):
+        lines.append(
+            f"| {i} | `{key}` | {labels.get(key, key)} | `{uniform}` | "
+            f"{defaults.get(key, '?')} |"
+        )
+    lines.append("")
+    for key, uniform in pairs:
+        if f"uniform float {uniform}" not in shader_src:
+            warn(
+                f"Filters.REGISTRY maps '{key}' to {uniform}, which "
+                "shaders/stage_filter.gdshader does not declare - the control is a no-op"
+            )
+        for table in ("LABELS", "BLURBS", "DEFAULTS"):
+            if key not in (labels if table == "LABELS" else blurbs if table == "BLURBS" else defaults):
+                warn(f"Filters.{table} has no entry for '{key}'")
+        lines.append(f"## `{key}` - {labels.get(key, key)}")
+        lines.append("")
+        if blurbs.get(key):
+            lines.extend([_md(blurbs[key]), ""])
+        lines.append(
+            f"Uniform `{uniform}`, default {defaults.get(key, '?')} when first "
+            "switched on."
+        )
+        lines.append("")
+    for m in re.finditer(r"uniform float (u_\w+)", shader_src):
+        if m.group(1) not in [u for _k, u in pairs]:
+            warn(
+                f"shaders/stage_filter.gdshader declares {m.group(1)}, which no "
+                "Filters.REGISTRY entry drives - it can never be set"
             )
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1340,6 +1439,11 @@ def main() -> int:
             "Vehicles",
             "the presentation registry - what the show is carried on.",
         ),
+        (
+            "filters",
+            "Filters",
+            "the look registry - the post-process over the whole picture.",
+        ),
         ("cli", "CLI flags", "every ghost command-line flag."),
     ]
 
@@ -1373,6 +1477,7 @@ def main() -> int:
         _render_masklab_doc(scripts["mask_session"], scripts["mask_editor"]),
     )
     _write_if_changed(DOCS / "vehicles.md", _render_vehicles_doc(scripts["vehicle"]))
+    _write_if_changed(DOCS / "filters.md", _render_filters_doc(scripts["filters"]))
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))
     _write_if_changed(DOCS / "index.md", _render_index(scripts, scenes, pages))
 

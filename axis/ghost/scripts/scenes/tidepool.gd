@@ -98,6 +98,7 @@ const OVER := 1.18
 ## PER_NODE is the rest of the frame in the same unit, measured from those pairs: the fixed
 ## work is worth about fourteen components. Budgeting `nodes * (components + PER_NODE)` makes
 ## the cost flat in the component count.
+const SWEEP_BUDGET := 100000
 const PER_NODE := 14.0
 
 ## Node-count bounds the budget is clamped into, so neither a very simple nor a very busy
@@ -1028,8 +1029,9 @@ class PoolJob:
 	## CROSS-SPLIT, four triangles about a centre vertex, not two about a diagonal.
 	##
 	## This is the fix for "the waves are blocky and jagged... even though their behavior is
-	## smooth". A cell is 18 to 28 screen pixels across at 1920x1080 (the grid is
-	## SWEEP_BUDGET / components nodes, so 76x43 at fourteen components and 117x65 at six), and
+	## smooth". A cell is 21 to 24 screen pixels across at 1920x1080 (the grid is
+	## SWEEP_BUDGET / (components + PER_NODE) nodes, clamped, so 80x45 at fourteen components
+	## and 94x53 at six - the figures here predated PER_NODE and were never restated), and
 	## splitting each one along a single diagonal makes the Gouraud interpolation directional:
 	## every cell shades along the SAME 45-degree line, so a smooth caustic rib comes out as a
 	## herringbone of straight creases all leaning one way. That reads as jagged even where

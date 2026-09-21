@@ -75,6 +75,14 @@ func _ready() -> void:
 		print("ghost: settings are READ-ONLY in this process (%s)" % why)
 
 
+## True in a process that must not write the user's things: an export render, the offline
+## analyzer, a test probe. Public because it is not only THIS file's rule any more - [DocSource]
+## saves the voice into the author's own document, and an unattended process editing a
+## manuscript is the same mistake one directory over.
+func is_read_only() -> bool:
+	return _read_only
+
+
 ## Let a gate that is specifically testing PERSISTENCE write after all. Nothing else may
 ## call this: the read-only rule above is what keeps every other gate from editing the
 ## config of whoever is running it.

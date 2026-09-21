@@ -16,6 +16,13 @@ extends Node
 ##   first time a file was opened, silently, in the background debounce.
 ##   THE VOICE IS RESTORED, AND SAVED. This is the whole reason the frontmatter is written
 ##   at all - a cast of two readers that comes back as one is the feature not working.
+##   THE SAVE IS AUTOMATIC, ON A QUIET PERIOD. A dial moved is a dial written, with no button
+##   pressed - and NOT written while it is still moving, or a ten-second drag is a dozen
+##   rewrites of a file the author may have open in their own editor. Both halves are
+##   asserted, because "it saved" also passes on a version that saves constantly.
+##   ...AND NEVER BY AN UNATTENDED PROCESS. An export render boots this whole app against the
+##   author's settings and would find their document open. Asserted by taking the gate's own
+##   seam away and watching the same dial move reach nothing.
 ##
 ## Needs a real boot: the panel's sliders are Director-backed and [Settings] is an autoload.
 ##   tests/run_boot_probe.sh tests/doc_sync_check.gd 120
@@ -78,10 +85,13 @@ func _ready() -> void:
 	_doc.bind_text(_ed._text)
 
 	_check_input_mode()
-	_check_opening_a_document()
+	await _check_opening_a_document()
 	_check_speak_rereads_the_disk()
 	_check_the_draft_survives()
 	_check_saving_the_voice()
+	await _check_autosave()
+	await _check_autosave_waits_for_quiet()
+	await _check_unattended_processes_never_autosave()
 
 	_ed.free()
 	DirAccess.remove_absolute(_path)
@@ -144,6 +154,15 @@ func _check_opening_a_document() -> void:
 	# A key the document did NOT mention takes its default rather than arriving missing.
 	_ok(_ed._cfg(0).has("presence") and _ed._cfg(0).has("ambience"),
 		"a voice written by an older build arrived with keys missing")
+	# OPENING A DOCUMENT IS NOT AN EDIT TO IT. The autosave's snapshot is seeded by the import,
+	# so a file the author has only just opened is not written back a second later - which
+	# would happen every single time, and is what a careful writer exists to avoid.
+	_doc.allow_autosave_for_test()
+	var opened := FileAccess.get_file_as_string(_path)
+	await _wait(int(DocSource.AUTOSAVE_MS) + 700)
+	_ok(FileAccess.get_file_as_string(_path) == opened,
+		"simply opening a document caused ghost to write it back")
+	_doc._autosave_for_test = false
 
 
 ## THE REAL-TIME CLAIM, which is the whole point of sync mode: the author keeps writing
@@ -204,6 +223,83 @@ func _check_saving_the_voice() -> void:
 		"the saved Turn came back as %f" % _ed._turn.value)
 	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 1.45),
 		"the dial moved before saving did not survive the document: %s" % str(_ed._cfg(0)))
+
+
+## A DIAL MOVED IS A DIAL WRITTEN, with nothing pressed.
+func _check_autosave() -> void:
+	# A probe is read-only precisely so gates cannot edit the author's things; this gate is the
+	# exception, only for the autosave, and only against a fixture of its own.
+	_doc.allow_autosave_for_test()
+	_doc.reload()
+	await _wait(400)
+	var before := FileAccess.get_file_as_string(_path)
+
+	_ed._turn.value = 3.75
+	await _wait(int(DocSource.AUTOSAVE_MS) + 900)
+	var after := FileAccess.get_file_as_string(_path)
+	_ok(after != before, "moving a dial never reached the document - autosave did nothing")
+	_ok(after.contains("turn: 3.75"),
+		"the document does not carry the dial that was moved")
+	# ...and the document is still the author's.
+	_ok(after.contains("title: 'Chapter One'") and after.contains("# an authoring note"),
+		"an automatic save damaged the author's own frontmatter")
+	_ok(after.ends_with(BODY_A), "an automatic save changed the chapter")
+
+	# NOTHING FURTHER IS WRITTEN while nothing changes. Without this the panel rewrites the
+	# file four times a second forever, and an editor open on it says so every time.
+	await _wait(int(DocSource.AUTOSAVE_MS) + 900)
+	_ok(FileAccess.get_file_as_string(_path) == after,
+		"the document kept being rewritten with nothing changing")
+
+
+## ...BUT NOT WHILE IT IS STILL BEING ADJUSTED. A quiet period, not a debounce from the first
+## change: a session of nudging lands as ONE write at the end, not one per nudge.
+##
+## THE ADJUSTMENTS HAVE TO BE SPACED, and getting that wrong is why this check first passed
+## against a build with no quiet period in it at all. A value changed EVERY FRAME never shows
+## the same snapshot to two consecutive polls, so the poll's own "has it changed" test blocks
+## the write by itself and the quiet period is never the thing being exercised. The gap here
+## is deliberately LONGER than [constant DocSource.POLL_MS] - so the snapshot really does sit
+## still between polls, and only the quiet period is left to stop the write - and SHORTER than
+## [constant DocSource.AUTOSAVE_MS], so it never elapses. That is the case an author actually
+## produces: nudge, listen, nudge again.
+func _check_autosave_waits_for_quiet() -> void:
+	var before := FileAccess.get_file_as_string(_path)
+	var gap: int = int(DocSource.POLL_MS) + 150
+	var bursts: int = 5
+	for i in bursts:
+		_ed._turn.value = 1.0 + 0.3 * float(i)
+		await _wait(gap)
+	_ok(FileAccess.get_file_as_string(_path) == before,
+		"the document was written during %d adjustments %d ms apart - there is no quiet "
+		% [bursts, gap] + "period, only a poll")
+	# ...and it lands once the nudging stops, on the LAST value rather than an interim one.
+	_ed._turn.value = 2.25
+	await _wait(int(DocSource.AUTOSAVE_MS) + 900)
+	var settled := FileAccess.get_file_as_string(_path)
+	_ok(settled != before, "the adjustments never landed once they stopped")
+	_ok(settled.contains("turn: 2.25"),
+		"the document carries an interim value rather than where the adjusting ended")
+
+
+## AN UNATTENDED PROCESS MUST NOT EDIT A MANUSCRIPT. The control for everything above: with
+## the gate's seam taken away this probe is read-only exactly as a render is, and the same
+## dial move must reach nothing.
+func _check_unattended_processes_never_autosave() -> void:
+	_doc._autosave_for_test = false
+	_ok(Settings.is_read_only(),
+		"the control is wrong - this probe is not read-only, so it says nothing about a render")
+	var before := FileAccess.get_file_as_string(_path)
+	_ed._turn.value = 5.5
+	await _wait(int(DocSource.AUTOSAVE_MS) + 900)
+	_ok(FileAccess.get_file_as_string(_path) == before,
+		"a read-only process (a render, the analyzer, a probe) wrote to the author's document")
+
+
+func _wait(ms: int) -> void:
+	var until := Time.get_ticks_msec() + ms
+	while Time.get_ticks_msec() < until:
+		await get_tree().process_frame
 
 
 func _write(text: String) -> void:

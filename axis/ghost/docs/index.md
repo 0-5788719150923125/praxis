@@ -42,6 +42,7 @@ core. The commitments:
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
 - [Masking](masking.md) - the video chroma-key editor: model, effects, headless tools.
 - [Vehicles](vehicles.md) - the presentation registry - what the show is carried on.
+- [Filters](filters.md) - the look registry - the post-process over the whole picture.
 - [CLI flags](cli.md) - every ghost command-line flag.
 
 ## Directory layout
@@ -83,11 +84,13 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`deps.gd`](../scripts/deps.gd) **Deps** - every external program ghost needs, in one place, with one promise: RESOLUTION AND REPORTING ARE THE SAME CODE.
 - [`deps_panel.gd`](../scripts/deps_panel.gd) **DepsPanel** - the environment readout in the home screen's bottom-right corner.
 - [`chrome.gd`](../scripts/chrome.gd) **Chrome** - the shared session furniture every mode of ghost carries.
+- [`side_panel.gd`](../scripts/side_panel.gd) **SidePanel** - a mode's control panel, which CANNOT outgrow the window.
 - [`console.gd`](../scripts/console.gd) **ConsoleView** - The in-app console - a live tail of Godot's own log file. print(), push_warning(), push_error() and engine SCRIPT ERRORs all land in user://logs/godot*.log via the engine's default file logging, but anyone launching ghost as a compiled app or from the Godot launcher never sees that stream - it used ...
 - [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.
 - [`director.gd`](../scripts/director.gd) **director** - 
 - [`settings.gd`](../scripts/settings.gd) **settings** - Settings - the one owner of `user://ghost.cfg` (autoload).
 - [`vehicle.gd`](../scripts/vehicle.gd) **Vehicle** - what the show is carried ON. The presentation axis.
+- [`filters.gd`](../scripts/filters.gd) **Filters** - the LOOK the whole picture is put through, after the scenes have drawn.
 - [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
 - [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicVehicle` flies over.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.

@@ -275,13 +275,13 @@ func _ready() -> void:
 
 
 func _build_panel() -> void:
-	_panel = PanelContainer.new()
-	_panel.position = Vector2(16, 16)
-	_panel.custom_minimum_size = Vector2(380, 0)
+	# A [SidePanel] rather than a bare PanelContainer: this panel has outgrown the window,
+	# and a Control outside a container is never asked to fit anything - the rows past the
+	# bottom edge were unreachable rather than clipped. See side_panel.gd.
+	_panel = preload("res://scripts/side_panel.gd").new(380.0)
 	add_child(_panel)
-	var box := VBoxContainer.new()
+	var box: VBoxContainer = _panel.body
 	box.add_theme_constant_override("separation", 8)
-	_panel.add_child(box)
 
 	var title_row := HBoxContainer.new()
 	box.add_child(title_row)
