@@ -387,7 +387,7 @@ static func parse(text: String) -> Array:
 				if in_span >= 0:
 					shown = span_src.trim_suffix("\n") if in_span != span_open else ""
 					span_open = in_span
-				words.append({
+				var entry := {
 					"text": bare,
 					"display": shown,
 					"src_span": in_span,
@@ -397,7 +397,18 @@ static func parse(text: String) -> Array:
 					"pause_after": pause,
 					"punct": punct,
 					"emph": emph,
-				})
+				}
+				# A CAPITAL "A" INSIDE A SENTENCE IS THE LETTER. The article is only ever
+				# capitalised where a sentence starts, so "groups, A and B" can only mean the
+				# letter - and read as the article it came out as a clipped schwa, all but
+				# inaudible. Pinned as `literal` so eSpeak cannot reduce it again downstream.
+				# Only mid-sentence: a sentence-initial "A" is the article, and stays one.
+				if bare == "a" and not words.is_empty() and _letter_a(token):
+					entry["phones"] = ["EY"]
+					entry["stress"] = [1]
+					entry["stressed"] = true
+					entry["literal"] = true
+				words.append(entry)
 		if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 			sentences.append(words)
 			words = []
@@ -474,6 +485,12 @@ static func _tokenize(text: String, at: PackedInt32Array = PackedInt32Array()) -
 			out.append(text.substr(i, j - i))
 			i = j
 	return out
+
+
+## The token is a capital A standing alone - wrappers and punctuation aside ("A", "A,", "(A").
+static func _letter_a(token: String) -> bool:
+	var core := token.strip_edges().lstrip("\"'(“‘").rstrip(".,!?;:\"')”’")
+	return core == "A"
 
 
 static func _literal_word(token: String) -> Dictionary:

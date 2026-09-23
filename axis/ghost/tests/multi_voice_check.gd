@@ -48,6 +48,7 @@ func _ready() -> void:
 	_check_saved_shape()
 	_check_hesitations()
 	_check_hesitation_splice()
+	_check_hum_is_held()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -607,3 +608,37 @@ func _check_hesitation_splice() -> void:
 	var r4: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 1.0, "before": false}], spans, 2.0)
 	_ok(is_equal_approx(GenerativeEditor._shifted(0.4, r4["cuts"], 2.0, true), 1.2),
 		"the splice ignored the resample ratio")
+
+
+## A HUM IS HELD. "Hmm." renders at ~0.2 s and reads as a clipped grunt; it is lengthened to
+## a thinking hum by cycling its own pitch periods. Held here: the hum reaches its target
+## length, the word after it moves by exactly what was added, and the stretch is STEADY - no
+## dips, which is what cycling the dip between two m's produced.
+func _check_hum_is_held() -> void:
+	var chunks: Array = _ed._build_chunks("Hmm. Who looks like they want to speak?")
+	var h: Array = (chunks[0] as Dictionary).get("holds", []) if chunks.size() > 0 else []
+	_ok(h.size() == 1 and is_equal_approx(float(h[0].get("hum", 0.0)), 0.75),
+		"Hmm. was not marked to be held: %s" % [h])
+	var sr := 22050
+	_ed._sr = sr
+	var pcm := PackedFloat32Array()
+	pcm.resize(int(0.6 * sr))
+	for i in int(0.2 * sr):
+		pcm[i] = 0.5 * sin(TAU * 150.0 * float(i) / float(sr))       # the hum, 0.0-0.2 s
+	for i in range(int(0.3 * sr), int(0.6 * sr)):
+		pcm[i] = 0.3 * sin(TAU * 220.0 * float(i) / float(sr))       # the next word
+	var spans: Array = [{"index": 0, "t0": 0.0, "t1": 0.2}, {"index": 1, "t0": 0.3, "t1": 0.6}]
+	var r: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 0.0, "before": false, "hum": 0.75}], spans, 1.0)
+	var o: PackedFloat32Array = r["pcm"]
+	var end := GenerativeEditor._shifted(0.2, r["cuts"], 1.0, false)
+	_ok(absf(end - 0.75) < 0.03, "the hum was held to %.3fs, wanted 0.75" % end)
+	_ok(absf(GenerativeEditor._shifted(0.3, r["cuts"], 1.0, true) - (0.3 + end - 0.2)) < 0.002,
+		"the next word did not move by what the hum gained")
+	var hop := int(0.01 * sr)
+	var lo := 1e9
+	for f in range(2, int(end * 100.0) - 2):
+		var e := 0.0
+		for k in hop:
+			e += o[f * hop + k] * o[f * hop + k]
+		lo = minf(lo, sqrt(e / float(hop)))
+	_ok(lo > 0.25, "the held hum dips (quietest 10 ms at %.3f of a 0.35 tone)" % lo)

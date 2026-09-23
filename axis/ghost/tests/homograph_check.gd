@@ -24,6 +24,10 @@ extends SceneTree
 
 # sentence, the word to inspect, the ARPAbet expected (stress digits optional)
 const SWITCHES := [
+	# A capital "A" mid-sentence is the LETTER (the article is only capitalised at a sentence
+	# start); read as the article it was a clipped, near-silent schwa. North-star ch40.
+	["Two groups, A and B, forty or so.", "a", "EY"],
+	["Plan A failed.", "a", "EY"],
 	# record: eSpeak reads the VERB as the NOUN after a plural-noun subject, because it
 	# parses "<noun> record" as a compound. Pronoun subjects it already gets right, and
 	# they are here so the rule is proven not to have BROKEN them on its way past.
@@ -49,6 +53,8 @@ const SWITCHES := [
 
 # The half that guards against over-firing. eSpeak is already correct on all of these.
 const HOLDS := [
+	["A man walked in.", "a", "AH"],
+	["It was a test.", "a", "AH"],
 	["The record shows nothing.", "record", "R EH K ER D"],
 	["A record of the year.", "record", "R EH K ER D"],
 	["She broke the record.", "record", "R EH K ER D"],

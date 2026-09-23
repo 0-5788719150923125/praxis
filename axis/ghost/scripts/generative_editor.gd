@@ -603,7 +603,7 @@ func _build_panel() -> void:
 	_turn.step = 0.05
 	_turn.value = 1.0
 	_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_turn.tooltip_text = ("How long the reading rests when the script CHANGES SPEAKER, on top of "
+	_turn.tooltip_text = ("EXTRA rest when the script CHANGES SPEAKER, shown in seconds beside it, on top of "
 		+ "the ordinary rest between sentences. 1 is a little over half a second - enough to "
 		+ "hear one reader stop and another begin; 0 hands over on the same beat as any other "
 		+ "sentence, which reads as one person changing their mind rather than as two people. "
@@ -616,6 +616,19 @@ func _build_panel() -> void:
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	turow.add_child(_turn)
+	# THE READOUT IS IN SECONDS, not the dial's multiplier: what matters is how long the gap
+	# is. There was no readout at all, and a stored 5.1 was a hidden 2.8 s at every handover -
+	# "an invisible, forced pause between speakers... killing the pacing".
+	var tur := Label.new()
+	tur.custom_minimum_size = Vector2(42, 0)
+	tur.add_theme_font_size_override("font_size", 12)
+	tur.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	tur.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var show_turn := func(v: float) -> void:
+		tur.text = "+%.1fs" % (TURN_GAP * v)
+	show_turn.call(_turn.value)
+	_turn.value_changed.connect(show_turn)
+	turow.add_child(tur)
 
 	# HESITATIONS, global for the same reason Turn is: a `<!-- hesitation -->` belongs to a
 	# moment in the text, not to whichever voice happens to be reading it. The checkbox
@@ -2573,6 +2586,11 @@ func _cut(body: String, sentence_no: int) -> Dictionary:
 					_hold_i += 1
 				if sec > 0.0:
 					holds.append({"tok": start, "sec": sec, "before": key == "hold_before"})
+			# A HUM IS HELD, not spoken in passing - see HUM_SECONDS.
+			var hum_key := String(w.text).to_lower()
+			if HUM_SECONDS.has(hum_key):
+				holds.append({"tok": start, "sec": 0.0, "before": false,
+					"hum": float(HUM_SECONDS[hum_key])})
 			# ghost's dictionary returns stress 0 for every phone of most
 			# monosyllables, so no stress mark was ever emitted for them and the
 			# model heard a flat reading. Promote the nucleus - but only for
@@ -3080,6 +3098,12 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 	for h in holds:
 		var k := int((h as Dictionary)["tok"])
 		var cur: Variant = by_index.get(k)
+		if (h as Dictionary).has("hum"):
+			if cur != null:
+				var hc := _hum_cut(pcm, float(cur["t0"]), float(cur["t1"]), float(h["hum"]), ratio)
+				if not hc.is_empty():
+					cuts.append(hc)
+			continue
 		var t := end
 		if bool((h as Dictionary)["before"]):
 			var prev: Variant = by_index.get(k - 1)
@@ -3104,26 +3128,110 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 	var out := PackedFloat32Array()
 	var from := 0
 	var fade := maxi(1, int(HOLD_FADE * float(_sr)))
+	var after_fill := false          # the piece being cut follows a hum: no fade-in on it
 	for c in cuts:
 		var ct := float(c["t"])
-		var at := pcm.size() if is_inf(ct) else clampi(int(round(ct / ratio * float(_sr))), from, pcm.size())
+		var at := pcm.size() if is_inf(ct) else clampi(int(c.get("at",
+			int(round(ct / ratio * float(_sr))))), from, pcm.size())
 		var piece := pcm.slice(from, at)
-		# fade the tail of what precedes the rest, and (below) the head of what follows it
-		for i in mini(fade, piece.size()):
-			piece[piece.size() - 1 - i] *= float(i) / float(fade)
-		if from > 0 and not out.is_empty():
+		var fill: Variant = c.get("fill")
+		# Fade either side of a SILENCE; a hum's continuation is phase-aligned to the cut, so
+		# fading it would put a dip in the middle of the hum it is lengthening.
+		if fill == null:
+			for i in mini(fade, piece.size()):
+				piece[piece.size() - 1 - i] *= float(i) / float(fade)
+		if from > 0 and not out.is_empty() and not after_fill:
 			for i in mini(fade, piece.size()):
 				piece[i] *= float(i) / float(fade)
 		out.append_array(piece)
-		var gap := PackedFloat32Array()
-		gap.resize(int(float(c["add"]) * float(_sr)))
-		out.append_array(gap)
+		if fill != null:
+			out.append_array(fill as PackedFloat32Array)
+		else:
+			var gap := PackedFloat32Array()
+			gap.resize(int(float(c["add"]) * float(_sr)))
+			out.append_array(gap)
+		after_fill = fill != null
 		from = at
 	var rest := pcm.slice(from)
-	for i in mini(fade, rest.size()):
-		rest[i] *= float(i) / float(fade)
+	if not after_fill:
+		for i in mini(fade, rest.size()):
+			rest[i] *= float(i) / float(fade)
 	out.append_array(rest)
 	return {"pcm": out, "cuts": cuts}
+
+
+## HUMS ARE HELD. "Hmm." read as a thinking hum is most of a second; the voice renders it in
+## about 0.15 s, and asking for more `M`s does not help - measured, eight of them come back
+## as 0.30 s, the model compresses the repeats. So the hum is LENGTHENED after the fact: a
+## hum is a steady periodic tone, and repeating its own pitch periods from the steady middle
+## extends it with the same voice, pitch and colour. Target length in seconds, per spelling.
+const HUM_SECONDS := {"hm": 0.45, "mm": 0.5, "hmm": 0.75, "mmm": 0.85, "hmmm": 0.95}
+
+## The cut that lengthens one hum to [param target] seconds: `{t, at, add, fill}`, or empty
+## when it is already long enough. `fill` is whole pitch periods from the steady peak of the
+## hum, cycled, and the cut sits on a period boundary so the join is phase-continuous.
+func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, ratio: float) -> Dictionary:
+	var sr := float(_sr)
+	var a := int(t0 / ratio * sr)
+	var b := mini(int(t1 / ratio * sr), pcm.size())
+	var add := target - float(b - a) / sr
+	if add < 0.03 or b - a < 64:
+		return {}
+	var period := _period_of(pcm, a + int(0.2 * float(b - a)), a + int(0.8 * float(b - a)))
+	if period <= 0:
+		return {}
+	# LOOP ONLY THE STEADY PEAK: a few periods around the loudest point. Cycling the whole
+	# middle of the hum also cycled the natural dip between its two m's, and the dip came back
+	# as a pulse through the stretched hum.
+	var hop := maxi(1, period)
+	var peak := a
+	var best := -1.0
+	var i := a
+	while i + hop <= b:
+		var e := 0.0
+		for k in hop:
+			e += pcm[i + k] * pcm[i + k]
+		if e > best:
+			best = e
+			peak = i
+		i += hop
+	var s0 := maxi(a, peak - period * 2)
+	var s1 := mini(b, peak + period * 3)
+	if s1 - s0 < period:
+		return {}
+	var cut := s0 + period * int(floor(float(peak - s0) / float(period)))
+	var need := int(add * sr)
+	var fill := PackedFloat32Array()
+	var pos := s0
+	while fill.size() < need:
+		if pos + period > s1:
+			pos = s0
+		fill.append_array(pcm.slice(pos, pos + period))
+		pos += period
+	return {"t": float(cut) / sr * ratio, "at": cut, "add": float(fill.size()) / sr, "fill": fill}
+
+
+## The pitch period of pcm[s0, s1] in samples, by autocorrelation over a voice's range
+## (60-350 Hz), or 0 when the stretch is too short to say.
+func _period_of(pcm: PackedFloat32Array, s0: int, s1: int) -> int:
+	var lo := int(float(_sr) / 350.0)
+	var hi := int(float(_sr) / 60.0)
+	var n := s1 - s0 - hi
+	if n < lo * 2:
+		return 0
+	var best := 0
+	var best_r := -INF
+	for lag in range(lo, hi + 1):
+		var r := 0.0
+		var e := 0.0
+		for i in range(s0, s0 + n, 2):
+			r += pcm[i] * pcm[i + lag]
+			e += pcm[i + lag] * pcm[i + lag]
+		var nr := r / sqrt(maxf(e, 1e-9))
+		if nr > best_r:
+			best_r = nr
+			best = lag
+	return best
 
 
 ## A word timing from the model's clock onto the spliced take's: divided by the resample
