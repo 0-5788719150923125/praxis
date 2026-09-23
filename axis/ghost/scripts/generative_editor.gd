@@ -1107,29 +1107,22 @@ func _doc_apply(cfg: Dictionary) -> void:
 ## What [method export_take] hands the book vehicle, and what main gives a live one: the
 ## chapter as the author wrote it, so pages can be typeset from the same words being read.
 ##
-## The TITLE is carried separately because in sync mode the body arrives without its
+## The TITLE, the BOOK's name and its AUTHOR are carried separately because in sync mode the body arrives without its
 ## frontmatter, which is where a chapter's title lives.
 func book_document(body := "") -> Dictionary:
 	var src := body if not body.is_empty() else _doc.pull()
-	return {"source": src, "title": _doc_title(src)}
+	return {"source": src, "title": _doc_field(src, "title"), "book": _doc_field(src, "book"),
+		"author": _doc_field(src, "author")}
 
 
-## The chapter title: the open document's frontmatter `title:`, else the pasted text's own.
-## Read TEXTUALLY, one line, for the reason FrontMatter.read_block gives - a head holding a
-## construct MiniYaml refuses must still yield its title.
-func _doc_title(src: String) -> String:
+## A top-level frontmatter field (`title:`, `book:`): the open document's, else the pasted
+## text's own. Read TEXTUALLY, one line, for the reason FrontMatter.read_block gives - a head
+## holding a construct MiniYaml refuses must still yield its title.
+func _doc_field(src: String, key: String) -> String:
 	var raw := src
 	if _doc != null and _doc.is_sync() and FileAccess.file_exists(_doc.doc_path()):
 		raw = FileAccess.get_file_as_string(_doc.doc_path())
-	var fm := FrontMatter.split(raw)
-	if not bool(fm["has"]):
-		return ""
-	for line in String(fm["head"]).split("\n"):
-		var t := String(line).strip_edges()
-		if t.begins_with("title:"):
-			return t.substr(6).strip_edges().trim_prefix("\"").trim_suffix("\"") \
-				.trim_prefix("'").trim_suffix("'")
-	return ""
+	return BookLayout.field_of(raw, key)
 
 
 # --- voices, plural and named --------------------------------------------------

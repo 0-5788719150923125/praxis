@@ -43,6 +43,7 @@ func _run() -> void:
 			"--camera": Director.camera = float(args[i + 1])
 			"--image": _image = args[i + 1]
 			"--turns": _turns = int(args[i + 1])
+			"--settle": _settle = int(args[i + 1])
 			"--times":
 				_times = []
 				for s in String(args[i + 1]).split(","):
@@ -89,6 +90,25 @@ func _run() -> void:
 			vehicle.advance(Spectrum.current, DT, 1.0)
 			await get_tree().process_frame
 			var bk := vehicle as BookVehicle
+			# THE END OF A TURN, frame by frame: the last frames of the leaf and the first
+			# frames after it lies down - where a stale page texture would show as a flash.
+			if _settle > 0 and bk._turn_t >= BookVehicle.TURN_TIME - 3.0 * DT:
+				await get_tree().process_frame
+				stage.get_texture().get_image().save_png("%s_end_%02d.png" % [_out, _settle_i])
+				_settle_i += 1
+			elif _settle > 0 and _was_turning and bk._turn_t < 0.0:
+				for f in 4:
+					if f > 0:
+						t += DT
+						Spectrum.virtual_clock = t
+						Spectrum.current.time = t
+						vehicle.advance(Spectrum.current, DT, 1.0)
+					await get_tree().process_frame
+					stage.get_texture().get_image().save_png("%s_end_%02d.png" % [_out, _settle_i])
+					_settle_i += 1
+				print("book_look_probe: turn ended at t=%.2f, %d frames written" % [t, _settle_i])
+				_settle -= 1
+			_was_turning = bk._turn_t >= 0.0
 			if _turns > 0 and bk._turn_t >= 0.8 and bk._turn_t < 0.8 + DT:
 				await get_tree().process_frame
 				var ti := stage.get_texture().get_image()
@@ -129,6 +149,11 @@ func _run() -> void:
 
 ## Every printed word, spoken at a steady pace with a rest at each sentence end - the shape of
 ## a real take's sidecar, without a voice host.
+var _settle := 0
+var _settle_i := 0
+var _was_turning := false
+
+
 func _timeline(body: String) -> Array:
 	var lay := BookLayout.new()
 	lay.build(body, func(_k: String) -> Vector2: return Vector2.ZERO)

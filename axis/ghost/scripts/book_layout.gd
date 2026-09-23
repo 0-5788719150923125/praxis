@@ -29,6 +29,8 @@ const BODY_FS := 33
 ## Line pitch as a multiple of the body size - bookish, a little looser than a screen.
 const LEADING := 1.46
 const INDENT_EM := 1.5
+## A blank line between paragraphs. Indent alone read as "squished" on a page this size.
+const PARA_GAP := 1.0
 ## An inline picture's width as a share of the text block, and the white space around it.
 const FLOAT_W := 0.46
 const FLOAT_GAP := 30.0
@@ -100,7 +102,10 @@ func norm(s: String) -> String:
 
 ## Typeset [param source] (a chapter's markdown). [param image_size] answers the pixel size
 ## of a picture key, or Vector2.ZERO when there is none yet.
-func build(source: String, image_size: Callable) -> void:
+##
+## [param title_override] is the chapter title when [param source] has no frontmatter of its
+## own - which is how a document arrives from the Generative panel in sync mode.
+func build(source: String, image_size: Callable, title_override := "") -> void:
 	_images_at = image_size
 	_hes_re = RegEx.new()
 	_hes_re.compile(Manuscript.HESITATION)
@@ -108,7 +113,7 @@ func build(source: String, image_size: Callable) -> void:
 	words = []
 	_pending_full = []
 	_pending_float = []
-	title = _title_of(source)
+	title = title_override if not title_override.is_empty() else _title_of(source)
 	var blocks: Array = Manuscript.blocks(source)
 	# PAGE 0 IS THE LEFT OF THE FIRST SPREAD, and a chapter opens on the RIGHT. An opening
 	# full-page picture is the natural thing to face it with - a frontispiece - so it takes
@@ -161,6 +166,7 @@ func build(source: String, image_size: Callable) -> void:
 					_space(0.55)
 					no_indent = true
 				else:
+					_space(PARA_GAP)
 					_paragraph(text, not no_indent, false)
 					no_indent = false
 	# Pictures still owed at the end get their pages, and a lone last page gets a facing one.
@@ -175,6 +181,11 @@ func spreads() -> int:
 
 
 static func _title_of(source: String) -> String:
+	return field_of(source, "title")
+
+
+## One top-level `key:` of [param source]'s frontmatter, read textually, or "".
+static func field_of(source: String, key: String) -> String:
 	var lines := source.split("\n")
 	var i := 0
 	while i < lines.size() and String(lines[i]).strip_edges().is_empty():
@@ -185,8 +196,8 @@ static func _title_of(source: String) -> String:
 		var l := String(lines[j]).strip_edges()
 		if l == "---":
 			break
-		if l.begins_with("title:"):
-			var v := l.substr(6).strip_edges()
+		if l.begins_with(key + ":"):
+			var v := l.substr(key.length() + 1).strip_edges()
 			if v.length() >= 2 and (v[0] == "\"" or v[0] == "'") and v[v.length() - 1] == v[0]:
 				v = v.substr(1, v.length() - 2)
 			return v
