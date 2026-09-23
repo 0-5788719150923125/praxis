@@ -31,6 +31,8 @@ func _ready() -> void:
 	add_child(_ed._panel)
 	_ed.remove_child(_ed._repace_timer)
 	add_child(_ed._repace_timer)
+	_ed.remove_child(_ed._cast_timer)
+	add_child(_ed._cast_timer)
 	_check_cues()
 	_check_comments_never_spoken()
 	_check_frontmatter()
@@ -44,6 +46,8 @@ func _ready() -> void:
 	_check_handover_is_sample_accurate()
 	_check_tabs()
 	_check_saved_shape()
+	_check_hesitations()
+	_check_hesitation_splice()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -61,10 +65,26 @@ func _ok(cond: bool, what: String) -> void:
 
 
 func _slots(n: int) -> void:
+	var names: Array = [Manuscript.NARRATOR]
+	for i in range(1, n):
+		names.append("Voice %d" % (i + 1))
+	_cast(names)
+
+
+func _cast(names: Array) -> void:
+	_ed._names = PackedStringArray(names)
 	_ed._slots = []
-	for i in n:
+	for i in names.size():
 		_ed._slots.append(GenerativeEditor.SLOT_DEFAULTS.duplicate())
+	_ed._stash = {}
 	_ed._slot = 0
+
+
+func _who(segs: Array) -> Array:
+	var out: Array = []
+	for s in segs:
+		out.append(String((s as Dictionary)["speaker"]))
+	return out
 
 
 ## THE CUES. Both halves matter and the second one more: the HOLDS are lines that
@@ -73,39 +93,40 @@ func _slots(n: int) -> void:
 func _check_cues() -> void:
 	_slots(3)
 	var segs: Array = _ed._split_speakers(
-		"Narrator opens.\n\n<!-- speaker: 2 -->\n\nI am the spider.\n\n"
-		+ "<!-- speaker: 1 -->\n\nThe pen comes back.\n\n[speaker: 3]\n\nNo Diddy.")
+		"Narrator opens.\n\n<!-- speaker: Charlotte -->\n\nI am the spider.\n\n"
+		+ "<!-- speaker: Narrator -->\n\nThe pen comes back.\n\n[speaker: Emily White]\n\nNo Diddy.")
 	_ok(segs.size() == 4, "four passages, got %d" % segs.size())
 	if segs.size() == 4:
-		_ok(int(segs[0]["slot"]) == 0 and int(segs[1]["slot"]) == 1
-			and int(segs[2]["slot"]) == 0 and int(segs[3]["slot"]) == 2,
-			"passages went to voices %s" % [[segs[0]["slot"], segs[1]["slot"],
-				segs[2]["slot"], segs[3]["slot"]]])
+		_ok(_who(segs) == ["Narrator", "Charlotte", "Narrator", "Emily White"],
+			"passages went to voices %s" % [_who(segs)])
 		_ok(String(segs[1]["text"]).begins_with("I am the spider"),
 			"the second passage is %s" % JSON.stringify(segs[1]["text"]))
 
-	# no cues at all is the case every script had before today
-	_slots(1)
+	# no cues at all is the case every script had before names
 	var plain: Array = _ed._split_speakers("Just prose.\nMore of it.")
-	_ok(plain.size() == 1 and int(plain[0]["slot"]) == 0, "an uncued script is one passage")
+	_ok(plain.size() == 1 and String(plain[0]["speaker"]) == Manuscript.NARRATOR,
+		"an uncued script is one passage, the narrator's")
+
+	# a NUMBER is still a name - the scripts written for numbered tabs keep working
+	var num: Array = _ed._split_speakers("One.\n<!-- speaker: 2 -->\nTwo.")
+	_ok(_who(num) == ["Narrator", "2"], "a numbered cue is not read as a name: %s" % [_who(num)])
 
 	# HOLDS: prose that mentions a speaker, and a cue that is not alone on its line
-	for hold in ["speaker: 2 is what he said.", "He said <!-- speaker: 2 --> aloud.",
-			"The speaker: 2 of them, in fact."]:
-		_slots(3)
+	for hold in ["speaker: Ryan is what he said.", "He said <!-- speaker: Ryan --> aloud.",
+			"The speaker: Ryan of them, in fact."]:
 		var h: Array = _ed._split_speakers("Before.\n%s\nAfter." % hold)
 		_ok(h.size() == 1, "prose taken for a cue: %s" % hold)
-
-	# an out-of-range cue clamps rather than reaching for a tab that is not there
-	_slots(2)
-	var over: Array = _ed._split_speakers("One.\n<!-- speaker: 7 -->\nTwo.")
-	_ok(over.size() == 2 and int(over[1]["slot"]) == 1,
-		"a cue past the last tab must clamp to it, got %s" % JSON.stringify(over))
+	_ok(Manuscript.speakers("Before.\nHe said <!-- speaker: Ryan --> aloud.\n")
+			== PackedStringArray(["Narrator"]),
+		"a cue inside a line of prose became a tab")
 
 	# a cue for the voice already reading is not a passage boundary
-	_slots(2)
-	var same: Array = _ed._split_speakers("One.\n<!-- speaker: 1 -->\nTwo.")
+	var same: Array = _ed._split_speakers("<!-- speaker: Ryan -->\nOne.\n<!-- speaker: Ryan -->\nTwo.")
 	_ok(same.size() == 1, "a redundant cue split the passage anyway")
+	# ...and a chapter that OPENS on a cue has no narrator at all
+	_ok(Manuscript.speakers("<!-- speaker: Ryan -->\n\nOne.\n\n<!-- speaker: Judge -->\n\nYou.")
+			== PackedStringArray(["Ryan", "Judge"]),
+		"a chapter opening on a cue grew an empty narrator tab")
 
 
 ## NOTHING IN <!-- --> IS SPOKEN. The cues are comments, so the format invites
@@ -113,7 +134,7 @@ func _check_cues() -> void:
 func _check_comments_never_spoken() -> void:
 	_slots(2)
 	var chunks: Array = _ed._build_chunks(
-		"The pen comes back. <!-- ask about the llama -->\n\n<!-- speaker: 2 -->\n\nNo Diddy.")
+		"The pen comes back. <!-- ask about the llama -->\n\n<!-- speaker: Voice 2 -->\n\nNo Diddy.")
 	var said := ""
 	for c in chunks:
 		for w in (c as Dictionary)["words"]:
@@ -129,16 +150,16 @@ func _check_comments_never_spoken() -> void:
 func _check_chunks_carry_their_voice() -> void:
 	_slots(2)
 	var chunks: Array = _ed._build_chunks(
-		"One. Two.\n\n<!-- speaker: 2 -->\n\nThree. Four.")
+		"One. Two.\n\n<!-- speaker: Voice 2 -->\n\nThree. Four.")
 	_ok(chunks.size() == 4, "four sentences, got %d chunks" % chunks.size())
 	if chunks.size() != 4:
 		return
 	var slots: Array = []
 	var nums: Array = []
 	for c in chunks:
-		slots.append(int((c as Dictionary).get("slot", -1)))
+		slots.append(String((c as Dictionary).get("speaker", "?")))
 		nums.append(int(((c as Dictionary)["words"][0] as Dictionary)["sentence"]))
-	_ok(slots == [0, 0, 1, 1], "chunk voices came out %s" % [slots])
+	_ok(slots == ["Narrator", "Narrator", "Voice 2", "Voice 2"], "chunk voices came out %s" % [slots])
 	_ok(nums == [0, 1, 2, 3], "sentence numbering restarted at the change: %s" % [nums])
 
 
@@ -201,53 +222,57 @@ func _check_handover_is_sample_accurate() -> void:
 	_slots(2)
 	_ed._slots[1]["echo"] = 0.9
 	_ed._fx = VoiceFX.new()
-	_ed._fx_marks = [{"at": 0, "slot": 0}, {"at": 1000, "slot": 1}]
-	_ed._fx_live_slot = -1
+	_ed._fx_marks = [{"at": 0, "speaker": "Narrator"}, {"at": 1000, "speaker": "Voice 2"}]
+	_ed._fx_live_name = ""
 	_ed._pushed = 0
 	# at the head: the first voice is dialled in, and the push stops at the change
 	_ok(_ed._fx_admit(4096) == 1000, "the push must stop at the handover, got %d"
 		% _ed._fx_admit(4096))
-	_ok(_ed._fx_live_slot == 0, "the opening voice's room was not dialled in")
+	_ok(_ed._fx_live_name == "Narrator", "the opening voice's room was not dialled in")
 	_ok(_ed._fx.echo_wet < 0.1, "the second voice's room arrived early")
 	# short of it, nothing changes and the remaining distance is what is offered
 	_ed._pushed = 600
 	_ok(_ed._fx_admit(4096) == 400, "frames offered up to the handover")
-	_ok(_ed._fx_live_slot == 0, "the voice changed before its own first frame")
+	_ok(_ed._fx_live_name == "Narrator", "the voice changed before its own first frame")
 	# on it
 	_ed._pushed = 1000
 	_ok(_ed._fx_admit(4096) == 4096, "past the last mark the whole buffer is free")
-	_ok(_ed._fx_live_slot == 1 and _ed._fx.echo_wet > 0.5,
+	_ok(_ed._fx_live_name == "Voice 2" and _ed._fx.echo_wet > 0.5,
 		"the second voice's room did not arrive at its own frame")
 
 
-## THE TABS THEMSELVES. Adding one must not disturb the voice you already have,
-## switching away and back must return exactly what was left there, and tab 1 has
-## to be un-removable - a reading with no reader is not a state to reach.
+## THE TABS ARE THE SCRIPT'S SPEAKERS. They appear as names are cued, in order of first
+## appearance; a new one starts as a copy of the first voice; switching away and back
+## returns exactly what was left there; and a name that leaves the script keeps its
+## settings for when it returns.
 func _check_tabs() -> void:
-	_ed._slots = [GenerativeEditor.SLOT_DEFAULTS.duplicate()]
-	_ed._slot = 0
+	_cast([Manuscript.NARRATOR])
 	_ed._rebuild_tabs()
-	_ok(_ed._tabs.tab_count == 1 and _ed._tab_del.disabled,
-		"a fresh panel is one tab that cannot be removed")
+	_ok(_ed._tabs.get_child_count() == 1, "a fresh panel is one tab")
 
-	_ed._arc.value = 0.20                      # something to recognise tab 1 by
-	_ed._on_tab_add()
-	_ok(_ed._tabs.tab_count == 2 and _ed._slot == 1 and not _ed._tab_del.disabled,
-		"adding a voice selects it and lets it be removed")
-	_ok(absf(_ed._arc.value - 0.20) < 0.001, "the new tab did not start as a copy")
-	_ed._arc.value = 0.90                      # ...and tab 2 by
+	_ed._arc.value = 0.20                      # something to recognise the narrator by
+	_ed._refresh_cast("Opening.\n\n<!-- speaker: Emily White -->\n\nHis.\n\n"
+		+ "<!-- speaker: Judge -->\n\nOverruled.")
+	_ok(_ed._names == PackedStringArray(["Narrator", "Emily White", "Judge"]),
+		"the tabs are not the script's names in order: %s" % [_ed._names])
+	_ok(_ed._tabs.get_child_count() == 3, "one button per name, got %d" % _ed._tabs.get_child_count())
+	_ok(String((_ed._tabs.get_child(1) as Button).text).begins_with("Emily White"),
+		"the tab is not labelled with the name")
+	_ok(_ed._slot == 0 and absf(_ed._arc.value - 0.20) < 0.001,
+		"the voice on screen moved when names were added")
+
+	_ed._on_tab_selected(1)
+	_ok(absf(_ed._arc.value - 0.20) < 0.001, "a new name did not start as a copy of the first voice")
+	_ed._arc.value = 0.90                      # ...and Emily by
 	_ed._speaker.value = 5                     # a control that regenerates on change
 
 	_ed._on_tab_selected(0)
 	_ok(absf(_ed._arc.value - 0.20) < 0.001,
-		"tab 1 came back holding %.2f, which is tab 2's" % _ed._arc.value)
-	_ok(int(_ed._speaker.value) == 0, "tab 1 came back holding tab 2's reader")
+		"the narrator came back holding %.2f, which is Emily's" % _ed._arc.value)
+	_ok(int(_ed._speaker.value) == 0, "the narrator came back holding Emily's reader")
 	_ed._on_tab_selected(1)
-	_ok(absf(_ed._arc.value - 0.90) < 0.001,
-		"tab 2 came back holding %.2f" % _ed._arc.value)
-	_ok(int(_ed._speaker.value) == 5, "tab 2 came back holding reader %d" % _ed._speaker.value)
-	_ok(_ed._tabs.get_tab_title(0) == "1" and _ed._tabs.get_tab_title(1) == "2",
-		"the tabs are numbered as the cues are")
+	_ok(absf(_ed._arc.value - 0.90) < 0.001, "Emily came back holding %.2f" % _ed._arc.value)
+	_ok(int(_ed._speaker.value) == 5, "Emily came back holding reader %d" % _ed._speaker.value)
 
 	# switching tabs must not throw the reading away - that is a repace, and it
 	# would fire on every glance at another voice's settings
@@ -258,34 +283,44 @@ func _check_tabs() -> void:
 	_ok(_ed._epoch == 0, "looking at another tab regenerated the reading")
 	_ed._chunks = []
 
-	_ed._on_tab_del()
-	_ok(_ed._tabs.tab_count == 1 and _ed._slot == 0 and _ed._tab_del.disabled,
-		"removing the last voice returns to one un-removable tab")
-	_ok(absf(_ed._arc.value - 0.20) < 0.001, "the surviving tab lost its settings")
-	_ed._on_tab_del()
-	_ok(_ed._slots.size() == 1, "tab 1 was removable")
+	# A NAME THAT LEAVES KEEPS ITS VOICE. Rewrite Emily out, then back in.
+	_ed._refresh_cast("Opening.\n\n<!-- speaker: Judge -->\n\nOverruled.")
+	_ok(_ed._names == PackedStringArray(["Narrator", "Judge"]),
+		"a name no longer cued is still a tab: %s" % [_ed._names])
+	_ok(_ed._tab_name() == "Narrator", "the tab on screen did not fall back when its name left")
+	_ok(_ed._cfg_of("Emily White")["arc"] > 0.8,
+		"a name that left the script lost its settings: %s" % [_ed._cfg_of("Emily White")])
+	_ed._refresh_cast("Opening.\n\n<!-- speaker: Emily White -->\n\nHis.")
+	var i := _ed._names.find("Emily White")
+	_ok(i >= 0 and absf(float(_ed._cfg(i)["arc"]) - 0.90) < 0.001 and int(_ed._cfg(i)["speaker"]) == 5,
+		"Emily came back without the voice she left with: %s" % [_ed._cfg(i) if i >= 0 else {}])
+	# ...and the cast written out carries every voice, shown or not
+	_ok(_ed._cast_dict().has("Judge") and _ed._cast_dict().has("Emily White"),
+		"the saved cast dropped a voice the script no longer shows")
 
 
 ## The saved shape survives a ConfigFile round trip. It stores every number as a
 ## float, so a tone index and a reader id come back as 3.0 - and a float where the
-## host wants an int is a request the backend refuses.
+## host wants an int is a request the backend refuses. And the numbered tabs this
+## replaced are MIGRATED, not lost: row N was cued `N`, row 1 was also the narrator.
 func _check_saved_shape() -> void:
-	_slots(2)
+	_cast(["Narrator", "Emily White"])
 	_ed._slots[1]["tone"] = 3
 	_ed._slots[1]["speaker"] = 12
 	_ed._slots[1]["voice"] = "en_US-libritts-high"
 	var path := "user://_multi_voice_probe.cfg"
 	var w := ConfigFile.new()
-	w.set_value("generative", "slots", _ed._slots)
+	w.set_value("generative", "cast", _ed._cast_dict())
 	w.save(path)
 	var r := ConfigFile.new()
 	r.load(path)
-	var back: Array = r.get_value("generative", "slots", [])
+	var back: Dictionary = _ed._merge_cast(r.get_value("generative", "cast", {}))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	_ok(back.size() == 2, "two voices saved, %d came back" % back.size())
-	if back.size() != 2:
+	if not back.has("Emily White"):
+		_ok(false, "the voice came back without its name: %s" % [back.keys()])
 		return
-	var m: Dictionary = _ed._merge(back[1] as Dictionary)
+	var m: Dictionary = back["Emily White"]
 	_ok(typeof(m["tone"]) == TYPE_INT and int(m["tone"]) == 3, "the tone came back as %s" % [m["tone"]])
 	_ok(typeof(m["speaker"]) == TYPE_INT and int(m["speaker"]) == 12,
 		"the reader id came back as %s" % [m["speaker"]])
@@ -294,6 +329,15 @@ func _check_saved_shape() -> void:
 	var old: Dictionary = _ed._merge({"pace": 0.8})
 	_ok(absf(float(old["pace"]) - 0.8) < 0.001 and absf(float(old["presence"]) - 1.0) < 0.001,
 		"a slot missing keys did not fall back to the defaults")
+	var mig: Dictionary = _ed._cast_from_rows([{"pace": 0.7}, {"pace": 1.3}],
+		"Intro.\n<!-- speaker: 1 -->\nOne.\n<!-- speaker: 2 -->\nTwo.")
+	_ok(mig.has("Narrator") and mig.has("1") and mig.has("2")
+			and absf(float(mig["Narrator"]["pace"]) - 0.7) < 0.001
+			and absf(float(mig["2"]["pace"]) - 1.3) < 0.001,
+		"the numbered tabs did not migrate to names: %s" % [mig])
+	# ...and a single-voice chapter with no cues migrates to the narrator ALONE
+	var solo: Dictionary = _ed._cast_from_rows([{"pace": 0.6}], "Just prose, no cues.")
+	_ok(solo.keys() == ["Narrator"], "an uncued chapter grew a phantom voice: %s" % [solo.keys()])
 
 
 ## A DIAL MOVED ON A SILENT TAB STAYS SILENT. The panel shows one voice's
@@ -305,7 +349,7 @@ func _check_silent_tabs_stay_silent() -> void:
 	_ed._slots[0]["echo"] = 0.3
 	_ed._slots[1]["echo"] = 0.9
 	_ed._fx = VoiceFX.new()
-	_ed._fx_live_slot = 0                      # voice 1 is on air
+	_ed._fx_live_name = "Narrator"             # voice 1 is on air
 	_ed._slot = 1                              # voice 2 is on screen
 	_ed._live_fx()
 	_ok(_ed._fx.echo_wet < 0.05,
@@ -322,7 +366,7 @@ func _check_silent_tabs_stay_silent() -> void:
 ## Global, not per tab: it is the boundary's rest, not either voice's.
 func _check_turn_rest() -> void:
 	_slots(2)
-	var chunks: Array = [{"slot": 0}, {"slot": 0}, {"slot": 1}, {"slot": 1}]
+	var chunks: Array = [{"speaker": "A"}, {"speaker": "A"}, {"speaker": "B"}, {"speaker": "B"}]
 	var s: Dictionary = _ed._cfg(0)
 	_ed._turn.value = 1.0
 	var within := _ed._gap_before(chunks, 1, s)
@@ -350,7 +394,7 @@ func _check_frontmatter() -> void:
 	_slots(2)
 	var chunks: Array = _ed._build_chunks(
 		"---\ntitle: Charlotte's Web of Lies\n---\n\nThere is one report.\n\n"
-		+ "<!-- speaker: 2 -->\n\nI am the spider.")
+		+ "<!-- speaker: Voice 2 -->\n\nI am the spider.")
 	var said := ""
 	for c in chunks:
 		for w in (c as Dictionary)["words"]:
@@ -378,7 +422,7 @@ func _check_macros() -> void:
 	_slots(2)
 	var chunks: Array = _ed._build_chunks(
 		"It has said so for ${CHAPTERS_BEFORE_IN_WORDS:twenty-one} chapters.\n\n"
-		+ "<!-- speaker: 2 -->\n\nAnd ${WORD_COUNT_IN_WORDS} of them.")
+		+ "<!-- speaker: Voice 2 -->\n\nAnd ${WORD_COUNT_IN_WORDS} of them.")
 	var said := ""
 	for c in chunks:
 		for w in (c as Dictionary)["words"]:
@@ -418,13 +462,6 @@ func _check_macros() -> void:
 	_ed._build_chunks("Plain text. <!-- todo: ${WORD_COUNT_IN_WORDS} -->")
 	_ok(_ed._plan_note.is_empty(),
 		"the note survived the text being fixed: %s" % _ed._plan_note)
-
-	# ...and an over-range speaker cue reports the same way, rather than writing
-	# a status line that "Planned N chunk(s)" overwrites a moment later
-	_slots(1)
-	_ed._build_chunks("One.\n<!-- speaker: 4 -->\nTwo.")
-	_ok(_ed._plan_note.contains("speaker 4"),
-		"an out-of-range cue was not reported: %s" % _ed._plan_note)
 
 
 ## THE PAGE SHOWS WHAT THE PAGE SAID. `2009` is spoken "two thousand nine" and
@@ -471,3 +508,102 @@ func _check_subtitles_show_the_source() -> void:
 		for w in (c as Dictionary)["words"]:
 			_ok(not String((w as Dictionary)["text"]).strip_edges().is_empty(),
 				"an empty subtitle card was emitted")
+
+
+## HESITATIONS. A `<!-- hesitation -->` is a rest AT THAT POINT and never a word: it must not
+## be spoken, it must land on the right word boundary (mid-sentence included), a marker that
+## names its length keeps it, and switching the feature off removes them all. Every one of
+## these fails silently - a rest in the wrong place just sounds like a slow reader.
+func _check_hesitations() -> void:
+	_slots(2)
+	_ed._hesitate_on.button_pressed = true
+	_ed._hesitate.value = 1.5
+	var chunks: Array = _ed._build_chunks(
+		"She comes all the way around, <!-- hesitation --> and stops on me.\n\n"
+		+ "<!-- speaker: Voice 2 -->\n\n<!-- hesitation: 2.5 -->\n\nHis.")
+	var said := ""
+	for c in chunks:
+		for t in (c as Dictionary)["tokens"]:
+			said += String((t as Dictionary)["text"]) + " "
+	_ok(not said.to_lower().contains("hesitation") and not said.contains(TextNorm.HOLD_MARK),
+		"the marker reached the voice: %s" % said)
+	_ok(said.contains("around") and said.contains("stops") and said.to_lower().contains("his"),
+		"words went missing around a hesitation: %s" % said)
+	_ok(chunks.size() == 2, "a mid-sentence hesitation split the sentence: %d chunks" % chunks.size())
+	if chunks.size() != 2:
+		return
+	var h0: Array = (chunks[0] as Dictionary).get("holds", [])
+	_ok(h0.size() == 1, "the mid-sentence rest was not recorded: %s" % [h0])
+	if h0.size() == 1:
+		var tok := int(h0[0]["tok"])
+		var toks: Array = (chunks[0] as Dictionary)["tokens"]
+		_ok(String(toks[tok]["text"]).to_lower().begins_with("around") and not bool(h0[0]["before"]),
+			"the rest sits after %s rather than after 'around'" % [toks[tok]["text"]])
+		_ok(is_equal_approx(float(h0[0]["sec"]), 1.5), "a bare marker did not take the dial: %s" % [h0])
+	var h1: Array = (chunks[1] as Dictionary).get("holds", [])
+	_ok(h1.size() == 1 and int(h1[0]["tok"]) == 0 and bool(h1[0]["before"])
+			and is_equal_approx(float(h1[0]["sec"]), 2.5),
+		"a leading marker with its own length came out %s" % [h1])
+	# the subtitle still shows the word without the sentinel
+	for c in chunks:
+		for w in (c as Dictionary)["words"]:
+			_ok(not String((w as Dictionary)["text"]).contains(TextNorm.HOLD_MARK),
+				"the sentinel reached a subtitle card")
+
+	# OFF means no rests at all, and still nothing spoken
+	_ed._hesitate_on.button_pressed = false
+	var off: Array = _ed._build_chunks("Around, <!-- hesitation --> and stops.")
+	var any := 0
+	var off_said := ""
+	for c in off:
+		any += ((c as Dictionary).get("holds", []) as Array).size()
+		for t in (c as Dictionary)["tokens"]:
+			off_said += String((t as Dictionary)["text"]) + " "
+	_ok(any == 0, "Hesitate off still rested")
+	_ok(not off_said.to_lower().contains("hesitation"), "Hesitate off spoke the marker: %s" % off_said)
+	_ed._hesitate_on.button_pressed = true
+
+	# a hesitation between two paragraphs rests after the first one's last word
+	var para: Array = _ed._build_chunks("I will show up.\n\n<!-- hesitation -->\n\nI am here.")
+	var h2: Array = (para[0] as Dictionary).get("holds", []) if para.size() > 0 else []
+	_ok(para.size() == 2 and h2.size() == 1 and not bool(h2[0]["before"]),
+		"a hesitation between paragraphs did not follow the first one: %s" % [h2])
+
+
+## THE SPLICE. Silence of exactly the asked length goes in at the gap between the two words,
+## every word after it moves by that much, and nothing before it moves at all.
+func _check_hesitation_splice() -> void:
+	var sr := 22050
+	_ed._sr = sr
+	var pcm := PackedFloat32Array()
+	pcm.resize(sr)                 # one second
+	pcm.fill(0.5)
+	# three words: 0.0-0.3, 0.4-0.6, 0.7-0.95
+	var spans: Array = [{"index": 0, "t0": 0.0, "t1": 0.3}, {"index": 1, "t0": 0.4, "t1": 0.6},
+		{"index": 2, "t0": 0.7, "t1": 0.95}]
+	var r: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 1.0, "before": false}], spans, 1.0)
+	var out: PackedFloat32Array = r["pcm"]
+	_ok(absi(out.size() - 2 * sr) <= 1, "the take grew by %d samples, not one second" % (out.size() - sr))
+	var cut := int(0.35 * sr)
+	_ok(absf(out[cut + sr / 2]) < 1e-6, "the rest is not silence at the gap")
+	_ok(absf(out[int(0.2 * sr)] - 0.5) < 1e-6, "audio before the rest changed")
+	_ok(absf(out[int(1.5 * sr)] - 0.5) < 1e-6, "audio after the rest did not move by its length")
+	var cuts: Array = r["cuts"]
+	_ok(is_equal_approx(GenerativeEditor._shifted(0.3, cuts, 1.0, false), 0.3),
+		"the word before the rest moved")
+	_ok(is_equal_approx(GenerativeEditor._shifted(0.4, cuts, 1.0, true), 1.4),
+		"the word after the rest did not move by it")
+	# a rest before the first word opens the chunk
+	var r2: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 0.5, "before": true}], spans, 1.0)
+	_ok(is_equal_approx(GenerativeEditor._shifted(0.0, r2["cuts"], 1.0, true), 0.5),
+		"a leading rest did not push the first word back")
+	_ok(absf((r2["pcm"] as PackedFloat32Array)[int(0.25 * sr)]) < 1e-6, "a leading rest is not silence")
+	# ...and one after the last word closes it, moving nothing
+	var r3: Dictionary = _ed._splice_holds(pcm, [{"tok": 2, "sec": 0.5, "before": false}], spans, 1.0)
+	_ok(is_equal_approx(GenerativeEditor._shifted(0.95, r3["cuts"], 1.0, false), 0.95)
+			and (r3["pcm"] as PackedFloat32Array).size() == sr + sr / 2,
+		"a trailing rest moved a word or was the wrong length")
+	# the resample ratio divides the model's clock
+	var r4: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 1.0, "before": false}], spans, 2.0)
+	_ok(is_equal_approx(GenerativeEditor._shifted(0.4, r4["cuts"], 2.0, true), 1.2),
+		"the splice ignored the resample ratio")

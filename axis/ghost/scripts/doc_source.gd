@@ -25,12 +25,12 @@ class_name DocSource
 ## block off the top before a word reaches the synthesizer, and ghost keeps its own key in
 ## there: the reader, the tone, the room, the whole cast of a multi-speaker chapter.
 ##
-## THE TWO DIRECTIONS ARE NOT SYMMETRIC, and that is deliberate rather than an oversight.
-## SAVING IS AUTOMATIC - a dial moved is a dial written, on a quiet period, exactly the way
-## the rest of ghost saves (see [Settings], whose whole argument is that persistence should
-## be a property rather than something to remember). LOADING IS NOT: it happens when a
-## document is opened and when ⟳ is pressed, and never on its own, because an import firing
-## by itself would undo a dial the author had just moved.
+## BOTH DIRECTIONS FOLLOW THE AUTHOR, with no button for either. SAVING is automatic - a
+## dial moved is a dial written, on a quiet period, exactly the way the rest of ghost saves
+## (see [Settings]). LOADING happens at every Speak and export ([method pull]), because the
+## file is the authoritative source - and never on a timer, because an import firing by
+## itself would undo a dial the author had just moved. A Speak cannot do that: it writes any
+## change still waiting first, so what it reads back already holds it.
 ##
 ## What makes the automatic direction safe is not that the write is small, it is that the
 ## write is CHECKED: [method FrontMatter.write_block] re-reads from disk, replaces one key
@@ -41,7 +41,7 @@ class_name DocSource
 ## ...AND NOT IN AN UNATTENDED PROCESS. An export render boots this whole app against the
 ## author's settings, which is exactly how a render would come to edit a manuscript nobody
 ## is watching. Automatic saving is refused wherever [Settings] is read-only - a render, the
-## offline analyzer, a test probe. The ↑ button is not, because a button press is a person.
+## offline analyzer, a test probe. Flushing on Speak is not, because pressing Speak is a person.
 ##
 ## The panel supplies the two halves it alone can know, as Callables: [member capture]
 ## returns the settings to store, [member apply] takes the ones a document carried.
@@ -117,7 +117,7 @@ func setup(section: String, block: String) -> void:
 		"Read a file on disk instead, fresh at every Speak. Keep writing in your own "
 		+ "editor while ghost is open: save, press Speak, and the reading is the file as it "
 		+ "is now. YAML frontmatter at the top is never spoken - it is where the voice is "
-		+ "kept (see ↑).")
+		+ "kept, written there on its own a moment after you stop adjusting a setting.")
 	row.add_child(_mode_input)
 	row.add_child(_mode_sync)
 	var spacer := Control.new()
@@ -133,15 +133,6 @@ func setup(section: String, block: String) -> void:
 	_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_row.add_child(_name)
 	_row.add_child(_tool("Open…", "Pick the document to read.", _open_dialog))
-	_row.add_child(_tool("⟳", "Re-read the file now, and take the voice from its "
-		+ "frontmatter again. A Speak re-reads the WORDS on its own; this is for when the "
-		+ "settings in the document have changed too.", func() -> void: reload()))
-	_row.add_child(_tool("↑", "Save the voice into the document NOW. You should not need "
-		+ "this - the settings are written to the document's frontmatter on their own, a "
-		+ "moment after you stop adjusting them - but it forces the write and says plainly "
-		+ "whether it worked. Either way only one `ghost:` key of ghost's own is touched: "
-		+ "not the body, not another key, not a comment, and the edit is refused outright if "
-		+ "it would be.", func() -> void: save()))
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -210,23 +201,50 @@ func draft() -> String:
 	return _text.text if _text != null else _draft
 
 
-## THE REAL-TIME HALF: the words to speak, read from the disk at this instant.
+## THE REAL-TIME READ: the document as it is on disk at this instant - its words AND its
+## voice. The file is the authoritative source, so every Speak and every export starts here
+## and there is no separate "re-read" to remember to press.
 ##
-## Call it at the top of every Speak and every export. In Input mode it is just the box. A
-## read that fails keeps the last body rather than falling silent - a file being saved
-## under us is a moment, not a reason to stop a reading - and says so.
+## A SETTING NOT YET WRITTEN IS WRITTEN FIRST. The autosave waits for a quiet period, so a
+## dial moved a moment before Speak exists only in the panel; reading the voice back without
+## flushing it would put the OLDER value from the file straight over the one just chosen.
+## Flushed, the panel's latest change is in the file, and what comes back is the file - the
+## author's own edits to the frontmatter included.
+##
+## In Input mode it is just the box. A read that fails keeps the last body rather than
+## falling silent - a file being saved under us is a moment, not a reason to stop a reading.
 func pull() -> String:
 	if not is_sync():
 		return _text.text if _text != null else ""
-	var body := _read_body()
-	if body.is_empty() and not _body.is_empty():
+	_flush()
+	var raw: Variant = _read_raw()
+	if raw == null:
 		return _body
-	_show(body)
-	return body
+	var parts := FrontMatter_.split(String(raw))
+	_body = String(parts.body)
+	_show(_body)
+	_import(String(raw), true)
+	return _body
 
 
-## Re-read the document AND take its voice again. The ⟳ button, and what picking a document
-## does. Returns false when the file could not be read.
+## Write the panel's settings now if they differ from what was last written - the autosave's
+## own write, without its quiet period. Refused where the autosave is (a render, a probe).
+func _flush() -> void:
+	if not capture.is_valid() or (Settings.is_read_only() and not _autosave_for_test):
+		return
+	var snap := _snapshot()
+	if snap.is_empty() or snap == _saved:
+		return
+	_saved = snap
+	_seen = snap
+	var err := FrontMatter_.write_block(_path, _merged_block())
+	if not err.is_empty():
+		_autosave_note = err
+		_note("⚠  " + err)
+
+
+## Re-read the document AND take its voice. What picking a document does, and what boot
+## does in sync mode. Returns false when the file could not be read.
 func reload() -> bool:
 	if not is_sync():
 		_note("Nothing to re-read - the reading is coming from the box.")
@@ -241,7 +259,8 @@ func reload() -> bool:
 	return true
 
 
-## Write the panel's settings into the document's frontmatter. The ↑ button.
+## Write the panel's settings into the document's frontmatter, now. For gates; the panel
+## itself relies on the autosave and on the flush in [method pull].
 ##
 ## Everything careful about this is in [method FrontMatter.write_block]; what belongs here
 ## is that a refusal is REPORTED rather than swallowed, because the whole value of the
@@ -288,7 +307,7 @@ func _process(_delta: float) -> void:
 	if not is_sync() or not capture.is_valid():
 		return
 	# An export render, the offline analyzer and a test probe all boot the whole app against
-	# the author's own settings - and would find their own document open. A person pressing ↑
+	# the author's own settings - and would find their own document open. A person pressing Speak
 	# is a person; a background process is not.
 	if Settings.is_read_only() and not _autosave_for_test:
 		return
@@ -447,18 +466,8 @@ func _read_raw() -> Variant:
 	return raw
 
 
-## The body alone, for a Speak: no voice import, no status chatter on success.
-func _read_body() -> String:
-	var raw: Variant = _read_raw()
-	if raw == null:
-		return ""
-	var parts := FrontMatter_.split(String(raw))
-	_body = String(parts.body)
-	return _body
-
-
 ## Take the voice out of a document and hand it to the panel.
-func _import(raw: String) -> void:
+func _import(raw: String, quiet := false) -> void:
 	var res := FrontMatter_.read_block(raw)
 	if not res.ok:
 		_note("Read %s. Its frontmatter could not be parsed (%s), so the voice is unchanged."
@@ -468,8 +477,9 @@ func _import(raw: String) -> void:
 	var mine: Variant = ghost.get(_block, null)
 	if mine is Dictionary and apply.is_valid():
 		apply.call(mine as Dictionary)
-		_note("Read %s and restored its voice." % _path.get_file())
-	else:
+		if not quiet:
+			_note("Read %s and restored its voice." % _path.get_file())
+	elif not quiet:
 		_note("Read %s. It carries no voice yet - adjust anything and it will be written in."
 			% _path.get_file())
 	# THE SNAPSHOT IS SEEDED HERE, after the panel has taken the document's voice. Without it

@@ -93,7 +93,11 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`filters.gd`](../scripts/filters.gd) **Filters** - the LOOK the whole picture is put through, after the scenes have drawn.
 - [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
 - [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicVehicle` flies over.
+- [`book_layout.gd`](../scripts/book_layout.gd) **BookLayout** - a chapter typeset into the pages of a printed novel, for `BookVehicle`.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
+- [`illustrations.gd`](../scripts/illustrations.gd) **Illustrations** - the library of generated pictures a book prints.
+- [`image_gen.gd`](../scripts/image_gen.gd) **ImageGen** - who paints the pictures. The backend axis of `Illustrations`.
+- [`illustration_panel.gd`](../scripts/illustration_panel.gd) **IllustrationPanel** - the Generative panel's controls for a book's pictures (`Illustrations`).
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).
 - [`dial_widget.gd`](../scripts/dial_widget.gd) **DialWidget** - the on-screen face of a `Dial` (see that class for what turning does).
@@ -187,6 +191,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
 - [`doc_source.gd`](../scripts/doc_source.gd) **DocSource** - where a reading's words come from: the text box, or a file on disk.
 - [`front_matter.gd`](../scripts/front_matter.gd) **FrontMatter** - YAML frontmatter on a Markdown document, read and (carefully) written.
+- [`manuscript.gd`](../scripts/manuscript.gd) **Manuscript** - what a chapter file SAYS about itself, beyond the words to be read.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 - [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
 - [`generative_editor.gd`](../scripts/generative_editor.gd) **GenerativeEditor** - the neural synthesis path (VOICE_PLAN.md P4).
@@ -226,5 +231,6 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 
 - [`feedback.gd`](../scripts/feedback.gd) **FeedbackConsole** - the authoring feedback channel.
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
+- [`assistant_backends.gd`](../scripts/assistant_backends.gd) **AssistantBackends** - the CLIs `Assistant` can dispatch a feedback note to, and everything that differs between them: how a run is launched, how it is resumed, and how its event stream reads.
 
 Scene scripts (59) are catalogued separately in [scenes.md](scenes.md).

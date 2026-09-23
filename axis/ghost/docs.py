@@ -95,7 +95,11 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "filters.gd",
             "comic_page.gd",
             "comic_spread.gd",
+            "book_layout.gd",
             "films.gd",
+            "illustrations.gd",
+            "image_gen.gd",
+            "illustration_panel.gd",
             "workspace.gd",
             "dial.gd",
             "dial_widget.gd",
@@ -211,6 +215,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "voice_sampler.gd",
             "doc_source.gd",
             "front_matter.gd",
+            "manuscript.gd",
             "subtitles.gd",
             "voice_host.gd",
             "generative_editor.gd",
@@ -248,7 +253,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "Feedback & assistant",
         "The in-app authoring loop: capture reproducible critiques, browse "
         "them, and dispatch automated fixes.",
-        ["feedback.gd", "assistant.gd"],
+        ["feedback.gd", "assistant.gd", "assistant_backends.gd"],
     ),
 ]
 
@@ -397,6 +402,15 @@ ENGINE_FLAGS = {
     "--write-movie",
     "--fixed-fps",
     "--",
+    # claude / codex arguments (assistant_backends' feedback dispatch, image_gen's
+    # illustration jobs), not ghost flags
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-skip-permissions",
+    "--json",
+    "--output-format",
+    "--resume",
+    "--skip-git-repo-check",
+    "--verbose",
     # yt-dlp/pip arguments (mask_editor's URL import subprocess), not ghost flags
     "--newline",
     "--no-playlist",

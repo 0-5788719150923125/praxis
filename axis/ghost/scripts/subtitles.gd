@@ -49,6 +49,13 @@ var loop_length := 0.0              # >0 once a streamed take loops: wrap time b
 var time_base := 0.0                # playback time when the current content started
 ## 0..1, eased. Multiplies every alpha the overlay draws, plate included.
 var presence := 0.0
+## The manuscript this reading came from, when there is one: `{source}` - the chapter's
+## markdown. Carried beside the words so a vehicle that typesets the text ([BookVehicle])
+## gets it in the live session and in the export render alike (it rides the sidecar).
+var document: Dictionary = {}
+## True when a vehicle shows the words itself: the clock and the eased cursor keep running,
+## because that vehicle reads them, and only the drawing stops.
+var overlay_hidden := false
 var _cursor := 0.0                  # the narrator's eye: global word progress, eased
 var _hue_sm := 0.6
 var _overlay: Control
@@ -69,6 +76,8 @@ func load_sidecar(path: String) -> bool:
 		push_warning("ghost: subtitle sidecar unreadable: " + path)
 		return false
 	words = parsed.words
+	if parsed.get("book") is Dictionary:
+		document = parsed.book
 	return true
 
 
@@ -79,6 +88,16 @@ func _ready() -> void:
 	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_overlay)
+
+
+## The reading's own clock: seconds into the take.
+func now() -> float:
+	return _now()
+
+
+## The narrator's eye: global word progress (word index + fraction within it), eased.
+func cursor() -> float:
+	return _cursor
 
 
 func _now() -> float:
@@ -205,6 +224,10 @@ func _process(delta: float) -> void:
 		# ramps to catch a run of quick words and slows as it closes in
 		var rate := 3.0 + 7.0 * clampf(absf(gap) - 0.15, 0.0, 1.5)
 		_cursor = lerpf(_cursor, target, 1.0 - exp(-rate * delta))
+	if overlay_hidden:
+		if _overlay.visible:
+			_overlay.visible = false
+		return
 	_overlay.queue_redraw()
 
 

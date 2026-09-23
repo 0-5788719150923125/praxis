@@ -235,13 +235,19 @@ static func parse(text: String) -> Array:
 	# toggles welded to the word at each end of a run, so a run of any length needs only
 	# its two ends marked and this carries the level across everything between.
 	var emph_state := 0
+	# Hesitation sentinels peeled off the current token, not yet given to a word.
+	var hold_acc := {"lead": 0, "tail": 0, "count": 0, "carry": 0}
 	for ti in toks.size():
 		var token: String = toks[ti]
 		# PEEL THE SENTINELS FIRST, before anything reads the token. They are typography:
 		# the dictionary must not see them, and `display` must not print them - what they
 		# leave behind is `emph`, which the subtitle draws as a slanted or bold face.
+		# Hesitations settle onto the word the PREVIOUS token produced, now that it is known
+		# whether it produced one - see [method _settle_holds].
+		_settle_holds(words, sentences, hold_acc)
 		var emph := emph_state
-		if token.contains(TextNorm.EMPH_ITALIC) or token.contains(TextNorm.EMPH_BOLD):
+		if token.contains(TextNorm.EMPH_ITALIC) or token.contains(TextNorm.EMPH_BOLD) \
+				or token.contains(TextNorm.HOLD_MARK):
 			var clean := ""
 			var seen := 0
 			for ci in token.length():
@@ -250,6 +256,12 @@ static func parse(text: String) -> Array:
 					emph_state ^= TextNorm.EMPH_I
 				elif ech == TextNorm.EMPH_BOLD:
 					emph_state ^= TextNorm.EMPH_B
+				elif ech == TextNorm.HOLD_MARK:
+					# Before any letter it is a rest BEFORE this word, after one a rest after it.
+					if clean.strip_edges().is_empty():
+						hold_acc["lead"] = int(hold_acc["lead"]) + 1
+					else:
+						hold_acc["tail"] = int(hold_acc["tail"]) + 1
 				else:
 					seen |= emph_state
 					clean += ech
@@ -389,10 +401,47 @@ static func parse(text: String) -> Array:
 		if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 			sentences.append(words)
 			words = []
+	_settle_holds(words, sentences, hold_acc)
 	if words.size() > 0:
 		sentences.append(words)
 	_resolve_homographs(sentences)
 	return sentences
+
+
+## Give the hesitations peeled off the last token to a word. A token appends at most one
+## word, so comparing the running word count says whether it did: if so the rests land on
+## THAT word (`hold_before` for a sentinel that led it, `hold` for one that trailed it);
+## if the token produced nothing - a stray mark, a dropped word - a trailing rest goes to
+## the word before, and a leading one waits for the next word. A rest is never dropped:
+## if no word follows at all it is kept on the last one, where the reading stops anyway.
+## `hold` / `hold_before` are COUNTS of sentinels; the caller owns the durations, in order.
+static func _settle_holds(words: Array, sentences: Array, acc: Dictionary) -> void:
+	var total := words.size()
+	for s in sentences:
+		total += (s as Array).size()
+	var grew := total > int(acc["count"])
+	acc["count"] = total
+	var lead := int(acc["lead"]) + int(acc["carry"])
+	var tail := int(acc["tail"])
+	acc["lead"] = 0
+	acc["tail"] = 0
+	acc["carry"] = 0
+	if lead == 0 and tail == 0:
+		return
+	var newest: Dictionary = {}
+	if not words.is_empty():
+		newest = words[words.size() - 1]
+	elif not sentences.is_empty() and not (sentences[sentences.size() - 1] as Array).is_empty():
+		var last: Array = sentences[sentences.size() - 1]
+		newest = last[last.size() - 1]
+	if grew and not newest.is_empty():
+		newest["hold_before"] = int(newest.get("hold_before", 0)) + lead
+		newest["hold"] = int(newest.get("hold", 0)) + tail
+	elif not newest.is_empty() and lead == 0:
+		newest["hold"] = int(newest.get("hold", 0)) + tail
+	else:
+		# Nothing to hang it on yet: everything waits for the next word, in order.
+		acc["carry"] = lead + tail
 
 
 ## `at` collects each token's start offset in `text`, for callers that have to

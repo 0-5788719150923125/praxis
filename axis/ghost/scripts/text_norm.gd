@@ -66,6 +66,14 @@ const FOLD := {
 const EMPH_ITALIC := "\uE001"
 const EMPH_BOLD := "\uE002"
 const EMPH_MARKS := EMPH_ITALIC + EMPH_BOLD
+## A HESITATION: a longer rest the author asked for (`<!-- hesitation -->`). The Generative
+## panel welds one to the word it follows (or leads, when nothing comes before it), and it
+## rides the pipeline exactly as the emphasis sentinels do - [Phonemes.parse] peels it into
+## `hold` / `hold_before` on the word, and the panel splices the silence into the take there.
+const HOLD_MARK := "\uE003"
+## Every sentinel, for the passes that must treat one as a WRAPPER (like a quote) rather than
+## as part of the word.
+const SENTINELS := EMPH_ITALIC + EMPH_BOLD + HOLD_MARK
 ## Level bits carried on a word: 1 italic, 2 bold, 3 both.
 const EMPH_I := 1
 const EMPH_B := 2
@@ -339,15 +347,15 @@ static func _strip_markdown(text: String) -> String:
 	return out
 
 
-## Strip every emphasis sentinel from `text`. For callers who want speakable words and
-## nothing else - which is everyone except [Phonemes.parse].
+## Strip every sentinel from `text` - emphasis and hesitation alike. For callers who want
+## speakable words and nothing else - which is everyone except [Phonemes.parse].
 static func strip_emphasis(text: String) -> String:
-	if not (text.contains(EMPH_ITALIC) or text.contains(EMPH_BOLD)):
+	if not (text.contains(EMPH_ITALIC) or text.contains(EMPH_BOLD) or text.contains(HOLD_MARK)):
 		return text
 	var out := ""
 	for i in text.length():
 		var c := text[i]
-		if c != EMPH_ITALIC and c != EMPH_BOLD:
+		if c != EMPH_ITALIC and c != EMPH_BOLD and c != HOLD_MARK:
 			out += c
 	return out
 
@@ -705,7 +713,7 @@ static func _expand_numbers(text: String, marks_in: Array = [],
 		out += done
 		# The next token starts a sentence if this one ended one. Closing wrappers are
 		# stripped first so `it."` counts.
-		var tail := tok.rstrip("\"')]" + EMPH_MARKS)
+		var tail := tok.rstrip("\"')]" + SENTINELS)
 		starts = tail.length() > 0 and tail[tail.length() - 1] in ".!?"
 	return out
 
@@ -713,11 +721,11 @@ static func _expand_numbers(text: String, marks_in: Array = [],
 static func _expand_token(tok: String) -> String:
 	# hold trailing punctuation aside so it still reaches the tokenizer
 	var tail := ""
-	while tok.length() > 0 and tok[tok.length() - 1] in ".,!?;:\"')" + EMPH_MARKS:
+	while tok.length() > 0 and tok[tok.length() - 1] in ".,!?;:\"')" + SENTINELS:
 		tail = tok[tok.length() - 1] + tail
 		tok = tok.substr(0, tok.length() - 1)
 	var head := ""
-	while tok.length() > 0 and tok[0] in "\"'(" + EMPH_MARKS:
+	while tok.length() > 0 and tok[0] in "\"'(" + SENTINELS:
 		head += tok[0]
 		tok = tok.substr(1)
 	if tok.is_empty():
@@ -853,11 +861,11 @@ static func _expand_abbrev(text: String, marks: Array = []) -> String:
 		var body := tok
 		# The emphasis sentinels count as wrappers here for the same reason a quote does:
 		# `*Mr. Smith*` must still find `mr.` in the table.
-		while body.length() > 0 and body[0] in "\"'(" + EMPH_MARKS:
+		while body.length() > 0 and body[0] in "\"'(" + SENTINELS:
 			head += body[0]
 			body = body.substr(1)
 		var tail := ""
-		while body.length() > 0 and body[body.length() - 1] in "\"')" + EMPH_MARKS:
+		while body.length() > 0 and body[body.length() - 1] in "\"')" + SENTINELS:
 			tail = body[body.length() - 1] + tail
 			body = body.substr(0, body.length() - 1)
 		# INITIALISMS FIRST, and against `body` rather than `lower`: the case IS the match.
@@ -922,7 +930,7 @@ static func _abbrev_fits(key: String, words: PackedStringArray, at: int) -> bool
 		return true
 	if at + 1 >= words.size():
 		return false                     # nothing follows: it ended a sentence, so it is the word
-	var nxt := String(words[at + 1]).lstrip("\"'(" + EMPH_MARKS)
+	var nxt := String(words[at + 1]).lstrip("\"'(" + SENTINELS)
 	if nxt.is_empty():
 		return false
 	if needs_number:

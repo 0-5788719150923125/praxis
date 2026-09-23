@@ -41,12 +41,14 @@ class_name Vehicle
 const REGISTRY := {
 	"full": "res://scripts/vehicles/full.gd",
 	"comic": "res://scripts/vehicles/comic.gd",
+	"book": "res://scripts/vehicles/book.gd",
 }
 
 ## Display names for the registry keys, in registry order - for the settings surface.
 const LABELS := {
 	"full": "Full frame",
 	"comic": "Comic book",
+	"book": "Novel",
 }
 
 ## WHICH OPTIONAL SETTINGS EACH VEHICLE ACTUALLY USES, as a list of tags per key.
@@ -68,6 +70,7 @@ const LABELS := {
 const USES := {
 	"full": [],
 	"comic": ["camera", "films"],
+	"book": ["camera", "illustrations"],
 }
 
 ## Does [param key]'s vehicle use the [param feature] group? Unknown vehicles and unknown
@@ -84,6 +87,7 @@ static func uses(key: String, feature: String) -> bool:
 ## continuation silently truncates the blurb at the first line.
 const BLURBS := {
 	"full": "One scene at a time, filling the frame. The original show.",
+	"book": "The chapter itself, typeset into the pages of an open novel on a desk, with each word lit as it is spoken and the leaf turning as the reading reaches the next spread. Pictures come from the chapter's image markers.",
 	"comic": "The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine.",
 }
 
@@ -177,6 +181,13 @@ func owns_cast() -> bool:
 ## particular change without giving up ownership.
 func take_over(_outgoing: GhostScene) -> GhostScene:
 	return null
+
+
+## The session's words and their clock, handed over when the karaoke overlay is made.
+## Return TRUE when this vehicle shows the words itself, and main hides the overlay - a page
+## that prints the text under a subtitle of the same text would say every sentence twice.
+func bind_captions(_subs) -> bool:
+	return false
 
 
 ## Per-frame, after the Director has advanced the schedule. [param features] is the

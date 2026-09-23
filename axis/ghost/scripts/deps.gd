@@ -179,6 +179,23 @@ const TOOLS := [
 		"site": "https://claude.com/claude-code",
 	},
 	{
+		"key": "codex",
+		"name": "OpenAI Codex CLI",
+		"bins": ["codex"],
+		"version_args": ["--version"],
+		"tier": TIER_EXTRA,
+		"used_for": "The Assistant dropdown's Codex option (a ` feedback note dispatched to "
+			+ "Codex as a one-shot fix against this checkout), and painting the illustrations "
+			+ "the book vehicle prints, through Codex's built-in image generation. Neither "
+			+ "runs unless you pick it.",
+		"install": {
+			"linux": "npm install -g @openai/codex",
+			"macos": "npm install -g @openai/codex",
+			"windows": "npm install -g @openai/codex",
+		},
+		"site": "https://developers.openai.com/codex/cli",
+	},
+	{
 		"key": "xvfb",
 		"name": "xvfb-run",
 		"bins": ["xvfb-run"],

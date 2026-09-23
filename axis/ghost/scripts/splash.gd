@@ -34,12 +34,10 @@ const AUDIO_EXTS := ["wav", "mp3", "ogg", "oga", "flac"]
 ## The assistant dropdown: display name -> the persisted key (see
 ## assistant_backend()). "" (Off) means no assistant at all - main.gd and
 ## mask_editor.gd both gate creating an Assistant node on this being non-empty.
-## Only one real backend exists yet; the dropdown shape is here so a second one
-## (a different CLI, an API-direct backend, whatever) is a new entry, not a
-## redesign - see assistant.gd, which is NOT backend-pluggable internally yet
-## because there is only one backend to plug.
-const ASSISTANT_BACKENDS := ["Off", "Claude Code CLI"]
-const ASSISTANT_KEYS := ["", "claude_cli"]
+## Each key is a row of [AssistantBackends], which owns everything that differs
+## between the CLIs; a new backend is a row there plus an entry here.
+const ASSISTANT_BACKENDS := ["Off", "Claude Code CLI", "Codex CLI (OpenAI)"]
+const ASSISTANT_KEYS := ["", "claude_cli", "codex_cli"]
 
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
@@ -434,7 +432,8 @@ func _on_assistant_selected(idx: int) -> void:
 	_assistant_backend = ASSISTANT_KEYS[idx]
 
 
-## The persisted assistant choice ("" = Off, "claude_cli" = Claude Code CLI) -
+## The persisted assistant choice ("" = Off, "claude_cli" = Claude Code CLI,
+## "codex_cli" = Codex CLI) -
 ## a STATIC reader over the same user://ghost.cfg this instance writes, so
 ## main.gd and mask_editor.gd can both read it directly rather than have it
 ## threaded through start_session/start_mask. That matters because splash

@@ -15,7 +15,7 @@ host_for(incoming)   - the node an arriving scene is added to. `full` returns th
 
 A vehicle is a Node2D mounted INSIDE the stage SubViewport, so the stage governor still owns it: when the governor stops the stage, it stops the vehicle and every panel viewport nested under it, together.
 
-Registry: `Vehicle.REGISTRY` in [scripts/vehicle.gd](../scripts/vehicle.gd) (2 entries). Select with `--vehicle NAME`, or the Vehicle picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] vehicle`).
+Registry: `Vehicle.REGISTRY` in [scripts/vehicle.gd](../scripts/vehicle.gd) (3 entries). Select with `--vehicle NAME`, or the Vehicle picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] vehicle`).
 
 ## `full` - Full frame
 
@@ -46,3 +46,19 @@ It is also simply correct. A comic panel IS a held moment; the page is a sequenc
 THE SPREAD IS REALLY IN 3D. Not a sheared 2D plane faking depth - two quads placed in a world and projected through a `Lens3D`, free to rotate on X, Y and Z at once. Panels are drawn as SUBDIVIDED grids of textured triangles whose vertices are each projected individually, because a two-triangle quad is affinely textured and warps: measured at a hard yaw, the seam of a two-tone test texture landed 28.5 px away from where perspective puts it, on a 512 px frame.
 
 Source: [scripts/vehicles/comic.gd](../scripts/vehicles/comic.gd)
+
+## `book` - Novel
+
+_The chapter itself, typeset into the pages of an open novel on a desk, with each word lit as it is spoken and the leaf turning as the reading reaches the next spread. Pictures come from the chapter's image markers._
+
+BookVehicle - the reading as a printed novel, open on a desk, with the words lit as they are spoken.
+
+Where the comic draws SCENES onto pages, this draws the TEXT: the chapter is typeset once into real pages (`BookLayout`) and the narration is followed across them by a soft swash under the word being said - a finger moving along a line - so the picture draws the viewer into the story rather than into the video. It replaces the karaoke line entirely (`bind_captions` answers true, and main hides the overlay), because a subtitle floating over a page of the same words would be the same sentence printed twice.
+
+NO SCENES. The Director still keeps its schedule, but a cut hands over to one hidden placeholder this vehicle owns (`take_over`), so nothing is built and nothing draws. A book that later wants scenes in its plates would cast them the way the comic does.
+
+REAL 3D. The stage SubViewport has a world of its own, so the book is geometry in it: a Camera3D, a lamp, a desk, a cloth cover, two page stacks and three leaves (the left page, the right page, and the one being turned), each leaf a subdivided plane bent by `LEAF_SHADER` into the gutter curve and, while turning, rolled over the spine with a curl. Each visible page is a SubViewport drawn by `BookVehicle.PageCanvas`; a page is redrawn only when what is printed on it or lit on it changes, and otherwise its render target is left alone. Four page targets cover the worst case, a turn, where the old left, the old right (the leaf's front), the new left (its back) and the new right are all in shot.
+
+A GENTLE CAMERA, deliberately unlike the comic's. It holds a wide view of the spread most of the time, drifts toward the page and then the lines being read, and changes framing on a slow schedule drawn from the session seed and the show clock, so an export frames the same shots as the live reading. Every channel is a critically damped spring: nothing it does can be a jump. `Director.camera` scales how far and how often it moves.
+
+Source: [scripts/vehicles/book.gd](../scripts/vehicles/book.gd)

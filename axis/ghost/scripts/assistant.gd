@@ -15,9 +15,10 @@ class_name Assistant
 ## session, just wired to fire the moment feedback lands instead of waiting
 ## for a human to notice and paste it in. Sonnet 5, default (auto) effort -
 ## the CLI's --effort flag has no "auto" value, so it's simply omitted; the
-## session picks its own. "Claude Code CLI" is the only backend implemented so
-## far - the dropdown exists as a menu of one so a second backend is a new
-## entry there, not a redesign here. With it set to Off, submissions still
+## session picks its own. Codex CLI (OpenAI) is the second backend; what differs
+## between them (command line, resume, event stream, cost) lives in
+## [AssistantBackends], and each entry remembers which one started it so a
+## follow-up never lands on a different CLI's session. With it set to Off, submissions still
 ## show up (status "orphaned") so they stay reviewable/deletable - they just
 ## never get sent anywhere on their own.
 ##
@@ -51,11 +52,10 @@ const PANEL_W := 380
 ## editing the same live working tree, not isolated sandboxes.
 const MAX_CONCURRENT := 3
 
-## Only ever call `claude` with a controlled argument list via bash's safe
-## positional-parameter trick ("$1", passed as a real argv element, never
-## string-interpolated into the script) - the prompt carries arbitrary user
-## text and must never be concatenated into the shell command itself.
-var _claude_bin := "claude"
+## The pure half: per-backend command lines and stream parsing. Preloaded rather than
+## named by class so a headless run never depends on the class cache being fresh.
+const Backends := preload("res://scripts/assistant_backends.gd")
+
 var _repo_root := ""
 
 var _entries: Array = [] # Array[Dictionary], newest first - see enqueue()
@@ -86,7 +86,6 @@ var _pending_reload: Callable = Callable()
 func _ready() -> void:
 	add_to_group("assistant") # the mask editor asks us to defer its reload until idle
 	layer = 126 # below the feedback console itself (128), above ordinary scene UI
-	_resolve_claude_bin()
 	_resolve_repo_root()
 	_ensure_dir()
 	_build_ui()
@@ -94,14 +93,25 @@ func _ready() -> void:
 	_refresh_list()
 
 
-## Resolve `claude` once at startup - PATH when Godot is launched from a GUI entry
-## (vs. a shell) doesn't always match an interactive shell's PATH, so resolve the
-## real binary rather than assume bare "claude" works. [Deps] is the app-wide
-## answer to that, and the home screen's Environment panel reports the same one.
-func _resolve_claude_bin() -> void:
-	var path := Deps.resolve("claude")
-	if not path.is_empty():
-		_claude_bin = path
+## The real binary for a backend - PATH when Godot is launched from a GUI entry (vs. a
+## shell) doesn't always match an interactive shell's PATH, so resolve it rather than
+## assume the bare name works. [Deps] is the app-wide answer to that, and the home
+## screen's Environment panel reports the same one.
+func _bin_for(backend: String) -> String:
+	var bin := Backends.dep(backend)
+	var path := Deps.resolve(bin)
+	return path if not path.is_empty() else bin
+
+
+## Which CLI an entry belongs to. Recorded when it is first dispatched and never changed
+## after, because a session id only means something to the CLI that issued it; an entry
+## saved before backends were recorded was Claude's.
+func _backend_of(entry: Dictionary) -> String:
+	var b := String(entry.get("backend", ""))
+	if Backends.has(b):
+		return b
+	var chosen := Splash.assistant_backend()
+	return chosen if Backends.has(chosen) else Backends.LEGACY
 
 
 ## ghost's project root is axis/ghost - the actual git repo (praxis) is two
@@ -130,7 +140,7 @@ func enqueue(index: int, query: String, stem: String) -> void:
 		"index": index, "query": query, "stem": stem,
 		"status": "queued", "session_id": "", "response": "", "cost_usd": 0.0,
 		"pid": - 1, "out_path": "", "err_path": "", "error_text": "", "expanded": true,
-		"pending_prompt": "",
+		"pending_prompt": "", "backend": "", "usage": "",
 	}
 	_entries.push_front(entry)
 	if Splash.assistant_backend() == "":
@@ -226,29 +236,20 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 	var base := ProjectSettings.globalize_path(DIR)
 	entry.out_path = "%s/%04d.out.json" % [base, int(entry.index)]
 	entry.err_path = "%s/%04d.err.log" % [base, int(entry.index)]
-	var resume_part := ""
-	if entry.session_id != "":
-		resume_part = " --resume %s" % entry.session_id
-	# stream-json (NDJSON: one event object per line, as they happen), not the
-	# single-blob json mode - --output-format json gives NOTHING until the
-	# whole run finishes, which is exactly what prompted this: a real,
-	# correctly-running session with zero visible sign of life for however
-	# long the fix takes. --verbose is required alongside --print for
-	# stream-json. _poll_progress tails this file each frame for a live
-	# "what's it doing right now" readout; _finish still just wants the LAST
-	# line (type "result") once the process exits.
+	# Pinned on first dispatch: a follow-up or resume must reach the SAME CLI whatever the
+	# dropdown says now.
+	var backend := _backend_of(entry)
+	entry.backend = backend
+	# The run's stdout is a stream of JSON events, one per line, as they happen - never a
+	# single blob at the end, which gave NOTHING to show for however long the fix took.
+	# _poll_progress tails it each frame for a live "what's it doing" line; _finish reads
+	# the whole thing once the process exits.
 	#
-	# cd/exec/redirects are all Godot-controlled strings (paths we built, never
-	# user text) - safe to interpolate directly. The prompt is NOT interpolated;
-	# it arrives as bash's $1, a real argv element.
-	var script := "cd \"%s\" && exec \"%s\" -p --model sonnet --dangerously-skip-permissions --output-format stream-json --verbose%s \"$1\" > \"%s\" 2> \"%s\"" % [
-		_repo_root, _claude_bin, resume_part, entry.out_path, entry.err_path]
-	# DETACHED ON PURPOSE, and this is the one place in ghost that is. A dispatched run
-	# writes straight to the working tree and is meant to finish whether or not the editor
-	# is still open - see the note on `_closing`. Everything else goes through
-	# [method Subprocess.start], which binds the child to this process and kills it on exit;
-	# that is exactly the behaviour a dispatch must NOT have.
-	entry.pid = Subprocess.start_detached("/bin/bash", ["-c", script, "bash", prompt])
+	# Everything reaches bash as a positional parameter - the repo, the capture paths, the
+	# binary and the prompt - so feedback text is one argv element and never shell source.
+	var cli := Backends.argv(backend, _bin_for(backend), prompt, String(entry.session_id), _repo_root)
+	entry.pid = Subprocess.start_detached("/bin/bash",
+		Backends.launcher(cli, _repo_root, entry.out_path, entry.err_path))
 	if int(entry.pid) < 0:
 		# create_process failed outright (bad binary, spawn error) - without
 		# this, the entry would sit at "running" forever: _process()'s poll
@@ -256,7 +257,8 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 		# pid, and a negative one never satisfies that, so nothing would ever
 		# notice or unblock the queue.
 		entry.status = "error"
-		entry.error_text = "failed to start the claude subprocess (OS.create_process returned %d)" % int(entry.pid)
+		entry.error_text = "failed to start the %s subprocess (OS.create_process returned %d)" \
+			% [Backends.label(backend), int(entry.pid)]
 		_running_count -= 1
 		_save_entry(entry)
 		_refresh_list()
@@ -349,16 +351,17 @@ func _poll_progress(entry: Dictionary) -> void:
 		line = line.strip_edges()
 		if line == "":
 			continue
-		var evt = _json_object(line)
+		var evt = Backends.json_object(line)
 		if evt is Dictionary:
-			# Persist the session id the INSTANT it first appears (the "system"/init
-			# event carries it), not only at _finish - so a run interrupted by a crash
-			# still has a saved id and can be resumed later (see _load_existing).
-			if String(entry.session_id) == "" and evt.has("session_id"):
-				entry.session_id = str(evt.get("session_id", ""))
-				if String(entry.session_id) != "":
+			# Persist the session id the INSTANT it first appears (Claude's init event,
+			# Codex's thread.started), not only at _finish - so a run interrupted by a
+			# crash still has a saved id and can be resumed later (see _load_existing).
+			if String(entry.session_id) == "":
+				var sid := Backends.session_of(_backend_of(entry), evt)
+				if sid != "":
+					entry.session_id = sid
 					_save_entry(entry)
-			var desc := _describe_event(evt)
+			var desc := Backends.describe(_backend_of(entry), evt)
 			if desc != "" and desc != String(entry.get("progress", "")):
 				# Marks the moment the underlying agent actually did something new -
 				# _build_row uses this to flicker the collapsed title briefly, a
@@ -369,89 +372,37 @@ func _poll_progress(entry: Dictionary) -> void:
 
 
 ## Dig a session id out of a captured output/error blob when the field itself was
-## never saved (an interrupted run): every stream-json event carries
-## "session_id":"<uuid>", so the first one in the text is the run's id.
-func _recover_session_id(text: String) -> String:
-	var key := "\"session_id\":\""
-	var i := text.find(key)
-	if i < 0:
-		return ""
-	i += key.length()
-	var j := text.find("\"", i)
-	return text.substr(i, j - i) if j > i else ""
-
-
-## One stream-json event -> a short human-readable "what's happening now"
-## line. Only assistant turns carry anything worth showing: a tool call (Read/
-## Edit/Bash/...) names itself and its main argument, plain text is the
-## model's own words, everything else (system init, tool-result echoes, rate-
-## limit pings) is silently skipped rather than shown raw.
-func _describe_event(evt: Dictionary) -> String:
-	if String(evt.get("type", "")) != "assistant":
-		return ""
-	var blocks: Array = evt.get("message", {}).get("content", [])
-	for b in blocks:
-		if String(b.get("type", "")) == "tool_use":
-			var input: Dictionary = b.get("input", {})
-			var hint := ""
-			for key in ["file_path", "command", "pattern", "path", "prompt"]:
-				if input.has(key):
-					hint = String(input[key])
-					break
-			if hint.length() > 55:
-				hint = hint.substr(0, 55) + "…"
-			return "%s  %s" % [String(b.get("name", "tool")), hint] if hint != "" else String(b.get("name", "tool"))
-	for b in blocks:
-		if String(b.get("type", "")) == "text":
-			var t := String(b.get("text", "")).strip_edges()
-			if t != "":
-				return t.substr(0, 70) + ("…" if t.length() > 70 else "")
-	return "thinking…"
-
-
-## Parse one stream-json line into its object, or null - QUIETLY. claude's stdout is
-## NDJSON (one JSON object per line), but a stray non-JSON line (a subprocess's own
-## stdout that slipped through, a partial write) must be skipped, not logged. JSON.parse_string
-## prints a console ERROR on every failure; a JSON instance's parse() just returns a code, so
-## no spam. Anything not starting with '{' is skipped without even trying.
-func _json_object(line: String) -> Variant:
-	if not line.begins_with("{"):
-		return null
-	var json := JSON.new()
-	if json.parse(line) != OK:
-		return null
-	return json.data
+## never saved (an interrupted run).
+func _recover_session_id(text: String, backend: String = Backends.LEGACY) -> String:
+	return Backends.recover_session(backend, text)
 
 
 func _finish(entry: Dictionary) -> void:
+	var backend := _backend_of(entry)
 	var out_text := _read_file(entry.out_path)
-	var parsed = null
-	if out_text != "":
-		# stream-json is NDJSON, not one blob - the line we want (type
-		# "result", same shape --output-format json would have given whole)
-		# is the last one written.
-		for line in out_text.split("\n"):
-			line = line.strip_edges()
-			if line == "":
-				continue
-			var evt = _json_object(line)
-			if evt is Dictionary and String(evt.get("type", "")) == "result":
-				parsed = evt
-	if parsed is Dictionary and parsed.get("is_error", true) == false and parsed.has("result"):
+	var res: Dictionary = Backends.result(backend, Backends.events_in(out_text))
+	if bool(res.ok):
 		entry.status = "done"
-		entry.response = str(parsed.get("result", ""))
-		entry.session_id = str(parsed.get("session_id", entry.session_id))
-		entry.cost_usd = float(parsed.get("total_cost_usd", entry.cost_usd))
+		entry.response = String(res.response)
+		if String(res.session) != "":
+			entry.session_id = String(res.session)
+		entry.cost_usd = float(res.cost_usd)
+		entry.usage = String(res.usage)
 		entry.error_text = ""
 	else:
 		var err_text := _read_file(entry.err_path)
-		# The run produced no clean result, but it may still have a session id (it got
-		# far enough to emit the init event). If so it's RESUMABLE, not a dead end.
 		if String(entry.session_id) == "":
-			entry.session_id = _recover_session_id(out_text + "\n" + err_text)
+			entry.session_id = String(res.session)
+		# The run produced no clean result, but it may still have a session id (it got
+		# far enough to emit its first event). If so it's RESUMABLE, not a dead end.
+		if String(entry.session_id) == "":
+			entry.session_id = _recover_session_id(out_text + "\n" + err_text, backend)
 		if String(entry.session_id) != "":
 			entry.status = "interrupted"
 			entry.error_text = "did not finish - Resume to continue this session"
+			if String(res.error) != "":
+				entry.error_text = "%s: %s - Resume to continue this session" \
+					% [Backends.label(backend), String(res.error)]
 		else:
 			entry.status = "error"
 			entry.error_text = err_text if err_text != "" else \
@@ -500,6 +451,7 @@ func _save_entry(entry: Dictionary) -> void:
 		"index": entry.index, "query": entry.query, "status": entry.status,
 		"session_id": entry.session_id, "response": entry.response,
 		"cost_usd": entry.cost_usd, "error_text": entry.get("error_text", ""),
+		"backend": entry.get("backend", ""), "usage": entry.get("usage", ""),
 	}
 	var fa := FileAccess.open(path, FileAccess.WRITE)
 	if fa != null:
@@ -532,8 +484,12 @@ func _load_existing() -> void:
 		var status := str(data.get("status", "error"))
 		var error_text := str(data.get("error_text", ""))
 		var sid := str(data.get("session_id", ""))
+		# No key = saved before backends were recorded, which means Claude.
+		var backend := str(data.get("backend", ""))
+		if not Backends.has(backend):
+			backend = Backends.LEGACY
 		if sid == "":
-			sid = _recover_session_id(error_text) # older logs stashed the init event in error_text
+			sid = _recover_session_id(error_text, backend) # older logs stashed the init event in error_text
 		# A run that was mid-flight when the editor closed (or errored without a clean
 		# result) is resumable IF we know its session id - continue it via --resume
 		# rather than starting over. Only a run we can't identify is a dead "error".
@@ -549,7 +505,7 @@ func _load_existing() -> void:
 			"status": status, "session_id": sid,
 			"response": str(data.get("response", "")), "cost_usd": float(data.get("cost_usd", 0.0)),
 			"pid": - 1, "out_path": "", "err_path": "", "error_text": error_text, "expanded": false,
-			"pending_prompt": "",
+			"pending_prompt": "", "backend": backend, "usage": str(data.get("usage", "")),
 		})
 		has_record[idx] = true
 	# Orphaned feedback: a NNNN.json with no matching NNNN.assistant.json - left
@@ -583,7 +539,7 @@ func _load_existing() -> void:
 			"index": idx, "query": query, "stem": "%s/%04d" % [DIR, idx],
 			"status": "orphaned", "session_id": "", "response": "", "cost_usd": 0.0,
 			"pid": - 1, "out_path": "", "err_path": "", "error_text": "", "expanded": false,
-			"pending_prompt": "",
+			"pending_prompt": "", "backend": "", "usage": "",
 		})
 	loaded.sort_custom(func(a, b): return int(a.index) > int(b.index))
 	_entries = loaded
@@ -876,8 +832,12 @@ func _build_body(entry: Dictionary) -> Control:
 			resp.text = String(entry.response)
 			resp.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			body.add_child(resp)
-			var cost := _dim_label("$%.3f" % float(entry.cost_usd))
-			body.add_child(cost)
+			# Claude reports dollars; Codex reports tokens and no price. An entry saved before
+			# `usage` existed still has its dollar figure.
+			var usage := String(entry.get("usage", ""))
+			if usage.is_empty():
+				usage = "$%.3f" % float(entry.cost_usd)
+			body.add_child(_dim_label("%s · %s" % [Backends.label(_backend_of(entry)), usage]))
 			body.add_child(_build_followup_row(entry))
 		_:
 			var err := Label.new()
@@ -905,7 +865,8 @@ func _dim_label(text: String) -> Label:
 ## _load_existing's class doc for why nothing here fires on its own.
 func _build_send_row(entry: Dictionary) -> Control:
 	var send := Button.new()
-	send.text = "Send to Claude Code CLI"
+	# Not yet dispatched, so it goes wherever the dropdown points now.
+	send.text = "Send to %s" % Backends.label(_backend_of(entry))
 	send.focus_mode = Control.FOCUS_NONE
 	send.pressed.connect(func():
 		entry.status = "queued"
@@ -1002,7 +963,8 @@ func _build_resume_row(entry: Dictionary) -> Control:
 	var resume := Button.new()
 	resume.text = "↻  Resume"
 	resume.focus_mode = Control.FOCUS_NONE
-	resume.tooltip_text = "Continue the same Claude session (--resume %s) where it left off" % String(entry.session_id)
+	resume.tooltip_text = "Continue the same %s session (%s) where it left off" \
+		% [Backends.label(_backend_of(entry)), String(entry.session_id)]
 	var do_resume := func():
 		var extra := edit.text.strip_edges()
 		var prompt := "The previous run was interrupted before finishing."

@@ -39,18 +39,20 @@ title: 'Chapter One'
 ghost:
   generative:
     turn: 2.5
-    tab: 0
+    tab: Narrator
     voices:
-      - voice: en_US-libritts-high
+      Narrator:
+        voice: en_US-libritts-high
         speaker: 4
         pace: 0.8
-      - voice: en_GB-alan-medium
+      Emily White:
+        voice: en_GB-alan-medium
         speaker: 0
         pace: 1.3
 ---
 """
-const BODY_A := "\n# Chapter One\n\nThe rain had not stopped.\n"
-const BODY_B := "\n# Chapter One\n\nThe rain had stopped, and the door stood open.\n"
+const BODY_A := "\n# Chapter One\n\nThe rain had not stopped.\n\n<!-- speaker: Emily White -->\n\nNor had I.\n"
+const BODY_B := "\n# Chapter One\n\nThe rain had stopped, and the door stood open.\n\n<!-- speaker: Emily White -->\n\nNor had I.\n"
 
 var _fails: Array = []
 var _ed: GenerativeEditor
@@ -91,6 +93,8 @@ func _ready() -> void:
 	_check_saving_the_voice()
 	await _check_autosave()
 	await _check_autosave_waits_for_quiet()
+	_check_speak_takes_the_voice()
+	_check_the_look_travels()
 	await _check_unattended_processes_never_autosave()
 
 	_ed.free()
@@ -147,10 +151,12 @@ func _check_opening_a_document() -> void:
 	_ok(String(_ed._cfg(0).get("voice", "")) == "en_US-libritts-high"
 			and int(_ed._cfg(0).get("speaker", -1)) == 4
 			and is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 0.8),
-		"tab 1 did not come back as the document wrote it: %s" % str(_ed._cfg(0)))
+		"the narrator did not come back as the document wrote it: %s" % str(_ed._cfg(0)))
+	_ok(_ed._names == PackedStringArray(["Narrator", "Emily White"]),
+		"the tabs are not the script's speakers by name: %s" % [_ed._names])
 	_ok(String(_ed._cfg(1).get("voice", "")) == "en_GB-alan-medium"
 			and is_equal_approx(float(_ed._cfg(1).get("pace", 0.0)), 1.3),
-		"tab 2 did not come back as the document wrote it: %s" % str(_ed._cfg(1)))
+		"Emily White did not come back as the document wrote her: %s" % str(_ed._cfg(1)))
 	# A key the document did NOT mention takes its default rather than arriving missing.
 	_ok(_ed._cfg(0).has("presence") and _ed._cfg(0).has("ambience"),
 		"a voice written by an older build arrived with keys missing")
@@ -215,6 +221,8 @@ func _check_saving_the_voice() -> void:
 	# Read it back the way a fresh session would: through the panel, from the file.
 	_ed._turn.value = 1.0
 	_ed._slots = [GenerativeEditor.SLOT_DEFAULTS.duplicate()]
+	_ed._names = PackedStringArray(["Narrator"])
+	_ed._stash = {}
 	_ed._slot = 0
 	_ed._rebuild_tabs()
 	_doc.reload()
@@ -280,6 +288,58 @@ func _check_autosave_waits_for_quiet() -> void:
 	_ok(settled != before, "the adjustments never landed once they stopped")
 	_ok(settled.contains("turn: 2.25"),
 		"the document carries an interim value rather than where the adjusting ended")
+
+
+## EVERY SPEAK READS THE VOICE TOO, not only the words - the file is the authoritative source
+## and there is no re-read button. Two-sided: an edit made to the frontmatter outside ghost
+## must arrive, AND a dial moved a moment before Speak (still inside the autosave's quiet
+## period) must survive it - the flush writes it first, so the file's older value cannot
+## come back over it.
+func _check_speak_takes_the_voice() -> void:
+	_doc.allow_autosave_for_test()
+	_write(HEAD.replace("pace: 0.8", "pace: 0.65") + BODY_A)
+	_doc.pull()
+	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 0.65),
+		"a Speak did not take the voice edited in the file: %s" % str(_ed._cfg(0)))
+	_ed._select_tab(0)
+	_ed._rate.value = 1.2
+	_doc.pull()
+	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 1.2),
+		"a Speak put the file's older pace over the dial just moved: %s" % str(_ed._cfg(0)))
+	_ok(FileAccess.get_file_as_string(_path).contains("pace: 1.2"),
+		"the dial moved before Speak was not written to the document first")
+	_doc._autosave_for_test = false
+
+
+## THE PICTURES' LOOK TRAVELS WITH THE DOCUMENT - painter, style and reference images, into
+## the frontmatter and back at the next Speak. The style is the awkward case on purpose: a
+## colon, quotes and a line break, all of which YAML would take apart if written carelessly.
+func _check_the_look_travels() -> void:
+	Illustrations.use_for_test({}, false)
+	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
+	img.fill(Color(0.8, 0.2, 0.2))
+	var ref := DIR + "/ref.png"
+	img.save_png(ref)
+	var style := "Ink and wash: muted, \"quiet\".\nNo text anywhere."
+	Illustrations.set_style(style)
+	Illustrations.add_references([ProjectSettings.globalize_path(ref)])
+	_ok(_doc.save(), "saving the look into the document failed")
+	var raw := FileAccess.get_file_as_string(_path)
+	_ok(raw.contains("illustrations:") and raw.contains("painter:"),
+		"the look was not written into the frontmatter")
+	_ok(raw.ends_with(BODY_A), "writing the look changed the chapter")
+	# Change everything in the library, then Speak: the document's look must come back.
+	Illustrations.set_style("something else")
+	Illustrations.set_look({"references": []})
+	_ok(Illustrations.references().is_empty(), "the control is wrong - the references did not clear")
+	_doc.allow_autosave_for_test()
+	_doc._saved = _doc._snapshot()      # no flush: the file must win this time
+	_doc._autosave_for_test = false
+	_doc.pull()
+	_ok(Illustrations.style() == style, "the style came back as %s" % JSON.stringify(Illustrations.style()))
+	_ok(Illustrations.references().size() == 1, "the reference images did not come back from the document")
+	_ok(String(_ed._illustrations._style.text) == style, "the panel's style box does not show the document's style")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ref))
 
 
 ## AN UNATTENDED PROCESS MUST NOT EDIT A MANUSCRIPT. The control for everything above: with

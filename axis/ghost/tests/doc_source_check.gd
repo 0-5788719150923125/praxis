@@ -4,7 +4,7 @@ extends SceneTree
 ##
 ## WHY THIS FILE IS SHARP. Every other gate in this directory protects a picture or a sound;
 ## this one protects THE AUTHOR'S MANUSCRIPT. Sync mode points ghost at a real file and the
-## ↑ button writes into it, so the failure mode is not "the reading sounds wrong", it is a
+## autosave writes into it, so the failure mode is not "the reading sounds wrong", it is a
 ## chapter with a paragraph missing and no way to tell which one. Nothing about that is
 ## visible from inside ghost, and a document is usually only read again days later.
 ##

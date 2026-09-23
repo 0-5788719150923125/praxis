@@ -399,6 +399,9 @@ func _process(delta: float) -> void:
 	# stayed a `.part` forever. The visible symptom was footage appearing on ONE page of a
 	# session and never again, with the dial at maximum.
 	Films.pump()
+	# The same argument for a picture being painted: the job is a subprocess, and the panel
+	# that started it may have been closed or scrolled away long before it finishes.
+	Illustrations.pump()
 	# The background render reports its progress (playback position / length) so the
 	# live app's exporter can show a percentage in the status notification.
 	if _clock_watch:
@@ -622,8 +625,11 @@ func _begin_generative_stream(fp: int, sr: int, words: Array) -> AudioStreamGene
 		_subtitles.queue_free()
 	var subs := preload("res://scripts/subtitles.gd").new()
 	subs.words = words          # shared by reference; the editor appends to it
+	if _generative != null and is_instance_valid(_generative) and _generative.has_method("book_document"):
+		subs.document = _generative.book_document()
 	_subtitles = subs
 	add_child(subs)
+	_bind_captions(subs)
 	if _generative != null and is_instance_valid(_generative):
 		_generative.subtitles = subs   # the editor re-bases its clock per frame
 	return pb
@@ -693,6 +699,7 @@ func _attach_live_subtitles(stream: Node) -> void:
 	subs.words = stream.words
 	_subtitles = subs
 	add_child(subs)
+	_bind_captions(subs)
 
 
 func _on_stream_completed(dur: float, wav_path: String) -> void:
@@ -726,7 +733,16 @@ func _attach_subtitles() -> void:
 	if subs.load_sidecar(side):
 		_subtitles = subs
 		add_child(subs)
+		_bind_captions(subs)
 		print("ghost: subtitles attached (%d words)" % (subs.words as Array).size())
+
+
+## Hand a fresh caption source to the vehicle. One that prints the words itself (the book)
+## answers true, and the overlay then stops drawing - its clock and cursor keep running,
+## because that vehicle reads them.
+func _bind_captions(subs: Node) -> void:
+	if _vehicle != null and is_instance_valid(_vehicle) and _vehicle.bind_captions(subs):
+		subs.overlay_hidden = true
 
 
 ## --mask-render <session.json>: the export relaunch. No splash, no Director - just
