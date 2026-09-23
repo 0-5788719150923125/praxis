@@ -281,8 +281,8 @@ static func placement_guide(placement: String) -> String:
 	if placement == "full":
 		return ("a full-page book illustration plate, PORTRAIT orientation, 2:3 aspect "
 			+ "(1024x1536), composed to fill the whole page edge to edge.")
-	return ("a smaller vignette printed inside a column of text in a novel, LANDSCAPE "
-		+ "orientation, about 3:2 (1536x1024), one clear subject that reads at a small size.")
+	return ("a half-page illustration spanning the full width of a novel's text column, "
+		+ "LANDSCAPE orientation, 3:2 (1536x1024), printed above or below the text on the page.")
 
 
 # --- the index ---------------------------------------------------------------

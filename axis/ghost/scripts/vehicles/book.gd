@@ -883,39 +883,39 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		var fs := int(w["fs"])
 		var lit := li >= 0 and alpha > 0.0 and i <= li
 		if lit and i < li and now - float(_lay_t.get(i, -1e9)) > TRAIL_TAU * 4.0:
-			lit = false                            # long cooled: one plain draw
-		if not lit:
-			ci.draw_string(font, w["base"], text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, ink)
-			continue
-		# THE SWEEP, letter by letter, as the subtitles draw it: each letter lights when the
-		# voice reaches it and cools from that moment, so colour runs ACROSS a word rather
-		# than landing on it whole. Letters are placed at their shaped offsets within the
-		# word, so the word sets exactly as a single draw would.
+			lit = false                            # long cooled: all ink
+		# EVERY WORD IS DRAWN THE SAME WAY, lit or not: its own shaped glyphs, each at its own
+		# shaped position, each given a colour. Switching from a whole-word draw to a letter-
+		# by-letter one when the highlight arrived moved letters by a pixel - two drawing
+		# paths snap glyphs to the pixel grid differently, and no offset arithmetic makes
+		# them agree ("the k shifts weirdly when the highlights touch it"). With one path the
+		# highlight can only ever change a colour.
 		var t0 := float(_lay_t0.get(i, now))
 		var t1 := float(_lay_t.get(i, now))
 		var n := text.length()
 		var base: Vector2 = w["base"]
-		var xs := _letter_x(font, text, fs)
-		for k in n:
-			var ch := text[k]
-			var at := (float(k) + 0.5) / float(maxi(n, 1))
-			var g := 0.0
-			if i < li:
-				g = exp(-maxf(now - lerpf(t0, t1, at), 0.0) / TRAIL_TAU)
-			elif at <= frac:
-				# the word being said: lit up to the eased cursor, freshest at the front
-				g = exp(-maxf((frac - at) * maxf(t1 - t0, 0.05), 0.0) / TRAIL_TAU)
+		for gl in _glyphs(font, text, fs):
+			var k := int(gl["start"])
 			var col := ink
-			if g > 0.01:
-				var ci_i := _char0[i] + k if i < _char0.size() else k
-				var hue := fposmod(_seed_hue + float(ci_i) * HUE_STEP, 1.0)
-				# the subtitles' saturation wave: two slow incommensurate ripples along the
-				# text, so the colour breathes instead of sitting at one flat intensity
-				var sw := 0.5 + 0.35 * sin(float(ci_i) * 0.21 - now * 0.9) \
-					+ 0.15 * sin(float(ci_i) * 0.36 + now * 0.45)
-				var sat := lerpf(0.45, 0.9, clampf(sw, 0.0, 1.0))
-				col = ink.lerp(Color.from_hsv(hue, sat, 0.55), g * alpha)
-			ci.draw_string(font, base + Vector2(xs[k], 0.0), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+			if lit:
+				var at := (float(k) + 0.5) / float(maxi(n, 1))
+				var g := 0.0
+				if i < li:
+					g = exp(-maxf(now - lerpf(t0, t1, at), 0.0) / TRAIL_TAU)
+				elif at <= frac:
+					# the word being said: lit up to the eased cursor, freshest at the front
+					g = exp(-maxf((frac - at) * maxf(t1 - t0, 0.05), 0.0) / TRAIL_TAU)
+				if g > 0.01:
+					var ci_i := _char0[i] + k if i < _char0.size() else k
+					var hue := fposmod(_seed_hue + float(ci_i) * HUE_STEP, 1.0)
+					# the subtitles' saturation wave: two slow incommensurate ripples along
+					# the text, so the colour breathes instead of sitting at one intensity
+					var sw := 0.5 + 0.35 * sin(float(ci_i) * 0.21 - now * 0.9) \
+						+ 0.15 * sin(float(ci_i) * 0.36 + now * 0.45)
+					var sat := lerpf(0.45, 0.9, clampf(sw, 0.0, 1.0))
+					col = ink.lerp(Color.from_hsv(hue, sat, 0.55), g * alpha)
+			_ts.font_draw_glyph(gl["rid"], ci.get_canvas_item(), fs, base + (gl["pos"] as Vector2),
+				int(gl["index"]), col)
 	for lb in pg["labels"]:
 		var l: Dictionary = lb
 		ci.draw_string(_layout.face(int(l["emph"])), l["pos"], String(l["text"]),
@@ -927,36 +927,30 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 	# that is wrong is worse than none.
 
 
-## WHERE EACH LETTER SITS when the whole word is set, from the SHAPED word - kerning
-## included. A word is drawn whole until the voice reaches it and letter by letter after (the
-## sweep), so the two drawings must put every letter in the same place. Measuring each
-## letter's offset as the width of the text before it misses the kerning between neighbours,
-## and a serif tucks a comma under `y`, `r` or `d`: the comma jumped as its word went live -
-## "it feels like that comma flickers into place". Cached per (font, size, text).
-var _letters := {}
+## A word's shaped glyphs: `[{index, rid, pos, start}]`, positions relative to the baseline
+## origin, kerning and fallback faces included - exactly what a whole-word draw would place.
+## Cached per (font, size, text); a page draws the same few thousand words over and over.
+var _glyph_cache := {}
+var _ts: TextServer = TextServerManager.get_primary_interface()
 
-func _letter_x(font: Font, text: String, fs: int) -> PackedFloat32Array:
+func _glyphs(font: Font, text: String, fs: int) -> Array:
 	var key := "%d|%d|%s" % [font.get_instance_id(), fs, text]
-	if _letters.has(key):
-		return _letters[key]
-	var out := PackedFloat32Array()
-	out.resize(text.length())
+	if _glyph_cache.has(key):
+		return _glyph_cache[key]
 	var line := TextLine.new()
 	line.add_string(text, font, fs)
-	var ts := TextServerManager.get_primary_interface()
+	var out: Array = []
 	var x := 0.0
-	var set_ := {}
-	for g in ts.shaped_text_get_glyphs(line.get_rid()):
-		var st := int((g as Dictionary)["start"])
-		if st >= 0 and st < out.size() and not set_.has(st):
-			out[st] = x + float(((g as Dictionary).get("offset", Vector2.ZERO) as Vector2).x) * 0.0
-			set_[st] = true
-		x += float((g as Dictionary)["advance"]) * float(int((g as Dictionary).get("repeat", 1)))
-	# a letter with no glyph of its own (inside a ligature) sits where the one before it does
-	for k in range(1, out.size()):
-		if not set_.has(k):
-			out[k] = out[k - 1]
-	_letters[key] = out
+	for g in _ts.shaped_text_get_glyphs(line.get_rid()):
+		var d: Dictionary = g
+		var rep := maxi(1, int(d.get("repeat", 1)))
+		for _r in rep:
+			var off: Vector2 = d.get("offset", Vector2.ZERO)
+			if int(d.get("index", 0)) != 0 or not d.has("font_rid"):
+				out.append({"index": int(d.get("index", 0)), "rid": d.get("font_rid", RID()),
+					"pos": Vector2(x, 0.0) + off, "start": int(d.get("start", 0))})
+			x += float(d.get("advance", 0.0))
+	_glyph_cache[key] = out
 	return out
 
 

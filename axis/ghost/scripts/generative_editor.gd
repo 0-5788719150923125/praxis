@@ -2875,8 +2875,14 @@ func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
 func _pump() -> void:
 	if _voice_meta.is_empty():
 		return
+	# THE INTRO IS NOT LOOKAHEAD. It is seeded into the queue as silence before anything is
+	# requested, so counting it made an Intro of LOOKAHEAD_SECONDS or more look like a full
+	# buffer: nothing was ever requested, the stream never opened, and Speak did nothing at
+	# all ("at 9 the video breaks, at 7 it works"). Only the SPEECH queued counts; the intro
+	# still to be pushed is taken off (an underestimate once it plays, so it stays safe).
+	var intro_left := maxf(0.0, _lead_in - float(_pushed) / float(maxi(_sr, 1)))
 	while _in_flight < LOOKAHEAD and _next_to_request < _chunks.size() \
-			and _buffered_seconds() < LOOKAHEAD_SECONDS:
+			and _buffered_seconds() - intro_left < LOOKAHEAD_SECONDS:
 		var idx := _next_to_request
 		_next_to_request += 1
 		_in_flight += 1

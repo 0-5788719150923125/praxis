@@ -28,15 +28,11 @@ const MARGIN_OUTER := 128.0
 const BODY_FS := 33
 ## Line pitch as a multiple of the body size - bookish, a little looser than a screen.
 const LEADING := 1.46
-const INDENT_EM := 1.5
+## No first-line indent: the book and its PDFs mark a paragraph with the blank line alone
+## (PARA_GAP), and the page should read like them. Set above 0 to indent again.
+const INDENT_EM := 0.0
 ## A blank line between paragraphs. Indent alone read as "squished" on a page this size.
 const PARA_GAP := 1.0
-## An inline picture's width as a share of the text block, and the white space around it.
-const FLOAT_W := 0.46
-const FLOAT_GAP := 30.0
-## The tallest an inline picture may be, as a share of the text block - past this it stops
-## being a picture in the text and becomes a page with a strip of text under it.
-const FLOAT_MAX_H := 0.46
 ## How far justification may stretch a space before a line is set ragged instead. A narrow
 ## line beside a picture with two long words on it would otherwise be two words at the
 ## margins with a river between them.
@@ -137,9 +133,14 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 				_heading(String(b["text"]), int(b.get("level", 1)))
 				no_indent = true
 			"rule":
-				_space(0.5)
-				_label_centered("*", BODY_FS)
-				_space(0.5)
+				# A SECTION BREAK, set as the same quiet ornament that sits under the chapter
+				# title, with one blank line either side (the next paragraph adds its own).
+				# Never alone at the foot of a page: there it would read as the end of the
+				# chapter, so it goes to the top of the next one instead.
+				if _y + _lh(BODY_FS) * 3.0 > _bottom():
+					_open_page()
+				_space(PARA_GAP)
+				_label_centered("~", BODY_FS, 0.55)
 				no_indent = true
 			"image":
 				if String(b.get("placement", "")) == "full":
@@ -161,9 +162,11 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 					# scene the reader has to turn the page to find.
 					if _y + _lh(BODY_FS) * 4.2 > _bottom():
 						_open_page()
-					_space(0.55)
+					# ONE blank line above and below, like any paragraph break: the paragraph that
+					# follows adds its own PARA_GAP, so a trailing space here doubled the gap
+					# under every scene line.
+					_space(PARA_GAP)
 					_paragraph(text, false, true)
-					_space(0.55)
 					no_indent = true
 				else:
 					_space(PARA_GAP)
@@ -318,41 +321,46 @@ func _heading(text: String, level: int) -> void:
 	_y += _lh(BODY_FS) * 0.4
 
 
-func _label_centered(text: String, fs: int) -> void:
+func _label_centered(text: String, fs: int, tone := 0.8) -> void:
 	if _y + _lh(fs) > _bottom():
 		_open_page()
 	var c := column(_p)
 	_y += _lh(fs)
 	(pages[_p]["labels"] as Array).append({"text": text, "pos": Vector2(c.x, _y - _lh(fs) * 0.28),
-		"fs": fs, "emph": 0, "align_w": c.y - c.x, "tone": 0.8})
+		"fs": fs, "emph": 0, "align_w": c.y - c.x, "tone": tone})
 
 
-## An inline picture, floated against its edge at the current line. One that would not fit
-## above the foot of the page waits for the top of the next one, like a printer would do it.
+## An inline picture, as a HALF-PAGE BAND: the full width of the text block and about half its
+## height, at the foot of the page it belongs to if there is room below the text already set,
+## otherwise at the head of the next page. It was a float beside the text at under half the
+## column's width, and the pictures were too small to see; made bigger, the text beside them
+## would have run in a narrow ribbon. One band a page, so a page is never all picture.
+const BAND_H := 0.46
+const BAND_GAP := 34.0
+
 func _float(b: Dictionary) -> void:
 	var c := column(_p)
-	var w := (c.y - c.x) * FLOAT_W
-	var sz: Vector2 = _images_at.call(String(b.get("key", ""))) if _images_at.is_valid() else Vector2.ZERO
-	var aspect := sz.x / sz.y if sz.x > 0.0 and sz.y > 0.0 else DEFAULT_ASPECT
-	var h := minf(w / aspect, (_bottom() - MARGIN_TOP) * FLOAT_MAX_H)
-	w = h * aspect if w / aspect > h else w
-	var top := _y + (_lh(BODY_FS) * 0.25 if _y > MARGIN_TOP + 1.0 else 0.0)
-	# Pictures STACK down the page rather than sharing a band: two floats side by side leave
-	# no room for a line between them and read as a gallery, not as a page of a novel.
-	for r in _floats:
-		top = maxf(top, (r as Rect2).end.y)
-	if top + h > _bottom() - _lh(BODY_FS) * 2.0:
+	var w := c.y - c.x
+	var h := (_bottom() - MARGIN_TOP) * BAND_H
+	if not _floats.is_empty():
 		_pending_float.append(b)
 		return
-	var left := String(b.get("side", "right")) == "left"
-	var x := c.x if left else c.y - w
-	var rect := Rect2(x, top, w, h)
+	var at_top := _y <= MARGIN_TOP + 1.0
+	var top := MARGIN_TOP
+	if at_top:
+		_y = MARGIN_TOP + h + BAND_GAP
+	elif _bottom() - h - BAND_GAP - _y >= _lh(BODY_FS) * 2.0:
+		top = _bottom() - h
+	else:
+		_pending_float.append(b)
+		return
+	var rect := Rect2(c.x, top, w, h)
 	(pages[_p]["images"] as Array).append({"rect": rect, "key": String(b.get("key", "")),
 		"prompt": String(b.get("prompt", "")), "full": false})
-	# The exclusion is the picture plus its gutter, on the side the text runs.
-	var ex := rect.grow_individual(FLOAT_GAP if not left else 0.0, 0.0,
-		FLOAT_GAP if left else 0.0, FLOAT_GAP * 0.8)
-	_floats.append(ex)
+	# The band keeps text off itself and its gutter; a line that meets it finds no room and
+	# moves on, so text above a foot band flows straight to the next page.
+	_floats.append(rect.grow_individual(0.0, 0.0 if at_top else BAND_GAP, 0.0,
+		BAND_GAP if at_top else 0.0))
 
 
 ## Inline markdown -> `[{text, emph}]`. Asterisks and edge underscores toggle emphasis and are
