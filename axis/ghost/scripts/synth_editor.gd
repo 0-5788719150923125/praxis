@@ -279,6 +279,7 @@ func _build_panel() -> void:
 	# and a Control outside a container is never asked to fit anything - the rows past the
 	# bottom edge were unreachable rather than clipped. See side_panel.gd.
 	_panel = preload("res://scripts/side_panel.gd").new(380.0)
+	_panel.title = "Synthesis"
 	add_child(_panel)
 	var box: VBoxContainer = _panel.body
 	box.add_theme_constant_override("separation", 8)

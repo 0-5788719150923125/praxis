@@ -47,6 +47,13 @@ const GUTTER := 4.0
 
 ## THE CONTAINER TO FILL. Everything a panel shows goes in here.
 var body: VBoxContainer
+## What the restore button says - the panel's own name, so it is clear what comes back.
+var title := ""
+## THE WAY BACK. Hiding the panel (its – button) left nothing on screen to bring it back but
+## F2, which nobody knows: "if I minimize the left-side panel, there is no clear way to
+## restore it". A small button in the corner the panel occupied, shown exactly while the
+## panel is hidden. A SIBLING, not a child - a child would be hidden with the panel.
+var _restore: Button
 
 var _scroll: ScrollContainer
 var _pad: MarginContainer
@@ -74,6 +81,14 @@ func _init(width := 380.0) -> void:
 
 
 func _ready() -> void:
+	_restore = Button.new()
+	_restore.text = ("▸  " + title) if not title.is_empty() else "▸"
+	_restore.tooltip_text = "Show the panel again (F2)"
+	_restore.focus_mode = Control.FOCUS_NONE
+	_restore.position = position
+	_restore.visible = not visible
+	_restore.pressed.connect(func() -> void: visible = true)
+	add_sibling.call_deferred(_restore)
 	# The content's height, not just the window's - see the note at the top.
 	body.minimum_size_changed.connect(_fit)
 	get_viewport().size_changed.connect(_fit)
@@ -83,8 +98,11 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	# A panel built outside the tree and reparented later (which every gate does, and which
 	# main does for the voice editors) gets its viewport here rather than in _init.
-	if what == NOTIFICATION_VISIBILITY_CHANGED and visible:
-		_fit()
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		if _restore != null and is_instance_valid(_restore):
+			_restore.visible = not visible
+		if visible:
+			_fit()
 
 
 ## Take the smaller of what the contents want and what the window has room for.

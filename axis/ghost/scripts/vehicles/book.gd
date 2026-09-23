@@ -53,7 +53,12 @@ const SPRING_TAU := 3.2
 ## whisper of roll, and how many times slower than the framing the yaw settles.
 const YAW_SPREAD := 9.0
 const YAW_WANDER := 3.0
-const ROLL_WANDER := 1.2
+## Clockwise/counter-clockwise roll and forward/back tilt, the same way: an offset per spread
+## plus a slow wander. Degrees; all through the slow spring, so none of it reads as a move.
+const ROLL_SPREAD := 2.5
+const ROLL_WANDER := 1.5
+const TILT_SPREAD := 2.5
+const TILT_WANDER := 1.8
 const ANGLE_SLOW := 3.0
 ## A LONG LENS. A wide one stood close makes every downstroke on the page converge on one
 ## vanishing point, so a line of roman type leans like italics toward the edges of the frame -
@@ -108,8 +113,11 @@ void vertex() {
 	vec2 t = normalize(q - p);
 	float z = (UV.y - 0.5) * page_h;
 	// Both leaves reach a hair past the spine, so no crack ever opens between them for the
-	// cloth to show through.
-	VERTEX = vec3((p.x - 0.006) * side, p.y + base_y, z);
+	// cloth to show through. ALONG THE LEAF'S OWN DIRECTION at the spine, not along world x:
+	// a turning leaf that has swung over is flipped, and a world-x overlap put its landed
+	// text 0.012 to the side of the flat page that takes over from it - the text jumped as
+	// every turn finished.
+	VERTEX = vec3((p.x - 0.006 * cos(angle)) * side, p.y - 0.006 * sin(angle) + base_y, z);
 	vec3 tan3 = vec3(t.x * side, t.y, 0.0);
 	vec3 nrm = normalize(cross(vec3(0.0, 0.0, 1.0), tan3));
 	if (side < 0.0) nrm = -nrm;
@@ -202,6 +210,8 @@ var _c_pitch := 60.0
 var _v_pitch := 0.0
 var _c_yaw := 0.0
 var _v_yaw := 0.0
+var _c_roll := 0.0
+var _v_roll := 0.0
 var _snap := true
 var _reading_z := 0.0            # the line being read, as world z, heavily smoothed
 
@@ -313,7 +323,7 @@ func _build_world() -> void:
 	var cf := SystemFont.new()
 	cf.font_names = PackedStringArray(BookLayout.SERIFS)
 	_cover_label.font = cf
-	_cover_label.font_size = 128
+	_cover_label.font_size = 80
 	_cover_label.pixel_size = 0.0016
 	_cover_label.modulate = Color(0.88, 0.74, 0.44)
 	_cover_label.outline_size = 0
@@ -326,7 +336,7 @@ func _build_world() -> void:
 	# the title and a shade quieter, in the same gilt. Same orientation trick as the title.
 	_cover_author = Label3D.new()
 	_cover_author.font = cf
-	_cover_author.font_size = 64
+	_cover_author.font_size = 40
 	_cover_author.pixel_size = 0.0016
 	_cover_author.modulate = Color(0.88, 0.74, 0.44, 0.85)
 	_cover_author.outline_size = 0
@@ -756,8 +766,14 @@ func _place_leaves() -> void:
 		_bind(_leaf_t, _spread * 2 + 1, _turn_to * 2, lerpf(yr, yl, k) + 0.003)
 	# THE OPENING: fold the left half over the right about a hinge just above both blocks, so
 	# closed it rests on top of the right-hand pages, cover up; open it lies flat on the left.
-	var hinge := (yl + yr) * 0.5 + 0.06
-	var th := -PI * (1.0 - _open_now())
+	# The hinge has to sit ABOVE both blocks while the book is closed, so the folded half rests
+	# on top of the right-hand pages - but a leaf turning about a point above its own spine
+	# edge swings that edge away from the spine, and the cloth showed through the gap between
+	# the pages as the book opened. So the hinge slides down to the left leaf's own surface by
+	# halfway: from there the page turns about its spine edge, and nothing opens up.
+	var op := _open_now()
+	var hinge := lerpf((yl + yr) * 0.5 + 0.06, yl, smoothstep(0.0, 0.5, op))
+	var th := -PI * (1.0 - op)
 	_pivot.transform = Transform3D(Basis.IDENTITY, Vector3(0.0, hinge, 0.0)) \
 		* Transform3D(Basis(Vector3(0.0, 0.0, 1.0), th), Vector3.ZERO) \
 		* Transform3D(Basis.IDENTITY, Vector3(0.0, -hinge, 0.0))
@@ -879,6 +895,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		var t1 := float(_lay_t.get(i, now))
 		var n := text.length()
 		var base: Vector2 = w["base"]
+		var xs := _letter_x(font, text, fs)
 		for k in n:
 			var ch := text[k]
 			var at := (float(k) + 0.5) / float(maxi(n, 1))
@@ -898,8 +915,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 					+ 0.15 * sin(float(ci_i) * 0.36 + now * 0.45)
 				var sat := lerpf(0.45, 0.9, clampf(sw, 0.0, 1.0))
 				col = ink.lerp(Color.from_hsv(hue, sat, 0.55), g * alpha)
-			var off := font.get_string_size(text.substr(0, k), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-			ci.draw_string(font, base + Vector2(off, 0.0), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+			ci.draw_string(font, base + Vector2(xs[k], 0.0), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 	for lb in pg["labels"]:
 		var l: Dictionary = lb
 		ci.draw_string(_layout.face(int(l["emph"])), l["pos"], String(l["text"]),
@@ -909,6 +925,39 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		_draw_image(ci, im)
 	# NO PAGE NUMBERS: this chapter does not start on page 2 of the real book, and a folio
 	# that is wrong is worse than none.
+
+
+## WHERE EACH LETTER SITS when the whole word is set, from the SHAPED word - kerning
+## included. A word is drawn whole until the voice reaches it and letter by letter after (the
+## sweep), so the two drawings must put every letter in the same place. Measuring each
+## letter's offset as the width of the text before it misses the kerning between neighbours,
+## and a serif tucks a comma under `y`, `r` or `d`: the comma jumped as its word went live -
+## "it feels like that comma flickers into place". Cached per (font, size, text).
+var _letters := {}
+
+func _letter_x(font: Font, text: String, fs: int) -> PackedFloat32Array:
+	var key := "%d|%d|%s" % [font.get_instance_id(), fs, text]
+	if _letters.has(key):
+		return _letters[key]
+	var out := PackedFloat32Array()
+	out.resize(text.length())
+	var line := TextLine.new()
+	line.add_string(text, font, fs)
+	var ts := TextServerManager.get_primary_interface()
+	var x := 0.0
+	var set_ := {}
+	for g in ts.shaped_text_get_glyphs(line.get_rid()):
+		var st := int((g as Dictionary)["start"])
+		if st >= 0 and st < out.size() and not set_.has(st):
+			out[st] = x + float(((g as Dictionary).get("offset", Vector2.ZERO) as Vector2).x) * 0.0
+			set_[st] = true
+		x += float((g as Dictionary)["advance"]) * float(int((g as Dictionary).get("repeat", 1)))
+	# a letter with no glyph of its own (inside a ligature) sits where the one before it does
+	for k in range(1, out.size()):
+		if not set_.has(k):
+			out[k] = out[k - 1]
+	_letters[key] = out
+	return out
 
 
 var _boxes := {}
@@ -1052,14 +1101,17 @@ func _tick_camera(delta: float) -> void:
 	var pitch := lerpf(float(WIDE["pitch"]), float(LOCAL["pitch"]), k) + sin(t * 0.029 + 1.3) * 1.5 * sev
 	var dist := lerpf(float(WIDE["dist"]), near, k) * (1.0 + 0.015 * sin(t * 0.033 + 2.1) * sev)
 	dist *= lerpf(1.02, 1.0, opened)
+	var roll := (_hash01(_spread, 53) - 0.5) * 2.0 * ROLL_SPREAD \
+		+ sin(t * 0.047 + 0.7) * ROLL_WANDER * sev
+	pitch += (_hash01(_spread, 67) - 0.5) * 2.0 * TILT_SPREAD + sin(t * 0.037 + 2.4) * TILT_WANDER * sev
 	if _snap:
 		_snap = false
 		_c_aim = aim
 		_c_dist = dist
 		_c_pitch = pitch
 		_c_yaw = yaw
+		_c_roll = roll
 	var tau := SPRING_TAU / lerpf(0.6, 1.4, sev * 0.5)
-	var roll := sin(t * 0.017 + 0.7) * ROLL_WANDER * sev
 	var steps := maxi(1, int(ceil(delta / (1.0 / 60.0))))
 	var h := delta / float(steps)
 	for _i in steps:
@@ -1073,6 +1125,9 @@ func _tick_camera(delta: float) -> void:
 		_c_pitch = rp.x
 		_v_pitch = rp.y
 		var ry := _spring(_c_yaw, _v_yaw, yaw, tau * ANGLE_SLOW, h)
+		var rr := _spring(_c_roll, _v_roll, roll, tau * ANGLE_SLOW, h)
+		_c_roll = rr.x
+		_v_roll = rr.y
 		_c_yaw = ry.x
 		_v_yaw = ry.y
 	var p := deg_to_rad(_c_pitch)
@@ -1080,7 +1135,7 @@ func _tick_camera(delta: float) -> void:
 	var dir := Vector3(sin(y) * cos(p), sin(p), cos(y) * cos(p))
 	_cam.position = _c_aim + dir * _c_dist
 	_cam.look_at(_c_aim, Vector3.UP)
-	_cam.rotate_object_local(Vector3.FORWARD, deg_to_rad(roll))
+	_cam.rotate_object_local(Vector3.FORWARD, deg_to_rad(_c_roll))
 	if not _cam.current:
 		_cam.make_current()
 
