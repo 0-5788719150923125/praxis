@@ -35,7 +35,7 @@ Praxis is organized as 55 registry namespaces. The feature categories below link
 - [Foreign model tasks](docs/model-tasks.md) (1)
 - [Generators](docs/generators.md) (3)
 - [Halting / early exit](docs/halting.md) (4)
-- [Input encoders](docs/encoders.md) (25)
+- [Input encoders](docs/encoders.md) (26)
 - [Layer-routing controllers](docs/controllers.md) (8)
 - [Long-term memory](docs/memory.md) (16)
 - [Loss functions](docs/losses.md) (13)

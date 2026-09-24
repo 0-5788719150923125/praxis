@@ -36,6 +36,8 @@ ByteLatentTransformer = partial(
     embeddings="byte_hash",
 )
 
+ByteLatentTransformerWindowed = partial(ByteLatentTransformer, local_window=14)
+
 
 AbstractinatorRVQ = partial(
     AbstractinatorEncoder,
@@ -301,6 +303,15 @@ registry.declare(
             (
                 "Byte-latent encoder with one transformer local layer on each side of "
                 "the trunk, space patching and hashed n-gram byte embeddings."
+            ),
+        ),
+        "byte_latent_transformer_windowed": Entry(
+            ByteLatentTransformerWindowed,
+            (
+                "byte_latent_transformer with each local layer attending 14 bytes "
+                "back, so the local path reaches exactly as far as byte_latent_conv's "
+                "(28 bytes across encoder and decoder) and longer context arrives "
+                "only through the trunk."
             ),
         ),
         "abstractinator_rvq": Entry(

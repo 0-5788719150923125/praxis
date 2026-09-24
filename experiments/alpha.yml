@@ -215,7 +215,7 @@ seed: 42
 # ``byte_level`` on their own. Descriptive Abstractinator names resolve to the
 # versioned profiles.
 #
-# Options: 25 of them, described in docs/encoders.md
+# Options: 26 of them, described in docs/encoders.md
 
 # encoder_type: null
 

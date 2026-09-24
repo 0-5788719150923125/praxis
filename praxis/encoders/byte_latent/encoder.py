@@ -60,6 +60,7 @@ class ByteLatentEncoder(BaseEncoder):
         local_architecture: str = "recurrent",
         n_layers_encoder: int = 3,
         n_layers_decoder: int = 3,
+        local_window: int = 512,
         # Input embeddings (``embeddings`` profile key)
         embeddings: str = "byte_hash",
         # Entropy model (for entropy patching)
@@ -84,6 +85,8 @@ class ByteLatentEncoder(BaseEncoder):
             local_architecture: Architecture for local encoder/decoder ("recurrent", "conv")
             n_layers_encoder: Number of layers in local encoder
             n_layers_decoder: Number of layers in local decoder
+            local_window: How many bytes back each transformer local layer
+                attends (transformer architecture only)
             embeddings: ``embeddings`` profile key for the input embeddings
             entropy_model_layers: Number of layers in entropy model
             cross_attn_encoder: Enable cross-attention in encoder
@@ -105,6 +108,7 @@ class ByteLatentEncoder(BaseEncoder):
         self.byte_config.patch_size = patch_size
         self.byte_config.n_layers_local_encoder = n_layers_encoder
         self.byte_config.n_layers_local_decoder = n_layers_decoder
+        self.byte_config.sliding_window_size = local_window
         self.byte_config.cross_attn_encoder = cross_attn_encoder
         if cross_attn_decoder:
             # The local decoders implement no cross-attention layers, so the flag
@@ -235,7 +239,12 @@ class ByteLatentEncoder(BaseEncoder):
             + f"architecture='{self.local_architecture}', "
             + f"patching='{self.byte_config.patching_mode}', "
             + f"n_encoders={len(self.encoder.layers)}, "
-            + f"n_decoders={len(self.decoder.layers)})"
+            + f"n_decoders={len(self.decoder.layers)}"
+            + (
+                f", window={self.byte_config.sliding_window_size})"
+                if self.local_architecture == "transformer"
+                else ")"
+            )
         )
 
     @property
