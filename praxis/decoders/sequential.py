@@ -31,7 +31,7 @@ class SequentialDecoder(BaseDecoder):
 
     @staticmethod
     @torch.no_grad()
-    def _deviation_tilt(hidden_states: Tensor) -> float:
+    def _deviation_tilt(hidden_states: Tensor, valid: Optional[Tensor] = None) -> float:
         """Deviation in the sequence's last quarter over its first, at one depth.
 
         The deviation is what each row has that the batch does not share - the
@@ -39,14 +39,32 @@ class SequentialDecoder(BaseDecoder):
         1 it rides the tip, below 1 it sits at the head, and at 1 the profile is
         flat. Reported beside the magnitude readings because magnitude cannot
         tell a deviation that moved from one that grew.
+
+        ``valid`` [B, T] marks real positions. Content-adaptive patching pads
+        short rows with empty patches at the end, so without it the "tip" of a
+        padded batch is mostly padding. Quarters are taken per row over its own
+        real positions, and each squared deviation is scaled by k / (k - 1) for
+        the k rows sharing its position, since a mean over fewer rows absorbs
+        more of each row's deviation.
         """
         if hidden_states.shape[0] < 2 or hidden_states.shape[1] < 4:
             return float("nan")
         state = hidden_states.detach().float()
-        deviation = state - state.mean(dim=0, keepdim=True)
-        quarter = max(1, state.shape[1] // 4)
-        head = deviation[:, :quarter].pow(2).mean().sqrt()
-        tip = deviation[:, -quarter:].pow(2).mean().sqrt()
+        if valid is None or valid.shape != state.shape[:2]:
+            valid = torch.ones(state.shape[:2], dtype=torch.bool, device=state.device)
+        weight = valid.to(state.dtype)
+        rows = weight.sum(0)  # [T] rows holding a real position here
+        mean = (state * weight.unsqueeze(-1)).sum(0) / rows.clamp_min(1).unsqueeze(-1)
+        dev2 = (state - mean).pow(2).mean(-1) * (rows / (rows - 1).clamp_min(1))
+        usable = valid & (rows >= 2)
+        length = usable.sum(1, keepdim=True)
+        usable = usable & (length >= 4)
+        if not usable.any():
+            return float("nan")
+        rank = usable.cumsum(1) - 1
+        quarter = (length // 4).clamp_min(1)
+        head = dev2[usable & (rank < quarter)].mean().sqrt()
+        tip = dev2[usable & (rank >= length - quarter)].mean().sqrt()
         return float(tip / head.clamp_min(1e-8))
 
     def forward(
@@ -60,6 +78,7 @@ class SequentialDecoder(BaseDecoder):
         labels: Optional[Tensor] = None,
         positions: Optional[Tensor] = None,
         row_continues: Optional[Tensor] = None,
+        valid: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
@@ -74,6 +93,8 @@ class SequentialDecoder(BaseDecoder):
             block_ids: Optional block identification tensor
             losses: A storage class for auxiliary losses
             labels: Optional labels tensor for supervised learning
+            valid: Optional [batch, seq] mask of real positions (False = padding);
+                read only by the depth-tilt diagnostic
 
         Returns:
             Tuple containing:
@@ -192,7 +213,7 @@ class SequentialDecoder(BaseDecoder):
             # a smooth drift? Detached - diagnostic only.
             if hidden_states.dim() == 3:
                 depth_prints.append(hidden_states.detach().float().mean(dim=(0, 1)))
-                depth_tilts.append(self._deviation_tilt(hidden_states))
+                depth_tilts.append(self._deviation_tilt(hidden_states, valid))
 
             # Handle expert decoder loss (can be scalar/tensor or LossContainer)
             if isinstance(decoder_loss, LossContainer):
@@ -266,8 +287,12 @@ class SequentialDecoder(BaseDecoder):
         # this claim's own falsifier rather than a missing number.
         for i, tilt in enumerate(depth_tilts):
             self._depth_metrics[f"depth/tilt_d{i}"] = tilt
-        if len(depth_tilts) >= 2:
-            self._depth_metrics["depth/tilt_slope"] = depth_tilts[-1] - depth_tilts[0]
+        # Only when every depth ran: halting varies how many do, and a slope to
+        # whichever depth happened to be last compares different depths.
+        if len(depth_tilts) >= max(2, self.depth):
+            self._depth_metrics["depth/tilt_slope"] = (
+                depth_tilts[self.depth - 1] - depth_tilts[0]
+            )
 
         # Mono-forward: the "final" schedule cuts here (one goodness at the
         # top of the stack); every schedule lands its mean score as "mono".

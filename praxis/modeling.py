@@ -208,6 +208,8 @@ class PraxisModel(PreTrainedModel):
             labels,
             positions,
             row_continues=row_continues,
+            # Empty patches pad content-adaptive patching's short rows.
+            valid=None if patch_lengths is None else patch_lengths > 0,
         )
 
         return PraxisModelOutput(

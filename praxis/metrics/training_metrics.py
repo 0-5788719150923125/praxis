@@ -1238,6 +1238,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "predicts above 1 and growing."
         ),
         "key_pattern": r"^depth/tilt_d\d+$",
+        "smooth": True,
         "order": 253,
     },
     {
@@ -1247,8 +1248,10 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "y_label": "last tilt - first tilt",
         "description": (
             "Change in the tip-over-head deviation ratio from the first depth to the "
-            "last. > 0 = the profile steepens as the loop deepens; <= 0 refutes it."
+            "last, from steps where every depth ran. > 0 = the profile steepens "
+            "as the loop deepens; <= 0 refutes it."
         ),
+        "smooth": True,
         "order": 254,
     },
     {

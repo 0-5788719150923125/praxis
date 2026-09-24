@@ -957,6 +957,7 @@ function buildCompositeConfigsFromRegistry(registry) {
             description: entry.description || '',
             source: entry.source || 'metrics',
             stepped: entry.stepped || false,
+            smooth: entry.smooth === true,
             keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
             series_noun: entry.series_noun || null,
             // Explicit legend labels for a NUMBERED family, indexed by the
@@ -3689,9 +3690,9 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
             const color = chartLineColor(identity.index);
             const label = agents.length > 1 ? `${agent.name} - ${identity.label}` : identity.label;
 
-            allDatasets.push({
+            const series = (points, overrides) => ({
                 label: label,
-                data: data,
+                data: points,
                 borderColor: color,
                 backgroundColor: color + '20',
                 borderWidth: 2,
@@ -3702,8 +3703,20 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                 pointHoverBorderWidth: 2,
                 tension: options.stepped ? 0 : 0.3,
                 stepped: options.stepped || false,
-                fill: false
+                fill: false,
+                ...overrides,
             });
+
+            if (!options.smooth || data.length < SMOOTH_MIN_WINDOW) {
+                allDatasets.push(series(data));
+                return;
+            }
+            // Same reading as the single-series charts: a rolling-median
+            // trend over the raw trace, which stays faint underneath.
+            allDatasets.push(
+                series(data, { borderWidth: 1, borderColor: color + '1f', tension: 0, [RAW_TRACE_FLAG]: true }),
+                series(rollingMedian(data, smoothingWindow(data.length)), { tension: 0 }),
+            );
         });
     });
 
@@ -3742,7 +3755,9 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
                         color: textColor,
                         usePointStyle: true,
                         padding: 12,
-                        font: { size: 11 }
+                        font: { size: 11 },
+                        filter: (item, data) =>
+                            !data.datasets[item.datasetIndex]?.[RAW_TRACE_FLAG],
                     }
                 },
                 tooltip: {
