@@ -19,11 +19,11 @@ The splash lists all four, always. A mode button _is_ start.
 | **Synthesis** | a written script | ghost speaks it in a synthesized voice, and the show reacts to the narration. |
 | **Masking** | a video clip, a file path, or a YouTube URL | A chroma-key effects editor over footage: 18 effects, markers on a timeline, render to video. |
 
-### Vehicles: what carries the show
+### Media: what carries the show
 
-Distinct from the modes above, and orthogonal to them. A **mode** decides what _drives_ the show - a song, a storyboard, a written script. A **vehicle** decides what the show is _presented as_. They are independent axes, so every mode gets every vehicle, the same way every scene gets every behavior and every render kind.
+Distinct from the modes above, and orthogonal to them. A **mode** decides what _drives_ the show - a song, a storyboard, a written script. A **medium** decides what the show is _presented as_. They are independent axes, so every mode gets every medium, the same way every scene gets every behavior and every render kind.
 
-| Vehicle | What it draws |
+| Medium | What it draws |
 | --- | --- |
 | **Full frame** _(default)_ | One scene at a time, filling the frame. The original show. |
 | **Comic book** | The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine. |
@@ -46,11 +46,11 @@ The comic is not a second renderer - it is the same Director cutting the same sc
 
 **The page is really in 3D**, and really turned: a quad under a `Lens3D` raked on X, Y and Z at once and drifting continuously, not a sheared 2D plane faking depth. An eye on the page's normal would see a flat rectangle however the sheet is rotated, so the rake comes from the elevation being off the paper, never square-on. How hard it rakes depends on what is in the panel: ghost already types every scene `subject` or `field`, and a field is raked gently for the same reason `Shots` already gives it the gentle moves - a hard angle on a recognisable object reads as foreshortening, and on a texture that fills the frame it just reads as a broken picture. Panels are drawn as subdivided grids of textured triangles with every vertex projected individually, because a two-triangle quad textures affinely and warps (28.5 px of error on a 512 px frame at a hard yaw, measured).
 
-**Liveness follows the camera, not the clock.** Six live scenes is not a thing that runs - the stage governor spends its whole budget on one - so panels in shot are live and panels out of shot are stopped render targets holding their last frame (which survives both the stop and their scene being freed, bit-exact: `tests/vehicle_probe.gd`). At the reading distance that is one to three panels, and the ones off the focus repaint every other frame at a matching multiple of the step, so they run at the right speed with half the samples. Measured: three live panels cost 1.8x one (73 ms of active frame against 41), and the governor absorbs the rest. Capturing panels with `get_image()` instead would be the synchronous readback stall that once cost Masking its frame rate.
+**Liveness follows the camera, not the clock.** Six live scenes is not a thing that runs - the stage governor spends its whole budget on one - so panels in shot are live and panels out of shot are stopped render targets holding their last frame (which survives both the stop and their scene being freed, bit-exact: `tests/medium_probe.gd`). At the reading distance that is one to three panels, and the ones off the focus repaint every other frame at a matching multiple of the step, so they run at the right speed with half the samples. Measured: three live panels cost 1.8x one (73 ms of active frame against 41), and the governor absorbs the rest. Capturing panels with `get_image()` instead would be the synchronous readback stall that once cost Masking its frame rate.
 
 Pages are **sampled, never authored**: panel count, the row/column split, gutters, corner radius, which panel is canted, the page's attitude and the camera's shot are all rolled from the session seed. So the show does not cycle through six templates - it draws from the space of comic pages, and a given song always draws the same ones.
 
-Select it with `--vehicle comic`, or the Vehicle picker in the Generative panel (it persists, and the export render inherits it). Full reference: [docs/vehicles.md](docs/vehicles.md).
+Select it with `--medium comic`, or the Medium picker in the Generative panel (it persists, and the export render inherits it). Full reference: [docs/media.md](docs/media.md).
 
 Every mode carries the same **furniture** (`Chrome`): the ⤓ export button and its background render pipeline, the `` ` `` feedback console, the assistant browser, and the `>_` log console (a live tail of Godot's own log, for anyone running without a terminal). That is deliberate - modes hand-assembling their own overlays is how Synthesis shipped twice without feedback or export. New shared furniture goes in `chrome.gd`, never in a mode's branch of `main.gd`.
 
@@ -162,7 +162,7 @@ Top-level layout; the per-script map (every class, one line each) is [docs/index
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalogue - one class per scene. See [docs/scenes.md](docs/scenes.md).
-- `scripts/vehicles/` - The vehicle registry - what the show is carried ON (full frame, comic page). See [docs/vehicles.md](docs/vehicles.md).
+- `scripts/media/` - The medium registry - what the show is carried ON (full frame, comic page). See [docs/media.md](docs/media.md).
 - `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects).
 - `storyboards/` - Manual-mode scene scores (YAML; JSON accepted). [storyboards/README.md](storyboards/README.md) is the data spec.
 - `masks/` - Saved Masking sessions, one directory per source video (runtime, git-ignored).

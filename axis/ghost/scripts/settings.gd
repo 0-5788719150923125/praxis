@@ -10,7 +10,7 @@ extends Node
 ## modes, and they were all live:
 ##
 ##   FORGOTTEN. A new control is persistent only if someone remembers to write the save
-##   code. The Vehicle picker went in beside four sliders that the DIRECTOR saves, in a panel
+##   code. The Medium picker went in beside four sliders that the DIRECTOR saves, in a panel
 ##   that saves its own settings a different way, and which of those two mechanisms it fell
 ##   under was not visible from the code that added it.
 ##

@@ -3,7 +3,7 @@ class_name FilmScene
 
 ## FilmScene - a panel of real footage, cut into the comic among the drawn ones.
 ##
-## It is a [GhostScene] like any other, which is the whole trick: the comic vehicle casts
+## It is a [GhostScene] like any other, which is the whole trick: the comic medium casts
 ## it into a panel exactly as it casts a spectrum ring, and every piece of machinery
 ## around it - the render target, the freeze that holds a panel as a still, the camera
 ## that flies over the page - carries on knowing nothing about video. The only thing that
@@ -30,7 +30,7 @@ class_name FilmScene
 ## NOT IN THE DIRECTOR'S CATALOGUE. This scene is never minted by [Director.mint_scene]:
 ## there is nothing to show unless the viewer has imported something, and a scene that is
 ## sometimes not there at all would make the running order depend on the library. The
-## comic casts it directly. See [ComicVehicle._film_at].
+## comic casts it directly. See [ComicMedium._film_at].
 
 ## How far the clip may drift from where the show says it should be, in seconds, before it
 ## is pulled back. Below about this a correction is more visible than the error - a seek

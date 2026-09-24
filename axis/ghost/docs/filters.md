@@ -15,16 +15,23 @@ THE REGISTRY ORDER IS THE PIPELINE ORDER, top to bottom, and it is the one thing
 
 ADDING A FILTER is an entry in each of the four tables below plus a `u_<key>` uniform and a block in `shaders/stage_filter.gdshader`. Nothing in main, the Director or the panel changes - the controls are built off `Filters.REGISTRY`. A key with no matching uniform is the failure this arrangement is exposed to, because `set_shader_parameter` on a name the shader does not declare is a SILENT no-op; the gate reads the shader source and fails on it.
 
-Registry: `Filters.REGISTRY` in [scripts/filters.gd](../scripts/filters.gd) (6 entries), rendered by [shaders/stage_filter.gdshader](../shaders/stage_filter.gdshader). Select with `--filter key=amount,...` (or `--filter none`), or the Look rows in the Generative panel (persisted to `user://ghost.cfg`, `[director] filters`).
+Registry: `Filters.REGISTRY` in [scripts/filters.gd](../scripts/filters.gd) (7 entries), rendered by [shaders/stage_filter.gdshader](../shaders/stage_filter.gdshader). Select with `--filter key=amount,...` (or `--filter none`), or the Look rows in the Generative panel (persisted to `user://ghost.cfg`, `[director] filters`).
 
 | # | Key | Name | Uniform | Default |
 | - | --- | ---- | ------- | ------- |
-| 1 | `pointillism` | Pointillism | `u_pointillism` | 0.35 |
-| 2 | `bloom` | Bloom | `u_bloom` | 0.45 |
-| 3 | `monochrome` | Monochrome | `u_monochrome` | 1.0 |
-| 4 | `noir` | Film noir | `u_noir` | 0.55 |
-| 5 | `grain` | Film grain | `u_grain` | 0.40 |
-| 6 | `vignette` | Vignette | `u_vignette` | 0.45 |
+| 1 | `slip` | Gate slip | `u_slip` | 0.45 |
+| 2 | `pointillism` | Pointillism | `u_pointillism` | 0.35 |
+| 3 | `bloom` | Bloom | `u_bloom` | 0.45 |
+| 4 | `monochrome` | Monochrome | `u_monochrome` | 1.0 |
+| 5 | `noir` | Film noir | `u_noir` | 0.55 |
+| 6 | `grain` | Film grain | `u_grain` | 0.40 |
+| 7 | `vignette` | Vignette | `u_vignette` | 0.45 |
+
+## `slip` - Gate slip
+
+Tearing: now and then a band of the picture jumps sideways for one frame and snaps back, the way a frame that does not seat squarely in a projector's gate is printed offset. The dial is how often and how far.
+
+Uniform `u_slip`, default 0.45 when first switched on.
 
 ## `pointillism` - Pointillism
 

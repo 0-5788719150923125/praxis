@@ -76,6 +76,7 @@ func _run() -> void:
 	await _check_pointillism()
 	await _check_noir()
 	await _check_combining()
+	await _check_slip()
 	if fails == 0:
 		print("stage_filter_check: ALL OK (%d checks, %d filters)"
 			% [checks, Filters_.REGISTRY.size()])
@@ -161,6 +162,8 @@ func _check_off_is_off() -> void:
 ## doing something" for both shapes.
 func _check_each_filter_acts() -> void:
 	for key in Filters_.REGISTRY:
+		if key == "slip":
+			continue          # fires on some frames and not others - see _check_slip
 		var got := await _render({String(key): 1.0})
 		var f := _changed_fraction(got, _plain)
 		print("stage_filter_check: '%s' moves %.1f%% of the frame at 1.0" % [key, f * 100.0])
@@ -229,6 +232,65 @@ func _check_vignette() -> void:
 		_ok(f > 0.45,
 			"at full strength the %s EDGE fell by only %.3f - the vignette is still only "
 			% [name, f] + "covering the corners")
+
+
+## THE GATE SLIP IS ITS OWN FILTER. It was the top of the Grain dial, so grain past 0.55 tore
+## the picture whether that was wanted or not. Held: the slip fires on some film frames at full
+## strength and at its default, and on a frame where it fires, grain alone leaves that band where
+## it was. Frames are asked for by number (`u_frame`), so this is the same answer every run.
+func _check_slip() -> void:
+	var fired := -1
+	for f in 60:
+		if _changed_fraction(await _render({"slip": 1.0}, f), _plain) > 0.02:
+			fired = f
+			break
+	_ok(fired >= 0, "gate slip at 1.0 never moved the picture in 60 film frames")
+	var soft := false
+	for f in 120:
+		if _changed_fraction(await _render({"slip": float(Filters_.DEFAULTS["slip"])}, f), _plain) > 0.005:
+			soft = true
+			break
+	_ok(soft, "gate slip at its default never moved the picture in 120 film frames")
+	if fired < 0:
+		return
+	var quiet := 0
+	for f in 60:
+		if _changed_fraction(await _render({"slip": 1.0}, f), _plain) <= 0.02:
+			quiet += 1
+	_ok(quiet > 30, "gate slip at 1.0 fired on %d of 60 frames - it is a tear, not a wobble" % (60 - quiet))
+	# THE BAND: rows of the hue ramp (the top half) the slip moved - a slip shifts nearly every
+	# pixel of the ramp in its band, where grain changes luminance and leaves hue alone. The
+	# first frame to fire may have slipped the bottom half, so find one that crossed the ramp.
+	var rows: Array = []
+	for f in range(fired, fired + 120):
+		var slipped := await _render({"slip": 1.0}, f)
+		rows.clear()
+		for y in range(0, H / 2, 2):
+			var moved := 0
+			for x in range(0, W, 2):
+				var p := slipped.get_pixel(x, y)
+				var q := _plain.get_pixel(x, y)
+				if absf(p.h - q.h) > 0.005 and absf(p.h - q.h) < 0.995:
+					moved += 1
+			if moved > W / 4:
+				rows.append(y)
+		if rows.size() >= 3:
+			fired = f
+			break
+	_ok(rows.size() >= 3, "no slip crossed the hue ramp in 120 film frames")
+	var grain := await _render({"grain": 1.0}, fired)
+	var in_band := 0
+	var n := 0
+	for y in rows:
+		for x in range(0, W, 2):
+			var p := grain.get_pixel(x, y)
+			var q := _plain.get_pixel(x, y)
+			if absf(p.h - q.h) > 0.005 and absf(p.h - q.h) < 0.995:
+				in_band += 1
+			n += 1
+	_ok(n > 0 and float(in_band) / float(n) < 0.1,
+		"grain alone shifted the slip band's hue on %.0f%% of it - grain is still tearing"
+		% (100.0 * float(in_band) / maxf(float(n), 1.0)))
 
 
 ## GRAIN LIVES IN THE MIDTONES. Flat noise fogs a black that exposed nothing, which is the one
@@ -320,7 +382,7 @@ func _check_combining() -> void:
 
 ## The stage view's arrangement in miniature: the picture in a TextureRect, the filter material
 ## on the rect, read back out of a SubViewport.
-func _render(amounts: Dictionary) -> Image:
+func _render(amounts: Dictionary, frame := -1) -> Image:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(W, H)
 	vp.disable_3d = true
@@ -332,6 +394,8 @@ func _render(amounts: Dictionary) -> Image:
 	tr.stretch_mode = TextureRect.STRETCH_SCALE
 	tr.size = Vector2(W, H)
 	Filters_.apply(tr, amounts, Vector2(W, H))
+	if frame >= 0 and tr.material != null:
+		(tr.material as ShaderMaterial).set_shader_parameter("u_frame", frame)
 	vp.add_child(tr)
 	root.add_child(vp)
 	for i in 4:

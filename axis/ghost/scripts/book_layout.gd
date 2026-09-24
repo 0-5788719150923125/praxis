@@ -1,13 +1,13 @@
 extends RefCounted
 class_name BookLayout
 
-## BookLayout - a chapter typeset into the pages of a printed novel, for [BookVehicle].
+## BookLayout - a chapter typeset into the pages of a printed novel, for [BookMedium].
 ##
-## The book vehicle does not caption a reading, it PRINTS it: the whole chapter is set once,
+## The book medium does not caption a reading, it PRINTS it: the whole chapter is set once,
 ## up front, into pages of a fixed trim, and the narration is then followed across those
 ## pages by a highlight. So this file is a small typesetter and nothing else - it knows
 ## nothing about audio, cameras or 3D. Its output is plain data (word boxes, image rects,
-## labels) that [BookVehicle.PageCanvas] draws and that the highlight indexes into.
+## labels) that [BookMedium.PageCanvas] draws and that the highlight indexes into.
 ##
 ## WHAT IT DOES, in the order a book does it: justified paragraphs with a first-line indent
 ## (none after a heading, a scene line or a picture - the convention that makes a novel read

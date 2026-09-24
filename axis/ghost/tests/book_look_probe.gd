@@ -1,6 +1,6 @@
 extends Node
 
-## NOT a gate. Drives a real book-vehicle session over a chapter with a SYNTHETIC word
+## NOT a gate. Drives a real book-medium session over a chapter with a SYNTHETIC word
 ## timeline and writes PNGs, because "does this read as a novel" is answered by looking.
 ##
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/book_look_probe.gd 400 \
@@ -65,16 +65,16 @@ func _run() -> void:
 	stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(stage)
 	Director.detach()
-	var vehicle: Vehicle = Vehicle.make("book")
-	vehicle.mount(stage)
-	Director.attach(stage, vehicle)
+	var medium: Medium = Medium.make("book")
+	medium.mount(stage)
+	Director.attach(stage, medium)
 	Director.hold(true)
 
 	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
 	subs.words = _timeline(body)
 	subs.document = {"source": body}
 	add_child(subs)
-	if vehicle.bind_captions(subs):
+	if medium.bind_captions(subs):
 		subs.overlay_hidden = true
 	print("book_look_probe: %d synthetic words, %.0fs" % [subs.words.size(),
 		float((subs.words.back() as Dictionary)["t1"]) if not subs.words.is_empty() else 0.0])
@@ -87,12 +87,12 @@ func _run() -> void:
 			t += DT
 			Spectrum.virtual_clock = t
 			Spectrum.current.time = t
-			vehicle.advance(Spectrum.current, DT, 1.0)
+			medium.advance(Spectrum.current, DT, 1.0)
 			await get_tree().process_frame
-			var bk := vehicle as BookVehicle
+			var bk := medium as BookMedium
 			# THE END OF A TURN, frame by frame: the last frames of the leaf and the first
 			# frames after it lies down - where a stale page texture would show as a flash.
-			if _settle > 0 and bk._turn_t >= BookVehicle.TURN_TIME - 3.0 * DT:
+			if _settle > 0 and bk._turn_t >= BookMedium.TURN_TIME - 3.0 * DT:
 				await get_tree().process_frame
 				stage.get_texture().get_image().save_png("%s_end_%02d.png" % [_out, _settle_i])
 				_settle_i += 1
@@ -102,7 +102,7 @@ func _run() -> void:
 						t += DT
 						Spectrum.virtual_clock = t
 						Spectrum.current.time = t
-						vehicle.advance(Spectrum.current, DT, 1.0)
+						medium.advance(Spectrum.current, DT, 1.0)
 					await get_tree().process_frame
 					stage.get_texture().get_image().save_png("%s_end_%02d.png" % [_out, _settle_i])
 					_settle_i += 1
@@ -123,10 +123,10 @@ func _run() -> void:
 		if st < 0.02:
 			_flat += 1
 		print("book_look_probe: t=%.1f %s -> %s (spread %.3f)" % [want,
-			(vehicle as BookVehicle).debug_line(), path, st])
+			(medium as BookMedium).debug_line(), path, st])
 	for p in _pages:
-		var bv := vehicle as BookVehicle
-		var c: BookVehicle.PageCanvas = bv._canvases[0]
+		var bv := medium as BookMedium
+		var c: BookMedium.PageCanvas = bv._canvases[0]
 		bv._slot_page[0] = int(p)
 		c.page = int(p)
 		c.hl = {}

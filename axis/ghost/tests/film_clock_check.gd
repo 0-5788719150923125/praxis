@@ -265,7 +265,7 @@ func _check_boundary() -> void:
 ##
 ## The worry this answers is a reasonable one to have: with seventy-odd scene types in the
 ## catalogue, a film sounds like it would be picked one time in seventy and never seen. It
-## is not in that draw at all - [method ComicVehicle._choose_film] runs when the page turns
+## is not in that draw at all - [method ComicMedium._choose_film] runs when the page turns
 ## and decides before the Director is asked for anything - but "not in the lottery" is a
 ## claim about control flow, and the thing worth pinning is the RATE that comes out of it.
 ##
@@ -283,11 +283,11 @@ func _check_rate() -> void:
 	stage.size = Vector2i(320, 180)
 	add_child(stage)
 	Director.detach()
-	var v: Vehicle = Vehicle.make("comic")
+	var v: Medium = Medium.make("comic")
 	v.mount(stage)
 	Director.attach(stage, v)
 	Director.hold(true)          # the probe turns the pages; nothing else may
-	var comic: ComicVehicle = v
+	var comic: ComicMedium = v
 	var spreads := 400
 	for freq in [0.0, 0.5, 1.0]:
 		Films.use_for_test([_clip], float(freq))

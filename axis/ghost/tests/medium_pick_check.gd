@@ -1,11 +1,11 @@
 extends Node
 
-## Smoke test for the PICTURE SETTINGS in the Generative panel - the Vehicle picker, the film
+## Smoke test for the PICTURE SETTINGS in the Generative panel - the Medium picker, the film
 ## controls and the Look filters: build the whole panel and read the controls back. A parse
 ## check cannot see a wrong registry key or a Callable that captured the wrong thing, and
 ## these controls are the only way most people will ever reach the settings.
 ##
-## Run: tests/run_boot_probe.sh tests/vehicle_pick_check.gd 90
+## Run: tests/run_boot_probe.sh tests/medium_pick_check.gd 90
 ##
 ## It restores the setting it found, and FLUSHES that restore to disk rather than trusting
 ## the debounce - see the note at the restore itself.
@@ -26,45 +26,45 @@ func _run() -> void:
 	# valid value - and the only visible symptom was a setting quietly reverting.
 	var on_disk := ConfigFile.new()
 	if on_disk.load(Settings.PATH) == OK:
-		var want := String(on_disk.get_value("director", "vehicle", "full"))
-		if Director.vehicle != want:
+		var want := String(on_disk.get_value("director", "medium", on_disk.get_value("director", "vehicle", "full")))
+		if Director.medium != want:
 			print("vpick: FAILED - file says '%s' but Director holds '%s' (autoload order?)"
-				% [want, Director.vehicle])
+				% [want, Director.medium])
 			fails += 1
-	var opt: OptionButton = ed._vehicle_pick
+	var opt: OptionButton = ed._medium_pick
 	if opt == null:
 		print("vpick: FAILED - the picker was never built")
 		fails += 1
 	else:
-		var keys: Array = Vehicle.REGISTRY.keys()
+		var keys: Array = Medium.REGISTRY.keys()
 		print("vpick: %d items, selected %d (%s)" % [
 			opt.item_count, opt.selected, opt.get_item_text(maxi(0, opt.selected))])
 		if opt.item_count != keys.size():
-			print("vpick: FAILED - %d items for %d registered vehicles" % [
+			print("vpick: FAILED - %d items for %d registered media" % [
 				opt.item_count, keys.size()])
 			fails += 1
-		if opt.get_item_text(maxi(0, opt.selected)) != String(Vehicle.LABELS.get(Director.vehicle, "")):
-			print("vpick: FAILED - selection does not show the live setting '%s'" % Director.vehicle)
+		if opt.get_item_text(maxi(0, opt.selected)) != String(Medium.LABELS.get(Director.medium, "")):
+			print("vpick: FAILED - selection does not show the live setting '%s'" % Director.medium)
 			fails += 1
 		# and that choosing one actually reaches the Director
-		var was := Director.vehicle
+		var was := Director.medium
 		var other := ""
 		for k in keys:
 			if String(k) != was:
 				other = String(k)
 				break
 		opt.item_selected.emit(keys.find(other))
-		if Director.vehicle != other:
-			print("vpick: FAILED - selecting '%s' left Director.vehicle at '%s'" % [other, Director.vehicle])
+		if Director.medium != other:
+			print("vpick: FAILED - selecting '%s' left Director.medium at '%s'" % [other, Director.medium])
 			fails += 1
 		else:
-			print("vpick: selecting '%s' set Director.vehicle" % other)
+			print("vpick: selecting '%s' set Director.medium" % other)
 		# LEAVE THE USER'S SETTING ALONE, and flush it rather than trusting the debounce.
-		# set_vehicle only marks the config dirty; the write lands 400 ms later, and this
+		# set_medium only marks the config dirty; the write lands 400 ms later, and this
 		# check quits well inside that - so the SELECTION above was what reached the disk
-		# and the restore was not. It left `vehicle="comic"` in a config the user never
+		# and the restore was not. It left `medium="comic"` in a config the user never
 		# chose it in.
-		Director.set_vehicle(was)
+		Director.set_medium(was)
 		Director._save_pacing()
 	# THE FILM CONTROLS ARE BUILT AND SHOW THE STORED VALUE. They live in the same section
 	# and are reached the same way, so they fail the same way: a control that never got
@@ -84,48 +84,48 @@ func _run() -> void:
 	if ed._film_list == null or ed._film_list.get_child_count() == 0:
 		print("vpick: FAILED - the film list was never built (it shows a row either way)")
 		fails += 1
-	# ONLY THE SETTINGS THIS VEHICLE CAN USE ARE SHOWN. Reported as "there are a number of
-	# settings currently being displayed that ONLY work with the comic book vehicle". The
+	# ONLY THE SETTINGS THIS MEDIUM CAN USE ARE SHOWN. Reported as "there are a number of
+	# settings currently being displayed that ONLY work with the comic book medium". The
 	# failure is not an error - a control that does nothing looks exactly like one that does -
 	# so it is asserted as a property of the registry rather than of a hand-written list.
-	if ed._vehicle_rows.is_empty():
-		print("vpick: FAILED - no rows are tagged with a vehicle feature at all")
+	if ed._medium_rows.is_empty():
+		print("vpick: FAILED - no rows are tagged with a medium feature at all")
 		fails += 1
 	else:
-		var cam := Director.vehicle
-		for key in Vehicle.REGISTRY:
+		var cam := Director.medium
+		for key in Medium.REGISTRY:
 			var vk := String(key)
 			# select() AND the signal: a real click does both, and the two are separate in
 			# Godot - emitting alone leaves `selected` on the previous item.
-			ed._vehicle_pick.select(Vehicle.REGISTRY.keys().find(vk))
-			ed._vehicle_pick.item_selected.emit(Vehicle.REGISTRY.keys().find(vk))
-			for tag in ed._vehicle_rows:
-				var want: bool = Vehicle.uses(vk, String(tag))
-				for row in ed._vehicle_rows[tag] as Array:
+			ed._medium_pick.select(Medium.REGISTRY.keys().find(vk))
+			ed._medium_pick.item_selected.emit(Medium.REGISTRY.keys().find(vk))
+			for tag in ed._medium_rows:
+				var want: bool = Medium.uses(vk, String(tag))
+				for row in ed._medium_rows[tag] as Array:
 					if (row as Control).visible != want:
 						print("vpick: FAILED - on '%s' the '%s' rows are %s, want %s"
 							% [vk, tag, "shown" if (row as Control).visible else "hidden",
 								"shown" if want else "hidden"])
 						fails += 1
 						break
-			print("vpick: '%s' shows %s" % [vk, str(Vehicle.USES.get(vk, []))])
-		# THE CONTROL: at least one tag must actually differ between two vehicles, or the
+			print("vpick: '%s' shows %s" % [vk, str(Medium.USES.get(vk, []))])
+		# THE CONTROL: at least one tag must actually differ between two media, or the
 		# sweep above is satisfied by every row being visible everywhere.
 		var differs := false
-		for tag in ed._vehicle_rows:
+		for tag in ed._medium_rows:
 			var seen := {}
-			for key in Vehicle.REGISTRY:
-				seen[Vehicle.uses(String(key), String(tag))] = true
+			for key in Medium.REGISTRY:
+				seen[Medium.uses(String(key), String(tag))] = true
 			if seen.size() > 1:
 				differs = true
 		if not differs:
 			print("vpick: FAILED - the control is wrong: no tagged group is hidden on any "
-				+ "vehicle, so the sweep proves nothing")
+				+ "medium, so the sweep proves nothing")
 			fails += 1
-		Director.set_vehicle(cam)
+		Director.set_medium(cam)
 		Director._save_pacing()
-		ed._vehicle_pick.select(maxi(0, Vehicle.REGISTRY.keys().find(cam)))
-		ed._sync_vehicle_rows()
+		ed._medium_pick.select(maxi(0, Medium.REGISTRY.keys().find(cam)))
+		ed._sync_medium_rows()
 	# THE LOOK FILTERS, and the same three questions: a row per registry entry, each showing
 	# the live setting, and a tick that actually reaches the Director. The failure mode here is
 	# the one filters.gd is written around - a checkbox that moves, saves, reloads and changes
@@ -176,7 +176,7 @@ func _run() -> void:
 				% [first, Director.filter_amount(first)])
 			fails += 1
 		# LEAVE THE USER'S LOOK ALONE, flushed rather than left to the debounce - same reason
-		# the vehicle restore above is flushed.
+		# the medium restore above is flushed.
 		Director.set_filter(first, was_amount)
 		Director._save_pacing()
 		Settings.flush()

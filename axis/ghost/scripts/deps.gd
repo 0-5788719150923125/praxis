@@ -186,7 +186,7 @@ const TOOLS := [
 		"tier": TIER_EXTRA,
 		"used_for": "The Assistant dropdown's Codex option (a ` feedback note dispatched to "
 			+ "Codex as a one-shot fix against this checkout), and painting the illustrations "
-			+ "the book vehicle prints, through Codex's built-in image generation. Neither "
+			+ "the book medium prints, through Codex's built-in image generation. Neither "
 			+ "runs unless you pick it.",
 		"install": {
 			"linux": "npm install -g @openai/codex",

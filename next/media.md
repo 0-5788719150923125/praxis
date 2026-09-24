@@ -1,14 +1,14 @@
-# Vehicles: what carries the show
+# Media: what carries the show
 
 ghost has one presentation. Every mode that runs the Director (Auto, Manual, Synthesis,
 Generative) paints ONE scene, full-bleed, edge to edge, and cuts to the next one. That is a
 choice the code has never had to name, because there was only ever one of it.
 
-A **vehicle** is that choice made addressable: the substrate the show is carried on. `full` is
+A **medium** is that choice made addressable: the substrate the show is carried on. `full` is
 today's behaviour, unchanged and default. `comic` renders the same scenes into the panels of a
 comic page, and flies a real perspective camera over that page.
 
-Not a mode. Modes decide what *drives* the show (a song, a storyboard, a voice). A vehicle
+Not a mode. Modes decide what *drives* the show (a song, a storyboard, a voice). A medium
 decides what the show is *presented as*, and every mode gets both.
 
 ## Why it is possible at all
@@ -36,13 +36,13 @@ Four things already in the codebase do almost all of the work:
 
 ```
 _stage (SubViewport)                     the composited picture, as today
-└── ComicVehicle (Node2D)                draws the paper, the panels, the ink
+└── ComicMedium (Node2D)                draws the paper, the panels, the ink
      ├── slot 0 (SubViewport)  <- a GhostScene lives here, live or frozen
      ├── slot 1 (SubViewport)
      └── ...                              two pools of these (page A / page B)
 ```
 
-Per frame the vehicle: eases the page's basis and the lens, projects the page quad, then for each
+Per frame the medium: eases the page's basis and the lens, projects the page quad, then for each
 FILLED panel projects a subdivided grid of its rect in page-local space and submits it as one
 textured draw call, UVs from the grid. Rounded corners are paper-coloured wedges painted back
 over the square corners (exact under perspective, because they are computed in page space and
@@ -55,7 +55,7 @@ the newest panel is live, and every panel behind it is a **frozen render target*
 stopped updating, its scene freed, its last frame still in VRAM. That is not a compromise dressed
 up as a feature. A comic panel *is* a held moment; the page is a sequence of them; and the frame
 is never static anyway because the camera and the page are always moving. It also means the comic
-costs the same as the full vehicle, which is the only reason it can ship at all - the stage
+costs the same as the full medium, which is the only reason it can ship at all - the stage
 governor already struggles with one heavy scene, and six live ones is not a thing that runs.
 
 Phase 2 can round-robin a little life back into the held panels. Phase 1 does not need it.
@@ -93,35 +93,35 @@ A small seeded shot vocabulary, eased (never snapped), chosen per page:
 ### The bookend
 
 The whole-show fade from and to black currently rides `_current.modulate.a`. In a comic that
-would fade one panel and leave the paper lit. The vehicle takes ownership of the bookend and
-modulates its own root instead; the Director stops applying it when a vehicle claims it.
+would fade one panel and leave the paper lit. The medium takes ownership of the bookend and
+modulates its own root instead; the Director stops applying it when a medium claims it.
 
 ## What has to change in the Director
 
-Small and countable. `_host.add_child(...)` at four sites becomes a router the vehicle answers,
-`_choose_style` and `_transition_alphas` get a vehicle veto, and `_bookend_fade` gets an owner
+Small and countable. `_host.add_child(...)` at four sites becomes a router the medium answers,
+`_choose_style` and `_transition_alphas` get a medium veto, and `_bookend_fade` gets an owner
 flag. Nothing else. `full` returns the stage from the router and vetoes nothing, so its behaviour
 is byte-identical to today's.
 
 ## Checklist
 
 ### Phase 0 - prove the two engine assumptions before building on them - DONE
-- [x] `tests/vehicle_probe.gd`: a SubViewport set to `UPDATE_DISABLED` keeps its last frame after
+- [x] `tests/medium_probe.gd`: a SubViewport set to `UPDATE_DISABLED` keeps its last frame after
       its child scene is freed. **Measured: drift 0.0000 after 8 frames with the scene freed.**
       The freeze is exact and free.
 - [x] Same probe: a ViewportTexture RID draws through a projected, subdivided grid.
       **Measured: the affine (1x1) seam lands 28.5 px from the perspective-correct (8x8) one on a
       512 px frame**, so subdivision is not optional.
 
-### Phase 1 - the vehicle axis - DONE
-- [x] `scripts/vehicle.gd` - the base + `VEHICLE_REGISTRY` (`full`, `comic`), labels, blurbs.
-- [x] `scripts/vehicles/full.gd` - the identity vehicle; every veto returns its argument.
+### Phase 1 - the medium axis - DONE
+- [x] `scripts/medium.gd` - the base + `MEDIUM_REGISTRY` (`full`, `comic`), labels, blurbs.
+- [x] `scripts/media/full.gd` - the identity medium; every veto returns its argument.
 - [x] Director: `_scene_host` router, `style_for` veto, `hold_outgoing`, `owns_bookend`,
       `begin_session`. Four call sites, no other control flow.
-- [x] main: builds the vehicle, mounts it in the stage, passes it to every `Director.attach`,
-      and rebuilds it when the setting changed (`_sync_vehicle`).
-- [x] `Director.vehicle` + `set_vehicle()` + `resolved_vehicle()`, persisted to
-      `[director] vehicle`, overridable with `--vehicle NAME`, forwarded by the exporter.
+- [x] main: builds the medium, mounts it in the stage, passes it to every `Director.attach`,
+      and rebuilds it when the setting changed (`_sync_medium`).
+- [x] `Director.medium` + `set_medium()` + `resolved_medium()`, persisted to
+      `[director] medium`, overridable with `--medium NAME`, forwarded by the exporter.
 - [x] **Regression: `scene_mix_check` replays one seed and reproduces all 140 cuts exactly**, so
       rewriting `_choose_style` around the veto did not perturb the seeded stream.
       `sting_shape_check` also passes.
@@ -130,7 +130,7 @@ is byte-identical to today's.
 - [x] `scripts/comic_page.gd` - the seeded page roll: 3-6 panels, rows then columns, uneven
       splits, gutters, margin, corner radius (weighted toward hard corners), the occasional cant.
       Rolls are REJECTED and retried when a panel aspect would crop a subject through.
-- [x] `scripts/vehicles/comic.gd` - the two slot pools, the page basis, the lens, the draw.
+- [x] `scripts/media/comic.gd` - the two slot pools, the page basis, the lens, the draw.
 - [x] Panel rendering: subdivided textured grid, aspect-matched render targets at constant AREA,
       half-texel UV inset, rounded corners by paper wedges, ink border.
 - [x] Freeze-on-advance, page turn hinged on the SPINE, two-pool alternation.
@@ -138,10 +138,10 @@ is byte-identical to today's.
       distance and eased attitude.
 
 ### Phase 3 - the surface - DONE
-- [x] Vehicle picker in the Generative panel's "THE PICTURE" section, built off the registry.
+- [x] Medium picker in the Generative panel's "THE PICTURE" section, built off the registry.
 - [x] `tests/comic_look_probe.gd` - drives a real comic session and writes PNGs; asserts only
       that the frame is not uniform (the failure most likely to ship silently).
-- [x] `python docs.py` (`docs/vehicles.md`, the CLI flag, the layout block) + README section.
+- [x] `python docs.py` (`docs/media.md`, the CLI flag, the layout block) + README section.
 
 ## Second pass (the first one was framed wrong)
 
@@ -163,7 +163,7 @@ Two measured mistakes on the way there, both of which read as framing bugs and w
   the push-in that fills the frame. A floor that binds in the ordinary case is the rule.
 
 **"Multiple panels, available from the start, and all moving at the same time."** The page now
-owns its cast: `Vehicle.owns_cast` / `take_over`, and `Director.mint_scene`. Every panel is
+owns its cast: `Medium.owns_cast` / `take_over`, and `Director.mint_scene`. Every panel is
 filled when the page turns (one per frame, so the build does not hitch), and a Director cut
 means MOVE THE READING, not build a scene. Liveness follows the camera - panels in shot run,
 panels out of shot are stopped targets - and the off-focus ones repaint every other frame at a
@@ -177,7 +177,7 @@ between panels a move parallel to the paper.
 
 ### What it costs now
 
-Three live scenes instead of one: **73 ms of active frame against the full vehicle's 41**, on
+Three live scenes instead of one: **73 ms of active frame against the full medium's 41**, on
 one seed with the same scenes. The earlier claim that the comic costs what the full frame
 costs was true of the one-live-panel build and is not true of this one; the README says so.
 The stage governor absorbs the difference, which is what it is for.
@@ -220,14 +220,14 @@ of them was mine:
 ### Coverage is measured now, not eyed
 
 "Is there dead space in the picture" took three passes to settle and every pass was judged by
-looking. `ComicVehicle.page_coverage()` reports how much of the frame's width the sheet
+looking. `ComicMedium.page_coverage()` reports how much of the frame's width the sheet
 spans, and the look probe prints it per frame and flags anything under 0.995. That is the
 number to watch when touching the framing solve.
 
 ## Settings: one owner (2026-09-03)
 
-Reported: "Vehicle and some of the other options are not serializing correctly. This happens
-a lot; please ensure all options are just saved automatically, by default." Not a vehicle
+Reported: "Medium and some of the other options are not serializing correctly. This happens
+a lot; please ensure all options are just saved automatically, by default." Not a medium
 bug - a shape the whole app had. Every remembered value was saved by whichever script owned
 the control: the Director's debounce for the picture knobs, the Generative panel's for the
 voice, the splash's for the last song, the deps panel's for its collapse. Five writers, five
@@ -235,7 +235,7 @@ debounces, each doing `ConfigFile.load()` -> set -> `save()` on the same file. T
 three ways and all three were live:
 
 - **Forgotten.** A control is persistent only if someone remembers to write save code. The
-  Vehicle picker went in beside four sliders the DIRECTOR saves, in a panel that saves its
+  Medium picker went in beside four sliders the DIRECTOR saves, in a panel that saves its
   own settings a different way, and nothing in the code said which applied.
 - **Clobbered.** Read-modify-write from separate owners is safe only while nothing else
   holds a copy - and an export renders in a SECOND ghost against the same file.
@@ -254,7 +254,7 @@ added without being saved. Two checks keep it that way: `docs.py check_settings_
 Two things this turned up on the way:
 - **Autoload order is load-bearing.** `Settings` must be FIRST; listed after `Director` it
   loaded the file after Director had already read its values, so every setting came back as
-  its default - silently, because a default is a valid value. `vehicle_pick_check` now
+  its default - silently, because a default is a valid value. `medium_pick_check` now
   compares the picker against the FILE, which is what catches this.
 - **A gate must not edit the config of whoever runs it.** Probes are read-only by default
   now; `settings_check` opts in explicitly because persistence is what it tests.
@@ -267,7 +267,7 @@ Two things this turned up on the way:
 - **Dark scenes read as empty boxes.** Roughly half the catalogue is near-black by design (`bed`
   tops out at a mid tone), and against bright paper that is high contrast and fine - but a page
   of four dark panels is a page of four dark rectangles. This is a scene-palette question, not a
-  vehicle one, and it is the first thing to look at if the comic feels flat.
+  medium one, and it is the first thing to look at if the comic feels flat.
 - **The desk is a screen-space wash, not a surface in the world.** A quad big enough never to
   run out under a close raked camera has corners behind the eye, and the projection has to drop
   those - so the world-quad version simply never drew, at any size worth having. A defocused

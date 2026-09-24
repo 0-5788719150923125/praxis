@@ -5,7 +5,7 @@ class_name Illustrations
 ##
 ## A chapter describes its pictures in `<!-- image: ... -->` markers ([Manuscript.images]);
 ## this turns each description into a PNG through an [ImageGen] backend and remembers it.
-## The book vehicle only ever asks [method path_for], so it neither knows nor cares who
+## The book medium only ever asks [method path_for], so it neither knows nor cares who
 ## painted what.
 ##
 ## THE CACHE IS THE POINT. A picture costs about a minute and a share of the author's quota,
@@ -40,7 +40,7 @@ const MAX_JOBS := 2
 const JOB_TIMEOUT_S := 600
 const IMAGE_EXTS := ["png", "jpg", "jpeg", "webp"]
 
-## Bumped whenever a picture lands or the chosen version changes, so a vehicle holding page
+## Bumped whenever a picture lands or the chosen version changes, so a medium holding page
 ## textures knows to re-typeset without polling the disk.
 static var revision := 0
 

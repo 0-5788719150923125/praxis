@@ -1,7 +1,7 @@
-extends Vehicle
-class_name ComicVehicle
+extends Medium
+class_name ComicMedium
 
-## ComicVehicle - the show as an open comic book, flown over by a real perspective camera.
+## ComicMedium - the show as an open comic book, flown over by a real perspective camera.
 ##
 ## The same scenes, the same Director, the same cutting. What changes is where a scene
 ## LANDS: instead of replacing the picture, each cut fills the next PANEL of the spread, and
@@ -21,7 +21,7 @@ class_name ComicVehicle
 ## ONE LIVE PANEL, THE REST HELD. The Director runs exactly one scene (two across a
 ## transition) and this keeps that: the newest panel is live in its own SubViewport, and
 ## every panel behind it is a STOPPED render target - update mode DISABLED, its scene
-## freed, its last frame still sitting in VRAM. Measured in tests/vehicle_probe.gd: the
+## freed, its last frame still sitting in VRAM. Measured in tests/medium_probe.gd: the
 ## texture survives both the stop and the free, bit-exact, so a held panel costs nothing
 ## at all. That is the only reason this can ship. Six live scenes is not a thing that
 ## runs - the stage governor already spends its budget on one - and the alternative,
@@ -66,7 +66,7 @@ const SLOT_IDLE := 64
 ## ADAPTIVE, because a fixed number cannot be right. Inside one cell the texture mapping is
 ## affine while the true mapping is projective, so the error scales with how big the cell is
 ## ON SCREEN and with how hard the panel is raked. A fixed 8 was measured sufficient at one
-## yaw on a 512 px frame, and this vehicle now puts a single panel across a whole 1280 px
+## yaw on a 512 px frame, and this medium now puts a single panel across a whole 1280 px
 ## frame at a much harder rake. Sizing the CELL rather than the count bounds the error
 ## directly, at any framing.
 ##
@@ -85,7 +85,7 @@ const CORNER_SEGS := 5
 
 ## ONE PAGE is this many units wide in the world, so the spread is twice it and is centred
 ## on the origin with the spine on the world Y axis. Deliberately unchanged from the
-## single-page vehicle: a panel therefore has exactly the world size it always had, every
+## single-page medium: a panel therefore has exactly the world size it always had, every
 ## framing constant below keeps the meaning it was tuned with, and the only thing that grew
 ## is the sheet.
 const PAGE_W := 2.0
@@ -103,7 +103,7 @@ const LIVE_MAX := POOL
 ## dozen simultaneous scenes do not fit in them. An export has no such deadline - it renders
 ## offline, one frame at a time, and a frame that takes a second costs a second of somebody's
 ## afternoon rather than a stutter. Spending the budget there buys nothing and costs the thing
-## the vehicle is for: "you're optimizing for real-time, but we are cutting videos. So we can
+## the medium is for: "you're optimizing for real-time, but we are cutting videos. So we can
 ## just play every scene, and we should. Freezing them looks terrible."
 ##
 ## Quite right, and it is also why the frozen panels read so much worse than they used to. On a
@@ -138,7 +138,7 @@ const REOPEN_STEP := 1.5
 ##
 ## THIS IS WHAT "4 OF THE 6 FRAMES ARE PURE BLACK, AND EMPTY" WAS, and the freeze mechanism
 ## was working perfectly the whole time. A held panel keeps the last picture it DREW - that is
-## the measured invariant the whole vehicle rests on (tests/vehicle_probe.gd) - and a panel
+## the measured invariant the whole medium rests on (tests/medium_probe.gd) - and a panel
 ## that was cast, given two frames, and frozen has a last picture that is two frames of an
 ## empty scene. Which is black. Nothing culled it; it was preserved exactly as found.
 ##
@@ -211,7 +211,7 @@ const PLAN_STYLES := {"read": 6.0, "grab": 2.0, "skim": 1.0}
 ## spread whatever style was rolled.
 ##
 ## "For most humans, an 'actual' human in a video is the first thing they want to look at,
-## every time." That is right, and it is the one place this vehicle should not be even-handed:
+## every time." That is right, and it is the one place this medium should not be even-handed:
 ## every other panel is an abstract field, and a face is not. Not 1.0 only because a spread
 ## that ALWAYS opens on the film is a rule the eye learns in two pages.
 const FILM_FIRST := 0.72
@@ -261,7 +261,7 @@ const CONTAIN_DESK := 1.0
 ## the constraint that fights containing a wide panel. Measured on a rolled spread at a
 ## moderate rake: containing the widest panel wanted 3.03 world units while the sheet stopped
 ## covering the frame past 2.13. Flattening buys most of that back, and it is also just the
-## right shot: a face is the most recognisable thing this vehicle ever puts on the page, and a
+## right shot: a face is the most recognisable thing this medium ever puts on the page, and a
 ## hard angle across a face reads as damage rather than as depth.
 ## LOWERED FROM 0.78, and the first value had the sign of its own effect backwards. Flattening
 ## turns the sheet square-on, which presents the panel at its FULL area - so the harder it
@@ -534,7 +534,7 @@ func mount(st: SubViewport) -> void:
 
 
 ## Everything sampled, rolled here rather than in mount() because the session seed is not
-## resolved until the Director attaches (see Vehicle.begin_session).
+## resolved until the Director attaches (see Medium.begin_session).
 func begin_session() -> void:
 	_rng.seed = Director.session_seed() ^ 0x0C031C
 	# Paper is never pure white - a white page reads as a blank canvas rather than as
@@ -555,7 +555,7 @@ func begin_session() -> void:
 
 
 func release() -> void:
-	# The vehicle OUTLIVES a session (main owns it; the synthesis modes re-attach per
+	# The medium OUTLIVES a session (main owns it; the synthesis modes re-attach per
 	# take), so release resets the BOOK rather than tearing the pool down - rebuilding
 	# twenty-four render targets on every settings change is exactly the reallocation churn
 	# main's governor warns about.
@@ -619,9 +619,9 @@ func _build_slots() -> void:
 		_slots.append(vp)
 
 
-# --- the Vehicle contract ----------------------------------------------------
+# --- the Medium contract ----------------------------------------------------
 
-## The spread owns its cast. See [method Vehicle.owns_cast] - this is the whole difference
+## The spread owns its cast. See [method Medium.owns_cast] - this is the whole difference
 ## between a page and a slideshow.
 func owns_cast() -> bool:
 	return true
@@ -664,7 +664,7 @@ func advance(features, delta: float, bookend: float) -> void:
 			# until the next turn opens it, and _open_slot sizes a slot before anything
 			# draws it - so this is the one safe moment to give the memory back. Skipping
 			# it kept a full spread of full-size render targets alive for the whole of the
-			# next spread, which is half the vehicle's VRAM doing nothing.
+			# next spread, which is half the medium's VRAM doing nothing.
 			for i in POOL:
 				var vp: SubViewport = _slots[(1 - _pool) * POOL + i]
 				if vp.size.x > SLOT_IDLE or vp.size.y > SLOT_IDLE:
@@ -677,7 +677,7 @@ func advance(features, delta: float, bookend: float) -> void:
 
 
 ## AudioFeatures is not a type this file should have to import to read one number off, and
-## a vehicle must keep working when there is no audio at all (the splash, a songless boot),
+## a medium must keep working when there is no audio at all (the splash, a songless boot),
 ## so this asks softly rather than declaring a dependency.
 func _energy_of(features) -> float:
 	if features == null:
@@ -974,7 +974,7 @@ func _open_slot(i: int, px := -1) -> SubViewport:
 
 ## The resolution panel [param i] earns in the shot on screen now: its drawn height in pixels,
 ## with a floor so a panel in the far distance is still a picture and a ceiling at the full
-## target so the one being read is as sharp as the vehicle can make it.
+## target so the one being read is as sharp as the medium can make it.
 ##
 ## THIS IS ALSO THE PIXELATION ANSWER. A panel rasterises into its target and is then textured
 ## onto the paper, so a shot tighter than the target is magnifying a bitmap - "some of the
@@ -1122,7 +1122,7 @@ func _update_liveness() -> void:
 ## HOW MANY PANELS MAY RUN THIS FRAME. See LIVE_ALL_ON_EXPORT: the real-time budget, or no
 ## budget at all when there is no frame deadline to spend it against.
 ##
-## Asked of the command line rather than of main, because a vehicle is built before main has
+## Asked of the command line rather than of main, because a medium is built before main has
 ## finished deciding anything and must not reach up into it - the same reason the Director is
 ## asked for the session seed instead of being handed one.
 func _live_budget() -> int:
@@ -1641,7 +1641,7 @@ const ZOOM_FREE := 1.6
 ## how long it takes to creep the whole way. One heading, chosen when the shot arrives.
 ##
 ## A held shot that is perfectly static reads as a photograph of a page rather than a camera
-## looking at one, and the original report on this vehicle was a camera that froze. A heading
+## looking at one, and the original report on this medium was a camera that froze. A heading
 ## rather than a walk: an unbiased random walk against the panel edge parks AT the edge and
 ## jitters there, which is a defect this file has shipped once already.
 const HOLD_CREEP := 0.05
@@ -1653,7 +1653,7 @@ const RATE_DIST := 2.4
 
 
 ## The severity in force, 0..2. Asked of the Director rather than held here so the slider takes
-## effect on the next frame without anything having to be pushed at the vehicle.
+## effect on the next frame without anything having to be pushed at the medium.
 func _sev() -> float:
 	return clampf(Director.camera, Director.CAMERA_MIN, Director.CAMERA_MAX)
 
@@ -2455,7 +2455,7 @@ func _draw() -> void:
 	_lens.prepare()
 	var u := minf(_stage_size.x, _stage_size.y)
 	var origin := _stage_size * 0.5
-	# The bookend belongs to the vehicle here (see Vehicle.owns_bookend): the whole spread
+	# The bookend belongs to the medium here (see Medium.owns_bookend): the whole spread
 	# fades, paper and all, instead of one panel fading inside a lit page.
 	modulate.a = 1.0
 	var fade := clampf(_bookend, 0.0, 1.0) * _dip_alpha()
@@ -2627,7 +2627,7 @@ func _cells(ok: Array, n: int) -> PackedInt32Array:
 
 ## One panel's picture: its render target mapped onto a GRID-subdivided quad whose every
 ## vertex is projected individually. Two triangles would be affine and would warp (28.5 px
-## on a 512 px frame, measured in tests/vehicle_probe.gd); subdivision makes the mapping
+## on a 512 px frame, measured in tests/medium_probe.gd); subdivision makes the mapping
 ## piecewise-perspective and the error vanishes.
 func _panel_quad(sp: ComicSpread, i: int, pool: int, m: Basis,
 		u: float, origin: Vector2, fade: float, mirror: bool) -> void:
@@ -2730,7 +2730,7 @@ func _panel_ink(sp: ComicSpread, i: int, m: Basis, u: float, origin: Vector2,
 
 
 ## Comic rules are CHUNKY - a hairline reads as a UI border around a video, which is
-## exactly what this vehicle exists not to be. Scaled off the shorter screen axis so it
+## exactly what this medium exists not to be. Scaled off the shorter screen axis so it
 ## is the same weight at 720p and at 4K, and sampled per session inside a narrow band
 ## (some books ink heavier than others; none ink thin).
 ## Twice the signed area of a polygon, absolute - the cheap "is this bigger than a pixel"

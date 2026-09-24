@@ -42,6 +42,7 @@ const SHADER := "res://shaders/stage_filter.gdshader"
 ## Keys are what `[director] filters` in `user://ghost.cfg` stores and what
 ## `--filter KEY=AMOUNT` takes.
 const REGISTRY := {
+	"slip": "u_slip",
 	"pointillism": "u_pointillism",
 	"bloom": "u_bloom",
 	"monochrome": "u_monochrome",
@@ -52,6 +53,7 @@ const REGISTRY := {
 
 ## Display names for the registry keys, in registry order - for the settings surface.
 const LABELS := {
+	"slip": "Gate slip",
 	"pointillism": "Pointillism",
 	"bloom": "Bloom",
 	"monochrome": "Monochrome",
@@ -64,6 +66,7 @@ const LABELS := {
 ## literal per entry, not a `+` continuation: docs.py reads this table with a regex and a
 ## continuation silently truncates the blurb at the first line.
 const BLURBS := {
+	"slip": "Tearing: now and then a band of the picture jumps sideways for one frame and snaps back, the way a frame that does not seat squarely in a projector's gate is printed offset. The dial is how often and how far.",
 	"pointillism": "The picture re-laid as overlapping dots of paint on a jittered lattice, each dot taking its colour from where it sits and its size from how bright that is. The dial is the size of the dots, so a little is a canvas texture and a lot is a painting you have to stand back from.",
 	"bloom": "Light bleeding out of the bright parts, the way it does through a lens. Only what is already brighter than the picture's own highlights blooms, so it lifts lamps, sparks and speculars without fogging the whole frame.",
 	"monochrome": "Colour taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same grey.",
@@ -77,6 +80,7 @@ const BLURBS := {
 ## an unfamiliar filter that arrived at full strength would read as broken rather than as a
 ## look. Picking one up gives you a usable version of it and the dial does the rest.
 const DEFAULTS := {
+	"slip": 0.45,
 	"pointillism": 0.35,
 	"bloom": 0.45,
 	"monochrome": 1.0,
@@ -144,7 +148,7 @@ static func apply(rect: CanvasItem, amounts: Dictionary, size: Vector2) -> void:
 
 ## The one-run override: `--filter monochrome=1,grain=0.3` (or `--filter none`).
 ##
-## Reads like `--vehicle`, and exists for the same two reasons: a gate that must pin a look
+## Reads like `--medium`, and exists for the same two reasons: a gate that must pin a look
 ## without touching the author's settings, and a render of a session that was deliberately
 ## not the remembered one. Returns null when the flag is absent, so a caller can tell "no
 ## override" from "override to nothing".

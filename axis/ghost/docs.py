@@ -40,7 +40,7 @@ from typing import Dict, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
 SCENES_DIR = SCRIPTS / "scenes"
-VEHICLES_DIR = SCRIPTS / "vehicles"
+MEDIA_DIR = SCRIPTS / "media"
 DOCS = ROOT / "docs"
 
 WARNINGS: List[str] = []
@@ -91,7 +91,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "splash.gd",
             "director.gd",
             "settings.gd",
-            "vehicle.gd",
+            "medium.gd",
             "filters.gd",
             "comic_page.gd",
             "comic_spread.gd",
@@ -275,11 +275,11 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         False,
     ),
     (
-        "--vehicle",
+        "--medium",
         "<name>",
         "What the show is carried on for this run: `full` (one scene filling "
         "the frame) or `comic` (a comic page). Overrides the remembered "
-        "setting; see [vehicles.md](vehicles.md).",
+        "setting; see [media.md](media.md).",
         False,
     ),
     (
@@ -460,9 +460,9 @@ TOP_LEVEL: List[Tuple[str, str]] = [
         "[docs/scenes.md](docs/scenes.md).",
     ),
     (
-        "scripts/vehicles/",
-        "The vehicle registry - what the show is carried ON (full frame, comic page). "
-        "See [docs/vehicles.md](docs/vehicles.md).",
+        "scripts/media/",
+        "The medium registry - what the show is carried ON (full frame, comic page). "
+        "See [docs/media.md](docs/media.md).",
     ),
     (
         "shaders/",
@@ -862,16 +862,16 @@ def _render_registry_page(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_vehicles_doc(base: Script) -> str:
-    """docs/vehicles.md, from Vehicle.REGISTRY and each vehicle script's own header.
+def _render_media_doc(base: Script) -> str:
+    """docs/media.md, from Medium.REGISTRY and each medium script's own header.
 
     Not _render_registry_page: that renderer expects a registry whose values are
     INNER CLASSES of the registry script (Layer, Primitives, Cast all work that
-    way). A vehicle is a whole file, because it owns render targets and a draw -
+    way). A medium is a whole file, because it owns render targets and a draw -
     so the values here are script paths and each entry's doc is that file's own
     class header."""
     pairs = re.findall(
-        r'"(\w+)":\s*"res://scripts/vehicles/(\w+)\.gd"',
+        r'"(\w+)":\s*"res://scripts/media/(\w+)\.gd"',
         (
             re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S).group(1)
             if re.search(r"const REGISTRY :?= \{(.*?)\n\}", base.text, re.S)
@@ -879,7 +879,7 @@ def _render_vehicles_doc(base: Script) -> str:
         ),
     )
     if not pairs:
-        warn("could not parse Vehicle.REGISTRY")
+        warn("could not parse Medium.REGISTRY")
     labels = dict(
         re.findall(r'"(\w+)":\s*"([^"]*)"', _const_block(base.text, "LABELS"))
     )
@@ -888,23 +888,23 @@ def _render_vehicles_doc(base: Script) -> str:
     )
     lines = [
         AUTOGEN_HEADER,
-        "# Vehicles: what carries the show",
+        "# Media: what carries the show",
         "",
         "The presentation axis - what the show is drawn ON, as opposed to what "
-        "drives it. Independent of the modes, so every mode gets every vehicle.",
+        "drives it. Independent of the modes, so every mode gets every medium.",
         "",
         _full_doc(base.doc),
         "",
-        f"Registry: `Vehicle.REGISTRY` in {_source_link(base.rel)} "
-        f"({len(pairs)} entries). Select with `--vehicle NAME`, or the Vehicle "
+        f"Registry: `Medium.REGISTRY` in {_source_link(base.rel)} "
+        f"({len(pairs)} entries). Select with `--medium NAME`, or the Medium "
         "picker in the Generative panel (persisted to `user://ghost.cfg`, "
-        "`[director] vehicle`).",
+        "`[director] medium`).",
         "",
     ]
     for key, stem in pairs:
-        path = VEHICLES_DIR / f"{stem}.gd"
+        path = MEDIA_DIR / f"{stem}.gd"
         if not path.exists():
-            warn(f"Vehicle.REGISTRY registers vehicles/{stem}.gd which does not exist")
+            warn(f"Medium.REGISTRY registers media/{stem}.gd which does not exist")
             continue
         sc = Script(path)
         lines.append(f"## `{key}` - {labels.get(key, key)}")
@@ -914,14 +914,14 @@ def _render_vehicles_doc(base: Script) -> str:
         if sc.doc:
             lines.extend([_full_doc(sc.doc), ""])
         else:
-            warn(f"{sc.rel}: vehicle '{key}' has no doc comment")
+            warn(f"{sc.rel}: medium '{key}' has no doc comment")
         lines.append(f"Source: {_source_link(sc.rel)}")
         lines.append("")
-    for path in sorted(VEHICLES_DIR.glob("*.gd")):
+    for path in sorted(MEDIA_DIR.glob("*.gd")):
         if path.stem not in [stem for _k, stem in pairs]:
             warn(
-                f"scripts/vehicles/{path.stem}.gd is not registered in "
-                "Vehicle.REGISTRY - it can never be selected"
+                f"scripts/media/{path.stem}.gd is not registered in "
+                "Medium.REGISTRY - it can never be selected"
             )
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1466,8 +1466,8 @@ def main() -> int:
             "the video chroma-key editor: model, effects, headless tools.",
         ),
         (
-            "vehicles",
-            "Vehicles",
+            "media",
+            "Media",
             "the presentation registry - what the show is carried on.",
         ),
         (
@@ -1507,7 +1507,7 @@ def main() -> int:
         DOCS / "masking.md",
         _render_masklab_doc(scripts["mask_session"], scripts["mask_editor"]),
     )
-    _write_if_changed(DOCS / "vehicles.md", _render_vehicles_doc(scripts["vehicle"]))
+    _write_if_changed(DOCS / "media.md", _render_media_doc(scripts["medium"]))
     _write_if_changed(DOCS / "filters.md", _render_filters_doc(scripts["filters"]))
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))
     _write_if_changed(DOCS / "index.md", _render_index(scripts, scenes, pages))

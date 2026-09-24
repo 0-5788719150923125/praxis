@@ -642,3 +642,68 @@ func _check_hum_is_held() -> void:
 			e += o[f * hop + k] * o[f * hop + k]
 		lo = minf(lo, sqrt(e / float(hop)))
 	_ok(lo > 0.25, "the held hum dips (quietest 10 ms at %.3f of a 0.35 tone)" % lo)
+	_check_hum_is_smooth()
+
+
+## A HELD HUM IS SMOOTH on a hum shaped like a rendered one, which a pure sine is not: its
+## pitch glides, it has harmonics, and its loudest stretch is FRY (period-doubled, an octave
+## down). Butting copied periods end to end buzzed on exactly this - every join a step, since
+## no whole number of samples is the period - and anchoring on the loudest stretch held the
+## fry as a creak. Held here: no step in the fill larger than the hum's own, no loudness
+## flutter, and the fill at the hum's pitch rather than the fry's.
+func _check_hum_is_smooth() -> void:
+	var sr := 22050
+	_ed._sr = sr
+	var pcm := PackedFloat32Array()
+	pcm.resize(int(0.45 * sr))
+	var ph := 0.0
+	for i in int(0.3 * sr):
+		var t := float(i) / float(sr)
+		# fry fades in over 0.15-0.17 and out over 0.22-0.24, as a rendered one does
+		var fry := clampf(minf((t - 0.15) / 0.02, (0.24 - t) / 0.02), 0.0, 1.0)
+		var f0 := lerpf(205.0, 172.0, t / 0.3)
+		ph += f0 / float(sr)
+		var env := minf(1.0, t / 0.03) * minf(1.0, (0.3 - t) / 0.03)
+		var v := 0.0
+		for k in range(1, 7):
+			v += sin(TAU * float(k) * ph) / float(k)
+		# every other period louder and the ones between nearly gone: a subharmonic at f0 / 2
+		v *= 1.0 + fry * (0.8 + 1.2 * sin(PI * ph))
+		pcm[i] = 0.2 * env * v
+	var spans: Array = [{"index": 0, "t0": 0.0, "t1": 0.3}]
+	var r: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 0.0, "before": false, "hum": 0.9}], spans, 1.0)
+	var cuts: Array = r["cuts"]
+	_ok(cuts.size() == 1 and cuts[0].has("fill"), "the gliding hum was not held")
+	if cuts.size() != 1 or not cuts[0].has("fill"):
+		return
+	var fill: PackedFloat32Array = cuts[0]["fill"]
+	var o: PackedFloat32Array = r["pcm"]
+	var s0 := int(cuts[0]["at"])
+	var step := func(x: PackedFloat32Array, i0: int, i1: int) -> float:
+		var m := 0.0
+		for i in range(maxi(1, i0), mini(i1, x.size() - 1)):
+			m = maxf(m, absf(x[i + 1] - 2.0 * x[i] + x[i - 1]))
+		return m
+	var own: float = maxf(step.call(pcm, 0, int(0.15 * sr)), step.call(pcm, int(0.24 * sr), int(0.3 * sr)))
+	_ok(s0 < int(0.15 * sr) or s0 >= int(0.24 * sr), "the hum was anchored in its fry (%.3f s)" % (float(s0) / float(sr)))
+	var held: float = step.call(o, s0 - 2, s0 + fill.size() + 2)
+	_ok(held <= own * 1.05, "the held hum has a step %.4f past the hum's own largest %.4f" % [held, own])
+	var hop := int(0.01 * sr)
+	var rms := []
+	for i in range(0, fill.size() - hop, hop):
+		var e := 0.0
+		for k in hop:
+			e += fill[i + k] * fill[i + k]
+		rms.append(sqrt(e / float(hop)))
+	var mean := 0.0
+	for v in rms:
+		mean += v
+	mean /= float(rms.size())
+	var dev := 0.0
+	for v in rms:
+		dev += (v - mean) * (v - mean)
+	var flutter := sqrt(dev / float(rms.size())) / maxf(mean, 1e-9)
+	_ok(flutter < 0.1, "the held hum flutters (10 ms loudness varies %.2f of its mean)" % flutter)
+	var pc: Vector3 = _ed._period_of(fill, 0, int(0.02 * sr))
+	_ok(pc.x > 0.0 and float(sr) / pc.x > 150.0,
+		"the hum was held in its fry (%.0f Hz)" % (float(sr) / maxf(pc.x, 1.0)))

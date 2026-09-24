@@ -58,7 +58,7 @@ extends Node
 var _fails: Array = []
 ## Seconds of camera driven per setting, at FPS. Long enough to contain several Director holds
 ## at the default pacing, so the numbers cover cuts and the tails between them.
-## Kept modest on purpose: each level drives a real vehicle with a full spread of live scenes
+## Kept modest on purpose: each level drives a real medium with a full spread of live scenes
 ## in it, and this shares a machine with whatever else is running. Long enough to contain
 ## several Director holds, which is what the numbers are about.
 const SECONDS := 90.0
@@ -103,10 +103,10 @@ func _run() -> void:
 	stage.size = Vector2i(320, 180)
 	add_child(stage)
 	Director.detach()
-	var v: Vehicle = Vehicle.make("comic")
+	var v: Medium = Medium.make("comic")
 	v.mount(stage)
 	Director.attach(stage, v)
-	var comic: ComicVehicle = v as ComicVehicle
+	var comic: ComicMedium = v as ComicMedium
 	_check_pinned(comic)
 	var was := Director.camera
 	for sev: float in LEVELS:
@@ -136,7 +136,7 @@ func _run() -> void:
 ##
 ## So: pin the camera and the target, run the sheet's drift, and measure. Anything above the
 ## float noise floor means the invariance has been lost.
-func _check_pinned(comic: ComicVehicle) -> void:
+func _check_pinned(comic: ComicMedium) -> void:
 	comic._turn_spread(0)
 	var dt := 1.0 / FPS
 	# WARM UP PROPERLY BEFORE PINNING. `_flat_s` and `_dist_s` are followers, so the first
@@ -163,7 +163,7 @@ func _check_pinned(comic: ComicVehicle) -> void:
 			comic._tgt = pinned.duplicate()
 			# ...AND THE SHOT MUST NOT BE HOLDING, or _ease overwrites the target we just
 			# pinned with the hold creep and the camera chases a point that flips between the
-			# two every frame. That is the probe fighting the vehicle, and it showed up as a
+			# two every frame. That is the probe fighting the medium, and it showed up as a
 			# residual that was identical with the sheet's attitude frozen - which should have
 			# been the clue, since a drift artefact would have to change when the drift stops.
 			comic._shot["arrived"] = false
@@ -194,12 +194,12 @@ func _check_pinned(comic: ComicVehicle) -> void:
 	# to test. Left in as a diagnostic to read, not as a bar to clear.
 
 
-## Drive the vehicle for SECONDS and report what the picture did.
+## Drive the medium for SECONDS and report what the picture did.
 ##
 ## The Director runs FREE here - it must, because the whole question is what happens across
 ## cuts and in the tail of a hold, and a probe that pins the hold (as comic_look_probe does)
 ## makes every deadline infinite and every one of those behaviours unreachable.
-func _drive(comic: ComicVehicle, sev: float) -> void:
+func _drive(comic: ComicMedium, sev: float) -> void:
 	comic._turn_spread(0)
 	var dt := 1.0 / FPS
 	var steps := int(SECONDS / dt)
@@ -226,17 +226,17 @@ func _drive(comic: ComicVehicle, sev: float) -> void:
 	for i in steps:
 		Director._elapsed += dt
 		# THE DIRECTOR MUST ACTUALLY CUT. The first version of this loop advanced the clock and
-		# then did nothing with it, so the vehicle sat on ONE shot for the whole run - and
+		# then did nothing with it, so the medium sat on ONE shot for the whole run - and
 		# under a follower a shot that is never replaced simply arrives and holds, which
 		# reported zero teleports and 90% held for a camera that had never been asked to move.
 		# The cut-related half of the measurement was reading a camera doing nothing.
 		#
-		# A cut on a CAST-OWNING vehicle is a HANDOVER and nothing else: ask it to take over,
+		# A cut on a CAST-OWNING medium is a HANDOVER and nothing else: ask it to take over,
 		# adopt what it hands back, and build or free nothing. The panels were cast when the
 		# page turned and they all stay on the paper - freeing "the outgoing scene" here would
 		# delete a panel out of the comic.
 		if Director._elapsed >= Director.hold_remaining():
-			# THE CLOCK IS RESET BEFORE THE HANDOVER, NOT AFTER. The vehicle sizes its shot
+			# THE CLOCK IS RESET BEFORE THE HANDOVER, NOT AFTER. The medium sizes its shot
 			# from Director.hold_remaining() at the moment it is asked to take over, so
 			# resetting afterwards hands it the exhausted hold it is being cut out of and it
 			# plans for a scene that is already over.
@@ -396,7 +396,7 @@ func _report(sev: float, moves: Array, areas: Array, panels: Array) -> void:
 ## geometry of the page's edge instead of the picture. These sit across the printed area, where
 ## the camera is actually looking. Points behind the eye are dropped, and a frame whose set of
 ## survivors differs from the last one is skipped rather than compared against a different set.
-func _grid(comic: ComicVehicle) -> PackedVector2Array:
+func _grid(comic: ComicMedium) -> PackedVector2Array:
 	var out := PackedVector2Array()
 	for iy in 3:
 		for ix in 5:

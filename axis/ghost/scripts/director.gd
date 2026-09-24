@@ -233,7 +233,7 @@ var pacing: float = 1.0
 ## holds, this is how often the show breaks that rhythm, and the reported problem was that raising
 ## one while the other ran hot cancelled it out.
 var flourish: float = 1.0
-## HOW SEVERE THE CAMERA IS, for a vehicle that flies one (see [ComicVehicle]). 0 is a slow,
+## HOW SEVERE THE CAMERA IS, for a medium that flies one (see [ComicMedium]). 0 is a slow,
 ## gentle drift that barely turns; 1 is the tuned default; the top of the range is fast,
 ## restless and cinematic, with real jump cuts in it.
 ##
@@ -241,25 +241,25 @@ var flourish: float = 1.0
 ## excursion a shot may take, how quickly that excursion is spent, how long a move lasts, how
 ## much of the bag is discontinuous, how deep a push goes and how fast the sheet drifts - so
 ## it moves the whole camera along one axis from "slow" to "chaotic" instead of asking anyone
-## to balance six numbers. The full-frame vehicle has no camera and ignores it.
+## to balance six numbers. The full-frame medium has no camera and ignores it.
 ##
 ## Set it through [method set_camera]; persisted by [Settings] as `[director] camera`.
 var camera: float = 1.0
-## THE VEHICLE - what the show is carried on, a key from [constant Vehicle.REGISTRY]
-## (`full` = the original full-frame show, `comic` = a comic page). See [Vehicle].
+## THE MEDIUM - what the show is carried on, a key from [constant Medium.REGISTRY]
+## (`full` = the original full-frame show, `comic` = a comic page). See [Medium].
 ##
 ## Held HERE rather than in main, for the same reason `pacing` is: it is a property of
 ## the show, it must persist between sessions, and the export render is a separate
 ## process that reads `user://ghost.cfg` on boot - so a setting that lives in this file
 ## is inherited by a render with no flag to pass and nothing to keep in sync.
-## `--vehicle NAME` overrides it for one run (tests, and a render of a session that was
+## `--medium NAME` overrides it for one run (tests, and a render of a session that was
 ## deliberately not the remembered setting).
-var vehicle := "full"
+var medium := "full"
 ## THE LOOK - a post-process over the whole picture, as `{filter key: amount}` with only the
 ## live ones present (see [Filters]). Combinable by construction: monochrome AND grain is one
 ## dictionary with two entries, not a choice between two modes.
 ##
-## Held here for exactly the reasons `vehicle` is: it is a property of the show, it must
+## Held here for exactly the reasons `medium` is: it is a property of the show, it must
 ## persist between sessions, and the export render is a SEPARATE PROCESS that reads
 ## `user://ghost.cfg` on boot - so a look that lives in this file is inherited by a render
 ## with no flag to pass and nothing to keep in sync. `--filter KEY=AMOUNT,...` (or
@@ -281,14 +281,14 @@ const PACING_MAX := 4.0
 @export var layer_time: float = 6.0
 
 var _host: Node = null
-## THE VEHICLE - what the show is carried on (see [Vehicle]). Set by [method attach];
-## null is treated exactly as `full`, so nothing here needs a vehicle to exist.
+## THE MEDIUM - what the show is carried on (see [Medium]). Set by [method attach];
+## null is treated exactly as `full`, so nothing here needs a medium to exist.
 ##
-## The Director must never learn what a comic page is. Everything a vehicle changes it
+## The Director must never learn what a comic page is. Everything a medium changes it
 ## reaches through four small vetoes - where a scene is ADDED (_scene_host), the
 ## transition STYLE (_choose_style), whether the outgoing scene may FADE (_tick_schedule),
 ## and who applies the BOOKEND - and nothing else in this file knows the difference.
-var _vehicle: Vehicle = null
+var _medium: Medium = null
 ## Extra entropy for ONE scene pick, so a caller can mint several scenes without the
 ## Director's clock having advanced between them - which is what a comic page does when it
 ## casts all of its panels at once (see [method mint_scene]).
@@ -526,7 +526,7 @@ func set_flourish(v: float) -> void:
 	_save_pacing()
 
 
-## The camera severity knob. Takes effect on the NEXT move the vehicle plans, which is at
+## The camera severity knob. Takes effect on the NEXT move the medium plans, which is at
 ## most one shot away - the same "reach for the slider and hear the difference" the pacing
 ## slider gives, without re-planning a move that is already travelling.
 func set_camera(v: float) -> void:
@@ -537,22 +537,22 @@ func set_camera(v: float) -> void:
 	_save_pacing()
 
 
-## Choose the vehicle (see [member vehicle]). Persisted like every other picture setting.
+## Choose the medium (see [member medium]). Persisted like every other picture setting.
 ##
 ## Takes effect on the NEXT session, not the running one - and unlike the intro hold,
 ## that IS a limitation rather than a definition. Swapping presentation mid-show means
 ## re-hosting the live scene into a different surface while it is drawing; the honest
 ## version of that is a restart, so the surface says so rather than half-doing it.
-func set_vehicle(key: String) -> void:
-	if not Vehicle.REGISTRY.has(key) or key == vehicle:
+func set_medium(key: String) -> void:
+	if not Medium.REGISTRY.has(key) or key == medium:
 		return
-	vehicle = key
+	medium = key
 	_save_pacing()
 
 
 ## SET ONE FILTER'S AMOUNT, 0 being off (see [Filters.REGISTRY] for the keys).
 ##
-## Takes effect IMMEDIATELY and on the running session, unlike the vehicle - the material
+## Takes effect IMMEDIATELY and on the running session, unlike the medium - the material
 ## lives on the stage view rather than inside any scene, so there is nothing to re-host and
 ## nothing to re-plan. That is the point of it being a post-process: a look is something you
 ## dial while watching it.
@@ -585,17 +585,17 @@ func resolved_filters() -> Dictionary:
 	return Filters.sanitize(filters)
 
 
-## The vehicle this run actually uses: `--vehicle NAME` if given and known, else the
+## The medium this run actually uses: `--medium NAME` if given and known, else the
 ## remembered setting. Read by [main] when it builds the stage.
-func resolved_vehicle() -> String:
+func resolved_medium() -> String:
 	var args := OS.get_cmdline_user_args()
-	var i := args.find("--vehicle")
+	var i := args.find("--medium")
 	if i >= 0 and i + 1 < args.size():
 		var k := String(args[i + 1])
-		if Vehicle.REGISTRY.has(k):
+		if Medium.REGISTRY.has(k):
 			return k
-		push_warning("ghost: --vehicle %s is not a known vehicle - using %s" % [k, vehicle])
-	return vehicle
+		push_warning("ghost: --medium %s is not a known medium - using %s" % [k, medium])
+	return medium
 
 
 func _load_pacing() -> void:
@@ -604,8 +604,9 @@ func _load_pacing() -> void:
 	camera = clampf(float(Settings.read("director", "camera", 1.0)), CAMERA_MIN, CAMERA_MAX)
 	intro_hold = clampf(float(Settings.read("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
 	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
-	var v := String(Settings.read("director", "vehicle", "full"))
-	vehicle = v if Vehicle.REGISTRY.has(v) else "full"
+	# `vehicle` was this key's name until 2026-09-24; read it once so the choice survives
+	var v := String(Settings.read("director", "medium", Settings.read("director", "vehicle", "full")))
+	medium = v if Medium.REGISTRY.has(v) else "full"
 	# Through `sanitize`, always: a filter dropped from the registry between builds comes back
 	# as a key nothing declares a uniform for, and writing one is a silent no-op rather than
 	# an error - so it is discarded here instead of being carried around forever.
@@ -621,13 +622,13 @@ func _save_pacing() -> void:
 	Settings.write("director", "camera", camera)
 	Settings.write("director", "intro", intro_hold)
 	Settings.write("director", "outro", outro_hold)
-	Settings.write("director", "vehicle", vehicle)
+	Settings.write("director", "medium", medium)
 	Settings.write("director", "filters", filters)
 
 
-func attach(host: Node, vehicle: Vehicle = null) -> void:
+func attach(host: Node, medium: Medium = null) -> void:
 	_host = host
-	_vehicle = vehicle
+	_medium = medium
 	# A fresh session hears fresh material: forget the last song's level, its reference, and any
 	# flurry state. attach() runs again on every new take in synthesis mode, so without this a quiet
 	# piece following a loud one would spend its opening judged against the loud one's level - and a
@@ -661,11 +662,11 @@ func attach(host: Node, vehicle: Vehicle = null) -> void:
 	_dial_demo = OS.get_cmdline_user_args().has("--dial-demo")
 	_echo = Echo.new()
 	_heard_t = 0.0
-	# AFTER _session_seed is resolved, BEFORE the first scene is made: the vehicle samples
+	# AFTER _session_seed is resolved, BEFORE the first scene is made: the medium samples
 	# its own look from the session seed, and the very next line asks it for a host.
-	if _vehicle != null and is_instance_valid(_vehicle):
-		_vehicle.begin_session()
-	# A vehicle that owns its cast has just built the whole page; the show opens on
+	if _medium != null and is_instance_valid(_medium):
+		_medium.begin_session()
+	# A medium that owns its cast has just built the whole page; the show opens on
 	# whichever panel it says the reading starts at, already alive in its own viewport.
 	var opening := _handover(null)
 	if opening != null:
@@ -676,17 +677,17 @@ func attach(host: Node, vehicle: Vehicle = null) -> void:
 	_arm()
 
 
-## Ask a cast-owning vehicle for the scene to move to, and adopt whatever it hands back.
+## Ask a cast-owning medium for the scene to move to, and adopt whatever it hands back.
 ##
-## Null means "not that kind of vehicle, or it declined this change" and the caller falls
+## Null means "not that kind of medium, or it declined this change" and the caller falls
 ## through to building a scene itself. Non-null means the scene is ALREADY built and
 ## parented and the outgoing one is still on the page - so there is nothing to add, nothing
 ## to free, and no fade to play: on a comic the change of scene IS the camera moving, and a
 ## crossfade between two panels that are both permanently on the paper would be nonsense.
 func _handover(outgoing: GhostScene) -> GhostScene:
-	if _vehicle == null or not is_instance_valid(_vehicle) or not _vehicle.owns_cast():
+	if _medium == null or not is_instance_valid(_medium) or not _medium.owns_cast():
 		return null
-	var sc := _vehicle.take_over(outgoing)
+	var sc := _medium.take_over(outgoing)
 	if sc == null or not is_instance_valid(sc):
 		return null
 	# The scene was minted with its own sensitivity already stamped on it; the hold bounds
@@ -696,17 +697,17 @@ func _handover(outgoing: GhostScene) -> GhostScene:
 	return sc
 
 
-## Where an ARRIVING scene is added. Without a vehicle this is the stage, which is what
+## Where an ARRIVING scene is added. Without a medium this is the stage, which is what
 ## every `_host.add_child` in this file used to say literally; with one it is whatever
-## surface that vehicle opens for the incoming scene (a comic page's next panel).
+## surface that medium opens for the incoming scene (a comic page's next panel).
 ##
-## Called at the MOMENT OF ARRIVAL and nowhere else, which is deliberate: a vehicle that
+## Called at the MOMENT OF ARRIVAL and nowhere else, which is deliberate: a medium that
 ## has to do something when the show advances (freeze the panel behind, open the next)
 ## hangs it off this one call rather than needing a second signal that could get out of
 ## step with it.
 func _scene_host(incoming: GhostScene) -> Node:
-	if _vehicle != null and is_instance_valid(_vehicle):
-		var h := _vehicle.host_for(incoming)
+	if _medium != null and is_instance_valid(_medium):
+		var h := _medium.host_for(incoming)
 		if h != null and is_instance_valid(h):
 			return h
 	return _host
@@ -761,10 +762,10 @@ func _seed_source() -> String:
 ## later attach() starts cleanly. Called when a song ends and we return to the
 ## splash. Does not clear a storyboard loaded for the *next* session (load it after).
 func detach() -> void:
-	# A cast-owning vehicle's scenes belong to its page, not to this session's current/next
+	# A cast-owning medium's scenes belong to its page, not to this session's current/next
 	# pair - they are still parented in their own panels and its release() lets them go.
-	# Freeing them here would leave the vehicle holding freed nodes.
-	var borrowed := _vehicle != null and is_instance_valid(_vehicle) and _vehicle.owns_cast()
+	# Freeing them here would leave the medium holding freed nodes.
+	var borrowed := _medium != null and is_instance_valid(_medium) and _medium.owns_cast()
 	if _transitioning and is_instance_valid(_next) and not borrowed:
 		_next.queue_free()
 	if is_instance_valid(_current) and not borrowed:
@@ -772,12 +773,12 @@ func detach() -> void:
 	_current = null
 	_next = null
 	_host = null
-	# The vehicle is OWNED BY MAIN (it is mounted on main's stage and outlives a
+	# The medium is OWNED BY MAIN (it is mounted on main's stage and outlives a
 	# take's session churn in synthesis modes); detach only lets go of the reference
 	# and tells it to release whatever it was holding for THIS session.
-	if _vehicle != null and is_instance_valid(_vehicle):
-		_vehicle.release()
-	_vehicle = null
+	if _medium != null and is_instance_valid(_medium):
+		_medium.release()
+	_medium = null
 	_transitioning = false
 	_trans_t = 0.0
 	_index = -1
@@ -1079,10 +1080,10 @@ func _process(delta: float) -> void:
 	# smoothed. So duration tracks the song; the picture just eases rather than lurches under lag.
 	_tick_schedule(raw)
 	_tick_animation(anim)
-	if _vehicle != null and is_instance_valid(_vehicle):
-		# the ANIMATION step, capped - the vehicle's camera is picture, not schedule, and a
+	if _medium != null and is_instance_valid(_medium):
+		# the ANIMATION step, capped - the medium's camera is picture, not schedule, and a
 		# lag spike must ease it rather than teleport it (same reason _tick_animation exists)
-		_vehicle.advance(Spectrum.current, anim, _bookend_fade())
+		_medium.advance(Spectrum.current, anim, _bookend_fade())
 
 
 # The SCHEDULE, advanced by the REAL music-clock step: the hold clock, transition progress + alphas,
@@ -1091,11 +1092,11 @@ func _process(delta: float) -> void:
 func _tick_schedule(dt: float) -> void:
 	var bookend := _bookend_fade()                  # 1, except fading from/to black at the video's ends
 	# WHO APPLIES THE BOOKEND. Folding it into the scene's own alpha is right for a full
-	# frame, where the scene IS the picture - and wrong for any vehicle that draws more
+	# frame, where the scene IS the picture - and wrong for any medium that draws more
 	# than the scene, because it would fade one comic panel and leave the paper lit. A
-	# vehicle that claims it applies the same number to its own root instead; the scene
+	# medium that claims it applies the same number to its own root instead; the scene
 	# then just never sees it.
-	var bf := 1.0 if (_vehicle != null and is_instance_valid(_vehicle) and _vehicle.owns_bookend()) else bookend
+	var bf := 1.0 if (_medium != null and is_instance_valid(_medium) and _medium.owns_bookend()) else bookend
 	if _transitioning:
 		var dur: float = layer_time if _style == Style.LAYER else transition_time
 		_trans_t += dt / maxf(0.01, dur)
@@ -1103,10 +1104,10 @@ func _tick_schedule(dt: float) -> void:
 		# Alphas are sequenced so the picture is clean (a DIP never shows both scenes at once).
 		var a := _transition_alphas(k)
 		# HELD OUTGOING. A comic panel that is already inked on the paper cannot un-draw
-		# itself, so the vehicle pins the leaving scene at full and only the ARRIVING one
+		# itself, so the medium pins the leaving scene at full and only the ARRIVING one
 		# fades - a panel developing in place. The full frame holds nothing and this is
 		# the identity.
-		if _vehicle != null and is_instance_valid(_vehicle) and _vehicle.hold_outgoing():
+		if _medium != null and is_instance_valid(_medium) and _medium.hold_outgoing():
 			a.x = 1.0
 		_current.modulate.a = a.x * bf
 		_current.view.presence = a.x
@@ -1431,8 +1432,8 @@ func _should_change() -> bool:
 
 ## HOW LONG THE CURRENT SCENE IS LIKELY TO HAVE LEFT, in seconds from now.
 ##
-## For a vehicle that flies a camera, this is the difference between a shot and an
-## interruption. [ComicVehicle] samples a move's duration from its own vocabulary - seven to
+## For a medium that flies a camera, this is the difference between a shot and an
+## interruption. [ComicMedium] samples a move's duration from its own vocabulary - seven to
 ## twenty seconds - while the cut that ends it is decided here, from bounds that shrink with
 ## the music's drive: on a driving passage the median cut lands about five and a half seconds
 ## in. So the camera was routinely still converging on a panel when the next cut arrived, and
@@ -1467,7 +1468,7 @@ func hold_remaining() -> float:
 	# `maxf(0.0, med - _elapsed)` reports ZERO for the whole tail of any hold that outlives
 	# its median - and the median is only 56% of the way through the window, so that is most
 	# of the second half of every scene. A caller asking "how long have I got" is told "none"
-	# over and over while the scene runs on, and [ComicVehicle] answers that by settling again
+	# over and over while the scene runs on, and [ComicMedium] answers that by settling again
 	# every few seconds: measured in an export log, 19 of 42 camera moves were settles, in runs
 	# of up to seven, each re-easing the shot a fifth of the way toward the panel it was on.
 	#
@@ -1717,7 +1718,7 @@ func _begin_transition() -> void:
 	var burst_cut := _burst_left > 0      # leaving a burst scene -> a hard jump cut, no morph/blend
 	if _burst_left > 0:
 		_burst_left -= 1                  # consume this quick scene
-	# CAST-OWNING VEHICLE: the change is a handover, not a construction. Taken before the
+	# CAST-OWNING MEDIUM: the change is a handover, not a construction. Taken before the
 	# stinger reset below so the punch clears off the scene being left exactly as it would
 	# on any other change.
 	var handed := _handover(_current)
@@ -1803,12 +1804,12 @@ func _choose_style() -> int:
 		"cut": s = Style.CUT
 		"dip": s = Style.DIP
 		"fade": s = Style.FADE
-	# The vehicle has the last word, and only ever to REJECT: a comic page cannot play a
+	# The medium has the last word, and only ever to REJECT: a comic page cannot play a
 	# LAYER (two scenes composited into one panel is mud). The draw off STYLE_BAG happens
-	# either way, above, so the seeded stream advances identically whatever the vehicle
+	# either way, above, so the seeded stream advances identically whatever the medium
 	# does with the answer - switching presentation must not re-roll the whole show.
-	if _vehicle != null and is_instance_valid(_vehicle):
-		s = _vehicle.style_for(s)
+	if _medium != null and is_instance_valid(_medium):
+		s = _medium.style_for(s)
 	return s
 
 
@@ -2007,8 +2008,8 @@ func _trigger_from_name(s: String) -> int:
 
 
 # Instantiate + seed the next scene with its behavior, shot, and exit rule.
-## Build ONE scene, the way a cut does, WITHOUT putting it on screen - for a vehicle that
-## owns its own cast ([method Vehicle.owns_cast]). [param salt] separates several mints
+## Build ONE scene, the way a cut does, WITHOUT putting it on screen - for a medium that
+## owns its own cast ([method Medium.owns_cast]). [param salt] separates several mints
 ## made at the same instant; pass a different one per panel.
 ##
 ## It goes through the same novelty scheduler as everything else rather than picking

@@ -12,7 +12,7 @@ extends Node
 ##
 ## (2) WHETHER A NESTED SubViewport STILL RENDERS WHEN ITS PARENT IS STOPPED. main.gd's stage
 ## governor throttles by disabling the STAGE (process off, render target UPDATE_DISABLED). The
-## comic vehicle puts its live panels in SubViewports NESTED INSIDE that stage, each set to
+## comic medium puts its live panels in SubViewports NESTED INSIDE that stage, each set to
 ## UPDATE_ALWAYS. If a nested target ignores its parent's state, the governor cannot throttle
 ## the comic at all - it is a real question about engine semantics and it decides whether the
 ## governor is a fix or a placebo here.
@@ -142,7 +142,7 @@ func _nested_viewport() -> void:
 	stage.transparent_bg = false
 	stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(stage)
-	# a panel viewport inside it, exactly as ComicVehicle._build_slots makes one
+	# a panel viewport inside it, exactly as ComicMedium._build_slots makes one
 	var panel := SubViewport.new()
 	panel.size = Vector2i(512, 512)
 	panel.transparent_bg = false
@@ -153,7 +153,7 @@ func _nested_viewport() -> void:
 	p.mode = "circle"
 	p.n = 600
 	panel.add_child(p)
-	# something drawing in the stage itself too, as the vehicle does
+	# something drawing in the stage itself too, as the medium does
 	var q := Painter.new()
 	q.mode = "circle"
 	q.n = 600

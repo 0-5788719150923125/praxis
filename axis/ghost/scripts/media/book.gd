@@ -1,7 +1,7 @@
-extends Vehicle
-class_name BookVehicle
+extends Medium
+class_name BookMedium
 
-## BookVehicle - the reading as a printed novel, open on a desk, with the words lit as they
+## BookMedium - the reading as a printed novel, open on a desk, with the words lit as they
 ## are spoken.
 ##
 ## Where the comic draws SCENES onto pages, this draws the TEXT: the chapter is typeset once
@@ -12,14 +12,14 @@ class_name BookVehicle
 ## floating over a page of the same words would be the same sentence printed twice.
 ##
 ## NO SCENES. The Director still keeps its schedule, but a cut hands over to one hidden
-## placeholder this vehicle owns ([method take_over]), so nothing is built and nothing draws.
+## placeholder this medium owns ([method take_over]), so nothing is built and nothing draws.
 ## A book that later wants scenes in its plates would cast them the way the comic does.
 ##
 ## REAL 3D. The stage SubViewport has a world of its own, so the book is geometry in it: a
 ## Camera3D, a lamp, a desk, a cloth cover, two page stacks and three leaves (the left page,
 ## the right page, and the one being turned), each leaf a subdivided plane bent by
 ## `LEAF_SHADER` into the gutter curve and, while turning, rolled over the spine with a curl.
-## Each visible page is a SubViewport drawn by [BookVehicle.PageCanvas]; a page is redrawn
+## Each visible page is a SubViewport drawn by [BookMedium.PageCanvas]; a page is redrawn
 ## only when what is printed on it or lit on it changes, and otherwise its render target is
 ## left alone. Four page targets cover the worst case, a turn, where the old left, the old
 ## right (the leaf's front), the new left (its back) and the new right are all in shot.
@@ -451,7 +451,7 @@ func _reset_reading() -> void:
 		_slot_state[i] = ""
 
 
-# --- the Vehicle contract ----------------------------------------------------
+# --- the Medium contract ----------------------------------------------------
 
 func owns_cast() -> bool:
 	return true
@@ -1161,7 +1161,7 @@ func debug_line() -> String:
 
 
 ## One page target's drawing surface. It holds no state of its own beyond which page and
-## which highlight it shows; the vehicle does the drawing.
+## which highlight it shows; the medium does the drawing.
 class PageCanvas:
 	extends Node2D
 	var book = null

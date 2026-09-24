@@ -27,7 +27,7 @@ const LABELS := {
 	"codex": "OpenAI (Codex CLI)",
 }
 
-## One string literal per entry, for the picker's tooltip - same rule as Vehicle.BLURBS.
+## One string literal per entry, for the picker's tooltip - same rule as Medium.BLURBS.
 const BLURBS := {
 	"codex": "OpenAI's image model, driven through the Codex CLI's built-in image tool. Uses the Codex login, not an API key. About a minute per picture.",
 }

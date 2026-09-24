@@ -1,9 +1,9 @@
 extends Node
 
-## Phase 0 for the comic vehicle (next/vehicles.md): the two engine assumptions the
+## Phase 0 for the comic medium (next/media.md): the two engine assumptions the
 ## whole design rests on, measured rather than assumed.
 ##
-##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/vehicle_probe.gd 90
+##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/medium_probe.gd 90
 ##
 ## GHOST_PROBE_GPU is not optional - this reads pixels back, and --headless is the
 ## dummy driver whose readback returns nothing (see run_quiet.sh's header).
@@ -36,9 +36,9 @@ func _run() -> void:
 	fails += 0 if await _check_freeze() else 1
 	fails += 0 if await _check_textured_grid() else 1
 	if fails == 0:
-		print("vehicle_probe: both assumptions hold.")
+		print("medium_probe: both assumptions hold.")
 	else:
-		print("vehicle_probe: %d assumption(s) FAILED - see above." % fails)
+		print("medium_probe: %d assumption(s) FAILED - see above." % fails)
 	for _i in 4:
 		await get_tree().process_frame
 	get_tree().quit(fails)
@@ -63,7 +63,7 @@ func _check_freeze() -> bool:
 	var before := _sample(vp)
 	var want: Color = painter.col     # read BEFORE the free; the node is gone below
 
-	# THE FREEZE, in the order the vehicle will do it: stop the viewport FIRST, then
+	# THE FREEZE, in the order the medium will do it: stop the viewport FIRST, then
 	# let the scene go. Reversed, the target repaints itself empty on the frame
 	# between the free and the stop.
 	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
@@ -75,7 +75,7 @@ func _check_freeze() -> bool:
 
 	var drift := _dist(before, after)
 	var ok := drift < 0.02 and _dist(before, want) < 0.02
-	print("vehicle_probe: freeze   painted=%s held=%s drift=%.4f -> %s" % [
+	print("medium_probe: freeze   painted=%s held=%s drift=%.4f -> %s" % [
 		_fmt(before), _fmt(after), drift, "OK" if ok else "FAILED"])
 	if not ok:
 		print("  a held panel does NOT keep its picture; the comic cannot freeze for free.")
@@ -138,7 +138,7 @@ func _check_textured_grid() -> bool:
 	# foreshortening and this probe is measuring nothing.
 	var shift := absf(affine - correct) if arrived else 0.0
 	var ok := arrived and shift > 2.0
-	print("vehicle_probe: texture  seam_1x1=%.1f px  seam_8x8=%.1f px  shift=%.1f px -> %s" % [
+	print("medium_probe: texture  seam_1x1=%.1f px  seam_8x8=%.1f px  shift=%.1f px -> %s" % [
 		affine, correct, shift, "OK" if ok else "FAILED"])
 	if not arrived:
 		print("  the viewport texture never reached the triangle array (no red/blue found).")

@@ -3,14 +3,14 @@ class_name Films
 
 ## Films - the library of imported video clips a comic panel can be filled with.
 ##
-## A panel of the [ComicVehicle] normally holds a live [GhostScene]. Some of them can
+## A panel of the [ComicMedium] normally holds a live [GhostScene]. Some of them can
 ## instead hold a piece of REAL FOOTAGE, which is the one thing a generated scene can
 ## never be, and a comic that cuts between drawings and a photograph is doing something
 ## comics have always done.
 ##
 ## This owns the LIBRARY, not the playback: the list of clips, their import, and the two
 ## dials over them (which clips exist, and how often a page reaches for one). The playing
-## is [FilmScene]'s, and the deciding is the comic vehicle's.
+## is [FilmScene]'s, and the deciding is the comic medium's.
 ##
 ## THE CLOCK IS VIRTUAL, and that is the one design decision here worth stating. The
 ## requirement was that a clip must not restart from the beginning every time it is
@@ -27,7 +27,7 @@ class_name Films
 ## picture twice, because the position is a function of time and nothing else. Rather
 ## than de-correlating them with per-panel offsets - which is a second mechanism to
 ## explain and to get wrong - the comic simply never runs more than one film panel on a
-## page. See [member ComicVehicle._film_at].
+## page. See [member ComicMedium._film_at].
 
 ## Where a clip's prepared WINDOWS live - one subdirectory per clip. A clip belongs to the
 ## library, not to any session, and survives every one of them.
@@ -63,7 +63,7 @@ const LEAD := 4.0
 ## THIS IS SET BY THE PANEL, NOT BY THE ENCODER'S CONVENIENCE. The first version chose 640px
 ## because it made windows cheap, and the footage came back "very pixelated... super blurry"
 ## - correctly: a comic panel's render target is the stage's short side
-## (`ComicVehicle._size_targets`), which is 1080 on a 1080p window, and the camera then fills
+## (`ComicMedium._size_targets`), which is 1080 on a 1080p window, and the camera then fills
 ## the frame with that panel. 640 into 1080 is a 1.7x upscale of an already-compressed
 ## picture, and every one of those pixels is on screen at the comic's reading distance.
 ##
@@ -495,7 +495,7 @@ static func _probe_duration(path: String) -> float:
 ## The clip's shape, width over height. Kept on the entry because it decides WHICH PANEL
 ## the film goes in: cover crops whichever axis is spare, so a 16:9 clip in a tall panel
 ## loses most of its width, and putting it in a panel of roughly its own shape loses almost
-## nothing. See ComicVehicle._choose_film.
+## nothing. See ComicMedium._choose_film.
 static func _probe_aspect(path: String) -> float:
 	var out: Array = []
 	if Deps.execute("ffprobe", ["-v", "error", "-select_streams", "v:0",

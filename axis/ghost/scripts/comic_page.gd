@@ -1,7 +1,7 @@
 extends RefCounted
 class_name ComicPage
 
-## ComicPage - one seeded page of comic panels. The layout half of [ComicVehicle].
+## ComicPage - one seeded page of comic panels. The layout half of [ComicMedium].
 ##
 ## Cattle, not pets, applied to page design: a page is not a hand-drawn template picked
 ## from a list of six, it is a RECIPE - a row split, a per-row column split, gutters, a
@@ -12,7 +12,7 @@ class_name ComicPage
 ## The page lives in PAGE SPACE: x and y both in [-1, 1], y DOWN, so a panel rect is
 ## directly usable as the u/v of a quad on the page plane and needs no aspect handed to
 ## it. [member aspect] is how tall the page is relative to its width, and panel rects are
-## expressed in that same normalized box - the vehicle scales by it when it places the
+## expressed in that same normalized box - the medium scales by it when it places the
 ## page in the world.
 ##
 ## WHY THE GRID IS ROWS-THEN-COLUMNS and not a free-form packing: a comic page reads in
@@ -41,7 +41,7 @@ const RADIUS := Vector2(0.0, 0.055)
 ##
 ## THE RATE IS ZERO, and that is a decision rather than a disabled feature. A tilted panel is
 ## a flat-page gesture: on printed paper, square-on, 2.5 degrees off the grid reads as a
-## deliberate scrapbook panel. This vehicle draws the page in real 3D through a perspective
+## deliberate scrapbook panel. This medium draws the page in real 3D through a perspective
 ## lens, and there every vertical edge on the sheet converges toward ONE vanishing point -
 ## which is what the eye reads as depth. A canted panel's edges converge toward a DIFFERENT
 ## point, so the gutter beside it opens into a wedge, and the eye reads that local
@@ -230,7 +230,7 @@ func panel_point(i: int, uv: Vector2) -> Vector2:
 	return c + Vector2(v.x * cs - v.y * sn, v.x * sn + v.y * cs)
 
 
-## Panel [param i]'s aspect (width / height). The vehicle sizes that panel's render
+## Panel [param i]'s aspect (width / height). The medium sizes that panel's render
 ## target to it, so a scene is never squeezed or cropped to fit its frame.
 func panel_aspect(i: int) -> float:
 	var r: Rect2 = panels[i]["rect"]

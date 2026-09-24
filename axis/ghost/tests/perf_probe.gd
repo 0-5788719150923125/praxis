@@ -1,9 +1,9 @@
 extends Node
 
-## perf_probe - WHERE A LIVE FRAME'S TIME GOES, measured, per scene and per vehicle.
+## perf_probe - WHERE A LIVE FRAME'S TIME GOES, measured, per scene and per medium.
 ##
 ## NOT a gate. It drives a real session the way the Director does (one update + one
-## view.commit per frame on the focal scene, vehicle.advance after it) and splits each
+## view.commit per frame on the focal scene, medium.advance after it) and splits each
 ## frame's wall time into the part the probe can name - the SIM (update/commit/advance,
 ## all GDScript on the main thread) - and the REST (every _draw callback, the
 ## RenderingServer submit, the present, and every other node's _process). Alongside it
@@ -11,7 +11,7 @@ extends Node
 ## the object count, so a scene that allocates per frame shows up as a rising line.
 ##
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/perf_probe.gd 600 \
-##       -- --vehicle comic --cuts 8 --frames 90 --seed 404
+##       -- --medium comic --cuts 8 --frames 90 --seed 404
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/perf_probe.gd 900 \
 ##       -- --catalogue --frames 60
 ##
@@ -20,7 +20,7 @@ extends Node
 ## draw-call counters read zero. The probe still runs there, for the SIM column alone.
 ##
 ## The stage is 1920x1080 because that is what the live window is on this machine; a
-## panel's render target is sized off the stage (ComicVehicle._size_targets), so a
+## panel's render target is sized off the stage (ComicMedium._size_targets), so a
 ## smaller stage would under-report the comic.
 
 const DT := 1.0 / 60.0
@@ -28,7 +28,7 @@ const WARM := 12                  # the Director's own pre-warm count
 
 var _w := 1920
 var _h := 1080
-var _vehicle_key := "full"
+var _medium_key := "full"
 var _cuts := 8
 var _frames := 90
 var _catalogue := false
@@ -38,7 +38,7 @@ var _only := ""                   # --scene NAME: catalogue only this script
 ## autoload and keeps calling update()/queue_redraw() on the scene regardless, so this
 ## answers whether a skipped frame is actually cheaper on the CPU or only on the GPU.
 var _governed := false
-var _vehicle: Vehicle = null
+var _medium: Medium = null
 var _live: GhostScene = null
 var _rows: Array = []
 
@@ -75,7 +75,7 @@ func _parse_args() -> void:
 		if i + 1 >= args.size():
 			break
 		match args[i]:
-			"--vehicle": _vehicle_key = args[i + 1]
+			"--medium": _medium_key = args[i + 1]
 			"--cuts": _cuts = int(args[i + 1])
 			"--frames": _frames = int(args[i + 1])
 			"--w": _w = int(args[i + 1])
@@ -97,23 +97,23 @@ func _stage() -> SubViewport:
 func _session_run() -> void:
 	var stage := _stage()
 	Director.detach()
-	_vehicle = Vehicle.make(_vehicle_key)
-	_vehicle.mount(stage)
-	Director.attach(stage, _vehicle)
+	_medium = Medium.make(_medium_key)
+	_medium.mount(stage)
+	Director.attach(stage, _medium)
 	Director.hold(true)
 	_live = Director._current
 	if _governed:
 		# exactly what main._process does to the stage on a frame the governor skips
 		stage.process_mode = Node.PROCESS_MODE_DISABLED
 		stage.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	print("--- %s seed %d%s ---" % [_vehicle_key, Director.session_seed(),
+	print("--- %s seed %d%s ---" % [_medium_key, Director.session_seed(),
 		" GOVERNED (stage process off, render target disabled)" if _governed else ""])
 	for cut in _cuts:
 		_cut()
 		var name := _live.scene_name if _live != null else "?"
 		var live_n := 1
-		if _vehicle is ComicVehicle:
-			live_n = (_vehicle as ComicVehicle)._live.size()
+		if _medium is ComicMedium:
+			live_n = (_medium as ComicMedium)._live.size()
 		var row := await _measure(name, live_n)
 		row["cut"] = cut
 		_rows.append(row)
@@ -128,8 +128,8 @@ func _session_run() -> void:
 
 ## One cut, exactly as comic_look_probe performs one (which is exactly as the Director does).
 func _cut() -> void:
-	if _vehicle.owns_cast():
-		var handed := _vehicle.take_over(_live)
+	if _medium.owns_cast():
+		var handed := _medium.take_over(_live)
 		if handed != null:
 			_live = handed
 		return
@@ -138,7 +138,7 @@ func _cut() -> void:
 	sc.init_with_seed(randi(), String(entry["behavior"]))
 	sc.scene_name = String((entry["script"] as Resource).resource_path).get_file().get_basename()
 	var prev: GhostScene = _live
-	_vehicle.host_for(sc).add_child(sc)
+	_medium.host_for(sc).add_child(sc)
 	_live = sc
 	if prev != null and is_instance_valid(prev):
 		prev.queue_free()
@@ -148,8 +148,8 @@ func _cut() -> void:
 
 func _catalogue_run() -> void:
 	var stage := _stage()
-	_vehicle = Vehicle.make("full")
-	_vehicle.mount(stage)
+	_medium = Medium.make("full")
+	_medium.mount(stage)
 	for i in Director.SCENES.size():
 		var entry: Dictionary = Director.SCENES[i]
 		var script: Resource = entry["script"]
@@ -159,7 +159,7 @@ func _catalogue_run() -> void:
 		var sc: GhostScene = script.new()
 		sc.init_with_seed(1000 + i, String(entry["behavior"]))
 		sc.scene_name = name
-		_vehicle.host_for(sc).add_child(sc)
+		_medium.host_for(sc).add_child(sc)
 		_live = sc
 		# the Director's pre-warm, so the first measured frame is a settled one
 		for _wi in WARM:
@@ -184,8 +184,8 @@ func _catalogue_run() -> void:
 ## THE DRAW BRACKET. CanvasItem.queue_redraw() pushes the item's redraw callback onto the
 ## engine's MessageQueue, and call_deferred pushes onto the SAME FIFO queue - so a marker
 ## deferred just BEFORE the sim and another just AFTER it are flushed either side of every
-## _draw the sim queued (the focal scene's, the vehicle's, and the off-focal panels ticked
-## inside vehicle.advance). The time between the two markers is the GDScript _draw cost plus
+## _draw the sim queued (the focal scene's, the medium's, and the off-focal panels ticked
+## inside medium.advance). The time between the two markers is the GDScript _draw cost plus
 ## the canvas command recording, and nothing else.
 var _draw_t0 := 0
 var _draw_ms := 0.0
@@ -238,8 +238,8 @@ func _measure(name: String, live_n: int) -> Dictionary:
 		if _live != null and is_instance_valid(_live):
 			_live.update(Spectrum.current, DT)
 			_live.view.commit(DT)
-		if _vehicle != null and is_instance_valid(_vehicle):
-			_vehicle.advance(Spectrum.current, DT, 1.0)
+		if _medium != null and is_instance_valid(_medium):
+			_medium.advance(Spectrum.current, DT, 1.0)
 		_mark_draw_end.call_deferred()
 		var b := Time.get_ticks_usec()
 		await get_tree().process_frame

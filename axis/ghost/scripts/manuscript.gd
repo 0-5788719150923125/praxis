@@ -12,7 +12,7 @@ class_name Manuscript
 ##     <!-- image: a wolf in a coat -->  an illustration, described; placed where it sits
 ##
 ## ONE PARSER, SEVERAL READERS. The Generative panel asks it for the speakers (its tabs) and
-## the hesitations (its rests); the book vehicle asks it for the page blocks; the illustration
+## the hesitations (its rests); the book medium asks it for the page blocks; the illustration
 ## library asks it for the image prompts. Each used to be a regex in whichever file needed it,
 ## and three copies of "what is a speaker cue" is how a cue gets read by one and missed by
 ## another - a tab with no voice, or a voice with no tab.
@@ -150,7 +150,7 @@ static func images(body: String) -> Array:
 	return out
 
 
-## The chapter as a sequence of page BLOCKS, for a vehicle that typesets it:
+## The chapter as a sequence of page BLOCKS, for a medium that typesets it:
 ##
 ##     {kind: "heading", level, text}
 ##     {kind: "para", text, speaker}      - inline markdown kept (*italic*, **bold**);

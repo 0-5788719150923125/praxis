@@ -4,14 +4,15 @@ shader_type canvas_item;
 //
 // This runs on main's stage view: the single TextureRect that presents the SubViewport every
 // scene draws into (see [Filters], which owns the registry and hangs this material here). So
-// TEXTURE is the finished frame - every scene, every layer, the vehicle's comic page and all -
+// TEXTURE is the finished frame - every scene, every layer, the medium's comic page and all -
 // and nothing above it on a CanvasLayer is touched, which is what keeps the karaoke line and
 // the panels readable.
 //
-// SIX FILTERS, ONE FRAGMENT, IN A FIXED ORDER, each with its own 0..1 amount and each an exact
+// SEVEN FILTERS, ONE FRAGMENT, IN A FIXED ORDER, each with its own 0..1 amount and each an exact
 // no-op at 0. The order is the one in Filters.REGISTRY and it is the only part of the pipeline
 // that cannot be read off this file:
 //
+//   0. GATE SLIP moves WHERE the picture is sampled, so it comes before anything reads it.
 //   1. POINTILLISM re-samples the picture into dots, so it must come first - everything below
 //      then grades the dots rather than the photograph underneath them.
 //   2. BLOOM is what a lens does, so it goes where a lens is: before the grade.
@@ -33,12 +34,16 @@ shader_type canvas_item;
 // resolution is a different picture.
 uniform vec2 u_size = vec2(1920.0, 1080.0);
 
+uniform float u_slip : hint_range(0.0, 1.0) = 0.0;
 uniform float u_pointillism : hint_range(0.0, 1.0) = 0.0;
 uniform float u_bloom : hint_range(0.0, 1.0) = 0.0;
 uniform float u_monochrome : hint_range(0.0, 1.0) = 0.0;
 uniform float u_noir : hint_range(0.0, 1.0) = 0.0;
 uniform float u_grain : hint_range(0.0, 1.0) = 0.0;
 uniform float u_vignette : hint_range(0.0, 1.0) = 0.0;
+// The film frame to show, or negative for the shader's own clock. Not a filter: a still render
+// has no way to reach the one frame in several that slips, and a gate has to.
+uniform int u_frame = -1;
 
 // Rec. 709 luma. NOT the channel average: the eye is about six times more sensitive to green
 // than to blue, so an average turns a saturated red and a saturated green of the same
@@ -49,10 +54,7 @@ const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 // Without this the noise shimmers faster on a fast frame and slower on a slow one, which is
 // the single clearest tell that it is not film.
 const float FILM_FPS = 24.0;
-// Where on the Grain dial the transport starts misbehaving, and how often it does at the top.
-// Below the onset the look is a clean print with grain on it, which is what most of the range
-// should be.
-const float GATE_ONSET = 0.55;
+// How often the transport misbehaves at the top of the Gate slip dial: a share of film frames.
 const float GATE_MAX = 0.22;
 // Where on the Vignette dial the falloff stops being a lens and starts closing on all four
 // edges. Below this it is photographic; above it, it is a porthole.
@@ -110,20 +112,16 @@ float vnoise(vec2 p) {
 
 // THE GATE SLIP: a band of the picture displaced sideways for ONE frame, then back.
 //
-// Reported as part of the grain - "entire regions of the scene might fracture/shift briefly
-// before correction" - and it is the other half of what reads as film. It is not an emulsion
-// property at all but a TRANSPORT one: a frame that does not seat squarely in the gate is
-// printed offset until the mechanism pulls it back. Nothing about noise can produce it,
-// because it is a change of WHERE the picture is sampled rather than of what comes back.
+// "Entire regions of the scene might fracture/shift briefly before correction." Not an
+// emulsion property but a TRANSPORT one: a frame that does not seat squarely in the gate is
+// printed offset until the mechanism pulls it back. It was the top of the Grain dial once, and
+// is its own filter because it is its own thing - grain without tearing is most of what anyone
+// wants from grain. The dial is how often, and how far.
 //
-// It happens to the SAMPLING POSITION, so it runs before anything reads the texture, and only
-// the top of the dial ever slips at all: a little grain is a clean print with grain on it.
+// It happens to the SAMPLING POSITION, so it runs before anything reads the texture.
 vec2 gate_slip(vec2 uv, float amount) {
-	float chance = max(amount - GATE_ONSET, 0.0) / max(1.0 - GATE_ONSET, 0.001) * GATE_MAX;
-	if (chance <= 0.0) {
-		return uv;
-	}
-	float t = floor(TIME * FILM_FPS);
+	float chance = amount * GATE_MAX;
+	float t = u_frame >= 0 ? float(u_frame) : floor(TIME * FILM_FPS);
 	if (hash1(vec2(t, 3.7)) > chance) {
 		return uv;
 	}
@@ -262,9 +260,6 @@ vec3 noir(vec3 src, float amount) {
 //   ...AND IT IS IN THE MIDTONES. Silver that did and did not develop: none in a black that
 //   exposed nothing, none in a highlight that exposed completely. A flat noise floor fogs the
 //   blacks, which is the one place it must not.
-//
-// The dial also opens the gate slip (see gate_slip, above) past GATE_ONSET, which is the other
-// half of the same report.
 vec3 grain(vec2 uv, vec3 src, float amount) {
 	vec2 px = uv * u_size;
 	// Wrapped, because the hash below is a sine: after a few minutes an unwrapped frame
@@ -342,8 +337,8 @@ void fragment() {
 	// texture - including pointillism and bloom, which take their own taps. Everything below
 	// works in `uv` rather than in UV for that reason.
 	vec2 uv = UV;
-	if (u_grain > 0.0) {
-		uv = gate_slip(uv, u_grain);
+	if (u_slip > 0.0) {
+		uv = gate_slip(uv, u_slip);
 	}
 	vec4 tex = texture(TEXTURE, uv);
 	vec3 c = tex.rgb;

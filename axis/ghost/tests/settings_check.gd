@@ -5,7 +5,7 @@ extends Node
 ##
 ## Run: tests/run_boot_probe.sh tests/settings_check.gd 90
 ##
-## THE COMPLAINT: "Vehicle and some of the other options are not serializing correctly.
+## THE COMPLAINT: "Medium and some of the other options are not serializing correctly.
 ## This happens a lot." Every previous mechanism here saved on a debounce and flushed at
 ## exit, which covers a clean quit and nothing else - and the failure is silent, so the only
 ## way it ever surfaced was someone noticing a setting had reverted.
@@ -32,7 +32,7 @@ func _run() -> void:
 	# the thing under test - and it still puts back everything it touches.
 	Settings.allow_writes_for_test()
 	# Everything this touches is put back at the end - it is the user's real config.
-	for k in ["pacing", "flourish", "camera", "vehicle"]:
+	for k in ["pacing", "flourish", "camera", "medium"]:
 		_restore[k] = Settings.read("director", k, null)
 
 	# 1. read-back before any disk write
@@ -59,10 +59,10 @@ func _run() -> void:
 		print("settings_check: an unflushed change reached disk within %d ms" % (Settings.MAX_DIRTY_MS + 600))
 
 	# 4. every setting the Director owns round-trips through its own setter
-	Director.set_vehicle("comic")
+	Director.set_medium("comic")
 	Settings.flush()
-	if String(_on_disk_str("vehicle", "")) != "comic":
-		_fail("Director.set_vehicle did not persist")
+	if String(_on_disk_str("medium", "")) != "comic":
+		_fail("Director.set_medium did not persist")
 	Director.set_pacing(2.25)
 	Settings.flush()
 	if not is_equal_approx(_on_disk("pacing", 0.0), 2.25):

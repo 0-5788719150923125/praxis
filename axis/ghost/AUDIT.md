@@ -8,7 +8,7 @@ Everything below is measured. Two new probes were written for it and they are th
 not the argument - re-run them and the numbers come back:
 
 - `tests/perf_probe.gd` - splits a live frame into the parts that can be named, per scene and
-  per vehicle. See the file header for what each column means.
+  per medium. See the file header for what each column means.
 - `tests/draw_cost_probe.gd` - two controls the whole audit rests on: what one canvas draw call
   costs from GDScript, and whether a nested SubViewport obeys its parent.
 
@@ -36,7 +36,7 @@ budget far enough that it became unusable.
 | | Fix | Measured basis | Expected recovery |
 |---|---|---|---|
 | 1 | Route per-shape drawing through `TriBatch` instead of per-shape `draw_*` calls | 7-26 us/shape becomes 1.2-1.7 us/shape for identical geometry | 4x to 20x on the draw term, which is 33-96% of the frame |
-| 2 | Hoist the page basis out of `ComicVehicle._page_point` | ~2500 `Basis.from_euler` constructions per frame, all with the same argument | most of the comic's ~18 ms page cost |
+| 2 | Hoist the page basis out of `ComicMedium._page_point` | ~2500 `Basis.from_euler` constructions per frame, all with the same argument | most of the comic's ~18 ms page cost |
 | 3 | Make the stage governor throttle the thing that costs, or stop paying for it | a skipped frame currently saves ~0.5 ms of ~80 | the throttle becomes real rather than cosmetic |
 
 ---
@@ -44,12 +44,12 @@ budget far enough that it became unusable.
 ## How this was measured, and what is not ghost's cost
 
 `perf_probe` drives a real session exactly as the Director drives one - `update()`, then
-`view.commit()`, then `vehicle.advance()` - and splits the frame four ways:
+`view.commit()`, then `medium.advance()` - and splits the frame four ways:
 
 - **sim** - the `update`/`commit`/`advance` GDScript, timed directly.
 - **draw** - every `_draw` callback the frame queued. Timed by bracketing the engine's
   MessageQueue with two `call_deferred` markers, one before the sim and one after, so the
-  measurement covers the focal scene's `_draw`, the vehicle's, and every live panel's, and
+  measurement covers the focal scene's `_draw`, the medium's, and every live panel's, and
   nothing else.
 - **render cpu / gpu** - `RenderingServer.viewport_get_measured_render_time_*`, summed over
   every viewport in the tree (root, stage, and the comic's twelve panel slots).
@@ -103,7 +103,7 @@ pays 20 ms for it). `terrain` and `rocks` are **allocation-bound**: two or three
 still 24 to 152 ms. `canopy`, `spires` and `terrain_city` are **sim-bound** despite having
 adopted FrameForge. Three separate diseases, and each needs its own treatment.
 
-### The comic vehicle against the full frame, same scene, same seed
+### The comic medium against the full frame, same scene, same seed
 
 The cleanest isolation available. `wire_solid` costs 0.1 ms of sim and 0.7 ms of draw when it is
 alone on a full frame:
@@ -114,7 +114,7 @@ alone on a full frame:
 | `wire_solid` in the comic, 8 cuts, 1-3 live panels | 0.5 | **19.1** | 55.4 |
 
 **The comic page adds roughly 18 ms of `_draw` per frame to a scene that costs 0.7 ms.** That
-is the vehicle's own drawing, not the panels' contents.
+is the medium's own drawing, not the panels' contents.
 
 ### The comic with real scenes
 
@@ -190,7 +190,7 @@ call-bound. On the catalogue mean that is 11.4 ms down to roughly 2 to 3 ms.
 
 ## Finding 2 - the comic page rebuilds a rotation matrix per vertex (comic-specific, large)
 
-`ComicVehicle._page_point` (`scripts/vehicles/comic.gd:979`, returning at line 991) ends with:
+`ComicMedium._page_point` (`scripts/media/comic.gd:979`, returning at line 991) ends with:
 
 ```gdscript
 return Basis.from_euler(att) * local
@@ -212,7 +212,7 @@ That lands at roughly **2000 to 3000 `Basis.from_euler` calls per frame**, all w
 argument, plus a `Lens3D.project` each. It is consistent with the measured ~18 ms the page adds.
 
 **Fix.** Compute the basis once per `_draw` (and once per `_ease`) and pass it down, or cache it
-on the vehicle keyed by `att`. The spine basis in the same function has the same problem during a
+on the medium keyed by `att`. The spine basis in the same function has the same problem during a
 page turn (`Basis(Vector3.UP, spine)`, rebuilt per vertex). This is a small, local, low-risk
 change with no visual consequence whatsoever - the value is identical, it is simply computed
 once instead of two thousand times.
@@ -251,7 +251,7 @@ which calls `queue_redraw()`, and the callback runs in full. What the skipped fr
 is the rasterization: about **0.5 to 1 ms of a 30 to 90 ms frame**. The GDScript, which is 96% of
 the cost, is paid every single frame at every governor level.
 
-This is visible in the real app. A 60-second `--vehicle comic` session logs:
+This is visible in the real app. A 60-second `--medium comic` session logs:
 
 ```
 ghost: stage governor -> level 1 (active frame 81 ms)
@@ -270,9 +270,9 @@ with the stage frozen, up to three panels are still rendering their scenes at fu
 frame. The governor is structurally incapable of throttling the comic.
 
 **Fix.** The governor must throttle at the source, not at the render target. On a skipped frame,
-`Director` should skip `_tick_animation` and the vehicle's `advance` entirely (the schedule must
+`Director` should skip `_tick_animation` and the medium's `advance` entirely (the schedule must
 still run on the real music clock - that split already exists and is correct). Additionally,
-`ComicVehicle` should expose a freeze so the governor can stop the panel viewports with the stage.
+`ComicMedium` should expose a freeze so the governor can stop the panel viewports with the stage.
 Until then the governor's cost should be understood as approximately zero benefit, and its
 escalation messages in the log should not be read as the throttle working.
 
@@ -395,7 +395,7 @@ number here:
 kill -STOP 1168500
 cd /home/crow/repos/praxis/axis/ghost
 GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/perf_probe.gd 400 -- \
-    --vehicle comic --cuts 10 --frames 45 --seed 404
+    --medium comic --cuts 10 --frames 45 --seed 404
 kill -CONT 1168500
 ```
 
@@ -416,7 +416,7 @@ The fix is not a faster machine, it is fewer calls.
    possible experiment, potentially the largest single multiplier, currently unknown.
 2. **Batch `Layer`'s per-particle painters through `TriBatch`.** One file, proven mechanism,
    reaches every scene. Measured 5-8x on the draw term.
-3. **Hoist the basis out of `ComicVehicle._page_point`.** Small, local, no visual change, removes
+3. **Hoist the basis out of `ComicMedium._page_point`.** Small, local, no visual change, removes
    ~2500 matrix constructions per frame.
 4. **Fix the stage governor to skip the sim rather than the render target**, and let it freeze the
    comic's panel viewports. Currently it saves ~0.5 ms of ~80 and its log messages are misleading.

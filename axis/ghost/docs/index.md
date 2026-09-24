@@ -41,7 +41,7 @@ core. The commitments:
 - [Forces](forces.md) - the physics-primitive registry particles compose.
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
 - [Masking](masking.md) - the video chroma-key editor: model, effects, headless tools.
-- [Vehicles](vehicles.md) - the presentation registry - what the show is carried on.
+- [Media](media.md) - the presentation registry - what the show is carried on.
 - [Filters](filters.md) - the look registry - the post-process over the whole picture.
 - [CLI flags](cli.md) - every ghost command-line flag.
 
@@ -51,7 +51,7 @@ core. The commitments:
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](../docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalogue - one class per scene. See [docs/scenes.md](../docs/scenes.md).
-- `scripts/vehicles/` - The vehicle registry - what the show is carried ON (full frame, comic page). See [docs/vehicles.md](../docs/vehicles.md).
+- `scripts/media/` - The medium registry - what the show is carried ON (full frame, comic page). See [docs/media.md](../docs/media.md).
 - `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects).
 - `storyboards/` - Manual-mode scene scores (YAML; JSON accepted). [storyboards/README.md](../storyboards/README.md) is the data spec.
 - `masks/` - Saved Masking sessions, one directory per source video (runtime, git-ignored).
@@ -89,11 +89,11 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.
 - [`director.gd`](../scripts/director.gd) **director** - 
 - [`settings.gd`](../scripts/settings.gd) **settings** - Settings - the one owner of `user://ghost.cfg` (autoload).
-- [`vehicle.gd`](../scripts/vehicle.gd) **Vehicle** - what the show is carried ON. The presentation axis.
+- [`medium.gd`](../scripts/medium.gd) **Medium** - what the show is carried ON. The presentation axis.
 - [`filters.gd`](../scripts/filters.gd) **Filters** - the LOOK the whole picture is put through, after the scenes have drawn.
-- [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicVehicle`.
-- [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicVehicle` flies over.
-- [`book_layout.gd`](../scripts/book_layout.gd) **BookLayout** - a chapter typeset into the pages of a printed novel, for `BookVehicle`.
+- [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicMedium`.
+- [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicMedium` flies over.
+- [`book_layout.gd`](../scripts/book_layout.gd) **BookLayout** - a chapter typeset into the pages of a printed novel, for `BookMedium`.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
 - [`illustrations.gd`](../scripts/illustrations.gd) **Illustrations** - the library of generated pictures a book prints.
 - [`image_gen.gd`](../scripts/image_gen.gd) **ImageGen** - who paints the pictures. The backend axis of `Illustrations`.

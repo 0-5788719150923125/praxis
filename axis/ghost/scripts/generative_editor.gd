@@ -398,10 +398,10 @@ var _epoch := 0                # bumped on a pace change; stale replies are drop
 # under the pointer and dragging to "near the end" meant near the end of the first thirty
 # seconds. A timeline has to know how long the thing is before it plays it.
 var _repace_timer: Timer
-var _vehicle_pick: OptionButton
-## Rows that belong to a vehicle feature: tag -> the Controls to show or hide together.
-## Filled by [method _director_slider] and [method _build_films]; read by [method _sync_vehicle_rows].
-var _vehicle_rows := {}
+var _medium_pick: OptionButton
+## Rows that belong to a medium feature: tag -> the Controls to show or hide together.
+## Filled by [method _director_slider] and [method _build_films]; read by [method _sync_medium_rows].
+var _medium_rows := {}
 var _filter_summary: Label
 var _filter_rows := {}     # filter key -> {box: CheckBox, slider: HSlider}
 var _film_list: VBoxContainer
@@ -941,13 +941,13 @@ func _build_panel() -> void:
 	# things is how someone ends up afraid to touch either.
 	var sep := HSeparator.new()
 	box.add_child(sep)
-	_vehicle_pick = _vehicle_option(box)
+	_medium_pick = _medium_option(box)
 	_build_films(box)
-	# THE BOOK'S PICTURES, under the vehicle picker for the reason the films are: they only
-	# mean something to the vehicle that prints them, and they appear the moment it is picked.
+	# THE BOOK'S PICTURES, under the medium picker for the reason the films are: they only
+	# mean something to the medium that prints them, and they appear the moment it is picked.
 	_illustrations = preload("res://scripts/illustration_panel.gd").new()
 	box.add_child(_illustrations)
-	(_vehicle_rows.get_or_add("illustrations", []) as Array).append(_illustrations)
+	(_medium_rows.get_or_add("illustrations", []) as Array).append(_illustrations)
 	_scene_hold = _director_slider(box, "Scene hold", Director.PACING_MIN, Director.PACING_MAX, 0.05,
 		Director.pacing,
 		"How long each visual scene stays on screen before the show cuts to the next. 1 is the "
@@ -963,15 +963,15 @@ func _build_panel() -> void:
 		func(v: float) -> void: Director.set_flourish(v))
 	_camera = _director_slider(box, "Camera", Director.CAMERA_MIN, Director.CAMERA_MAX, 0.05,
 		Director.camera,
-		"How severe the camera is on the Comic book vehicle - one knob over the whole "
+		"How severe the camera is on the Comic book medium - one knob over the whole "
 		+ "behaviour. 0 is a slow gentle drift that barely turns and never cuts; 1 is the "
 		+ "default; 2 is fast, restless and cinematic, with real jump cuts. It scales how far "
 		+ "a shot may swing, how many shots that swing is spread over, how long a move lasts "
-		+ "and how deep a push goes. It is shown only for the vehicles that fly a camera.",
+		+ "and how deep a push goes. It is shown only for the media that fly a camera.",
 		func(v: float) -> void: Director.set_camera(v), "camera")
 	_build_filters(box)
-	# Now that every tagged row exists, show the ones this vehicle can actually use.
-	_sync_vehicle_rows()
+	# Now that every tagged row exists, show the ones this medium can actually use.
+	_sync_medium_rows()
 	_intro = _director_slider(box, "Intro", Director.INTRO_MIN, Director.INTRO_MAX, 0.5,
 		Director.intro_hold,
 		"Seconds of held opening before the narration starts, so the video fades up onto "
@@ -1118,7 +1118,7 @@ func _doc_apply(cfg: Dictionary) -> void:
 	_last_edit_ms = Time.get_ticks_msec()
 
 
-## What [method export_take] hands the book vehicle, and what main gives a live one: the
+## What [method export_take] hands the book medium, and what main gives a live one: the
 ## chapter as the author wrote it, so pages can be typeset from the same words being read.
 ##
 ## The TITLE, the BOOK's name and its AUTHOR are carried separately because in sync mode the body arrives without its
@@ -1701,8 +1701,8 @@ func _tick_test() -> void:
 ## One labelled slider that drives the [Director] directly. Unlike the voice controls these need
 ## no re-plan and no persistence here - the Director clamps, applies immediately to the scene on
 ## screen, and owns its own saved value.
-## [param tag] names the vehicle feature this row belongs to (see [constant Vehicle.USES]);
-## an untagged row is one every vehicle uses and is always shown.
+## [param tag] names the medium feature this row belongs to (see [constant Medium.USES]);
+## an untagged row is one every medium uses and is always shown.
 func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, step: float,
 		initial: float, tip: String, apply: Callable, tag := "") -> HSlider:
 	var row := HBoxContainer.new()
@@ -1724,29 +1724,29 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	row.add_child(sl)
 	_slider_readout(row, sl)
 	if not tag.is_empty():
-		(_vehicle_rows.get_or_add(tag, []) as Array).append(row)
+		(_medium_rows.get_or_add(tag, []) as Array).append(row)
 	return sl
 
 
-## Show only what the chosen vehicle can use.
+## Show only what the chosen medium can use.
 ##
-## ASKED OF THE DIRECTOR, NOT OF THE OPTIONBUTTON. The first cut read `_vehicle_pick.selected`,
+## ASKED OF THE DIRECTOR, NOT OF THE OPTIONBUTTON. The first cut read `_medium_pick.selected`,
 ## on the reasoning that the rows should follow what is being CHOSEN rather than what is
 ## running - and that is still the intent, it is just not what that property says. Selecting
 ## an item and the `item_selected` signal are separate things in Godot, so a picker driven
 ## from code (which is how it is exercised, and how a restored setting arrives) has the signal
-## without the index and the rows stayed on the previous vehicle. `Director.vehicle` is set by
+## without the index and the rows stayed on the previous medium. `Director.medium` is set by
 ## that same callback, synchronously, one line above this call. Going through
-## `resolved_vehicle` also means a run launched with `--vehicle comic` shows the comic's
+## `resolved_medium` also means a run launched with `--medium comic` shows the comic's
 ## controls even though the stored setting says otherwise, which the picker alone cannot know.
 ##
-## The rows move IMMEDIATELY even though the vehicle itself takes effect at the next reading:
+## The rows move IMMEDIATELY even though the medium itself takes effect at the next reading:
 ## a control that stayed hidden until a restart would read as the picker not having worked.
-func _sync_vehicle_rows() -> void:
-	var key := Director.resolved_vehicle()
-	for tag in _vehicle_rows:
-		var on := Vehicle.uses(key, String(tag))
-		for row in _vehicle_rows[tag] as Array:
+func _sync_medium_rows() -> void:
+	var key := Director.resolved_medium()
+	for tag in _medium_rows:
+		var on := Medium.uses(key, String(tag))
+		for row in _medium_rows[tag] as Array:
 			if is_instance_valid(row):
 				(row as Control).visible = on
 
@@ -1754,7 +1754,7 @@ func _sync_vehicle_rows() -> void:
 # --- the look: a post-process over the whole picture --------------------------
 #
 # THIS SITS WITH THE PICTURE SETTINGS, under Camera, because that is what it is - it belongs
-# beside Vehicle and Scene hold rather than beside the voice dials. Like them it is the
+# beside Medium and Scene hold rather than beside the voice dials. Like them it is the
 # DIRECTOR'S, so a look set here is the look of every session: a reading, a synthesis take,
 # a song in Auto mode, and an export render, which boots a second process against the same
 # settings file and inherits it with no flag to pass.
@@ -1837,31 +1837,31 @@ func _refresh_filters() -> void:
 	_filter_summary.text = text
 	_filter_summary.tooltip_text = ("Applied to the WHOLE picture, in this order, after "
 		+ "every scene has drawn - and to nothing above it, so the subtitles stay clean. "
-		+ "It is a Director setting like Vehicle, so it is also the look of a song in Auto "
+		+ "It is a Director setting like Medium, so it is also the look of a song in Auto "
 		+ "mode and of an export render.\n\nOn now: " + text)
 
 
 # --- films: real footage in a comic panel -------------------------------------
 #
-# THIS SITS UNDER THE VEHICLE PICKER because it only means anything to the comic, and a
+# THIS SITS UNDER THE MEDIUM PICKER because it only means anything to the comic, and a
 # setting is easiest to understand next to the thing it qualifies.
 #
-# IT IS ALSO HIDDEN WHEN THE VEHICLE CANNOT USE IT, which reverses an earlier decision worth
+# IT IS ALSO HIDDEN WHEN THE MEDIUM CANNOT USE IT, which reverses an earlier decision worth
 # recording rather than quietly overwriting. The argument for always showing it was that
 # someone building a library before switching over should not have to discover that the
 # controls exist somewhere else first. That is answered by WHERE it sits: the picker is the
 # row directly above, so the controls appear the moment the comic is chosen, in the place the
 # eye is already looking. The argument against it was the stronger one - "there are a number
-# of settings currently being displayed that ONLY work with the comic book vehicle" - because
+# of settings currently being displayed that ONLY work with the comic book medium" - because
 # a control that does nothing teaches nothing, and there were two of them.
 
 ## The film library block: the list, an import button, and the frequency dial. Built into a
-## group of its own so the whole block can be shown or hidden as one (see Vehicle.USES).
+## group of its own so the whole block can be shown or hidden as one (see Medium.USES).
 func _build_films(outer: VBoxContainer) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
 	outer.add_child(box)
-	(_vehicle_rows.get_or_add("films", []) as Array).append(box)
+	(_medium_rows.get_or_add("films", []) as Array).append(box)
 	var head := Label.new()
 	head.text = "Films"
 	head.add_theme_font_size_override("font_size", 12)
@@ -2019,42 +2019,42 @@ func _pump_films() -> void:
 			_film_status.text = "✓  Ready"
 
 
-## THE VEHICLE PICKER - what the show is carried on (see [Vehicle]). Built off the
+## THE MEDIUM PICKER - what the show is carried on (see [Medium]). Built off the
 ## registry rather than a written-out list, so a new presentation appears here by being
 ## registered and nothing in this file has to know about it.
 ##
 ## It sits at the TOP of this section, above Scene hold, because it is the setting the
 ## ones below are qualified by: how long a scene holds means something slightly different
 ## when a "scene" is a panel on a page.
-func _vehicle_option(box: VBoxContainer) -> OptionButton:
+func _medium_option(box: VBoxContainer) -> OptionButton:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	box.add_child(row)
 	var l := Label.new()
-	l.text = "Vehicle"
+	l.text = "Medium"
 	l.custom_minimum_size = Vector2(72, 0)
 	l.add_theme_font_size_override("font_size", 12)
 	row.add_child(l)
 	var opt := OptionButton.new()
 	opt.focus_mode = Control.FOCUS_NONE
 	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var keys: Array = Vehicle.REGISTRY.keys()
-	var tip := "What the show is drawn ON, as opposed to what drives it - every mode gets " 		+ "every vehicle. Takes effect on the next reading, not the one already playing.\n"
+	var keys: Array = Medium.REGISTRY.keys()
+	var tip := "What the show is drawn ON, as opposed to what drives it - every mode gets " 		+ "every medium. Takes effect on the next reading, not the one already playing.\n"
 	for k in keys:
-		opt.add_item(String(Vehicle.LABELS.get(k, k)))
-		tip += "\n%s - %s" % [Vehicle.LABELS.get(k, k), Vehicle.BLURBS.get(k, "")]
+		opt.add_item(String(Medium.LABELS.get(k, k)))
+		tip += "\n%s - %s" % [Medium.LABELS.get(k, k), Medium.BLURBS.get(k, "")]
 	opt.tooltip_text = tip
 	# The DIRECTOR is the truth for this one (it is a whole-app setting and the export
 	# render reads it), so the picker drives the setter rather than being bound directly -
 	# and the setter is what persists it, through Settings like every other one.
-	opt.select(maxi(0, keys.find(Director.vehicle)))
+	opt.select(maxi(0, keys.find(Director.medium)))
 	opt.item_selected.connect(func(i: int) -> void:
-		Director.set_vehicle(String(keys[i]))
-		# The rows follow the PICKER immediately, even though the vehicle itself lands at the
+		Director.set_medium(String(keys[i]))
+		# The rows follow the PICKER immediately, even though the medium itself lands at the
 		# next reading: a control that stayed hidden until a restart would read as the picker
 		# not having worked.
-		_sync_vehicle_rows()
-		_note("Vehicle: %s - takes effect on the next reading." % Vehicle.LABELS.get(keys[i], keys[i])))
+		_sync_medium_rows()
+		_note("Medium: %s - takes effect on the next reading." % Medium.LABELS.get(keys[i], keys[i])))
 	row.add_child(opt)
 	return opt
 
@@ -3162,14 +3162,27 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 
 ## HUMS ARE HELD. "Hmm." read as a thinking hum is most of a second; the voice renders it in
 ## about 0.15 s, and asking for more `M`s does not help - measured, eight of them come back
-## as 0.30 s, the model compresses the repeats. So the hum is LENGTHENED after the fact: a
-## hum is a steady periodic tone, and repeating its own pitch periods from the steady middle
-## extends it with the same voice, pitch and colour. Target length in seconds, per spelling.
+## as 0.30 s, the model compresses the repeats. So the hum is LENGTHENED after the fact, by
+## pitch-synchronous overlap-add of its own steadiest periods: same voice, pitch and colour.
+## Target length in seconds, per spelling.
 const HUM_SECONDS := {"hm": 0.45, "mm": 0.5, "hmm": 0.75, "mmm": 0.85, "hmmm": 0.95}
+## Pitch marks either side of the anchor the held hum wanders over. Wandering, rather than
+## repeating one period, keeps the hum alive; more than a few reaches the pitch glide and the
+## fry either side of the steady stretch.
+const HUM_MARKS := 2
 
 ## The cut that lengthens one hum to [param target] seconds: `{t, at, add, fill}`, or empty
-## when it is already long enough. `fill` is whole pitch periods from the steady peak of the
-## hum, cycled, and the cut sits on a period boundary so the join is phase-continuous.
+## when it is already long enough or has no steady voiced stretch to hold.
+##
+## WHY OVERLAP-ADD. The first version butted raw periods end to end. A rendered hum is not
+## strictly periodic - its pitch glides ~15% across the word, periodicity is ~0.75, and it
+## drops into fry at half the pitch - so every join between copied periods was a step in the
+## waveform, and a join every few periods is a buzz: measured, splice steps up to 2.9x the
+## largest in the natural hum and a 5 ms loudness flutter of 20-50%. Here every period is a
+## two-period Hann grain laid down one period apart, so each join is a crossfade and a hard
+## step cannot occur; grains are matched in loudness to the anchor so the wander cannot
+## flutter; and the fill starts and ends on the anchor mark itself, so it leaves and rejoins
+## the natural hum at the same sample.
 func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, ratio: float) -> Dictionary:
 	var sr := float(_sr)
 	var a := int(t0 / ratio * sr)
@@ -3177,61 +3190,171 @@ func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, rati
 	var add := target - float(b - a) / sr
 	if add < 0.03 or b - a < 64:
 		return {}
-	var period := _period_of(pcm, a + int(0.2 * float(b - a)), a + int(0.8 * float(b - a)))
-	if period <= 0:
+	# THE ANCHOR: the loudest periodic frame at the hum's own pitch. Most renders drop into
+	# FRY somewhere - a period-doubled subharmonic an octave down, often the loudest stretch
+	# and just as periodic (measured 0.96 against the modal 0.9), which held is a creak and
+	# not a hum. Two tells, and neither is a candidate unless the hum has nothing else: a
+	# frame pitched well under the highest the hum reaches cleanly, and one that matches
+	# itself better two periods on than one (the fry setting in or letting go).
+	var win := int(0.02 * sr)
+	var hi := int(sr / 60.0)
+	var frames: Array = []          # [at, period, periodicity, rms, doubled]
+	var modal := INF
+	var f := a
+	while f + win + hi <= b:
+		var pc := _period_of(pcm, f, win)
+		if pc.x > 0.0 and pc.y > 0.5:
+			var e := 0.0
+			for k in win:
+				e += pcm[f + k] * pcm[f + k]
+			frames.append([f, pc.x, pc.y, sqrt(e / float(win)), pc.z > pc.y + 0.05])
+			if pc.y > 0.7:
+				modal = minf(modal, pc.x)
+		f += int(0.01 * sr)
+	var anchor := -1
+	var period := 0.0
+	for pass_ in 2:
+		var score := 0.0
+		for fr in frames:
+			if pass_ == 0 and (float(fr[1]) > modal / 0.7 or bool(fr[4])):
+				continue
+			var sc: float = float(fr[3]) * float(fr[2]) * float(fr[2])
+			if sc > score:
+				score = sc
+				anchor = int(fr[0])
+				period = float(fr[1])
+		if anchor >= 0:
+			break
+	if anchor < 0:
 		return {}
-	# LOOP ONLY THE STEADY PEAK: a few periods around the loudest point. Cycling the whole
-	# middle of the hum also cycled the natural dip between its two m's, and the dip came back
-	# as a pulse through the stretched hum.
-	var hop := maxi(1, period)
-	var peak := a
-	var best := -1.0
-	var i := a
-	while i + hop <= b:
-		var e := 0.0
-		for k in hop:
-			e += pcm[i + k] * pcm[i + k]
-		if e > best:
-			best = e
-			peak = i
-		i += hop
-	var s0 := maxi(a, peak - period * 2)
-	var s1 := mini(b, peak + period * 3)
-	if s1 - s0 < period:
+	var half := int(round(period))
+	# THE MARKS: the strongest peak in the middle period of the anchor frame, then one
+	# period at a time either side, each nudged to where it best matches the anchor's own
+	# period. They stay inside the frame that was measured: a frame is chosen for being
+	# steady, and the fry is often the very next thing.
+	var mid := anchor + win / 2 - half / 2
+	var c := mid
+	for k in half:
+		if pcm[mid + k] > pcm[c]:
+			c = mid + k
+	var marks: Array = []
+	var gains: Array = []
+	var ref := _grain_energy(pcm, c, half)
+	if ref <= 0.0:
 		return {}
-	var cut := s0 + period * int(floor(float(peak - s0) / float(period)))
-	var need := int(add * sr)
-	var fill := PackedFloat32Array()
-	var pos := s0
-	while fill.size() < need:
-		if pos + period > s1:
-			pos = s0
-		fill.append_array(pcm.slice(pos, pos + period))
-		pos += period
-	return {"t": float(cut) / sr * ratio, "at": cut, "add": float(fill.size()) / sr, "fill": fill}
+	for j in range(-HUM_MARKS, HUM_MARKS + 1):
+		var m := c
+		if j != 0:
+			m = _align_mark(pcm, c, int(round(float(c) + float(j) * period)), half)
+		if m - half < maxi(a, anchor - half / 2) or m + half >= mini(b, anchor + win + half / 2):
+			continue
+		marks.append(m)
+		gains.append(sqrt(ref / maxf(_grain_energy(pcm, m, half), 1e-9)))
+	var home := marks.find(c)
+	if home < 0:
+		return {}
+	# THE FILL: grains one period apart, source marks on a seeded walk over the marks,
+	# first and last on the anchor itself, normalised by the summed window.
+	var n := int(ceil(add * sr / period))
+	var length := int(round(float(n) * period))
+	var acc := PackedFloat32Array()
+	acc.resize(length)
+	var wsum := PackedFloat32Array()
+	wsum.resize(length)
+	var at := home
+	for g in n + 1:
+		if g == 0 or g == n:
+			at = home
+		else:
+			var step := posmod(hash(g * 7919 + c), 3) - 1
+			at = clampi(at + step, 0, marks.size() - 1)
+		var m: int = marks[at]
+		var gain: float = 1.0 if at == home else float(gains[at])
+		var o := int(round(float(g) * period))
+		for d in range(-half + 1, half):
+			var q := o + d
+			if q < 0 or q >= length:
+				continue
+			var w := 0.5 + 0.5 * cos(PI * float(d) / float(half))
+			acc[q] += w * gain * pcm[m + d]
+			wsum[q] += w
+	for q in length:
+		acc[q] = acc[q] / wsum[q] if wsum[q] > 1e-6 else 0.0
+	return {"t": float(c) / sr * ratio, "at": c, "add": float(length) / sr, "fill": acc}
 
 
-## The pitch period of pcm[s0, s1] in samples, by autocorrelation over a voice's range
-## (60-350 Hz), or 0 when the stretch is too short to say.
-func _period_of(pcm: PackedFloat32Array, s0: int, s1: int) -> int:
+## The pitch period of [param n] samples from [param s0] (fractional, in samples), how
+## periodic they are (normalised correlation at that lag, 0..1), and the same correlation two
+## periods on, over a voice's 60-350 Hz. The SHORTEST lag within 90% of the best wins, so a
+## stretch that also matches itself two periods on does not read as an octave down.
+func _period_of(pcm: PackedFloat32Array, s0: int, n: int) -> Vector3:
 	var lo := int(float(_sr) / 350.0)
 	var hi := int(float(_sr) / 60.0)
-	var n := s1 - s0 - hi
-	if n < lo * 2:
-		return 0
-	var best := 0
+	if s0 < 0 or s0 + n + hi + 1 > pcm.size():
+		return Vector3.ZERO
+	var e0 := 0.0
+	for i in range(0, n, 2):
+		e0 += pcm[s0 + i] * pcm[s0 + i]
+	if e0 <= 1e-9:
+		return Vector3.ZERO
+	var rs := PackedFloat32Array()
+	rs.resize(hi + 2)
+	var best := 0.0
+	for lag in range(lo, hi + 2):
+		rs[lag] = _corr_at(pcm, s0, n, lag, e0)
+		best = maxf(best, rs[lag])
+	for lag in range(lo + 1, hi + 1):
+		if rs[lag] >= 0.9 * best and rs[lag] >= rs[lag - 1] and rs[lag] >= rs[lag + 1]:
+			# parabolic refinement: the true period is rarely a whole number of samples,
+			# and a whole-sample hop drifts a sample every few periods
+			var den := rs[lag - 1] - 2.0 * rs[lag] + rs[lag + 1]
+			var off := 0.0 if absf(den) < 1e-9 else clampf(0.5 * (rs[lag - 1] - rs[lag + 1]) / den, -0.5, 0.5)
+			# two periods on, searched a couple of samples either way for the pitch drift
+			var twice := 0.0
+			for l2 in range(2 * lag - 2, 2 * lag + 3):
+				if s0 + n + l2 <= pcm.size():
+					twice = maxf(twice, _corr_at(pcm, s0, n, l2, e0))
+			return Vector3(float(lag) + off, rs[lag], twice)
+	return Vector3.ZERO
+
+
+## Normalised correlation of pcm[s0, s0 + n) with itself [param lag] on, every other sample.
+func _corr_at(pcm: PackedFloat32Array, s0: int, n: int, lag: int, e0: float) -> float:
+	var r := 0.0
+	var e1 := 0.0
+	for i in range(0, n, 2):
+		var y := pcm[s0 + i + lag]
+		r += pcm[s0 + i] * y
+		e1 += y * y
+	return r / sqrt(e0 * maxf(e1, 1e-9))
+
+
+## The mark near [param guess] whose period best matches the one about [param c], searched a
+## sixth of a period either way - a hum's pitch drifts, so a mark a whole period away is
+## rarely exactly where arithmetic puts it.
+func _align_mark(pcm: PackedFloat32Array, c: int, guess: int, half: int) -> int:
+	var reach := maxi(1, half / 6)
+	var best := guess
 	var best_r := -INF
-	for lag in range(lo, hi + 1):
+	for m in range(guess - reach, guess + reach + 1):
+		if m - half < 0 or m + half >= pcm.size():
+			continue
 		var r := 0.0
-		var e := 0.0
-		for i in range(s0, s0 + n, 2):
-			r += pcm[i] * pcm[i + lag]
-			e += pcm[i + lag] * pcm[i + lag]
-		var nr := r / sqrt(maxf(e, 1e-9))
-		if nr > best_r:
-			best_r = nr
-			best = lag
+		for d in range(-half / 2, half / 2):
+			r += pcm[c + d] * pcm[m + d]
+		if r > best_r:
+			best_r = r
+			best = m
 	return best
+
+
+## Energy of one period centred on [param m].
+func _grain_energy(pcm: PackedFloat32Array, m: int, half: int) -> float:
+	var e := 0.0
+	for d in range(-half / 2, half / 2):
+		if m + d >= 0 and m + d < pcm.size():
+			e += pcm[m + d] * pcm[m + d]
+	return e
 
 
 ## A word timing from the model's clock onto the spliced take's: divided by the resample
@@ -3443,7 +3566,7 @@ func export_take() -> String:
 
 	var path := TAKE_DIR + "/take_%d.wav" % stamp
 	var abs_path := _write_wav(path, pcm)
-	# ALWAYS written now, words or not: the book vehicle reads the chapter from it.
+	# ALWAYS written now, words or not: the book medium reads the chapter from it.
 	var side := FileAccess.open(path.get_basename() + ".json", FileAccess.WRITE)
 	if side != null:
 		# Word timings shift with the audio they describe. Doing it here, once,
@@ -3456,8 +3579,8 @@ func export_take() -> String:
 			d["t0"] = float(d.get("t0", 0.0)) + intro
 			d["t1"] = float(d.get("t1", 0.0)) + intro
 			shifted.append(d)
-		# THE BOOK rides along: a render has no editor, and a vehicle that typesets
-		# pages needs the chapter those words came from (see BookVehicle).
+		# THE BOOK rides along: a render has no editor, and a medium that typesets
+		# pages needs the chapter those words came from (see BookMedium).
 		side.store_string(JSON.stringify({
 			"words": shifted, "bookend": {"in": intro, "out": outro},
 			"book": book_document(body)}))

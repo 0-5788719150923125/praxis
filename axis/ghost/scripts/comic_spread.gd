@@ -1,11 +1,11 @@
 extends RefCounted
 class_name ComicSpread
 
-## ComicSpread - the two facing pages of an open comic book. What [ComicVehicle] flies over.
+## ComicSpread - the two facing pages of an open comic book. What [ComicMedium] flies over.
 ##
 ## A comic is not read a page at a time. It is read a SPREAD at a time: you open the book
 ## and two pages face you across the spine, and the leaf you turn carries a page on each of
-## its sides. Drawing one page at a time was the first cut of this vehicle and it cost three
+## its sides. Drawing one page at a time was the first cut of this medium and it cost three
 ## things at once - a portrait sheet inside a landscape frame leaves a wedge of desk in shot
 ## however close the camera gets; a pan has only one page's width of content to travel
 ## across before it runs onto the trim edge; and a "page turn" of a single sheet has no
@@ -33,7 +33,7 @@ class_name ComicSpread
 const PAGES := 2
 
 ## The most panels a spread can hold, and therefore how many render targets a pool needs.
-## See [constant ComicVehicle.POOL].
+## See [constant ComicMedium.POOL].
 const MAX_PANELS := ComicPage.MAX_PANELS * PAGES
 
 ## The print style, shared by both leaves. Sampled here and handed down, see the note above.
@@ -147,7 +147,7 @@ func panel_point(i: int, uv: Vector2) -> Vector2:
 
 ## The inverse of [method panel_point] for a point already in spread space: where
 ## [param p] falls in panel [param i]'s own unit square. Outside 0..1 means outside the
-## panel, and by how much - which is what [method ComicVehicle._content_at] reads to decide
+## panel, and by how much - which is what [method ComicMedium._content_at] reads to decide
 ## whether the camera is looking at a picture or at the paper between pictures.
 func panel_uv(i: int, p: Vector2) -> Vector2:
 	var e: Dictionary = panels[i]
@@ -171,7 +171,7 @@ func corners(i: int) -> PackedVector2Array:
 	return out
 
 
-## Panel [param i]'s aspect (width / height). The vehicle sizes that panel's render target
+## Panel [param i]'s aspect (width / height). The medium sizes that panel's render target
 ## to it, so a scene is never squeezed or cropped to fit its frame.
 func panel_aspect(i: int) -> float:
 	var r: Rect2 = panels[i]["rect"]
@@ -185,6 +185,6 @@ func panel_center(i: int) -> Vector2:
 
 
 ## The middle of the spread - the point the aim is pulled toward so a shot on an outer panel
-## keeps paper across the frame. See [constant ComicVehicle.AIM_PULL].
+## keeps paper across the frame. See [constant ComicMedium.AIM_PULL].
 func center() -> Vector2:
 	return Vector2(SPINE, aspect * 0.5)

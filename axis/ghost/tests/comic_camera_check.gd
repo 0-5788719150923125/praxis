@@ -10,7 +10,7 @@ extends Node
 ## THIS MEASURES THE PLAN, AND THAT IS ALL IT CLAIMS. It is the right instrument for "is the
 ## slider monotone" - a statement about a distribution over hundreds of shots, which no amount
 ## of watching can judge - and the WRONG one for "does the camera behave", which is
-## tests/comic_motion_check.gd's job: that one drives the real vehicle and measures the picture.
+## tests/comic_motion_check.gd's job: that one drives the real medium and measures the picture.
 ##
 ## FOUR CHECKS THAT USED TO LIVE HERE WENT WITH THE MOVE LAYER THEY TESTED. They asked whether
 ## a move fitted its deadline, whether a chain went forward, whether a settle repeated, whether
@@ -45,11 +45,11 @@ func _run() -> void:
 	stage.size = Vector2i(320, 180)
 	add_child(stage)
 	Director.detach()
-	var v: Vehicle = Vehicle.make("comic")
+	var v: Medium = Medium.make("comic")
 	v.mount(stage)
 	Director.attach(stage, v)
 	Director.hold(true)          # nothing but this probe advances the reading
-	var comic: ComicVehicle = v
+	var comic: ComicMedium = v
 
 	var was := Director.camera
 	var swing: Array = []
@@ -67,9 +67,9 @@ func _run() -> void:
 			% [comic._reach(), rad_to_deg(float(r["worst"]))])
 		# THE WALK IS BOUNDED BY ITS ARC, at every setting. If this ever fails the clamp in
 		# _walk has been lost and the whole "spread over several shots" guarantee with it.
-		if float(r["worst"]) > ComicVehicle.AZ_ARC * float(sev) + 1e-4:
+		if float(r["worst"]) > ComicMedium.AZ_ARC * float(sev) + 1e-4:
 			_fails.append("camera %.1f: the azimuth walk reached %.3f rad, outside its %.3f arc"
-				% [sev, float(r["worst"]), ComicVehicle.AZ_ARC * float(sev)])
+				% [sev, float(r["worst"]), ComicMedium.AZ_ARC * float(sev)])
 
 	# THE KNOB IS MONOTONE. Not "different at the ends" - every step of it has to move the
 	# camera the same way, or it is a switch with a slider drawn on it.
@@ -113,7 +113,7 @@ func _run() -> void:
 
 
 ## Plan SHOTS shots at the current setting and report what the planner chose.
-func _measure(comic: ComicVehicle) -> Dictionary:
+func _measure(comic: ComicMedium) -> Dictionary:
 	comic._spread = ComicSpread.new(hash(["cam", Director.camera]))
 	comic._spread_i = 3
 	comic._film_at = -1
@@ -133,11 +133,11 @@ func _measure(comic: ComicVehicle) -> Dictionary:
 		if m >= WARMUP:
 			swing += absf(angle_difference(before, az))
 			worst = maxf(worst, absf(comic._az_walk))
-			if bool(ComicVehicle.SHOTS[String(comic._shot["kind"])].get("hard", false)):
+			if bool(ComicMedium.SHOTS[String(comic._shot["kind"])].get("hard", false)):
 				jumps += 1
 			n += 1
 		# Stand the camera on its target so the next shot is planned from where this one led -
-		# what the running vehicle does once the follower has closed.
+		# what the running medium does once the follower has closed.
 		comic._cam = (comic._tgt as Dictionary).duplicate()
 	return {
 		"swing": swing / maxf(1.0, float(n)),
@@ -157,7 +157,7 @@ func _measure(comic: ComicVehicle) -> Dictionary:
 ## panel is the FIRST entry of the reading plan, so it has been read and left behind before the
 ## probe's first capture. This drives _place_eye directly on the widest panel of a spread, with
 ## and without the film flag, so the contain path is compared against the shot it replaces.
-func _check_film_fit(comic: ComicVehicle) -> void:
+func _check_film_fit(comic: ComicMedium) -> void:
 	comic._spread = ComicSpread.new(hash(["filmfit"]))
 	comic._spread_i = 3
 	comic._att = Vector3(0.3, 0.35, 0.15)
@@ -206,7 +206,7 @@ func _check_film_fit(comic: ComicVehicle) -> void:
 ## three - so the three panels cast by a page turn could take the whole budget and freeze the
 ## Director's own current scene. This casts a full spread (so every panel is cold, the worst
 ## case) and asserts the read panel survives it.
-func _check_focal_live(comic: ComicVehicle) -> void:
+func _check_focal_live(comic: ComicMedium) -> void:
 	comic._spread = ComicSpread.new(hash(["focal"]))
 	comic._spread_i = 11
 	comic._film_at = -1
@@ -219,7 +219,7 @@ func _check_focal_live(comic: ComicVehicle) -> void:
 	# Stand in for a cast spread: every panel holds a scene and none has drawn yet.
 	for i in n:
 		var sc := GhostScene.new()
-		comic._slots[comic._pool * ComicVehicle.POOL + i].add_child(sc)
+		comic._slots[comic._pool * ComicMedium.POOL + i].add_child(sc)
 		comic._cast[i] = sc
 	var missed := 0
 	for i in n:

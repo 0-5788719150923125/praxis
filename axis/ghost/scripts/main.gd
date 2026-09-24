@@ -34,12 +34,12 @@ var _status_t := 0.0     # throttle for writing render progress (export mode)
 # entirely - renders are always full-rate, full-resolution.
 var _stage: SubViewport = null
 var _stage_view: TextureRect = null
-# WHAT THE SHOW IS CARRIED ON (see vehicle.gd). Built with the stage and mounted inside
-# it, so the governor above owns it too: stopping the stage stops the vehicle and every
+# WHAT THE SHOW IS CARRIED ON (see medium.gd). Built with the stage and mounted inside
+# it, so the governor above owns it too: stopping the stage stops the medium and every
 # panel viewport nested under it, together. Persists across a session teardown - in the
 # synthesis modes attach/detach run again on every take, and rebuilding the page (and its
 # render targets) per take would throw away the comic on every settings change.
-var _vehicle: Vehicle = null
+var _medium: Medium = null
 # The governor's metric is the cost of STAGE-ACTIVE frames ONLY. The blended
 # frame rate is a LIE while throttling: the skipped frames are cheap, the
 # average looks healthy, the governor de-escalates straight back into the
@@ -218,7 +218,7 @@ func _begin_session(audio_path := "") -> void:
 	Spectrum.lead_in = Director.intro_hold
 	Spectrum.tail = Director.outro_hold
 	Spectrum.begin(audio_path)
-	Director.attach(_stage_host(), _vehicle)
+	Director.attach(_stage_host(), _medium)
 	_attach_subtitles()
 	if _export_mode:
 		return                         # render clean: no overlays (the Director fades the video ends)
@@ -275,7 +275,7 @@ func _end_session() -> void:
 ## what keeps the instrument responsive when a scene gets heavy.
 func _stage_host() -> Node:
 	if _stage != null:
-		_sync_vehicle()
+		_sync_medium()
 		return _stage
 	_stage = SubViewport.new()
 	_stage.own_world_3d = true
@@ -296,7 +296,7 @@ func _stage_host() -> Node:
 	# over nothing else, which is what leaves the panels and the karaoke line unfiltered.
 	Director.filters_changed.connect(_sync_filters)
 	get_viewport().size_changed.connect(_sync_stage_size)
-	_sync_vehicle()
+	_sync_medium()
 	# every scene gets a FRESH measurement: without this, a light scene that
 	# follows a heavy one stays imprisoned at the old level for the ~15 s the
 	# sparse active samples need to forgive (measured, and it read as broken)
@@ -360,20 +360,20 @@ func _watch_render_clock(delta: float) -> void:
 			% [_clock_t, _clock_frames, str(playing), pos])
 
 
-## Rebuild the vehicle if the setting changed since the last session. Director.set_vehicle
+## Rebuild the medium if the setting changed since the last session. Director.set_medium
 ## says the change lands on the NEXT session, and this is where "next session" happens - the
 ## stage is built once and reused for every take, so without this the picker would write the
 ## config, persist it, survive a restart, and appear to do nothing all afternoon.
-func _sync_vehicle() -> void:
-	var want := Director.resolved_vehicle()
-	if _vehicle != null and is_instance_valid(_vehicle):
-		if _vehicle.key == want:
+func _sync_medium() -> void:
+	var want := Director.resolved_medium()
+	if _medium != null and is_instance_valid(_medium):
+		if _medium.key == want:
 			return
-		_vehicle.release()
-		_vehicle.queue_free()
-	_vehicle = Vehicle.make(want)
-	_vehicle.mount(_stage)
-	print("ghost: vehicle '%s'" % _vehicle.key)
+		_medium.release()
+		_medium.queue_free()
+	_medium = Medium.make(want)
+	_medium.mount(_stage)
+	print("ghost: medium '%s'" % _medium.key)
 
 
 func _sync_stage_size() -> void:
@@ -386,8 +386,8 @@ func _sync_stage_size() -> void:
 	# The dot lattice and the grain are sized in pixels, so the look has to be told when the
 	# frame changes size - otherwise a resized window renders a different picture.
 	_sync_filters()
-	if _vehicle != null and is_instance_valid(_vehicle):
-		_vehicle.on_stage_resized(base)
+	if _medium != null and is_instance_valid(_medium):
+		_medium.on_stage_resized(base)
 
 
 func _process(delta: float) -> void:
@@ -620,7 +620,7 @@ func _begin_generative_stream(fp: int, sr: int, words: Array) -> AudioStreamGene
 	Director.detach()
 	Spectrum.stop()
 	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(fp, sr)
-	Director.attach(_stage_host(), _vehicle)
+	Director.attach(_stage_host(), _medium)
 	if _subtitles != null and is_instance_valid(_subtitles):
 		_subtitles.queue_free()
 	var subs := preload("res://scripts/subtitles.gd").new()
@@ -660,7 +660,7 @@ func _begin_synth_stream(stream: Node) -> void:
 	add_child(stream)
 	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(stream.fingerprint(), Voice.SR)
 	stream.attach_playback(pb)
-	Director.attach(_stage_host(), _vehicle)
+	Director.attach(_stage_host(), _medium)
 	# synthesis is GAME PACED: the fishing owns the cuts - a scene changes when
 	# a catch jumps it, so each new scene reads as a reward, not weather
 	Director.set_game_paced(true)
@@ -737,11 +737,11 @@ func _attach_subtitles() -> void:
 		print("ghost: subtitles attached (%d words)" % (subs.words as Array).size())
 
 
-## Hand a fresh caption source to the vehicle. One that prints the words itself (the book)
+## Hand a fresh caption source to the medium. One that prints the words itself (the book)
 ## answers true, and the overlay then stops drawing - its clock and cursor keep running,
-## because that vehicle reads them.
+## because that medium reads them.
 func _bind_captions(subs: Node) -> void:
-	if _vehicle != null and is_instance_valid(_vehicle) and _vehicle.bind_captions(subs):
+	if _medium != null and is_instance_valid(_medium) and _medium.bind_captions(subs):
 		subs.overlay_hidden = true
 
 

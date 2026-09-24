@@ -50,11 +50,11 @@ var time_base := 0.0                # playback time when the current content sta
 ## 0..1, eased. Multiplies every alpha the overlay draws, plate included.
 var presence := 0.0
 ## The manuscript this reading came from, when there is one: `{source}` - the chapter's
-## markdown. Carried beside the words so a vehicle that typesets the text ([BookVehicle])
+## markdown. Carried beside the words so a medium that typesets the text ([BookMedium])
 ## gets it in the live session and in the export render alike (it rides the sidecar).
 var document: Dictionary = {}
-## True when a vehicle shows the words itself: the clock and the eased cursor keep running,
-## because that vehicle reads them, and only the drawing stops.
+## True when a medium shows the words itself: the clock and the eased cursor keep running,
+## because that medium reads them, and only the drawing stops.
 var overlay_hidden := false
 var _cursor := 0.0                  # the narrator's eye: global word progress, eased
 var _hue_sm := 0.6

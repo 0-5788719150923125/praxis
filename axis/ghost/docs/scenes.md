@@ -765,7 +765,7 @@ Present under `scripts/scenes/` but not registered in `Director.SCENES` - reacha
 
 FilmScene - a panel of real footage, cut into the comic among the drawn ones.
 
-It is a `GhostScene` like any other, which is the whole trick: the comic vehicle casts it into a panel exactly as it casts a spectrum ring, and every piece of machinery around it - the render target, the freeze that holds a panel as a still, the camera that flies over the page - carries on knowing nothing about video. The only thing that makes it different from a drawn panel is where its pixels come from.
+It is a `GhostScene` like any other, which is the whole trick: the comic medium casts it into a panel exactly as it casts a spectrum ring, and every piece of machinery around it - the render target, the freeze that holds a panel as a still, the camera that flies over the page - carries on knowing nothing about video. The only thing that makes it different from a drawn panel is where its pixels come from.
 
 IT PLAYS A WINDOW, NOT A FILM. The clip is never transcoded whole (see `Films.WINDOW` for why that was intolerable); what exists on disk is `Films.WINDOW` seconds of it at a time, and this plays whichever window covers the position the show clock asks for. That makes the panel's job slightly bigger than "play a file": it has to know where it is in the FILM while playing a file that starts at zero, and it has to cross from one window to the next without a gap.
 
@@ -773,7 +773,7 @@ THE CROSSING IS WHY THERE ARE TWO PLAYERS. A window is loaded, played, and when 
 
 THE SEEK, ONCE, AT THE TOP. The window is placed when it opens and then simply plays - it is NOT re-seeked per frame, which is Masking's scrubbing mode and costs a decoder flush every time. What it does instead is watch for DRIFT: a panel that was frozen while the camera looked elsewhere has a stopped clock while the show's kept running.
 
-NOT IN THE DIRECTOR'S CATALOGUE. This scene is never minted by `Director.mint_scene`: there is nothing to show unless the viewer has imported something, and a scene that is sometimes not there at all would make the running order depend on the library. The comic casts it directly. See `ComicVehicle._film_at`.
+NOT IN THE DIRECTOR'S CATALOGUE. This scene is never minted by `Director.mint_scene`: there is nothing to show unless the viewer has imported something, and a scene that is sometimes not there at all would make the running order depend on the library. The comic casts it directly. See `ComicMedium._film_at`.
 
 Source: [scripts/scenes/film.gd](../scripts/scenes/film.gd) (extends `GhostScene`)
 
