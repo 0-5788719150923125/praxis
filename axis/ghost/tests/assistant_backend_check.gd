@@ -6,12 +6,11 @@ extends SceneTree
 ## shows as an error nobody connects to the argument list; a stream read with the wrong
 ## backend's rules is a run with no progress line that never reports a result. So:
 ##
-##   THE COMMAND - the argv for a fresh run and for a resume, per backend, and that the
-##   launcher really passes a hostile prompt through as ONE argument. That last one is RUN,
-##   not inspected: bash executes the launcher with printf standing in for the CLI, and the
-##   captured output must be the prompt byte for byte. A `$(...)` that expanded would show.
-##   It runs through OS.create_process, exactly as the dispatch does - NOT OS.execute, which
-##   on Linux joins its arguments into one shell string and so mangles any quoted script.
+##   THE COMMAND - the argv for a fresh run and for a resume, per backend, with the prompt
+##   in none of them, and that Subprocess.start_redirected really delivers a hostile prompt
+##   on stdin byte for byte. That last one is RUN, not inspected: `cat` stands in for the
+##   CLI, and the captured output must be the prompt exactly. A `$(...)` that expanded would
+##   show. It launches detached, exactly as the dispatch does.
 ##
 ##   THE STREAM - recorded output (tests/fixtures/assistant/; the codex files are real
 ##   `codex exec --json` runs from codex-cli 0.150.0, one a resume of the other and one a
@@ -55,68 +54,70 @@ func _events(name: String) -> Array:
 
 func _commands() -> void:
 	print("-- commands")
-	var p := "fix it \"now\" $(rm -rf ~)"
-	var c := B.argv("claude_cli", "/bin/claude", p, "", "/repo")
+	var c := B.argv("claude_cli", "/bin/claude", "", "/repo")
 	_check(c == PackedStringArray(["/bin/claude", "-p", "--model", "sonnet",
-		"--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", p]),
-		"claude fresh run is the command it has always been")
-	c = B.argv("claude_cli", "/bin/claude", p, "sid-1", "/repo")
-	_check(c.has("--resume") and c[c.find("--resume") + 1] == "sid-1" and c[c.size() - 1] == p,
-		"claude resume passes --resume <id> and the prompt last")
-	var x := B.argv("codex_cli", "/bin/codex", p, "", "/repo")
+		"--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"]),
+		"claude fresh run: -p with no prompt argument (it reads stdin)")
+	c = B.argv("claude_cli", "/bin/claude", "sid-1", "/repo")
+	_check(c.has("--resume") and c[c.find("--resume") + 1] == "sid-1",
+		"claude resume passes --resume <id>")
+	var x := B.argv("codex_cli", "/bin/codex", "", "/repo")
 	_check(x == PackedStringArray(["/bin/codex", "exec", "--json", "--skip-git-repo-check",
-		"--dangerously-bypass-approvals-and-sandbox", "-C", "/repo", p]),
-		"codex fresh run: exec --json, full access, -C repo, prompt last")
-	x = B.argv("codex_cli", "/bin/codex", p, "th-9", "/repo")
+		"--dangerously-bypass-approvals-and-sandbox", "-C", "/repo", "-"]),
+		"codex fresh run: exec --json, full access, -C repo, `-` for a stdin prompt")
+	x = B.argv("codex_cli", "/bin/codex", "th-9", "/repo")
 	_check(x.slice(0, 4) == PackedStringArray(["/bin/codex", "exec", "resume", "th-9"]),
 		"codex resume is the `exec resume <id>` subcommand")
 	_check(not x.has("-C"), "codex resume does not pass -C (the subcommand has no such flag)")
-	_check(x.has("--json") and x[x.size() - 1] == p, "codex resume still streams JSON, prompt last")
+	_check(x.has("--json") and x[x.size() - 1] == "-", "codex resume still streams JSON, stdin prompt")
 	_check(B.label("nope") == B.label(B.LEGACY) and B.dep("codex_cli") == "codex",
 		"unknown key falls back to Claude; codex resolves through the codex Deps row")
 
 
 func _launcher() -> void:
-	print("-- launcher")
+	print("-- launcher (Subprocess.start_redirected)")
 	var dir := OS.get_user_data_dir().path_join("assistant_check")
 	DirAccess.make_dir_recursive_absolute(dir)
 	var out_p := dir.path_join("out.txt")
 	var err_p := dir.path_join("err.txt")
-	var hostile := "a \"b\" 'c' $(echo INJECTED) `echo X` ; exit 7 \\ $HOME\nsecond line"
-	var cli := PackedStringArray(["/usr/bin/printf", "%s", hostile])
-	var args := B.launcher(cli, "/", out_p, err_p)
-	_check(args[0] == "-c" and not String(args[1]).contains(hostile),
-		"the script is fixed text; the prompt is not in it")
-	var code := _run(args)
-	var got := FileAccess.get_file_as_string(out_p)
-	_check(code == 0, "the launched program ran and exited (%d)" % code)
-	_check(got == hostile, "the prompt arrived as one argument, byte for byte")
+	var in_p := dir.path_join("prompt.txt")
+	var hostile := "a \"b\" 'c' $(echo INJECTED) `echo X` ; exit 7 \\ $HOME %PATH% & ^\nsecond line"
+	var f := FileAccess.open(in_p, FileAccess.WRITE)
+	f.store_string(hostile)
+	f.close()
+	_run("cat", [], {"stdin": in_p, "out": out_p, "err": err_p})
+	_check(FileAccess.get_file_as_string(out_p) == hostile,
+		"the prompt arrived on stdin, byte for byte")
 	# The cd is real: a relative path in the program resolves against the repo root.
-	args = B.launcher(PackedStringArray(["/bin/pwd"]), dir, out_p, err_p)
-	_run(args)
+	_run("pwd", [], {"cwd": dir, "out": out_p, "err": err_p})
 	_check(FileAccess.get_file_as_string(out_p).strip_edges() == dir,
 		"the run starts in the repo root")
-	# ...and stdin is closed, or `codex exec` sits waiting on it.
-	args = B.launcher(PackedStringArray(["/bin/cat"]), dir, out_p, err_p)
-	code = _run(args)
+	# ...and with no stdin file, stdin is empty and closed, or `codex exec` sits waiting.
+	var code := _run("cat", [], {"out": out_p, "err": err_p})
 	_check(code == 0 and FileAccess.get_file_as_string(out_p).is_empty(),
-		"stdin is /dev/null (cat returns at once, empty)")
-	for f in [out_p, err_p]:
-		DirAccess.remove_absolute(f)
+		"no stdin file: cat returns at once, empty")
+	# stdout and stderr land apart - the dispatch parses one and shows the other.
+	_run("sh", ["-c", "echo to-out; echo to-err >&2"], {"out": out_p, "err": err_p})
+	_check(FileAccess.get_file_as_string(out_p) == "to-out\n"
+		and FileAccess.get_file_as_string(err_p) == "to-err\n", "stdout and stderr are separate")
+	_check(Subprocess.start_redirected("cat", [], {"out": out_p, "err": out_p}) <= 0,
+		"one file for both streams is refused, not silently interleaved")
+	for p in [out_p, err_p, in_p]:
+		DirAccess.remove_absolute(p)
 
 
-## Launch the way Subprocess.start_detached does and wait for it. The exit code is not
+## Launch detached, exactly as the dispatch does, and wait for it. The exit code is not
 ## observable from create_process, so this returns 0 once the child is gone and -1 if it
 ## never started or overran - the checks read its output instead.
-func _run(args: PackedStringArray) -> int:
-	var pid := OS.create_process("/bin/bash", args)
+func _run(prog: String, args: Array, io: Dictionary) -> int:
+	var pid := Subprocess.start_redirected(prog, PackedStringArray(args), io, "", true)
 	if pid < 0:
 		return -1
 	for i in 200:
 		if not OS.is_process_running(pid):
 			return 0
 		OS.delay_msec(25)
-	OS.kill(pid)
+	Subprocess.terminate(pid)
 	return -1
 
 

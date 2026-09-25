@@ -58,7 +58,7 @@ and a shadow's edge is the part a viewer looks at.
 Usage:
     python pose_track.py --video <path> --out <track.bin> --model <model.task>
                          [--rate 12] [--mask-w 96] [--mask-h 54]
-                         [--progress <file>]
+                         [--progress <file>] [--start S --duration D] [--background]
 """
 
 import argparse
@@ -73,6 +73,21 @@ POINTS = 33
 HEADER = 44  # 4 magic + u32 version + f32 rate + u32 count + u32 points
 #   + u32 mask_w + u32 mask_h + u32 start
 #   + f32 dir_x + f32 dir_y + f32 conf
+
+
+def _lower_priority() -> None:
+    """The lowest scheduling priority the OS hands out, before anything heavy loads."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            idle_priority_class = 0x40
+            k32 = ctypes.windll.kernel32
+            k32.SetPriorityClass(k32.GetCurrentProcess(), idle_priority_class)
+        else:
+            os.nice(19)
+    except (OSError, AttributeError):
+        pass  # a full-speed run is slower for the editor, not wrong
 
 
 def main() -> int:
@@ -96,7 +111,12 @@ def main() -> int:
     # and any offline use want.
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--duration", type=float, default=0.0)
+    # The editor always passes this: mediapipe saturates every core it is given and
+    # would starve the editor's own video decode (see mask_editor._pt_spawn_logged).
+    ap.add_argument("--background", action="store_true")
     args = ap.parse_args()
+    if args.background:
+        _lower_priority()
 
     import cv2  # imported here so --help works without the venv populated
     import numpy as np

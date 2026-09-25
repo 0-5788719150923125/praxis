@@ -34,6 +34,7 @@ func _init() -> void:
 		_child_role()
 		return
 	_registry_half()
+	_logged_half()
 	_pact_half()
 	if _fails.is_empty():
 		print("subprocess_pact_check: ALL OK")
@@ -99,6 +100,46 @@ func _registry_half() -> void:
 	_check(not Subprocess.stop(me), "stop() refuses a pid it did not start...")
 	OS.delay_msec(150)
 	_check(_running(me), "...and the gate is still running to say so")
+
+
+# --- start_logged: output pumped into a log, no shell ------------------------------------
+# The seven `/bin/bash -c '... > log 2>&1'` call sites are this now, so it has to hold what
+# the shell held. More than a pipe's worth (64 KiB) on BOTH streams, interleaved: a single
+# reader blocked on one stream while the child fills the other deadlocks, and that is the
+# case that would hang a pip install forever. And `alive()` must not report the child gone
+# before its last line is in the log - callers read the log the frame it exits.
+func _logged_half() -> void:
+	print("LOGGED (start_logged: both streams into one file, drained before alive() lets go)")
+	var log_path := OS.get_user_data_dir().path_join("subprocess_logged_probe.log")
+	var n := 3000
+	var script := "i=0; while [ $i -lt %d ]; do " % n \
+		+ "echo \"out $i ................................................\"; " \
+		+ "echo \"err $i ................................................\" >&2; " \
+		+ "i=$((i+1)); done; echo LAST-OUT; echo LAST-ERR >&2"
+	var pid := Subprocess.start_logged("sh", ["-c", script], log_path, "logged probe")
+	_check(pid > 0, "a logged child started (pid %d)" % pid)
+	var waited := 0
+	while Subprocess.alive(pid) and waited < 15000:
+		OS.delay_msec(20)
+		waited += 20
+	_check(waited < 15000, "it finished (%d ms) - no deadlock on two full pipes" % waited)
+	var text := FileAccess.get_file_as_string(log_path)
+	var outs := 0
+	var errs := 0
+	for line in text.split("\n"):
+		if line.begins_with("out "):
+			outs += 1
+		elif line.begins_with("err "):
+			errs += 1
+	_check(outs == n and errs == n, "every line of both streams is in the log (%d/%d, %d/%d)"
+		% [outs, n, errs, n])
+	_check(text.contains("LAST-OUT") and text.contains("LAST-ERR"),
+		"including the last ones, read the moment alive() said it was gone")
+	var sleeper := Subprocess.start_logged("sleep", [SLEEP_S], log_path, "logged sleeper")
+	_check(Subprocess.stop(sleeper), "a logged child can be stopped")
+	OS.delay_msec(300)
+	_check(not _running(sleeper), "and it is gone")
+	DirAccess.remove_absolute(log_path)
 
 
 # --- the pact, across a hard kill -------------------------------------------------------

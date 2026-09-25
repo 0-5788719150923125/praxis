@@ -280,7 +280,7 @@ func _process(dt: float) -> void:
 					# alone" is advice that has to still be visible at hour five.
 					var how := " …  %.1f%%" % (maxf(_stall_frac, 0.0) * 100.0)
 					if _note_no_virtual_display:
-						how += "   ⚠ leave the render window visible (no xvfb-run)"
+						how += "   ⚠ leave the render window visible"
 					_set_status("⏺  Rendering %s%s" % [_out.get_file(), how],
 						Color(0.95, 0.92, 0.7))
 			else:
@@ -584,10 +584,12 @@ func _start_render() -> void:
 		run_args.append_array(args)
 		print("ghost export: rendering on a virtual display - the desktop cannot freeze it")
 	else:
-		push_warning("ghost export: no xvfb-run; the render window must stay drawable for "
-			+ "the WHOLE render. Minimising or burying it freezes the recorded picture "
-			+ "while the audio keeps going. Install it: "
-			+ "sudo pacman -S xorg-server-xvfb")
+		# xvfb-run is Linux-only; on Windows and macOS there is no virtual display to offer,
+		# so the advice is the whole message there.
+		var fix := ("  " + Deps.hint("xvfb")) if OS.get_name() == "Linux" else ""
+		push_warning("ghost export: no virtual display; the render window must stay drawable "
+			+ "for the WHOLE render. Minimising or burying it freezes the recorded picture "
+			+ "while the audio keeps going." + fix)
 		_note_no_virtual_display = true
 	_render_pid = Subprocess.start(runner, run_args, "render")
 	if _render_pid > 0:

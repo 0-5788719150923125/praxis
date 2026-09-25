@@ -744,6 +744,11 @@ static func _is_windows() -> bool:
 	return _platform() == "windows"
 
 
+## The user's home directory - `HOME`, or `USERPROFILE` on Windows, which has no `HOME`.
+static func home() -> String:
+	return _home()
+
+
 static func _home() -> String:
 	var h := OS.get_environment("HOME")
 	if h.is_empty():

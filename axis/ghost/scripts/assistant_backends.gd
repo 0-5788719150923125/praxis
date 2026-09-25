@@ -14,10 +14,11 @@ class_name AssistantBackends
 ## Everything here is PURE (strings and dictionaries in, strings and dictionaries out), so
 ## tests/assistant_backend_check.gd can drive it with recorded streams and no subprocess.
 ##
-## THE PROMPT IS NEVER INTERPOLATED. [method argv] returns a real argument vector, and
-## [method launcher] wraps it in a fixed bash script that only ever expands positional
-## parameters - so arbitrary feedback text reaches the CLI as one argv element, whatever
-## quotes or `$(...)` it contains.
+## THE PROMPT IS NEVER IN ARGV. [method argv] returns flags, ids and paths only; the prompt
+## reaches the CLI on stdin (`claude -p` reads it there when no prompt argument is given,
+## `codex exec -` by request), from a file [method Subprocess.start_redirected] feeds in. No
+## shell ever parses it, and Windows' command-line quoting - which does not escape quotes
+## inside an argument - never sees it.
 
 ## Key -> display label + the [Deps] row that resolves its binary. Keys are what
 ## `[assistant] backend` in ghost.cfg stores (see splash.gd); "claude_cli" predates this
@@ -44,9 +45,10 @@ static func dep(key: String) -> String:
 	return String((REGISTRY.get(key, REGISTRY[LEGACY]) as Dictionary)["dep"])
 
 
-## The CLI's own argument vector for one run. [param session] is empty for a fresh run and
-## the saved session/thread id for a resume or follow-up.
-static func argv(key: String, bin: String, prompt: String, session: String, repo_root: String) -> PackedStringArray:
+## The CLI's own argument vector for one run, the prompt excluded (it goes on stdin).
+## [param session] is empty for a fresh run and the saved session/thread id for a resume or
+## follow-up.
+static func argv(key: String, bin: String, session: String, repo_root: String) -> PackedStringArray:
 	var a := PackedStringArray([bin])
 	match key:
 		"codex_cli":
@@ -59,6 +61,7 @@ static func argv(key: String, bin: String, prompt: String, session: String, repo
 				"--dangerously-bypass-approvals-and-sandbox"])
 			if session.is_empty():
 				a.append_array(["-C", repo_root])
+			a.append("-")         # the prompt: read it from stdin
 		_:
 			# Sonnet 5, default (auto) effort - the CLI's --effort has no "auto" value, so it
 			# is simply omitted. stream-json needs --verbose alongside -p.
@@ -66,18 +69,6 @@ static func argv(key: String, bin: String, prompt: String, session: String, repo
 				"--output-format", "stream-json", "--verbose"])
 			if not session.is_empty():
 				a.append_array(["--resume", session])
-	a.append(prompt)
-	return a
-
-
-## The full `/bin/bash` argument list for [method Subprocess.start_detached]: a fixed script
-## that cd's into the repo and execs the CLI with stdout/stderr captured, every variable part
-## passed positionally. Stdin is /dev/null because `codex exec` reads stdin whenever it is
-## not a terminal ("Reading additional input from stdin...") and would wait on an open pipe.
-static func launcher(cli_argv: PackedStringArray, repo_root: String, out_path: String, err_path: String) -> PackedStringArray:
-	var script := "cd \"$1\" || exit 1; out=\"$2\"; err=\"$3\"; shift 3; exec \"$@\" < /dev/null > \"$out\" 2> \"$err\""
-	var a := PackedStringArray(["-c", script, "bash", repo_root, out_path, err_path])
-	a.append_array(cli_argv)
 	return a
 
 

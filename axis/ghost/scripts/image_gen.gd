@@ -85,21 +85,27 @@ class Codex:
 		DirAccess.make_dir_recursive_absolute(dir)
 		job["events"] = dir.path_join("events.jsonl")
 		job["log"] = dir.path_join("stderr.log")
+		# The prompt carries the author's own text, so it goes on stdin (`-`), never in argv:
+		# see AssistantBackends for why.
+		var prompt_path := dir.path_join("prompt.txt")
+		var pf := FileAccess.open(prompt_path, FileAccess.WRITE)
+		if pf == null:
+			job["error"] = "could not write the prompt file in " + dir
+			return -1
+		pf.store_string(String(job["prompt"]))
+		pf.close()
 		var args := PackedStringArray([
-			# The redirects live in bash, and the prompt is a real argv element ("$@"),
-			# never interpolated into the script - it carries the author's own text.
-			"-c", "out=\"$1\"; err=\"$2\"; shift 2; exec \"$@\" > \"$out\" 2> \"$err\" < /dev/null",
-			"bash", String(job["events"]), String(job["log"]),
-			binary(), "exec", "--skip-git-repo-check", "--json",
+			"exec", "--skip-git-repo-check", "--json",
 			"-s", "workspace-write", "-C", dir,
-			"-c", "model_reasoning_effort=\"low\""])
+			"-c", "model_reasoning_effort=low"])
 		# `--image=` per file, then `--`: the flag takes MANY values, and a bare `-i a.png`
 		# followed by the prompt swallowed the prompt as a second image ("No prompt provided").
 		for r in job.get("refs", []):
 			args.append("--image=" + String(r))
 		args.append("--")
-		args.append(String(job["prompt"]))
-		var pid := Subprocess.start("/bin/bash", args, "codex image")
+		args.append("-")
+		var pid := Subprocess.start_redirected(binary(), args, {"stdin": prompt_path,
+			"out": String(job["events"]), "err": String(job["log"])}, "codex image")
 		if pid <= 0:
 			job["error"] = "could not start codex (is the Codex CLI installed and logged in?)"
 		return pid
@@ -128,7 +134,7 @@ class Codex:
 	static func generated_dir() -> String:
 		var home := OS.get_environment("CODEX_HOME")
 		if home.is_empty():
-			home = OS.get_environment("HOME").path_join(".codex")
+			home = Deps.home().path_join(".codex")
 		return home.path_join("generated_images")
 
 	## The thread id from a `codex exec --json` event log, or "".

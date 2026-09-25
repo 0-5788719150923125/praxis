@@ -1277,16 +1277,11 @@ func _yt_download() -> void:
 
 
 ## OS.create_process can't redirect output, and both the progress readout and any
-## failure diagnosis live in it - so the command runs through bash with stdout+
-## stderr sent to a log file this instance then tails. The command and its
-## arguments travel as REAL argv entries ("$@"), never interpolated into the
-## script string (assistant.gd's prompt-as-$1 discipline) - a URL is data.
+## failure diagnosis live in it - so stdout+stderr go to a log file this instance
+## then tails ([method Subprocess.start_logged], no shell on any platform).
 func _yt_spawn_logged(cmd: String, args: PackedStringArray) -> int:
 	_yt_log = _yt_dl_dir().path_join(".yt.log")
-	var script := "exec \"$@\" > \"%s\" 2>&1" % _yt_log
-	var full := PackedStringArray(["-c", script, "bash", cmd])
-	full.append_array(args)
-	return Subprocess.start("/bin/bash", full, "clip download")
+	return Subprocess.start_logged(cmd, args, _yt_log, "clip download")
 
 
 ## The log's last 4KB. This is polled EVERY FRAME while a download runs (the
@@ -5493,11 +5488,7 @@ func _ft_fail(why: String) -> void:
 ## stdout+stderr to one file, so a failed pip or a mediapipe import error is
 ## readable afterwards instead of vanishing into a GUI launch's missing console.
 func _ft_spawn_logged(exe: String, args: PackedStringArray) -> int:
-	var quoted := PackedStringArray()
-	for a in [exe] + Array(args):
-		quoted.append('"' + String(a).replace('"', '\\"') + '"')
-	return Subprocess.start("/bin/bash", PackedStringArray(
-		["-c", " ".join(quoted) + ' >"' + _ft_log + '" 2>&1']))
+	return Subprocess.start_logged(exe, args, _ft_log, "face track")
 
 
 func _ft_load() -> void:
@@ -5663,13 +5654,15 @@ func _pt_ensure() -> void:
 	if _pt_state == "failed" or session == null or session.video_path.is_empty():
 		return
 	if _pt_state != "ready":
+		# Before ANY step, not just the windows: pip and the model fetch log here too, and
+		# an empty path used to make their redirect fail so the step never ran at all.
+		DirAccess.make_dir_recursive_absolute(_pt_dir_path())
+		_pt_log = _pt_dir_path().path_join("last_run.log")
 		if not FileAccess.file_exists(_ft_bin("python")):
 			_pt_make_venv()
 		elif not FileAccess.file_exists(_pt_model_path()):
 			_pt_fetch_model()
 		else:
-			DirAccess.make_dir_recursive_absolute(_pt_dir_path())
-			_pt_log = _pt_dir_path().path_join("last_run.log")
 			_pt_chunk_n = int(POSE_CHUNK_SECS * POSE_TRACK_RATE)
 			_pt_chunk_total = maxi(1, int(ceil(session.duration / POSE_CHUNK_SECS)))
 			_pt_state = "ready"
@@ -5741,9 +5734,10 @@ func _pt_fail(why: String) -> void:
 	_set_status("⚠  The umbra can't see the body - " + why)
 
 
-## `background` runs the child at the lowest priority the OS will hand out, and
-## the pose tracker is ALWAYS run that way.
+## stdout+stderr to one file, like [method _ft_spawn_logged].
 ##
+## THE WINDOWS RUN AT THE LOWEST PRIORITY THE OS HANDS OUT, and pose_track.py lowers itself
+## (`--background`: nice 19, or IDLE_PRIORITY_CLASS on Windows) before it loads anything.
 ## WHY, and it is not tidiness: mediapipe saturates every core it is given, and
 ## ghost's video decode and the editor's own frame both run on this machine's
 ## other ones. Starve the decode and `_player.stream_position` stops advancing;
@@ -5752,20 +5746,8 @@ func _pt_fail(why: String) -> void:
 ## continues. Reported as "the sound no longer works in masking mode... it's
 ## breaking the audio at launch" - and nothing had touched the audio at all. A
 ## background job that can stall the foreground is a background job in name only.
-func _pt_spawn_logged(exe: String, args: PackedStringArray, background := false) -> int:
-	var quoted := PackedStringArray()
-	if background:
-		# `nice` is coreutils, present wherever `setpriv` (which Subprocess already
-		# depends on) is. If it is missing the shell reports it and the child never
-		# starts, which surfaces as a failed window rather than as a silent
-		# full-speed run - the honest failure of the two.
-		quoted.append("nice")
-		quoted.append("-n")
-		quoted.append("19")
-	for a in [exe] + Array(args):
-		quoted.append('"' + String(a).replace('"', '\\"') + '"')
-	return Subprocess.start("/bin/bash", PackedStringArray(
-		["-c", " ".join(quoted) + ' >"' + _pt_log + '" 2>&1']))
+func _pt_spawn_logged(exe: String, args: PackedStringArray) -> int:
+	return Subprocess.start_logged(exe, args, _pt_log, "pose track")
 
 
 ## THE PUMP. Which windows are wanted is a pure function of the playhead: the one
@@ -5873,7 +5855,7 @@ func _pt_start_chunk(k: int) -> void:
 		script, "--video", src, "--out", _pt_chunk_path(k), "--model", _pt_model_path(),
 		"--rate", str(POSE_TRACK_RATE), "--mask-w", str(_UMB_W), "--mask-h", str(_UMB_H),
 		"--start", str(float(k) * POSE_CHUNK_SECS), "--duration", str(POSE_CHUNK_SECS),
-		"--progress", _pt_dir_path().path_join("progress")]), true)
+		"--progress", _pt_dir_path().path_join("progress"), "--background"]))
 	if _pt_job_pid <= 0:
 		_pt_missing[k] = true
 		_pt_fail("could not start the pose tracker")
@@ -6572,8 +6554,9 @@ func _do_restart() -> void:
 	var exe := OS.get_executable_path()
 	var proj := ProjectSettings.globalize_path("res://")
 	_reload_check_log = ProjectSettings.globalize_path("user://reload_compile_check.log")
-	var script := "\"%s\" --headless --path \"%s\" --editor --quit > \"%s\" 2>&1" % [exe, proj, _reload_check_log]
-	_reload_check_pid = Subprocess.start("/bin/bash", ["-c", script], "reload check")
+	_reload_check_pid = Subprocess.start_logged(exe,
+		PackedStringArray(["--headless", "--path", proj, "--editor", "--quit"]),
+		_reload_check_log, "reload check")
 	if _reload_check_pid <= 0:
 		_set_status("⚠  Couldn't run the pre-reload compile check - NOT reloading (edits left as-is)")
 		_reload_check_pid = -1
@@ -8168,9 +8151,7 @@ func _poll_render() -> void:
 		"transcoding":
 			if Subprocess.alive(_transcode_pid):
 				return
-			# Always clear the scratch AVI (the transcode's own `&& rm` usually already
-			# did, but not if it failed or was interrupted) - never leave an intermediate
-			# behind. remove_absolute is a harmless no-op when it's already gone.
+			# Always clear the scratch AVI - never leave an intermediate behind.
 			if _file_size(_out) > 4096:
 				DirAccess.remove_absolute(_avi)
 				_set_status("✓  Saved  " + _out)
@@ -8273,15 +8254,13 @@ func _start_transcode() -> void:
 	# _repair_avi_sizes) is bypassed instead of trusted - without it a >4 GiB render
 	# transcodes to a broken file or fails outright, leaving the raw .render.avi behind.
 	# `-pix_fmt yuv420p` keeps the MP4 playable everywhere (VLC/QuickTime/browsers).
-	# Run through bash so the scratch AVI is deleted BY THE TRANSCODE ITSELF the moment
-	# it succeeds (`&& rm`), not by a _poll_render tick that never comes if the editor is
-	# closed while ffmpeg (a child that outlives it) is still finalizing - which is how
-	# the orphaned .render.avi got left "alongside the final version". Paths are passed as
-	# $1/$2, never interpolated, so spaces/quotes in the export path are safe.
-	var script := "ffmpeg -y -loglevel error -fflags +genpts -i \"$1\" " \
-		+ "-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k \"$2\" " \
-		+ "&& rm -f \"$1\""
-	_transcode_pid = Subprocess.start("/bin/bash", PackedStringArray(["-c", script, "bash", _avi, _out]), "mask transcode")
+	# The scratch AVI is deleted by _poll_render once the .mp4 is there. If ghost closes
+	# mid-transcode, ffmpeg dies with it (see [Subprocess]) and the AVI stays - it is then
+	# the only complete copy of the render - until the next export clears it.
+	_transcode_pid = Subprocess.start("ffmpeg", PackedStringArray([
+		"-y", "-loglevel", "error", "-fflags", "+genpts", "-i", _avi,
+		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-b:a", "192k", _out]), "mask transcode")
 	_render_state = "transcoding"
 
 

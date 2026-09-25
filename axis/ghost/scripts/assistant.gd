@@ -236,6 +236,7 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 	var base := ProjectSettings.globalize_path(DIR)
 	entry.out_path = "%s/%04d.out.json" % [base, int(entry.index)]
 	entry.err_path = "%s/%04d.err.log" % [base, int(entry.index)]
+	var prompt_path := "%s/%04d.prompt.txt" % [base, int(entry.index)]
 	# Pinned on first dispatch: a follow-up or resume must reach the SAME CLI whatever the
 	# dropdown says now.
 	var backend := _backend_of(entry)
@@ -245,11 +246,17 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 	# _poll_progress tails it each frame for a live "what's it doing" line; _finish reads
 	# the whole thing once the process exits.
 	#
-	# Everything reaches bash as a positional parameter - the repo, the capture paths, the
-	# binary and the prompt - so feedback text is one argv element and never shell source.
-	var cli := Backends.argv(backend, _bin_for(backend), prompt, String(entry.session_id), _repo_root)
-	entry.pid = Subprocess.start_detached("/bin/bash",
-		Backends.launcher(cli, _repo_root, entry.out_path, entry.err_path))
+	# The prompt reaches the CLI on stdin, from a file - never argv, never shell source (see
+	# AssistantBackends). Detached: the run edits the working tree and is meant to finish
+	# after the editor closes.
+	var pf := FileAccess.open(prompt_path, FileAccess.WRITE)
+	if pf != null:
+		pf.store_string(prompt)
+		pf.close()
+	var cli := Backends.argv(backend, _bin_for(backend), String(entry.session_id), _repo_root)
+	entry.pid = Subprocess.start_redirected(cli[0], cli.slice(1), {"cwd": _repo_root,
+		"stdin": prompt_path, "out": entry.out_path, "err": entry.err_path}, "", true) \
+		if pf != null else -1
 	if int(entry.pid) < 0:
 		# create_process failed outright (bad binary, spawn error) - without
 		# this, the entry would sit at "running" forever: _process()'s poll
@@ -257,7 +264,7 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 		# pid, and a negative one never satisfies that, so nothing would ever
 		# notice or unblock the queue.
 		entry.status = "error"
-		entry.error_text = "failed to start the %s subprocess (OS.create_process returned %d)" \
+		entry.error_text = "failed to start the %s subprocess (launch returned %d)" \
 			% [Backends.label(backend), int(entry.pid)]
 		_running_count -= 1
 		_save_entry(entry)
@@ -409,6 +416,7 @@ func _finish(entry: Dictionary) -> void:
 				(out_text if out_text != "" else "(no output - the process may have failed to start)")
 	_delete_file(entry.out_path)
 	_delete_file(entry.err_path)
+	_delete_file(String(entry.out_path).replace(".out.json", ".prompt.txt"))
 	entry.pid = -1
 	entry.progress = ""
 	_save_entry(entry)
@@ -548,9 +556,10 @@ func _load_existing() -> void:
 
 func _delete_entry(entry: Dictionary) -> void:
 	if entry.status == "running" and int(entry.pid) >= 0:
-		OS.kill(int(entry.pid))
+		Subprocess.terminate(int(entry.pid))
 	_delete_file(entry.out_path)
 	_delete_file(entry.err_path)
+	_delete_file(String(entry.out_path).replace(".out.json", ".prompt.txt"))
 	var g := ProjectSettings.globalize_path(String(entry.stem))
 	_delete_file(g + ".assistant.json")
 	_delete_file(g + ".json")
@@ -926,7 +935,7 @@ func _build_followup_row(entry: Dictionary) -> Control:
 func _interrupt_entry(entry: Dictionary) -> void:
 	if entry.status != "running" or int(entry.pid) < 0:
 		return
-	OS.kill(int(entry.pid))
+	Subprocess.terminate(int(entry.pid))
 
 
 func _build_interrupt_row(entry: Dictionary) -> Control:

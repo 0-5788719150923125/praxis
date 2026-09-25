@@ -432,6 +432,7 @@ ENGINE_FLAGS = {
     "--mask-h",
     "--start",
     "--duration",
+    "--background",
     # setpriv's interface (subprocess.gd binds every child's lifetime to ghost's with it),
     # an argument to a subprocess, not a ghost flag.
     "--pdeathsig",

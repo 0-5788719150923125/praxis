@@ -312,6 +312,12 @@ godot --headless --path axis/ghost -- --deps
 - **setpriv** (optional, Linux) - lets the kernel kill ghost's background programs
   when ghost dies, rather than only on a clean quit.
 
+Linux, macOS and Windows are all meant to work, and nothing requires a Unix shell:
+background programs are launched directly, and where output has to be redirected,
+ghost does it itself (PowerShell on Windows for the AI-assistant features). ghost is
+developed on Linux, though, so Windows and macOS are the least exercised - if
+something fails there, the Environment panel is the first place to look.
+
 Python packages are never installed system-wide or into your own environment: each
 feature gets a private virtualenv under the user data directory, built the first
 time that feature is used. The panel lists those too, with what they will cost to

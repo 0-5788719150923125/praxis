@@ -28,7 +28,7 @@ extends SceneTree
 ## Programs every platform provides as part of itself. They are excluded from the
 ## drift scan because a row telling someone to install `sleep` would be absurd -
 ## and because a machine without them has bigger problems than ghost.
-const ASSUMED := ["sleep", "true", "false", "sh", "bash", "cmd", "env"]
+const ASSUMED := ["sleep", "true", "false", "sh", "bash", "cmd", "env", "powershell"]
 
 var _fails: Array = []
 
@@ -121,7 +121,7 @@ func _source_drift() -> void:
 		declared[a] = true
 
 	var re := RegEx.new()
-	re.compile("(?:Subprocess\\.start(?:_with_pipe|_detached)?|Deps\\.execute|OS\\.execute)"
+	re.compile("(?:Subprocess\\.start(?:_with_pipe|_detached|_logged|_redirected)?|Deps\\.execute|OS\\.execute)"
 		+ "\\(\\s*\"([^\"/\\\\]+)\"")
 	var seen := {}
 	for path in _scripts():
@@ -139,6 +139,19 @@ func _source_drift() -> void:
 	for prog in seen.keys():
 		_check(declared.has(prog), "'%s' (spawned in %s) has a Deps.TOOLS row"
 			% [prog, ", ".join(PackedStringArray(seen[prog]))])
+
+	# NO POSIX-ONLY PROGRAM PATHS. `/bin/bash` was spawned from seven places, none of which
+	# could start on Windows; the redirects they existed for are Subprocess.start_logged /
+	# start_redirected now. Subprocess itself owns the one `/bin/sh`, on the Unix branch.
+	var abs_re := RegEx.new()
+	abs_re.compile("(?:Subprocess\\.start\\w*|Deps\\.execute|OS\\.execute|OS\\.create_process"
+		+ "|OS\\.execute_with_pipe)\\(\\s*\"(/[^\"]*)\"")
+	var posix := PackedStringArray()
+	for path in _scripts():
+		for m in abs_re.search_all(FileAccess.get_file_as_string(path)):
+			posix.append("%s in %s" % [m.get_string(1), path.get_file()])
+	_check(posix.is_empty(), "no script spawns a POSIX-only absolute path (%s)"
+		% ", ".join(posix))
 
 
 func _scripts() -> PackedStringArray:
