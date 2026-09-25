@@ -60,8 +60,12 @@ class Host:
         # Claim the real stdout before anything else can write to it, then point
         # the process's stdout at stderr so a chatty backend cannot corrupt the
         # protocol stream. Model loaders are notoriously chatty.
-        self._out = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+        self._out = os.fdopen(
+            os.dup(sys.stdout.fileno()), "w", buffering=1, encoding="utf-8"
+        )
         os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+        # Godot speaks UTF-8; Windows would otherwise decode stdin as cp1252.
+        sys.stdin.reconfigure(encoding="utf-8")
         self._backends: dict = {}
 
     # -- transport ---------------------------------------------------------

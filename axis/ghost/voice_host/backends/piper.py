@@ -1500,7 +1500,7 @@ class PiperBackend(Backend):
 
         onnx, cfgp = self._files(voice)
         self._ensure_aligned(onnx)
-        cfg = json.loads(cfgp.read_text())
+        cfg = json.loads(cfgp.read_text(encoding="utf-8"))
         opts = ort.SessionOptions()
         opts.log_severity_level = 3  # the protocol owns stdout
         sess = ort.InferenceSession(

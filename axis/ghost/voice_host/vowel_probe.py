@@ -238,7 +238,7 @@ class VowelProbe:
 
     def _load(self, voice: str):
         try:
-            got = json.loads(self._path(voice).read_text())
+            got = json.loads(self._path(voice).read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 - absent, unreadable or half-written
             return None
         return (
