@@ -322,6 +322,7 @@ func _check_the_look_travels() -> void:
 	img.save_png(ref)
 	var style := "Ink and wash: muted, \"quiet\".\nNo text anywhere."
 	Illustrations.set_style(style)
+	Illustrations.set_style("Ballpoint: schematic, \"plain\".", "sketch")
 	Illustrations.add_references([ProjectSettings.globalize_path(ref)])
 	_ok(_doc.save(), "saving the look into the document failed")
 	var raw := FileAccess.get_file_as_string(_path)
@@ -330,6 +331,7 @@ func _check_the_look_travels() -> void:
 	_ok(raw.ends_with(BODY_A), "writing the look changed the chapter")
 	# Change everything in the library, then Speak: the document's look must come back.
 	Illustrations.set_style("something else")
+	Illustrations.set_style("something else", "sketch")
 	Illustrations.set_look({"references": []})
 	_ok(Illustrations.references().is_empty(), "the control is wrong - the references did not clear")
 	_doc.allow_autosave_for_test()
@@ -337,6 +339,8 @@ func _check_the_look_travels() -> void:
 	_doc._autosave_for_test = false
 	_doc.pull()
 	_ok(Illustrations.style() == style, "the style came back as %s" % JSON.stringify(Illustrations.style()))
+	_ok(Illustrations.style("sketch") == "Ballpoint: schematic, \"plain\".",
+		"the sketch style came back as %s" % JSON.stringify(Illustrations.style("sketch")))
 	_ok(Illustrations.references().size() == 1, "the reference images did not come back from the document")
 	_ok(String(_ed._illustrations._style.text) == style, "the panel's style box does not show the document's style")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ref))

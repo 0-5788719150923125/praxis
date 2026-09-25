@@ -39,6 +39,14 @@ const MAX_JOBS := 2
 ## A job that runs this long is abandoned rather than watched forever. Measured ~60 s each.
 const JOB_TIMEOUT_S := 600
 const IMAGE_EXTS := ["png", "jpg", "jpeg", "webp"]
+## SELF-REFERENCE, a switch per kind (on unless the document says otherwise): each picture is
+## also sent the ones already made before it in the chapter, so ten pictures read as one hand
+## rather than ten separate tries at the style. It rides ALONGSIDE the static references and is
+## never written into them - those are the author's list, and a generated picture appended to it
+## would outlive the reroll that replaced it. At most this many are sent - the FIRST, which set
+## the look, and the most recent - because the run grows with the chapter, and a pile of
+## attachments makes a model worse at matching, not better.
+const CHAIN_MAX := 4
 
 ## Bumped whenever a picture lands or the chosen version changes, so a medium holding page
 ## textures knows to re-typeset without polling the disk.
@@ -69,6 +77,16 @@ static func use_for_test(store := {}, read_only := false) -> void:
 	_jobs = {}
 	_queue = []
 	_errors = {}
+	_chapter = []
+
+
+## The chapter's pictures in reading order ([method Manuscript.images] rows), which is what
+## "the pictures before this one" means for a self-referenced kind. Set by whoever holds the
+## text - the Illustrations panel, on every read of it.
+static var _chapter: Array = []
+
+static func set_chapter(images: Array) -> void:
+	_chapter = images.duplicate(true)
 
 
 # --- storage -----------------------------------------------------------------
@@ -108,38 +126,105 @@ static func read_only() -> bool:
 
 # --- the look ----------------------------------------------------------------
 
-static func style() -> String:
-	return String(_read("style", ""))
+## THE STYLE IS PER KIND, named by the marker that asks for the picture: `image` for the
+## pictures put into the book, `sketch` for the drawings its writer makes on the page. One style
+## for both was wrong both ways - a painter's brief turned every margin sketch into a painting,
+## and a pen-sketch brief would flatten every plate. Each kind is edited, stored, signed and
+## judged stale on its own. The references are the pictures' alone; a sketch never gets them.
+const STYLE_KINDS := ["image", "sketch"]
+const STYLE_LABELS := {"image": "Pictures", "sketch": "Sketches"}
 
 
-static func set_style(text: String) -> void:
-	_write("style", text)
+## Which style a picture of [param placement] is made under.
+static func kind_of(placement: String) -> String:
+	return "sketch" if placement == "sketch" else "image"
 
 
-## The reference images, as `user://` paths of the COPIES this library holds.
-static func references() -> Array:
+## `{kind: text}` for every kind. A library from before there were kinds held one string: it
+## was the pictures' style, and it stays theirs.
+static func styles() -> Dictionary:
+	# NOT a null default: ConfigFile takes null as "no default given" and logs an error for
+	# every read of a key that is not there yet, which is every read on an older config.
+	var raw: Variant = _read("styles", {})
+	var out := {}
+	for k in STYLE_KINDS:
+		out[k] = ""
+	if raw is Dictionary and not (raw as Dictionary).is_empty():
+		for k in STYLE_KINDS:
+			out[k] = String((raw as Dictionary).get(k, ""))
+	else:
+		out["image"] = String(_read("style", ""))
+	return out
+
+
+static func style(kind := "image") -> String:
+	return String(styles().get(kind, ""))
+
+
+static func set_style(text: String, kind := "image") -> void:
+	var all := styles()
+	all[kind] = text
+	_write("styles", all)
+
+
+## The reference images for [param kind], as `user://` paths of the COPIES this library holds.
+## PER KIND, like the style: a sketch and a painting should not be pulled toward the same
+## pictures. A library from before there were kinds held one list, and it was the pictures'.
+static func references(kind := "image") -> Array:
 	var out: Array = []
-	for p in (_read("refs", []) as Array):
+	for p in (_all_refs().get(kind, []) as Array):
 		if FileAccess.file_exists(String(p)):
 			out.append(String(p))
 	return out
+
+
+static func _all_refs() -> Dictionary:
+	var raw: Variant = _read("refs_by_kind", {})     # {} not null - see styles()
+	var out := {}
+	for k in STYLE_KINDS:
+		out[k] = []
+	if raw is Dictionary and not (raw as Dictionary).is_empty():
+		for k in STYLE_KINDS:
+			out[k] = ((raw as Dictionary).get(k, []) as Array).duplicate()
+	else:
+		out["image"] = (_read("refs", []) as Array).duplicate()
+	return out
+
+
+## Whether [param kind] is sent its own earlier pictures. On by default.
+static func self_reference(kind := "image") -> bool:
+	var raw: Variant = _read("self_ref", {})
+	return bool((raw as Dictionary).get(kind, true)) if raw is Dictionary else true
+
+
+static func set_self_reference(on: bool, kind := "image") -> void:
+	var raw: Variant = _read("self_ref", {})
+	var d: Dictionary = (raw as Dictionary).duplicate() if raw is Dictionary else {}
+	d[kind] = on
+	_write("self_ref", d)
+
+
+static func _set_refs(kind: String, list: Array) -> void:
+	var all := _all_refs()
+	all[kind] = list
+	_write("refs_by_kind", all)
 
 
 ## Copy [param paths] into the library. A copy, because a reference that vanishes when the
 ## author tidies their Downloads folder would silently change every later picture. Named by
 ## content, so importing the same file twice is one reference. Returns one line per file that
 ## could not be taken.
-static func add_references(paths: Array) -> PackedStringArray:
+static func add_references(paths: Array, kind := "image") -> PackedStringArray:
 	var errs := PackedStringArray()
 	if read_only():
 		errs.append("read-only session")
 		return errs
-	var list := references()
+	var list := references(kind)
 	for src in paths:
 		var dest := _take(String(src), errs)
 		if not dest.is_empty() and not list.has(dest):
 			list.append(dest)
-	_write("refs", list)
+	_set_refs(kind, list)
 	return errs
 
 
@@ -166,12 +251,12 @@ static func _take(s: String, errs: PackedStringArray) -> String:
 	return dest
 
 
-static func remove_reference(i: int) -> void:
-	var list := references()
+static func remove_reference(i: int, kind := "image") -> void:
+	var list := references(kind)
 	if i < 0 or i >= list.size():
 		return
 	list.remove_at(i)
-	_write("refs", list)
+	_set_refs(kind, list)
 	# The COPY stays: references are per document now (see [method look]), so another
 	# chapter may still name this file, and a copy named by its content costs nothing to keep.
 
@@ -193,8 +278,10 @@ static func look_signature(style_text: String, refs: Array) -> String:
 	return (style_text.strip_edges() + "|" + ",".join(names)).sha256_text().substr(0, 12)
 
 
-static func current_signature() -> String:
-	return look_signature(style(), references())
+## The look a [param kind] of picture is made under now. The chain of earlier pictures is NOT
+## part of it: rerolling the first picture would otherwise mark every later one stale.
+static func current_signature(kind := "image") -> String:
+	return look_signature(style(kind), references(kind))
 
 
 ## THE LOOK AS A DOCUMENT CARRIES IT - the painter, the style and the reference images -
@@ -202,30 +289,75 @@ static func current_signature() -> String:
 ## references are ABSOLUTE paths to the library's own copies: links a person can open, and
 ## files that stay put whatever happens to the originals.
 static func look() -> Dictionary:
-	var refs: Array = []
-	for r in references():
-		refs.append(ProjectSettings.globalize_path(String(r)))
-	return {"painter": backend(), "style": style(), "references": refs}
+	# Only what is set: a kind with no style or no references is simply not named, and
+	# [method set_look] reads a kind it is not given as none.
+	var st := {}
+	var refs := {}
+	for k in STYLE_KINDS:
+		if not style(k).strip_edges().is_empty():
+			st[k] = style(k)
+		var list: Array = []
+		for r in references(k):
+			list.append(ProjectSettings.globalize_path(String(r)))
+		if not list.is_empty():
+			refs[k] = list
+	# Written for EVERY kind, on or off: the switch is a decision about this chapter's pictures,
+	# and a default that changed later must not silently change it.
+	var sr := {}
+	for k in STYLE_KINDS:
+		sr[k] = self_reference(k)
+	var out := {"painter": backend(), "self_reference": sr}
+	if not st.is_empty():
+		out["style"] = st
+	if not refs.is_empty():
+		out["references"] = refs
+	return out
 
 
 ## ...and back. Any image path is accepted (it is copied in by content, so a library copy is
-## itself and a new file is imported); the reference list becomes EXACTLY this one. A key
-## the block does not carry is left as it is. Returns one line per file that could not be taken.
+## itself and a new file is imported).
+##
+## THE BLOCK IS THE WHOLE LOOK. A style or a reference list the block does not name is NONE,
+## not "whatever the last chapter left": a chapter written without reference images, opened
+## after one written with them, would otherwise have been painted against the other chapter's
+## pictures, silently. Only the painter carries over - that is the machine's, not the book's.
+## `style` and `references` may each be a map by kind or, as older documents wrote them, a
+## bare string / list, which is the pictures'. Returns one line per file that could not be taken.
 static func set_look(d: Dictionary) -> PackedStringArray:
 	var errs := PackedStringArray()
 	if read_only():
 		return errs
 	if d.has("painter"):
 		set_backend(String(d["painter"]))
-	if d.has("style"):
-		set_style(String(d["style"]))
-	if d.get("references") is Array:
+	var st: Variant = d.get("style", {})
+	var rf: Variant = d.get("references", {})
+	if not (st is Dictionary):
+		st = {"image": String(st)}
+	if rf is Array:
+		rf = {"image": rf}
+	elif not (rf is Dictionary):
+		rf = {}
+	var sr: Variant = d.get("self_reference", {})
+	if sr is bool:
+		sr = {"image": sr, "sketch": sr}
+	elif not (sr is Dictionary):
+		sr = {}
+	var all_sr := {}
+	var all_st := {}
+	var all_rf := {}
+	for k in STYLE_KINDS:
+		all_st[k] = String((st as Dictionary).get(k, ""))
 		var list: Array = []
-		for p in d["references"] as Array:
+		var given: Variant = (rf as Dictionary).get(k, [])
+		for p in (given as Array if given is Array else []):
 			var dest := _take(String(p), errs)
 			if not dest.is_empty() and not list.has(dest):
 				list.append(dest)
-		_write("refs", list)
+		all_rf[k] = list
+		all_sr[k] = bool((sr as Dictionary).get(k, true))
+	_write("self_ref", all_sr)
+	_write("styles", all_st)
+	_write("refs_by_kind", all_rf)
 	return errs
 
 
@@ -252,7 +384,7 @@ static func set_backend(key: String) -> void:
 ## picture of a wolf and asked for a courtroom, a model will happily put the wolf in the
 ## courtroom.
 static func build_prompt(description: String, placement: String, style_text: String,
-		ref_count: int, target: String) -> String:
+		ref_count: int, target: String, chain_count := 0) -> String:
 	var lines := PackedStringArray()
 	lines.append("Use your built-in image generation tool to create exactly ONE image, then "
 		+ "save it as a PNG at this exact path: %s" % target)
@@ -262,19 +394,43 @@ static func build_prompt(description: String, placement: String, style_text: Str
 	lines.append(description.strip_edges())
 	lines.append("")
 	lines.append("FORMAT: " + placement_guide(placement))
-	# A SKETCH IS THE WRITER'S OWN HAND, not the book's illustrator: the book's style and its
-	# references would paint it, and a painting cannot be lifted off its background onto a page.
+	# A SKETCH IS THE WRITER'S OWN HAND, not the book's illustrator: [param style_text] and the
+	# references are the sketches' own.
 	var sketch := placement == "sketch"
-	if not sketch and not style_text.strip_edges().is_empty():
-		lines.append("STYLE (applies to every illustration in this book): " + style_text.strip_edges())
-	if not sketch and ref_count > 0:
-		lines.append("REFERENCES: the %d attached image%s %s STYLE REFERENCES ONLY. Match "
-			% [ref_count, "" if ref_count == 1 else "s", "is a" if ref_count == 1 else "are"]
+	if not style_text.strip_edges().is_empty():
+		if sketch:
+			lines.append("STYLE (applies to every sketch in this notebook; the FORMAT above wins "
+				+ "wherever they disagree): " + style_text.strip_edges())
+		else:
+			lines.append("STYLE (applies to every illustration in this book): " + style_text.strip_edges())
+	# The attachments arrive in that order - the author's references, then the chain - so each
+	# group is named by its place in it.
+	var both := ref_count > 0 and chain_count > 0
+	if ref_count > 0:
+		lines.append("REFERENCES: %s %s STYLE REFERENCES ONLY. Match "
+			% [("the first %d attached image%s" % [ref_count, "" if ref_count == 1 else "s"]) if both
+				else ("the %d attached image%s" % [ref_count, "" if ref_count == 1 else "s"]),
+			"is a" if ref_count == 1 else "are"]
 			+ "their rendering style: medium, palette, linework, texture, lighting and level of "
 			+ "detail. Do NOT copy their subjects, characters, objects or composition - the "
 			+ "content comes only from the description above.")
-	lines.append("ALWAYS: no text, no captions, no lettering, no borders, no frames, "
-		+ "no watermark, no signature.")
+	if chain_count > 0:
+		lines.append("EARLIER PICTURES: %s %s earlier %s from this same book. Match their "
+			% [("the last %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]) if both
+				else ("the %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]),
+			"is an" if chain_count == 1 else "are", "sketches" if sketch else "pictures"]
+			+ "rendering exactly - medium, palette, linework, texture and level of detail - so "
+			+ "every one reads as made by the same hand. Keep a recurring character looking the "
+			+ "same if one appears. Do NOT reuse their compositions or scenes - the content comes "
+			+ "only from the description above.")
+	# A sketch may be labelled - a ledger entry, an arrow marked "leak" - when its description
+	# says so; a picture never is.
+	if sketch:
+		lines.append("ALWAYS: no borders, no frames, no watermark, no signature; write words only "
+			+ "where the description asks for them, in plain handwriting.")
+	else:
+		lines.append("ALWAYS: no text, no captions, no lettering, no borders, no frames, "
+			+ "no watermark, no signature.")
 	return "\n".join(lines)
 
 
@@ -343,12 +499,41 @@ static func select_version(key: String, i: int) -> void:
 	revision += 1
 
 
+## Delete version [param i] of [param key] - its file and its place in the index - and show the
+## one before it (or, when it was the first, the next). With none left the picture is simply
+## missing again. This is how a bad picture stops being passed on: [method chain_refs] sends
+## whatever is CURRENT, so rerolling alone kept the bad one in front of every later picture
+## until the new one landed, and kept it as a version forever. Returns false when nothing went.
+static func delete_version(key: String, i: int) -> bool:
+	if read_only():
+		return false
+	var vs := versions(key)
+	if i < 0 or i >= vs.size():
+		return false
+	var file := String((vs[i] as Dictionary)["file"])
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(file))
+	var at := current_index(key)
+	vs.remove_at(i)
+	var e := entry(key)
+	e["versions"] = vs
+	if vs.is_empty():
+		e.erase("current")
+	elif at >= i:
+		e["current"] = maxi(at - 1, 0)
+	else:
+		e["current"] = at
+	_put_entry(key, e)
+	revision += 1
+	return true
+
+
 ## Made under a different style or reference set than the one now in force.
 static func is_stale(key: String) -> bool:
 	var i := current_index(key)
 	if i < 0:
 		return false
-	return String((versions(key)[i] as Dictionary).get("sig", "")) != current_signature()
+	var kind := kind_of(String(entry(key).get("placement", "")))
+	return String((versions(key)[i] as Dictionary).get("sig", "")) != current_signature(kind)
 
 
 ## "missing", "queued", "running", "ready" or "error".
@@ -409,8 +594,53 @@ static func pump() -> void:
 		Subprocess.forget(pid)
 		_jobs.erase(key)
 		_land(String(key), job)
-	while _jobs.size() < MAX_JOBS and not _queue.is_empty():
-		_start(_queue.pop_front())
+	while _jobs.size() < MAX_JOBS:
+		var i := _next_startable()
+		if i < 0:
+			break
+		_start(_queue.pop_at(i))
+
+
+## The first queued request that may start now. A self-referencing kind runs ONE AT A TIME, in
+## the order it was asked for: two of its pictures painting together could not reference each
+## other, and the second would come out as unanchored as the first.
+static func _next_startable() -> int:
+	for i in _queue.size():
+		var kind := kind_of(String((_queue[i] as Dictionary)["placement"]))
+		if not self_reference(kind):
+			return i
+		var busy_kind := false
+		for j in _jobs.values():
+			if kind_of(String((j as Dictionary)["placement"])) == kind:
+				busy_kind = true
+		for q in range(i):
+			if kind_of(String((_queue[q] as Dictionary)["placement"])) == kind:
+				busy_kind = true
+		if not busy_kind:
+			return i
+	return -1
+
+
+## The earlier pictures of [param key]'s kind in the chapter that exist now, as the chain sends
+## them: the first, then the most recent, [constant CHAIN_MAX] in all, oldest first.
+static func chain_refs(key: String) -> Array:
+	var at := -1
+	var kind := "image"
+	for i in _chapter.size():
+		if String((_chapter[i] as Dictionary)["key"]) == key:
+			at = i
+			kind = kind_of(String((_chapter[i] as Dictionary).get("placement", "")))
+			break
+	var made: Array = []
+	for i in range(maxi(at, 0)):
+		var im: Dictionary = _chapter[i]
+		var k := String(im["key"])
+		if kind_of(String(im.get("placement", ""))) == kind and k != key and not path_for(k).is_empty() \
+				and not made.has(path_for(k)):
+			made.append(path_for(k))
+	if made.size() <= CHAIN_MAX:
+		return made
+	return [made[0]] + made.slice(made.size() - (CHAIN_MAX - 1))
 
 
 static func _start(req: Dictionary) -> void:
@@ -419,17 +649,22 @@ static func _start(req: Dictionary) -> void:
 	var stamp := Time.get_ticks_msec()
 	var dir := ProjectSettings.globalize_path(_root.path_join("jobs").path_join("%s_%d" % [key, stamp]))
 	var target := dir.path_join("image.png")
+	var kind := kind_of(String(req["placement"]))
 	var refs: Array = []
-	for r in references():
+	for r in references(kind):
 		refs.append(ProjectSettings.globalize_path(String(r)))
+	# The author's references first, then the chain: the prompt tells the model which is which.
+	var chain: Array = chain_refs(key) if self_reference(kind) else []
+	var n_static := refs.size()
+	refs.append_array(chain)
 	var job := {
 		"key": key, "dir": dir, "target": target, "refs": refs,
 		"placement": String(req["placement"]), "description": String(req["prompt"]),
-		"sig": current_signature(), "backend": backend(),
+		"sig": current_signature(kind), "backend": backend(),
 		# A second of slack: file mtimes are whole seconds and the clock read is not.
 		"started": int(Time.get_unix_time_from_system()) - 1,
-		"prompt": build_prompt(String(req["prompt"]), String(req["placement"]), style(),
-			refs.size(), target),
+		"prompt": build_prompt(String(req["prompt"]), String(req["placement"]), style(kind),
+			n_static, target, chain.size()),
 	}
 	job["gen"] = gen
 	var pid := gen.start(job)
@@ -453,7 +688,12 @@ static func _land(key: String, job: Dictionary) -> void:
 		return
 	var e := entry(key)
 	var vs: Array = e.get("versions", [])
-	var file := _root.path_join(key).path_join("v%03d.png" % (vs.size() + 1))
+	# The first free number, not the count: after a version is deleted the count names a file
+	# that still exists, and the new picture would overwrite it.
+	var num := vs.size() + 1
+	while FileAccess.file_exists(_root.path_join(key).path_join("v%03d.png" % num)):
+		num += 1
+	var file := _root.path_join(key).path_join("v%03d.png" % num)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(file.get_base_dir()))
 	# Re-encoded rather than copied: whatever the painter wrote (a JPEG named .png has been
 	# seen from image tools), the library holds a real PNG.

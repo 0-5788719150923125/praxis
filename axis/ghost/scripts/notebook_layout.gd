@@ -32,8 +32,11 @@ const PAD_SPINE := 100.0
 const SKETCH_ROWS := 8
 ## A photo's white border, in page pixels.
 const PHOTO_BORDER := 18.0
-## A paper clip's length, from the edge it grips.
+## A paper clip's length, and how far its outer loop stands off the page edge it grips - a clip
+## is pushed on from the edge, so its end is always past it. Drawn in the page texture's margin
+## ([method NotebookMedium._page_pad]), which must be wider than this.
 const CLIP_LEN := 150.0
+const CLIP_OVERHANG := 40.0
 
 ## THE HANDS, all OFL, bundled under fonts/hands/ (licences beside them). One is chosen per
 ## session. `size` is the body size that fills a rule in that hand - they differ a lot (Caveat's
@@ -238,7 +241,7 @@ func _image_page(b: Dictionary) -> void:
 	var ang := deg_to_rad(((r & 0xFF) / 255.0 - 0.5) * 6.0)
 	var centre := Vector2(PAGE.x * 0.5 + (((r >> 8) & 0xFF) / 255.0 - 0.5) * 60.0, 70.0 + sz.y * 0.5)
 	pg["images"].append(_photo(b, centre, sz, ang, true,
-		{"pos": Vector2(centre.x + (((r >> 16) & 0xFF) / 255.0 - 0.5) * w * 0.3, 0.0),
+		{"pos": Vector2(centre.x + (((r >> 16) & 0xFF) / 255.0 - 0.5) * w * 0.3, -CLIP_OVERHANG),
 		"angle": (((r >> 24) & 0xFF) / 255.0 - 0.5) * 0.14}))
 	_last_photo = {}
 
@@ -304,7 +307,7 @@ func _clip_photo(b: Dictionary) -> void:
 	var clip := {}
 	if near_top and u.call(24) < 0.5:
 		centre = Vector2(lerpf(sz.x * 0.5 + 60.0, PAGE.x - sz.x * 0.5 - 60.0, u.call(4)), 34.0 + sz.y * 0.5)
-		clip = {"pos": Vector2(centre.x + (u.call(12) - 0.5) * sz.x * 0.4, 0.0),
+		clip = {"pos": Vector2(centre.x + (u.call(12) - 0.5) * sz.x * 0.4, -CLIP_OVERHANG),
 			"angle": (u.call(20) - 0.5) * 0.14}
 	else:
 		var edge := 34.0 + sz.x * 0.5
@@ -313,7 +316,7 @@ func _clip_photo(b: Dictionary) -> void:
 		centre = Vector2(cx, cy)
 		var gy := cy - sz.y * lerpf(0.1, 0.35, u.call(12))
 		# the clip's long axis points in from the edge it grips
-		clip = {"pos": Vector2(PAGE.x if side == 1 else 0.0, gy),
+		clip = {"pos": Vector2(PAGE.x + CLIP_OVERHANG if side == 1 else -CLIP_OVERHANG, gy),
 			"angle": (PI * 0.5 if side == 1 else -PI * 0.5) + (u.call(20) - 0.5) * 0.14}
 	var ph := _photo(b, centre, sz, ang, false, clip)
 	images.append(ph)

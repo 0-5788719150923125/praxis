@@ -139,9 +139,8 @@ func _check_markers() -> void:
 		_ok(not bool(ims[1].get("sketch", false)), "the image marker was read as a sketch")
 		_ok(String(ims[0]["key"]) != String(ims[1]["key"]),
 			"a sketch and a picture with the same words share a key - one file for both")
-	var p := Illustrations.build_prompt("a flask", "sketch", "oil painting, warm", 2, "/x.png")
-	_ok(not p.contains("oil painting") and not p.contains("REFERENCES"),
-		"the sketch prompt carries the book's style or references")
+	# The sketch's own style and references (per kind) are held by illustrations_check.
+	var p := Illustrations.build_prompt("a flask", "sketch", "", 0, "/x.png")
 	_ok(p.contains("BLACK INK") and p.contains("WHITE"), "the sketch prompt does not ask for ink on white")
 
 

@@ -31,6 +31,11 @@ func _make_layout() -> BookLayout:
 	return l
 
 
+## Room for a clip's outer loop to stand off the page, as a clip does.
+func _page_pad() -> float:
+	return 64.0
+
+
 func _cover_font() -> Font:
 	return NotebookLayout.hand_face(_hand, 0)
 

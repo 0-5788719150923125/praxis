@@ -87,6 +87,9 @@ uniform float lift = 0.05;
 uniform float base_y = 0.0;
 uniform float page_h = 1.5;
 uniform float has_back = 0.0;
+// The texture's transparent margin past the page's outer and top/bottom edges, in page widths
+// (see BookMedium._page_pad). 0 in a book, so the leaf is exactly the page.
+uniform float ext = 0.0;
 
 // The leaf's centre line, arc length s from the spine, as (across, up): it leaves the spine
 // at `angle` and bends by `curl` along its width, then the gutter swell is added along its
@@ -107,11 +110,11 @@ vec2 profile(float s) {
 }
 
 void vertex() {
-	float s = side > 0.0 ? UV.x : 1.0 - UV.x;
+	float s = (side > 0.0 ? UV.x : 1.0 - UV.x) * (1.0 + ext);
 	vec2 p = profile(s);
 	vec2 q = profile(s + 0.01);
 	vec2 t = normalize(q - p);
-	float z = (UV.y - 0.5) * page_h;
+	float z = (UV.y - 0.5) * (page_h + 2.0 * ext);
 	// Both leaves reach a hair past the spine, so no crack ever opens between them for the
 	// cloth to show through. ALONG THE LEAF'S OWN DIRECTION at the spine, not along world x:
 	// a turning leaf that has swung over is flipped, and a world-x overlap put its landed
@@ -127,27 +130,30 @@ void vertex() {
 // A small box filter over the pixel's footprint. Page targets have no mipmaps, and printed
 // text minified without them shimmers as the camera drifts; five taps spread over the
 // footprint are what a mip level would have averaged.
-vec3 tap(sampler2D tex, vec2 uv) {
+vec4 tap(sampler2D tex, vec2 uv) {
 	vec2 dx = dFdx(uv) * 0.38;
 	vec2 dy = dFdy(uv) * 0.38;
-	vec3 c = texture(tex, uv).rgb * 2.0;
-	c += texture(tex, uv + dx + dy).rgb;
-	c += texture(tex, uv + dx - dy).rgb;
-	c += texture(tex, uv - dx + dy).rgb;
-	c += texture(tex, uv - dx - dy).rgb;
+	vec4 c = texture(tex, uv) * 2.0;
+	c += texture(tex, uv + dx + dy);
+	c += texture(tex, uv + dx - dy);
+	c += texture(tex, uv - dx + dy);
+	c += texture(tex, uv - dx - dy);
 	return c / 6.0;
 }
 
 void fragment() {
 	bool up = FRONT_FACING;
 	if (side < 0.0) up = !up;
-	vec3 col;
+	vec4 col;
 	if (up || has_back < 0.5) {
 		col = tap(front, UV);
 	} else {
 		col = tap(back, vec2(1.0 - UV.x, UV.y));
 	}
-	ALBEDO = col;
+	ALBEDO = col.rgb;
+	// The margin is empty except where something hangs off the page - a clip.
+	ALPHA = col.a;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.12;
 }
@@ -226,8 +232,8 @@ func mount(st: SubViewport) -> void:
 	add_child(_placeholder)
 	for i in 4:
 		var vp := SubViewport.new()
-		vp.size = Vector2i(BookLayout.PAGE)
-		vp.transparent_bg = false
+		vp.size = Vector2i(BookLayout.PAGE + Vector2(_page_pad(), _page_pad() * 2.0))
+		vp.transparent_bg = true
 		vp.disable_3d = true
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		add_child(vp)
@@ -401,6 +407,7 @@ func _leaf(side: float) -> MeshInstance3D:
 	mat.shader = sh
 	mat.set_shader_parameter("side", side)
 	mat.set_shader_parameter("page_h", PAGE_H)
+	mat.set_shader_parameter("ext", _page_pad() / BookLayout.PAGE.x)
 	m.material_override = mat
 	# The shader moves every vertex; without a generous AABB the leaf is culled mid-turn.
 	m.custom_aabb = AABB(Vector3(-1.2, -0.2, -PAGE_H), Vector3(2.4, 1.5, PAGE_H * 2.0))
@@ -874,6 +881,9 @@ func _refresh_pages() -> void:
 			continue
 		_slot_state[i] = state
 		c.page = page
+		# the page sits inside the margin: past its outer edge (left, on a left-hand page) and
+		# its top
+		c.position = Vector2(_page_pad() if page % 2 == 0 else 0.0, _page_pad())
 		c.hl = hl
 		c.queue_redraw()
 		(_vps[i] as SubViewport).render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -1093,6 +1103,12 @@ func _draw_sketch(ci: CanvasItem, im: Dictionary) -> void:
 
 
 # --- hooks for a medium in another hand ----------------------------------------------
+
+## Pixels of transparent margin around a page texture, past its outer and top/bottom edges -
+## room for something to hang off the page (a notebook's clips). A book needs none.
+func _page_pad() -> float:
+	return 0.0
+
 
 ## The layout this medium typesets with.
 func _make_layout() -> BookLayout:

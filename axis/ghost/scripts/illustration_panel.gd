@@ -24,6 +24,9 @@ var _images: Array = []            # [Manuscript.images] rows for the current te
 var _list: VBoxContainer
 var _refs: HFlowContainer
 var _style: TextEdit
+var _style_kind := "image"        # which of Illustrations.STYLE_KINDS the box is editing
+var _kind_pick: OptionButton
+var _self_ref: CheckBox
 var _pick: OptionButton
 var _missing_btn: Button
 var _all_btn: Button
@@ -68,20 +71,49 @@ func _ready() -> void:
 	pick.item_selected.connect(func(i: int) -> void: Illustrations.set_backend(String(keys[i])))
 	brow.add_child(pick)
 
+	# ONE BOX, A PICKER FOR WHICH STYLE IT EDITS: pictures and sketches are briefed separately,
+	# and two boxes would double a panel that already scrolls.
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 8)
+	add_child(srow)
 	var sl := Label.new()
 	sl.text = "Style"
 	sl.add_theme_font_size_override("font_size", 12)
-	add_child(sl)
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	srow.add_child(sl)
+	_kind_pick = OptionButton.new()
+	_kind_pick.focus_mode = Control.FOCUS_NONE
+	for k in Illustrations.STYLE_KINDS:
+		_kind_pick.add_item(String(Illustrations.STYLE_LABELS.get(k, k)))
+	_kind_pick.tooltip_text = ("Which look the style box and the references below edit. "
+		+ "Pictures (`<!-- image: -->`) and sketches (`<!-- sketch: -->`) each have their own.")
+	_kind_pick.item_selected.connect(func(i: int) -> void:
+		_style_kind = String(Illustrations.STYLE_KINDS[i])
+		_style.text = Illustrations.style(_style_kind)
+		_self_ref.set_pressed_no_signal(Illustrations.self_reference(_style_kind))
+		_refresh_refs())
+	srow.add_child(_kind_pick)
+	_self_ref = CheckBox.new()
+	_self_ref.text = "Match earlier"
+	_self_ref.focus_mode = Control.FOCUS_NONE
+	_self_ref.tooltip_text = ("Send each picture of this kind the ones already made before it in "
+		+ "the chapter (the first and the most recent few), so they read as one hand. Works "
+		+ "alongside the references below and never adds to them. Saved in the document.")
+	_self_ref.button_pressed = Illustrations.self_reference(_style_kind)
+	_self_ref.toggled.connect(func(on: bool) -> void:
+		Illustrations.set_self_reference(on, _style_kind)
+		_refresh_refs())
+	srow.add_child(_self_ref)
 	_style = TextEdit.new()
 	_style.custom_minimum_size = Vector2(0, 72)
 	_style.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_style.placeholder_text = "e.g. muted watercolour and ink, like a mid-century storybook plate"
-	_style.tooltip_text = ("How EVERY picture in the book should look - medium, palette, "
-		+ "linework, mood. Added to each picture's own description. Changing it does not "
+	_style.tooltip_text = ("How every picture of the chosen kind should look - medium, palette, "
+		+ "linework, mood. Added to each one's own description. Changing it does not "
 		+ "throw away pictures already made: they are marked stale and kept until you regenerate them.")
-	_style.text = Illustrations.style()
+	_style.text = Illustrations.style(_style_kind)
 	_style.text_changed.connect(func() -> void:
-		Illustrations.set_style(_style.text)
+		Illustrations.set_style(_style.text, _style_kind)
 		_seen = "")
 	add_child(_style)
 
@@ -96,10 +128,11 @@ func _ready() -> void:
 	var imp := Button.new()
 	imp.text = "Import…"
 	imp.focus_mode = Control.FOCUS_NONE
-	imp.tooltip_text = ("Pick any number of images whose STYLE the pictures should share. "
-		+ "They are attached to every request as style references only - their subjects are "
-		+ "never copied. Nothing is trained; they are copied into ghost's own folder so moving "
-		+ "the originals changes nothing.")
+	imp.tooltip_text = ("Pick images whose STYLE this kind (the dropdown above) should share. "
+		+ "They are attached to every request of that kind as style references only - their "
+		+ "subjects are never copied. With none, each picture is matched to the ones already "
+		+ "made before it in the chapter instead. Copied into ghost's own folder, so moving the "
+		+ "originals changes nothing.")
 	imp.pressed.connect(_open_dialog)
 	rrow.add_child(imp)
 	_refs = HFlowContainer.new()
@@ -143,8 +176,10 @@ func _ready() -> void:
 func sync_from_library() -> void:
 	if _pick != null:
 		_pick.select(maxi(0, ImageGen.REGISTRY.keys().find(Illustrations.backend())))
-	if _style != null and _style.text != Illustrations.style():
-		_style.text = Illustrations.style()
+	if _style != null and _style.text != Illustrations.style(_style_kind):
+		_style.text = Illustrations.style(_style_kind)
+	if _self_ref != null:
+		_self_ref.set_pressed_no_signal(Illustrations.self_reference(_style_kind))
 	if _refs != null:
 		_refresh_refs()
 	_seen = ""
@@ -153,6 +188,7 @@ func sync_from_library() -> void:
 ## The chapter's text, whenever it is read. Cheap enough to call on every edit.
 func set_script_text(body: String) -> void:
 	_images = Manuscript.images(body)
+	Illustrations.set_chapter(_images)
 	_seen = ""
 	if is_inside_tree():
 		_refresh()
@@ -168,7 +204,8 @@ func _process(_delta: float) -> void:
 func _refresh() -> void:
 	if _list == null:
 		return
-	var sig := "%d|%s|%d" % [Illustrations.revision, Illustrations.current_signature(), _images.size()]
+	var sig := "%d|%s|%s|%d" % [Illustrations.revision, Illustrations.current_signature("image"),
+		Illustrations.current_signature("sketch"), _images.size()]
 	for im in _images:
 		sig += "|" + Illustrations.status(String(im["key"]))
 	if sig == _seen:
@@ -259,6 +296,9 @@ func _row(im: Dictionary) -> Control:
 			b.disabled = at + step < 0 or at + step >= vs.size()
 			b.pressed.connect(func() -> void: Illustrations.select_version(key, at + step))
 			row.add_child(b)
+	if not path.is_empty():
+		var del := _delete_button("✕", key, Illustrations.current_index(key))
+		row.add_child(del)
 	var go := Button.new()
 	go.focus_mode = Control.FOCUS_NONE
 	go.text = "Regenerate" if not path.is_empty() else "Generate"
@@ -356,6 +396,15 @@ func _open_preview(im: Dictionary) -> void:
 			v.text = "version %d of %d%s" % [at + 1, vs.size(),
 				"  (stale)" if Illustrations.is_stale(key) else ""]
 			bar.add_child(v)
+	if at >= 0:
+		var del := _delete_button("Delete this version", key, at)
+		del.pressed.connect(func() -> void:
+			if bool(del.get_meta("gone", false)):
+				if Illustrations.versions(key).is_empty():
+					_preview.hide()
+				else:
+					_open_preview(im))
+		bar.add_child(del)
 	var again := Button.new()
 	again.text = "Regenerate"
 	again.disabled = Illustrations.status(key) in ["queued", "running"] or Illustrations.read_only()
@@ -364,6 +413,33 @@ func _open_preview(im: Dictionary) -> void:
 		_preview.hide())
 	bar.add_child(again)
 	_preview.popup_centered()
+
+
+## DELETE TAKES TWO CLICKS, because it cannot be undone: the first arms the button for a few
+## seconds, the second deletes. A dialog for every bad picture would make clearing a run of
+## them a chore, which is exactly when this is used.
+func _delete_button(label: String, key: String, version: int) -> Button:
+	var b := Button.new()
+	b.text = label
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = ("Delete this version of the picture - the file too. The one before it is "
+		+ "shown instead, or none. Later pictures stop being matched to it.")
+	b.disabled = Illustrations.read_only()
+	b.pressed.connect(func() -> void:
+		if not bool(b.get_meta("armed", false)):
+			b.set_meta("armed", true)
+			b.text = "Delete?"
+			b.add_theme_color_override("font_color", Color(1.0, 0.55, 0.5))
+			get_tree().create_timer(3.0).timeout.connect(func() -> void:
+				if is_instance_valid(b) and not bool(b.get_meta("gone", false)):
+					b.set_meta("armed", false)
+					b.text = label
+					b.remove_theme_color_override("font_color"))
+			return
+		b.set_meta("gone", Illustrations.delete_version(key, version))
+		_thumbs.clear()
+		_seen = "")
+	return b
 
 
 func _generate_missing() -> void:
@@ -395,10 +471,11 @@ func _thumb(path: String, px: int) -> Texture2D:
 func _refresh_refs() -> void:
 	for c in _refs.get_children():
 		c.queue_free()
-	var list := Illustrations.references()
+	var list := Illustrations.references(_style_kind)
 	if list.is_empty():
 		var none := Label.new()
-		none.text = "  (none - the style text alone decides the look)"
+		none.text = ("  (none - each is matched to the ones made before it in the chapter)"
+			if Illustrations.self_reference(_style_kind) else "  (none - the style text alone decides the look)")
 		none.add_theme_font_size_override("font_size", 11)
 		none.modulate = Color(1, 1, 1, 0.6)
 		_refs.add_child(none)
@@ -421,7 +498,7 @@ func _refresh_refs() -> void:
 		x.tooltip_text = "Stop using this reference. Pictures already made are kept, marked stale."
 		var at := i
 		x.pressed.connect(func() -> void:
-			Illustrations.remove_reference(at)
+			Illustrations.remove_reference(at, _style_kind)
 			_refresh_refs()
 			_seen = "")
 		box.add_child(x)
@@ -443,7 +520,7 @@ func _open_dialog() -> void:
 		_dialog.current_dir = pics
 	_dialog.size = Vector2i(820, 560)
 	_dialog.files_selected.connect(func(paths: PackedStringArray) -> void:
-		var errs := Illustrations.add_references(Array(paths))
+		var errs := Illustrations.add_references(Array(paths), _style_kind)
 		_status.text = "" if errs.is_empty() else "⚠  " + "; ".join(errs)
 		_refresh_refs()
 		_seen = ""
