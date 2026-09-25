@@ -23,6 +23,10 @@ func _ready() -> void:
 	# host, and nothing here needs a python process.
 	_ed = GenerativeEditor.new()
 	_ed._build_panel()
+	# INPUT MODE, which every check here is written against: the settings are the author's own,
+	# and in Sync mode the open chapter's title would be read before every test script.
+	if _ed._doc != null and _ed._doc._mode_sync != null:
+		_ed._doc._mode_sync.set_pressed_no_signal(false)
 	# THE PANEL, HOWEVER, MUST BE IN THE TREE. Range only emits value_changed for
 	# an owner that is inside one (Range::Shared::emit_value_changed skips the
 	# rest), so a panel built outside it has every slider callback silently dead -
@@ -402,14 +406,23 @@ func _check_frontmatter() -> void:
 	for c in chunks:
 		for w in (c as Dictionary)["words"]:
 			said += String((w as Dictionary)["text"]) + " "
-	_ok(not said.to_lower().contains("title") and not said.to_lower().contains("charlotte"),
-		"the frontmatter was read aloud: %s" % said)
+	_ok(not said.to_lower().contains("title"), "the frontmatter was read aloud: %s" % said)
+	# ...but the title's VALUE is, once, before the chapter - a reader announces a chapter
+	_ok(said.to_lower().begins_with("charlotte's web of lies") and said.to_lower().count("charlotte") == 1,
+		"the title was not read once, first: %s" % said)
 	_ok(said.to_lower().contains("report") and said.to_lower().contains("spider"),
 		"the chapter itself went missing: %s" % said)
 	# a blank line before the opening rule is still frontmatter
 	var lead: Array = _ed._split_speakers("\n\n---\ntitle: A Chapter\n---\n\nThe text.")
-	_ok(not String(lead[0]["text"]).to_lower().contains("chapter"),
+	_ok(not String(lead[0]["text"]).contains("title:") and String(lead[0]["text"]).begins_with("# A Chapter"),
 		"a blank line above the frontmatter defeated it: %s" % JSON.stringify(lead[0]["text"]))
+	# a chapter that already opens on its title as a heading is not announced twice
+	var twice: Array = _ed._split_speakers("---\ntitle: A Chapter\n---\n\n# A Chapter\n\nThe text.")
+	_ok(String(twice[0]["text"]).count("A Chapter") == 1, "the title was read twice: %s" % JSON.stringify(twice[0]["text"]))
+	# the title goes to the voice that OPENS the chapter - no phantom narrator before its cue
+	var cued: Array = _ed._split_speakers("---\ntitle: A Chapter\n---\n\n<!-- speaker: Voice 2 -->\nThe text.")
+	_ok(cued.size() == 1 and String(cued[0]["speaker"]) == "Voice 2" and String(cued[0]["text"]).begins_with("# A Chapter"),
+		"the title was not given to the opening voice: %s" % JSON.stringify(cued))
 	# ...and a rule in the middle of the text is a rule, not frontmatter
 	var mid: Array = _ed._split_speakers("Before the line.\n\n---\n\nKeep this.")
 	_ok(String(mid[0]["text"]).to_lower().contains("keep this"),

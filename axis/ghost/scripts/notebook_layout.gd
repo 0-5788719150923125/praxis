@@ -180,9 +180,11 @@ func _title_block() -> void:
 	var f := face(2)
 	while fs > body_fs and f.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > c.y - c.x:
 		fs -= 2
-	(pages[_p]["labels"] as Array).append({"text": title, "pos": Vector2(c.x, HEADER - 22.0),
-		"fs": fs, "emph": 2, "align_w": c.y - c.x, "tone": 1.0,
-		"halign": HORIZONTAL_ALIGNMENT_LEFT, "underline": true})
+	# WORDS in the header strip, not a label: the title is read aloud first.
+	var lh := _lh(fs)
+	_y = HEADER - 22.0 - lh + 8.0
+	_set_line_words(title, fs, 2, false, {"underline": true})
+	_y = _top()
 
 
 ## An entry heading - a date, a subject - written bold and underlined at the margin, with a

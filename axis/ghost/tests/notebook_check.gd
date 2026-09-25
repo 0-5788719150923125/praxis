@@ -78,6 +78,8 @@ func _check_layout() -> void:
 	var off := 0
 	for w in l.words:
 		var y: float = (w["base"] as Vector2).y
+		if y < NotebookLayout.HEADER:
+			continue          # the title, in the header strip above the first rule
 		var k := (y + 8.0 - NotebookLayout.HEADER) / NotebookLayout.RULE
 		if absf(k - round(k)) * NotebookLayout.RULE > 4.0:
 			off += 1
@@ -178,7 +180,11 @@ func _check_headings_are_read() -> void:
 			lay = NotebookLayout.new()
 			lay.hand = "kalam"
 			lay.body_fs = int(NotebookLayout.HANDS["kalam"]["size"])
-		lay.build(doc, func(_k: String) -> Vector2: return Vector2.ZERO, "T")
+		lay.build(doc, func(_k: String) -> Vector2: return Vector2.ZERO, "Title Words")
+		# the title is read aloud first, so it is the first thing the reading can follow
+		_ok(lay.words.size() > 1 and String(lay.words[0]["norm"]) == "title"
+			and String(lay.words[1]["norm"]) == "words",
+			"%s: the title is not the first words on the page" % lay.get_script().get_global_name())
 		var printed := ""
 		for w in lay.words:
 			printed += String(w["norm"]) + " "

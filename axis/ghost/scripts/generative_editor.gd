@@ -1426,9 +1426,24 @@ func _split_speakers(body: String) -> Array:
 	var on := _hesitate_on == null or _hesitate_on.button_pressed
 	var bare := _hesitate.value if _hesitate != null else HESITATE_DEFAULT
 	_holds = []
+	# THE TITLE IS READ FIRST, as a heading of its own, by the voice that opens the chapter.
+	# The frontmatter as metadata is still never spoken - only the title's value, the way a
+	# reader announces a chapter before its first word. Not twice: a chapter that already
+	# opens on its title as a heading keeps that one.
+	var title := _doc_field(body, "title").strip_edges()
+	var first := true
 	for p in Manuscript.passages(body):
+		var raw := String((p as Dictionary)["text"])
+		# the first passage with anything in it: a chapter opening on a cue has an empty one
+		# before it, and a title put there would invent a narrator to read it
+		if first and not title.is_empty() and not raw.strip_edges().is_empty():
+			var lead := raw.strip_edges().get_slice("\n", 0).lstrip("#").strip_edges()
+			if lead.to_lower() != title.to_lower():
+				raw = "# %s\n\n%s" % [title, raw]
+		if not raw.strip_edges().is_empty():
+			first = false
 		# a log entry's time gets its pause before the markers are read, so it IS a marker
-		var t := Manuscript.mark_timestamp_pauses(String((p as Dictionary)["text"]))
+		var t := Manuscript.mark_timestamp_pauses(raw)
 		var out := ""
 		var at := 0
 		var re := Manuscript._rx(Manuscript.COMMENT)

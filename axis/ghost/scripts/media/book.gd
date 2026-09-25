@@ -932,7 +932,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		var ink := _ink_for(w)
 		var i := int(wi)
 		if read >= 0 and i < read:
-			ink = _ink.lerp(_paper, 0.12)         # read: the faintest lift of the ink
+			ink = ink.lerp(_paper, 0.12)          # read: the faintest lift of ITS ink - a voice's colour stays its colour
 		var font := _layout.face(int(w["emph"]))
 		var text := String(w["text"])
 		var fs := int(w["fs"])

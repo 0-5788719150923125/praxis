@@ -316,8 +316,10 @@ func _title_block() -> void:
 	while fs > 30 and f.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > c.y - c.x:
 		fs -= 2
 	var y := MARGIN_TOP + TITLE_SINK
-	pg["labels"].append({"text": title, "pos": Vector2(c.x, y), "fs": fs, "emph": 0,
-		"align_w": c.y - c.x, "tone": 1.0})
+	# WORDS, not a label: the title is read aloud first, and the highlight follows it.
+	_y = y - _lh(fs) * 0.72
+	_set_line_words(title, fs, 0, true)
+	y = _y - _lh(fs) * 0.28
 	pg["labels"].append({"text": "~", "pos": Vector2(c.x, y + fs * 1.1), "fs": body_fs, "emph": 0,
 		"align_w": c.y - c.x, "tone": 0.55})
 	_y = y + fs * 1.1 + _lh(body_fs) * 2.2
