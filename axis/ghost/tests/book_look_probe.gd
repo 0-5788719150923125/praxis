@@ -80,7 +80,14 @@ func _run() -> void:
 
 	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
 	subs.words = _timeline(body)
-	subs.document = {"source": body}
+	# the voices' inks, as the Generative panel hands them over (book_document)
+	var inks := {}
+	var voices: Variant = (FrontMatter.read_block(body).data as Dictionary).get("generative", {}).get("voices", {})
+	if voices is Dictionary:
+		for who in voices:
+			if voices[who] is Dictionary and not String(voices[who].get("ink", "")).is_empty():
+				inks[who] = String(voices[who]["ink"])
+	subs.document = {"source": body, "inks": inks}
 	add_child(subs)
 	if medium.bind_captions(subs):
 		subs.overlay_hidden = true

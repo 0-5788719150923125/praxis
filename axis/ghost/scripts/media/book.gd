@@ -720,7 +720,10 @@ func _reading() -> Dictionary:
 	if li < 0:
 		return {}
 	var nxt := int(_map[i + 1]) if i + 1 < _map.size() else -1
-	return {"sub": i, "layout": li, "frac": clampf(c - float(i), 0.0, 1.0), "next": nxt,
+	# A SPOKEN WORD WITH NO PRINTED ONE leaves the last printed word fully lit. Handing its
+	# progress on to that word re-lit it from its first letter for every unmatched word said.
+	var frac := clampf(c - float(i), 0.0, 1.0) if k == i else 1.0
+	return {"sub": i, "layout": li, "frac": frac, "next": nxt,
 		"sentence": int((_subs.words[i] as Dictionary).get("sentence", 0)),
 		"alpha": clampf(float(_subs.presence), 0.0, 1.0)}
 
@@ -926,7 +929,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 	var frac := float(hl.get("frac", 0.0))
 	for wi in pg["words"]:
 		var w: Dictionary = _layout.words[int(wi)]
-		var ink := _ink
+		var ink := _ink_for(w)
 		var i := int(wi)
 		if read >= 0 and i < read:
 			ink = _ink.lerp(_paper, 0.12)         # read: the faintest lift of the ink
@@ -1131,6 +1134,11 @@ func _draw_paper(ci: CanvasItem, pg: Dictionary) -> void:
 		var w := 90.0 * (1.0 - float(k) / 12.0)
 		var x := spine_x - w if spine_x > 0.0 else 0.0
 		ci.draw_rect(Rect2(x, 0.0, w, size.y), Color(0.25, 0.18, 0.1, 0.02))
+
+
+## The colour word [param _w] is set in. One ink, in print.
+func _ink_for(_w: Dictionary) -> Color:
+	return _ink
 
 
 ## Anything laid on the page after its pictures. Nothing, in print.

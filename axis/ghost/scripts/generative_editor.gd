@@ -143,6 +143,9 @@ const SLOT_DEFAULTS := {
 	"voice": "", "speaker": 0, "tone": 0, "pace": 1.0, "pause": 1.0,
 	"dynamics": 0.5, "arc": 0.4, "effort": 0.35,
 	"echo": 0.0, "room": 0.0, "resonance": 0.0, "presence": 1.0, "ambience": 0.0,
+	# the pen this voice writes in, in a medium that writes by hand - a name from
+	# NotebookLayout.INKS or a hex colour; "" is the default black
+	"ink": "",
 }
 ## Seconds of audio that must be queued before the first sample is heard, when there is
 ## no intro to serve as the lead. Chunks are one sentence, and a short opening sentence
@@ -929,6 +932,7 @@ func _build_panel() -> void:
 		"A sustained ambient bed underneath, in the reader's own key - long tones that keep "
 		+ "sounding through the pauses, rather than reverb of the voice. It ducks under speech and "
 		+ "swells in the gaps, and it is what plays alone through the Intro hold.")
+	_build_ink_row(box)
 
 	# --- THE PICTURE, not the voice ------------------------------------------
 	# These two live here, with every other option, rather than off in the shared
@@ -1125,8 +1129,16 @@ func _doc_apply(cfg: Dictionary) -> void:
 ## frontmatter, which is where a chapter's title lives.
 func book_document(body := "") -> Dictionary:
 	var src := body if not body.is_empty() else _doc.pull()
+	# Each voice's pen, beside the text for the reason the title is: in sync mode the text has
+	# no frontmatter, and the voices live there.
+	var inks := {}
+	var cast := _cast_dict()
+	for who in cast:
+		var v := String((cast[who] as Dictionary).get("ink", ""))
+		if not v.is_empty():
+			inks[who] = v
 	return {"source": src, "title": _doc_field(src, "title"), "book": _doc_field(src, "book"),
-		"author": _doc_field(src, "author")}
+		"author": _doc_field(src, "author"), "inks": inks}
 
 
 ## A top-level frontmatter field (`title:`, `book:`): the open document's, else the pasted
@@ -1281,6 +1293,7 @@ func _capture_slot() -> void:
 		"dynamics": _dynamics.value, "arc": _arc.value, "effort": _effort.value,
 		"echo": _fx_echo.value, "room": _fx_room.value, "resonance": _fx_res.value,
 		"presence": _fx_presence.value, "ambience": _fx_pad.value,
+		"ink": _ink_value(),
 	}
 	_refresh_tab_labels()
 
@@ -1308,6 +1321,7 @@ func _apply_slot(i: int) -> void:
 	_fx_res.value = float(s["resonance"])
 	_fx_presence.value = float(s["presence"])
 	_fx_pad.value = float(s["ambience"])
+	_show_ink(String(s["ink"]))
 	# After the voice, because it is what sets the Speaker row's range - and a
 	# speaker id is only meaningful against the model that holds it.
 	_show_voice_license()
@@ -1413,7 +1427,8 @@ func _split_speakers(body: String) -> Array:
 	var bare := _hesitate.value if _hesitate != null else HESITATE_DEFAULT
 	_holds = []
 	for p in Manuscript.passages(body):
-		var t := String((p as Dictionary)["text"])
+		# a log entry's time gets its pause before the markers are read, so it IS a marker
+		var t := Manuscript.mark_timestamp_pauses(String((p as Dictionary)["text"]))
 		var out := ""
 		var at := 0
 		var re := Manuscript._rx(Manuscript.COMMENT)
@@ -2206,6 +2221,51 @@ func _slider_readout(row: HBoxContainer, sl: HSlider, suffix := "") -> Label:
 		v.text = ("%.2f" % nv) + suffix)
 	row.add_child(v)
 	return v
+
+
+## THE INK: which pen this voice writes in, where the medium writes by hand (the Notebook).
+## Not a sound, so changing it restarts nothing; it reaches the page at the next Speak.
+var _ink_pick: OptionButton
+var _ink_raw := ""               # the slot's ink as stored, kept when it is a hex the list lacks
+
+func _build_ink_row(box: VBoxContainer) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	var l := Label.new()
+	l.text = "Ink"
+	l.custom_minimum_size = Vector2(72, 0)
+	l.add_theme_font_size_override("font_size", 12)
+	row.add_child(l)
+	_ink_pick = OptionButton.new()
+	_ink_pick.focus_mode = Control.FOCUS_NONE
+	_ink_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for k in NotebookLayout.INKS:
+		_ink_pick.add_item(String(k).capitalize())
+	_ink_pick.tooltip_text = ("The pen this voice writes in, in the Notebook: a colour per speaker "
+		+ "tells the voices apart on the page without naming them. Black unless set. Saved on "
+		+ "the voice as `ink:` - a hex colour written there works too.")
+	_ink_pick.item_selected.connect(func(i: int) -> void:
+		if _syncing:
+			return
+		_ink_raw = "" if i == 0 else String(NotebookLayout.INKS.keys()[i])
+		_capture_slot())
+	row.add_child(_ink_pick)
+
+
+func _ink_value() -> String:
+	return _ink_raw
+
+
+func _show_ink(v: String) -> void:
+	_ink_raw = v
+	if _ink_pick == null:
+		return
+	var k := v.strip_edges().to_lower()
+	var i := NotebookLayout.INKS.keys().find("black" if k.is_empty() else k)
+	_ink_pick.select(i)            # -1 (nothing shown) for a hex: it is kept, not replaced
+	_ink_pick.tooltip_text = _ink_pick.tooltip_text.get_slice("\n\nNow: ", 0) \
+		+ ("\n\nNow: " + v if i < 0 and not v.is_empty() else "")
 
 
 func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> HSlider:

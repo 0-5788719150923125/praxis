@@ -85,12 +85,12 @@ func begin_session() -> void:
 	if h != _hand:
 		_hand = h
 		_source = ""             # typeset again, in this hand
-	# Paper is white with the faintest warmth; the pen is blue or black ballpoint, or a
-	# blue-black fountain ink.
+	# Paper is white with the faintest warmth. The pen is BLACK unless a voice names its own
+	# ink (see [method _ink_for]) - a colour per speaker is how a page tells voices apart
+	# without labels, so the default must be the one colour no voice is likely to choose.
 	_paper = Color.from_hsv(r.randf_range(0.10, 0.14), r.randf_range(0.02, 0.06),
 		r.randf_range(0.955, 0.985))
-	var inks := [Color(0.10, 0.16, 0.46), Color(0.08, 0.08, 0.11), Color(0.12, 0.14, 0.32)]
-	_ink = (inks[r.randi() % inks.size()] as Color).lightened(r.randf_range(0.0, 0.06))
+	_ink = NotebookLayout.INKS["black"]
 	var cm := _cover.material_override as StandardMaterial3D
 	cm.albedo_color = Color.WHITE
 	cm.albedo_texture = _marble_texture()
@@ -170,20 +170,38 @@ func _draw_paper(ci: CanvasItem, pg: Dictionary) -> void:
 	super._draw_paper(ci, pg)
 
 
+## Each voice writes in its own ink, from `ink:` on the voice in the frontmatter, carried beside
+## the text as the document's `inks` ({speaker: ink}); a voice naming none writes in black.
+func _ink_for(w: Dictionary) -> Color:
+	var who := String(w.get("speaker", ""))
+	if _subs == null or not is_instance_valid(_subs) or who.is_empty():
+		return _ink
+	var inks: Variant = (_subs.document as Dictionary).get("inks", {})
+	if not (inks is Dictionary) or not (inks as Dictionary).has(who):
+		return _ink
+	var v := String((inks as Dictionary)[who])
+	return _ink if v.strip_edges().is_empty() else NotebookLayout.ink_color(v)
+
+
 ## A hand has no italic: an emphasised word is underlined, and the line runs on under the next
 ## word when that one is emphasised too, so a phrase gets one stroke rather than a dashed one.
 func _decorate_word(ci: CanvasItem, i: int, w: Dictionary, ink_col: Color) -> void:
-	if (int(w["emph"]) & 1) == 0:
+	if not _underlined(w):
 		return
 	var rect: Rect2 = w["rect"]
 	var base: Vector2 = w["base"]
 	var width := rect.size.x
 	if i + 1 < _layout.words.size():
 		var nx: Dictionary = _layout.words[i + 1]
-		if (int(nx["emph"]) & 1) != 0 and int(nx["page"]) == int(w["page"]) \
+		if _underlined(nx) and int(nx["page"]) == int(w["page"]) \
 				and absf((nx["base"] as Vector2).y - base.y) < 6.0:
 			width = (nx["base"] as Vector2).x - base.x
 	_underline(ci, Vector2(base.x, base.y + 6.0), width, ink_col, i)
+
+
+## Emphasis, or a heading marked for it.
+static func _underlined(w: Dictionary) -> bool:
+	return (int(w["emph"]) & 1) != 0 or bool(w.get("underline", false))
 
 
 ## A pen line: not quite straight, not quite level.

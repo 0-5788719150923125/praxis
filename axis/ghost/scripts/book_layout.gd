@@ -61,6 +61,8 @@ var title := ""
 ## The body size. A variable rather than [constant BODY_FS] so a layout in another hand
 ## ([NotebookLayout]) can set its own.
 var body_fs := BODY_FS
+## Whose voice reads the block being set; every word records it (a notebook inks by it).
+var _speaker := ""
 
 var _faces := {}
 var _p := -1                 # the page being filled
@@ -130,6 +132,7 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 		_title_block()
 	for bi in range(first, blocks.size()):
 		var b: Dictionary = blocks[bi]
+		_speaker = String(b.get("speaker", ""))
 		match String(b["kind"]):
 			"heading":
 				_space(0.6)
@@ -334,7 +337,7 @@ func _heading(text: String, level: int) -> void:
 	var fs := int(body_fs * (1.5 if level <= 1 else 1.25))
 	if _y + _lh(fs) * 2.0 > _bottom():
 		_open_page()
-	_label_centered(text, fs)
+	_set_line_words(text, fs, 0, true)
 	_y += _lh(body_fs) * 0.4
 
 
@@ -488,13 +491,61 @@ func _paragraph(text: String, indent: bool, scene: bool) -> void:
 				w = face(em).get_string_size(String(t["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			var off := _ink_offset(words.size(), _y, x - x0)
 			words.append({"page": _p, "text": String(t["text"]), "norm": norm(String(t["text"])),
-				"emph": em, "fs": fs, "base": Vector2(x, base_y) + off,
+				"emph": em, "fs": fs, "base": Vector2(x, base_y) + off, "speaker": _speaker,
 				"rect": Rect2(x + off.x, _y + lh * 0.08 + off.y, w, lh * 0.86)})
 			(pages[_p]["words"] as Array).append(words.size() - 1)
 			x += w + gap
 		_y += lh
 		i = j
 		first = false
+
+
+## Set [param text] as WORDS on lines of its own, centred or from the column's left edge. A
+## heading is SPOKEN - a chapter's dated entries are read out - so it has to be words the
+## reading can follow. Set as a label it was invisible to the highlight: the voice read the
+## date, nothing on the page matched, and the highlight fell back to the previous paragraph's
+## last word and re-lit it for every word of the date, with the camera parked on it.
+## [param extra] is merged into every word (a notebook marks its headings underlined).
+func _set_line_words(text: String, fs: int, emph: int, center: bool, extra := {}) -> void:
+	var toks := tokens(text)
+	if toks.is_empty():
+		return
+	var lh := _lh(fs)
+	var sp := face(emph).get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var widths: Array = []
+	for t in toks:
+		widths.append(face(emph | int(t["emph"])).get_string_size(String(t["text"]),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	var i := 0
+	while i < toks.size():
+		if _y + lh > _bottom():
+			_open_page()
+		var c := column(_p)
+		var j := i
+		var used := 0.0
+		while j < toks.size():
+			var add := float(widths[j]) + (sp if j > i else 0.0)
+			if j > i and used + add > c.y - c.x:
+				break
+			used += add
+			j += 1
+		var x0 := c.x + ((c.y - c.x - used) * 0.5 if center else 0.0)
+		var x := x0
+		var base_y := _baseline(_y, lh)
+		for k in range(i, j):
+			var t: Dictionary = toks[k]
+			var w := float(widths[k])
+			var off := _ink_offset(words.size(), _y, x - x0)
+			var wd := {"page": _p, "text": String(t["text"]), "norm": norm(String(t["text"])),
+				"emph": emph | int(t["emph"]), "fs": fs, "base": Vector2(x, base_y) + off,
+				"speaker": _speaker,
+				"rect": Rect2(x + off.x, _y + lh * 0.08 + off.y, w, lh * 0.86)}
+			wd.merge(extra)
+			words.append(wd)
+			(pages[_p]["words"] as Array).append(words.size() - 1)
+			x += w + sp
+		_y += lh
+		i = j
 
 
 # --- hooks a layout in another hand overrides ------------------------------------------

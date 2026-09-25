@@ -41,6 +41,9 @@ func _ready() -> void:
 	_check_layout()
 	_check_markers()
 	_check_keying()
+	_check_headings_are_read()
+	_check_inks()
+	_check_single_spaced()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -156,3 +159,83 @@ func _check_keying() -> void:
 	var mid := out.get_pixel(48, 14).a
 	_ok(mid > 0.3 and mid < 0.9, "a grey stroke is not a lighter stroke (alpha %.2f)" % mid)
 	_ok(out.get_pixel(14, 14).b > 0.4, "the stroke is not in the pen's ink")
+
+
+## A HEADING IS SPOKEN, so it must be WORDS the reading can follow. Set as a label, a dated
+## entry ("## September 19, 2026") had nothing on the page to match: the highlight fell back to
+## the previous paragraph and re-lit its last word for every word of the date, and the camera
+## sat on it. Held for both layouts, on the chapter the report came from when it is present.
+func _check_headings_are_read() -> void:
+	var path := "/home/crow/repos/rift/books/north-star/chapters/41-the-gift-of-guilt.md"
+	var doc := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else DOC
+	var heads: Array = []
+	for b in Manuscript.blocks(doc):
+		if String(b["kind"]) == "heading":
+			heads.append(String(b["text"]))
+	_ok(not heads.is_empty(), "the control is wrong - the chapter has no headings")
+	for lay in [BookLayout.new(), _layout(true)]:
+		if lay is NotebookLayout:
+			lay = NotebookLayout.new()
+			lay.hand = "kalam"
+			lay.body_fs = int(NotebookLayout.HANDS["kalam"]["size"])
+		lay.build(doc, func(_k: String) -> Vector2: return Vector2.ZERO, "T")
+		var printed := ""
+		for w in lay.words:
+			printed += String(w["norm"]) + " "
+		var missing := 0
+		for h in heads:
+			var want := ""
+			for t in lay.tokens(h):
+				want += lay.norm(String(t["text"])) + " "
+			if not printed.contains(want):
+				missing += 1
+		_ok(missing == 0, "%s: %d of %d headings are not words the reading can follow"
+			% [lay.get_script().get_global_name(), missing, heads.size()])
+
+
+## EACH VOICE WRITES IN ITS OWN INK, black by default: words carry their speaker (headings and
+## margin times included), a named ink is an ink colour, and the medium resolves a speaker to
+## the ink the document names for it.
+func _check_inks() -> void:
+	var doc := "Opening.\n\n<!-- speaker: Angel -->\n## Monday\n\n09:40 Blue words here.\n\n<!-- speaker: Ryan -->\nRed words."
+	var l := NotebookLayout.new()
+	l.build(doc, func(_k: String) -> Vector2: return Vector2.ZERO, "T")
+	var who := {}
+	for w in l.words:
+		who[String(w["text"])] = String(w.get("speaker", "?"))
+	_ok(who.get("Opening.") == Manuscript.NARRATOR and who.get("Monday") == "Angel"
+		and who.get("09:40") == "Angel" and who.get("Blue") == "Angel" and who.get("Red") == "Ryan",
+		"words do not carry their speaker: %s" % [who])
+	_ok(NotebookLayout.ink_color("blue") == NotebookLayout.INKS["blue"]
+		and NotebookLayout.ink_color("#335577") == Color.html("#335577")
+		and NotebookLayout.ink_color("nonsense") == NotebookLayout.INKS["black"],
+		"ink names, hex and the black fallback do not resolve")
+	var m := NotebookMedium.new()
+	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
+	subs.document = {"source": doc, "inks": {"Angel": "blue", "Ryan": "red"}}
+	m._subs = subs
+	m._ink = NotebookLayout.INKS["black"]
+	_ok(m._ink_for({"speaker": "Angel"}) == NotebookLayout.INKS["blue"]
+		and m._ink_for({"speaker": "Ryan"}) == NotebookLayout.INKS["red"]
+		and m._ink_for({"speaker": Manuscript.NARRATOR}) == NotebookLayout.INKS["black"],
+		"a speaker is not written in the ink the document names for it")
+	subs.free()
+	m.free()
+
+
+## EVERY HAND WRITES ON EVERY RULE: consecutive lines of one paragraph are one rule apart, in
+## each hand. Caveat's body size once double-spaced every line.
+func _check_single_spaced() -> void:
+	var para := "word ".repeat(120)
+	for h in NotebookLayout.HANDS:
+		var l := NotebookLayout.new()
+		l.hand = h
+		l.body_fs = int(NotebookLayout.HANDS[h]["size"])
+		l.build(para, func(_k: String) -> Vector2: return Vector2.ZERO, "")
+		var ys: Array = []
+		for w in l.words:
+			var y := int(round(((w["base"] as Vector2).y + 8.0 - NotebookLayout.HEADER) / NotebookLayout.RULE))
+			if not ys.has(y):
+				ys.append(y)
+		_ok(ys.size() > 3 and int(ys[1]) - int(ys[0]) == 1 and int(ys[2]) - int(ys[1]) == 1,
+			"%s is not written on consecutive rules: %s" % [h, ys.slice(0, 4)])

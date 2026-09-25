@@ -425,17 +425,24 @@ func _delete_button(label: String, key: String, version: int) -> Button:
 	b.tooltip_text = ("Delete this version of the picture - the file too. The one before it is "
 		+ "shown instead, or none. Later pictures stop being matched to it.")
 	b.disabled = Illustrations.read_only()
+	# The disarm timer is the BUTTON'S CHILD, not a SceneTree timer: the delete rebuilds the list
+	# and frees this button, and a tree timer still holding it fired into a freed capture.
+	var disarm := Timer.new()
+	disarm.one_shot = true
+	disarm.wait_time = 3.0
+	disarm.timeout.connect(func() -> void:
+		b.set_meta("armed", false)
+		b.text = label
+		b.remove_theme_color_override("font_color"))
+	b.add_child(disarm)
 	b.pressed.connect(func() -> void:
 		if not bool(b.get_meta("armed", false)):
 			b.set_meta("armed", true)
 			b.text = "Delete?"
 			b.add_theme_color_override("font_color", Color(1.0, 0.55, 0.5))
-			get_tree().create_timer(3.0).timeout.connect(func() -> void:
-				if is_instance_valid(b) and not bool(b.get_meta("gone", false)):
-					b.set_meta("armed", false)
-					b.text = label
-					b.remove_theme_color_override("font_color"))
+			disarm.start()
 			return
+		disarm.stop()
 		b.set_meta("gone", Illustrations.delete_version(key, version))
 		_thumbs.clear()
 		_seen = "")

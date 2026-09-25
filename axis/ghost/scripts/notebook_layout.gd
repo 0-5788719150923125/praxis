@@ -48,6 +48,29 @@ const HANDS := {
 	"patrick": {"regular": "res://fonts/hands/PatrickHand-Regular.ttf", "bold": "", "size": 33},
 }
 
+## THE PENS a voice may write in, by name - what `ink:` on a voice in the frontmatter takes
+## (a hex colour works too). Ink colours, not pure ones: "blue" is a ballpoint's, not #0000FF.
+## Black is the default for every voice that names none.
+const INKS := {
+	"black": Color(0.08, 0.08, 0.10),
+	"blue": Color(0.10, 0.18, 0.55),
+	"red": Color(0.68, 0.10, 0.12),
+	"green": Color(0.08, 0.38, 0.20),
+	"purple": Color(0.36, 0.14, 0.50),
+	"brown": Color(0.36, 0.20, 0.10),
+}
+
+
+## A voice's `ink:` as a colour: a name from [constant INKS], a hex colour, or black.
+static func ink_color(v: String) -> Color:
+	var k := v.strip_edges().to_lower()
+	if INKS.has(k):
+		return INKS[k]
+	if Color.html_is_valid(k):
+		return Color.html(k)
+	return INKS["black"]
+
+
 ## Which of [constant HANDS] writes this chapter.
 var hand := "kalam"
 ## Seeds every wobble, angle and placement.
@@ -113,8 +136,11 @@ func _bottom() -> float:
 	return HEADER + RULE * floor((PAGE.y - 80.0 - HEADER) / RULE)
 
 
+## Whole rules, as many as the size needs. Measured against the size itself, not a leading
+## factor: a hand's body size is already chosen to fill one rule (Caveat's 40 is small letters
+## on a big em), and 1.25x of it double-spaced every line in that hand.
 func _lh(fs: int) -> float:
-	return RULE * maxf(1.0, ceil(float(fs) * 1.25 / RULE))
+	return RULE * maxf(1.0, ceil(float(fs) * 0.95 / RULE))
 
 
 ## Whole rules only: a gap of half a line would take the writing off the grid for the rest of
@@ -167,11 +193,7 @@ func _heading(text: String, level: int) -> void:
 	_space(1.0)
 	if _y + lh + RULE > _bottom():
 		_open_page()
-	var c := column(_p)
-	(pages[_p]["labels"] as Array).append({"text": text, "pos": Vector2(c.x, _baseline(_y, lh)),
-		"fs": fs, "emph": 2, "align_w": c.y - c.x, "tone": 1.0,
-		"halign": HORIZONTAL_ALIGNMENT_LEFT, "underline": level <= 2})
-	_y += lh
+	_set_line_words(text, fs, 2, false, {"underline": level <= 2})
 
 
 func _rule() -> void:
@@ -217,7 +239,7 @@ func _set_margin(toks: Array, _widths: Array, n: int, base_y: float, fs: int, lh
 		var t: Dictionary = toks[k]
 		var w := float(ws[k])
 		words.append({"page": _p, "text": String(t["text"]), "norm": norm(String(t["text"])),
-			"emph": int(t["emph"]), "fs": mfs, "base": Vector2(x, base_y),
+			"emph": int(t["emph"]), "fs": mfs, "base": Vector2(x, base_y), "speaker": _speaker,
 			"rect": Rect2(x, base_y - lh * 0.64, w, lh * 0.86)})
 		(pages[_p]["words"] as Array).append(words.size() - 1)
 		x += w + sp

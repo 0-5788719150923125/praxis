@@ -49,6 +49,8 @@ func _ready() -> void:
 	_check_hesitations()
 	_check_hesitation_splice()
 	_check_hum_is_held()
+	_check_timestamp_pauses()
+	_check_ink_travels()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -733,3 +735,54 @@ func _check_hum_is_smooth() -> void:
 	var pc: Vector3 = _ed._period_of(fill, 0, int(0.02 * sr))
 	_ok(pc.x > 0.0 and float(sr) / pc.x > 150.0,
 		"the hum was held in its fry (%.0f Hz)" % (float(sr) / maxf(pc.x, 1.0)))
+
+
+## A TIME THAT OPENS A PARAGRAPH IS FOLLOWED BY A REST, as if the author had marked one - read
+## straight on, "21:40 The subject..." ran the time into the sentence. Held: the paragraph-
+## opening times each get the bare hesitation, welded after the time; a time mid-sentence gets
+## none; an author's own hesitation after a time is not doubled; and Hesitate off removes the
+## automatic ones with the rest.
+func _check_timestamp_pauses() -> void:
+	var body := "21:40 The subject has moved.\n\nWe met at 12:30 today.\n\n09:40 <!-- hesitation: 2 --> Arrived early.\n\n7:15 pm Dinner, alone."
+	var was: bool = _ed._hesitate_on.button_pressed
+	_ed._hesitate_on.button_pressed = true
+	var bare: float = _ed._hesitate.value
+	var kept: Array = _ed._split_speakers(body)
+	var holds: Array = _ed._holds
+	_ok(holds.size() == 3, "%d rests for three paragraph-opening times (one authored): %s" % [holds.size(), holds])
+	if holds.size() == 3:
+		_ok(is_equal_approx(float(holds[0]), bare) and is_equal_approx(float(holds[1]), 2.0)
+			and is_equal_approx(float(holds[2]), bare),
+			"the rests are not the bare hesitation, the author's own, the bare one: %s" % [holds])
+	var text := String((kept[0] as Dictionary)["text"]) if not kept.is_empty() else ""
+	_ok(text.contains("21:40" + TextNorm.HOLD_MARK) and text.contains("pm" + TextNorm.HOLD_MARK),
+		"the rest is not welded right after the time (and its am/pm)")
+	_ok(not text.contains("12:30" + TextNorm.HOLD_MARK), "a time mid-sentence got a rest")
+	_ed._hesitate_on.button_pressed = false
+	_ed._split_speakers(body)
+	_ok((_ed._holds as Array).is_empty(), "Hesitate off kept the automatic rests")
+	_ed._hesitate_on.button_pressed = was
+
+
+## A VOICE'S INK is a setting like any other on it: it survives the panel capturing the slot
+## (which rebuilds the slot from the controls - a key the controls do not carry is erased on
+## the next autosave), a hex colour the Ink list does not offer is kept rather than replaced,
+## and it reaches the page beside the text as the document's `inks`.
+func _check_ink_travels() -> void:
+	_ok(String(_ed._merge({"ink": "blue"})["ink"]) == "blue", "the slot schema drops `ink`")
+	_ok(String(_ed._merge({})["ink"]) == "", "a voice with no ink is not the default black")
+	var i: int = _ed._slot
+	var was: Dictionary = (_ed._slots[i] as Dictionary).duplicate()
+	_ed._slots[i]["ink"] = "red"
+	_ed._apply_slot(i)
+	_ed._capture_slot()
+	_ok(String(_ed._slots[i]["ink"]) == "red", "capturing the slot lost its ink")
+	_ed._slots[i]["ink"] = "#335577"
+	_ed._apply_slot(i)
+	_ed._capture_slot()
+	_ok(String(_ed._slots[i]["ink"]) == "#335577", "a hex ink was replaced on capture")
+	var doc: Dictionary = _ed.book_document("text")
+	_ok((doc.get("inks", {}) as Dictionary).values().has("#335577"),
+		"the ink does not travel with the document: %s" % [doc.get("inks")])
+	_ed._slots[i] = was
+	_ed._apply_slot(i)

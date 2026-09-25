@@ -35,6 +35,13 @@ const HESITATION := "<!--\\s*hesitation\\s*(?::\\s*([0-9]*\\.?[0-9]+)\\s*(?:s|se
 ## references, and drawn with the white taken out so it lies on the paper like the writing.
 ## Group 1 is which of the two, 2 the pin, 3 the description.
 const IMAGE := "<!--\\s*(image|sketch)\\s*(?:\\(\\s*(full|inline|left|right)\\s*\\))?\\s*:\\s*([\\s\\S]*?)\\s*-->"
+## A TIME THAT OPENS A PARAGRAPH - a log entry, "21:40 The subject has been moved..." - is
+## followed by a hesitation, as if the author had written `<!-- hesitation -->` after it: read
+## straight into the sentence, the time sounds like its first words rather than its heading.
+## Only at the start of a line (a time mid-sentence is part of the sentence), and never where
+## the author already put a hesitation of their own. The same forms the notebook sets in its
+## margin ([method NotebookLayout._margin_lead]).
+const TIMESTAMP_LEAD := "(?m)^([ \\t]*[\\[(]?\\d{1,2}[:.h]\\d{2}(?::\\d{2})?(?:[ \\t]*[aApP]\\.?[mM]\\.?)?[\\])]?[,:;.]?)(?=[ \\t]+\\S)(?![ \\t]*<!--\\s*hesitation)"
 ## Any other comment is an authoring note.
 const COMMENT := "<!--[\\s\\S]*?-->"
 ## Text before the first cue belongs to this voice. A chapter that opens on a cue never has one.
@@ -136,6 +143,11 @@ static func hesitations(text: String) -> Array:
 	return out
 
 
+## [param text] with a hesitation after every paragraph-opening time (see [constant TIMESTAMP_LEAD]).
+static func mark_timestamp_pauses(text: String) -> String:
+	return _rx(TIMESTAMP_LEAD).sub(text, "$1 <!-- hesitation -->", true)
+
+
 ## A stable key for an image description: whitespace-folded and hashed, so re-wrapping a long
 ## comment in an editor does not turn it into a different picture.
 static func image_key(prompt: String) -> String:
@@ -226,7 +238,8 @@ static func blocks(body: String) -> Array:
 			var level := 0
 			while level < s.length() and s[level] == "#":
 				level += 1
-			out.append({"kind": "heading", "level": level, "text": s.substr(level).strip_edges()})
+			out.append({"kind": "heading", "level": level, "text": s.substr(level).strip_edges(),
+				"speaker": who})
 			continue
 		para.append(kept.strip_edges())
 	_flush(out, para, who)
