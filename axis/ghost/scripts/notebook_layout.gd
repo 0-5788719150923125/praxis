@@ -172,10 +172,11 @@ func _baseline(y: float, lh: float) -> float:
 	return y + lh - 8.0
 
 
-## A line drifts off level along its length and each word sits a little high or low.
-func _ink_offset(i: int, line_y: float, dx: float) -> Vector2:
-	var slope := (_h(int(line_y) * 31 + _p * 7919) - 0.5) * 0.007
-	return Vector2((_h(i * 977 + 3) - 0.5) * 2.0, slope * dx + (_h(i * 131 + 17) - 0.5) * 3.4)
+## Words are set exactly on the line: how the writing wanders off it is drawn letter by letter
+## by [method NotebookMedium._glyph_xform], as a smooth drift. Word-by-word jitter - each word a
+## little high or low - is not how a hand writes, and was reported as looking strange.
+func _ink_offset(_i: int, _line_y: float, _dx: float) -> Vector2:
+	return Vector2.ZERO
 
 
 # --- blocks -----------------------------------------------------------------

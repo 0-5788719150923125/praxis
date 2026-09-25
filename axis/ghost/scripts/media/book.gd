@@ -1003,8 +1003,14 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 						+ 0.15 * sin(float(ci_i) * 0.36 + now * 0.45)
 					var sat := lerpf(0.45, 0.9, clampf(sw, 0.0, 1.0))
 					col = ink.lerp(Color.from_hsv(hue, sat, 0.55), g * alpha)
-			_ts.font_draw_glyph(gl["rid"], ci.get_canvas_item(), fs, base + (gl["pos"] as Vector2),
-				int(gl["index"]), col)
+			var gp := base + (gl["pos"] as Vector2)
+			var xf := _glyph_xform(i, k, gp, int(w["page"]))
+			if xf == Transform2D.IDENTITY:
+				_ts.font_draw_glyph(gl["rid"], ci.get_canvas_item(), fs, gp, int(gl["index"]), col)
+			else:
+				ci.draw_set_transform_matrix(xf)
+				_ts.font_draw_glyph(gl["rid"], ci.get_canvas_item(), fs, Vector2.ZERO, int(gl["index"]), col)
+				ci.draw_set_transform_matrix(Transform2D.IDENTITY)
 		_decorate_word(ci, i, w, ink)
 	for lb in pg["labels"]:
 		var l: Dictionary = lb
@@ -1189,6 +1195,12 @@ func _page_state(_page: int) -> String:
 ## The colour word [param _w] is set in. One ink, in print.
 func _ink_for(_w: Dictionary) -> Color:
 	return _ink
+
+
+## Where glyph [param _k] of word [param _i] is drawn, given its typeset origin [param _at]:
+## IDENTITY to set it exactly there, which is what type does.
+func _glyph_xform(_i: int, _k: int, _at: Vector2, _page: int) -> Transform2D:
+	return Transform2D.IDENTITY
 
 
 ## Anything laid on the page after its pictures. Nothing, in print.

@@ -48,6 +48,7 @@ func _ready() -> void:
 	_check_photo_covers()
 	_check_peel_holds()
 	_check_clip_sides()
+	_check_hand_drift()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -332,3 +333,30 @@ func _check_clip_sides() -> void:
 		for pt in pth:
 			bmax = maxf(bmax, (pt as Vector2).y)
 	_ok(bmax < fmax * 0.8, "the back of a clip is drawn as long as its front (%.0f vs %.0f)" % [bmax, fmax])
+
+
+## THE HAND DRIFTS, IT DOES NOT JITTER: words sit exactly on the line (no per-word offset), and
+## the drift is SMOOTH - a letter a little further along sits almost where its neighbour does,
+## and lines next to each other lean alike. A per-word random offset was reported as unnatural.
+func _check_hand_drift() -> void:
+	var l := NotebookLayout.new()
+	l.hand = "kalam"
+	l.body_fs = int(NotebookLayout.HANDS["kalam"]["size"])
+	l.build("word ".repeat(40), func(_k: String) -> Vector2: return Vector2.ZERO, "")
+	var ys := {}
+	var rules := {}
+	for w in l.words:
+		ys[snappedf((w["base"] as Vector2).y, 0.01)] = true
+		rules[int(round((w["base"] as Vector2).y / NotebookLayout.RULE))] = true
+	_ok(ys.size() == rules.size(), "words are offset one by one: %d baselines on %d lines" % [ys.size(), rules.size()])
+	var m := NotebookMedium.new()
+	m._seed = 1234
+	var worst := 0.0
+	var y := NotebookLayout.HEADER + NotebookLayout.RULE * 4.0
+	for x in range(200, 1000, 4):
+		worst = maxf(worst, absf(m._drift(3, float(x) + 4.0, y) - m._drift(3, float(x), y)))
+	_ok(worst < 0.2, "the drift jumps %.2f px between letters 4 px apart" % worst)
+	var a := m._drift(3, 900.0, y) - m._drift(3, 250.0, y)
+	var b := m._drift(3, 900.0, y + NotebookLayout.RULE) - m._drift(3, 250.0, y + NotebookLayout.RULE)
+	_ok(absf(a - b) < 2.0, "neighbouring lines do not lean alike (%.1f vs %.1f px)" % [a, b])
+	m.free()

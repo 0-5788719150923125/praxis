@@ -321,14 +321,70 @@ static func _underlined(w: Dictionary) -> bool:
 	return (int(w["emph"]) & 1) != 0 or bool(w.get("underline", false))
 
 
-## A pen line: not quite straight, not quite level.
+## A pen line: not quite straight, and riding the same drift as the writing above it.
 func _underline(ci: CanvasItem, at: Vector2, width: float, col: Color, salt: int) -> void:
 	var pts := PackedVector2Array()
-	for k in 5:
-		var f := float(k) / 4.0
-		var jy := (float(hash([_seed, salt, k]) & 0xFF) / 255.0 - 0.5) * 2.4
-		pts.append(at + Vector2(width * f, jy + f * 1.2))
+	for k in 7:
+		var f := float(k) / 6.0
+		var x := at.x + width * f
+		var jy := (float(hash([_seed, salt, k]) & 0xFF) / 255.0 - 0.5) * 1.2
+		pts.append(Vector2(x, at.y + _drift(_draw_page, x, at.y) + jy + f * 0.8))
 	ci.draw_polyline(pts, col, 2.0, true)
+
+
+# --- the hand ---------------------------------------------------------------------
+
+## HOW THE WRITING WANDERS OFF THE LINE, as a smooth field over the page rather than a jitter
+## per word: along a line the letters rise gradually toward its end (a hand drifts up as it goes
+## right), by a slope that changes only slowly from line to line, so neighbouring lines lean
+## together in clusters; a very slow wave rides along each line; the slant wanders slowly down
+## the page; and each letter differs by a hair in size and slant and sits a fraction off, which
+## is the tremor of a pen. Every term is a function of place and the session seed, so a page
+## draws the same way every time and a render writes what the live reading wrote.
+const DRIFT_SLOPE := -0.005        # mean rise per px along a line (negative is up)
+const DRIFT_SLOPE_VARY := 0.0045   # ...and how far a cluster of lines strays from it
+const DRIFT_CLUSTER := 5.0         # lines over which the slope changes
+const DRIFT_WAVE := 1.1            # px of the slow wave along a line
+const SLANT := -0.05               # mean slant (radians of skew)
+const SLANT_VARY := 0.06
+const LETTER_SCALE := 0.035        # a letter's size varies by this much either way
+const LETTER_SLANT := 0.03
+const TREMOR := 0.45               # px
+var _draw_page := -1
+
+
+func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
+	_draw_page = page
+	super.draw_page(ci, page, hl)
+
+
+## Smooth 1D value noise in 0..1 at [param t], lattice seeded by [param salt].
+func _vnoise(t: float, salt: int) -> float:
+	var i := floori(t)
+	var f := t - float(i)
+	var a := float(hash([_seed, salt, i]) & 0xFFFF) / 65535.0
+	var b := float(hash([_seed, salt, i + 1]) & 0xFFFF) / 65535.0
+	return lerpf(a, b, f * f * (3.0 - 2.0 * f))
+
+
+## How far the writing sits off the line at page point ([param x], [param y]), in px.
+func _drift(page: int, x: float, y: float) -> float:
+	var line := y / NotebookLayout.RULE
+	var slope := DRIFT_SLOPE + DRIFT_SLOPE_VARY * (_vnoise(line / DRIFT_CLUSTER, page * 17 + 1) - 0.5) * 2.0
+	var dx := maxf(0.0, x - (NotebookLayout.MARGIN_X + 16.0))
+	var phase := TAU * _vnoise(line / 3.0, page * 17 + 2)
+	return slope * dx + DRIFT_WAVE * sin(x / 170.0 + phase)
+
+
+func _glyph_xform(i: int, k: int, at: Vector2, page: int) -> Transform2D:
+	var h := hash([_seed, i, k])
+	var u1 := float(h & 0xFF) / 255.0 - 0.5
+	var u2 := float((h >> 8) & 0xFF) / 255.0 - 0.5
+	var u3 := float((h >> 16) & 0xFF) / 255.0 - 0.5
+	var slant := SLANT + SLANT_VARY * (_vnoise(at.y / NotebookLayout.RULE / 7.0, page * 17 + 3) - 0.5) * 2.0
+	var s := 1.0 + LETTER_SCALE * u1 * 2.0
+	return Transform2D(0.0, Vector2(s, s), slant + LETTER_SLANT * u2 * 2.0,
+		at + Vector2(0.0, _drift(page, at.x, at.y) + TREMOR * u3 * 2.0))
 
 
 func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
