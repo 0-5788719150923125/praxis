@@ -1084,7 +1084,58 @@ func _doc_capture() -> Dictionary:
 	_capture_slot()
 	return {"turn": _turn.value, "tab": _tab_name(), "voices": _cast_dict(),
 		"hesitate": _hesitate.value, "hesitate_on": _hesitate_on.button_pressed,
-		"illustrations": Illustrations.look()}
+		"illustrations": Illustrations.look(), "picture": _picture_capture()}
+
+
+## THE PICTURE, for the document: the medium, the Look, and the Director's dials a reading is
+## shown with. They lived only in this machine's ghost.cfg, so a chapter opened on another
+## machine - Windows, first - came up in whatever medium and look THAT machine last had: "the
+## medium didn't transfer, the filters didn't transfer". The film LIBRARY stays behind: it is
+## this machine's file paths. Every filter is named, off ones at 0, so the block says exactly
+## which look the chapter is shown in.
+func _picture_capture() -> Dictionary:
+	var looks := {}
+	for k in Filters.REGISTRY:
+		looks[k] = snappedf(Director.filter_amount(k), 0.01)
+	return {"medium": Director.medium, "filters": looks,
+		"scene_hold": snappedf(Director.pacing, 0.01), "flourishes": snappedf(Director.flourish, 0.01),
+		"camera": snappedf(Director.camera, 0.01), "intro": snappedf(Director.intro_hold, 0.01),
+		"outro": snappedf(Director.outro_hold, 0.01), "film_frequency": snappedf(Films.frequency(), 0.01)}
+
+
+## ...and back. Each key the block names is set through the same control a hand would use,
+## so the panel shows it and the Director saves it; a key it does not name is left alone (a
+## document from before this block keeps whatever the machine had).
+func _picture_apply(pic: Dictionary) -> void:
+	var med := String(pic.get("medium", ""))
+	if Medium.REGISTRY.has(med) and med != Director.medium:
+		Director.set_medium(med)
+		if _medium_pick != null:
+			_medium_pick.select(maxi(0, Medium.REGISTRY.keys().find(med)))
+		_sync_medium_rows()
+	if pic.get("filters") is Dictionary:
+		for k in Filters.REGISTRY:
+			Director.set_filter(k, float((pic["filters"] as Dictionary).get(k, 0.0)))
+		_sync_filter_rows()
+	for pair in [["scene_hold", _scene_hold], ["flourishes", _flourish], ["camera", _camera],
+			["intro", _intro], ["outro", _outro], ["film_frequency", _film_freq]]:
+		var sl: HSlider = pair[1]
+		if pic.has(String(pair[0])) and sl != null:
+			sl.value = clampf(float(pic[String(pair[0])]), sl.min_value, sl.max_value)
+
+
+## The Look rows, back from the Director - after a document set the filters.
+func _sync_filter_rows() -> void:
+	for k in _filter_rows:
+		var row: Dictionary = _filter_rows[k]
+		var amt := Director.filter_amount(String(k))
+		var cb: CheckBox = row["box"]
+		var sl: HSlider = row["slider"]
+		cb.set_pressed_no_signal(amt > 0.0)
+		sl.editable = amt > 0.0
+		if amt > 0.0:
+			sl.set_value_no_signal(amt)
+	_refresh_filters()
 
 
 ## ...and back the other way, when a document that carries one is opened.
@@ -1095,7 +1146,9 @@ func _doc_capture() -> Dictionary:
 ## silently blanking the panel's cast for it would be the opposite of the feature. A LIST
 ## of voices is the numbered tabs this replaced, and is read the way the settings are.
 func _doc_apply(cfg: Dictionary) -> void:
-	# THE LOOK first, and on its own: a document may carry pictures' settings and no cast yet.
+	# THE PICTURE and THE LOOK first, and on their own: a document may carry them and no cast yet.
+	if cfg.get("picture") is Dictionary:
+		_picture_apply(cfg["picture"] as Dictionary)
 	if cfg.get("illustrations") is Dictionary:
 		var errs := Illustrations.set_look(cfg["illustrations"] as Dictionary)
 		if not errs.is_empty():

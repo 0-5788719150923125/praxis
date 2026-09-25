@@ -158,6 +158,9 @@ func _run() -> void:
 		var fcb: CheckBox = frow["box"]
 		var fsl: HSlider = frow["slider"]
 		var was_amount := Director.filter_amount(first)
+		# OFF FIRST: the settings are the author's own, and a filter they already have on would
+		# make ticking the box a no-op - the check read their amount back as a failure.
+		fcb.button_pressed = false
 		fsl.set_value_no_signal(0.0)
 		fcb.button_pressed = true
 		if Director.filter_amount(first) <= 0.0:

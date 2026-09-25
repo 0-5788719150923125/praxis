@@ -95,6 +95,7 @@ func _ready() -> void:
 	await _check_autosave_waits_for_quiet()
 	_check_speak_takes_the_voice()
 	_check_the_look_travels()
+	_check_the_picture_travels()
 	await _check_unattended_processes_never_autosave()
 
 	_ed.free()
@@ -309,6 +310,39 @@ func _check_speak_takes_the_voice() -> void:
 	_ok(FileAccess.get_file_as_string(_path).contains("pace: 1.2"),
 		"the dial moved before Speak was not written to the document first")
 	_doc._autosave_for_test = false
+
+
+## THE PICTURE TRAVELS WITH THE DOCUMENT - medium, Look filters and the Director's dials. They
+## lived only in ghost.cfg, so a chapter opened on another machine came up in that machine's
+## medium and look. Set here, saved, changed, and read back by the next Speak.
+func _check_the_picture_travels() -> void:
+	var was := {"medium": Director.medium, "filters": Director.filters.duplicate(),
+		"pacing": Director.pacing}
+	Director.set_medium("notebook")
+	Director.set_filter("grain", 0.3)
+	Director.set_filter("vignette", 0.0)
+	Director.set_pacing(1.4)
+	_ok(_doc.save(), "saving the picture into the document failed")
+	var raw := FileAccess.get_file_as_string(_path)
+	_ok(raw.contains("picture:") and raw.contains("medium: notebook"), "the picture was not written into the frontmatter")
+	Director.set_medium("full")
+	Director.set_filter("grain", 0.0)
+	Director.set_pacing(1.0)
+	_doc.allow_autosave_for_test()
+	_doc._saved = _doc._snapshot()
+	_doc._autosave_for_test = false
+	_doc.pull()
+	_ok(Director.medium == "notebook", "the medium did not come back from the document (%s)" % Director.medium)
+	_ok(is_equal_approx(Director.filter_amount("grain"), 0.3), "the Look did not come back from the document")
+	_ok(is_equal_approx(Director.pacing, 1.4), "the scene hold did not come back from the document")
+	_ok(is_equal_approx(_ed._scene_hold.value, 1.4), "the panel does not show the document's scene hold")
+	var row: Dictionary = _ed._filter_rows["grain"]
+	_ok((row["box"] as CheckBox).button_pressed, "the panel does not show the document's filter")
+	# put the Director back as it was
+	Director.set_medium(String(was["medium"]))
+	for k in Filters.REGISTRY:
+		Director.set_filter(k, float((was["filters"] as Dictionary).get(k, 0.0)))
+	Director.set_pacing(float(was["pacing"]))
 
 
 ## THE PICTURES' LOOK TRAVELS WITH THE DOCUMENT - painter, style and reference images, into

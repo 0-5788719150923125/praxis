@@ -252,7 +252,31 @@ cmd_compose() {
         allocate_ports
     fi
 
-    docker compose -f "$cf" run --rm --remove-orphans $service_ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
+    local rc=0
+    docker compose -f "$cf" run --rm --remove-orphans $service_ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}" || rc=$?
+    [ "$rc" -eq 0 ] || report_stale_cdi_spec
+    return "$rc"
+}
+
+# The NVIDIA runtime in CDI mode mounts exactly the host files listed in the CDI
+# spec, so a driver update that renames a versioned library leaves the spec
+# pointing at a file that is gone and every GPU container fails with "failed to
+# fulfil mount request: open <path>: no such file or directory". Arch's pacman
+# hook only string-substitutes the nvidia-utils version on an upgrade, which
+# misses companion libs (egl-wayland, egl-gbm) that version on their own.
+report_stale_cdi_spec() {
+    local spec missing
+    for spec in /etc/cdi/nvidia*.yaml /var/run/cdi/nvidia*.yaml; do
+        [ -f "$spec" ] || continue
+        missing=$(sed -ne 's|^[[:space:]-]*hostPath:[[:space:]]*||p' "$spec" | sort -u |
+            while read -r path; do [ -e "$path" ] || echo "$path"; done)
+        [ -n "$missing" ] || continue
+        echo "[DOCKER] The NVIDIA CDI spec $spec is stale (usually after a driver update)." >&2
+        echo "[DOCKER] Missing host files:" >&2
+        echo "$missing" | head -5 | sed 's/^/[DOCKER]   /' >&2
+        echo "[DOCKER] Regenerate it (after rebooting, if the driver was just updated), then retry:" >&2
+        echo "[DOCKER]   sudo nvidia-ctk cdi generate --output=$spec" >&2
+    done
 }
 
 # ── In-container user setup ──────────────────────────────────────────────────
