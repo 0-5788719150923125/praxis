@@ -46,6 +46,7 @@ func _ready() -> void:
 	_check_single_spaced()
 	_check_heading_kept_with_text()
 	_check_photo_covers()
+	_check_peel_holds()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -293,3 +294,20 @@ func _check_photo_covers() -> void:
 					"a photo claims words on another page")
 			n += 1
 	_ok(n == 3, "the control is wrong - %d photos" % n)
+
+
+## A LIFTED PHOTO DOES NOT FLICKER. Reported: curled, dropped, curled again - the early test
+## flipped as the take's timings arrived. Held: once up it stays up while "early" goes false,
+## it drops only after the reading passes its last word, never within PEEL_HOLD of lifting, and
+## it does not lift for a reading that is nowhere near it.
+func _check_peel_holds() -> void:
+	var L := NotebookMedium.peel_latch
+	var at: float = L.call(NAN, 10.0, 50, 60, 90, true)
+	_ok(not is_nan(at), "an early lift did not lift")
+	at = L.call(at, 10.5, 51, 60, 90, false)
+	_ok(not is_nan(at), "the photo dropped when the early test changed its mind")
+	at = L.call(at, 11.0, 91, 60, 90, false)
+	_ok(not is_nan(at), "the photo dropped within PEEL_HOLD of lifting")
+	at = L.call(at, 14.5, 92, 60, 90, false)
+	_ok(is_nan(at), "the photo stayed up after its words were read and the hold was over")
+	_ok(is_nan(L.call(NAN, 1.0, 5, 60, 90, false)), "a photo lifted for a reading far above it")

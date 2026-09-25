@@ -771,6 +771,16 @@ func _check_timestamp_pauses() -> void:
 	_ok(text.contains("21:40" + TextNorm.HOLD_MARK) and text.contains("pm" + TextNorm.HOLD_MARK),
 		"the rest is not welded right after the time (and its am/pm)")
 	_ok(not text.contains("12:30" + TextNorm.HOLD_MARK), "a time mid-sentence got a rest")
+	# a hesitation standing alone above a heading, at the start of a passage: the rest goes
+	# AFTER the `#`s, or "##" stops being markup and is read as a word
+	var head: Array = _ed._split_speakers("<!-- speaker: A -->\n<!-- hesitation: 2 -->\n\n## October 13, 2026\n\nText.")
+	var ht := String(head[0]["text"]) if not head.is_empty() else ""
+	_ok(ht.begins_with("## " + TextNorm.HOLD_MARK), "the rest landed before the heading's #s: %s" % JSON.stringify(ht))
+	var said := ""
+	for c in _ed._build_chunks("<!-- speaker: A -->\n<!-- hesitation: 2 -->\n\n## October 13, 2026\n\nText."):
+		for w in (c as Dictionary)["words"]:
+			said += String((w as Dictionary)["text"]) + " "
+	_ok(not said.contains("#"), "a heading marker was spoken: %s" % said)
 	_ed._hesitate_on.button_pressed = false
 	_ed._split_speakers(body)
 	_ok((_ed._holds as Array).is_empty(), "Hesitate off kept the automatic rests")

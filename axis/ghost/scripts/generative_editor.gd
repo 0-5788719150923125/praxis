@@ -1473,7 +1473,17 @@ func _split_speakers(body: String) -> Array:
 		while body_t.begins_with(TextNorm.HOLD_MARK):
 			n += 1
 			body_t = body_t.substr(1).strip_edges(true, false)
-		out = TextNorm.HOLD_MARK.repeat(n) + body_t
+		# ...AFTER a heading's `#`s, never before them: `#` is only markup at the start of a
+		# line, and a sentinel in front of it left "##" to be read as a word (a hesitation
+		# standing alone above a dated entry did exactly that).
+		var marks := ""
+		if n > 0 and body_t.begins_with("#"):
+			var k := 0
+			while k < body_t.length() and body_t[k] == "#":
+				k += 1
+			marks = body_t.substr(0, k) + " "
+			body_t = body_t.substr(k).strip_edges(true, false)
+		out = marks + TextNorm.HOLD_MARK.repeat(n) + body_t
 		if not out.replace(TextNorm.HOLD_MARK, "").strip_edges().is_empty():
 			kept.append({"speaker": String((p as Dictionary)["speaker"]), "text": out})
 		else:

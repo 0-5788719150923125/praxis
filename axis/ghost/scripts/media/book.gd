@@ -93,6 +93,9 @@ uniform float has_back = 0.0;
 // The texture's transparent margin past the page's outer and top/bottom edges, in page widths
 // (see BookMedium._page_pad). 0 in a book, so the leaf is exactly the page.
 uniform float ext = 0.0;
+// ...and past its top (far) and bottom (near) edges, in page widths.
+uniform float ext_top = 0.0;
+uniform float ext_bot = 0.0;
 
 // The leaf's centre line, arc length s from the spine, as (across, up): it leaves the spine
 // at `angle` and bends by `curl` along its width, then the gutter swell is added along its
@@ -117,7 +120,7 @@ void vertex() {
 	vec2 p = profile(s);
 	vec2 q = profile(s + 0.01);
 	vec2 t = normalize(q - p);
-	float z = (UV.y - 0.5) * (page_h + 2.0 * ext);
+	float z = mix(-(page_h * 0.5 + ext_top), page_h * 0.5 + ext_bot, UV.y);
 	// Both leaves reach a hair past the spine, so no crack ever opens between them for the
 	// cloth to show through. ALONG THE LEAF'S OWN DIRECTION at the spine, not along world x:
 	// a turning leaf that has swung over is flipped, and a world-x overlap put its landed
@@ -236,7 +239,7 @@ func mount(st: SubViewport) -> void:
 	add_child(_placeholder)
 	for i in 4:
 		var vp := SubViewport.new()
-		vp.size = Vector2i(BookLayout.PAGE + Vector2(_page_pad(), _page_pad() * 2.0))
+		vp.size = Vector2i(BookLayout.PAGE + Vector2(_page_pad(), _page_pad_top() + _page_pad_bottom()))
 		vp.transparent_bg = true
 		vp.disable_3d = true
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -415,6 +418,8 @@ func _leaf(side: float) -> MeshInstance3D:
 	mat.set_shader_parameter("side", side)
 	mat.set_shader_parameter("page_h", PAGE_H)
 	mat.set_shader_parameter("ext", _page_pad() / BookLayout.PAGE.x)
+	mat.set_shader_parameter("ext_top", _page_pad_top() / BookLayout.PAGE.x)
+	mat.set_shader_parameter("ext_bot", _page_pad_bottom() / BookLayout.PAGE.x)
 	m.material_override = mat
 	# The shader moves every vertex; without a generous AABB the leaf is culled mid-turn.
 	m.custom_aabb = AABB(Vector3(-1.2, -0.2, -PAGE_H), Vector3(2.4, 1.5, PAGE_H * 2.0))
@@ -588,7 +593,9 @@ static func _words_to_source(words: Array) -> String:
 
 
 func _image_size(key: String) -> Vector2:
-	var t := _texture_for(key)
+	# a sketch is laid out at the size of its INK, which is what is drawn
+	var t := _sketch_texture_for(key) if String(Illustrations.entry(key).get("placement", "")) == "sketch" \
+		else _texture_for(key)
 	return Vector2(t.get_size()) if t != null else Vector2.ZERO
 
 
@@ -654,6 +661,12 @@ static func ink_texture(img: Image, ink: Color) -> ImageTexture:
 		out[i * 4 + 3] = clampi((235 - int(lum[i])) * 255 / 175, 0, 255)
 	var ink_img := Image.create_from_data(img.get_width(), img.get_height(), false,
 		Image.FORMAT_RGBA8, out)
+	# CROPPED TO THE INK, with a hair of margin: the model surrounds a drawing with white it was
+	# asked for, and once the white is keyed out that border is empty room that makes every
+	# sketch look small in the space the page gave it.
+	var used := ink_img.get_used_rect()
+	if used.size.x > 8 and used.size.y > 8:
+		ink_img = ink_img.get_region(used.grow(6).intersection(Rect2i(Vector2i.ZERO, ink_img.get_size())))
 	ink_img.generate_mipmaps()
 	return ImageTexture.create_from_image(ink_img)
 
@@ -902,7 +915,7 @@ func _refresh_pages() -> void:
 		c.page = page
 		# the page sits inside the margin: past its outer edge (left, on a left-hand page) and
 		# its top
-		c.position = Vector2(_page_pad() if page % 2 == 0 else 0.0, _page_pad())
+		c.position = Vector2(_page_pad() if page % 2 == 0 else 0.0, _page_pad_top())
 		c.hl = hl
 		c.queue_redraw()
 		(_vps[i] as SubViewport).render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -1129,6 +1142,16 @@ func _page_pad() -> float:
 	return 0.0
 
 
+## ...past its top edge, and its bottom one. Separate, because what hangs off a page need not
+## hang off every edge of it.
+func _page_pad_top() -> float:
+	return _page_pad()
+
+
+func _page_pad_bottom() -> float:
+	return _page_pad()
+
+
 ## The layout this medium typesets with.
 func _make_layout() -> BookLayout:
 	return BookLayout.new()
@@ -1214,17 +1237,48 @@ func _hash01(i: int, salt: int) -> float:
 	return float(hash([_seed, i, salt]) & 0xFFFFFF) / float(0xFFFFFF)
 
 
+## THE CAMERA READS AHEAD. It aims at the word the voice will reach [constant CAM_LEAD] seconds
+## from now, as a reader's eyes run ahead of the words they are saying - most visibly at the
+## foot of a left-hand page, where it used to follow the voice across to the right one and
+## arrive well after it: the springs that keep every move gentle also make it late, so the
+## lead is what pays for them. Kept on the open spread: the next spread is the page turn's.
+## Measured on a left-to-right crossing: with no lead the aim crossed the spine 3.8 s after the
+## voice, at 2.5 s 1.3 s after it, and at 5 s 1.3 s BEFORE it - arriving as the voice does.
+const CAM_LEAD := 5.0
+
+func _camera_word() -> int:
+	var r := _reading()
+	if r.is_empty():
+		return -1
+	var li := int(r["layout"])
+	if _subs == null or not is_instance_valid(_subs):
+		return li
+	var ahead: float = _subs.now() + CAM_LEAD
+	var words: Array = _subs.words
+	var spread := _spread_of_word(li)
+	for i in range(int(r["sub"]) + 1, mini(_map.size(), words.size())):
+		if float((words[i] as Dictionary).get("t0", INF)) > ahead:
+			break
+		var m := int(_map[i])
+		if m < 0:
+			continue
+		if _spread_of_word(m) != spread:
+			break
+		li = m
+	return li
+
+
 func _tick_camera(delta: float) -> void:
 	var t := maxf(Spectrum.current.time, 0.0)
 	var sev := _sev()
 	var k := _arc()
 	# Where the reading is on the spread: its page and its line, as world coordinates.
 	var aim := Vector3(0.0, 0.0, 0.06)
-	var r := _reading()
+	var li := _camera_word()
 	var page_x := 0.0
 	var line_z := 0.0
-	if not r.is_empty():
-		var w: Dictionary = _layout.words[int(r["layout"])]
+	if li >= 0:
+		var w: Dictionary = _layout.words[li]
 		var rect: Rect2 = w["rect"]
 		var side := int(w["page"]) % 2
 		page_x = -0.5 if side == 0 else 0.5

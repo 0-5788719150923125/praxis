@@ -24,18 +24,23 @@ var _hand := "kalam"
 ## `_peel[stack]` runs 0..1 at a steady rate and is drawn through a smoothstep, so it eases in
 ## and out; a stack lifts together.
 ##
-## IT LIFTS AHEAD OF THE VOICE, as a reader lifts a photo before reaching the line under it: it
-## starts [constant PEEL_TIME] + [constant PEEL_EARLY] seconds before the first hidden word is
-## spoken, so it is fully up that long before the word. Timed off the word's own start where the
-## voice has reached it in the take; [constant PEEL_LEAD] words early where it has not yet.
+## IT LIFTS WELL AHEAD OF THE VOICE, as a reader moves a photo aside while still a few lines
+## above what it hides - not as the voice arrives ("a real reader would turn the photo much
+## earlier, like 5 seconds or even 10"). It is fully up [constant PEEL_EARLY] seconds before the
+## first hidden word is spoken, timed off that word's own start where the take has reached it;
+## [constant PEEL_LEAD] words early (about the same, at speaking pace) where it has not yet.
 const PEEL_TIME := 0.9
-const PEEL_EARLY := 0.6
-const PEEL_LEAD := 5
-## How far the photo swings back at full peel (radians) - past upright, leaning out over its
-## clip and beyond the page edge, so it covers as little writing as it can: at 135 degrees at
-## most ~60 px of it stays over the page, beside the clip, and up to ~215 px hangs past the edge
-## (which is why [method _page_pad] is as wide as it is).
-const CURL_MAX := 2.35
+const PEEL_EARLY := 6.0
+const PEEL_LEAD := 20
+## ONCE UP, A PHOTO STAYS UP until the reading has passed the last word it hides, and never
+## comes down within this many seconds of lifting. The "early" test switches from a word count
+## to the take's own timings as they arrive, and the two can disagree for a moment: the photo
+## curled, dropped and curled again.
+const PEEL_HOLD := 4.0
+var _raised := {}                # stack -> when it was lifted (subtitle clock)
+## How much of a photo the clip PINS, from its clipped edge: that part stays flat under the clip
+## and the rest folds back over it. About where a clip's inner end reaches.
+const PIN := 76.0
 var _peel := {}
 var _peel_dt := 0.0
 var _prints := {}
@@ -52,10 +57,20 @@ func _make_layout() -> BookLayout:
 	return l
 
 
-## Room past the page edge for what hangs off it: a clip's outer loop, and a photo swung back
-## over its clip while the words under it are read (see [constant CURL_MAX]).
+## Room past the page edge for what hangs off it: a clip's outer loop, and a photo folded back
+## over its clip while the words under it are read. The widest photo (0.56 of the page) folded
+## at its pin reaches ~430 px past a side edge; a landscape photo less than that past the top.
+## Nothing folds downward, so the bottom needs only the clips' room.
 func _page_pad() -> float:
-	return 240.0
+	return 480.0
+
+
+func _page_pad_top() -> float:
+	return 480.0
+
+
+func _page_pad_bottom() -> float:
+	return 64.0
 
 
 func _cover_font() -> Font:
@@ -90,9 +105,26 @@ func _tick_peel() -> void:
 			var lo := int(cover[0])
 			var t0 := _spoken_at(lo)
 			var early := now >= t0 - PEEL_TIME - PEEL_EARLY if t0 >= 0.0 else li >= lo - PEEL_LEAD
-			var want := 1.0 if li >= 0 and li <= int(cover[1]) and (li >= lo or early) else 0.0
+			var at: float = _raised.get(st, NAN)
+			at = peel_latch(at, now, li, lo, int(cover[1]), early)
+			if is_nan(at):
+				_raised.erase(st)
+			else:
+				_raised[st] = at
 			var v := float(_peel.get(st, 0.0))
-			_peel[st] = move_toward(v, want, step)
+			_peel[st] = move_toward(v, 0.0 if is_nan(at) else 1.0, step)
+
+
+## The lift decision for one stack: when it was lifted ([param at], NAN while it is down) after
+## this frame. It LIFTS when the reading is within its words or [param early] says it is time;
+## it DROPS only once the reading has left its words - past the last, or well back before the
+## first (a restart) - and at least [constant PEEL_HOLD] seconds after it lifted. Pure, so the
+## gate can drive it.
+static func peel_latch(at: float, now: float, li: int, lo: int, hi: int, early: bool) -> float:
+	if is_nan(at):
+		return now if li >= 0 and li <= hi and (li >= lo or early) else NAN
+	var gone := li > hi or li < lo - PEEL_LEAD * 3
+	return NAN if gone and absf(now - at) >= PEEL_HOLD else at
 
 
 ## When layout word [param li] starts being spoken, from the take's own timings, or -1 while
@@ -103,6 +135,12 @@ func _spoken_at(li: int) -> float:
 	if float(_lay_t0.get(li, -1.0)) >= 0.0:
 		return float(_lay_t0[li])
 	return -1.0
+
+
+func _reset_reading() -> void:
+	super._reset_reading()
+	_raised = {}
+	_peel = {}
 
 
 func _page_state(page: int) -> String:
@@ -331,11 +369,13 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-## A photo lifted by [param peel] (0..1): drawn as strips from the clipped edge to the free one.
-## It BENDS AT THE CLIP and swings back over it like a door - most of the turn in the first
-## fifth of its length, the rest nearly rigid - past upright and out over the page edge. A curl
-## at the free end was tried first and left the half nearest the clip lying on the writing:
-## "it still covers a lot of text". A strip turned past upright shows the BACK of the print.
+## A photo lifted by [param peel] (0..1): a CLEAN FOLD. The part the clip pins ([constant PIN])
+## stays flat; the rest turns about the fold line at the clip's inner end, rigid and full
+## length, up through upright and over, until at full peel it lies flat on the far side of the
+## clip - back up, off the page edge - and the writing under it is uncovered. Two earlier cuts
+## were wrong in ways a still frame shows: a curl at the free end left the clipped half on the
+## text, and a lean to 135 degrees showed the photo foreshortened, "not a clean fold that holds
+## the length constant". Past upright the clip is under the photo, so it is drawn first.
 func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 	var rect: Rect2 = im["rect"]
 	var sz := rect.size
@@ -357,52 +397,51 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 			length = sz.x
 			width = sz.y
 	var side := Vector2(-a.y, a.x) * width * 0.5
-	const N := 32
-	var us := PackedFloat32Array([0.0])
-	var zs := PackedFloat32Array([0.0])
-	var th := PackedFloat32Array([0.0])
-	for i in N:
-		var t := (float(i) + 0.5) / float(N)
-		var theta := peel * CURL_MAX * (0.8 * minf(1.0, t / 0.2) + 0.2 * t)
-		us.append(us[i] + cos(theta) * length / float(N))
-		zs.append(zs[i] + sin(theta) * length / float(N))
-		th.append(theta)
+	var t0 := clampf(PIN / length, 0.0, 0.5)
+	var theta := peel * PI
+	var fold := o + a * t0 * length
+	var reach := (1.0 - t0) * length * cos(theta)      # < 0 once it is over the clip
+	var far := fold + a * reach
 	var tex := _print_for(im)
+	var clip: Dictionary = im.get("clip", {})
+	if theta > PI * 0.5 and not clip.is_empty():
+		_draw_clip(ci, clip["pos"], float(clip["angle"]))
 	ci.draw_set_transform(c, ang, Vector2.ONE)
-	# ONE SHADOW under the footprint, reaching as far as the lift does and softer the higher it
-	# goes. A shadow per strip, each thrown by its own height, drew a comb of bars.
-	var reach := 0.0
-	var top := 0.0
-	for i in N + 1:
-		reach = maxf(reach, us[i])
-		top = maxf(top, zs[i])
-	var lift := minf(top / length, 1.0)
-	var off := Vector2(6.0, 9.0) + Vector2(0.05, 0.08) * top
-	for k in 3:
-		var g := side.normalized() * float(k) * 3.0
-		var q := PackedVector2Array([o + side + g + off, o - side - g + off,
-			o + a * (reach + float(k) * 3.0) - side - g + off, o + a * (reach + float(k) * 3.0) + side + g + off])
-		ci.draw_colored_polygon(q, Color(0, 0, 0, 0.06 * (1.0 - 0.5 * lift)))
-	for i in N:
-		if absf(us[i + 1] - us[i]) < 0.5:
-			continue
-		var q := PackedVector2Array([o + a * us[i] + side, o + a * us[i] - side,
-			o + a * us[i + 1] - side, o + a * us[i + 1] + side])
-		var ct := cos(th[i + 1])
-		if ct >= 0.0 and tex != null:
-			var t0 := float(i) / float(N)
-			var t1 := float(i + 1) / float(N)
-			var uv := PackedVector2Array()
-			for pt in [o + a * t0 * length + side, o + a * t0 * length - side,
-					o + a * t1 * length - side, o + a * t1 * length + side]:
-				uv.append(((pt as Vector2) + sz * 0.5) / sz)
-			var sh := 0.72 + 0.28 * ct
-			var col := Color(sh, sh, sh)
-			ci.draw_polygon(q, PackedColorArray([col, col, col, col]), uv, tex)
+	# the shadow of what lies over the page, fainter while the photo stands up off it
+	var lift := sin(theta)
+	var shadow_end := far if reach > 0.0 else fold
+	var off := Vector2(6.0, 9.0) + Vector2(10.0, 14.0) * lift
+	ci.draw_colored_polygon(PackedVector2Array([o + side + off, o - side + off,
+		shadow_end - side + off, shadow_end + side + off]), Color(0, 0, 0, 0.14 * (1.0 - 0.5 * lift)))
+	# the pinned part, flat
+	_print_quad(ci, tex, o, fold, side, a, 0.0, t0, length, sz, 1.0)
+	# the folded part: its face while it rises, its back once it is over
+	if absf(reach) > 0.5:
+		if reach > 0.0:
+			_print_quad(ci, tex, fold, far, side, a, t0, 1.0, length, sz, 0.75 + 0.25 * cos(theta))
 		else:
-			# the back of the print: plain paper, lit less the more it faces away
-			ci.draw_colored_polygon(q, PHOTO_PAPER.darkened(0.06 + 0.14 * absf(ct)))
+			ci.draw_colored_polygon(PackedVector2Array([fold + side, fold - side, far - side, far + side]),
+				PHOTO_PAPER.darkened(0.04 + 0.12 * (1.0 + cos(theta))))
+			ci.draw_polyline(PackedVector2Array([fold + side, far + side, far - side, fold - side]),
+				Color(0, 0, 0, 0.12), 1.2, true)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## One quad of the print, from [param p0] to [param p1] across [param side], showing the print
+## between [param t0] and [param t1] along its clipped-to-free axis, lit by [param shade].
+func _print_quad(ci: CanvasItem, tex: Texture2D, p0: Vector2, p1: Vector2, side: Vector2, a: Vector2,
+		t0: float, t1: float, length: float, sz: Vector2, shade: float) -> void:
+	var q := PackedVector2Array([p0 + side, p0 - side, p1 - side, p1 + side])
+	if tex == null:
+		ci.draw_colored_polygon(q, PHOTO_PAPER.darkened(1.0 - shade))
+		return
+	var o := p0 - a * t0 * length
+	var uv := PackedVector2Array()
+	for pt in [o + a * t0 * length + side, o + a * t0 * length - side,
+			o + a * t1 * length - side, o + a * t1 * length + side]:
+		uv.append(((pt as Vector2) + sz * 0.5) / sz)
+	var col := Color(shade, shade, shade)
+	ci.draw_polygon(q, PackedColorArray([col, col, col, col]), uv, tex)
 
 
 ## The whole print - white border and picture - as one texture, so a curled strip can be cut
@@ -450,7 +489,9 @@ func _print_for(im: Dictionary) -> Texture2D:
 func _draw_overlay(ci: CanvasItem, pg: Dictionary) -> void:
 	for im in pg["images"]:
 		var clip: Dictionary = (im as Dictionary).get("clip", {})
-		if not clip.is_empty():
+		# past upright the photo lies over its clip, which _draw_curled has already put under it
+		var peel := smoothstep(0.0, 1.0, float(_peel.get(int((im as Dictionary).get("stack", -1)), 0.0)))
+		if not clip.is_empty() and peel <= 0.5:
 			_draw_clip(ci, clip["pos"], float(clip["angle"]))
 
 
@@ -484,3 +525,7 @@ static func _clip_arc(pts: PackedVector2Array, c: Vector2, r: float, from: float
 	for k in 13:
 		var t := lerpf(from, to, float(k) / 12.0)
 		pts.append(c + Vector2(cos(t), sin(t)) * r)
+
+
+func debug_line() -> String:
+	return super.debug_line() + " peel %s" % [_peel]

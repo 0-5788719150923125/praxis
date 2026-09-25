@@ -28,8 +28,14 @@ const MARGIN_X := 172.0
 ## How close writing comes to the outer edge, and to the spine.
 const PAD_OUTER := 64.0
 const PAD_SPINE := 100.0
-## Rows a sketch is given, and how much of the column it may take.
-const SKETCH_ROWS := 8
+## A SKETCH IS CENTRED IN THE COLUMN and drawn as large as its shape allows: [constant
+## SKETCH_WIDTH] of the column's width, with as many rows as that takes at its own aspect (the
+## drawing's ink, cropped - see [method BookMedium.ink_texture]), between [constant SKETCH_ROWS]
+## and [constant SKETCH_ROWS_MAX]. It used to sit at a random place along a fixed 8 rows and
+## came out small, and always somewhere different to no purpose.
+const SKETCH_ROWS := 6
+const SKETCH_ROWS_MAX := 13
+const SKETCH_WIDTH := 0.9
 ## A photo's white border, in page pixels.
 const PHOTO_BORDER := 18.0
 ## A paper clip's length, and how far its outer loop stands off the page edge it grips - a clip
@@ -302,16 +308,21 @@ func _image_page(b: Dictionary) -> void:
 ## Rows left in the writing for a drawing, the drawing somewhere along them.
 func _sketch(b: Dictionary) -> void:
 	_space(1.0)
-	if _y + RULE * SKETCH_ROWS > _bottom():
-		_open_page()
 	var c := column(_p)
-	var r := hash([hand_seed, String(b.get("key", "")), "sketch"])
-	var w := (c.y - c.x) * lerpf(0.6, 0.85, (r & 0xFF) / 255.0)
-	var x := c.x + (c.y - c.x - w) * (((r >> 8) & 0xFF) / 255.0)
-	(pages[_p]["images"] as Array).append({"rect": Rect2(x, _y + 6.0, w, RULE * SKETCH_ROWS - 12.0),
-		"key": String(b.get("key", "")), "prompt": String(b.get("prompt", "")), "full": false,
-		"sketch": true})
-	_y += RULE * SKETCH_ROWS
+	var w := (c.y - c.x) * SKETCH_WIDTH
+	var aspect := 1.5
+	if _images_at.is_valid():
+		var got: Vector2 = _images_at.call(String(b.get("key", "")))
+		if got.x > 0.0 and got.y > 0.0:
+			aspect = got.x / got.y
+	var rows := clampi(int(ceil((w / aspect + 12.0) / RULE)), SKETCH_ROWS, SKETCH_ROWS_MAX)
+	if _y + RULE * rows > _bottom():
+		_open_page()
+		c = column(_p)
+	(pages[_p]["images"] as Array).append({"rect": Rect2(c.x + (c.y - c.x - w) * 0.5, _y + 6.0, w,
+		RULE * rows - 12.0), "key": String(b.get("key", "")), "prompt": String(b.get("prompt", "")),
+		"full": false, "sketch": true})
+	_y += RULE * rows
 
 
 ## The photo's outer size (border included) at width [param w], from the picture's own aspect.

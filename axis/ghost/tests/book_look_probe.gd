@@ -144,6 +144,7 @@ func _run() -> void:
 		var c: BookMedium.PageCanvas = bv._canvases[0]
 		bv._slot_page[0] = int(p)
 		c.page = int(p)
+		c.position = Vector2(bv._page_pad() if int(p) % 2 == 0 else 0.0, bv._page_pad_top())
 		c.hl = {}
 		c.queue_redraw()
 		(bv._vps[0] as SubViewport).render_target_update_mode = SubViewport.UPDATE_ONCE
