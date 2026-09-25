@@ -94,6 +94,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`comic_page.gd`](../scripts/comic_page.gd) **ComicPage** - one seeded page of comic panels. The layout half of `ComicMedium`.
 - [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicMedium` flies over.
 - [`book_layout.gd`](../scripts/book_layout.gd) **BookLayout** - a chapter typeset into the pages of a printed novel, for `BookMedium`.
+- [`notebook_layout.gd`](../scripts/notebook_layout.gd) **NotebookLayout** - a chapter written by hand into a ruled notebook, for `NotebookMedium`.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
 - [`illustrations.gd`](../scripts/illustrations.gd) **Illustrations** - the library of generated pictures a book prints.
 - [`image_gen.gd`](../scripts/image_gen.gd) **ImageGen** - who paints the pictures. The backend axis of `Illustrations`.

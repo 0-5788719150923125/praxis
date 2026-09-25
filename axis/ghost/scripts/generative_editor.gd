@@ -3150,8 +3150,10 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 			var gap := PackedFloat32Array()
 			gap.resize(int(float(c["add"]) * float(_sr)))
 			out.append_array(gap)
-		after_fill = fill != null
-		from = at
+		# A fill that RESUMES elsewhere ended in its own fade, so what follows fades in as
+		# after any rest; one that rejoins at `at` is phase-aligned and must not.
+		after_fill = fill != null and not c.has("resume")
+		from = clampi(int(c.get("resume", at)), at, pcm.size())
 	var rest := pcm.slice(from)
 	if not after_fill:
 		for i in mini(fade, rest.size()):
@@ -3163,13 +3165,19 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 ## HUMS ARE HELD. "Hmm." read as a thinking hum is most of a second; the voice renders it in
 ## about 0.15 s, and asking for more `M`s does not help - measured, eight of them come back
 ## as 0.30 s, the model compresses the repeats. So the hum is LENGTHENED after the fact, by
-## pitch-synchronous overlap-add of its own steadiest periods: same voice, pitch and colour.
+## pitch-synchronous overlap-add of its own steadiest periods: same voice and colour.
 ## Target length in seconds, per spelling.
 const HUM_SECONDS := {"hm": 0.45, "mm": 0.5, "hmm": 0.75, "mmm": 0.85, "hmmm": 0.95}
 ## Pitch marks either side of the anchor the held hum wanders over. Wandering, rather than
 ## repeating one period, keeps the hum alive; more than a few reaches the pitch glide and the
 ## fry either side of the steady stretch.
 const HUM_MARKS := 2
+## THE HUM FALLS. A thinking "hmm" is not a held note: it settles, then drops in pitch and dies
+## away. Semitones of fall by the end, and where along the held hum (0..1) the pitch starts to
+## drop and the loudness starts to fade.
+const HUM_FALL := 4.0
+const HUM_FALL_FROM := 0.3
+const HUM_FADE_FROM := 0.55
 
 ## The cut that lengthens one hum to [param target] seconds: `{t, at, add, fill}`, or empty
 ## when it is already long enough or has no steady voiced stretch to hold.
@@ -3183,12 +3191,16 @@ const HUM_MARKS := 2
 ## step cannot occur; grains are matched in loudness to the anchor so the wander cannot
 ## flutter; and the fill starts and ends on the anchor mark itself, so it leaves and rejoins
 ## the natural hum at the same sample.
+##
+## IT REPLACES THE HUM'S TAIL rather than being inserted into it: the fill falls in pitch and
+## fades out, so going back to the natural hum afterwards would jump the pitch back up. The
+## take resumes (`resume`) where the natural hum has gone quiet, and `add` is what the reading
+## gained overall.
 func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, ratio: float) -> Dictionary:
 	var sr := float(_sr)
 	var a := int(t0 / ratio * sr)
 	var b := mini(int(t1 / ratio * sr), pcm.size())
-	var add := target - float(b - a) / sr
-	if add < 0.03 or b - a < 64:
+	if target - float(b - a) / sr < 0.03 or b - a < 64:
 		return {}
 	# THE ANCHOR: the loudest periodic frame at the hum's own pitch. Most renders drop into
 	# FRY somewhere - a period-doubled subharmonic an octave down, often the loudest stretch
@@ -3253,34 +3265,59 @@ func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, rati
 	var home := marks.find(c)
 	if home < 0:
 		return {}
-	# THE FILL: grains one period apart, source marks on a seeded walk over the marks,
-	# first and last on the anchor itself, normalised by the summed window.
-	var n := int(ceil(add * sr / period))
-	var length := int(round(float(n) * period))
+	# WHERE THE NATURAL HUM ENDS: the first 5 ms after the anchor quieter than a tenth of it,
+	# not the aligner's word end, which can fall short of the voicing it closes.
+	var ref_rms := sqrt(ref / float(maxi(1, half / 2 * 2)))
+	var hop5 := int(0.005 * sr)
+	var e := mini(b + int(0.2 * sr), pcm.size())
+	var s := c + int(0.02 * sr)
+	while s + hop5 <= mini(b + int(0.2 * sr), pcm.size()):
+		var en := 0.0
+		for k in hop5:
+			en += pcm[s + k] * pcm[s + k]
+		if sqrt(en / float(hop5)) < 0.1 * ref_rms:
+			e = s
+			break
+		s += hop5
+	var length := int(target * sr) - (c - a)
+	var add := float(length - (e - c)) / sr
+	if add < 0.03:
+		return {}
+	# THE FILL: grains laid down one output period apart - a period that lengthens as the
+	# pitch falls - from a seeded walk over the marks, the first on the anchor itself so the
+	# fill leaves the natural hum at the same sample. Divided by the summed window only where
+	# grains overlap by more than it: a longer hop leaves the windows short of 1 between
+	# grains, which is what a lower pitch is, and dividing that out would inflate the tails.
+	var fall := pow(2.0, -HUM_FALL / 12.0)
 	var acc := PackedFloat32Array()
 	acc.resize(length)
 	var wsum := PackedFloat32Array()
 	wsum.resize(length)
 	var at := home
-	for g in n + 1:
-		if g == 0 or g == n:
-			at = home
-		else:
+	var o := 0.0
+	var g := 0
+	while o < float(length + half):
+		var u := o / float(length)
+		var drop := smoothstep(HUM_FALL_FROM, 1.0, u)
+		var env := 0.5 + 0.5 * cos(PI * smoothstep(HUM_FADE_FROM, 1.0, u))
+		if g > 0:
 			var step := posmod(hash(g * 7919 + c), 3) - 1
 			at = clampi(at + step, 0, marks.size() - 1)
 		var m: int = marks[at]
-		var gain: float = 1.0 if at == home else float(gains[at])
-		var o := int(round(float(g) * period))
+		var gain: float = env * (1.0 if at == home else float(gains[at]))
+		var oi := int(round(o))
 		for d in range(-half + 1, half):
-			var q := o + d
+			var q := oi + d
 			if q < 0 or q >= length:
 				continue
 			var w := 0.5 + 0.5 * cos(PI * float(d) / float(half))
 			acc[q] += w * gain * pcm[m + d]
 			wsum[q] += w
+		o += period / lerpf(1.0, fall, drop)
+		g += 1
 	for q in length:
-		acc[q] = acc[q] / wsum[q] if wsum[q] > 1e-6 else 0.0
-	return {"t": float(c) / sr * ratio, "at": c, "add": float(length) / sr, "fill": acc}
+		acc[q] = acc[q] / maxf(wsum[q], 1.0)
+	return {"t": float(c) / sr * ratio, "at": c, "add": add, "fill": acc, "resume": e}
 
 
 ## The pitch period of [param n] samples from [param s0] (fractional, in samples), how

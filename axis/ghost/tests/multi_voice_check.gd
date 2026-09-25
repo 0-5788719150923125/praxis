@@ -634,15 +634,41 @@ func _check_hum_is_held() -> void:
 	_ok(absf(end - 0.75) < 0.03, "the hum was held to %.3fs, wanted 0.75" % end)
 	_ok(absf(GenerativeEditor._shifted(0.3, r["cuts"], 1.0, true) - (0.3 + end - 0.2)) < 0.002,
 		"the next word did not move by what the hum gained")
+	# STEADY until it starts to fade, and only then does it die away.
+	var cut: Dictionary = (r["cuts"] as Array)[0]
+	var c0 := float(cut["at"]) / float(sr)
+	var fade_at := c0 + GenerativeEditor.HUM_FADE_FROM * (end - c0)
 	var hop := int(0.01 * sr)
 	var lo := 1e9
-	for f in range(2, int(end * 100.0) - 2):
+	for f in range(2, int(fade_at * 100.0)):
 		var e := 0.0
 		for k in hop:
 			e += o[f * hop + k] * o[f * hop + k]
 		lo = minf(lo, sqrt(e / float(hop)))
-	_ok(lo > 0.25, "the held hum dips (quietest 10 ms at %.3f of a 0.35 tone)" % lo)
+	_ok(lo > 0.25, "the held hum dips before its fade (quietest 10 ms at %.3f of a 0.35 tone)" % lo)
+	_check_hum_falls(cut["fill"], sr)
 	_check_hum_is_smooth()
+
+
+## THE HUM FALLS. A thinking "hmm" settles and drops; held flat it reads as a sustained note -
+## "a hmm would typically have a downward inflection; the speaker would not just hold a
+## constant note straight through". Held: the end of the fill is at least two semitones under
+## its start, and it has died away rather than stopping at full strength.
+func _check_hum_falls(fill: PackedFloat32Array, sr: int) -> void:
+	var n := int(0.02 * sr)
+	var p0: Vector3 = _ed._period_of(fill, 0, n)
+	var p1: Vector3 = _ed._period_of(fill, int(0.8 * float(fill.size())) - n, n)
+	var semis := 12.0 * log(p1.x / maxf(p0.x, 1.0)) / log(2.0)
+	_ok(p0.x > 0.0 and p1.x > 0.0 and semis > 2.0,
+		"the held hum does not fall (%.1f semitones from its start to 80%% through)" % semis)
+	var rms := func(i0: int) -> float:
+		var e := 0.0
+		for k in n:
+			e += fill[i0 + k] * fill[i0 + k]
+		return sqrt(e / float(n))
+	var head: float = rms.call(0)
+	var tail: float = rms.call(fill.size() - n)
+	_ok(tail < 0.15 * head, "the held hum stops at %.2f of its level instead of dying away" % (tail / maxf(head, 1e-9)))
 
 
 ## A HELD HUM IS SMOOTH on a hum shaped like a rendered one, which a pure sine is not: its
@@ -690,7 +716,7 @@ func _check_hum_is_smooth() -> void:
 	_ok(held <= own * 1.05, "the held hum has a step %.4f past the hum's own largest %.4f" % [held, own])
 	var hop := int(0.01 * sr)
 	var rms := []
-	for i in range(0, fill.size() - hop, hop):
+	for i in range(0, int(GenerativeEditor.HUM_FADE_FROM * float(fill.size())) - hop, hop):
 		var e := 0.0
 		for k in hop:
 			e += fill[i + k] * fill[i + k]

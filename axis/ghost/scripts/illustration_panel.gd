@@ -231,8 +231,7 @@ func _row(im: Dictionary) -> Control:
 	col.add_child(desc)
 	var st := Illustrations.status(key)
 	var meta := Label.new()
-	var parts := PackedStringArray(["full page" if String(im.get("placement", "")) == "full"
-		else "inline", String(im.get("side", "")), st])
+	var parts := PackedStringArray([_placement_label(im), String(im.get("side", "")), st])
 	var vs := Illustrations.versions(key)
 	if vs.size() > 1:
 		parts.append("v%d/%d" % [Illustrations.current_index(key) + 1, vs.size()])
@@ -317,8 +316,7 @@ func _open_preview(im: Dictionary) -> void:
 		c.queue_free()
 	var vp := get_viewport().get_visible_rect().size
 	_preview.size = Vector2i(int(vp.x * 0.8), int(vp.y * 0.85))
-	_preview.title = "Illustration  ·  %s" % ("full page" if String(im.get("placement", "")) == "full"
-		else "inline")
+	_preview.title = "Illustration  ·  %s" % (_placement_label(im))
 	var bg := PanelContainer.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_preview.add_child(bg)
@@ -459,3 +457,13 @@ func _close_dialog() -> void:
 	if _dialog != null and is_instance_valid(_dialog):
 		_dialog.queue_free()
 	_dialog = null
+
+
+## How a picture's placement reads in the list: "full page", "inline" or "sketch".
+static func _placement_label(im: Dictionary) -> String:
+	match String(im.get("placement", "")):
+		"full":
+			return "full page"
+		"sketch":
+			return "sketch"
+	return "inline"

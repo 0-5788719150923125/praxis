@@ -96,6 +96,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "comic_page.gd",
             "comic_spread.gd",
             "book_layout.gd",
+            "notebook_layout.gd",
             "films.gd",
             "illustrations.gd",
             "image_gen.gd",

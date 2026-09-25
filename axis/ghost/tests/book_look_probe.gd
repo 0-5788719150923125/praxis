@@ -9,7 +9,9 @@ extends Node
 ## `--times` are show seconds to photograph (the session is stepped there continuously, so the
 ## camera and the leaf got there the way they would live); `--pages` also writes those flat
 ## page textures, which is the typesetting on its own; `--wpm`-like pacing is `--word S`
-## seconds per word. `--camera X` sets Director.camera for the run (not saved).
+## seconds per word. `--camera X` sets Director.camera for the run (not saved). `--medium
+## notebook` drives the notebook instead (same machinery); `--sketch <png>` stands in for every
+## `<!-- sketch: -->` the way `--image` does for pictures.
 ##
 ## It asserts only that a frame is not uniform - a book that failed to project comes out flat.
 
@@ -25,6 +27,8 @@ var _word := 0.26
 var _flat := 0
 var _image := ""        # a PNG to stand in for every illustration (via Illustrations' test seam)
 var _turns := 0         # photograph the middle of this many leaf turns
+var _medium := "book"
+var _sketch := ""       # a PNG to stand in for every sketch
 
 
 func _ready() -> void:
@@ -42,6 +46,8 @@ func _run() -> void:
 			"--word": _word = float(args[i + 1])
 			"--camera": Director.camera = float(args[i + 1])
 			"--image": _image = args[i + 1]
+			"--sketch": _sketch = args[i + 1]
+			"--medium": _medium = args[i + 1]
 			"--turns": _turns = int(args[i + 1])
 			"--settle": _settle = int(args[i + 1])
 			"--times":
@@ -53,10 +59,12 @@ func _run() -> void:
 				for s in String(args[i + 1]).split(","):
 					_pages.append(int(s))
 	var body := FileAccess.get_file_as_string(_doc)
-	if not _image.is_empty():
+	if not _image.is_empty() or not _sketch.is_empty():
 		var idx := {}
 		for im in Manuscript.images(body):
-			idx[String(im["key"])] = {"versions": [{"file": _image, "sig": ""}], "current": 0}
+			var f := _sketch if bool(im.get("sketch", false)) else _image
+			if not f.is_empty():
+				idx[String(im["key"])] = {"versions": [{"file": f, "sig": ""}], "current": 0}
 		Illustrations.use_for_test({"index": idx}, true)
 	var stage := SubViewport.new()
 	stage.size = Vector2i(W, H)
@@ -65,7 +73,7 @@ func _run() -> void:
 	stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(stage)
 	Director.detach()
-	var medium: Medium = Medium.make("book")
+	var medium: Medium = Medium.make(_medium)
 	medium.mount(stage)
 	Director.attach(stage, medium)
 	Director.hold(true)

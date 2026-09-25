@@ -262,9 +262,12 @@ static func build_prompt(description: String, placement: String, style_text: Str
 	lines.append(description.strip_edges())
 	lines.append("")
 	lines.append("FORMAT: " + placement_guide(placement))
-	if not style_text.strip_edges().is_empty():
+	# A SKETCH IS THE WRITER'S OWN HAND, not the book's illustrator: the book's style and its
+	# references would paint it, and a painting cannot be lifted off its background onto a page.
+	var sketch := placement == "sketch"
+	if not sketch and not style_text.strip_edges().is_empty():
 		lines.append("STYLE (applies to every illustration in this book): " + style_text.strip_edges())
-	if ref_count > 0:
+	if not sketch and ref_count > 0:
 		lines.append("REFERENCES: the %d attached image%s %s STYLE REFERENCES ONLY. Match "
 			% [ref_count, "" if ref_count == 1 else "s", "is a" if ref_count == 1 else "are"]
 			+ "their rendering style: medium, palette, linework, texture, lighting and level of "
@@ -278,6 +281,12 @@ static func build_prompt(description: String, placement: String, style_text: Str
 ## What each placement asks for. A full page is a plate; an inline picture has to read at a
 ## few inches wide inside a column of prose, so it wants one clear subject.
 static func placement_guide(placement: String) -> String:
+	if placement == "sketch":
+		return ("a quick pen sketch as drawn in a research notebook: PURE BLACK INK LINES ONLY "
+			+ "on a PURE WHITE background - no grey wash, no shading fills, no paper texture, no "
+			+ "ruled lines, nothing behind the drawing. Hatching is fine. The white is removed "
+			+ "afterwards so the lines can lie on a page, so anything that is not black line "
+			+ "will be lost. LANDSCAPE, 3:2 (1536x1024), with white space around the drawing.")
 	if placement == "full":
 		return ("a full-page book illustration plate, PORTRAIT orientation, 2:3 aspect "
 			+ "(1024x1536), composed to fill the whole page edge to edge.")

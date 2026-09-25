@@ -10,6 +10,7 @@ class_name Manuscript
 ##     <!-- hesitation -->               a longer rest here, for effect (anywhere, even mid-line)
 ##     <!-- hesitation: 2.5 -->          ...the same, for exactly this many seconds
 ##     <!-- image: a wolf in a coat -->  an illustration, described; placed where it sits
+##     <!-- sketch: a wiring diagram -->   a drawing made ON the page, in the writer's own ink
 ##
 ## ONE PARSER, SEVERAL READERS. The Generative panel asks it for the speakers (its tabs) and
 ## the hesitations (its rests); the book medium asks it for the page blocks; the illustration
@@ -28,7 +29,12 @@ const SPEAKER := "^\\s*(?:<!--\\s*speaker\\s*:\\s*(.+?)\\s*-->|\\[\\s*speaker\\s
 const HESITATION := "<!--\\s*hesitation\\s*(?::\\s*([0-9]*\\.?[0-9]+)\\s*(?:s|secs?|seconds)?)?\\s*-->|\\[\\s*hesitation\\s*(?::\\s*([0-9]*\\.?[0-9]+)\\s*(?:s|secs?|seconds)?)?\\s*\\]"
 ## An image. The optional `(full)`, `(inline)`, `(left)` or `(right)` pins its placement;
 ## without one it is decided from where it sits (see [method _auto_placement]).
-const IMAGE := "<!--\\s*image\\s*(?:\\(\\s*(full|inline|left|right)\\s*\\))?\\s*:\\s*([\\s\\S]*?)\\s*-->"
+##
+## A SKETCH is the same marker with `sketch` for `image`: not a picture put into the book but a
+## drawing made on the page - black ink on white, generated without the book's style or its
+## references, and drawn with the white taken out so it lies on the paper like the writing.
+## Group 1 is which of the two, 2 the pin, 3 the description.
+const IMAGE := "<!--\\s*(image|sketch)\\s*(?:\\(\\s*(full|inline|left|right)\\s*\\))?\\s*:\\s*([\\s\\S]*?)\\s*-->"
 ## Any other comment is an authoring note.
 const COMMENT := "<!--[\\s\\S]*?-->"
 ## Text before the first cue belongs to this voice. A chapter that opens on a cue never has one.
@@ -156,7 +162,8 @@ static func images(body: String) -> Array:
 ##     {kind: "para", text, speaker}      - inline markdown kept (*italic*, **bold**);
 ##                                          hesitation marks kept (the page ignores them,
 ##                                          they are here so offsets line up with speech)
-##     {kind: "image", prompt, key, placement, side, ordinal}
+##     {kind: "image", prompt, key, placement, side, ordinal}   - placement "full" or "inline"
+##     {kind: "image", prompt, key, placement: "sketch", sketch: true, ordinal}
 ##     {kind: "rule"}
 ##
 ## Speaker cues are consumed (the page does not print them) but every paragraph records whose
@@ -175,7 +182,8 @@ static func blocks(body: String) -> Array:
 	for m in img_re.search_all(text):
 		flat += text.substr(cursor, m.get_start() - cursor)
 		flat += "\n\uE0F0IMG%d\uE0F0\n" % imgs.size()
-		imgs.append({"prompt": m.get_string(2).strip_edges(), "pin": m.get_string(1)})
+		imgs.append({"prompt": m.get_string(3).strip_edges(), "pin": m.get_string(2),
+			"sketch": m.get_string(1) == "sketch"})
 		cursor = m.get_end()
 	flat += text.substr(cursor)
 
@@ -191,9 +199,15 @@ static func blocks(body: String) -> Array:
 			_flush(out, para, who)
 			var n := int(s.substr(4, s.length() - 5))
 			var im: Dictionary = imgs[n]
-			out.append({"kind": "image", "prompt": String(im["prompt"]),
+			var blk := {"kind": "image", "prompt": String(im["prompt"]),
 				"key": image_key(String(im["prompt"])), "pin": String(im["pin"]),
-				"ordinal": n})
+				"ordinal": n}
+			if bool(im["sketch"]):
+				# its own key, so a sketch and a picture with the same words are two files
+				blk["key"] = image_key("sketch: " + String(im["prompt"]))
+				blk["placement"] = "sketch"
+				blk["sketch"] = true
+			out.append(blk)
 			continue
 		if s.is_empty():
 			_flush(out, para, who)          # a blank line ends a paragraph
@@ -264,6 +278,9 @@ static func _place_images(blocks_out: Array) -> void:
 			seen_text = true
 			continue
 		if kind != "image":
+			continue
+		if bool(b.get("sketch", false)):
+			b.erase("pin")
 			continue
 		var pin := String(b.get("pin", ""))
 		var full := false

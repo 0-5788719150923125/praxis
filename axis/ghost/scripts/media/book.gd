@@ -320,8 +320,7 @@ func _build_world() -> void:
 	# edge - so when the pivot folds the half over (a half turn about the spine) it faces up
 	# and reads the right way round. Open, it faces the desk and nothing sees it.
 	_cover_label = Label3D.new()
-	var cf := SystemFont.new()
-	cf.font_names = PackedStringArray(BookLayout.SERIFS)
+	var cf := _cover_font()
 	_cover_label.font = cf
 	_cover_label.font_size = 80
 	_cover_label.pixel_size = 0.0016
@@ -531,9 +530,10 @@ func _ensure_layout() -> void:
 	var reflow := _layout != null and src == _source
 	if _rev != Illustrations.revision:
 		_textures = {}              # a reroll is a new file; let the old pictures go
+		_sketches = {}
 	_source = src
 	_rev = Illustrations.revision
-	var lay := BookLayout.new()
+	var lay := _make_layout()
 	_title = title
 	lay.build(src, _image_size, title)
 	_layout = lay
@@ -594,6 +594,54 @@ func _texture_for(key: String) -> Texture2D:
 	var tex := ImageTexture.create_from_image(img)
 	_textures[path] = tex
 	return tex
+
+
+## [param key]'s picture as INK: white taken out, what is left drawn in [member _ink]. A sketch
+## is generated black on white because an image model reliably draws that and does not
+## reliably draw on transparency; the page then needs only the lines. Darkness becomes
+## coverage, so a hatched grey is a lighter stroke rather than a grey box. Cached per file and
+## ink; shrunk first, because it is a pass over every pixel in GDScript and the page never
+## shows it larger than half its own width.
+var _sketches := {}
+
+func _sketch_texture_for(key: String) -> Texture2D:
+	var path := Illustrations.path_for(key) if not key.is_empty() else ""
+	if path.is_empty():
+		return null
+	var ck := "%s|%s" % [path, _ink.to_html()]
+	if _sketches.has(ck):
+		return _sketches[ck]
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		_sketches[ck] = null
+		return null
+	_sketches[ck] = ink_texture(img, _ink)
+	return _sketches[ck]
+
+
+## [param img] as ink of colour [param ink] on transparency: white (>= 235) is paper, black
+## (<= 60) is full ink, between is a lighter stroke. Static, so a gate can hold it to that.
+static func ink_texture(img: Image, ink: Color) -> ImageTexture:
+	img = img.duplicate()
+	var s := minf(1.0, 900.0 / float(maxi(img.get_width(), img.get_height())))
+	if s < 1.0:
+		img.resize(int(img.get_width() * s), int(img.get_height() * s), Image.INTERPOLATE_LANCZOS)
+	img.convert(Image.FORMAT_L8)
+	var lum := img.get_data()
+	var out := PackedByteArray()
+	out.resize(lum.size() * 4)
+	var r := ink.r8
+	var g := ink.g8
+	var b := ink.b8
+	for i in lum.size():
+		out[i * 4] = r
+		out[i * 4 + 1] = g
+		out[i * 4 + 2] = b
+		out[i * 4 + 3] = clampi((235 - int(lum[i])) * 255 / 175, 0, 255)
+	var ink_img := Image.create_from_data(img.get_width(), img.get_height(), false,
+		Image.FORMAT_RGBA8, out)
+	ink_img.generate_mipmaps()
+	return ImageTexture.create_from_image(ink_img)
 
 
 ## Map the spoken words onto the printed ones, as far as they have arrived.
@@ -860,13 +908,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 	if _layout == null or page < 0 or page >= _layout.pages.size():
 		return
 	var pg: Dictionary = _layout.pages[page]
-	# A breath of shading toward the spine: the paper turns away from the light as it goes
-	# into the gutter, and a flat page reads as a printout.
-	var spine_x := size.x if int(pg["side"]) == 0 else 0.0
-	for k in 12:
-		var w := 90.0 * (1.0 - float(k) / 12.0)
-		var x := spine_x - w if spine_x > 0.0 else 0.0
-		ci.draw_rect(Rect2(x, 0.0, w, size.y), Color(0.25, 0.18, 0.1, 0.02))
+	_draw_paper(ci, pg)
 	var alpha := float(hl.get("alpha", 0.0))
 	var li := int(hl.get("word", -1))
 	var read := int(hl.get("read", -1))
@@ -916,13 +958,23 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 					col = ink.lerp(Color.from_hsv(hue, sat, 0.55), g * alpha)
 			_ts.font_draw_glyph(gl["rid"], ci.get_canvas_item(), fs, base + (gl["pos"] as Vector2),
 				int(gl["index"]), col)
+		_decorate_word(ci, i, w, ink)
 	for lb in pg["labels"]:
 		var l: Dictionary = lb
-		ci.draw_string(_layout.face(int(l["emph"])), l["pos"], String(l["text"]),
-			HORIZONTAL_ALIGNMENT_CENTER, float(l["align_w"]), int(l["fs"]),
-			Color(_ink, float(l.get("tone", 1.0))))
+		var lf := _layout.face(int(l["emph"]))
+		var ha := int(l.get("halign", HORIZONTAL_ALIGNMENT_CENTER))
+		var lcol := Color(_ink, float(l.get("tone", 1.0)))
+		ci.draw_string(lf, l["pos"], String(l["text"]), ha, float(l["align_w"]), int(l["fs"]), lcol)
+		if bool(l.get("underline", false)):
+			var tw := lf.get_string_size(String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(l["fs"])).x
+			var lx: float = (l["pos"] as Vector2).x
+			if ha == HORIZONTAL_ALIGNMENT_CENTER:
+				lx += (float(l["align_w"]) - tw) * 0.5
+			_underline(ci, Vector2(lx, (l["pos"] as Vector2).y + float(l["fs"]) * 0.2), tw, lcol,
+				hash(l["text"]))
 	for im in pg["images"]:
 		_draw_image(ci, im)
+	_draw_overlay(ci, pg)
 	# NO PAGE NUMBERS: this chapter does not start on page 2 of the real book, and a folio
 	# that is wrong is worse than none.
 
@@ -993,6 +1045,9 @@ func _line_runs(lo: int, hi: int, page: int) -> Array:
 
 func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 	var rect: Rect2 = im["rect"]
+	if bool(im.get("sketch", false)):
+		_draw_sketch(ci, im)
+		return
 	var tex := _texture_for(String(im["key"]))
 	if tex == null:
 		# NOT YET PAINTED: a quiet frame holding the description, so the page shows where the
@@ -1021,6 +1076,60 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 		src = Rect2(0.0, (ts.y - h) * 0.5, ts.x, h)
 	ci.draw_texture_rect_region(tex, rect, src)
 	ci.draw_rect(rect, Color(_ink, 0.25), false, 1.0)
+
+
+## A sketch: the drawing's ink laid on the page, CONTAINED in its rect (never cropped - a
+## drawing cut off at its edge reads as a mistake), and nothing at all until it exists, since
+## a frame around a drawing that is not there would itself be a drawing.
+func _draw_sketch(ci: CanvasItem, im: Dictionary) -> void:
+	var tex := _sketch_texture_for(String(im["key"]))
+	if tex == null:
+		return
+	var rect: Rect2 = im["rect"]
+	var ts := Vector2(tex.get_size())
+	var k := minf(rect.size.x / ts.x, rect.size.y / ts.y)
+	var sz := ts * k
+	ci.draw_texture_rect(tex, Rect2(rect.get_center() - sz * 0.5, sz), false)
+
+
+# --- hooks for a medium in another hand ----------------------------------------------
+
+## The layout this medium typesets with.
+func _make_layout() -> BookLayout:
+	return BookLayout.new()
+
+
+## The face on the cover.
+func _cover_font() -> Font:
+	var cf := SystemFont.new()
+	cf.font_names = PackedStringArray(BookLayout.SERIFS)
+	return cf
+
+
+## The page under the words: here, a breath of shading toward the spine - the paper turns away
+## from the light as it goes into the gutter, and a flat page reads as a printout.
+func _draw_paper(ci: CanvasItem, pg: Dictionary) -> void:
+	var size := BookLayout.PAGE
+	var spine_x := size.x if int(pg["side"]) == 0 else 0.0
+	for k in 12:
+		var w := 90.0 * (1.0 - float(k) / 12.0)
+		var x := spine_x - w if spine_x > 0.0 else 0.0
+		ci.draw_rect(Rect2(x, 0.0, w, size.y), Color(0.25, 0.18, 0.1, 0.02))
+
+
+## Anything laid on the page after its pictures. Nothing, in print.
+func _draw_overlay(_ci: CanvasItem, _pg: Dictionary) -> void:
+	pass
+
+
+## Anything drawn with a word beyond its letters. Print draws nothing.
+func _decorate_word(_ci: CanvasItem, _i: int, _w: Dictionary, _ink_col: Color) -> void:
+	pass
+
+
+## A line under [param width] of text from [param at]: a plain rule, in print.
+func _underline(ci: CanvasItem, at: Vector2, width: float, col: Color, _salt: int) -> void:
+	ci.draw_line(at, at + Vector2(width, 0.0), col, 1.6, true)
 
 
 # --- the camera ------------------------------------------------------------------

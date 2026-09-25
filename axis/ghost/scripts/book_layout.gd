@@ -58,6 +58,9 @@ var pages: Array = []
 ## `base` is the baseline origin draw_string wants; `rect` is the box a highlight covers.
 var words: Array = []
 var title := ""
+## The body size. A variable rather than [constant BODY_FS] so a layout in another hand
+## ([NotebookLayout]) can set its own.
+var body_fs := BODY_FS
 
 var _faces := {}
 var _p := -1                 # the page being filled
@@ -137,20 +140,19 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 				# title, with one blank line either side (the next paragraph adds its own).
 				# Never alone at the foot of a page: there it would read as the end of the
 				# chapter, so it goes to the top of the next one instead.
-				if _y + _lh(BODY_FS) * 3.0 > _bottom():
-					_open_page()
-				_space(PARA_GAP)
-				_label_centered("~", BODY_FS, 0.55)
+				_rule()
 				no_indent = true
 			"image":
-				if String(b.get("placement", "")) == "full":
+				if String(b.get("placement", "")) == "sketch":
+					_sketch(b)
+				elif String(b.get("placement", "")) == "full":
 					_pending_full.append(b)
 					# A PICTURE THAT OPENS A SCENE comes before it, as a book sets a section
 					# break: when little of the page is left, the page ends here and the
 					# picture takes the next one. With most of the page still to fill, the
 					# text runs on and the picture follows at the next page turn instead -
 					# a book does not leave half a page blank for a plate.
-					if _y > MARGIN_TOP + 1.0 and _bottom() - _y < (_bottom() - MARGIN_TOP) * 0.45:
+					if _y > _top() + 1.0 and _bottom() - _y < (_bottom() - _top()) * 0.45:
 						_open_page()
 				else:
 					_float(b)
@@ -160,7 +162,7 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 				if Manuscript.is_scene_line(text):
 					# Kept with what follows: a scene line alone at the foot of a page opens a
 					# scene the reader has to turn the page to find.
-					if _y + _lh(BODY_FS) * 4.2 > _bottom():
+					if _y + _lh(body_fs) * 4.2 > _bottom():
 						_open_page()
 					# ONE blank line above and below, like any paragraph break: the paragraph that
 					# follows adds its own PARA_GAP, so a trailing space here doubled the gap
@@ -259,12 +261,17 @@ func _open_page(first := false) -> void:
 			waited += 1
 	_new_page("text")
 	_p = pages.size() - 1
-	_y = MARGIN_TOP
+	_y = _top()
 	_floats = []
 	var owed := _pending_float
 	_pending_float = []
 	for b in owed:
 		_float(b)
+
+
+## Where a text page's first line starts.
+func _top() -> float:
+	return MARGIN_TOP
 
 
 func _bottom() -> float:
@@ -276,8 +283,8 @@ func _lh(fs: int) -> float:
 
 
 func _space(lines: float) -> void:
-	if _y > MARGIN_TOP + 1.0:
-		_y += _lh(BODY_FS) * lines
+	if _y > _top() + 1.0:
+		_y += _lh(body_fs) * lines
 
 
 ## The free span of the text block for a line whose box is [y0, y1]: the column minus any
@@ -308,17 +315,27 @@ func _title_block() -> void:
 	var y := MARGIN_TOP + TITLE_SINK
 	pg["labels"].append({"text": title, "pos": Vector2(c.x, y), "fs": fs, "emph": 0,
 		"align_w": c.y - c.x, "tone": 1.0})
-	pg["labels"].append({"text": "~", "pos": Vector2(c.x, y + fs * 1.1), "fs": BODY_FS, "emph": 0,
+	pg["labels"].append({"text": "~", "pos": Vector2(c.x, y + fs * 1.1), "fs": body_fs, "emph": 0,
 		"align_w": c.y - c.x, "tone": 0.55})
-	_y = y + fs * 1.1 + _lh(BODY_FS) * 2.2
+	_y = y + fs * 1.1 + _lh(body_fs) * 2.2
+
+
+## A section break: the same quiet ornament that sits under the chapter title, with one blank
+## line either side (the next paragraph adds its own). Never alone at the foot of a page: there
+## it would read as the end of the chapter, so it goes to the top of the next one instead.
+func _rule() -> void:
+	if _y + _lh(body_fs) * 3.0 > _bottom():
+		_open_page()
+	_space(PARA_GAP)
+	_label_centered("~", body_fs, 0.55)
 
 
 func _heading(text: String, level: int) -> void:
-	var fs := int(BODY_FS * (1.5 if level <= 1 else 1.25))
+	var fs := int(body_fs * (1.5 if level <= 1 else 1.25))
 	if _y + _lh(fs) * 2.0 > _bottom():
 		_open_page()
 	_label_centered(text, fs)
-	_y += _lh(BODY_FS) * 0.4
+	_y += _lh(body_fs) * 0.4
 
 
 func _label_centered(text: String, fs: int, tone := 0.8) -> void:
@@ -341,22 +358,22 @@ const BAND_GAP := 34.0
 func _float(b: Dictionary) -> void:
 	var c := column(_p)
 	var w := c.y - c.x
-	var h := (_bottom() - MARGIN_TOP) * BAND_H
+	var h := (_bottom() - _top()) * BAND_H
 	if not _floats.is_empty():
 		_pending_float.append(b)
 		return
-	var at_top := _y <= MARGIN_TOP + 1.0
-	var top := MARGIN_TOP
+	var at_top := _y <= _top() + 1.0
+	var top := _top()
 	if at_top:
-		_y = MARGIN_TOP + h + BAND_GAP
-	elif _bottom() - h - BAND_GAP - _y >= _lh(BODY_FS) * 2.0:
+		_y = _top() + h + BAND_GAP
+	elif _bottom() - h - BAND_GAP - _y >= _lh(body_fs) * 2.0:
 		top = _bottom() - h
 	else:
 		_pending_float.append(b)
 		return
 	var rect := Rect2(c.x, top, w, h)
 	(pages[_p]["images"] as Array).append({"rect": rect, "key": String(b.get("key", "")),
-		"prompt": String(b.get("prompt", "")), "full": false})
+		"prompt": String(b.get("prompt", "")), "full": false, "sketch": bool(b.get("sketch", false))})
 	# The band keeps text off itself and its gutter; a line that meets it finds no room and
 	# moves on, so text above a foot band flows straight to the next page.
 	_floats.append(rect.grow_individual(0.0, 0.0 if at_top else BAND_GAP, 0.0,
@@ -414,7 +431,7 @@ func _paragraph(text: String, indent: bool, scene: bool) -> void:
 	var toks := tokens(text)
 	if toks.is_empty():
 		return
-	var fs := BODY_FS
+	var fs := body_fs
 	var lh := _lh(fs)
 	var sp := face(0).get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var widths: Array = []
@@ -423,10 +440,16 @@ func _paragraph(text: String, indent: bool, scene: bool) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
 	var i := 0
 	var first := true
+	# A LEAD-IN set in the margin beside the first line (a notebook's timestamp), read first.
+	var lead := _margin_lead(toks)
 	while i < toks.size():
 		if _y + lh > _bottom():
 			_open_page()
 		var span := _span_at(_y, _y + lh)
+		if lead > 0:
+			_set_margin(toks, widths, lead, _baseline(_y, lh), fs, lh)
+			i = lead
+			lead = 0
 		var x0 := span.x + (float(fs) * INDENT_EM if (first and indent) else 0.0)
 		var avail := span.y - x0
 		# Too narrow to set a line beside a float: drop below it.
@@ -449,25 +472,62 @@ func _paragraph(text: String, indent: bool, scene: bool) -> void:
 		if used > avail and j - i > 1:
 			gap = sp - (used - avail) / float(j - i - 1)
 			used = avail
-		elif not last and not scene and j - i > 1:
+		elif not last and not scene and j - i > 1 and _justify():
 			var stretch := (avail - used) / float(j - i - 1)
 			if stretch + sp <= sp * MAX_STRETCH:
 				gap = sp + stretch
 		var x := x0
 		if scene:
 			x = span.x + (span.y - span.x - used) * 0.5
-		var base_y := _y + lh * 0.72
+		var base_y := _baseline(_y, lh)
 		for k in range(i, j):
 			var t: Dictionary = toks[k]
 			var w := float(widths[k])
 			var em := int(t["emph"]) | (1 if scene else 0)
 			if scene and em != int(t["emph"]):
 				w = face(em).get_string_size(String(t["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			var off := _ink_offset(words.size(), _y, x - x0)
 			words.append({"page": _p, "text": String(t["text"]), "norm": norm(String(t["text"])),
-				"emph": em, "fs": fs, "base": Vector2(x, base_y),
-				"rect": Rect2(x, _y + lh * 0.08, w, lh * 0.86)})
+				"emph": em, "fs": fs, "base": Vector2(x, base_y) + off,
+				"rect": Rect2(x + off.x, _y + lh * 0.08 + off.y, w, lh * 0.86)})
 			(pages[_p]["words"] as Array).append(words.size() - 1)
 			x += w + gap
 		_y += lh
 		i = j
 		first = false
+
+
+# --- hooks a layout in another hand overrides ------------------------------------------
+
+## A drawing made on the page. A printed book has no hand to make one, so it is set like any
+## inline picture; [NotebookLayout] draws it into the writing.
+func _sketch(b: Dictionary) -> void:
+	_float(b)
+
+
+## Justify every line but a paragraph's last. Print does; handwriting does not.
+func _justify() -> bool:
+	return true
+
+
+## The baseline of a line whose box starts at [param y] and is [param lh] tall.
+func _baseline(y: float, lh: float) -> float:
+	return y + lh * 0.72
+
+
+## How far word [param _i] strays from where the typesetter put it, [param _dx] along its
+## line. Type does not stray.
+func _ink_offset(_i: int, _line_y: float, _dx: float) -> Vector2:
+	return Vector2.ZERO
+
+
+## How many of a paragraph's opening tokens are set in the MARGIN rather than the column. None,
+## in a book.
+func _margin_lead(_toks: Array) -> int:
+	return 0
+
+
+## Set tokens [0, n) of a paragraph in the margin beside its first line, appending them to
+## [member words]. Only reached when [method _margin_lead] answers more than 0.
+func _set_margin(_toks: Array, _widths: Array, _n: int, _base_y: float, _fs: int, _lh: float) -> void:
+	pass

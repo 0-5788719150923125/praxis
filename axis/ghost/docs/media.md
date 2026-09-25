@@ -15,7 +15,7 @@ host_for(incoming)   - the node an arriving scene is added to. `full` returns th
 
 A medium is a Node2D mounted INSIDE the stage SubViewport, so the stage governor still owns it: when the governor stops the stage, it stops the medium and every panel viewport nested under it, together.
 
-Registry: `Medium.REGISTRY` in [scripts/medium.gd](../scripts/medium.gd) (3 entries). Select with `--medium NAME`, or the Medium picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] medium`).
+Registry: `Medium.REGISTRY` in [scripts/medium.gd](../scripts/medium.gd) (4 entries). Select with `--medium NAME`, or the Medium picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] medium`).
 
 ## `full` - Full frame
 
@@ -62,3 +62,15 @@ REAL 3D. The stage SubViewport has a world of its own, so the book is geometry i
 A GENTLE CAMERA, deliberately unlike the comic's. It holds a wide view of the spread most of the time, drifts toward the page and then the lines being read, and changes framing on a slow schedule drawn from the session seed and the show clock, so an export frames the same shots as the live reading. Every channel is a critically damped spring: nothing it does can be a jump. `Director.camera` scales how far and how often it moves.
 
 Source: [scripts/media/book.gd](../scripts/media/book.gd)
+
+## `notebook` - Notebook
+
+_The chapter handwritten into a ruled research notebook - margin times, underlined emphasis, photos paper-clipped over the writing at an angle, and sketches (`<!-- sketch: ... -->`) drawn onto the page in the same ink. For a chapter drafted as a journal or a lab report._
+
+NotebookMedium - the reading as a research notebook, written by hand, open on a desk.
+
+Everything that makes the book work is the book's - the 3D spread, the turning leaf, the camera, the voice followed word by word - and only what a notebook does differently is here: ruled paper with a red margin, the chapter in a handwriting face (`NotebookLayout`), a marbled composition cover with a paper label, emphasis underlined, photos clipped on with a paper clip at an angle, and sketches drawn onto the page in the same ink as the writing.
+
+THE TONE IS THE AUTHOR'S. A chapter drafted as a lab notebook or a field journal - dated entries under headings, times in the margin, "<!-- sketch: ... -->" beside the note it goes with - reads as one here; the same chapter in the Novel medium reads as a book.
+
+Source: [scripts/media/notebook.gd](../scripts/media/notebook.gd)
