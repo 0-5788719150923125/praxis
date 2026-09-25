@@ -89,16 +89,16 @@ func _run() -> void:
 	Settings.write("director", "filters", live)
 	Settings.flush()
 	# (a) the config does not alias what it was handed
-	live["grain"] = 0.4
+	live["static"] = 0.4
 	var stored: Variant = Settings.read("director", "filters", {})
-	if (stored as Dictionary).has("grain"):
+	if (stored as Dictionary).has("static"):
 		_fail("the config aliases the dictionary it was given - a caller mutating its own "
 			+ "copy is editing the settings through a side door")
 	# (b) ...so writing the mutated one is seen as a CHANGE and reaches the disk
 	Settings.write("director", "filters", live)
 	Settings.flush()
 	var on_disk: Dictionary = _on_disk_dict("filters")
-	if not on_disk.has("grain"):
+	if not on_disk.has("static"):
 		_fail("a mutated dictionary written again never reached the disk - the no-op guard "
 			+ "is comparing the stored value with itself")
 	elif not is_equal_approx(float(on_disk.get("monochrome", 0.0)), 1.0):

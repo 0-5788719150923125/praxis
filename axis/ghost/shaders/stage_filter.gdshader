@@ -18,8 +18,9 @@ shader_type canvas_item;
 //   2. BLOOM is what a lens does, so it goes where a lens is: before the grade.
 //   3. MONOCHROME, then 4. NOIR. Noir grades whatever it is handed, so monochrome above it is
 //      black-and-white noir and monochrome below it would simply delete the split-tone.
-//   5. GRAIN is the emulsion the graded light is exposed onto.
-//   6. VIGNETTE is the frame, and it is last because it darkens everything including the grain.
+//   5. STATIC is the emulsion's own noise the graded light is exposed onto (it was "grain").
+//   6. DUST is dirt ON the print - specks, hairs, scratches - so it goes over the image.
+//   7. VIGNETTE is the frame, and it is last because it darkens everything including the dust.
 //
 // COST. Measured in AUDIT.md, ghost's GPU sits at 0.2-0.9 ms while a frame costs 30-170 ms of
 // GDScript - the machine is CPU-bound by a wide margin, and a full-frame fragment shader is
@@ -39,7 +40,8 @@ uniform float u_pointillism : hint_range(0.0, 1.0) = 0.0;
 uniform float u_bloom : hint_range(0.0, 1.0) = 0.0;
 uniform float u_monochrome : hint_range(0.0, 1.0) = 0.0;
 uniform float u_noir : hint_range(0.0, 1.0) = 0.0;
-uniform float u_grain : hint_range(0.0, 1.0) = 0.0;
+uniform float u_static : hint_range(0.0, 1.0) = 0.0;
+uniform float u_dust : hint_range(0.0, 1.0) = 0.0;
 uniform float u_vignette : hint_range(0.0, 1.0) = 0.0;
 // The film frame to show, or negative for the shader's own clock. Not a filter: a still render
 // has no way to reach the one frame in several that slips, and a gate has to.
@@ -260,12 +262,12 @@ vec3 noir(vec3 src, float amount) {
 //   ...AND IT IS IN THE MIDTONES. Silver that did and did not develop: none in a black that
 //   exposed nothing, none in a highlight that exposed completely. A flat noise floor fogs the
 //   blacks, which is the one place it must not.
-vec3 grain(vec2 uv, vec3 src, float amount) {
+vec3 static_noise(vec2 uv, vec3 src, float amount) {
 	vec2 px = uv * u_size;
 	// Wrapped, because the hash below is a sine: after a few minutes an unwrapped frame
 	// counter is large enough to lose the precision the hash depends on, and the noise starts
 	// repeating and banding instead of re-rolling.
-	float t = mod(floor(TIME * FILM_FPS), 1024.0);
+	float t = mod(u_frame >= 0 ? float(u_frame) : floor(TIME * FILM_FPS), 1024.0);
 	vec2 drift = vec2(t * 41.0, t * 17.0);
 
 	// SIZE, AND NOT ON A LATTICE. Flooring a hash onto cells of grain-size is a GRID, and a
@@ -321,14 +323,116 @@ vec3 vignette(vec2 uv, vec3 src, float amount) {
 	vec2 d = (uv - vec2(0.5)) * vec2(aspect, 1.0);
 	float r_lens = length(d) / length(vec2(0.5 * aspect, 0.5));
 	// 1 at the middle of EVERY edge, whatever the aspect.
+	// A ROUNDED rectangle, not max(x, y): the hard max has a crease along each diagonal where
+	// its two sides meet, and at the top of the dial that crease drew a band of light running in
+	// from every corner - brightest with bloom on, which lit it up. A superellipse is the same
+	// "1 at the middle of every edge" and has no crease; so is the smooth max below.
 	vec2 e = abs(uv - vec2(0.5)) * 2.0;
-	float r_edge = max(e.x, e.y);
+	float r_edge = pow(pow(e.x, 6.0) + pow(e.y, 6.0), 1.0 / 6.0);
 	float close = clamp((amount - CLOSE_ONSET) / max(1.0 - CLOSE_ONSET, 0.001), 0.0, 1.0);
-	float r = mix(r_lens, max(r_lens, r_edge), close);
+	float smax = 0.5 * (r_lens + r_edge + sqrt((r_lens - r_edge) * (r_lens - r_edge) + 0.01));
+	float r = mix(r_lens, smax, close);
 	// The falloff's INNER edge moves with the dial as well as its depth, so a little is a
 	// darkened corner and a lot is a porthole, rather than one fixed shape fading in.
 	float fall = 1.0 - amount * smoothstep(mix(0.90, 0.30, amount), 1.0, r);
 	return src * fall;
+}
+
+
+// --- 6. DUST ------------------------------------------------------------------------------
+//
+// Dirt on the PRINT, which is what people mean by an old film's "grain" when they are not
+// meaning the emulsion: specks of dust, the odd curled hair, and now and then a scratch running
+// down the frame. All of it re-rolls at the film's rate, because the dirt is on the frame
+// going through the gate, not on the lens. Specks are mostly DARK (dust on the print blocks
+// light) with some LIGHT (dust on the negative prints white); a scratch is light and lasts a
+// few frames, wandering a little, because the same wear drags across frame after frame.
+// The dial is how OFTEN it happens as much as how strongly it shows: each of DUST_MAX slots is
+// present on a frame only by chance, at amount^2.5, so 0.05 is a speck every few seconds (a
+// fixed count would be one every frame - 24 a second - however low the dial went), the default
+// is a couple a frame, and 1.0 is all of them.
+const float DUST_MAX = 14.0;
+const int HAIR_STEPS = 8;
+
+// Distance from p to the segment a-b, and how far along it the nearest point is (0..1).
+vec2 seg_dist(vec2 p, vec2 a, vec2 b) {
+	vec2 ab = b - a;
+	float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 0.0001), 0.0, 1.0);
+	return vec2(length(p - (a + ab * t)), t);
+}
+
+vec3 dust(vec2 uv, vec3 src, float amount) {
+	vec2 px = uv * u_size;
+	float frame = u_frame >= 0 ? float(u_frame) : floor(TIME * FILM_FPS);
+	float k = max(u_size.y, 1.0) / 1080.0;       // everything is sized for a 1080-tall frame
+	float dark = 0.0;
+	float light = 0.0;
+	float chance = pow(amount, 2.5);
+	for (int i = 0; i < int(DUST_MAX); i++) {
+		vec2 s = vec2(frame * 13.1 + float(i) * 7.7, float(i) * 3.3 + 1.7);
+		if (hash1(s + vec2(0.0, 29.0)) >= chance) {
+			continue;
+		}
+		vec2 c = vec2(hash1(s), hash1(s + vec2(19.2, 0.0))) * u_size;
+		float m = 0.0;
+		if (hash1(s + vec2(5.1, 0.0)) < 0.82) {
+			// a speck: a small irregular blob, most of them tiny
+			vec2 d = px - c;
+			float ang = atan(d.y, d.x);
+			float rr = mix(1.2, 5.0, pow(hash1(s + vec2(8.3, 0.0)), 2.2)) * k;
+			rr *= 1.0 + 0.3 * sin(ang * 3.0 + hash1(s + vec2(2.0, 0.0)) * 6.2832) + 0.15 * sin(ang * 5.0);
+			m = 1.0 - smoothstep(rr - 0.7, rr + 0.7, length(d));
+		} else if (length(px - c) < float(HAIR_STEPS) * 26.0 * k) {
+			// a hair: a JAGGED random walk, not an arc. Each step turns a little either way with a
+			// slight curl the whole hair shares, and now and then it kinks hard - which is what
+			// a real one does, crumpled on the film rather than lying in a smooth curve.
+			float ang = hash1(s + vec2(4.4, 0.0)) * 6.2832;
+			float curl = (hash1(s + vec2(6.6, 0.0)) - 0.5) * 0.7;
+			float step_len = mix(7.0, 17.0, hash1(s + vec2(7.7, 0.0))) * k;
+			vec2 a = c;
+			float best = 1e9;
+			float at = 0.0;
+			for (int h = 0; h < HAIR_STEPS; h++) {
+				float fh = float(h);
+				float r = hash1(s + vec2(20.0 + fh, 3.0));
+				ang += curl + (r - 0.5) * 0.9;
+				if (hash1(s + vec2(40.0 + fh, 5.0)) < 0.3) {
+					ang += sign(r - 0.5) * mix(1.0, 2.4, hash1(s + vec2(50.0 + fh, 7.0)));
+				}
+				vec2 b = a + vec2(cos(ang), sin(ang)) * step_len * mix(0.4, 1.5, hash1(s + vec2(60.0 + fh, 9.0)));
+				vec2 st = seg_dist(px, a, b);
+				if (st.x < best) {
+					best = st.x;
+					at = (fh + st.y) / float(HAIR_STEPS);
+				}
+				a = b;
+			}
+			float w = mix(0.5, 1.2, hash1(s + vec2(9.9, 0.0))) * k;
+			// thinner toward its ends, as a hair is
+			w *= 0.35 + 0.65 * sin(3.14159 * at);
+			m = 1.0 - smoothstep(w, w + 0.8, best);
+		}
+		if (hash1(s + vec2(11.0, 0.0)) < 0.78) {
+			dark = max(dark, m);
+		} else {
+			light = max(light, m);
+		}
+	}
+	// SCRATCHES, held for half a second at a time and wandering a pixel or two frame to frame
+	float seg = floor(frame / 12.0);
+	for (int j = 0; j < 2; j++) {
+		vec2 s = vec2(seg * 3.7 + float(j) * 17.0, 41.0);
+		if (hash1(s) > chance * 0.7) {
+			continue;
+		}
+		float x = hash1(s + vec2(1.0, 0.0)) * u_size.x + (hash1(vec2(frame, float(j) + 3.0)) - 0.5) * 3.0 * k;
+		float w = mix(0.5, 1.3, hash1(s + vec2(2.0, 0.0))) * k;
+		float along = vnoise(vec2(float(j) * 7.0 + seg, px.y / (70.0 * k)));
+		float m = (1.0 - smoothstep(w, w + 0.8, abs(px.x - x))) * smoothstep(0.35, 0.6, along);
+		light = max(light, m * 0.8);
+	}
+	vec3 c = mix(src, src * 0.2, dark * mix(0.55, 0.95, amount));
+	return mix(c, vec3(0.93, 0.91, 0.86), light * mix(0.35, 0.8, amount));
 }
 
 
@@ -357,8 +461,11 @@ void fragment() {
 	if (u_noir > 0.0) {
 		c = noir(c, u_noir);
 	}
-	if (u_grain > 0.0) {
-		c = grain(uv, c, u_grain);
+	if (u_static > 0.0) {
+		c = static_noise(uv, c, u_static);
+	}
+	if (u_dust > 0.0) {
+		c = dust(uv, c, u_dust);
 	}
 	if (u_vignette > 0.0) {
 		c = vignette(uv, c, u_vignette);

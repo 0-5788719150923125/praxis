@@ -15,7 +15,7 @@ THE REGISTRY ORDER IS THE PIPELINE ORDER, top to bottom, and it is the one thing
 
 ADDING A FILTER is an entry in each of the four tables below plus a `u_<key>` uniform and a block in `shaders/stage_filter.gdshader`. Nothing in main, the Director or the panel changes - the controls are built off `Filters.REGISTRY`. A key with no matching uniform is the failure this arrangement is exposed to, because `set_shader_parameter` on a name the shader does not declare is a SILENT no-op; the gate reads the shader source and fails on it.
 
-Registry: `Filters.REGISTRY` in [scripts/filters.gd](../scripts/filters.gd) (7 entries), rendered by [shaders/stage_filter.gdshader](../shaders/stage_filter.gdshader). Select with `--filter key=amount,...` (or `--filter none`), or the Look rows in the Generative panel (persisted to `user://ghost.cfg`, `[director] filters`).
+Registry: `Filters.REGISTRY` in [scripts/filters.gd](../scripts/filters.gd) (8 entries), rendered by [shaders/stage_filter.gdshader](../shaders/stage_filter.gdshader). Select with `--filter key=amount,...` (or `--filter none`), or the Look rows in the Generative panel (persisted to `user://ghost.cfg`, `[director] filters`).
 
 | # | Key | Name | Uniform | Default |
 | - | --- | ---- | ------- | ------- |
@@ -24,8 +24,9 @@ Registry: `Filters.REGISTRY` in [scripts/filters.gd](../scripts/filters.gd) (7 e
 | 3 | `bloom` | Bloom | `u_bloom` | 0.45 |
 | 4 | `monochrome` | Monochrome | `u_monochrome` | 1.0 |
 | 5 | `noir` | Film noir | `u_noir` | 0.55 |
-| 6 | `grain` | Film grain | `u_grain` | 0.40 |
-| 7 | `vignette` | Vignette | `u_vignette` | 0.45 |
+| 6 | `static` | Static | `u_static` | 0.40 |
+| 7 | `dust` | Dust & scratches | `u_dust` | 0.45 |
+| 8 | `vignette` | Vignette | `u_vignette` | 0.45 |
 
 ## `slip` - Gate slip
 
@@ -57,11 +58,17 @@ The hard grade: contrast pushed until the blacks close up and the highlights bur
 
 Uniform `u_noir`, default 0.55 when first switched on.
 
-## `grain` - Film grain
+## `static` - Static
 
-Film emulsion. The noise is strongest in the midtones and nearly absent in the blacks and the blown highlights, which is where grain actually lives, and it moves - a still frame with static grain reads as dirt on the lens.
+Fine noise over the picture, strongest in the midtones and nearly absent in the blacks and the blown highlights, where the emulsion's own noise lives, and it moves at a film's frame rate.
 
-Uniform `u_grain`, default 0.40 when first switched on.
+Uniform `u_static`, default 0.40 when first switched on.
+
+## `dust` - Dust & scratches
+
+Dirt on the print: specks of dust (mostly dark, some light), the odd curled hair, and now and then a scratch down the frame that holds for a moment and wanders. It changes every film frame, the way dirt on a moving print does.
+
+Uniform `u_dust`, default 0.45 when first switched on.
 
 ## `vignette` - Vignette
 

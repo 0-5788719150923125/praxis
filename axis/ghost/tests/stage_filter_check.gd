@@ -72,6 +72,7 @@ func _run() -> void:
 	await _check_monochrome()
 	await _check_vignette()
 	await _check_grain()
+	await _check_dust()
 	await _check_bloom()
 	await _check_pointillism()
 	await _check_noir()
@@ -162,8 +163,8 @@ func _check_off_is_off() -> void:
 ## doing something" for both shapes.
 func _check_each_filter_acts() -> void:
 	for key in Filters_.REGISTRY:
-		if key == "slip":
-			continue          # fires on some frames and not others - see _check_slip
+		if key == "slip" or key == "dust":
+			continue          # sparse and per-frame - see _check_slip / _check_dust
 		var got := await _render({String(key): 1.0})
 		var f := _changed_fraction(got, _plain)
 		print("stage_filter_check: '%s' moves %.1f%% of the frame at 1.0" % [key, f * 100.0])
@@ -278,7 +279,7 @@ func _check_slip() -> void:
 			fired = f
 			break
 	_ok(rows.size() >= 3, "no slip crossed the hue ramp in 120 film frames")
-	var grain := await _render({"grain": 1.0}, fired)
+	var grain := await _render({"static": 1.0}, fired)
 	var in_band := 0
 	var n := 0
 	for y in rows:
@@ -296,7 +297,7 @@ func _check_slip() -> void:
 ## GRAIN LIVES IN THE MIDTONES. Flat noise fogs a black that exposed nothing, which is the one
 ## place it must not, and it is exactly what an unweighted version does.
 func _check_grain() -> void:
-	var got := await _render({"grain": 1.0})
+	var got := await _render({"static": 1.0})
 	var mid := _added_variance(got, MID)
 	var black := _added_variance(got, BLACK)
 	var white := _added_variance(got, WHITE)
@@ -355,8 +356,8 @@ func _check_noir() -> void:
 ## TWO AT ONCE, which is the reason these are dials and not a picker.
 func _check_combining() -> void:
 	var mono := await _render({"monochrome": 1.0})
-	var grain := await _render({"grain": 1.0})
-	var both := await _render({"monochrome": 1.0, "grain": 1.0})
+	var grain := await _render({"static": 1.0})
+	var both := await _render({"monochrome": 1.0, "static": 1.0})
 	_ok(_mean_diff(both, mono) > 0.002,
 		"monochrome + grain is indistinguishable from monochrome alone")
 	_ok(_mean_diff(both, grain) > 0.01,
@@ -364,8 +365,13 @@ func _check_combining() -> void:
 	# ...and each keeps its own property in the pair.
 	_ok(_mean_chroma(both) < 0.02,
 		"grain put the colour back into a monochrome picture (%.3f)" % _mean_chroma(both))
-	_ok(_added_variance(both, MID) > 0.0005,
-		"monochrome flattened the grain out of the midtones")
+	# MOTTLE leaves whole regions nearly clean for a while, so one frame can catch the mid patch
+	# in a quiet spell: the best of a few pinned frames, never the clock (which made this pass
+	# or fail on how long the checks before it took).
+	var mid_var := 0.0
+	for f in 4:
+		mid_var = maxf(mid_var, _added_variance(await _render({"monochrome": 1.0, "static": 1.0}, f * 7), MID))
+	_ok(mid_var > 0.0005, "monochrome flattened the grain out of the midtones")
 	# THE WHOLE STACK, which is the setting most likely to be used and the one most likely to
 	# hit a clamp: it must still be a picture rather than black or white.
 	var all := {}
@@ -560,3 +566,38 @@ func _luma_spread_of(img: Image, r: Rect2i) -> float:
 
 func _luma(c: Color) -> float:
 	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+
+
+## DUST IS DIRT ON THE PRINT: sparse marks that change every film frame - some of the picture
+## moved on every frame, never most of it, a different place each frame, and none at all on a
+## frame when the dial is off. Frames are asked for by number (`u_frame`).
+func _check_dust() -> void:
+	var moved: Array = []
+	var images: Array = []
+	for f in 6:
+		var got := await _render({"dust": 1.0}, f)
+		images.append(got)
+		moved.append(_changed_fraction(got, _plain))
+	var lo := 1.0
+	var hi := 0.0
+	for m in moved:
+		lo = minf(lo, float(m))
+		hi = maxf(hi, float(m))
+	_ok(lo > 0.0005, "dust at 1.0 left a frame untouched (%.4f moved)" % lo)
+	_ok(hi < 0.15, "dust at 1.0 covered %.1f%% of a frame - it is a fog, not dirt" % (hi * 100.0))
+	_ok(_mean_diff(images[0], images[1]) > 0.0002, "dust did not change from one film frame to the next")
+	# Presence is by chance per frame, so the default is judged over a half second of frames.
+	var soft_hit := 0
+	for f in 12:
+		var soft := await _render({"dust": float(Filters_.DEFAULTS["dust"])}, f)
+		if _changed_fraction(soft, _plain) > 0.0:
+			soft_hit += 1
+	_ok(soft_hit >= 6, "dust at its default touched only %d of 12 frames" % soft_hit)
+	# A LOW DIAL IS RARE, not a constant trickle: a fixed per-frame count made 0.05 a speck on
+	# every single frame, 24 a second.
+	var rare_hit := 0
+	for f in 48:
+		var faint := await _render({"dust": 0.05}, f)
+		if _changed_fraction(faint, _plain) > 0.0:
+			rare_hit += 1
+	_ok(rare_hit <= 4, "dust at 0.05 marked %d of 48 frames - a low dial should be a rare event" % rare_hit)

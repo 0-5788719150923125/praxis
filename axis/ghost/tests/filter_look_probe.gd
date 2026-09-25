@@ -4,9 +4,9 @@ extends SceneTree
 ## writes PNGs to LOOK at.
 ##
 ##   tests/run_quiet.sh -- res://tests/filter_look_probe.gd --out /tmp/look
-##   ... --filter grain --sweep 0.2,0.45,0.7,1.0        one filter across its range
-##   ... --filter grain --frames 6                      consecutive FRAMES of one setting
-##   ... --set monochrome=1,grain=0.5                   a combination, one image
+##   ... --filter static --sweep 0.2,0.45,0.7,1.0        one filter across its range
+##   ... --filter static --frames 6                      consecutive FRAMES of one setting
+##   ... --set monochrome=1,static=0.5                   a combination, one image
 ##
 ## WHY IT EXISTS. [code]stage_filter_check.gd[/code] measures each filter against the property
 ## that names it, and every one of those measurements passed on a grain that was reported as

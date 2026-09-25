@@ -287,7 +287,7 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         "--filter",
         "<k=v,...>",
         "The look over the whole picture for this run - `--filter "
-        "monochrome=1,grain=0.3`, or `--filter none`. Overrides the remembered "
+        "monochrome=1,static=0.3`, or `--filter none`. Overrides the remembered "
         "set; see [filters.md](filters.md).",
         False,
     ),

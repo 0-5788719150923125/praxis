@@ -47,7 +47,8 @@ const REGISTRY := {
 	"bloom": "u_bloom",
 	"monochrome": "u_monochrome",
 	"noir": "u_noir",
-	"grain": "u_grain",
+	"static": "u_static",
+	"dust": "u_dust",
 	"vignette": "u_vignette",
 }
 
@@ -58,7 +59,8 @@ const LABELS := {
 	"bloom": "Bloom",
 	"monochrome": "Monochrome",
 	"noir": "Film noir",
-	"grain": "Film grain",
+	"static": "Static",
+	"dust": "Dust & scratches",
 	"vignette": "Vignette",
 }
 
@@ -71,7 +73,8 @@ const BLURBS := {
 	"bloom": "Light bleeding out of the bright parts, the way it does through a lens. Only what is already brighter than the picture's own highlights blooms, so it lifts lamps, sparks and speculars without fogging the whole frame.",
 	"monochrome": "Colour taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same grey.",
 	"noir": "The hard grade: contrast pushed until the blacks close up and the highlights burn, with cold shadows against warm highlights. It grades whatever it is handed, so put Monochrome above it for black-and-white and leave it off for something closer to Technicolor.",
-	"grain": "Film emulsion. The noise is strongest in the midtones and nearly absent in the blacks and the blown highlights, which is where grain actually lives, and it moves - a still frame with static grain reads as dirt on the lens.",
+	"static": "Fine noise over the picture, strongest in the midtones and nearly absent in the blacks and the blown highlights, where the emulsion's own noise lives, and it moves at a film's frame rate.",
+	"dust": "Dirt on the print: specks of dust (mostly dark, some light), the odd curled hair, and now and then a scratch down the frame that holds for a moment and wanders. It changes every film frame, the way dirt on a moving print does.",
 	"vignette": "The corners fallen off, as a fast lens does wide open. Measured on the frame's own diagonal, so it is the same shape of falloff on a phone clip as on a widescreen render.",
 }
 
@@ -85,7 +88,8 @@ const DEFAULTS := {
 	"bloom": 0.45,
 	"monochrome": 1.0,
 	"noir": 0.55,
-	"grain": 0.40,
+	"static": 0.40,
+	"dust": 0.45,
 	"vignette": 0.45,
 }
 
@@ -104,6 +108,11 @@ static func sanitize(raw: Variant) -> Dictionary:
 	var out := {}
 	if not (raw is Dictionary):
 		return out
+	# "grain" is this filter's old name (it looked like static, so it is called that now); a
+	# setting or a chapter from before keeps its amount rather than silently losing it
+	if (raw as Dictionary).has("grain") and not (raw as Dictionary).has("static"):
+		raw = (raw as Dictionary).duplicate()
+		raw["static"] = raw["grain"]
 	for k in REGISTRY:
 		if not (raw as Dictionary).has(k):
 			continue
@@ -146,7 +155,7 @@ static func apply(rect: CanvasItem, amounts: Dictionary, size: Vector2) -> void:
 	mat.set_shader_parameter("u_size", size)
 
 
-## The one-run override: `--filter monochrome=1,grain=0.3` (or `--filter none`).
+## The one-run override: `--filter monochrome=1,static=0.3` (or `--filter none`).
 ##
 ## Reads like `--medium`, and exists for the same two reasons: a gate that must pin a look
 ## without touching the author's settings, and a render of a session that was deliberately
