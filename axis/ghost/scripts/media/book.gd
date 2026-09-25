@@ -783,6 +783,8 @@ func _tick_turn(delta: float) -> void:
 	if want == _spread:
 		return
 	if want == _spread + 1:
+		if not _turn_ready():
+			return                   # something on the open spread must settle first
 		_turn_to = want
 		_turn_t = 0.0
 	else:
@@ -1195,6 +1197,12 @@ func _page_state(_page: int) -> String:
 ## The colour word [param _w] is set in. One ink, in print.
 func _ink_for(_w: Dictionary) -> Color:
 	return _ink
+
+
+## May the leaf turn now? Always, in print. A medium with something lifted off the page - a
+## notebook's photo - holds the turn until it has settled back.
+func _turn_ready() -> bool:
+	return true
 
 
 ## Where glyph [param _k] of word [param _i] is drawn, given its typeset origin [param _at]:

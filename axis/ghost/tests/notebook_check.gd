@@ -332,7 +332,9 @@ func _check_clip_sides() -> void:
 	for pth in back:
 		for pt in pth:
 			bmax = maxf(bmax, (pt as Vector2).y)
-	_ok(bmax < fmax * 0.8, "the back of a clip is drawn as long as its front (%.0f vs %.0f)" % [bmax, fmax])
+	# the front is the small loop, the back the big one - one loop a side
+	_ok(fmax < bmax * 0.85, "the front of a clip is not its small loop (%.0f vs %.0f)" % [fmax, bmax])
+	_ok(front.size() == 1 and back.size() == 1, "a side of the clip is drawn as more than one wire")
 
 
 ## THE HAND DRIFTS, IT DOES NOT JITTER: words sit exactly on the line (no per-word offset), and
@@ -359,4 +361,16 @@ func _check_hand_drift() -> void:
 	var a := m._drift(3, 900.0, y) - m._drift(3, 250.0, y)
 	var b := m._drift(3, 900.0, y + NotebookLayout.RULE) - m._drift(3, 250.0, y + NotebookLayout.RULE)
 	_ok(absf(a - b) < 2.0, "neighbouring lines do not lean alike (%.1f vs %.1f px)" % [a, b])
+	# THE HAND LEANS RIGHT (positive skew in Godot leans a glyph's top right - measured): every
+	# line's slant, per-letter wobble included, stays right of upright or at it, never left.
+	var lefts := 0
+	for li in 60:
+		for k in 5:
+			var xf: Transform2D = m._glyph_xform_uncached(li * 7 + k, k,
+				Vector2(400.0, NotebookLayout.HEADER + NotebookLayout.RULE * float(li)), 3)
+			# the direction a glyph's upright stroke is drawn in: its top, from its baseline
+			var up := xf.basis_xform(Vector2(0.0, -1.0))
+			if up.x < -0.02:
+				lefts += 1
+	_ok(lefts == 0, "%d of 300 letters lean left - the hand should lean right or stand upright" % lefts)
 	m.free()

@@ -78,6 +78,7 @@ static func use_for_test(store := {}, read_only := false) -> void:
 	_queue = []
 	_errors = {}
 	_chapter = []
+	_memo = {}
 
 
 ## The chapter's pictures in reading order ([method Manuscript.images] rows), which is what
@@ -96,17 +97,33 @@ static func _settings() -> Node:
 	return tree.root.get_node_or_null("Settings") if tree != null else null
 
 
+## WHAT WAS LAST READ OR WRITTEN, per key, held here rather than fetched again. Settings hands
+## out a deep copy on every read (rightly - see settings.gd), and the Illustrations panel asks
+## every frame whether any picture changed: status and signature for each one, each a read of
+## the whole index. With 24 pictures in a 64-entry index that was 12.7 ms of every frame - most
+## of a 60 fps budget, and the real-time view lagged. This library is the only writer of its
+## section, so what it holds cannot go stale. Callers that change a value they read write it
+## back (_put_entry, set_*), which is what keeps the held copy and the file the same.
+static var _memo := {}
+
 static func _read(key: String, dflt: Variant) -> Variant:
+	if _memo.has(key):
+		return _memo[key]
+	var v: Variant = dflt
 	if _test_active:
-		var v: Variant = _test_store.get(key, dflt)
-		return v.duplicate(true) if (v is Dictionary or v is Array) else v
-	var st := _settings()
-	return st.read(SECTION, key, dflt) if st != null else dflt
+		v = _test_store.get(key, dflt)
+		v = v.duplicate(true) if (v is Dictionary or v is Array) else v
+	else:
+		var st := _settings()
+		v = st.read(SECTION, key, dflt) if st != null else dflt
+	_memo[key] = v
+	return v
 
 
 static func _write(key: String, value: Variant) -> void:
 	if read_only():
 		return
+	_memo[key] = value
 	if _test_active:
 		_test_store[key] = value.duplicate(true) if (value is Dictionary or value is Array) else value
 		return

@@ -1,4 +1,4 @@
-extends SceneTree
+extends Node
 
 ## LOOK AT THE PANEL, in both the state you have and the state you don't.
 ##
@@ -10,26 +10,33 @@ extends SceneTree
 ## a verdict long enough to draw over the buttons beside it, a right-hand column too
 ## narrow for its own text.
 ##
-##   tests/run_quiet.sh -- res://tests/deps_panel_probe.gd found.png missing.png
+##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/deps_panel_probe.gd 60 found.png missing.png
 ##
-## Through run_quiet.sh, because it renders: `--headless` is the dummy driver and a
+## A BOOT probe: the panel reads its collapsed state through the [Settings] autoload, and a bare
+## `--script` run has no autoloads - it failed to compile and then sat idle instead of quitting.
+##
+## With GHOST_PROBE_GPU=1, because it renders: `--headless` is the dummy driver and a
 ## viewport readback there returns nothing at all.
 
 const FAKE_MISSING := ["ffmpeg", "ffprobe", "jsruntime"]
 
 
-func _init() -> void:
+func _ready() -> void:
+	_run.call_deferred()
+
+
+func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() < 2:
 		print("usage: ... deps_panel_probe.gd <found.png> <missing.png>")
-		quit(2)
+		get_tree().quit(2)
 		return
 	var splash := preload("res://scripts/splash.gd").new()
-	root.add_child(splash)
+	get_tree().root.add_child(splash)
 	var panel: DepsPanel = null
 	# The probe runs on a thread; wait for it rather than guessing a frame count.
 	for i in 600:
-		await process_frame
+		await get_tree().process_frame
 		if panel == null:
 			for c in splash.get_children():
 				if c is DepsPanel:
@@ -38,9 +45,9 @@ func _init() -> void:
 			break
 	if panel == null:
 		print("deps_panel_probe: no panel on the splash")
-		quit(1)
+		get_tree().quit(1)
 		return
-	root.get_texture().get_image().save_png(args[0])
+	get_tree().root.get_texture().get_image().save_png(args[0])
 
 	var rows := panel._rows.duplicate(true)
 	for r in rows:
@@ -51,7 +58,7 @@ func _init() -> void:
 	panel._apply(rows)
 	panel._toggle_detail(FAKE_MISSING[0])
 	for i in 30:
-		await process_frame
-	root.get_texture().get_image().save_png(args[1])
+		await get_tree().process_frame
+	get_tree().root.get_texture().get_image().save_png(args[1])
 	print("deps_panel_probe: wrote %s and %s" % [args[0], args[1]])
-	quit(0)
+	get_tree().quit(0)

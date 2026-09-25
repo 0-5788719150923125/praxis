@@ -448,8 +448,21 @@ func replay() -> void:
 
 ## Stop playback and reset to a clean, songless state, so the next begin() starts
 ## fresh. Called when a session ends (the song finished, or we returned home).
+## PAUSE A STREAMED SESSION where it is. The session clock follows the player's position, so
+## pausing the player holds the reading, the subtitles and everything driven by show time
+## together; a streaming caller simply finds no room to push more audio until it resumes.
+func set_stream_paused(on: bool) -> void:
+	if _player != null:
+		_player.stream_paused = on
+
+
+func stream_paused() -> bool:
+	return _player != null and _player.stream_paused
+
+
 func stop() -> void:
 	if _player != null:
+		_player.stream_paused = false
 		_player.stop()
 		_player.volume_db = 0.0      # a mid-fade session end must not mute the next
 	_has_audio = false

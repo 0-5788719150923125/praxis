@@ -40,10 +40,14 @@ const PEEL_HOLD := 4.0
 var _raised := {}                # stack -> when it was lifted (subtitle clock)
 ## How much of a photo the clip PINS, from its clipped edge: that part stays flat under the clip
 ## and the rest folds back over it. About where a clip's inner end reaches.
-const PIN := 76.0
+const PIN := 110.0
 ## The roller a lifted print is turned over: wide enough to read as a curl rather than a crease,
 ## small enough that the loop does not lie back over the writing beside the page edge.
-const CURL_RADIUS := 80.0
+const CURL_RADIUS := 50.0
+## The lamp, as the page sees it: which way a shadow is thrown (per px of height above the page)
+## and where a print lying flat throws it. The lamp is above and to the left, near the reader.
+const LIGHT_DIR := Vector2(0.32, 0.42)
+const SHADOW_BASE := Vector2(5.0, 7.0)
 var _peel := {}
 var _peel_dt := 0.0
 var _prints := {}
@@ -97,6 +101,10 @@ func _tick_peel() -> void:
 	var li := int(r["layout"]) if not r.is_empty() else -1
 	var now: float = _subs.now() if _subs != null and is_instance_valid(_subs) else 0.0
 	var step := _peel_dt / PEEL_TIME
+	# THE PHOTOS ARE PUT BACK BEFORE THE LEAF TURNS. A lifted photo on a turning leaf vanished
+	# with it; so as the voice nears the next spread every photo on this one is sent down,
+	# whatever its hold, and [method _turn_ready] keeps the leaf still until they are flat.
+	var turning_soon := r.is_empty() == false and _next_spread_in(r, now) < SETTLE_BEFORE_TURN
 	for page in _needed_pages():
 		if page < 0 or page >= _layout.pages.size():
 			continue
@@ -110,6 +118,8 @@ func _tick_peel() -> void:
 			var early := now >= t0 - PEEL_TIME - PEEL_EARLY if t0 >= 0.0 else li >= lo - PEEL_LEAD
 			var at: float = _raised.get(st, NAN)
 			at = peel_latch(at, now, li, lo, int(cover[1]), early)
+			if turning_soon and page / 2 == _spread:
+				at = NAN
 			if is_nan(at):
 				_raised.erase(st)
 			else:
@@ -128,6 +138,32 @@ static func peel_latch(at: float, now: float, li: int, lo: int, hi: int, early: 
 		return now if li >= 0 and li <= hi and (li >= lo or early) else NAN
 	var gone := li > hi or li < lo - PEEL_LEAD * 3
 	return NAN if gone and absf(now - at) >= PEEL_HOLD else at
+
+
+## How long before a turn the open spread's photos start settling: the turn's own lead, the
+## time a photo takes to come down, and a breath.
+const SETTLE_BEFORE_TURN := BookMedium.TURN_LEAD + PEEL_TIME + 0.4
+
+## Seconds until the voice reaches the first word of the NEXT spread, or INF if it is not known.
+func _next_spread_in(r: Dictionary, now: float) -> float:
+	var words: Array = _subs.words
+	for i in range(int(r["sub"]) + 1, mini(_map.size(), words.size())):
+		var m := int(_map[i])
+		if m >= 0 and _spread_of_word(m) > _spread:
+			return float((words[i] as Dictionary).get("t0", INF)) - now
+	return INF
+
+
+func _turn_ready() -> bool:
+	if _layout == null:
+		return true
+	for page in [_spread * 2, _spread * 2 + 1]:
+		if page < 0 or page >= _layout.pages.size():
+			continue
+		for im in (_layout.pages[page] as Dictionary)["images"]:
+			if float(_peel.get(int((im as Dictionary).get("stack", -1)), 0.0)) > 0.01:
+				return false
+	return true
 
 
 ## When layout word [param li] starts being spoken, from the take's own timings, or -1 while
@@ -345,7 +381,10 @@ const DRIFT_SLOPE := -0.005        # mean rise per px along a line (negative is 
 const DRIFT_SLOPE_VARY := 0.0045   # ...and how far a cluster of lines strays from it
 const DRIFT_CLUSTER := 5.0         # lines over which the slope changes
 const DRIFT_WAVE := 1.1            # px of the slow wave along a line
-const SLANT := -0.05               # mean slant (radians of skew)
+## The slant, as skew in radians: POSITIVE leans the letters RIGHT, the way most hands lean.
+## Wanders from nearly upright to a clear right lean. It was centred on a small LEFT lean, so
+## it was never seen to lean right at all.
+const SLANT := 0.08
 const SLANT_VARY := 0.06
 const LETTER_SCALE := 0.035        # a letter's size varies by this much either way
 const LETTER_SLANT := 0.03
@@ -376,7 +415,25 @@ func _drift(page: int, x: float, y: float) -> float:
 	return slope * dx + DRIFT_WAVE * sin(x / 170.0 + phase)
 
 
+## Cached per letter: a letter's place is a function of the layout and the seed, and a page is
+## redrawn every frame its highlight moves - computing ~400 of these each time was 4.6 ms.
+var _xf_cache := {}
+var _xf_key := ""
+
 func _glyph_xform(i: int, k: int, at: Vector2, page: int) -> Transform2D:
+	var ck := "%d|%d" % [_layout.get_instance_id(), _seed]
+	if ck != _xf_key:
+		_xf_cache = {}
+		_xf_key = ck
+	var gk := Vector2i(i, k)
+	if _xf_cache.has(gk):
+		return _xf_cache[gk]
+	var xf := _glyph_xform_uncached(i, k, at, page)
+	_xf_cache[gk] = xf
+	return xf
+
+
+func _glyph_xform_uncached(i: int, k: int, at: Vector2, page: int) -> Transform2D:
 	var h := hash([_seed, i, k])
 	var u1 := float(h & 0xFF) / 255.0 - 0.5
 	var u2 := float((h >> 8) & 0xFF) / 255.0 - 0.5
@@ -459,7 +516,7 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 			length = sz.x
 			width = sz.y
 	var side := Vector2(-a.y, a.x) * width * 0.5
-	var t0 := clampf(PIN / length, 0.0, 0.5)
+	var t0 := clampf(_pin_of(im, c, ang, a, o, length) / length, 0.0, 0.5)
 	var theta := peel * PI
 	var rem := (1.0 - t0) * length
 	var r := minf(CURL_RADIUS, rem / PI)
@@ -486,17 +543,34 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 		zs.append(z)
 		ph.append(bent)
 	ci.draw_set_transform(c, ang, Vector2.ONE)
-	# ONE shadow under what lies over the page, reaching as far in as the roll does
-	var reach := 0.0
-	var top := 0.0
-	for i in N + 1:
-		reach = maxf(reach, us[i])
-		top = maxf(top, zs[i])
-	var lift := minf(top / maxf(rem, 1.0), 1.0)
-	var off := Vector2(6.0, 9.0) + Vector2(0.06, 0.09) * minf(top, 160.0)
-	var shadow_end := fold + a * reach
-	ci.draw_colored_polygon(PackedVector2Array([o + side + off, o - side + off,
-		shadow_end - side + off, shadow_end + side + off]), Color(0, 0, 0, 0.14 * (1.0 - 0.5 * lift)))
+	# THE SHADOW IS CAST, as a real curl's is: every point of the print that faces the page
+	# throws its shadow along the lamp's direction, further the higher it is, and the shadow is
+	# the outline of all of them - one shape, from the clipped edge up the rising curl to where
+	# the print turns upright. What lies back past that throws its shadow off the page edge or
+	# onto the print itself. (A flat rectangle under the whole footprint read as "a strange
+	# shadow, which doesn't seem to align with what a true 3D page curl would look like".)
+	var light := LIGHT_DIR.rotated(-ang)              # page direction, in the print's frame
+	var base_off := SHADOW_BASE.rotated(-ang)
+	var upper := PackedVector2Array([o + side + base_off, fold + side + base_off])
+	var lower := PackedVector2Array([o - side + base_off, fold - side + base_off])
+	for i in range(1, N + 1):
+		if ph[i] > PI * 0.5 + 0.01:
+			break
+		var off := base_off + light * zs[i]
+		upper.append(fold + a * us[i] + side + off)
+		lower.append(fold + a * us[i] - side + off)
+	lower.reverse()
+	var outline := upper + lower
+	var fade := 1.0 - 0.45 * sin(theta * 0.5)
+	for g in [4.0, 0.0]:
+		var grown := PackedVector2Array()
+		var cen := Vector2.ZERO
+		for q in outline:
+			cen += q
+		cen /= float(outline.size())
+		for q in outline:
+			grown.append(q + (q - cen).normalized() * g)
+		ci.draw_colored_polygon(grown, Color(0, 0, 0, 0.07 * fade))
 	# the pinned part, flat
 	_print_quad(ci, tex, o, fold, side, a, 0.0, t0, length, sz, 1.0)
 	# the rolled part, strip by strip in order along the print: what comes later lies over what
@@ -523,6 +597,25 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 			# the back of the print: plain paper, lit less the more it faces away from the lamp
 			ci.draw_colored_polygon(q, PHOTO_PAPER.darkened(0.03 + 0.16 * (1.0 + cf) * 0.5 + 0.1 * sin(fa)))
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Where the curl starts, from the print's clipped edge: just past where its stack's clip reaches,
+## measured on THIS print, in its own frame. A fixed length was wrong for a print fanned under
+## another's clip or turned at an angle, and the fold landed well inside it - the curl "still
+## covers a lot of the text". [constant PIN] where there is no clip to measure.
+func _pin_of(im: Dictionary, c: Vector2, ang: float, a: Vector2, o: Vector2, length: float) -> float:
+	var clip: Dictionary = im.get("clip", {})
+	if clip.is_empty() and _layout != null and _draw_page >= 0 and _draw_page < _layout.pages.size():
+		for other in (_layout.pages[_draw_page] as Dictionary)["images"]:
+			if int((other as Dictionary).get("stack", -2)) == int(im.get("stack", -1)) \
+					and not ((other as Dictionary).get("clip", {}) as Dictionary).is_empty():
+				clip = other["clip"]
+	if clip.is_empty():
+		return PIN
+	var reach_pt: Vector2 = (clip["pos"] as Vector2) \
+		+ Vector2(0, 1).rotated(float(clip["angle"])) * NotebookLayout.CLIP_LEN
+	var local := (reach_pt - c).rotated(-ang)
+	return clampf((local - o).dot(a) + 4.0, 0.0, length * 0.5)
 
 
 ## One quad of the print, from [param p0] to [param p1] across [param side], showing the print
@@ -612,11 +705,59 @@ static func _sheet_partner(p: int) -> int:
 	return p + 1 if p % 2 == 1 else p - 1
 
 
-## A Gem clip, as its wire's path in its own frame: the outer loop's end at the origin, gripping
-## the page edge, its length along +y. FRONT is the whole clip, lying over the sheet. BACK is what
-## the other side of the sheet shows - the inner tongue, which is the part of a clip that goes
-## behind the paper, and the outer loop's end where it stands past the edge.
+## A Gem clip, as its wire's path in its own frame: its length along +y from the origin, which is
+## the page edge. THE BEND AT THE EDGE is the one joining the clip's two layers - the paper is
+## slid in between them, so that bend is all that stands past the edge, a few px. The clip was
+## first drawn the other way round, its far outer loop at the edge and 40 px of wire standing
+## off the page, which "stick out too far, because they are turned the wrong way around".
+## ONE LOOP A SIDE: the FRONT - the side the photo is on - shows the small inner loop (the
+## tongue) and the bend; the BACK shows the big outer loop and the bend. Both loops were once
+## drawn on the front: "we shouldn't see two loops on the front of a photo".
 static func _clip_path(back: bool) -> Array:
+	var out: Array = []
+	var l := NotebookLayout.CLIP_LEN
+	for path in _clip_path_raw(back):
+		var flipped := PackedVector2Array()
+		for pt in path:
+			flipped.append(Vector2(pt.x, l - pt.y))
+		out.append(_behind_the_edge(flipped, back))
+	return out
+
+
+## THE BEND WRAPS THE EDGE: past its apex (the point furthest off the page) the wire turns
+## round the edge and under the sheet, so on the page's face it must stop at the edge rather than
+## come back across it. The front runs up to the apex and on only while still off the page; the
+## back is the same wire seen from the other side, so it STARTS where the wire comes back round.
+## Drawn through the page, the loop "was clipping through the paper in an unnatural way".
+static func _behind_the_edge(path: PackedVector2Array, back: bool) -> PackedVector2Array:
+	var edge := NotebookLayout.CLIP_OVERHANG
+	var apex := 0
+	for i in path.size():
+		if path[i].y < path[apex].y:
+			apex = i
+	var out := PackedVector2Array()
+	if not back:
+		for i in range(0, apex + 1):
+			out.append(path[i])
+		for i in range(apex + 1, path.size()):
+			if path[i].y > edge:
+				out.append(path[i - 1].lerp(path[i], (edge - path[i - 1].y) / maxf(path[i].y - path[i - 1].y, 0.001)))
+				break
+			out.append(path[i])
+	else:
+		var start := 0
+		for i in range(apex, -1, -1):
+			if path[i].y > edge:
+				start = i + 1
+				out.append(path[i + 1].lerp(path[i], (edge - path[i + 1].y) / maxf(path[i].y - path[i + 1].y, 0.001)))
+				break
+		for i in range(start, path.size()):
+			out.append(path[i])
+	return out
+
+
+## The same wire drawn with its far outer loop at y = 0 and the joining bend at y = CLIP_LEN.
+static func _clip_path_raw(back: bool) -> Array:
 	var l := NotebookLayout.CLIP_LEN
 	var a := 14.0
 	var g := 5.0
@@ -625,21 +766,18 @@ static func _clip_path(back: bool) -> Array:
 	var ri := (xr_i - xl_i) * 0.5
 	var y_ti := l * 0.22
 	var rb := (xr_i + a) * 0.5
-	if back:
+	if not back:
+		# the tongue, down into the bend that joins it to the outer layer at the edge
 		var tongue := PackedVector2Array([Vector2(xl_i, l * 0.62)])
 		_clip_arc(tongue, Vector2(0.0, y_ti + ri), ri, PI, TAU)
-		tongue.append(Vector2(xr_i, l * 0.66))
-		var loop := PackedVector2Array([Vector2(-a, NotebookLayout.CLIP_OVERHANG)])
-		_clip_arc(loop, Vector2(0.0, a), a, PI, TAU)
-		loop.append(Vector2(a, NotebookLayout.CLIP_OVERHANG))
-		return [tongue, loop]
-	var pts := PackedVector2Array()
-	pts.append(Vector2(xl_i, l * 0.62))
-	_clip_arc(pts, Vector2(0.0, y_ti + ri), ri, PI, TAU)
-	_clip_arc(pts, Vector2((xr_i - a) * 0.5, l - rb), rb, 0.0, PI)
-	_clip_arc(pts, Vector2(0.0, a), a, PI, TAU)
-	pts.append(Vector2(a, l * 0.78))
-	return [pts]
+		_clip_arc(tongue, Vector2((xr_i - a) * 0.5, l - rb), rb, 0.0, PI)
+		return [tongue]
+	# the bend, then the big outer loop behind the paper
+	var outer := PackedVector2Array()
+	_clip_arc(outer, Vector2((xr_i - a) * 0.5, l - rb), rb, 0.0, PI)
+	_clip_arc(outer, Vector2(0.0, a), a, PI, TAU)
+	outer.append(Vector2(a, l * 0.78))
+	return [outer]
 
 
 ## Draw a clip at [param at] along [param ang] (0 = straight down the page) - its [param back]

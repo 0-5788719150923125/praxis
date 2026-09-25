@@ -41,6 +41,7 @@ var _detail: VBoxContainer
 var _detail_text: Label
 var _detail_link: LinkButton
 var _open_key := ""
+var _row_buttons := {}           # dependency key -> its row, for the open-row highlight
 var _collapsed := false
 
 
@@ -142,6 +143,17 @@ func _build_ui() -> void:
 	var rule := HSeparator.new()
 	_body.add_child(rule)
 
+	# SAY THE ROWS CAN BE CLICKED. The detail pane with the install command is the reason this
+	# panel exists, and nothing said it was there: the rows are flat, and "it's not clear that
+	# we can click on a dependency in the list, to get instructions about how to install them".
+	var hint := Label.new()
+	hint.text = "Click a dependency for what it does and how to install it."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(336, 0)
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.add_theme_color_override("font_color", COL_IDLE)
+	_body.add_child(hint)
+
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 1)
 	_body.add_child(_list)
@@ -242,6 +254,7 @@ func _copy_report() -> void:
 func _render() -> void:
 	for c in _list.get_children():
 		c.queue_free()
+	_row_buttons = {}
 	var managed_started := false
 	for r in _rows:
 		if int(r.get("kind", Deps.KIND_TOOL)) == Deps.KIND_MANAGED and not managed_started:
@@ -288,11 +301,13 @@ func _row_button(r: Dictionary) -> Button:
 	var tint := COL_OK if found else (COL_BAD if feature else COL_IDLE)
 
 	var b := Button.new()
-	b.flat = true
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(0, 17)
-	b.tooltip_text = String(r.get("used_for", ""))
+	b.tooltip_text = String(r.get("used_for", "")) + "\n(click for install instructions)"
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.pressed.connect(_toggle_detail.bind(String(r.get("key", ""))))
+	_row_buttons[String(r.get("key", ""))] = b
+	_style_row(b, String(r.get("key", "")) == _open_key)
 
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -314,6 +329,27 @@ func _row_button(r: Dictionary) -> Button:
 	return b
 
 
+## A row's look: nothing at rest, a faint band under the pointer - so a row reads as something
+## to click, which a flat button never did - and a stronger band for the row whose detail pane
+## is OPEN, which stays until it is closed.
+const ROW_HOVER := Color(0.16, 0.19, 0.25, 0.9)
+const ROW_OPEN := Color(0.19, 0.26, 0.38, 0.95)
+
+func _style_row(b: Button, open: bool) -> void:
+	var rest := StyleBoxFlat.new()
+	rest.bg_color = ROW_OPEN if open else Color(0, 0, 0, 0)
+	rest.set_corner_radius_all(3)
+	var over := StyleBoxFlat.new()
+	over.bg_color = ROW_OPEN if open else ROW_HOVER
+	over.set_corner_radius_all(3)
+	if open:
+		over.bg_color = ROW_OPEN.lightened(0.08)
+	b.add_theme_stylebox_override("normal", rest)
+	b.add_theme_stylebox_override("hover", over)
+	b.add_theme_stylebox_override("pressed", over)
+	b.add_theme_stylebox_override("hover_pressed", over)
+
+
 func _cell(text: String, tint: Color, size: int, min_w: int,
 		align: int) -> Label:
 	var l := Label.new()
@@ -332,9 +368,11 @@ func _cell(text: String, tint: Color, size: int, min_w: int,
 ## pane exists - the install command for THIS platform. Clicking the same row again
 ## closes it, so the panel returns to its compact height.
 func _toggle_detail(key: String) -> void:
+	var was := _open_key
 	if key == _open_key:
 		_open_key = ""
 		_detail.visible = false
+		_restyle(was)
 		return
 	var entry := {}
 	for r in _rows:
@@ -360,6 +398,14 @@ func _toggle_detail(key: String) -> void:
 	_detail_link.text = String(entry.get("site", ""))
 	_detail_link.visible = not _detail_link.text.is_empty()
 	_detail.visible = true
+	_restyle(was)
+	_restyle(key)
+
+
+func _restyle(key: String) -> void:
+	var b: Variant = _row_buttons.get(key)
+	if b != null and is_instance_valid(b):
+		_style_row(b as Button, key == _open_key)
 
 
 # --- collapse state ([Settings] owns the file; see settings.gd) ---

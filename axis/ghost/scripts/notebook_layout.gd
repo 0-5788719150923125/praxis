@@ -42,7 +42,7 @@ const PHOTO_BORDER := 18.0
 ## is pushed on from the edge, so its end is always past it. Drawn in the page texture's margin
 ## ([method NotebookMedium._page_pad]), which must be wider than this.
 const CLIP_LEN := 150.0
-const CLIP_OVERHANG := 40.0
+const CLIP_OVERHANG := 6.0
 
 ## THE HANDS, all OFL, bundled under fonts/hands/ (licences beside them). One is chosen per
 ## session. `size` is the body size that fills a rule in that hand - they differ a lot (Caveat's

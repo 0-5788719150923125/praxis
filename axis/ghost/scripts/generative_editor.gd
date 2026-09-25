@@ -446,6 +446,9 @@ func _process(_delta: float) -> void:
 	# BEFORE the playback guard: a window cut is not part of a reading, and one started
 	# with nothing playing would otherwise never be noticed to have finished.
 	_pump_films()
+	# the reading ends on its own (a stream never says so): put Speak back when it does
+	if _go != null and _go.text.begins_with("Pause") and not _reading_live():
+		_show_speak_label()
 	if _playback == null:
 		return
 
@@ -580,7 +583,8 @@ func _build_panel() -> void:
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec()
 		if not _chunks.is_empty():
-			_go.text = "Speak ●"     # the reading no longer matches the box
+			_stale = true            # the reading no longer matches the box
+			_show_speak_label()
 		)
 	box.add_child(_text)
 
@@ -723,7 +727,9 @@ func _build_panel() -> void:
 	vrow.add_child(_voices)
 	_go = Button.new()
 	_go.text = "Speak"
-	_go.tooltip_text = "Read the script aloud and drive the visuals from it. Pressing it again restarts the reading from the top; Stop ends it. The scenes react to the narration exactly as they would to music."
+	_go.tooltip_text = ("Read the script aloud and drive the visuals from it. While a reading "
+		+ "plays this is Pause, then Resume - it picks up exactly where it stopped. To read again "
+		+ "from the top (or to hear an edit, marked with a dot), press Stop, then Speak.")
 	_go.disabled = true
 	_go.pressed.connect(_on_speak)
 	vrow.add_child(_go)
@@ -1410,7 +1416,34 @@ func _on_tab_selected(i: int) -> void:
 ## box raises, and for the same reason: the cast changed under what is playing.
 func _mark_stale() -> void:
 	if not _chunks.is_empty() and _go != null:
-		_go.text = "Speak ●"
+		_stale = true
+		_show_speak_label()
+
+
+## SPEAK IS A TOGGLE while a reading plays: Pause, then Resume, from where it was. It restarted
+## the reading from the top every time, and "there are times when I need to pause the
+## visualization and come back to it later". Reading again from the top is Stop, then Speak.
+var _stale := false
+var _outro_queued := false       # the outro's silence is on the stream (see the drain)
+
+## A reading that is still going: planned, and not yet played out to the end. A generated
+## stream never announces its end, so "every chunk played and the buffer drained" is the end -
+## and then Speak reads again from the top rather than pausing silence.
+func _reading_live() -> bool:
+	if _chunks.is_empty():
+		return false
+	if _next_to_play < _chunks.size() or not _pending.is_empty() or _playback == null:
+		return true
+	return _ring_capacity - int(_playback.get_frames_available()) > 256
+
+
+func _show_speak_label() -> void:
+	if _go == null:
+		return
+	var label := "Speak"
+	if _reading_live():
+		label = "Resume" if Spectrum.stream_paused() else "Pause"
+	_go.text = label + (" ●" if _stale and not _chunks.is_empty() else "")
 
 
 ## Split a script into passages by speaker: `[{speaker, text, lead}]`. Text before the
@@ -2465,6 +2498,12 @@ func _show_voice_license() -> void:
 
 
 func _on_speak() -> void:
+	if _reading_live():
+		Spectrum.set_stream_paused(not Spectrum.stream_paused())
+		_show_speak_label()
+		_set_status("Paused. Press Resume to carry on, or Stop to end the reading."
+			if Spectrum.stream_paused() else "Resumed.")
+		return
 	if _host == null or not _host.is_up() or _voices.selected < 0:
 		return
 	# THE REAL-TIME READ. In sync mode this is the file as it is on disk RIGHT NOW, not as
@@ -2486,7 +2525,8 @@ func _on_speak() -> void:
 	if _chunks.is_empty():
 		_set_status("Nothing speakable in that text.")
 		return
-	_go.text = "Speak"
+	_stale = false
+	Spectrum.set_stream_paused(false)
 	_sync_speak_buttons()
 	_set_status("Planned %d chunk(s). Synthesizing the first…%s" % [_chunks.size(), _plan_note])
 	_pump()
@@ -2503,6 +2543,8 @@ func _restart_speaking() -> void:
 	_plan(body)
 	if _chunks.is_empty():
 		return
+	_stale = false
+	Spectrum.set_stream_paused(false)
 	_sync_speak_buttons()
 	_set_status("Voice changed - reading again from the start…%s" % _plan_note)
 	_pump()
@@ -2548,6 +2590,7 @@ func _reset_playback() -> void:
 	# first sentence - the audition spoke its opening line, went quiet for five seconds, then
 	# carried on.
 	_lead_in = 0.0
+	_outro_queued = false
 	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
 
 
@@ -2557,8 +2600,9 @@ func _sync_speak_buttons() -> void:
 	var reading := not _chunks.is_empty()
 	if _stop != null:
 		_stop.disabled = not reading
-	if _go != null and not reading:
-		_go.text = "Speak"
+	if not reading:
+		_stale = false
+	_show_speak_label()
 
 
 ## Plan a reading: tear the old one down, then cut the text into chunks.
@@ -2588,6 +2632,7 @@ func _plan(body: String) -> void:
 func _stop_speaking() -> void:
 	if _chunks.is_empty() and _playback == null:
 		return
+	Spectrum.set_stream_paused(false)
 	_reset_playback()
 	if end_stream.is_valid():
 		end_stream.call()
@@ -3065,6 +3110,17 @@ func _drain_ready() -> void:
 			_sub_words.append(d)
 		_pending.append_array(pcm)
 		_elapsed += float(pcm.size()) / float(_sr)
+		# THE OUTRO, after the last chunk: silence on the stream, the way the intro is silence
+		# before the first and the export pads both ends. A stream that simply runs dry stops the
+		# session clock with it, so the show froze on the last word instead of playing out the
+		# outro ("it doesn't respect the 7.0 second outro I specified").
+		if _next_to_play >= _chunks.size() and not _outro_queued:
+			var outro := maxf(0.0, Director.outro_hold)
+			var tail := PackedFloat32Array()
+			tail.resize(int(outro * float(_sr)))
+			_pending.append_array(tail)
+			_elapsed += outro
+			_outro_queued = true
 		_set_status("Chunk %d of %d - %.0fs of audio ready."
 			% [_next_to_play, _chunks.size(), _elapsed])
 		# HOLD THE FIRST SAMPLE UNTIL THERE IS A LEAD. Chunks are one sentence each
