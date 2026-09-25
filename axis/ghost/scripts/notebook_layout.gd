@@ -81,6 +81,7 @@ var _ampm_re: RegEx
 var _last_photo := {}         # the photo the next one would fan onto
 var _last_photo_words := -1   # ...and how many words had been written when it was clipped
 var _last_photo_p := -1
+var _stacks := 0              # photos under one clip share a stack number, which lifts as one
 
 static var _hand_faces := {}
 
@@ -193,9 +194,8 @@ func _heading(text: String, level: int) -> void:
 	var fs := int(body_fs * (1.2 if level <= 1 else 1.08))
 	var lh := _lh(fs)
 	_space(1.0)
-	if _y + lh + RULE > _bottom():
-		_open_page()
-	_set_line_words(text, fs, 2, false, {"underline": level <= 2})
+	_keep_with_next(lh)
+	_set_line_words(text, fs, 2, false, {"underline": level <= 2, "heading": true})
 
 
 func _rule() -> void:
@@ -248,6 +248,35 @@ func _set_margin(toks: Array, _widths: Array, n: int, base_y: float, fs: int, lh
 
 
 # --- pictures -----------------------------------------------------------------
+
+## WHICH WORDS EACH CLIPPED PHOTO HIDES, as `cover: [first, last]` on every photo of its stack
+## (or [-1, -1]), so the medium can lift it while they are read. A word is hidden when its
+## centre or either end lies inside the photo's turned rectangle.
+func _finish() -> void:
+	var lo := {}
+	var hi := {}
+	for pg in pages:
+		for im in pg["images"]:
+			if not bool(im.get("photo", false)) or int(im.get("stack", -1)) < 0:
+				continue
+			var st := int(im["stack"])
+			var r: Rect2 = im["rect"]
+			var c := r.get_center()
+			var ang := float(im.get("angle", 0.0))
+			for wi in pg["words"]:
+				var wr: Rect2 = words[int(wi)]["rect"]
+				for p in [wr.get_center(), Vector2(wr.position.x + 4.0, wr.get_center().y),
+						Vector2(wr.end.x - 4.0, wr.get_center().y)]:
+					var q := ((p as Vector2) - c).rotated(-ang)
+					if absf(q.x) < r.size.x * 0.5 and absf(q.y) < r.size.y * 0.5:
+						lo[st] = mini(int(lo.get(st, wi)), int(wi))
+						hi[st] = maxi(int(hi.get(st, wi)), int(wi))
+						break
+	for pg in pages:
+		for im in pg["images"]:
+			var st := int(im.get("stack", -1))
+			im["cover"] = [int(lo.get(st, -1)), int(hi.get(st, -1))]
+
 
 ## An inline picture: a photo clipped over the writing, where the marker falls.
 func _float(b: Dictionary) -> void:
@@ -320,6 +349,8 @@ func _clip_photo(b: Dictionary) -> void:
 		var centre := (prev["rect"] as Rect2).get_center() + Vector2((u.call(24) - 0.5) * 70.0,
 			lerpf(24.0, 60.0, u.call(4)))
 		var ph := _photo(b, centre, sz, -signf(float(prev["angle"])) * absf(ang), false, {})
+		ph["stack"] = prev["stack"]
+		ph["hinge"] = prev["hinge"]
 		# under the one already there: the clip was put on over the stack
 		images.insert(images.find(prev), ph)
 		return
@@ -343,6 +374,10 @@ func _clip_photo(b: Dictionary) -> void:
 		clip = {"pos": Vector2(PAGE.x + CLIP_OVERHANG if side == 1 else -CLIP_OVERHANG, gy),
 			"angle": (PI * 0.5 if side == 1 else -PI * 0.5) + (u.call(20) - 0.5) * 0.14}
 	var ph := _photo(b, centre, sz, ang, false, clip)
+	# THE HINGE is the edge the clip holds; the photo lifts from the other one
+	ph["hinge"] = "top" if clip["pos"].y < 0.0 else ("right" if side == 1 else "left")
+	ph["stack"] = _stacks
+	_stacks += 1
 	images.append(ph)
 	_last_photo = ph
 	_last_photo_p = _p

@@ -182,6 +182,7 @@ func build(source: String, image_size: Callable, title_override := "") -> void:
 		_image_page(_pending_full.pop_front())
 	if pages.size() % 2 == 1:
 		_blank_page()
+	_finish()
 
 
 func spreads() -> int:
@@ -337,10 +338,28 @@ func _rule() -> void:
 
 func _heading(text: String, level: int) -> void:
 	var fs := int(body_fs * (1.5 if level <= 1 else 1.25))
-	if _y + _lh(fs) * 2.0 > _bottom():
-		_open_page()
-	_set_line_words(text, fs, 0, true)
+	_keep_with_next(_lh(fs))
+	_set_line_words(text, fs, 0, true, {"heading": true})
 	_y += _lh(body_fs) * 0.4
+
+
+## A HEADING IS KEPT WITH WHAT IT HEADS: it is set only where the gap after it and two lines of
+## its text fit below it on the same page, else it opens the next one. A dated entry written at
+## the foot of a page with its whole text over the leaf is something no hand would do, and in a
+## printed book it is the widow compositors have always refused. [param h] is the heading's own
+## height.
+##
+## "Fit" means room a line can USE: a picture band across the lower page leaves the height but
+## not the width, and the two lines reserved there moved over the leaf anyway.
+func _keep_with_next(h: float) -> void:
+	var lh := _lh(body_fs)
+	var y := _y + h + lh * PARA_GAP
+	for _k in 2:
+		var span := _span_at(y, y + lh)
+		if y + lh > _bottom() or span.y - span.x < float(body_fs) * 5.0:
+			_open_page()
+			return
+		y += lh
 
 
 func _label_centered(text: String, fs: int, tone := 0.8) -> void:
@@ -551,6 +570,11 @@ func _set_line_words(text: String, fs: int, emph: int, center: bool, extra := {}
 
 
 # --- hooks a layout in another hand overrides ------------------------------------------
+
+## Everything is set. A layout with something to work out from the finished pages does it here.
+func _finish() -> void:
+	pass
+
 
 ## A drawing made on the page. A printed book has no hand to make one, so it is set like any
 ## inline picture; [NotebookLayout] draws it into the writing.

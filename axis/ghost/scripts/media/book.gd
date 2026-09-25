@@ -85,6 +85,9 @@ uniform float angle = 0.0;
 uniform float curl = 0.0;
 uniform float lift = 0.05;
 uniform float base_y = 0.0;
+// Where every leaf meets the spine. A leaf rises from here to its own stack (base_y) across the
+// gutter, so both pages dip into ONE gutter however unevenly the book is read - see _place_leaves.
+uniform float spine_y = 0.0;
 uniform float page_h = 1.5;
 uniform float has_back = 0.0;
 // The texture's transparent margin past the page's outer and top/bottom edges, in page widths
@@ -120,7 +123,8 @@ void vertex() {
 	// a turning leaf that has swung over is flipped, and a world-x overlap put its landed
 	// text 0.012 to the side of the flat page that takes over from it - the text jumped as
 	// every turn finished.
-	VERTEX = vec3((p.x - 0.006 * cos(angle)) * side, p.y - 0.006 * sin(angle) + base_y, z);
+	float rise = mix(spine_y, base_y, 1.0 - exp(-s * 9.0));
+	VERTEX = vec3((p.x - 0.006 * cos(angle)) * side, p.y - 0.006 * sin(angle) + rise, z);
 	vec3 tan3 = vec3(t.x * side, t.y, 0.0);
 	vec3 nrm = normalize(cross(vec3(0.0, 0.0, 1.0), tan3));
 	if (side < 0.0) nrm = -nrm;
@@ -381,10 +385,13 @@ static func _grime(seed: int, freq: float, octaves: int, contrast: float) -> Tex
 	return ImageTexture.create_from_image(img)
 
 
+## How far the page blocks stop short of the spine: the gutter the leaves dip into.
+const STACK_GAP := 0.09
+
 func _stack() -> MeshInstance3D:
 	var m := MeshInstance3D.new()
 	var bm := BoxMesh.new()
-	bm.size = Vector3(0.985, 0.02, PAGE_H - 0.01)
+	bm.size = Vector3(0.985 - STACK_GAP, 0.02, PAGE_H - 0.01)
 	m.mesh = bm
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.86, 0.83, 0.76)
@@ -800,10 +807,19 @@ func _place_leaves() -> void:
 	_stack_l.scale = Vector3(1.0, tl / 0.02, 1.0)
 	_stack_r.scale = Vector3(1.0, tr / 0.02, 1.0)
 	var floor_y := -0.043
-	_stack_l.position = Vector3(-0.5, floor_y + tl * 0.5, 0.0)
-	_stack_r.position = Vector3(0.5, floor_y + tr * 0.5, 0.0)
+	# held back from the spine, where the leaves dip below the stacks' tops into the gutter
+	# (the block spans x = STACK_GAP + 0.0075 .. 0.9925 from the spine)
+	_stack_l.position = Vector3(-(STACK_GAP + 1.0) * 0.5, floor_y + tl * 0.5, 0.0)
+	_stack_r.position = Vector3((STACK_GAP + 1.0) * 0.5, floor_y + tr * 0.5, 0.0)
 	var yl := floor_y + tl
 	var yr := floor_y + tr
+	# THE GUTTER IS SHARED. Each leaf used to sit flat at its own stack's height right up to the
+	# spine, so early in a chapter (thin left stack, thick right) the right page met the spine
+	# 0.035 above the left and the ruled lines stepped across the binding. Both now meet at the
+	# thin-stack height and rise to their own across the gutter, as bound pages do.
+	var spine := floor_y + 0.012
+	for leaf in [_leaf_l, _leaf_r, _leaf_t]:
+		((leaf as MeshInstance3D).material_override as ShaderMaterial).set_shader_parameter("spine_y", spine)
 	var turning := _turn_t >= 0.0
 	var left_page := _spread * 2
 	var right_page := (_turn_to if turning else _spread) * 2 + 1
@@ -879,7 +895,7 @@ func _refresh_pages() -> void:
 		var page := int(_slot_page[i])
 		var c: PageCanvas = _canvases[i]
 		var hl := _highlight_for(page, r)
-		var state := "%d|%s" % [page, str(hl)]
+		var state := "%d|%s|%s" % [page, str(hl), _page_state(page)]
 		if state == _slot_state[i]:
 			continue
 		_slot_state[i] = state
@@ -1134,6 +1150,12 @@ func _draw_paper(ci: CanvasItem, pg: Dictionary) -> void:
 		var w := 90.0 * (1.0 - float(k) / 12.0)
 		var x := spine_x - w if spine_x > 0.0 else 0.0
 		ci.draw_rect(Rect2(x, 0.0, w, size.y), Color(0.25, 0.18, 0.1, 0.02))
+
+
+## Anything else a page's picture depends on, so the page redraws when it changes. Nothing, in
+## print: a printed page changes only with its highlight.
+func _page_state(_page: int) -> String:
+	return ""
 
 
 ## The colour word [param _w] is set in. One ink, in print.

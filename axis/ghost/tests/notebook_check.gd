@@ -44,6 +44,8 @@ func _ready() -> void:
 	_check_headings_are_read()
 	_check_inks()
 	_check_single_spaced()
+	_check_heading_kept_with_text()
+	_check_photo_covers()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -245,3 +247,49 @@ func _check_single_spaced() -> void:
 				ys.append(y)
 		_ok(ys.size() > 3 and int(ys[1]) - int(ys[0]) == 1 and int(ys[2]) - int(ys[1]) == 1,
 			"%s is not written on consecutive rules: %s" % [h, ys.slice(0, 4)])
+
+
+## A PAGE NEVER ENDS ON A HEADING: every heading has two lines of its own text under it on the
+## same page (unless the chapter ends there). Reported as a dated entry at the foot of a page
+## with its whole text over the leaf. Held on chapter 41 in both layouts.
+func _check_heading_kept_with_text() -> void:
+	var path := "/home/crow/repos/rift/books/north-star/chapters/41-the-gift-of-guilt.md"
+	var doc := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else DOC
+	for lay in [BookLayout.new(), NotebookLayout.new()]:
+		if lay is NotebookLayout:
+			lay.hand = "caveat"
+			lay.body_fs = int(NotebookLayout.HANDS["caveat"]["size"])
+		lay.build(doc, func(_k: String) -> Vector2: return Vector2(1536, 1024), "T")
+		var stranded := 0
+		for i in lay.words.size():
+			if not bool(lay.words[i].get("heading", false)):
+				continue
+			var j: int = i + 1
+			while j < lay.words.size() and bool(lay.words[j].get("heading", false)) \
+					and int(lay.words[j]["page"]) == int(lay.words[i]["page"]):
+				j += 1
+			if j >= lay.words.size():
+				continue                   # the chapter's last words
+			if int(lay.words[j]["page"]) != int(lay.words[i]["page"]):
+				stranded += 1
+		_ok(stranded == 0, "%s: %d headings end a page with their text over the leaf"
+			% [lay.get_script().get_global_name(), stranded])
+
+
+## EVERY CLIPPED PHOTO KNOWS WHICH WORDS IT HIDES, so it can lift while they are read: a photo
+## over writing names a real range of words on its own page, and a stack shares one.
+func _check_photo_covers() -> void:
+	var l := _layout(true)
+	var n := 0
+	for pg in l.pages:
+		for im in pg["images"]:
+			if not bool(im.get("photo", false)):
+				continue
+			var cv: Array = im.get("cover", [-1, -1])
+			_ok(cv.size() == 2 and int(cv[0]) >= 0 and int(cv[1]) >= int(cv[0]),
+				"a photo over the writing hides no words: %s" % [cv])
+			if int(cv[0]) >= 0:
+				_ok(int(l.words[int(cv[0])]["page"]) == int(l.pages.find(pg)),
+					"a photo claims words on another page")
+			n += 1
+	_ok(n == 3, "the control is wrong - %d photos" % n)

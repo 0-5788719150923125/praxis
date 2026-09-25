@@ -19,6 +19,27 @@ const PHOTO_PAPER := Color(0.97, 0.965, 0.95)
 const STEEL := Color(0.60, 0.62, 0.66)
 
 var _hand := "kalam"
+## THE PEEK: a clipped photo lifts off the page, curling back from its free edge toward the
+## clip, while the words it hides are being read, and settles again once they have been.
+## `_peel[stack]` runs 0..1 at a steady rate and is drawn through a smoothstep, so it eases in
+## and out; a stack lifts together.
+##
+## IT LIFTS AHEAD OF THE VOICE, as a reader lifts a photo before reaching the line under it: it
+## starts [constant PEEL_TIME] + [constant PEEL_EARLY] seconds before the first hidden word is
+## spoken, so it is fully up that long before the word. Timed off the word's own start where the
+## voice has reached it in the take; [constant PEEL_LEAD] words early where it has not yet.
+const PEEL_TIME := 0.9
+const PEEL_EARLY := 0.6
+const PEEL_LEAD := 5
+## How far the photo swings back at full peel (radians) - past upright, leaning out over its
+## clip and beyond the page edge, so it covers as little writing as it can: at 135 degrees at
+## most ~60 px of it stays over the page, beside the clip, and up to ~215 px hangs past the edge
+## (which is why [method _page_pad] is as wide as it is).
+const CURL_MAX := 2.35
+var _peel := {}
+var _peel_dt := 0.0
+var _prints := {}
+var _prints_rev := -1
 var _plate: MeshInstance3D
 static var _marble: Texture2D
 
@@ -31,13 +52,68 @@ func _make_layout() -> BookLayout:
 	return l
 
 
-## Room for a clip's outer loop to stand off the page, as a clip does.
+## Room past the page edge for what hangs off it: a clip's outer loop, and a photo swung back
+## over its clip while the words under it are read (see [constant CURL_MAX]).
 func _page_pad() -> float:
-	return 64.0
+	return 240.0
 
 
 func _cover_font() -> Font:
 	return NotebookLayout.hand_face(_hand, 0)
+
+
+func advance(features, delta: float, bookend: float) -> void:
+	_peel_dt = delta
+	super.advance(features, delta, bookend)
+
+
+func _refresh_pages() -> void:
+	_tick_peel()
+	super._refresh_pages()
+
+
+func _tick_peel() -> void:
+	if _layout == null:
+		return
+	var r := _reading()
+	var li := int(r["layout"]) if not r.is_empty() else -1
+	var now: float = _subs.now() if _subs != null and is_instance_valid(_subs) else 0.0
+	var step := _peel_dt / PEEL_TIME
+	for page in _needed_pages():
+		if page < 0 or page >= _layout.pages.size():
+			continue
+		for im in (_layout.pages[page] as Dictionary)["images"]:
+			var cover: Array = (im as Dictionary).get("cover", [-1, -1])
+			if int(cover[0]) < 0:
+				continue
+			var st := int(im["stack"])
+			var lo := int(cover[0])
+			var t0 := _spoken_at(lo)
+			var early := now >= t0 - PEEL_TIME - PEEL_EARLY if t0 >= 0.0 else li >= lo - PEEL_LEAD
+			var want := 1.0 if li >= 0 and li <= int(cover[1]) and (li >= lo or early) else 0.0
+			var v := float(_peel.get(st, 0.0))
+			_peel[st] = move_toward(v, want, step)
+
+
+## When layout word [param li] starts being spoken, from the take's own timings, or -1 while
+## the voice has not reached it in what has arrived so far.
+func _spoken_at(li: int) -> float:
+	if _layout == null:
+		return -1.0
+	if float(_lay_t0.get(li, -1.0)) >= 0.0:
+		return float(_lay_t0[li])
+	return -1.0
+
+
+func _page_state(page: int) -> String:
+	if _layout == null or page < 0 or page >= _layout.pages.size():
+		return ""
+	var out := ""
+	for im in (_layout.pages[page] as Dictionary)["images"]:
+		var st := int((im as Dictionary).get("stack", -1))
+		if st >= 0:
+			out += "%d:%.2f," % [st, snappedf(float(_peel.get(st, 0.0)), 0.02)]
+	return out
 
 
 func mount(st: SubViewport) -> void:
@@ -218,6 +294,10 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 	if not bool(im.get("photo", false)):
 		super._draw_image(ci, im)
 		return
+	var peel := smoothstep(0.0, 1.0, float(_peel.get(int(im.get("stack", -1)), 0.0)))
+	if peel > 0.01:
+		_draw_curled(ci, im, peel)
+		return
 	var rect: Rect2 = im["rect"]
 	var c := rect.get_center()
 	var hs := rect.size * 0.5
@@ -249,6 +329,121 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 		ci.draw_texture_rect_region(tex, inner, src)
 	ci.draw_rect(Rect2(-hs, rect.size), Color(0, 0, 0, 0.18), false, 1.2)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## A photo lifted by [param peel] (0..1): drawn as strips from the clipped edge to the free one.
+## It BENDS AT THE CLIP and swings back over it like a door - most of the turn in the first
+## fifth of its length, the rest nearly rigid - past upright and out over the page edge. A curl
+## at the free end was tried first and left the half nearest the clip lying on the writing:
+## "it still covers a lot of text". A strip turned past upright shows the BACK of the print.
+func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
+	var rect: Rect2 = im["rect"]
+	var sz := rect.size
+	var c := rect.get_center()
+	var ang := float(im.get("angle", 0.0))
+	var a := Vector2(0, 1)          # clipped edge -> free edge, in the photo's own frame
+	var o := Vector2(0, -sz.y * 0.5)
+	var length := sz.y
+	var width := sz.x
+	match String(im.get("hinge", "top")):
+		"right":
+			a = Vector2(-1, 0)
+			o = Vector2(sz.x * 0.5, 0)
+			length = sz.x
+			width = sz.y
+		"left":
+			a = Vector2(1, 0)
+			o = Vector2(-sz.x * 0.5, 0)
+			length = sz.x
+			width = sz.y
+	var side := Vector2(-a.y, a.x) * width * 0.5
+	const N := 32
+	var us := PackedFloat32Array([0.0])
+	var zs := PackedFloat32Array([0.0])
+	var th := PackedFloat32Array([0.0])
+	for i in N:
+		var t := (float(i) + 0.5) / float(N)
+		var theta := peel * CURL_MAX * (0.8 * minf(1.0, t / 0.2) + 0.2 * t)
+		us.append(us[i] + cos(theta) * length / float(N))
+		zs.append(zs[i] + sin(theta) * length / float(N))
+		th.append(theta)
+	var tex := _print_for(im)
+	ci.draw_set_transform(c, ang, Vector2.ONE)
+	# ONE SHADOW under the footprint, reaching as far as the lift does and softer the higher it
+	# goes. A shadow per strip, each thrown by its own height, drew a comb of bars.
+	var reach := 0.0
+	var top := 0.0
+	for i in N + 1:
+		reach = maxf(reach, us[i])
+		top = maxf(top, zs[i])
+	var lift := minf(top / length, 1.0)
+	var off := Vector2(6.0, 9.0) + Vector2(0.05, 0.08) * top
+	for k in 3:
+		var g := side.normalized() * float(k) * 3.0
+		var q := PackedVector2Array([o + side + g + off, o - side - g + off,
+			o + a * (reach + float(k) * 3.0) - side - g + off, o + a * (reach + float(k) * 3.0) + side + g + off])
+		ci.draw_colored_polygon(q, Color(0, 0, 0, 0.06 * (1.0 - 0.5 * lift)))
+	for i in N:
+		if absf(us[i + 1] - us[i]) < 0.5:
+			continue
+		var q := PackedVector2Array([o + a * us[i] + side, o + a * us[i] - side,
+			o + a * us[i + 1] - side, o + a * us[i + 1] + side])
+		var ct := cos(th[i + 1])
+		if ct >= 0.0 and tex != null:
+			var t0 := float(i) / float(N)
+			var t1 := float(i + 1) / float(N)
+			var uv := PackedVector2Array()
+			for pt in [o + a * t0 * length + side, o + a * t0 * length - side,
+					o + a * t1 * length - side, o + a * t1 * length + side]:
+				uv.append(((pt as Vector2) + sz * 0.5) / sz)
+			var sh := 0.72 + 0.28 * ct
+			var col := Color(sh, sh, sh)
+			ci.draw_polygon(q, PackedColorArray([col, col, col, col]), uv, tex)
+		else:
+			# the back of the print: plain paper, lit less the more it faces away
+			ci.draw_colored_polygon(q, PHOTO_PAPER.darkened(0.06 + 0.14 * absf(ct)))
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## The whole print - white border and picture - as one texture, so a curled strip can be cut
+## from it. Composed once per picture and size.
+func _print_for(im: Dictionary) -> Texture2D:
+	var rect: Rect2 = im["rect"]
+	var key := String(im["key"])
+	var src_tex := _texture_for(key)
+	var ck := "%s|%d|%d|%s" % [key, int(rect.size.x), int(rect.size.y), src_tex != null]
+	if _prints_rev == Illustrations.revision and _prints.has(ck):
+		return _prints[ck]
+	var w := maxi(8, int(rect.size.x))
+	var h := maxi(8, int(rect.size.y))
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(PHOTO_PAPER)
+	var b := int(NotebookLayout.PHOTO_BORDER)
+	var iw := maxi(1, w - b * 2)
+	var ih := maxi(1, h - b * 2)
+	if src_tex == null:
+		img.fill_rect(Rect2i(b, b, iw, ih), Color(0.80, 0.80, 0.79))
+	else:
+		var pic := src_tex.get_image().duplicate()
+		pic.clear_mipmaps()
+		pic.convert(Image.FORMAT_RGBA8)
+		var ts := Vector2(pic.get_size())
+		var want := float(iw) / float(ih)
+		var cut := Rect2i(0, 0, int(ts.x), int(ts.y))
+		if ts.x / ts.y > want:
+			cut = Rect2i(int((ts.x - ts.y * want) * 0.5), 0, int(ts.y * want), int(ts.y))
+		else:
+			cut = Rect2i(0, int((ts.y - ts.x / want) * 0.5), int(ts.x), int(ts.x / want))
+		pic = pic.get_region(cut)
+		pic.resize(iw, ih, Image.INTERPOLATE_BILINEAR)
+		img.blit_rect(pic, Rect2i(0, 0, iw, ih), Vector2i(b, b))
+	img.generate_mipmaps()
+	var tex := ImageTexture.create_from_image(img)
+	if _prints_rev != Illustrations.revision:
+		_prints = {}                 # a reroll is a new picture under the same key
+		_prints_rev = Illustrations.revision
+	_prints[ck] = tex
+	return tex
 
 
 ## The clips go on after every photo on the page, so a fanned stack sits under its clip.
