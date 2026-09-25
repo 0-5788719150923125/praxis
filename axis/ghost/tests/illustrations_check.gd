@@ -147,6 +147,30 @@ func _init() -> void:
 	I._jobs = {}
 
 	I.set_look({})
+	print("-- reference instructions")
+	I.use_for_test({})
+	var lk3: Dictionary = I.look()
+	_check((lk3["reference_prompt"] as Dictionary).has("image") and (lk3["reference_prompt"] as Dictionary).has("sketch")
+		and (lk3["self_reference_prompt"] as Dictionary).has("sketch"),
+		"the reference instructions are not written out, by kind, for the author to edit")
+	var sig0: String = I.current_signature("image")
+	I.set_look(lk3)
+	_check(I.current_signature("image") == sig0, "writing the default instructions back made the pictures stale")
+	I.set_look({"reference_prompt": {"image": "Copy the palette only."}})
+	_check(I.ref_prompt("references", "image") == "Copy the palette only."
+		and I.ref_prompt("references", "sketch") == String(I.REF_PROMPT_DEFAULTS["references"]["sketch"]),
+		"an edited instruction did not land on its own kind alone")
+	_check(I.current_signature("image") != sig0, "an edited instruction did not change the look")
+	_check(I.current_signature("sketch") == I.look_signature("", []), "editing the pictures' instruction touched the sketches' look")
+	var rp: String = I.build_prompt("x", "inline", "", 2, "/t.png", 1, I.ref_prompt("references", "image"),
+		I.ref_prompt("self_reference", "image"))
+	_check(rp.contains("REFERENCES (the first 2 attached images): Copy the palette only.")
+		and rp.contains("EARLIER PICTURES (the last 1 attached image):"),
+		"the author's instruction does not reach the request with its attachments named")
+	I.set_look({})
+	_check(I.ref_prompt("references", "image") == String(I.REF_PROMPT_DEFAULTS["references"]["image"]),
+		"a chapter naming no instruction kept the last chapter's")
+
 	print("-- versions")
 	var store := {}
 	I.use_for_test(store)

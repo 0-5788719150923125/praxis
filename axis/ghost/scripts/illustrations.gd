@@ -281,7 +281,51 @@ static func look_signature(style_text: String, refs: Array) -> String:
 ## The look a [param kind] of picture is made under now. The chain of earlier pictures is NOT
 ## part of it: rerolling the first picture would otherwise mark every later one stale.
 static func current_signature(kind := "image") -> String:
-	return look_signature(style(kind), references(kind))
+	# an EDITED reference instruction changes the look; the default does not, so a library from
+	# before the instructions could be edited does not wake up with every picture stale
+	var extra := ""
+	for which in ["references", "self_reference"]:
+		if not String(_all_prompts(which).get(kind, "")).is_empty():
+			extra += "|" + ref_prompt(which, kind)
+	return look_signature(style(kind) + extra, references(kind))
+
+
+## HOW THE ATTACHMENTS ARE TO BE USED, per kind and per group - `references` (the author's
+## reference images) and `self_reference` (the chapter's earlier pictures) - editable in the
+## document as `reference_prompt:` / `self_reference_prompt:`, which is written out with these
+## defaults so there is something to edit. It was entirely internal: nothing showed what the
+## model was told to do with a reference, let alone let the author change it. Only WHICH
+## attachments a group is ("the first 3 attached images") stays internal - that depends on the
+## counts, and is prepended by [method build_prompt].
+const REF_PROMPT_DEFAULTS := {
+	"references": {
+		"image": "STYLE REFERENCES ONLY. Match their rendering style: medium, palette, linework, texture, lighting and level of detail. Do NOT copy their subjects, characters, objects or composition - the content comes only from the description above.",
+		"sketch": "STYLE REFERENCES ONLY. Match their line: pen, weight, hatching and how much is drawn. Do NOT copy their subjects or composition - the content comes only from the description above.",
+	},
+	"self_reference": {
+		"image": "Earlier pictures from this same book. Match their rendering exactly - medium, palette, linework, texture and level of detail - so every one reads as made by the same hand. Keep a recurring character looking the same if one appears. Do NOT reuse their compositions or scenes - the content comes only from the description above.",
+		"sketch": "Earlier sketches from this same notebook. Match their line exactly - pen, weight, hatching and how much is drawn - so every one reads as drawn by the same hand. Do NOT reuse their compositions - the content comes only from the description above.",
+	},
+}
+
+
+## The instruction for [param which] group of attachments on [param kind]: the document's, or
+## the default.
+static func ref_prompt(which: String, kind := "image") -> String:
+	var v := String(_all_prompts(which).get(kind, "")).strip_edges()
+	return v if not v.is_empty() else String(REF_PROMPT_DEFAULTS[which][kind])
+
+
+static func set_ref_prompt(which: String, text: String, kind := "image") -> void:
+	var all := _all_prompts(which)
+	# the default, written back, is stored as "the default" - so it keeps following it
+	all[kind] = "" if text.strip_edges() == String(REF_PROMPT_DEFAULTS[which][kind]) else text
+	_write("ref_prompts_" + which, all)
+
+
+static func _all_prompts(which: String) -> Dictionary:
+	var raw: Variant = _read("ref_prompts_" + which, {})
+	return (raw as Dictionary).duplicate() if raw is Dictionary else {}
 
 
 ## THE LOOK AS A DOCUMENT CARRIES IT - the painter, the style and the reference images -
@@ -306,7 +350,13 @@ static func look() -> Dictionary:
 	var sr := {}
 	for k in STYLE_KINDS:
 		sr[k] = self_reference(k)
-	var out := {"painter": backend(), "self_reference": sr}
+	var rp := {}
+	var sp := {}
+	for k in STYLE_KINDS:
+		rp[k] = ref_prompt("references", k)
+		sp[k] = ref_prompt("self_reference", k)
+	var out := {"painter": backend(), "self_reference": sr, "reference_prompt": rp,
+		"self_reference_prompt": sp}
 	if not st.is_empty():
 		out["style"] = st
 	if not refs.is_empty():
@@ -357,6 +407,15 @@ static func set_look(d: Dictionary) -> PackedStringArray:
 		all_sr[k] = bool((sr as Dictionary).get(k, true))
 	_write("self_ref", all_sr)
 	_write("styles", all_st)
+	for pair in [["reference_prompt", "references"], ["self_reference_prompt", "self_reference"]]:
+		var given: Variant = d.get(String(pair[0]), {})
+		if not (given is Dictionary):
+			given = {"image": String(given)}
+		var all := {}
+		for k in STYLE_KINDS:
+			var v := String((given as Dictionary).get(k, "")).strip_edges()
+			all[k] = "" if v == String(REF_PROMPT_DEFAULTS[pair[1]][k]) else v
+		_write("ref_prompts_" + String(pair[1]), all)
 	_write("refs_by_kind", all_rf)
 	return errs
 
@@ -384,7 +443,7 @@ static func set_backend(key: String) -> void:
 ## picture of a wolf and asked for a courtroom, a model will happily put the wolf in the
 ## courtroom.
 static func build_prompt(description: String, placement: String, style_text: String,
-		ref_count: int, target: String, chain_count := 0) -> String:
+		ref_count: int, target: String, chain_count := 0, ref_text := "", chain_text := "") -> String:
 	var lines := PackedStringArray()
 	lines.append("Use your built-in image generation tool to create exactly ONE image, then "
 		+ "save it as a PNG at this exact path: %s" % target)
@@ -405,24 +464,24 @@ static func build_prompt(description: String, placement: String, style_text: Str
 			lines.append("STYLE (applies to every illustration in this book): " + style_text.strip_edges())
 	# The attachments arrive in that order - the author's references, then the chain - so each
 	# group is named by its place in it.
+	# What each group IS TO BE USED FOR is the author's (see REF_PROMPT_DEFAULTS); which
+	# attachments it is stays here, because it depends on the counts.
+	var kind := kind_of(placement)
+	if ref_text.strip_edges().is_empty():
+		ref_text = String(REF_PROMPT_DEFAULTS["references"][kind])
+	if chain_text.strip_edges().is_empty():
+		chain_text = String(REF_PROMPT_DEFAULTS["self_reference"][kind])
 	var both := ref_count > 0 and chain_count > 0
 	if ref_count > 0:
-		lines.append("REFERENCES: %s %s STYLE REFERENCES ONLY. Match "
-			% [("the first %d attached image%s" % [ref_count, "" if ref_count == 1 else "s"]) if both
+		lines.append("REFERENCES (%s): %s" % [
+			("the first %d attached image%s" % [ref_count, "" if ref_count == 1 else "s"]) if both
 				else ("the %d attached image%s" % [ref_count, "" if ref_count == 1 else "s"]),
-			"is a" if ref_count == 1 else "are"]
-			+ "their rendering style: medium, palette, linework, texture, lighting and level of "
-			+ "detail. Do NOT copy their subjects, characters, objects or composition - the "
-			+ "content comes only from the description above.")
+			ref_text.strip_edges()])
 	if chain_count > 0:
-		lines.append("EARLIER PICTURES: %s %s earlier %s from this same book. Match their "
-			% [("the last %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]) if both
+		lines.append("EARLIER PICTURES (%s): %s" % [
+			("the last %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]) if both
 				else ("the %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]),
-			"is an" if chain_count == 1 else "are", "sketches" if sketch else "pictures"]
-			+ "rendering exactly - medium, palette, linework, texture and level of detail - so "
-			+ "every one reads as made by the same hand. Keep a recurring character looking the "
-			+ "same if one appears. Do NOT reuse their compositions or scenes - the content comes "
-			+ "only from the description above.")
+			chain_text.strip_edges()])
 	# A sketch may be labelled - a ledger entry, an arrow marked "leak" - when its description
 	# says so; a picture never is.
 	if sketch:
@@ -664,7 +723,8 @@ static func _start(req: Dictionary) -> void:
 		# A second of slack: file mtimes are whole seconds and the clock read is not.
 		"started": int(Time.get_unix_time_from_system()) - 1,
 		"prompt": build_prompt(String(req["prompt"]), String(req["placement"]), style(kind),
-			n_static, target, chain.size()),
+			n_static, target, chain.size(), ref_prompt("references", kind),
+			ref_prompt("self_reference", kind)),
 	}
 	job["gen"] = gen
 	var pid := gen.start(job)

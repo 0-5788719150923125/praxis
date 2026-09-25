@@ -41,6 +41,9 @@ var _raised := {}                # stack -> when it was lifted (subtitle clock)
 ## How much of a photo the clip PINS, from its clipped edge: that part stays flat under the clip
 ## and the rest folds back over it. About where a clip's inner end reaches.
 const PIN := 76.0
+## The roller a lifted print is turned over: wide enough to read as a curl rather than a crease,
+## small enough that the loop does not lie back over the writing beside the page edge.
+const CURL_RADIUS := 80.0
 var _peel := {}
 var _peel_dt := 0.0
 var _prints := {}
@@ -369,13 +372,16 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-## A photo lifted by [param peel] (0..1): a CLEAN FOLD. The part the clip pins ([constant PIN])
-## stays flat; the rest turns about the fold line at the clip's inner end, rigid and full
-## length, up through upright and over, until at full peel it lies flat on the far side of the
-## clip - back up, off the page edge - and the writing under it is uncovered. Two earlier cuts
-## were wrong in ways a still frame shows: a curl at the free end left the clipped half on the
-## text, and a lean to 135 degrees showed the photo foreshortened, "not a clean fold that holds
-## the length constant". Past upright the clip is under the photo, so it is drawn first.
+## A photo lifted by [param peel] (0..1), ROLLED BACK over a wide curve the way a person turns a
+## print they do not want to crease. The part the clip pins ([constant PIN]) stays flat; past it
+## the print wraps round a roller of radius [constant CURL_RADIUS] through an angle that grows to
+## a half turn, and runs on straight from where it leaves the roller - so its length is exactly
+## kept, and at full peel it lies back past the edge with a rounded loop over the clip. Drawn as
+## strips, each lit by how far it faces from the page and showing the back once past upright.
+## Three earlier cuts were each wrong in a way a still frame showed: a curl at the free end left
+## the clipped half on the text; a lean to 135 degrees looked foreshortened; and a hinge fold
+## "looks like a flat, linear fold - which is not what a real person would do". Past upright the
+## clip is under the print, so it is drawn first.
 func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 	var rect: Rect2 = im["rect"]
 	var sz := rect.size
@@ -399,31 +405,67 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 	var side := Vector2(-a.y, a.x) * width * 0.5
 	var t0 := clampf(PIN / length, 0.0, 0.5)
 	var theta := peel * PI
+	var rem := (1.0 - t0) * length
+	var r := minf(CURL_RADIUS, rem / PI)
 	var fold := o + a * t0 * length
-	var reach := (1.0 - t0) * length * cos(theta)      # < 0 once it is over the clip
-	var far := fold + a * reach
 	var tex := _print_for(im)
 	var clip: Dictionary = im.get("clip", {})
 	if theta > PI * 0.5 and not clip.is_empty():
 		_draw_clip(ci, clip["pos"], float(clip["angle"]))
+	# along the print from the fold: projected distance u, height z and the facing angle phi
+	const N := 40
+	var us := PackedFloat32Array()
+	var zs := PackedFloat32Array()
+	var ph := PackedFloat32Array()
+	for i in N + 1:
+		var sv := rem * float(i) / float(N)
+		var bent := minf(sv / r, theta) if theta > 0.0 else 0.0
+		var u := r * sin(bent)
+		var z := r * (1.0 - cos(bent))
+		var rest := sv - bent * r
+		if rest > 0.0:
+			u += rest * cos(theta)
+			z += rest * sin(theta)
+		us.append(u)
+		zs.append(z)
+		ph.append(bent)
 	ci.draw_set_transform(c, ang, Vector2.ONE)
-	# the shadow of what lies over the page, fainter while the photo stands up off it
-	var lift := sin(theta)
-	var shadow_end := far if reach > 0.0 else fold
-	var off := Vector2(6.0, 9.0) + Vector2(10.0, 14.0) * lift
+	# ONE shadow under what lies over the page, reaching as far in as the roll does
+	var reach := 0.0
+	var top := 0.0
+	for i in N + 1:
+		reach = maxf(reach, us[i])
+		top = maxf(top, zs[i])
+	var lift := minf(top / maxf(rem, 1.0), 1.0)
+	var off := Vector2(6.0, 9.0) + Vector2(0.06, 0.09) * minf(top, 160.0)
+	var shadow_end := fold + a * reach
 	ci.draw_colored_polygon(PackedVector2Array([o + side + off, o - side + off,
 		shadow_end - side + off, shadow_end + side + off]), Color(0, 0, 0, 0.14 * (1.0 - 0.5 * lift)))
 	# the pinned part, flat
 	_print_quad(ci, tex, o, fold, side, a, 0.0, t0, length, sz, 1.0)
-	# the folded part: its face while it rises, its back once it is over
-	if absf(reach) > 0.5:
-		if reach > 0.0:
-			_print_quad(ci, tex, fold, far, side, a, t0, 1.0, length, sz, 0.75 + 0.25 * cos(theta))
+	# the rolled part, strip by strip in order along the print: what comes later lies over what
+	# came before, which is the right way round for a print rolled back on itself
+	for i in N:
+		var p0 := fold + a * us[i]
+		var p1 := fold + a * us[i + 1]
+		if p0.distance_to(p1) < 0.4:
+			continue                 # edge-on at the top of the roll
+		var q := PackedVector2Array([p0 + side, p0 - side, p1 - side, p1 + side])
+		var fa := 0.5 * (ph[i] + ph[i + 1])
+		var cf := cos(fa)
+		if cf >= 0.0 and tex != null:
+			var ta := t0 + (1.0 - t0) * float(i) / float(N)
+			var tb := t0 + (1.0 - t0) * float(i + 1) / float(N)
+			var uv := PackedVector2Array()
+			for pt in [o + a * ta * length + side, o + a * ta * length - side,
+					o + a * tb * length - side, o + a * tb * length + side]:
+				uv.append(((pt as Vector2) + sz * 0.5) / sz)
+			var sh := 0.62 + 0.38 * cf
+			ci.draw_polygon(q, PackedColorArray([Color(sh, sh, sh), Color(sh, sh, sh),
+				Color(sh, sh, sh), Color(sh, sh, sh)]), uv, tex)
 		else:
-			ci.draw_colored_polygon(PackedVector2Array([fold + side, fold - side, far - side, far + side]),
-				PHOTO_PAPER.darkened(0.04 + 0.12 * (1.0 + cos(theta))))
-			ci.draw_polyline(PackedVector2Array([fold + side, far + side, far - side, fold - side]),
-				Color(0, 0, 0, 0.12), 1.2, true)
+			# the back of the print: plain paper, lit less the more it faces away from the lamp
+			ci.draw_colored_polygon(q, PHOTO_PAPER.darkened(0.03 + 0.16 * (1.0 + cf) * 0.5 + 0.1 * sin(fa)))
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
@@ -485,7 +527,10 @@ func _print_for(im: Dictionary) -> Texture2D:
 	return tex
 
 
-## The clips go on after every photo on the page, so a fanned stack sits under its clip.
+## The clips go on after every photo on the page, so a fanned stack sits under its clip. Then
+## the clips on the OTHER SIDE of this sheet: a clip grips the sheet's edge, so the page behind
+## a clipped photo shows it too - mirrored, and only what shows from behind (see [method
+## _clip_path]). That is how a right-hand page shows the clips of the pages still to come.
 func _draw_overlay(ci: CanvasItem, pg: Dictionary) -> void:
 	for im in pg["images"]:
 		var clip: Dictionary = (im as Dictionary).get("clip", {})
@@ -493,11 +538,29 @@ func _draw_overlay(ci: CanvasItem, pg: Dictionary) -> void:
 		var peel := smoothstep(0.0, 1.0, float(_peel.get(int((im as Dictionary).get("stack", -1)), 0.0)))
 		if not clip.is_empty() and peel <= 0.5:
 			_draw_clip(ci, clip["pos"], float(clip["angle"]))
+	var p := _layout.pages.find(pg)
+	var other := _sheet_partner(p)
+	if other < 0 or other >= _layout.pages.size():
+		return
+	for im in (_layout.pages[other] as Dictionary)["images"]:
+		var clip: Dictionary = (im as Dictionary).get("clip", {})
+		if not clip.is_empty():
+			_draw_clip(ci, clip["pos"], float(clip["angle"]), true, true)
 
 
-## A Gem clip seen from above: a wire in three turns, the outer loop gripping the page edge at
-## [param at] and its length pointing in along [param ang] (0 = straight down the page).
-func _draw_clip(ci: CanvasItem, at: Vector2, ang: float) -> void:
+## The page on the other side of page [param p]'s sheet: a right-hand page (odd) is backed by
+## the next left-hand one. Page 0 is the inside of the cover and has no sheet. -1 for none.
+static func _sheet_partner(p: int) -> int:
+	if p < 1:
+		return -1
+	return p + 1 if p % 2 == 1 else p - 1
+
+
+## A Gem clip, as its wire's path in its own frame: the outer loop's end at the origin, gripping
+## the page edge, its length along +y. FRONT is the whole clip, lying over the sheet. BACK is what
+## the other side of the sheet shows - the inner tongue, which is the part of a clip that goes
+## behind the paper, and the outer loop's end where it stands past the edge.
+static func _clip_path(back: bool) -> Array:
 	var l := NotebookLayout.CLIP_LEN
 	var a := 14.0
 	var g := 5.0
@@ -506,19 +569,168 @@ func _draw_clip(ci: CanvasItem, at: Vector2, ang: float) -> void:
 	var ri := (xr_i - xl_i) * 0.5
 	var y_ti := l * 0.22
 	var rb := (xr_i + a) * 0.5
+	if back:
+		var tongue := PackedVector2Array([Vector2(xl_i, l * 0.62)])
+		_clip_arc(tongue, Vector2(0.0, y_ti + ri), ri, PI, TAU)
+		tongue.append(Vector2(xr_i, l * 0.66))
+		var loop := PackedVector2Array([Vector2(-a, NotebookLayout.CLIP_OVERHANG)])
+		_clip_arc(loop, Vector2(0.0, a), a, PI, TAU)
+		loop.append(Vector2(a, NotebookLayout.CLIP_OVERHANG))
+		return [tongue, loop]
 	var pts := PackedVector2Array()
 	pts.append(Vector2(xl_i, l * 0.62))
 	_clip_arc(pts, Vector2(0.0, y_ti + ri), ri, PI, TAU)
 	_clip_arc(pts, Vector2((xr_i - a) * 0.5, l - rb), rb, 0.0, PI)
 	_clip_arc(pts, Vector2(0.0, a), a, PI, TAU)
 	pts.append(Vector2(a, l * 0.78))
-	ci.draw_set_transform(at + Vector2(3.0, 4.0), ang, Vector2.ONE)
-	ci.draw_polyline(pts, Color(0, 0, 0, 0.22), 4.2, true)
-	ci.draw_set_transform(at, ang, Vector2.ONE)
-	ci.draw_polyline(pts, STEEL, 3.4, true)
-	ci.draw_set_transform(at + Vector2(-0.7, -0.7), ang, Vector2.ONE)
-	ci.draw_polyline(pts, Color(0.93, 0.94, 0.96), 1.1, true)
+	return [pts]
+
+
+## Draw a clip at [param at] along [param ang] (0 = straight down the page) - its [param back]
+## view, and [param mirror]ed across the page when it belongs to the sheet's other side.
+func _draw_clip(ci: CanvasItem, at: Vector2, ang: float, back := false, mirror := false) -> void:
+	var xf := Transform2D(ang, at)
+	if mirror:
+		xf = Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2(BookLayout.PAGE.x, 0)) * xf
+	for path in _clip_path(back):
+		ci.draw_set_transform_matrix(Transform2D(0.0, Vector2(3.0, 4.0)) * xf)
+		ci.draw_polyline(path, Color(0, 0, 0, 0.22), 4.2, true)
+		ci.draw_set_transform_matrix(xf)
+		ci.draw_polyline(path, STEEL, 3.4, true)
+		ci.draw_set_transform_matrix(Transform2D(0.0, Vector2(-0.7, -0.7)) * xf)
+		ci.draw_polyline(path, Color(0.93, 0.94, 0.96), 1.1, true)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+# --- clips in the stacks ------------------------------------------------------------
+
+## THE CLIPS ON PAGES THAT ARE NOT OPEN. Every clip in the chapter is a flat piece of the stack
+## it is in, at its own sheet's height: under the stack's top, so the block hides all of it but
+## what stands past the edge - which is exactly what shows on a real notebook with photos
+## clipped through it. Read sheets are in the left stack and show the face that is up there
+## (the back of an odd page's clip); unread ones in the right. The open leaves draw their own.
+var _stack_clips: Array = []      # [{node, page, clip}]
+var _stack_layout: BookLayout = null
+var _clip_tex := {}               # back (bool) -> ViewportTexture
+
+
+func _place_leaves() -> void:
+	super._place_leaves()
+	if _layout != _stack_layout:
+		_build_stack_clips()
+	_place_stack_clips()
+
+
+## One drawing of the clip, front or back, for the stack pieces to show. Drawn once.
+func _clip_texture(back: bool) -> Texture2D:
+	if _clip_tex.has(back):
+		return _clip_tex[back]
+	var vp := SubViewport.new()
+	vp.size = Vector2i(72, 320)
+	vp.transparent_bg = true
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	var cv := ClipCanvas.new()
+	cv.medium = self
+	cv.back = back
+	vp.add_child(cv)
+	add_child(vp)
+	_clip_tex[back] = vp.get_texture()
+	return _clip_tex[back]
+
+
+func _build_stack_clips() -> void:
+	for c in _stack_clips:
+		(c["node"] as Node).queue_free()
+	_stack_clips = []
+	_stack_layout = _layout
+	for p in _layout.pages.size():
+		for im in (_layout.pages[p] as Dictionary)["images"]:
+			var clip: Dictionary = (im as Dictionary).get("clip", {})
+			if clip.is_empty() or p < 1:
+				continue
+			var m := MeshInstance3D.new()
+			var q := QuadMesh.new()
+			q.size = Vector2.ONE
+			m.mesh = q
+			m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			_root3.add_child(m)
+			_stack_clips.append({"node": m, "page": p, "clip": clip})
+
+
+func _place_stack_clips() -> void:
+	var d := _stack_depth
+	var turning := _turn_t >= 0.0
+	for c in _stack_clips:
+		var m: MeshInstance3D = c["node"]
+		var p := int(c["page"])
+		var sheet := (p - 1) / 2            # pages 2k+1 and 2k+2 are sheet k
+		# the sheets in view are drawn by their leaves: the left's (spread-1), the right's (spread),
+		# and while a leaf turns, the one it uncovers
+		var shown := [_spread - 1, _spread]
+		if turning:
+			shown.append(_turn_to)
+		m.visible = not shown.has(sheet)
+		if not m.visible:
+			continue
+		var left := sheet < _spread
+		var up_page := sheet * 2 + 2 if left else sheet * 2 + 1   # the face that is up
+		var back := up_page != p
+		var clip: Dictionary = c["clip"]
+		var ang := float(clip["angle"])
+		var pos: Vector2 = clip["pos"]
+		var ax := Vector2(cos(ang), sin(ang))            # the clip's x in page space
+		var ay := Vector2(-sin(ang), cos(ang))           # ...and its length
+		var centre := pos + ay * NotebookLayout.CLIP_LEN * 0.5
+		if back:
+			centre.x = BookLayout.PAGE.x - centre.x
+			ax.x = -ax.x
+			ay.x = -ay.x
+		# page px -> world: one page width is 1 world unit, x from the spine outward
+		var k := 1.0 / BookLayout.PAGE.x
+		var wx := -(1.0 - centre.x * k) if left else centre.x * k
+		var wz := (centre.y / BookLayout.PAGE.y - 0.5) * PAGE_H
+		var n := maxi(1, _spread - 1) if left else maxi(1, _layout.spreads() - _spread - 1)
+		var depth := (float(_spread - 1 - sheet) if left else float(sheet - _spread)) / float(n)
+		var top := d.x if left else d.z
+		var thick := d.y if left else d.w
+		var wy := top - clampf(depth, 0.0, 1.0) * (thick - 0.002) - 0.001
+		var w := 72.0 / 2.0 * k
+		var h := 320.0 / 2.0 * k
+		# the quad faces +Z; lay it face up, its x along the clip's x and its v down its length
+		var bx := Vector3(ax.x, 0.0, ax.y) * w
+		var by := -Vector3(ay.x, 0.0, ay.y) * h
+		var bz := Vector3(0.0, 1.0, 0.0) * 0.001
+		m.transform = Transform3D(Basis(bx, by, bz), Vector3(wx, wy, wz))
+		if m.material_override == null or bool(m.get_meta("back", not back)) != back:
+			var mat := StandardMaterial3D.new()
+			mat.albedo_texture = _clip_texture(back)
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			mat.alpha_scissor_threshold = 0.5
+			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			mat.metallic = 0.6
+			mat.roughness = 0.35
+			m.material_override = mat
+			m.set_meta("back", back)
+		# a read sheet lies in the left half, which folds with the front cover
+		var parent: Node = _pivot if left else _root3
+		if m.get_parent() != parent:
+			m.reparent(parent, false)
+
+
+## Draws one clip, front or back, into its texture: the clip's frame fitted to the target.
+class ClipCanvas:
+	extends Node2D
+	var medium = null
+	var back := false
+
+	func _draw() -> void:
+		var xf := Transform2D(0.0, Vector2(2, 2), 0.0, Vector2(36, 8))
+		for path in medium._clip_path(back):
+			draw_set_transform_matrix(xf)
+			draw_polyline(path, NotebookMedium.STEEL, 3.4, true)
+			draw_set_transform_matrix(Transform2D(0.0, Vector2(-0.7, -0.7)) * xf)
+			draw_polyline(path, Color(0.93, 0.94, 0.96), 1.1, true)
 
 
 static func _clip_arc(pts: PackedVector2Array, c: Vector2, r: float, from: float, to: float) -> void:

@@ -47,6 +47,7 @@ func _ready() -> void:
 	_check_heading_kept_with_text()
 	_check_photo_covers()
 	_check_peel_holds()
+	_check_clip_sides()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -311,3 +312,23 @@ func _check_peel_holds() -> void:
 	at = L.call(at, 14.5, 92, 60, 90, false)
 	_ok(is_nan(at), "the photo stayed up after its words were read and the hold was over")
 	_ok(is_nan(L.call(NAN, 1.0, 5, 60, 90, false)), "a photo lifted for a reading far above it")
+
+
+## A CLIP GRIPS A SHEET, so both its pages show it: a right-hand page is backed by the next
+## left-hand one (page 0 is the cover's inside, with no sheet), and the back is a different
+## drawing from the front - the inner tongue and the end past the edge, not the whole clip.
+func _check_clip_sides() -> void:
+	_ok(NotebookMedium._sheet_partner(1) == 2 and NotebookMedium._sheet_partner(2) == 1
+		and NotebookMedium._sheet_partner(5) == 6 and NotebookMedium._sheet_partner(0) == -1,
+		"pages are not paired into sheets")
+	var front: Array = NotebookMedium._clip_path(false)
+	var back: Array = NotebookMedium._clip_path(true)
+	var fmax := 0.0
+	for pth in front:
+		for pt in pth:
+			fmax = maxf(fmax, (pt as Vector2).y)
+	var bmax := 0.0
+	for pth in back:
+		for pt in pth:
+			bmax = maxf(bmax, (pt as Vector2).y)
+	_ok(bmax < fmax * 0.8, "the back of a clip is drawn as long as its front (%.0f vs %.0f)" % [bmax, fmax])

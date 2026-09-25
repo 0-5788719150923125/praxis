@@ -388,6 +388,10 @@ static func _grime(seed: int, freq: float, octaves: int, contrast: float) -> Tex
 	return ImageTexture.create_from_image(img)
 
 
+## The page blocks as last placed: (left top, left thickness, right top, right thickness), for
+## anything that has to sit at a sheet's height inside one.
+var _stack_depth := Vector4.ZERO
+
 ## How far the page blocks stop short of the spine: the gutter the leaves dip into.
 const STACK_GAP := 0.09
 
@@ -826,6 +830,7 @@ func _place_leaves() -> void:
 	_stack_r.position = Vector3((STACK_GAP + 1.0) * 0.5, floor_y + tr * 0.5, 0.0)
 	var yl := floor_y + tl
 	var yr := floor_y + tr
+	_stack_depth = Vector4(yl, tl, yr, tr)
 	# THE GUTTER IS SHARED. Each leaf used to sit flat at its own stack's height right up to the
 	# spine, so early in a chapter (thin left stack, thick right) the right page met the spine
 	# 0.035 above the left and the ruled lines stepped across the binding. Both now meet at the

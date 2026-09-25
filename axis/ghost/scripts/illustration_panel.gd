@@ -34,7 +34,7 @@ var _confirm: ConfirmationDialog = null
 var _preview: Window = null
 var _status: Label
 var _dialog: FileDialog = null
-var _thumbs := {}                  # path -> ImageTexture, so a rebuild does not re-decode
+var _thumbs := {}                  # path|mtime|px -> ImageTexture, so a rebuild does not re-decode
 var _seen := ""                    # what the list last drew, so it rebuilds only on change
 
 
@@ -459,9 +459,13 @@ func _generate_missing() -> void:
 	_seen = ""
 
 
+## Keyed by the file's path AND its modification time (and the size asked for): a path can come
+## to hold a different picture - a version number freed by a delete and taken by the next
+## regenerate - and a path-only cache showed the old one until something else rebuilt it.
 func _thumb(path: String, px: int) -> Texture2D:
-	if _thumbs.has(path):
-		return _thumbs[path]
+	var key := "%s|%d|%d" % [path, FileAccess.get_modified_time(path), px]
+	if _thumbs.has(key):
+		return _thumbs[key]
 	var img := Image.new()
 	if img.load(path) != OK:
 		return null
@@ -469,7 +473,7 @@ func _thumb(path: String, px: int) -> Texture2D:
 	img.resize(maxi(1, int(img.get_width() * s)), maxi(1, int(img.get_height() * s)),
 		Image.INTERPOLATE_BILINEAR)
 	var tex := ImageTexture.create_from_image(img)
-	_thumbs[path] = tex
+	_thumbs[key] = tex
 	return tex
 
 
