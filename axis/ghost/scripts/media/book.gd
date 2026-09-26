@@ -1293,6 +1293,12 @@ func _camera_word() -> int:
 	return li
 
 
+## How close the camera comes at full "local" (before the Camera dial scales it). A medium whose
+## writing is smaller on the page than type overrides it.
+func _local_dist() -> float:
+	return float(LOCAL["dist"])
+
+
 func _tick_camera(delta: float) -> void:
 	var t := maxf(Spectrum.current.time, 0.0)
 	var sev := _sev()
@@ -1325,7 +1331,7 @@ func _tick_camera(delta: float) -> void:
 	var yaw := (_hash01(_spread, 41) - 0.5) * 2.0 * YAW_SPREAD \
 		+ sin(t * 0.021 + float(_seed % 97)) * YAW_WANDER * sev
 	# How close "local" is scales with the Camera dial; wide is always the whole spread.
-	var near := lerpf(float(WIDE["dist"]), float(LOCAL["dist"]), clampf(0.55 + 0.3 * sev, 0.0, 1.0))
+	var near := lerpf(float(WIDE["dist"]), _local_dist(), clampf(0.55 + 0.3 * sev, 0.0, 1.0))
 	var pitch := lerpf(float(WIDE["pitch"]), float(LOCAL["pitch"]), k) + sin(t * 0.029 + 1.3) * 1.5 * sev
 	var dist := lerpf(float(WIDE["dist"]), near, k) * (1.0 + 0.015 * sin(t * 0.033 + 2.1) * sev)
 	dist *= lerpf(1.02, 1.0, opened)

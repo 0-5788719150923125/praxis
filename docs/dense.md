@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Entries are feedforward structure only; the activation a feedforward gates through is set on ``--activation-type``, where the run's Arguments card shows it.
 
-Namespace: ``registry.namespace("dense")``, declared in ``praxis.dense`` (10 entries)
+Namespace: ``registry.namespace("dense")``, declared in ``praxis.dense`` (11 entries)
 
 Selected with ``--ffn-type`` (default: ``glu``).
 
@@ -56,7 +56,7 @@ A multi-layer perceptron mapping ``input_dim -> input_dim``.
 
 Source: [praxis/dense/mlp.py:11](../praxis/dense/mlp.py#L11)
 
-## `peer`, `peer_glu` - ParameterEfficientExpertRetrieval
+## `peer`, `peer_glu`, `peer_glu_single_head` - ParameterEfficientExpertRetrieval
 
 This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
 https://arxiv.org/abs/2407.04153v1
@@ -74,6 +74,7 @@ Source: [praxis/dense/peer.py:112](../praxis/dense/peer.py#L112)
 Presets:
 - `peer` - class defaults
 - `peer_glu` (`glu=True`) - PEER with gated experts: each retrieved expert becomes a GLU (``up_e * (act(x . gate_e) * (x . down_e))``) instead of a rank-1 projection. The third bank row per expert is paid for out of the expert count, not the parameter budget, so this trades bank breadth for per-expert expressiveness at a matched size.
+- `peer_glu_single_head` (`glu=True, num_heads=1`) - peer_glu with one retrieval head, whatever ``num_heads`` says. PEER otherwise takes its retrieval heads, key width and ``up`` init scale from the attention's head count, so this is what lets the attention split into more heads while the feedforward stays exactly as it was at ``num_heads: 1``.
 
 ## `poly` - PolynomialExpansionMLP
 

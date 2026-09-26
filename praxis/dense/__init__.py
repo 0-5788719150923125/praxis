@@ -42,6 +42,16 @@ registry.declare(
                 "expressiveness at a matched size."
             ),
         ),
+        "peer_glu_single_head": Entry(
+            partial(ParameterEfficientExpertRetrieval, glu=True, num_heads=1),
+            (
+                "peer_glu with one retrieval head, whatever ``num_heads`` says. PEER "
+                "otherwise takes its retrieval heads, key width and ``up`` init scale "
+                "from the attention's head count, so this is what lets the attention "
+                "split into more heads while the feedforward stays exactly as it was "
+                "at ``num_heads: 1``."
+            ),
+        ),
         "eml_tree": EMLTree,
         "spline": SplineNetwork,
     },

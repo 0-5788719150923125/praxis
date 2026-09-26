@@ -465,8 +465,10 @@ var _dial_demo := false              # --dial-demo: scripted turning, for headle
 ## intro much under 5 s hands the voice a bed that is still climbing, and an outro much
 ## under 6 s cuts the bed off mid-decay. These are the shortest values that let the
 ## ambience actually complete its own gesture at each end.
+## ONE RANGE FOR BOTH ENDS, so the two sliders put a value at the same place; with Intro
+## to 15 and Outro to 20, "9.0" sat at different positions on sliders stacked one above the other.
 const INTRO_MIN := 0.0
-const INTRO_MAX := 15.0
+const INTRO_MAX := 20.0
 const OUTRO_MIN := 0.0
 const OUTRO_MAX := 20.0
 var intro_hold := 5.0

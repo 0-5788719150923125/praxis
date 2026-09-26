@@ -58,9 +58,6 @@ const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 const float FILM_FPS = 24.0;
 // How often the transport misbehaves at the top of the Gate slip dial: a share of film frames.
 const float GATE_MAX = 0.22;
-// Where on the Vignette dial the falloff stops being a lens and starts closing on all four
-// edges. Below this it is photographic; above it, it is a porthole.
-const float CLOSE_ONSET = 0.45;
 // How heavy the grain field's tail is. Higher is sparser: the exponent is applied to a signed
 // noise centred on zero, so it pushes the bulk toward nothing and leaves the extremes alone.
 const float GRAIN_TAIL = 3.4;
@@ -300,42 +297,26 @@ vec3 static_noise(vec2 uv, vec3 src, float amount) {
 
 // --- 6. VIGNETTE -------------------------------------------------------------------------
 //
-// A LENS VIGNETTES IN A CIRCLE, in the image plane, so the distance is measured with the aspect
-// PUT BACK - x scaled by width/height - and then normalised by the frame's own half-diagonal.
-// The obvious version, `length(uv - 0.5)`, is an ellipse stretched to the frame: it makes the
-// top and bottom edges fall off exactly as hard as the left and right ones, when on a widescreen
-// frame the sides are nearly twice as far from the optical axis.
+// AN OVAL FITTED TO THE FRAME, the shape an editor's vignette has by default: the distance is
+// `length` of the position scaled so the middle of EVERY edge is 1 and the corners are sqrt(2).
+// It comes in from all four sides at once, heaviest in the corners, and on a widescreen frame
+// it is an oval rather than a circle.
 //
-// ...AND THAT IS WHY IT COULD NOT CLOSE. Reported as "even at 1.0 it doesn't cover ANY of the
-// edges - it only covers the corners", which was true and was the circle being obeyed too
-// faithfully: on a 16:9 frame the middle of the top edge is 0.49 of the way to a corner, so a
-// falloff deep enough to darken it has to start halfway to the centre, and then it is not a
-// vignette any more, it is an iris. The two things wanted here are not the same shape.
+// TWO SHAPES CAME FIRST, and each was wrong the way the user saw it. A CIRCLE from the optical
+// axis (a real lens) put a 16:9 frame's sides nearly twice as far out as its top, so below
+// about 0.6 the sides were black and the top and bottom untouched ("you expect it to start
+// creeping in from ALL sides"). An inset ROUNDED RECTANGLE, the same number of pixels from
+// every edge, fixed that and "looks very square, which I've never seen before with a vignette".
 //
-// So the DIAL CROSSES BETWEEN THEM. Below CLOSE_ONSET it is a lens, exactly as before, and the
-// aspect behaviour the gate measures is the point of it. Above, the distance blends toward the
-// EDGE distance - which reaches 1 at the middle of every edge, not just at the corners - so the
-// top of the range closes in on all four sides like a porthole, which a lens does not do and
-// which is what "even at 1.0" was asking for. A look is allowed to leave physics behind at the
-// end of its travel; it is not allowed to do so in the middle, where most settings live.
+// A VIGNETTE IS DARK, NOT TINTED. The depth used to be the dial itself, so at 0.5 even the
+// corner was only half dark and the frame read as a grey veil ("very transparent, even at
+// high values"). The depth saturates early (0.3 is two-thirds dark, 0.5 nearly black), and the
+// dial's travel is mostly REACH: both ends of the falloff move inward with it, so the top of
+// the range is solid black at every edge.
 vec3 vignette(vec2 uv, vec3 src, float amount) {
-	float aspect = max(u_size.x, 1.0) / max(u_size.y, 1.0);
-	vec2 d = (uv - vec2(0.5)) * vec2(aspect, 1.0);
-	float r_lens = length(d) / length(vec2(0.5 * aspect, 0.5));
-	// 1 at the middle of EVERY edge, whatever the aspect.
-	// A ROUNDED rectangle, not max(x, y): the hard max has a crease along each diagonal where
-	// its two sides meet, and at the top of the dial that crease drew a band of light running in
-	// from every corner - brightest with bloom on, which lit it up. A superellipse is the same
-	// "1 at the middle of every edge" and has no crease; so is the smooth max below.
-	vec2 e = abs(uv - vec2(0.5)) * 2.0;
-	float r_edge = pow(pow(e.x, 6.0) + pow(e.y, 6.0), 1.0 / 6.0);
-	float close = clamp((amount - CLOSE_ONSET) / max(1.0 - CLOSE_ONSET, 0.001), 0.0, 1.0);
-	float smax = 0.5 * (r_lens + r_edge + sqrt((r_lens - r_edge) * (r_lens - r_edge) + 0.01));
-	float r = mix(r_lens, smax, close);
-	// The falloff's INNER edge moves with the dial as well as its depth, so a little is a
-	// darkened corner and a lot is a porthole, rather than one fixed shape fading in.
-	float fall = 1.0 - amount * smoothstep(mix(0.90, 0.30, amount), 1.0, r);
-	return src * fall;
+	float r = length((uv - vec2(0.5)) * 2.0);
+	float depth = 1.0 - pow(1.0 - amount, 3.0);
+	return src * (1.0 - depth * smoothstep(mix(0.85, 0.25, amount), mix(1.25, 0.95, amount), r));
 }
 
 

@@ -67,6 +67,7 @@ func _run() -> void:
 	await _check_fits("Synthesis", _synth._panel)
 	await _check_short_panel_is_not_stretched()
 	await _check_the_old_arrangement_overflows()
+	await _check_wheel_skips_sliders(_ed._panel)
 
 	_synth._panel.queue_free()
 	_ed._panel.queue_free()
@@ -85,6 +86,27 @@ func _run() -> void:
 func _ok(cond: bool, what: String) -> void:
 	if not cond:
 		_fails.append(what)
+
+
+## THE WHEEL IS THE PANEL'S: "scrolling through the UI is constantly, accidentally scrolling
+## values for options". Every slider on a real panel, and one added after the panel is built
+## (as a voice tab adds them), is drag-only. Asserted on the flag the engine reads: a wheel
+## event pushed through the viewport in a headless probe never reached a slider, so a check of
+## the value passed with the fix removed.
+func _check_wheel_skips_sliders(panel: SidePanel_) -> void:
+	var late := HSlider.new()
+	late.max_value = 100.0
+	late.value = 50.0
+	panel.body.add_child(late)
+	await _settle()
+	var sliders: Array = panel.find_children("*", "Slider", true, false)
+	_ok(sliders.size() > 5, "found only %d sliders on the panel" % sliders.size())
+	var loose: Array = []
+	for sl in sliders:
+		if (sl as Slider).scrollable:
+			loose.append((sl as Slider).name)
+	_ok(loose.is_empty(), "%d slider(s) still take the wheel: %s" % [loose.size(), loose.slice(0, 5)])
+	late.queue_free()
 
 
 func _settle() -> void:

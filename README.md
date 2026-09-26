@@ -30,7 +30,7 @@ Praxis is organized as 55 registry namespaces. The feature categories below link
 - [Decoder block layouts](docs/blocks.md) (9)
 - [Diffusion objectives](docs/diffusion.md) (2)
 - [Expert mixing](docs/mixing.md) (6)
-- [Feedforward experts](docs/dense.md) (10)
+- [Feedforward experts](docs/dense.md) (11)
 - [Foreign model adapters](docs/model-adapters.md) (1)
 - [Foreign model tasks](docs/model-tasks.md) (1)
 - [Generators](docs/generators.md) (3)

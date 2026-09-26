@@ -93,6 +93,24 @@ func _ready() -> void:
 	body.minimum_size_changed.connect(_fit)
 	get_viewport().size_changed.connect(_fit)
 	_fit()
+	# THE WHEEL SCROLLS THE PANEL, NEVER A SLIDER. Every slider already here, and every one a
+	# mode adds later (a voice tab, a rebuilt section), is made drag-only.
+	_no_wheel(self)
+	get_tree().node_added.connect(func(n: Node) -> void:
+		if is_ancestor_of(n):
+			_no_wheel(n))
+
+
+## A [Slider] takes the mouse wheel by default, so scrolling down a long panel dragged every
+## knob the pointer passed over and silently changed it ("scrolling through the UI is
+## constantly, accidentally scrolling values for options"). The wheel event is left unhandled,
+## so it carries on up to the scroll view. A [SpinBox] only takes the wheel while it is being
+## typed in, which is deliberate, so it is left alone.
+static func _no_wheel(n: Node) -> void:
+	if n is Slider:
+		(n as Slider).scrollable = false
+	for c in n.get_children():
+		_no_wheel(c)
 
 
 func _notification(what: int) -> void:

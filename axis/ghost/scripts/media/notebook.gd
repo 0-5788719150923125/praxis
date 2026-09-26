@@ -152,6 +152,14 @@ static func peel_latch(at: float, now: float, li: int, lo: int, hi: int, early: 
 	return NAN if gone and absf(now - at) >= PEEL_HOLD else at
 
 
+## CLOSER THAN THE BOOK'S. A hand is smaller on the page than type and was hard to read on a
+## phone at the book's framing; the arc closes in to here instead of BookMedium.LOCAL's 3.3.
+const LOCAL_DIST := 2.7
+
+func _local_dist() -> float:
+	return LOCAL_DIST
+
+
 ## How long before a turn the open spread's photos start settling: the turn's own lead, the
 ## time a photo takes to come down, and a breath.
 const SETTLE_BEFORE_TURN := BookMedium.TURN_LEAD + PEEL_TIME + 0.4
@@ -495,6 +503,54 @@ func _draw_image(ci: CanvasItem, im: Dictionary) -> void:
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
+## THE CURL'S SHADOW OUTLINE, in the print's frame, grown by [param grow] px. Every point of the
+## print that faces the page throws its shadow along the lamp's direction, further the higher it
+## is, and the shadow is the outline of all of them - one shape, from the clipped edge up the
+## rising curl to where the print turns upright. (A flat rectangle under the whole footprint read
+## as "a strange shadow, which doesn't seem to align with what a true 3D page curl would look
+## like".)
+##
+## ALWAYS A POLYGON THE ENGINE CAN FILL. When the lamp shines back along the curl - a print
+## clipped on the side the light comes from - pushing the rising edge along it folds that edge
+## back over itself, the outline crosses itself, and `draw_colored_polygon` refuses it ("Invalid
+## polygon data, triangulation failed"): the shadow blinked out for those frames of an export.
+## Such an outline is replaced by its convex hull, which is what that shadow covers anyway.
+static func curl_shadow(o: Vector2, fold: Vector2, side: Vector2, a: Vector2, us: PackedFloat32Array,
+		zs: PackedFloat32Array, ph: PackedFloat32Array, ang: float, grow: float) -> PackedVector2Array:
+	var light := LIGHT_DIR.rotated(-ang)              # page direction, in the print's frame
+	var base_off := SHADOW_BASE.rotated(-ang)
+	var upper := PackedVector2Array([o + side + base_off, fold + side + base_off])
+	var lower := PackedVector2Array([o - side + base_off, fold - side + base_off])
+	for i in range(1, us.size()):
+		if ph[i] > PI * 0.5 + 0.01:
+			break
+		var off := base_off + light * zs[i]
+		upper.append(fold + a * us[i] + side + off)
+		lower.append(fold + a * us[i] - side + off)
+	lower.reverse()
+	var outline := _fillable(upper + lower)
+	if grow <= 0.0:
+		return outline
+	var cen := Vector2.ZERO
+	for q in outline:
+		cen += q
+	cen /= float(outline.size())
+	var grown := PackedVector2Array()
+	for q in outline:
+		grown.append(q + (q - cen).normalized() * grow)
+	return _fillable(grown)
+
+
+## [param poly] if the engine can triangulate it, else its convex hull (open, as a fill wants).
+static func _fillable(poly: PackedVector2Array) -> PackedVector2Array:
+	if not Geometry2D.triangulate_polygon(poly).is_empty():
+		return poly
+	var hull := Geometry2D.convex_hull(poly)
+	if hull.size() > 1 and hull[0] == hull[hull.size() - 1]:
+		hull.remove_at(hull.size() - 1)
+	return hull
+
+
 ## A photo lifted by [param peel] (0..1), ROLLED BACK over a wide curve the way a person turns a
 ## print they do not want to crease. The part the clip pins ([constant PIN]) stays flat; past it
 ## the print wraps round a roller of radius [constant CURL_RADIUS] through an angle that grows to
@@ -553,34 +609,11 @@ func _draw_curled(ci: CanvasItem, im: Dictionary, peel: float) -> void:
 		zs.append(z)
 		ph.append(bent)
 	ci.draw_set_transform(c, ang, Vector2.ONE)
-	# THE SHADOW IS CAST, as a real curl's is: every point of the print that faces the page
-	# throws its shadow along the lamp's direction, further the higher it is, and the shadow is
-	# the outline of all of them - one shape, from the clipped edge up the rising curl to where
-	# the print turns upright. What lies back past that throws its shadow off the page edge or
-	# onto the print itself. (A flat rectangle under the whole footprint read as "a strange
-	# shadow, which doesn't seem to align with what a true 3D page curl would look like".)
-	var light := LIGHT_DIR.rotated(-ang)              # page direction, in the print's frame
-	var base_off := SHADOW_BASE.rotated(-ang)
-	var upper := PackedVector2Array([o + side + base_off, fold + side + base_off])
-	var lower := PackedVector2Array([o - side + base_off, fold - side + base_off])
-	for i in range(1, N + 1):
-		if ph[i] > PI * 0.5 + 0.01:
-			break
-		var off := base_off + light * zs[i]
-		upper.append(fold + a * us[i] + side + off)
-		lower.append(fold + a * us[i] - side + off)
-	lower.reverse()
-	var outline := upper + lower
+	# THE SHADOW IS CAST - see [method curl_shadow]
 	var fade := 1.0 - 0.45 * sin(theta * 0.5)
 	for g in [4.0, 0.0]:
-		var grown := PackedVector2Array()
-		var cen := Vector2.ZERO
-		for q in outline:
-			cen += q
-		cen /= float(outline.size())
-		for q in outline:
-			grown.append(q + (q - cen).normalized() * g)
-		ci.draw_colored_polygon(grown, Color(0, 0, 0, 0.07 * fade))
+		ci.draw_colored_polygon(curl_shadow(o, fold, side, a, us, zs, ph, ang, g),
+			Color(0, 0, 0, 0.07 * fade))
 	# the pinned part, flat
 	_print_quad(ci, tex, o, fold, side, a, 0.0, t0, length, sz, 1.0)
 	# the rolled part, strip by strip in order along the print: what comes later lies over what

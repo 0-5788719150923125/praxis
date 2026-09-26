@@ -50,6 +50,7 @@ func _ready() -> void:
 	_check_clip_sides()
 	_check_hand_drift()
 	_check_one_print_size()
+	_check_curl_shadow_fills()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -75,6 +76,80 @@ func _layout(with_images: bool) -> NotebookLayout:
 		doc = re.sub(doc, "", true)
 	l.build(doc, func(_k: String) -> Vector2: return Vector2(1536, 1024), "Station Notes")
 	return l
+
+
+## A CURLED PHOTO'S SHADOW IS ALWAYS FILLABLE. An overnight export logged "Invalid polygon data,
+## triangulation failed" from the curl: with the lamp shining back along the curl, the shadow's
+## rising edge folds over itself and the engine drops the whole shadow for that frame. Swept over
+## every hinge, the angles a print is turned to, and the whole peel - and the RAW outline is
+## counted too, because a sweep that never produces the fault proves nothing.
+func _check_curl_shadow_fills() -> void:
+	var raw_bad := 0
+	var bad := 0
+	var n := 0
+	for hinge in ["top", "right", "left"]:
+		for portrait in [false, true]:
+			var sz := Vector2(420, 290) if not portrait else Vector2(290, 420)
+			for deg in range(-10, 11, 2):
+				var ang := deg_to_rad(float(deg))
+				for pk in 21:
+					var peel := float(pk) / 20.0
+					var a := Vector2(0, 1)
+					var o := Vector2(0, -sz.y * 0.5)
+					var length := sz.y
+					var width := sz.x
+					if hinge == "right":
+						a = Vector2(-1, 0)
+						o = Vector2(sz.x * 0.5, 0)
+						length = sz.x
+						width = sz.y
+					elif hinge == "left":
+						a = Vector2(1, 0)
+						o = Vector2(-sz.x * 0.5, 0)
+						length = sz.x
+						width = sz.y
+					var side := Vector2(-a.y, a.x) * width * 0.5
+					var t0 := 0.3
+					var theta := peel * PI
+					var rem := (1.0 - t0) * length
+					var r := minf(NotebookMedium.CURL_RADIUS, rem / PI)
+					var fold := o + a * t0 * length
+					var us := PackedFloat32Array()
+					var zs := PackedFloat32Array()
+					var ph := PackedFloat32Array()
+					for i in 41:
+						var sv := rem * float(i) / 40.0
+						var bent := minf(sv / r, theta) if theta > 0.0 else 0.0
+						var u := r * sin(bent)
+						var z := r * (1.0 - cos(bent))
+						var rest := sv - bent * r
+						if rest > 0.0:
+							u += rest * cos(theta)
+							z += rest * sin(theta)
+						us.append(u)
+						zs.append(z)
+						ph.append(bent)
+					for g in [4.0, 0.0]:
+						n += 1
+						var poly := NotebookMedium.curl_shadow(o, fold, side, a, us, zs, ph, ang, g)
+						if Geometry2D.triangulate_polygon(poly).is_empty():
+							bad += 1
+					# the raw outline, as it was drawn before
+					var light := NotebookMedium.LIGHT_DIR.rotated(-ang)
+					var base_off := NotebookMedium.SHADOW_BASE.rotated(-ang)
+					var upper := PackedVector2Array([o + side + base_off, fold + side + base_off])
+					var lower := PackedVector2Array([o - side + base_off, fold - side + base_off])
+					for i in range(1, 41):
+						if ph[i] > PI * 0.5 + 0.01:
+							break
+						upper.append(fold + a * us[i] + side + base_off + light * zs[i])
+						lower.append(fold + a * us[i] - side + base_off + light * zs[i])
+					lower.reverse()
+					if Geometry2D.triangulate_polygon(upper + lower).is_empty():
+						raw_bad += 1
+	print("notebook_check: curl shadow - %d raw outlines unfillable, %d of %d after" % [raw_bad, bad, n])
+	_ok(raw_bad > 0, "the sweep never produces the unfillable outline - it tests nothing")
+	_ok(bad == 0, "%d curl shadows the engine cannot fill" % bad)
 
 
 ## ONE CAMERA, ONE PRINT: every inline photo is the same size, and a portrait picture is that

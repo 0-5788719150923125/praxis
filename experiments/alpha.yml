@@ -246,7 +246,8 @@ seed: 42
 # feedforward gates through is set on ``--activation-type``, where the run's
 # Arguments card shows it.
 #
-# Options: mlp, glu, arc, poly, scatter, kan, peer, peer_glu, eml_tree, spline
+# Options: mlp, glu, arc, poly, scatter, kan, peer, peer_glu,
+#     peer_glu_single_head, eml_tree, spline
 
 # ffn_type: glu
 

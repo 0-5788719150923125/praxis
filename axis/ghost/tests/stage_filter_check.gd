@@ -194,27 +194,29 @@ func _check_monochrome() -> void:
 		% absf(_mean_luma(got) - _mean_luma(_plain)))
 
 
-## THE VIGNETTE IS TWO SHAPES ALONG ONE DIAL, and each half is asserted where it applies.
-##
-## IN THE MIDDLE OF THE RANGE IT IS A LENS, and the discriminating measurement is not "did the
-## corners go dark" - an ellipse stretched to the frame does that too. It is the LEFT edge
-## against the TOP edge: on this 16:9 frame the mid-left is 0.87 of the way to a corner and the
-## mid-top only 0.49, so a circular falloff darkens the sides far harder than the top, where
-## the `length(uv - 0.5)` version everyone writes first darkens them exactly the same.
-##
-## AT THE TOP OF THE RANGE IT CLOSES ON EVERY EDGE, which is the reported defect: "even at 1.0
-## it doesn't cover ANY of the edges - it only covers the corners". Obeying the circle is what
-## made that true, so past CLOSE_ONSET the falloff crosses to an edge distance. All four edge
-## midpoints have to go dark, and the centre still must not.
+## THE VIGNETTE COMES IN FROM EVERY EDGE. It was a circular lens, which on this 16:9 frame put
+## the mid-left 0.87 of the way to a corner and the mid-top 0.49, so below about 0.6 the sides
+## were black and the top and bottom untouched ("you expect it to start creeping in from ALL
+## sides"). Now an oval fitted to the frame: the top and the side move alike at a low setting,
+## the corners most, the centre not at all; and it is DARK - its depth was once the dial
+## itself, a grey veil at 0.5. (The shape between, an inset rounded rectangle, passed all of
+## this and was rejected by eye as "very square"; roundness is not gated.)
 func _check_vignette() -> void:
+	var low := await _render({"vignette": 0.3})
+	var left := _fall(low, Rect2i(0, H / 2 - 12, 12, 24))
+	var top := _fall(low, Rect2i(W / 2 - 12, 0, 24, 12))
+	var nook := _fall(low, Rect2i(0, 0, 12, 12))
+	_ok(top > 0.3, "at 0.3 the TOP edge fell by only %.3f - it is not coming in from every side" % top)
+	_ok(left > 0.3, "at 0.3 the LEFT edge fell by only %.3f" % left)
+	_ok(top > left * 0.75 and left > top * 0.75,
+		"at 0.3 the mid-left fell by %.3f and the mid-top by %.3f - one pair of sides is "
+		% [left, top] + "doing the work (the circular lens separated them by 2x and more)")
+	_ok(nook >= maxf(left, top) - 0.01, "the corners (%.3f) are lighter than the edges" % nook)
+	_ok(_fall(low, Rect2i(W / 2 - 16, H / 2 - 16, 32, 32)) < 0.02, "at 0.3 the centre darkened")
+
 	var lens := await _render({"vignette": 0.5})
-	var left := _fall(lens, Rect2i(0, H / 2 - 12, 24, 24))
-	var top := _fall(lens, Rect2i(W / 2 - 12, 0, 24, 24))
-	_ok(left > 0.05, "at half strength the vignette did not darken the sides at all (%.3f)" % left)
-	_ok(left > top * 2.0,
-		"at half strength the mid-LEFT fell by %.3f and the mid-TOP by %.3f - on a 16:9 frame "
-		% [left, top] + "a circular falloff separates those by a long way, an aspect-stretched "
-		+ "one not at all")
+	var dark := 0.5 * (_fall(lens, Rect2i(0, 0, 12, 12)) + _fall(lens, Rect2i(W - 12, H - 12, 12, 12)))
+	_ok(dark > 0.7, "at half strength the corners fell by only %.3f - a veil, not a vignette" % dark)
 
 	var shut := await _render({"vignette": 1.0})
 	var corner := 0.5 * (_fall(shut, Rect2i(0, 0, 24, 24))

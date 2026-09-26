@@ -51,12 +51,14 @@ const CLIP_OVERHANG := 6.0
 
 ## THE HANDS, all OFL, bundled under fonts/hands/ (licences beside them). One is chosen per
 ## session. `size` is the body size that fills a rule in that hand - they differ a lot (Caveat's
-## letters are small for their em). `bold` is a file, or empty to thicken the regular one.
+## letters are small for their em). Sized for a phone: about a fifth larger than the sizes that
+## first looked right on a monitor, which left a third of each rule empty. Keep each under
+## RULE / 0.95 (48) or a line of body text takes two rules. `bold` is a file, or empty to thicken the regular one.
 const HANDS := {
-	"caveat": {"regular": "res://fonts/hands/Caveat-Variable.ttf", "bold": "", "size": 40},
+	"caveat": {"regular": "res://fonts/hands/Caveat-Variable.ttf", "bold": "", "size": 48},
 	"kalam": {"regular": "res://fonts/hands/Kalam-Regular.ttf",
-		"bold": "res://fonts/hands/Kalam-Bold.ttf", "size": 30},
-	"patrick": {"regular": "res://fonts/hands/PatrickHand-Regular.ttf", "bold": "", "size": 33},
+		"bold": "res://fonts/hands/Kalam-Bold.ttf", "size": 36},
+	"patrick": {"regular": "res://fonts/hands/PatrickHand-Regular.ttf", "bold": "", "size": 40},
 }
 
 ## THE PENS a voice may write in, by name - what `ink:` on a voice in the frontmatter takes
