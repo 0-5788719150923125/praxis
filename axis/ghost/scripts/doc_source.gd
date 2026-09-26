@@ -235,9 +235,7 @@ func _flush() -> void:
 	var snap := _snapshot()
 	if snap.is_empty() or snap == _saved:
 		return
-	_saved = snap
-	_seen = snap
-	var err := FrontMatter_.write_block(_path, _merged_block())
+	var err := _write_reconciled()
 	if not err.is_empty():
 		_autosave_note = err
 		_note("⚠  " + err)
@@ -322,11 +320,7 @@ func _process(_delta: float) -> void:
 		return
 	if snap == _saved or now - _settled_ms < AUTOSAVE_MS:
 		return
-	# Marked saved BEFORE the attempt, not after: a write that fails for a standing reason (the
-	# file is read-only, the directory is gone) must not be retried four times a second for the
-	# rest of the session. The next actual change moves the snapshot and tries again.
-	_saved = snap
-	var err := FrontMatter_.write_block(_path, _merged_block())
+	var err := _write_reconciled()
 	if err.is_empty():
 		_autosave_note = ""
 		return
@@ -339,6 +333,86 @@ func _process(_delta: float) -> void:
 ## See [member _autosave_for_test]. Nothing but a gate may call this.
 func allow_autosave_for_test() -> void:
 	_autosave_for_test = true
+
+
+## WRITE THE PANEL INTO THE DOCUMENT WITHOUT UNDOING AN EDIT MADE TO IT OUTSIDE GHOST.
+##
+## The panel writes its WHOLE block whenever anything in it changes, and the document is only
+## re-read at Speak - so a value the author reverted in their own editor was written straight
+## back from the panel's memory by the next unrelated change (a slider, a tab, the Handwriting
+## picker): "I keep reverting the frontmatter, yet Ghost keeps resetting it". So when the block
+## on disk is no longer what ghost last read or wrote (`_saved`), this is a THREE-WAY MERGE:
+## the file's version, plus only what changed in the panel since then. The panel is then shown
+## the result, so what it displays and what the file says are the same.
+##
+## Marked saved BEFORE the write, not after: a write that fails for a standing reason (the file
+## is read-only, the directory is gone) must not be retried four times a second for the rest
+## of the session. The next actual change moves the snapshot and tries again.
+func _write_reconciled() -> String:
+	var raw: Variant = _read_raw()
+	var ghost := {}
+	if raw != null:
+		var res := FrontMatter_.read_block(String(raw))
+		if res.data is Dictionary:
+			ghost = (res.data as Dictionary).duplicate(true)
+	var mine: Variant = capture.call()
+	var theirs: Variant = ghost.get(_block, null)
+	var base: Variant = JSON.parse_string(_saved) if not _saved.is_empty() else null
+	if mine is Dictionary and theirs is Dictionary and base is Dictionary \
+			and not same_value(theirs, base):
+		var merged: Variant = merge3(base, mine, theirs)
+		if apply.is_valid() and not same_value(merged, mine):
+			apply.call(merged as Dictionary)
+			mine = capture.call()
+			_note("%s was edited outside ghost - kept those edits." % _path.get_file())
+	_seen = _snapshot()
+	_saved = _seen
+	ghost[_block] = mine
+	return FrontMatter_.write_block(_path, ghost)
+
+
+## `theirs` with every value `mine` changed from `base` laid over it, key by key down through
+## nested blocks (a voice's dial is three levels in). A value only one side changed survives;
+## where both changed the same value, the panel - the more recent hand - wins.
+static func merge3(base: Variant, mine: Variant, theirs: Variant) -> Variant:
+	if not (mine is Dictionary and theirs is Dictionary):
+		return mine if not same_value(mine, base) else theirs
+	var out := (theirs as Dictionary).duplicate(true)
+	var b: Dictionary = base if base is Dictionary else {}
+	for k in mine:
+		if not b.has(k):
+			if not out.has(k):
+				out[k] = mine[k]           # new in the panel, unknown to the file
+			continue
+		if same_value(mine[k], b[k]):
+			if not out.has(k):
+				out[k] = mine[k]           # absent from the file is not an edit (a newer key)
+			continue                       # the panel did not touch it: the file's stands
+		out[k] = merge3(b[k], mine[k], out.get(k, null))
+	return out
+
+
+## Equal as settings: numbers by value whatever their type (YAML reads 3, JSON gives 3.0), and
+## to the precision a dial is shown at.
+static func same_value(a: Variant, b: Variant) -> bool:
+	var num := [TYPE_INT, TYPE_FLOAT]
+	if typeof(a) in num and typeof(b) in num:
+		return absf(float(a) - float(b)) < 0.0005
+	if a is Dictionary and b is Dictionary:
+		if (a as Dictionary).size() != (b as Dictionary).size():
+			return false
+		for k in a:
+			if not (b as Dictionary).has(k) or not same_value(a[k], b[k]):
+				return false
+		return true
+	if a is Array and b is Array:
+		if (a as Array).size() != (b as Array).size():
+			return false
+		for i in (a as Array).size():
+			if not same_value(a[i], b[i]):
+				return false
+		return true
+	return typeof(a) == typeof(b) and a == b
 
 
 ## The panel's settings as a stable string, for comparing one frame to the next.

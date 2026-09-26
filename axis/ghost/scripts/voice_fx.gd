@@ -109,6 +109,37 @@ const PAD_TONIC_TAU := 12.0              # the key follows the reader, slowly
 # matters perceptually far more than the average level suggests. 0.40 still
 # steps aside for the voice without vanishing behind it.
 const PAD_DUCK := 0.40
+## THE DIAL IS SEVERITY, NOT LEVEL. The bed plays at its full staged level (`pad_level`)
+## whenever Ambience is on at all - it faded in over this much of the travel so 0 is still
+## a clean off, not a step. What the rest of the dial buys is MORE HAPPENING on top of it.
+const PAD_FADE_IN := 0.05
+
+# --- no melody, on purpose ------------------------------------------------------
+# Three melodic layers were built on top of the bed and each removed: a plucked string
+# (twice) and a sliding electronic lead. They were in tune and on a beat, and they still
+# sounded like random notes, because choosing WHICH note comes next needs a real model of
+# music and a handful of rules is not one. The bed works because it never has to make that
+# choice - sustained, always-consonant tones - and the bass works for the same reason: one
+# note, the key's root, when the voice moves. Do not add a melody without that model.
+
+# --- the bass: a low swell on the key's root, when the voice MOVES -----------------
+# Cued by a shift in the reader's pitch away from its recent average - emphasis, a question,
+# a change of register - and landing on the next bar line of a steady tempo drawn per reading,
+# so swells a minute apart keep one pulse.
+const BPM_MIN := 80.0                    # the bar grid's tempo, drawn once per reading
+const BPM_MAX := 92.0
+const BASS_ONSET := 0.3
+const BASS_CHANCE := 0.7                 # a pitch move is answered this often at 1.0
+const BASS_SHIFT := 2.0                  # semitones from the recent average that count as a move
+const BASS_PITCH_TAU := 4.0              # seconds: what "recent average" means
+const BASS_COOLDOWN := 4.0               # one move, one swell, not a swell per syllable
+const BASS_ATTACK := 0.35
+const BASS_DECAY := 2.4                  # exponential time constant, seconds
+const BASS_LEVEL := 1.0
+const BASS_ROOT_LO := 41.0               # the bass root sits in [LO, 2 LO)
+# The key moves only when the SLOW register (`_tonic`, a 12 s average) has left it by this
+# much: a key that followed each phrase's pitch hopped between keys phrase to phrase.
+const KEY_HYSTERESIS := 3.0
 
 var sample_rate := 22050
 var echo_wet := 0.0            # 0..1
@@ -167,7 +198,20 @@ var _tonic := 0.0                       # Hz, the pad's root
 var _next_note := 0.0
 var _speech := 0.0                      # smoothed |voice|, for the duck
 var _rng := RandomNumberGenerator.new()
-
+# The events draw from their OWN generator, so moving the dial changes what is added on
+# top without re-rolling the bed's notes underneath it.
+var _ev_rng := RandomNumberGenerator.new()
+var _key_semi := -1000                  # the key's root, semitones from A440; -1000 = none yet
+var _clock := 0                         # samples since setup
+var _eighth := 1                        # samples per eighth note; a bar is eight
+var _bass_at := -1                      # a swell waiting for its bar line
+var _bass_hz := 0.0
+var _pitch_slow := 0.0                  # the reader's recent pitch, for the bass cue
+var _bass_cool := 0.0
+var _bass_ph := 0.0
+var _bass_w := 0.0
+var _bass_env := 0.0
+var _bass_rise := false
 
 func setup(sr: int) -> void:
 	sample_rate = sr
@@ -194,6 +238,15 @@ func setup(sr: int) -> void:
 	_next_note = 0.5
 	_speech = 0.0
 	_rng.seed = pad_seed
+	_ev_rng.seed = pad_seed + 7919
+	_key_semi = -1000
+	_clock = 0
+	_eighth = maxi(1, int(round(sr * 30.0 / _ev_rng.randf_range(BPM_MIN, BPM_MAX))))
+	_bass_at = -1
+	_pitch_slow = 0.0
+	_bass_cool = 0.0
+	_bass_env = 0.0
+	_bass_rise = false
 	room.setup(sr)
 
 
@@ -245,6 +298,7 @@ func prime_key(buf: PackedFloat32Array) -> void:
 		if f > 0.0:
 			_pitch = f
 			_tonic = f * 0.25
+			_follow_key()
 			return
 		pos += win
 
@@ -332,6 +386,7 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 				var want := _pitch * 0.25
 				_tonic = want if _tonic <= 0.0 else lerpf(_tonic, want,
 					1.0 / (PAD_TONIC_TAU * sample_rate))
+			_follow_key()
 			var mix := 0.0
 			for k in PAD_VOICES:
 				if _p_state[k] == 0:
@@ -367,9 +422,10 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 			# voice it is supposed to sit under, and peaking at 0.88. This puts
 			# it well below the voice, which is where a bed belongs: audible
 			# when you listen for it, never competing.
-			wet += mix * pad * pad_level * duck
+			mix += _tick_events(dry)
+			wet += mix * smoothstep(0.0, PAD_FADE_IN, pad) * pad_level * duck
 			_next_note -= 1.0 / sample_rate
-			if _next_note <= 0.0 and _tonic > 0.0:
+			if _next_note <= 0.0 and _key_semi > -1000:
 				_next_note = PAD_GAP * _rng.randf_range(0.7, 1.8)
 				_start_tone()
 
@@ -400,6 +456,79 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 	return buf
 
 
+## The key's root in Hz, or 0 before there is one.
+func _key_hz() -> float:
+	return 0.0 if _key_semi <= -1000 else 440.0 * pow(2.0, float(_key_semi) / 12.0)
+
+
+## Hold the key on a real note, and move it only when the reader's register has moved more
+## than KEY_HYSTERESIS off it - so it follows a change of speaker, not every inflection.
+func _follow_key() -> void:
+	if _tonic <= 0.0:
+		return
+	var s := 12.0 * log(_tonic / 440.0) / log(2.0)
+	if _key_semi <= -1000 or absf(s - float(_key_semi)) > KEY_HYSTERESIS:
+		_key_semi = int(round(s))
+
+
+## The bass for one sample, in the bed's units (so it shares its level, its duck and its
+## fade-in). Its cue is detected here too.
+func _tick_events(dry: float) -> float:
+	var dt := 1.0 / sample_rate
+	var out := 0.0
+	_clock += 1
+	# --- cue: the voice's pitch moving ---
+	_bass_cool -= dt
+	if _pitch > 0.0:
+		_pitch_slow = _pitch if _pitch_slow <= 0.0 else lerpf(_pitch_slow, _pitch, dt / BASS_PITCH_TAU)
+		if _bass_cool <= 0.0 and absf(12.0 * log(_pitch / _pitch_slow) / log(2.0)) > BASS_SHIFT:
+			_bass_cool = BASS_COOLDOWN
+			if _key_semi > -1000 and _bass_at < 0 and _ev_rng.randf() < _chance(BASS_ONSET, BASS_CHANCE):
+				_plan_bass()
+	if _bass_at >= 0 and _clock >= _bass_at:
+		_bass_at = -1
+		_bass_w = TAU * _bass_hz / sample_rate
+		_bass_rise = true
+	# --- the bass ---
+	if _bass_env > 0.0 or _bass_rise:
+		if _bass_rise:
+			_bass_env += dt / BASS_ATTACK
+			if _bass_env >= 1.0:
+				_bass_env = 1.0
+				_bass_rise = false
+		else:
+			_bass_env *= exp(-dt / BASS_DECAY)
+			if _bass_env < 1e-4:
+				_bass_env = 0.0
+		_bass_ph = fmod(_bass_ph + _bass_w, TAU)
+		# The fundamental plus two harmonics: a small speaker cannot play the root itself, so
+		# the harmonics are what make the note there at all.
+		var v := sin(_bass_ph) + 0.45 * sin(2.0 * _bass_ph) + 0.18 * sin(3.0 * _bass_ph)
+		out += v * _bass_env * _bass_env * BASS_LEVEL
+	return out
+
+
+## How often a cue is taken at the current dial: never below `onset`, rising (x^1.5, so
+## the lower part of the range stays sparse) to `top` at 1.0.
+func _chance(onset: float, top: float) -> float:
+	var x := clampf((pad - onset) / (1.0 - onset), 0.0, 1.0)
+	return top * pow(x, 1.5)
+
+
+## A bass swell on the key's root (sometimes the fifth), waiting for the next bar line.
+func _plan_bass() -> void:
+	var hz := _key_hz()
+	if _ev_rng.randf() < 0.25:
+		hz *= 1.5
+	while hz >= BASS_ROOT_LO * 2.0:
+		hz *= 0.5
+	while hz < BASS_ROOT_LO:
+		hz *= 2.0
+	_bass_hz = hz
+	var bar := _eighth * 8
+	_bass_at = (_clock / bar + 1) * bar
+
+
 ## Bring one idle voice in on a scale degree. Notes are chosen, not swept: the
 ## pad is a sequence of sustained tones, and overlapping envelopes are what turn
 ## a sequence into a chord.
@@ -413,7 +542,7 @@ func _start_tone() -> void:
 		return
 	var degree: int = int(PAD_SCALE[_rng.randi() % PAD_SCALE.size()])
 	var octave: int = int(PAD_OCTAVES[_rng.randi() % PAD_OCTAVES.size()])
-	var hz: float = _tonic * pow(2.0, float(degree + octave) / 12.0)
+	var hz: float = _key_hz() * pow(2.0, float(degree + octave) / 12.0)
 	if hz <= 0.0 or hz >= sample_rate * 0.45:
 		return
 	var w := TAU * hz / sample_rate
@@ -431,6 +560,7 @@ func _start_tone() -> void:
 	_p_env[slot] = 0.0
 	_p_hold[slot] = _rng.randf_range(PAD_HOLD_MIN, PAD_HOLD_MAX)
 	_p_state[slot] = 1
+
 
 
 ## Autocorrelation over one tracking window, decimated by 4 - the pitch of a

@@ -245,6 +245,11 @@ var flourish: float = 1.0
 ##
 ## Set it through [method set_camera]; persisted by [Settings] as `[director] camera`.
 var camera: float = 1.0
+## THE NOTEBOOK'S HANDWRITING - a key of [constant NotebookLayout.HANDS], or "random" to draw
+## one per session from the seed. A setting, not only a draw, because the seed comes from the
+## audio's fingerprint: any change to the audio chain changed the hand (Kalam -> Caveat).
+## Set it through [method set_hand]; persisted as `[director] hand`.
+var hand := "kalam"
 ## THE MEDIUM - what the show is carried on, a key from [constant Medium.REGISTRY]
 ## (`full` = the original full-frame show, `comic` = a comic page). See [Medium].
 ##
@@ -537,6 +542,16 @@ func set_camera(v: float) -> void:
 	_save_pacing()
 
 
+## Choose the notebook's handwriting (see [member hand]). Takes effect at once: the notebook
+## re-typesets in the new hand.
+func set_hand(key: String) -> void:
+	var k := key if (key == "random" or NotebookLayout.HANDS.has(key)) else "kalam"
+	if k == hand:
+		return
+	hand = k
+	_save_pacing()
+
+
 ## Choose the medium (see [member medium]). Persisted like every other picture setting.
 ##
 ## Takes effect on the NEXT session, not the running one - and unlike the intro hold,
@@ -602,6 +617,8 @@ func _load_pacing() -> void:
 	pacing = clampf(float(Settings.read("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
 	flourish = clampf(float(Settings.read("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
 	camera = clampf(float(Settings.read("director", "camera", 1.0)), CAMERA_MIN, CAMERA_MAX)
+	var h := String(Settings.read("director", "hand", "kalam"))
+	hand = h if (h == "random" or NotebookLayout.HANDS.has(h)) else "kalam"
 	intro_hold = clampf(float(Settings.read("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
 	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
 	# `vehicle` was this key's name until 2026-09-24; read it once so the choice survives
@@ -620,6 +637,7 @@ func _save_pacing() -> void:
 	Settings.write("director", "pacing", pacing)
 	Settings.write("director", "flourish", flourish)
 	Settings.write("director", "camera", camera)
+	Settings.write("director", "hand", hand)
 	Settings.write("director", "intro", intro_hold)
 	Settings.write("director", "outro", outro_hold)
 	Settings.write("director", "medium", medium)

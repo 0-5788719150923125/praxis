@@ -94,6 +94,7 @@ func _ready() -> void:
 	await _check_autosave()
 	await _check_autosave_waits_for_quiet()
 	_check_speak_takes_the_voice()
+	await _check_outside_edit_survives()
 	_check_the_look_travels()
 	_check_the_picture_travels()
 	await _check_unattended_processes_never_autosave()
@@ -312,37 +313,68 @@ func _check_speak_takes_the_voice() -> void:
 	_doc._autosave_for_test = false
 
 
+## AN EDIT MADE OUTSIDE GHOST SURVIVES THE NEXT AUTOSAVE. The panel writes its whole block
+## whenever anything in it changes, and it used to write it from memory - so a voice dial the
+## author reverted in their own editor came straight back the next time an UNRELATED control
+## moved ("I keep reverting the frontmatter, yet Ghost keeps resetting it"). Both edits must
+## land: the file's dial and the panel's own change.
+func _check_outside_edit_survives() -> void:
+	_doc.allow_autosave_for_test()
+	_doc.pull()                      # ghost and the file agree
+	var raw := FileAccess.get_file_as_string(_path)
+	var re := RegEx.create_from_string("pace: [0-9.]+")
+	var m := re.search(raw)
+	_ok(m != null, "the fixture carries no pace to edit")
+	if m == null:
+		return
+	_write(raw.substr(0, m.get_start()) + "pace: 0.7" + raw.substr(m.get_end()))
+	_ed._turn.value = 1.9            # something else, moved in the panel
+	await _wait(int(DocSource.AUTOSAVE_MS) + 900)
+	var after := FileAccess.get_file_as_string(_path)
+	_ok(after.contains("pace: 0.7"), "the autosave put the panel's old pace back over an edit made in the file")
+	_ok(after.contains("turn: 1.9"), "the panel's own change was lost in reconciling with the file")
+	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 0.7),
+		"the panel does not show the file's edit after reconciling: %s" % str(_ed._cfg(0)))
+	_doc._autosave_for_test = false
+
+
 ## THE PICTURE TRAVELS WITH THE DOCUMENT - medium, Look filters and the Director's dials. They
 ## lived only in ghost.cfg, so a chapter opened on another machine came up in that machine's
 ## medium and look. Set here, saved, changed, and read back by the next Speak.
 func _check_the_picture_travels() -> void:
 	var was := {"medium": Director.medium, "filters": Director.filters.duplicate(),
-		"pacing": Director.pacing}
+		"pacing": Director.pacing, "hand": Director.hand}
 	Director.set_medium("notebook")
-	Director.set_filter("grain", 0.3)
+	Director.set_hand("patrick")
+	Director.set_filter("static", 0.3)
 	Director.set_filter("vignette", 0.0)
 	Director.set_pacing(1.4)
 	_ok(_doc.save(), "saving the picture into the document failed")
 	var raw := FileAccess.get_file_as_string(_path)
 	_ok(raw.contains("picture:") and raw.contains("medium: notebook"), "the picture was not written into the frontmatter")
 	Director.set_medium("full")
-	Director.set_filter("grain", 0.0)
+	Director.set_filter("static", 0.0)
 	Director.set_pacing(1.0)
+	Director.set_hand("kalam")
 	_doc.allow_autosave_for_test()
 	_doc._saved = _doc._snapshot()
 	_doc._autosave_for_test = false
 	_doc.pull()
 	_ok(Director.medium == "notebook", "the medium did not come back from the document (%s)" % Director.medium)
-	_ok(is_equal_approx(Director.filter_amount("grain"), 0.3), "the Look did not come back from the document")
+	_ok(is_equal_approx(Director.filter_amount("static"), 0.3), "the Look did not come back from the document")
 	_ok(is_equal_approx(Director.pacing, 1.4), "the scene hold did not come back from the document")
+	_ok(Director.hand == "patrick", "the handwriting did not come back from the document (%s)" % Director.hand)
+	_ok(_ed._hand_pick.get_item_text(_ed._hand_pick.selected) == "Patrick",
+		"the panel does not show the document's handwriting")
 	_ok(is_equal_approx(_ed._scene_hold.value, 1.4), "the panel does not show the document's scene hold")
-	var row: Dictionary = _ed._filter_rows["grain"]
+	var row: Dictionary = _ed._filter_rows["static"]
 	_ok((row["box"] as CheckBox).button_pressed, "the panel does not show the document's filter")
 	# put the Director back as it was
 	Director.set_medium(String(was["medium"]))
 	for k in Filters.REGISTRY:
 		Director.set_filter(k, float((was["filters"] as Dictionary).get(k, 0.0)))
 	Director.set_pacing(float(was["pacing"]))
+	Director.set_hand(String(was["hand"]))
 
 
 ## THE PICTURES' LOOK TRAVELS WITH THE DOCUMENT - painter, style and reference images, into

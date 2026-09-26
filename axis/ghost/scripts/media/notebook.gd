@@ -19,6 +19,7 @@ const PHOTO_PAPER := Color(0.97, 0.965, 0.95)
 const STEEL := Color(0.60, 0.62, 0.66)
 
 var _hand := "kalam"
+var _drawn_hand := ""       # this session's draw, used when the setting is "random"
 ## THE PEEK: a clipped photo lifts off the page, curling back from its free edge toward the
 ## clip, while the words it hides are being read, and settles again once they have been.
 ## `_peel[stack]` runs 0..1 at a steady rate and is drawn through a smoothstep, so it eases in
@@ -86,7 +87,18 @@ func _cover_font() -> Font:
 
 func advance(features, delta: float, bookend: float) -> void:
 	_peel_dt = delta
+	_follow_hand()
 	super.advance(features, delta, bookend)
+
+
+## The hand the author chose ([member Director.hand]), or this session's draw on "random".
+## Checked every frame so a change in the panel re-typesets the open chapter at once.
+func _follow_hand() -> void:
+	var want := Director.hand if NotebookLayout.HANDS.has(Director.hand) else _drawn_hand
+	if want.is_empty() or want == _hand:
+		return
+	_hand = want
+	_source = ""             # typeset again, in this hand
 
 
 func _refresh_pages() -> void:
@@ -234,10 +246,8 @@ func begin_session() -> void:
 	r.seed = _seed ^ 0x40E7
 	var keys := NotebookLayout.HANDS.keys()
 	keys.sort()
-	var h := String(keys[r.randi() % keys.size()])
-	if h != _hand:
-		_hand = h
-		_source = ""             # typeset again, in this hand
+	_drawn_hand = String(keys[r.randi() % keys.size()])
+	_follow_hand()
 	# Paper is white with the faintest warmth. The pen is BLACK unless a voice names its own
 	# ink (see [method _ink_for]) - a colour per speaker is how a page tells voices apart
 	# without labels, so the default must be the one colour no voice is likely to choose.

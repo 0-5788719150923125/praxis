@@ -73,7 +73,7 @@ const USES := {
 	"full": [],
 	"comic": ["camera", "films"],
 	"book": ["camera", "illustrations"],
-	"notebook": ["camera", "illustrations"],
+	"notebook": ["camera", "illustrations", "handwriting"],
 }
 
 ## Does [param key]'s medium use the [param feature] group? Unknown media and unknown

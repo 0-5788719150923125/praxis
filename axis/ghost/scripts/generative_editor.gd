@@ -405,6 +405,7 @@ var _medium_pick: OptionButton
 ## Rows that belong to a medium feature: tag -> the Controls to show or hide together.
 ## Filled by [method _director_slider] and [method _build_films]; read by [method _sync_medium_rows].
 var _medium_rows := {}
+var _hand_pick: OptionButton
 var _filter_summary: Label
 var _filter_rows := {}     # filter key -> {box: CheckBox, slider: HSlider}
 var _film_list: VBoxContainer
@@ -937,7 +938,9 @@ func _build_panel() -> void:
 	_fx_pad = _fx_slider(box, "Ambience", 0.0,
 		"A sustained ambient bed underneath, in the reader's own key - long tones that keep "
 		+ "sounding through the pauses, rather than reverb of the voice. It ducks under speech and "
-		+ "swells in the gaps, and it is what plays alone through the Intro hold.")
+		+ "swells in the gaps, and it is what plays alone through the Intro hold. Any setting plays "
+		+ "the bed at full level; the dial is SEVERITY - how often a low bass swell answers the "
+		+ "reader's pitch moving. Low is the bed alone; higher, the bass comes more often.")
 	_build_ink_row(box)
 
 	# --- THE PICTURE, not the voice ------------------------------------------
@@ -979,6 +982,7 @@ func _build_panel() -> void:
 		+ "a shot may swing, how many shots that swing is spread over, how long a move lasts "
 		+ "and how deep a push goes. It is shown only for the media that fly a camera.",
 		func(v: float) -> void: Director.set_camera(v), "camera")
+	_hand_pick = _hand_option(box)
 	_build_filters(box)
 	# Now that every tagged row exists, show the ones this medium can actually use.
 	_sync_medium_rows()
@@ -1099,7 +1103,8 @@ func _picture_capture() -> Dictionary:
 		looks[k] = snappedf(Director.filter_amount(k), 0.01)
 	return {"medium": Director.medium, "filters": looks,
 		"scene_hold": snappedf(Director.pacing, 0.01), "flourishes": snappedf(Director.flourish, 0.01),
-		"camera": snappedf(Director.camera, 0.01), "intro": snappedf(Director.intro_hold, 0.01),
+		"camera": snappedf(Director.camera, 0.01), "hand": Director.hand,
+		"intro": snappedf(Director.intro_hold, 0.01),
 		"outro": snappedf(Director.outro_hold, 0.01), "film_frequency": snappedf(Films.frequency(), 0.01)}
 
 
@@ -1113,6 +1118,10 @@ func _picture_apply(pic: Dictionary) -> void:
 		if _medium_pick != null:
 			_medium_pick.select(maxi(0, Medium.REGISTRY.keys().find(med)))
 		_sync_medium_rows()
+	if pic.has("hand"):
+		Director.set_hand(String(pic["hand"]))
+		if _hand_pick != null:
+			_hand_pick.select(maxi(0, _hand_keys().find(Director.hand)))
 	if pic.get("filters") is Dictionary:
 		for k in Filters.REGISTRY:
 			Director.set_filter(k, float((pic["filters"] as Dictionary).get(k, 0.0)))
@@ -2152,6 +2161,37 @@ func _pump_films() -> void:
 ## It sits at the TOP of this section, above Scene hold, because it is the setting the
 ## ones below are qualified by: how long a scene holds means something slightly different
 ## when a "scene" is a panel on a page.
+## The notebook's handwriting: a named hand, or Random (drawn per session from the seed).
+func _hand_option(box: VBoxContainer) -> OptionButton:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	var l := Label.new()
+	l.text = "Handwriting"
+	l.custom_minimum_size = Vector2(72, 0)
+	l.add_theme_font_size_override("font_size", 12)
+	row.add_child(l)
+	var opt := OptionButton.new()
+	opt.focus_mode = Control.FOCUS_NONE
+	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	opt.tooltip_text = "The notebook's handwriting. Random draws one per session, which changes " \
+		+ "whenever the audio does; a named hand stays put, and travels with the chapter."
+	for k in _hand_keys():
+		opt.add_item("Random" if k == "random" else String(k).capitalize())
+	opt.select(maxi(0, _hand_keys().find(Director.hand)))
+	opt.item_selected.connect(func(i: int) -> void:
+		Director.set_hand(String(_hand_keys()[i])))
+	row.add_child(opt)
+	(_medium_rows.get_or_add("handwriting", []) as Array).append(row)
+	return opt
+
+
+func _hand_keys() -> Array:
+	var keys: Array = NotebookLayout.HANDS.keys()
+	keys.sort()
+	return keys + ["random"]
+
+
 func _medium_option(box: VBoxContainer) -> OptionButton:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -2933,7 +2973,7 @@ func _open_up(k: float) -> float:
 	return k * (1.0 + 1.5 * k * k)
 
 
-## The ambience bed's level. Just the slider now - see [constant TONE_PRESETS] for why
+## The ambience dial: SEVERITY, not level (see [constant VoiceFX.PAD_FADE_IN]). Just the slider now - see [constant TONE_PRESETS] for why
 ## the preset writes this dial instead of secretly adding to it.
 ##
 ## Kept as a named function rather than inlined because the stream open, the export, the

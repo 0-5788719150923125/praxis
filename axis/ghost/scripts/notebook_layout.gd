@@ -38,6 +38,11 @@ const SKETCH_ROWS_MAX := 13
 const SKETCH_WIDTH := 0.9
 ## A photo's white border, in page pixels.
 const PHOTO_BORDER := 18.0
+## An inline photo's LONG edge (border included) as a share of the page width. One size for
+## every print, because one camera took them: a portrait photo is the same print turned on its
+## side, not one scaled to a landscape's width (which made it 2.25x the area). Full-page photos
+## are their own, larger size.
+const PRINT_LONG := 0.5
 ## A paper clip's length, and how far its outer loop stands off the page edge it grips - a clip
 ## is pushed on from the edge, so its end is always past it. Drawn in the page texture's margin
 ## ([method NotebookMedium._page_pad]), which must be wider than this.
@@ -328,13 +333,26 @@ func _sketch(b: Dictionary) -> void:
 
 ## The photo's outer size (border included) at width [param w], from the picture's own aspect.
 func _photo_size(b: Dictionary, w: float) -> Vector2:
-	var aspect := DEFAULT_ASPECT
+	var aspect := _aspect_of(b)
+	var inner := w - PHOTO_BORDER * 2.0
+	return Vector2(w, inner / aspect + PHOTO_BORDER * 2.0)
+
+
+## An inline photo's outer size: the same print for every picture, its long edge PRINT_LONG of
+## the page whichever way up it is.
+func _print_size(b: Dictionary) -> Vector2:
+	var aspect := _aspect_of(b)
+	var long_in := PAGE.x * PRINT_LONG - PHOTO_BORDER * 2.0
+	var inner := Vector2(long_in, long_in / aspect) if aspect >= 1.0 else Vector2(long_in * aspect, long_in)
+	return inner + Vector2.ONE * PHOTO_BORDER * 2.0
+
+
+func _aspect_of(b: Dictionary) -> float:
 	if _images_at.is_valid():
 		var got: Vector2 = _images_at.call(String(b.get("key", "")))
 		if got.x > 0.0 and got.y > 0.0:
-			aspect = got.x / got.y
-	var inner := w - PHOTO_BORDER * 2.0
-	return Vector2(w, inner / aspect + PHOTO_BORDER * 2.0)
+			return got.x / got.y
+	return DEFAULT_ASPECT
 
 
 func _photo(b: Dictionary, centre: Vector2, sz: Vector2, ang: float, full: bool, clip: Dictionary) -> Dictionary:
@@ -357,7 +375,7 @@ func _clip_photo(b: Dictionary) -> void:
 	if not _last_photo.is_empty() and _last_photo_p == _p and _last_photo_words == words.size():
 		# FANNED: the same clip, the photo underneath slid a little and turned the other way
 		var prev: Dictionary = _last_photo
-		var sz := _photo_size(b, (prev["rect"] as Rect2).size.x * lerpf(0.9, 1.05, u.call(16)))
+		var sz := _print_size(b)
 		var centre := (prev["rect"] as Rect2).get_center() + Vector2((u.call(24) - 0.5) * 70.0,
 			lerpf(24.0, 60.0, u.call(4)))
 		var ph := _photo(b, centre, sz, -signf(float(prev["angle"])) * absf(ang), false, {})
@@ -366,8 +384,7 @@ func _clip_photo(b: Dictionary) -> void:
 		# under the one already there: the clip was put on over the stack
 		images.insert(images.find(prev), ph)
 		return
-	var w := PAGE.x * lerpf(0.44, 0.56, u.call(16))
-	var sz := _photo_size(b, w)
+	var sz := _print_size(b)
 	var side := _side(_p)
 	var near_top := _y < _top() + RULE * 3.0
 	var centre: Vector2

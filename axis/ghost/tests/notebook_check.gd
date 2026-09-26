@@ -49,6 +49,7 @@ func _ready() -> void:
 	_check_peel_holds()
 	_check_clip_sides()
 	_check_hand_drift()
+	_check_one_print_size()
 	if _fails == 0:
 		print("notebook_check: ALL OK")
 	else:
@@ -74,6 +75,32 @@ func _layout(with_images: bool) -> NotebookLayout:
 		doc = re.sub(doc, "", true)
 	l.build(doc, func(_k: String) -> Vector2: return Vector2(1536, 1024), "Station Notes")
 	return l
+
+
+## ONE CAMERA, ONE PRINT: every inline photo is the same size, and a portrait picture is that
+## print turned on its side. Sizes used to be drawn per photo (44-56% of the page, a fanned one
+## 90-105% of the one on top), and a portrait was set to a landscape's WIDTH - 2.25x the area.
+func _check_one_print_size() -> void:
+	var longs: Array = []
+	for portrait in [false, true]:
+		var l := NotebookLayout.new()
+		l.hand = "kalam"
+		l.hand_seed = 7
+		l.body_fs = int(NotebookLayout.HANDS["kalam"]["size"])
+		var px := Vector2(1024, 1536) if portrait else Vector2(1536, 1024)
+		l.build(DOC, func(_k: String) -> Vector2: return px, "Station Notes")
+		for pg in l.pages:
+			for im in pg["images"]:
+				if not bool(im.get("photo", false)) or bool(im.get("full", false)):
+					continue
+				var sz: Vector2 = (im["rect"] as Rect2).size
+				longs.append(maxf(sz.x, sz.y))
+				_ok((sz.y > sz.x) == portrait, "a %s picture was printed %s" % [
+					"portrait" if portrait else "landscape", "tall" if sz.y > sz.x else "wide"])
+	_ok(longs.size() >= 4, "the control is wrong - %d inline photos" % longs.size())
+	var lo: float = longs.min()
+	var hi: float = longs.max()
+	_ok(hi - lo < 0.5, "inline prints differ in size: long edges %.1f to %.1f" % [lo, hi])
 
 
 func _check_layout() -> void:
