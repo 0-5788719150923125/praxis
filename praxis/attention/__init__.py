@@ -48,6 +48,16 @@ registry.declare(
                 "bidirectional."
             ),
         ),
+        "self_attention_dropoff_always": Entry(
+            partial(SelfAttention, dropoff="warp", dropoff_every=True),
+            (
+                "self_attention with the ``warp`` value sink at every recurrent pass, "
+                "as in arc_dropoff_always. The content-addressed control for the "
+                "``*_dropoff_always`` kaleidoscope profiles: same sink, but scores "
+                "come from comparing queries against keys rather than from frozen "
+                "mirrors."
+            ),
+        ),
         # Configs and checkpoints written before the rename.
         "causal": Alias("self_attention"),
         "infini": InfiniAttention,

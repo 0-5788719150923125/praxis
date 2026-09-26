@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants, plus the Q/K-free kaleidoscope and SSOG fields. Entries may be ``functools.partial`` profiles of one class; a profile is the variant, not a flag.
 
-Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (35 entries)
+Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (36 entries)
 
 Selected with ``--attention-type`` (default: ``modular``).
 
@@ -128,14 +128,17 @@ Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
 
-## `self_attention` - SelfAttention
+## `self_attention`, `self_attention_dropoff_always` - SelfAttention
 
-Plain self-attention on FlexAttention, with an optional sliding window. Masking is NOT
-part of what this entry selects: whether a causal mask is applied is ``config.causal``,
-which every entry in this namespace reads and which ``PraxisForCausalLM`` sets to ``not
-diffusion_type``. Under a diffusion objective this runs fully bidirectional.
+Self-attention on PyTorch's FlexAttention API, with block masking, an optional sliding
+window and the dropoff ablation. Causal when ``config.causal`` is set, bidirectional
+under a diffusion objective.
 
 Source: [praxis/attention/self_attention.py:21](../praxis/attention/self_attention.py#L21)
+
+Presets:
+- `self_attention` - Plain self-attention on FlexAttention, with an optional sliding window. Masking is NOT part of what this entry selects: whether a causal mask is applied is ``config.causal``, which every entry in this namespace reads and which ``PraxisForCausalLM`` sets to ``not diffusion_type``. Under a diffusion objective this runs fully bidirectional.
+- `self_attention_dropoff_always` (`dropoff='warp', dropoff_every=True`) - self_attention with the ``warp`` value sink at every recurrent pass, as in arc_dropoff_always. The content-addressed control for the ``*_dropoff_always`` kaleidoscope profiles: same sink, but scores come from comparing queries against keys rather than from frozen mirrors.
 
 ## `ssog` - SSOGAttention
 

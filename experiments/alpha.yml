@@ -49,7 +49,7 @@ batch_size: 16
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 35 of them, described in docs/attention.md
+# Options: 36 of them, described in docs/attention.md
 # Default: modular
 #
 # modular: This class is akin to a wrapper, which implements a number of

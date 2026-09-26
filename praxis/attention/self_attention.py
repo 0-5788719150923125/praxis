@@ -20,9 +20,9 @@ os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
 
 class SelfAttention(nn.Module):
     """
-    Causal self-attention using PyTorch's FlexAttention API.
-    Provides efficient attention computation with customizable block masking.
-    Supports optional sliding window for efficient long-sequence inference.
+    Self-attention on PyTorch's FlexAttention API, with block masking, an optional
+    sliding window and the dropoff ablation. Causal when ``config.causal`` is set,
+    bidirectional under a diffusion objective.
     """
 
     def __init__(
