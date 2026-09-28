@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from praxis.metrics.copy_probe import copy_gain
+from praxis.utils.tensors import create_block_ids
 
 # --- the copy probe ------------------------------------------------------------
 
@@ -48,6 +49,39 @@ def test_copy_gain_separates_a_copier_from_a_model_without_context():
     assert float(copy_gain(_Amnesiac(), ids, length=20)) == pytest.approx(0.0, abs=1e-6)
     gain = float(copy_gain(_Copier(), ids, length=20))
     assert gain > 5.0  # log2(64) = 6 bits per token, all but free the second time
+
+
+class _DocumentCopier(_Copier):
+    """_Copier that, like PraxisModel, cannot see past a separator: attention is
+    confined to the block ``create_block_ids`` assigns."""
+
+    def __init__(self, vocab=64, sep=0):
+        super().__init__(vocab)
+        self.config = type("Config", (), {"eos_token_id": sep})()
+
+    def forward(self, input_ids, labels=None):
+        blocks = create_block_ids(input_ids, self.config.eos_token_id)
+        b, t = input_ids.shape
+        logits = torch.zeros(b, t, self.vocab)
+        for row in range(b):
+            for i in range(t):
+                same = (input_ids[row, :i] == input_ids[row, i]) & (
+                    blocks[row, :i] == blocks[row, i]
+                )
+                seen = same.nonzero().flatten()
+                if len(seen):
+                    logits[row, i, input_ids[row, seen[-1] + 1]] = 30.0
+        return type("Out", (), {"logits": logits})()
+
+
+def test_copy_gain_reads_through_document_separators():
+    torch.manual_seed(0)
+    ids = torch.stack([torch.randperm(63)[:40] + 1 for _ in range(2)])
+    ids[:, 5] = 0  # separators inside the copied passage
+    ids[:, 13] = 0
+    # Left in, each separator would start a new block in both copies and hide
+    # every first-copy twin from its second-copy position.
+    assert float(copy_gain(_DocumentCopier(sep=0), ids, length=20)) > 5.0
 
 
 def test_copy_gain_runs_the_uncompiled_module():
