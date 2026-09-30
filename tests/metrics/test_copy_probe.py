@@ -52,8 +52,9 @@ def test_copy_gain_separates_a_copier_from_a_model_without_context():
 
 
 class _DocumentCopier(_Copier):
-    """_Copier that, like PraxisModel, cannot see past a separator: attention is
-    confined to the block ``create_block_ids`` assigns."""
+    """_Copier that, like attention honoring PraxisModel's document blocks,
+    cannot see past a separator: it copies only within the block
+    ``create_block_ids`` assigns."""
 
     def __init__(self, vocab=64, sep=0):
         super().__init__(vocab)

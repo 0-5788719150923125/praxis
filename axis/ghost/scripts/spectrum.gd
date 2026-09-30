@@ -718,11 +718,15 @@ func _process(delta: float) -> void:
 	if virtual_clock >= 0.0:
 		# A CLOCK FROM OUTSIDE - see `virtual_clock`. Everything below this branch runs
 		# exactly as it does in a render; only where the time came from is different.
+		# The held lead-in and the tail are silence here too, as they are in a render: the
+		# bands fill only where the player would be playing.
 		f.time = virtual_clock
-		if _baked:
-			_fill_bands_baked(f)
-		else:
-			_fill_bands(f)
+		var pos := virtual_clock - _clock_offset()
+		if pos >= 0.0 and pos < _content_length():
+			if _baked:
+				_fill_bands_baked(f)
+			else:
+				_fill_bands(f)
 	elif _has_audio and _player.playing:
 		# THE RENDER CLOCK. A render is driven by ACCUMULATED FIXED-FPS TIME, never by the
 		# audio player's reported position - see `render_clock`.
@@ -840,7 +844,10 @@ func _fill_bands_baked(f: AudioFeatures) -> void:
 	if _sm_bands.size() != BAND_COUNT:
 		_sm_bands.resize(BAND_COUNT)
 	f.bands.resize(BAND_COUNT)
-	var idx := clampi(int(f.time * BAKE_FPS), 0, _baked_frames.size() - 1)
+	# The bake is of the FILE, so it is indexed by the file's position - the session clock
+	# less the held lead-in. Indexing by the session clock ran the picture a whole lead-in
+	# (5 s by default) ahead of the sound in every export.
+	var idx := clampi(int((f.time - _clock_offset()) * BAKE_FPS), 0, _baked_frames.size() - 1)
 	var raw: PackedFloat32Array = _baked_frames[idx]
 	for i in BAND_COUNT:
 		_sm_bands[i] = lerpf(_sm_bands[i], raw[i], SMOOTH)

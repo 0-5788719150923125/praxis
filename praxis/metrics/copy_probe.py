@@ -45,10 +45,11 @@ def copy_gain(
     length = min(int(length), input_ids.size(1) // 2)
     if length < 4:
         return None
-    # The model isolates attention per document, starting a new block after each
-    # separator (PraxisModel.forward), so a separator inside the passage would
-    # put every second-copy token in a later block than its first-copy twin and
-    # hide the twin. Dropping separators makes the passage one run of text.
+    # PraxisModel.forward starts a new document block after each separator, and
+    # attention that honors blocks cannot see across one, so a separator inside
+    # the passage would hide every first-copy twin from its second-copy
+    # position. Where attention ignores blocks, a separator still reads as a
+    # document reset. Dropping separators makes the passage one run of text.
     sep = getattr(getattr(model, "config", None), "eos_token_id", None)
     if sep is not None:
         rows = [row[~torch.isin(row, torch.as_tensor(sep, device=row.device))] for row in input_ids]
