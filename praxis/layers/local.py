@@ -58,7 +58,6 @@ class LocalLayer(nn.Module):
         current_state: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor] = None,
-        positions: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor,
         Optional[Tensor],
@@ -91,7 +90,6 @@ class LocalLayer(nn.Module):
             past_key_values,
             current_depth,
             block_ids,
-            positions,
         )
 
     def _forward(
@@ -102,7 +100,6 @@ class LocalLayer(nn.Module):
         past_key_values: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor] = None,
-        positions: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor,
         Optional[Tensor],
@@ -141,9 +138,6 @@ class LocalLayer(nn.Module):
                 current_state,
                 current_depth,
                 block_ids,
-                # Appended only when an encoder supplied a byte timeline, so
-                # every router keeps its exact prior arity on the None path.
-                *(() if positions is None else (positions,)),
             )
 
             # Extract exit signal from Taxus router if present
@@ -178,8 +172,6 @@ class LocalLayer(nn.Module):
                 current_state,
                 current_depth,
                 block_ids,
-                # By KEYWORD: the block's 7th positional slot is router_weights.
-                **({} if positions is None else {"positions": positions}),
             )
         else:
             raise ValueError("Neither router nor block is a valid module")

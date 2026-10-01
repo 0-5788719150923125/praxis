@@ -62,7 +62,7 @@ def trunk_hooks(model) -> dict:
     - ``base_forward(ids)`` runs the trunk from TOKENS and returns an output
       exposing ``last_hidden_state`` (plus ``patch_embeds``, ``h_encoder``,
       ``patch_lengths`` and ``local_decoder_tokens`` for encoders that patch).
-    - ``latent_forward(patch_embeds, positions=None)`` runs the trunk directly
+    - ``latent_forward(patch_embeds)`` runs the trunk directly
       on a LATENT sequence. An encoder that autoregresses over patches needs
       it: the patch it just predicted has no bytes behind it, so
       ``base_forward`` cannot reach it.
@@ -77,8 +77,8 @@ def trunk_hooks(model) -> dict:
 
     return {
         "base_forward": lambda ids: PraxisModel.forward(model, input_ids=ids),
-        "latent_forward": lambda pe, positions=None: model.decoder(
-            pe, None, None, None, None, LossContainer(), None, positions
+        "latent_forward": lambda pe: model.decoder(
+            pe, None, None, None, None, LossContainer(), None
         )[0],
         "decode_logits": lambda embeds: model.classifier(embeds),
     }

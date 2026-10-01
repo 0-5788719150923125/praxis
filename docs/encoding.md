@@ -59,4 +59,4 @@ depths). Parameterized in a bounded log space: theta = THETA_MIN *
 (THETA_MAX/THETA_MIN)^sigmoid(z_base + z_delta[depth]). z_base inits theta to
 THETA_INIT; z_delta is zero-init so every depth starts there and ...
 
-Source: [praxis/encoding/rope.py:22](../praxis/encoding/rope.py#L22)
+Source: [praxis/encoding/rope.py:24](../praxis/encoding/rope.py#L24)

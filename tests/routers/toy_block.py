@@ -46,7 +46,6 @@ class Block(nn.Module):
         current_depth=0,
         block_ids=None,
         router_weights=None,
-        positions=None,
     ):
         h = self.attn_norm(inputs)
         h = self.attn.output(self.attn.qkv(h) * self.attn.kappa[0])

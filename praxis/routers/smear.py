@@ -608,16 +608,15 @@ class SMEAR(nn.Module):
     # --- forward --------------------------------------------------------------
 
     def forward(self, *args: Any, **kwargs: Any):
-        """Router-mode forward: seven positional arguments, or eight when an
-        encoder supplies a byte timeline (praxis/layers/local.py)."""
-        if len(args) not in (7, 8):
+        """Router-mode forward: seven positional arguments, as
+        praxis/layers/local.py passes them."""
+        if len(args) != 7:
             raise NotImplementedError(
-                "SMEAR routers support router mode only (7 or 8 positional args "
+                "SMEAR routers support router mode only (7 positional args "
                 f"from LocalLayer); got {len(args)}."
             )
         layer, inputs, attention_mask, past_key_values = args[:4]
         current_state, current_depth, block_ids = args[4:7]
-        positions = args[7] if len(args) == 8 else None
 
         merge, probs = self._coefficients(inputs, current_depth, past_key_values)
 
@@ -652,16 +651,13 @@ class SMEAR(nn.Module):
             current_depth,
             block_ids,
         )
-        # By KEYWORD: the block's 7th positional slot is router_weights, so
-        # passing positions there would feed it to the FFN gate.
-        forward_kwargs = {} if positions is None else {"positions": positions}
 
         # tie_weights=False: the same module is reparametrized once per recurrent pass, and functional_call's
         # parameter-aliasing machinery corrupts the merged graph across those
         # reuses, surfacing as a double-backward on a freed graph.
         with self._coefficient_scope(merge):
             result = torch.func.functional_call(
-                layer, merged, forward_args, forward_kwargs, tie_weights=False
+                layer, merged, forward_args, {}, tie_weights=False
             )
 
         if isinstance(result, tuple) and len(result) == 4:

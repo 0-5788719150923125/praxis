@@ -159,7 +159,6 @@ class ExpertBank(nn.Module):
         current_state: Optional[torch.Tensor],
         current_depth: int,
         block_ids: Optional[torch.Tensor],
-        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[
         torch.Tensor,
         Optional[Union[torch.Tensor, List, Dict]],
@@ -205,10 +204,6 @@ class ExpertBank(nn.Module):
             current_depth,
             block_ids,
         )
-        # By KEYWORD, not position: the block's 7th positional slot is
-        # router_weights, and only when present so blocks predating the
-        # positions channel keep their exact previous call.
-        forward_kwargs = {} if positions is None else {"positions": positions}
 
         # Apply the merged parameters using functional_call. tie_weights=False is
         # REQUIRED. This is functional_call's OWN arg (not model weight-tying - the
@@ -219,11 +214,7 @@ class ExpertBank(nn.Module):
         # time"). Verified on a model with zero tied weights. Only bites under the
         # smear/vear shared-expert recurrent reuse.
         result = torch.func.functional_call(
-            base_module,
-            merged_state_dict,
-            forward_args,
-            forward_kwargs,
-            tie_weights=False,
+            base_module, merged_state_dict, forward_args, {}, tie_weights=False
         )
 
         # Handle different return formats
@@ -709,17 +700,13 @@ class ExpertBank(nn.Module):
 
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""
-        # Router mode if we have 7 positional args or 'layer' in kwargs. 8 when
-        # LocalLayer appends the byte-timeline positions - miscounting there
-        # falls through to direct mode, which reads the BLOCK as the input
-        # tensor and dies inside the residual with a bare AttributeError.
-        return len(args) in (7, 8) or "layer" in kwargs
+        # Router mode if we have 7 positional args or 'layer' in kwargs
+        return len(args) == 7 or "layer" in kwargs
 
     def _parse_router_args(self, args: tuple, kwargs: dict) -> tuple:
         """Parse arguments for router mode."""
-        if len(args) in (7, 8):
-            # Positional arguments (8 when the byte-timeline positions are
-            # threaded through; see PraxisModel.forward).
+        if len(args) == 7:
+            # Positional arguments
             return args
         else:
             # Keyword arguments
@@ -963,13 +950,8 @@ class SharpenedExpertBank(ExpertBank):
 
     def _router_forward(self, *args):
         # args = (layer, inputs, attention_mask, past_key_values, current_state,
-        #         current_depth, block_ids[, positions]); experts are called with
-        # args[1:]. The trailing positions - present only when an encoder
-        # supplies a byte timeline - is sliced off: lazy expert init shape-probes
-        # the block positionally, and the block's 7th positional slot is
-        # router_weights, so passing it here would feed positions to the FFN
-        # gate.
-        self._ensure_experts_initialized(tuple(args[1:7]))
+        #         current_depth, block_ids); experts are called with args[1:].
+        self._ensure_experts_initialized(tuple(args[1:]))
         return super()._router_forward(*args)
 
     def _direct_forward(self, inputs: Tensor, current_state: Optional[Tensor]):

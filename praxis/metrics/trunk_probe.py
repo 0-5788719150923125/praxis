@@ -9,6 +9,9 @@ positional shape and every other path are untouched.
 
 Zero means the trunk is a constant as far as the decoder is concerned, whatever
 its norm; a positive value is the part of the prediction that came through it.
+That output includes the trunk's residual skip, the pooled bytes of each patch
+itself, so a trunk that only relays its input still reads positive. The reading
+bounds what the trunk adds from context from above; it does not measure it.
 """
 
 import math

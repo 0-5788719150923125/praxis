@@ -629,3 +629,79 @@ def test_prose_boundary_costs_fewer_patches(prose_tokenizer):
     assert patch_count("France.\n\nuser\n\nAnd of Japan?") < patch_count(
         "France.\n[SEP]\n[BOS]user\nAnd of Japan?"
     )
+
+
+# ---------------------------------------------------------- document seams
+
+
+SEAM_TEXT = b"alpha beta" + b"gamma delta"  # no space where the documents meet
+SEAM_DOCS = [1] * 10 + [2] * 11
+
+
+def _space_patch_lengths(docs):
+    from praxis.encoders.byte_latent.patcher import (
+        find_space_patch_start_ids,
+        patch_lengths_from_start_ids,
+    )
+
+    tokens = torch.tensor([list(SEAM_TEXT)])
+    block_ids = None if docs is None else torch.tensor([docs])
+    starts = find_space_patch_start_ids(tokens, 0, block_ids=block_ids)
+    return patch_lengths_from_start_ids(starts, tokens.shape[1] + 1)
+
+
+def _starts(lengths):
+    return set((torch.cumsum(lengths[0], 0) - lengths[0]).tolist())
+
+
+def test_a_document_start_starts_a_patch():
+    joined, split = _space_patch_lengths(None), _space_patch_lengths(SEAM_DOCS)
+    assert 10 not in _starts(joined)  # "betagamma" would pool two documents
+    assert _starts(split) - _starts(joined) == {10}
+    assert _starts(joined) <= _starts(split)
+
+
+def test_entropy_patching_closes_a_patch_before_each_document():
+    from praxis.encoders.byte_latent.patcher import (
+        Patcher,
+        PatcherConfig,
+        PatchingMode,
+    )
+
+    patcher = Patcher(
+        PatcherConfig(
+            patching_mode=PatchingMode.entropy, threshold=1.0, device="cpu", byte_offset=0
+        )
+    )
+    tokens = torch.randint(97, 123, (1, 12))
+    flat = torch.zeros(1, 12)  # below the threshold everywhere: no content cut
+    docs = torch.tensor([[1] * 7 + [2] * 5])
+    lengths, _ = patcher.patch(
+        tokens, include_next_token=False, entropies=flat, block_ids=docs
+    )
+    assert 7 in _starts(lengths)
+
+
+def test_a_document_reads_no_trunk_output_from_the_one_before():
+    from praxis import PraxisConfig
+    from praxis.encoders.byte_latent.encoder import ByteLatentEncoder
+    from praxis.encoders.byte_latent.patcher import decoder_patch_ids_from_lengths
+
+    encoder = ByteLatentEncoder(
+        PraxisConfig(hidden_size=32, embed_size=32, vocab_size=1024),
+        local_architecture="transformer",
+    )
+    docs = torch.tensor([SEAM_DOCS])
+    lengths = _space_patch_lengths(SEAM_DOCS)
+    n = len(SEAM_TEXT)
+    ids = decoder_patch_ids_from_lengths(lengths, 0, n)
+    trunk = torch.arange(1.0, lengths.size(1) + 1).view(1, -1, 1).expand(1, -1, 4)
+    aligned = torch.gather(trunk, 1, ids.unsqueeze(-1).expand(-1, -1, 4))
+    isolated = encoder._isolate_documents(aligned, docs, lengths, ids)
+
+    zeroed = (isolated == 0).all(-1)[0]
+    source_end = (torch.cumsum(lengths, 1).gather(1, ids) - 1)[0]
+    crossing = (docs[0] == 2) & (source_end < 10)
+    assert crossing.any()
+    assert torch.equal(zeroed, crossing)
+    torch.testing.assert_close(isolated[0, ~crossing], aligned[0, ~crossing])

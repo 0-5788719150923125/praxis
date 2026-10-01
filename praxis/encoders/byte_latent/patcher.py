@@ -67,6 +67,7 @@ class Patcher:
         include_next_token: bool = True,
         threshold: Optional[float] = None,
         entropies: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Create patches from input tokens.
 
@@ -94,6 +95,9 @@ class Patcher:
             include_next_token: Whether to include the next token in patch boundaries
             threshold: Optional entropy threshold override
             entropies: Pre-computed entropy scores (for entropy mode)
+            block_ids: Optional document index per token. The content-adaptive
+                modes start a patch wherever it changes, so no patch pools bytes
+                from two documents; static patching keeps its fixed grid.
 
         Returns:
             Tuple of:
@@ -111,9 +115,10 @@ class Patcher:
                 entropies,
                 threshold or self.config.threshold,
                 include_next_token,
+                block_ids=block_ids,
             )
         elif self.config.patching_mode == PatchingMode.space:
-            return self._space_patching(tokens, include_next_token)
+            return self._space_patching(tokens, include_next_token, block_ids=block_ids)
         elif self.config.patching_mode == PatchingMode.static:
             return self._static_patching(
                 tokens, self.config.patch_size, include_next_token
@@ -130,6 +135,7 @@ class Patcher:
         entropies: torch.Tensor,
         threshold: float,
         include_next_token: bool,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Create patches based on entropy scores.
@@ -139,6 +145,8 @@ class Patcher:
             entropies: Entropy scores [batch_size, seq_len]
             threshold: Entropy threshold for creating boundaries
             include_next_token: Whether to include next token
+            block_ids: Optional document index per token; a patch ends before
+                each document start
 
         Returns:
             Tuple of patch lengths and boundaries
@@ -176,6 +184,10 @@ class Patcher:
             )
         else:
             boundaries = entropies > threshold
+        if block_ids is not None:
+            # A boundary marks a patch's LAST byte, so a document starting at p
+            # closes the patch at p - 1.
+            boundaries[:, :-1] |= block_ids[:, 1:] != block_ids[:, :-1]
 
         # Calculate patch lengths from boundaries
         patch_lengths = self._boundaries_to_lengths(boundaries, include_next_token)
@@ -185,7 +197,10 @@ class Patcher:
         )
 
     def _space_patching(
-        self, tokens: torch.Tensor, include_next_token: bool
+        self,
+        tokens: torch.Tensor,
+        include_next_token: bool,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Create patches at space boundaries using exact BLT reference logic.
@@ -193,12 +208,16 @@ class Patcher:
         Args:
             tokens: Input tokens [batch_size, seq_len]
             include_next_token: Whether to include next token
+            block_ids: Optional document index per token; each document
+                starts a patch
 
         Returns:
             Tuple of patch lengths and boundaries
         """
         # Use exact BLT reference implementation
-        patch_start_ids = find_space_patch_start_ids(tokens, self.config.byte_offset)
+        patch_start_ids = find_space_patch_start_ids(
+            tokens, self.config.byte_offset, block_ids=block_ids
+        )
         seq_len_with_next = tokens.shape[1] + (1 if include_next_token else 0)
         patch_lengths = patch_lengths_from_start_ids(patch_start_ids, seq_len_with_next)
 
@@ -718,7 +737,9 @@ def get_blt_input(
 
 
 def find_space_patch_start_ids(
-    tokens: torch.Tensor, offset: int = OFFSET
+    tokens: torch.Tensor,
+    offset: int = OFFSET,
+    block_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Find space patch start IDs using exact BLT reference logic.
@@ -729,6 +750,8 @@ def find_space_patch_start_ids(
             ``ByteLatentConfig.byte_offset``. The character-class tests below
             are defined on RAW bytes, so getting this wrong shifts every class
             boundary and silently changes where patches cut.
+        block_ids: Optional document index per token. Each document starts a
+            patch, which is the cut a control id makes in the separator formats.
 
     Returns:
         Patch start IDs [batch_size, max_patches]
@@ -757,6 +780,10 @@ def find_space_patch_start_ids(
         ],
         dim=1,
     )
+    if block_ids is not None:
+        # Index p of the start mask is byte p (the extra last slot is the
+        # next-token position), so a document beginning at byte p starts one.
+        patch_start_mask[:, 1:seq_len] |= block_ids[:, 1:] != block_ids[:, :-1]
     max_patches = patch_start_mask.sum(dim=1).max()
 
     patch_ids = (

@@ -50,9 +50,9 @@ class PatchMerge(nn.Module):
         },
         "merge_trunk_content_ratio": {
             "description": (
-                "The same ratio for the trunk's INPUT-DEPENDENT part - its "
-                "contribution minus its mean over the batch - which is all a "
-                "constant offset cannot carry."
+                "The same ratio for the trunk's input-dependent part (minus its "
+                "batch mean). Includes the pooled bytes its skip relays, so it is "
+                "not all context."
             ),
             "chart": {
                 "title": "Trunk vs Byte Path at the Merge",

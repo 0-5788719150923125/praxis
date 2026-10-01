@@ -40,7 +40,7 @@ maps every distinct n-gram onto exactly one row, so two n-grams sharing a bucket
 the same vector and are unrecoverable downstream; the only defence is a wider table, and
 byte n-grams outnumber ...
 
-Source: [praxis/embeddings/hash.py:41](../praxis/embeddings/hash.py#L41)
+Source: [praxis/embeddings/hash.py:63](../praxis/embeddings/hash.py#L63)
 
 ## `mru`, `positional` - PositionalEmbedding
 

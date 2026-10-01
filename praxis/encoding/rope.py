@@ -11,12 +11,14 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 # Learned theta is bounded to this range via a sigmoid, so it can never
 # explode or collapse. THETA_MIN sits in the 50-200 band Huang & Chen (IEEE
-# Access 2025) found best. We init at THETA_INIT rather than the legacy
-# 10000: the same study found 400-800 optimal at small scale, and tuning
-# theta below 10000 is the whole point of this work.
+# Access 2025) found best. Theta starts at the standard 10000, the midpoint of
+# the range in log space. The same study found 400-800 optimal at small scale
+# on token positions. byte-latent-d's trunk counted byte offsets, several per
+# word, and there theta ~700 left no band slow enough to match content a few
+# hundred bytes back.
 THETA_MIN: float = 100.0
 THETA_MAX: float = 1_000_000.0
-THETA_INIT: float = 500.0
+THETA_INIT: float = 10_000.0
 
 
 class RoPE(NoPE):
@@ -119,7 +121,6 @@ class RoPE(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
-        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply rotary position embeddings to queries and keys.
@@ -131,8 +132,6 @@ class RoPE(NoPE):
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
             current_depth: Recurrent depth pass, selects the per-depth theta
-            positions: Optional explicit [batch, seq_len] positions. Overrides
-                the implicit ``arange``; see ``_compute_rope_embeddings``.
 
         Returns:
             Tuple of (rotated_queries, rotated_keys, values)
@@ -146,14 +145,7 @@ class RoPE(NoPE):
         # Compute embeddings using the longer sequence length
         max_seq_len = max(q_seq_len, k_seq_len)
         self._compute_rope_embeddings(
-            head_dim,
-            max_seq_len,
-            device,
-            dtype,
-            offset,
-            block_ids,
-            current_depth,
-            positions,
+            head_dim, max_seq_len, device, dtype, offset, block_ids, current_depth
         )
 
         # When using caching during inference
@@ -203,7 +195,6 @@ class RoPE(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
-        positions: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Compute rotary positional embeddings for the given parameters.
@@ -220,17 +211,7 @@ class RoPE(NoPE):
         # Recomputed each call: theta is learned, so inv_freq carries gradient.
         inv_freq = self._compute_inv_freq(head_dim, device, current_depth)
 
-        # Explicit positions win. This is the seam that lets a patched sequence
-        # be rotated on the BYTE timeline instead of the patch index: under
-        # content-adaptive patching, patch p sits at a data-dependent byte
-        # offset, so an implicit arange makes theta measure "patches elapsed" -
-        # a clock whose tick length depends on how long the words happened to
-        # be. Guarded on the sequence length because the recurrent loop can
-        # compress the sequence between depths (SequentialDecoder's compressor)
-        # while these positions describe the uncompressed one.
-        if positions is not None and positions.size(1) == seq_len:
-            positions = positions.to(device) + offset
-        elif block_ids is not None and block_ids.size(1) != 1:
+        if block_ids is not None and block_ids.size(1) != 1:
             positions = self._compute_relative_positions_vectorized(
                 block_ids, device
             )  # Shape: [batch_size, seq_len]

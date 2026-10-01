@@ -352,7 +352,7 @@ class ByteLatentEncoder(BaseEncoder):
         if self.entropy_model is None:
             # Space patching mode
             patch_lengths, scores = self.patcher.patch(
-                local_encoder_tokens, include_next_token=True
+                local_encoder_tokens, include_next_token=True, block_ids=local_block_ids
             )
         else:
             # Entropy patching mode
@@ -374,6 +374,7 @@ class ByteLatentEncoder(BaseEncoder):
                     include_next_token=True,
                     threshold=safe_threshold,
                     entropies=entropy_scores,
+                    block_ids=local_block_ids,
                 )
 
                 # Entropy training loss on raw predictions.
@@ -396,6 +397,7 @@ class ByteLatentEncoder(BaseEncoder):
                     include_next_token=True,
                     threshold=self.optimal_threshold.float(),
                     entropies=entropy_scores,
+                    block_ids=local_block_ids,
                 )
 
         # Create patch IDs from encoder token length
@@ -560,6 +562,10 @@ class ByteLatentEncoder(BaseEncoder):
             assert (
                 local_decoder_tokens.shape == h_aligned.shape[:-1]
             ), f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
+            if block_ids is not None:
+                h_aligned = self._isolate_documents(
+                    h_aligned, block_ids, patch_lengths, decoder_patch_ids
+                )
             h = h_aligned
 
         # Local decoder forward pass. Returns features only; the classifier
@@ -574,6 +580,30 @@ class ByteLatentEncoder(BaseEncoder):
         )
 
         return None, decoder_embeds
+
+    def _isolate_documents(
+        self,
+        h_aligned: torch.Tensor,
+        block_ids: torch.Tensor,
+        patch_lengths: torch.Tensor,
+        decoder_patch_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Zero the trunk output a byte position receives from another document.
+
+        A position reads the output of the patch before its target's patch, so
+        the first patch of a document would be predicted from the last patch of
+        the previous one - context the trunk's own attention mask keeps out.
+        The position just before a document starts keeps its own document's
+        output: its target is the next document's first byte either way.
+        """
+        last_byte = (
+            torch.cumsum(patch_lengths, dim=1).gather(1, decoder_patch_ids)
+            - 1
+            - self.nb_boe
+        )
+        source = block_ids.gather(1, last_byte.clamp(0, block_ids.size(1) - 1))
+        foreign = source != block_ids[:, : source.size(1)]
+        return h_aligned.masked_fill(foreign.unsqueeze(-1), 0.0)
 
     def _find_safe_threshold(
         self, input_ids: torch.Tensor, entropy_scores: torch.Tensor

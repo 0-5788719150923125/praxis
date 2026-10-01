@@ -76,7 +76,6 @@ class SequentialDecoder(BaseDecoder):
         block_ids: Optional[Tensor] = None,
         losses: LossContainer = None,
         labels: Optional[Tensor] = None,
-        positions: Optional[Tensor] = None,
         row_continues: Optional[Tensor] = None,
         valid: Optional[Tensor] = None,
     ) -> Tuple[
@@ -195,7 +194,6 @@ class SequentialDecoder(BaseDecoder):
                     should_checkpoint(
                         self.training, current_depth, self.checkpoint_every
                     ),
-                    positions,
                 )
             # Positions that already exited keep their state (per-position
             # halting); an identity for every other profile.

@@ -16,6 +16,11 @@ PRIMES = [
 ]
 
 
+# SplitMix64's finalizer multipliers, as signed int64.
+_MIX_1: int = 0xBF58476D1CE4E5B9 - (1 << 64)
+_MIX_2: int = 0x94D049BB133111EB - (1 << 64)
+
+
 def rolling_polynomial_hash(t: torch.Tensor, hash_func_nb: int = 0) -> torch.Tensor:
     """Polynomial rolling hash over the last dim of a windowed tensor."""
     prime = torch.tensor(PRIMES[hash_func_nb], dtype=torch.int64, device=t.device)
@@ -23,16 +28,33 @@ def rolling_polynomial_hash(t: torch.Tensor, hash_func_nb: int = 0) -> torch.Ten
     return torch.sum(t * prime_powers, dim=-1)
 
 
+def _shift_in_zeros(h: torch.Tensor, bits: int) -> torch.Tensor:
+    """Right shift that fills with zeros; int64 ``>>`` copies the sign bit."""
+    return (h >> bits) & ((1 << (64 - bits)) - 1)
+
+
+def mix64(h: torch.Tensor) -> torch.Tensor:
+    """SplitMix64's finalizer on wrapping int64: every input bit reaches the
+    low bits, which are all a power-of-two modulus keeps."""
+    h = (h ^ _shift_in_zeros(h, 30)) * _MIX_1
+    h = (h ^ _shift_in_zeros(h, 27)) * _MIX_2
+    return h ^ _shift_in_zeros(h, 31)
+
+
 def byte_group_hash_function(
     x: torch.Tensor, group_size: int = 2, hash_func_nb: int = 0, max_hash: int = 30000
 ) -> torch.Tensor:
-    """Hash each length-``group_size`` byte window to a bucket in ``[0, max_hash)``."""
+    """Hash each length-``group_size`` byte window to a bucket in ``[0, max_hash)``.
+
+    The BLT reference's polynomial hash, run through ``mix64`` before the
+    modulus (see HashEmbedding).
+    """
     with torch.no_grad():
         bs, _ = x.shape
         prefix = torch.zeros(bs, group_size - 1, dtype=torch.int64, device=x.device)
         x_padded = torch.cat([prefix, x], dim=1)
         windows = x_padded.unfold(1, group_size, 1)
-        hashes = rolling_polynomial_hash(windows, hash_func_nb)
+        hashes = mix64(rolling_polynomial_hash(windows, hash_func_nb))
         hash_values_range = hashes % max_hash
     hash_values_range.requires_grad = False
     return hash_values_range
@@ -48,11 +70,17 @@ class HashEmbedding(nn.Module):
     sharing a bucket become the same vector and are unrecoverable downstream;
     the only defence is a wider table, and byte n-grams outnumber any affordable
     table. ``M`` independent hashes make an n-gram's code the M-tuple of buckets,
-    which is ambiguous only when all M collide at once. Measured on 8MB of
-    minipile, 5-byte windows: M=1 over 4096 buckets leaves 100% of occurrences
+    which is ambiguous only when all M collide at once. Measured on 6MB of this
+    repo's text, 5-byte windows: M=1 over 4096 buckets leaves 100% of occurrences
     ambiguous, while M=4 over 1024 buckets - the same row count, so the same
-    parameters - leaves under 2%. Widening a single table cannot buy this; 65536
-    buckets at M=1 still leaves ~97% ambiguous at 16x the parameters.
+    parameters - leaves 0.0%. Widening a single table cannot buy this; 65536
+    buckets at M=1 still leaves 100% ambiguous at 16x the parameters.
+
+    The M hashes stay independent only because each polynomial passes through
+    ``mix64`` before the modulus. Unmixed, the polynomial wraps in int64, so a
+    power-of-two count keeps only low bits that every odd prime shapes alike:
+    at 256 buckets 36% of 4-gram occurrences share all four codes with another
+    4-gram.
     """
 
     def __init__(

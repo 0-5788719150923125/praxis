@@ -615,7 +615,6 @@ class SSOGAttention(nn.Module):
         past_key_values: Optional[Tensor] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
-        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Tensor], float]:
         B, T, _ = inputs.shape
         v = self.value(inputs).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)

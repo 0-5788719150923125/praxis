@@ -129,9 +129,9 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_trunk_swap": {
         "description": (
-            "Bits per token lost when a row is decoded on another row's trunk "
-            "output. 0 = the trunk reads as a constant, whatever its magnitude; "
-            "positive = what the prediction owes it."
+            "Bits lost when a row decodes on another row's trunk output. 0 = the "
+            "trunk acts as a constant. Counts the pooled bytes its skip relays, "
+            "so it overstates context use."
         ),
         "chart": {
             "title": "Trunk Swap Cost",

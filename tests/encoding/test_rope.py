@@ -1,5 +1,6 @@
 """RoPE: scores depend only on relative position."""
 
+import pytest
 import torch
 
 from praxis import PraxisConfig
@@ -20,3 +21,8 @@ def test_scores_are_invariant_to_a_shared_offset():
     )
     # ...while the rotation itself did move with the offset.
     assert not torch.allclose(q0, q1)
+
+
+def test_theta_starts_at_the_standard_10000():
+    config = PraxisConfig(hidden_size=64, num_heads=4, num_queries=1, block_size=256)
+    assert RoPE(config).theta == pytest.approx(10_000.0, rel=1e-4)
