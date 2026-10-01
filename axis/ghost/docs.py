@@ -550,8 +550,7 @@ def _md(text: str) -> str:
     verbatim, eighteen times, because only `[param ]` was handled."""
     text = re.sub(r"\[code\](.*?)\[/code\]", r"`\1`", text, flags=re.S)
     text = re.sub(
-        r"\[(?:param|constant|method|member|signal|enum|annotation) "
-        r"([\w.]+)\]",
+        r"\[(?:param|constant|method|member|signal|enum|annotation) " r"([\w.]+)\]",
         r"`\1`",
         text,
     )
@@ -988,7 +987,11 @@ def _render_filters_doc(base: Script) -> str:
                 "shaders/stage_filter.gdshader does not declare - the control is a no-op"
             )
         for table in ("LABELS", "BLURBS", "DEFAULTS"):
-            if key not in (labels if table == "LABELS" else blurbs if table == "BLURBS" else defaults):
+            if key not in (
+                labels
+                if table == "LABELS"
+                else blurbs if table == "BLURBS" else defaults
+            ):
                 warn(f"Filters.{table} has no entry for '{key}'")
         lines.append(f"## `{key}` - {labels.get(key, key)}")
         lines.append("")

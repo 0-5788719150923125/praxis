@@ -28,12 +28,12 @@ class ArcAttention(InfiniAttention):
     output (Qiu et al. 2025, arXiv:2505.06708), which introduces non-linearity
     and input-dependent sparsity between the attention output and W_o.
     """
+
     # Causality here is the ARCHITECTURE, not a mask: this module carries state
     # forward across the sequence, so clearing ``config.causal`` cannot make it
     # read backwards. An objective that needs bidirectional attention is refused
     # at assembly rather than silently given a left-to-right model.
     supports_bidirectional = False
-
 
     # Depth-specialization diagnostics (see praxis.metrics.specialization),
     # averaged across ArcAttention layers and surfaced to the Dynamics tab.

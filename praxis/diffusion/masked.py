@@ -241,7 +241,9 @@ class MaskedDiffusion(nn.Module):
             # Rows with no valid position at all (fully padded) stay empty.
             masked &= valid
 
-        noisy = torch.where(masked, torch.full_like(input_ids, self.mask_token_id), input_ids)
+        noisy = torch.where(
+            masked, torch.full_like(input_ids, self.mask_token_id), input_ids
+        )
         return noisy, masked, t
 
     # ------------------------------------------------------------------
@@ -323,7 +325,11 @@ class MaskedDiffusion(nn.Module):
         tt = t.squeeze(-1)
         per_row_masked = masked_f.sum(dim=-1).clamp_min(1.0)
         per_row_ce = (ce * masked_f).sum(dim=-1) / per_row_masked
-        for name, lo, hi in (("low", 0.0, 0.34), ("mid", 0.34, 0.67), ("high", 0.67, 1.01)):
+        for name, lo, hi in (
+            ("low", 0.0, 0.34),
+            ("mid", 0.34, 0.67),
+            ("high", 0.67, 1.01),
+        ):
             sel = (tt >= lo) & (tt < hi)
             if sel.any():
                 metrics[f"diffusion_ce_{name}"] = float(per_row_ce[sel].mean())
@@ -340,7 +346,9 @@ class MaskedDiffusion(nn.Module):
                 )
             probs = self.unigram_counts / self.unigram_counts.sum().clamp_min(1e-9)
             logp = probs.clamp_min(1e-9).log()
-            unigram_ce = float(-(logp[targets.reshape(-1)] * masked_f.reshape(-1)).sum() / n_masked)
+            unigram_ce = float(
+                -(logp[targets.reshape(-1)] * masked_f.reshape(-1)).sum() / n_masked
+            )
             metrics["diffusion_unigram_ce"] = unigram_ce
             # Positive = the model beats the marginal. At or below zero, the
             # degenerate solution has won regardless of what the loss does.

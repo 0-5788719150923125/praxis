@@ -139,7 +139,9 @@ def test_depth_passes_follows_a_shared_block_per_execution():
 
 def test_shared_block_bank_indexes_by_execution():
     """Each execution must select its own instance, not share one per sweep."""
-    act = build_depth_activation("serpent", _cfg(depth=4, num_layers=4, router_type="smear"))
+    act = build_depth_activation(
+        "serpent", _cfg(depth=4, num_layers=4, router_type="smear")
+    )
     assert len(act.passes) == 4
     assert [act.pass_index(d) for d in range(4)] == [0, 1, 2, 3]
 

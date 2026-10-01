@@ -670,7 +670,10 @@ def test_entropy_patching_closes_a_patch_before_each_document():
 
     patcher = Patcher(
         PatcherConfig(
-            patching_mode=PatchingMode.entropy, threshold=1.0, device="cpu", byte_offset=0
+            patching_mode=PatchingMode.entropy,
+            threshold=1.0,
+            device="cpu",
+            byte_offset=0,
         )
     )
     tokens = torch.randint(97, 123, (1, 12))

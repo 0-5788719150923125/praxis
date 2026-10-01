@@ -109,9 +109,9 @@ def test_step_count_reaches_the_loop():
         finally:
             handle.remove()
         # One forward per refinement pass, plus at most one final sweep.
-        assert steps <= len(calls) <= steps + 1, (
-            f"{steps} steps asked for, {len(calls)} forwards taken"
-        )
+        assert (
+            steps <= len(calls) <= steps + 1
+        ), f"{steps} steps asked for, {len(calls)} forwards taken"
 
 
 def test_module_level_generate_matches_the_decoding_method():
@@ -137,7 +137,7 @@ def test_learns_to_reconstruct_a_periodic_corpus():
     on a stream that is genuinely learnable. Held-out masked-position accuracy
     far above chance is the smallest honest claim that this works at all."""
     torch.manual_seed(0)
-    text = (b"the quick brown fox jumps over the lazy dog. " * 24)
+    text = b"the quick brown fox jumps over the lazy dog. " * 24
     data = torch.tensor(list(text), dtype=torch.long)
 
     model = _model(hidden_size=128, embed_size=128, num_heads=2, head_size=64, depth=4)
@@ -219,7 +219,9 @@ def test_generate_honours_the_return_shape(return_dict):
     model = _model()
     prompt = torch.randint(0, 256, (1, 6))
     out = model.generate(
-        inputs=prompt, max_new_tokens=12, do_sample=False,
+        inputs=prompt,
+        max_new_tokens=12,
+        do_sample=False,
         return_dict_in_generate=return_dict,
     )
     sequences = out.sequences if return_dict else out

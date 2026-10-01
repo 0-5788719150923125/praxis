@@ -162,9 +162,7 @@ def test_causal(key, train):
 
 
 BIDIRECTIONAL = [
-    key
-    for key in ATTENTION
-    if getattr(_class(key), "supports_bidirectional", True)
+    key for key in ATTENTION if getattr(_class(key), "supports_bidirectional", True)
 ]
 STRUCTURALLY_CAUSAL = [key for key in ATTENTION if key not in BIDIRECTIONAL]
 

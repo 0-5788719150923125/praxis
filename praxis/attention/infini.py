@@ -90,12 +90,12 @@ class InfiniAttention(SelfAttention):
     segments, an ELU+1 kernel memory accumulates key-value context and a
     learned gate blends memory retrieval with local attention output.
     """
+
     # Causality here is the ARCHITECTURE, not a mask: this module carries state
     # forward across the sequence, so clearing ``config.causal`` cannot make it
     # read backwards. An objective that needs bidirectional attention is refused
     # at assembly rather than silently given a left-to-right model.
     supports_bidirectional = False
-
 
     metric_descriptions = {
         "attn_span": {

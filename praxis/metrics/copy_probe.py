@@ -52,7 +52,10 @@ def copy_gain(
     # document reset. Dropping separators makes the passage one run of text.
     sep = getattr(getattr(model, "config", None), "eos_token_id", None)
     if sep is not None:
-        rows = [row[~torch.isin(row, torch.as_tensor(sep, device=row.device))] for row in input_ids]
+        rows = [
+            row[~torch.isin(row, torch.as_tensor(sep, device=row.device))]
+            for row in input_ids
+        ]
         rows = [row[:length] for row in rows if row.numel() >= length]
         if not rows:
             return None
