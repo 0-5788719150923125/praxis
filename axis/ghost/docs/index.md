@@ -96,6 +96,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`comic_spread.gd`](../scripts/comic_spread.gd) **ComicSpread** - the two facing pages of an open comic book. What `ComicMedium` flies over.
 - [`book_layout.gd`](../scripts/book_layout.gd) **BookLayout** - a chapter typeset into the pages of a printed novel, for `BookMedium`.
 - [`notebook_layout.gd`](../scripts/notebook_layout.gd) **NotebookLayout** - a chapter written by hand into a ruled notebook, for `NotebookMedium`.
+- [`tablet_page.gd`](../scripts/tablet_page.gd) **TabletPage** - one web page of a `TabletScript`, set into a column of a given width.
 - [`films.gd`](../scripts/films.gd) **Films** - the library of imported video clips a comic panel can be filled with.
 - [`illustrations.gd`](../scripts/illustrations.gd) **Illustrations** - the library of generated pictures a book prints.
 - [`image_gen.gd`](../scripts/image_gen.gd) **ImageGen** - who paints the pictures. The backend axis of `Illustrations`.
@@ -194,6 +195,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`doc_source.gd`](../scripts/doc_source.gd) **DocSource** - where a reading's words come from: the editor alone, or a file it syncs to.
 - [`front_matter.gd`](../scripts/front_matter.gd) **FrontMatter** - YAML frontmatter on a Markdown document, read and (carefully) written.
 - [`manuscript.gd`](../scripts/manuscript.gd) **Manuscript** - what a chapter file SAYS about itself, beyond the words to be read.
+- [`tablet_script.gd`](../scripts/tablet_script.gd) **TabletScript** - a chapter written as somebody browsing on a tablet.
 - [`script_marks.gd`](../scripts/script_marks.gd) **ScriptMarks** - every authoring mark a script may carry, registered with what it does.
 - [`script_highlighter.gd`](../scripts/script_highlighter.gd) **ScriptHighlighter** - colours a script by the marks the panel reading it understands.
 - [`script_writer.gd`](../scripts/script_writer.gd) **ScriptWriter** - where a voice panel's script is written: a card in the panel, and an editor window it opens.

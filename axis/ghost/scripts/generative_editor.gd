@@ -1519,6 +1519,11 @@ func _split_speakers(body: String) -> Array:
 	# reader announces a chapter before its first word. Not twice: a chapter that already
 	# opens on its title as a heading keeps that one.
 	var title := _doc_field(body, "title").strip_edges()
+	# A TABLET CHAPTER is read off the screen and nothing else: no title announced, skipped text
+	# out, link targets out, a rest for every run of taps
+	if TabletScript.is_tablet(body):
+		title = ""
+		body = TabletScript.speakable(body)
 	var first := true
 	for p in Manuscript.passages(body):
 		var raw := String((p as Dictionary)["text"])
@@ -1539,13 +1544,17 @@ func _split_speakers(body: String) -> Array:
 		for m in re.search_all(t):
 			out += t.substr(at, m.get_start() - at)
 			at = m.get_end()
-			if not on:
-				continue
-			var hm := hes.search(m.get_string())
-			if hm == null:
-				continue             # an authoring note
-			var v := hm.get_string(1) if not hm.get_string(1).is_empty() else hm.get_string(2)
-			var secs := clampf(float(v), 0.0, 30.0) if not v.is_empty() else bare
+			# THE TABLET'S HAND IS NOT A HESITATION: its rest is the time a tap or a typed
+			# address takes, so it stays when the Hesitate box is off
+			var secs := TabletScript.hold_of(m.get_string())
+			if secs < 0.0:
+				if not on:
+					continue
+				var hm := hes.search(m.get_string())
+				if hm == null:
+					continue             # an authoring note
+				var v := hm.get_string(1) if not hm.get_string(1).is_empty() else hm.get_string(2)
+				secs = clampf(float(v), 0.0, 30.0) if not v.is_empty() else bare
 			# WELDED, never left standing: a sentinel alone between two spaces is a token of
 			# its own, and a token that is not a word confuses the sentence splitter around
 			# it. Trailing whitespace is stepped over so it lands directly after the last

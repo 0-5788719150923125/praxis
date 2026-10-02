@@ -15,7 +15,7 @@ host_for(incoming)   - the node an arriving scene is added to. `full` returns th
 
 A medium is a Node2D mounted INSIDE the stage SubViewport, so the stage governor still owns it: when the governor stops the stage, it stops the medium and every panel viewport nested under it, together.
 
-Registry: `Medium.REGISTRY` in [scripts/medium.gd](../scripts/medium.gd) (4 entries). Select with `--medium NAME`, or the Medium picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] medium`).
+Registry: `Medium.REGISTRY` in [scripts/medium.gd](../scripts/medium.gd) (5 entries). Select with `--medium NAME`, or the Medium picker in the Generative panel (persisted to `user://ghost.cfg`, `[director] medium`).
 
 ## `full` - Full frame
 
@@ -74,3 +74,19 @@ Everything that makes the book work is the book's - the 3D spread, the turning l
 THE TONE IS THE AUTHOR'S. A chapter drafted as a lab notebook or a field journal - dated entries under headings, times in the margin, "<!-- sketch: ... -->" beside the note it goes with - reads as one here; the same chapter in the Novel medium reads as a book.
 
 Source: [scripts/media/notebook.gd](../scripts/media/notebook.gd)
+
+## `tablet` - Tablet
+
+_Somebody browsing on a tablet lying on a desk: the chapter is web pages (`<!-- url: -->`), read aloud as they are scrolled, with searches, new tabs, a turn to landscape and links followed between them - every tap and keystroke timed into the rests the voice leaves for it._
+
+TabletMedium - the reading as somebody browsing on a tablet lying on a desk.
+
+The chapter is a `TabletScript`: web pages written as markdown, and a few marks for what the hand does between them (open a url, search, a new tab, turn to landscape, skip the rest of a paragraph). The voice reads what is on the page; the hand acts in the rests the voice leaves for it (`<!-- action-hold -->`, sized by the same `TabletScript.phases` this medium schedules from), so nothing has to be timed by the author.
+
+EVERYTHING ON THE SCREEN IS A FUNCTION OF SHOW TIME, like the book's leaf: actions are placed in the gaps between the spoken words that bracket them (`_build_schedule`), and the screen is REPLAYED from them every frame (`_state_at`), scroll included (`_build_flings`) - so an export draws exactly what the live reading drew, and a reading that restarts lands on the right page without having to have watched the last one.
+
+THE TABLET NEVER MOVES; THE CAMERA DOES. Turning to landscape swings the camera a quarter turn round the slab, and the screen's content counter-rotates against the same curve, so it stays upright in the picture while the device turns beneath it - shrinking to fit as an iPad's does, and re-laid out for the new shape at the half-way point, where the old and new pictures are the same size.
+
+Reuses the book's desk, lamp and springs (`BookMedium`); nothing about pages or leaves.
+
+Source: [scripts/media/tablet.gd](../scripts/media/tablet.gd)

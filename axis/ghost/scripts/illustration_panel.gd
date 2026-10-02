@@ -274,6 +274,8 @@ func _row(im: Dictionary) -> Control:
 		parts.append("v%d/%d" % [Illustrations.current_index(key) + 1, vs.size()])
 	if Illustrations.is_stale(key):
 		parts.append("stale")
+	if Illustrations.is_imported(key):
+		parts.append("imported")
 	meta.text = "  ·  ".join(parts)
 	meta.add_theme_font_size_override("font_size", 10)
 	meta.modulate = Color(1, 1, 1, 0.6)
@@ -307,7 +309,21 @@ func _row(im: Dictionary) -> Control:
 	go.disabled = st in ["queued", "running"] or Illustrations.read_only()
 	go.pressed.connect(func() -> void: _ask(im))
 	row.add_child(go)
+	row.add_child(_import_button(im))
 	return row
+
+
+## IMPORT A PICTURE FROM DISK for [param im] instead of painting one: it lands as a new version,
+## so an imported picture and painted ones can be stepped between, and deleting it brings the
+## last one back.
+func _import_button(im: Dictionary) -> Button:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.text = "Import…"
+	b.tooltip_text = "Use a picture from disk for this one. Any current picture is kept as an earlier version."
+	b.disabled = Illustrations.read_only()
+	b.pressed.connect(func() -> void: _open_dialog(im))
+	return b
 
 
 func _ask(im: Dictionary) -> void:
@@ -412,6 +428,9 @@ func _open_preview(im: Dictionary) -> void:
 		_ask(im)
 		_preview.hide())
 	bar.add_child(again)
+	var imp := _import_button(im)
+	imp.pressed.connect(func() -> void: _preview.hide())
+	bar.add_child(imp)
 	_preview.popup_centered()
 
 
@@ -516,20 +535,27 @@ func _refresh_refs() -> void:
 		_refs.add_child(box)
 
 
-func _open_dialog() -> void:
+## The file dialog: style references when [param for_image] is empty, otherwise ONE picture to
+## use for that image.
+func _open_dialog(for_image := {}) -> void:
 	if _dialog != null and is_instance_valid(_dialog):
 		return
 	_dialog = FileDialog.new()
-	_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES
+	_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES if for_image.is_empty() else FileDialog.FILE_MODE_OPEN_FILE
 	_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	# In-window, never native: the portal dialog shows nothing without xdg-desktop-portal.
 	_dialog.use_native_dialog = false
-	_dialog.title = "Import style references"
+	_dialog.title = "Import style references" if for_image.is_empty() else "Use a picture from disk"
 	_dialog.filters = PackedStringArray(["*.png, *.jpg, *.jpeg, *.webp ; Images"])
 	var pics := OS.get_system_dir(OS.SYSTEM_DIR_PICTURES)
 	if not pics.is_empty():
 		_dialog.current_dir = pics
 	_dialog.size = Vector2i(820, 560)
+	_dialog.file_selected.connect(func(path: String) -> void:
+		var err := Illustrations.import_file(for_image, path)
+		_status.text = "" if err.is_empty() else "⚠  " + err
+		_seen = ""
+		_close_dialog())
 	_dialog.files_selected.connect(func(paths: PackedStringArray) -> void:
 		var errs := Illustrations.add_references(Array(paths), _style_kind)
 		_status.text = "" if errs.is_empty() else "⚠  " + "; ".join(errs)

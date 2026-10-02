@@ -10,12 +10,19 @@ the timer expires before it is re-armed, that thread writes every Python thread'
 stack to a file and lets the process carry on. It does NOT need the GIL to fire,
 so it still reports when the interpreter is wedged.
 
-This callback re-arms the timer at each batch start, so a step overrunning
-``timeout_s`` dumps whatever it is stuck in, including work running from the
-batch-end hooks (the generation queue drains there). ``repeat`` keeps it dumping,
-which separates a HANG (the same stack over and over) from something merely SLOW.
-The timeout is deliberately generous - the first compiled step can take minutes -
-so this is a wedge detector, not a performance monitor.
+This callback re-arms the timer at each training batch start, so a step
+overrunning ``timeout_s`` dumps whatever it is stuck in, including work running
+from the batch-end hooks (the generation queue drains there). ``repeat`` keeps it
+dumping, which separates a HANG (the same stack over and over) from something
+merely SLOW. The timeout is deliberately generous - the first compiled step can
+take minutes - so this is a wedge detector, not a performance monitor.
+
+Each VALIDATION batch re-arms it too. A validation loop runs between two training
+batches and can legitimately take longer than ``timeout_s`` as a whole, and the
+timer must not fire on a healthy run: faulthandler reads every other thread's
+stack without the GIL, so a thread that changes or exits mid-read can segfault
+the process. byte-latent-e died that way twice, 600s into a 10-minute
+validation, with the dump cut off mid-write.
 
 READING ``stalls.log``
 
@@ -69,6 +76,8 @@ class StallWatchdogCallback(Callback):
         self._file = None
         self._armed_at = None
         self._step = -1
+        self._label = "step -1"
+        self._arming = 0
         self._dumped_for = None
         self._stop = threading.Event()
         self._thread = None
@@ -158,12 +167,12 @@ class StallWatchdogCallback(Callback):
                 continue
             if time.monotonic() - armed_at <= self.timeout_s:
                 continue
-            if self._dumped_for == self._step:
-                continue  # one uncapped dump per stuck step is enough
-            self._dumped_for = self._step
+            if self._dumped_for == self._arming:
+                continue  # one uncapped dump per stuck batch is enough
+            self._dumped_for = self._arming
             try:
                 self._file.write(
-                    f"=== step {self._step} has been running "
+                    f"=== {self._label} has been running "
                     f"{time.monotonic() - armed_at:.0f}s "
                     f"(watchdog timeout {self.timeout_s:.0f}s) ===\n"
                 )
@@ -171,17 +180,29 @@ class StallWatchdogCallback(Callback):
             except Exception:  # pragma: no cover
                 pass
 
+    def _arm(self, label: str) -> None:
+        """Restart the countdown for one batch. Re-arming cancels the previous
+        timer, so only an overrun ever fires; repeat=True keeps dumping while the
+        wedge lasts, which is what tells a hang apart from a slow batch."""
+        self._label = label
+        self._arming += 1
+        self._armed_at = time.monotonic()
+        faulthandler.dump_traceback_later(
+            self.timeout_s, repeat=True, file=self._file, exit=False
+        )
+
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         if self._file is None:
             return
         self._step = trainer.global_step
-        self._armed_at = time.monotonic()
-        # Re-arming cancels the previous timer, so the countdown restarts every
-        # step and only an overrun ever fires. repeat=True keeps dumping while
-        # the wedge lasts, which is what tells a hang apart from a slow step.
-        faulthandler.dump_traceback_later(
-            self.timeout_s, repeat=True, file=self._file, exit=False
-        )
+        self._arm(f"step {self._step}")
+
+    def on_validation_batch_start(
+        self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
+    ):
+        if self._file is None:
+            return
+        self._arm(f"validation batch {batch_idx} after step {trainer.global_step}")
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         # Deliberately NOT cancelled here. The generation queue drains from a

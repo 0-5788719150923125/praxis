@@ -43,6 +43,7 @@ const REGISTRY := {
 	"comic": "res://scripts/media/comic.gd",
 	"book": "res://scripts/media/book.gd",
 	"notebook": "res://scripts/media/notebook.gd",
+	"tablet": "res://scripts/media/tablet.gd",
 }
 
 ## Display names for the registry keys, in registry order - for the settings surface.
@@ -51,6 +52,7 @@ const LABELS := {
 	"comic": "Comic book",
 	"book": "Novel",
 	"notebook": "Notebook",
+	"tablet": "Tablet",
 }
 
 ## WHICH OPTIONAL SETTINGS EACH MEDIUM ACTUALLY USES, as a list of tags per key.
@@ -74,6 +76,7 @@ const USES := {
 	"comic": ["camera", "films"],
 	"book": ["camera", "illustrations"],
 	"notebook": ["camera", "illustrations", "handwriting"],
+	"tablet": ["camera", "illustrations"],
 }
 
 ## Does [param key]'s medium use the [param feature] group? Unknown media and unknown
@@ -92,6 +95,7 @@ const BLURBS := {
 	"full": "One scene at a time, filling the frame. The original show.",
 	"book": "The chapter itself, typeset into the pages of an open novel on a desk, with each word lit as it is spoken and the leaf turning as the reading reaches the next spread. Pictures come from the chapter's image markers.",
 	"notebook": "The chapter handwritten into a ruled research notebook - margin times, underlined emphasis, photos paper-clipped over the writing at an angle, and sketches (`<!-- sketch: ... -->`) drawn onto the page in the same ink. For a chapter drafted as a journal or a lab report.",
+	"tablet": "Somebody browsing on a tablet lying on a desk: the chapter is web pages (`<!-- url: -->`), read aloud as they are scrolled, with searches, new tabs, a turn to landscape and links followed between them - every tap and keystroke timed into the rests the voice leaves for it.",
 	"comic": "The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine.",
 }
 

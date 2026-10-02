@@ -608,6 +608,8 @@ static func is_stale(key: String) -> bool:
 	var i := current_index(key)
 	if i < 0:
 		return false
+	if (versions(key)[i] as Dictionary).has("imported"):
+		return false                # made under no style, so no style can outdate it
 	var kind := kind_of(String(entry(key).get("placement", "")))
 	return String((versions(key)[i] as Dictionary).get("sig", "")) != current_signature(kind)
 
@@ -763,6 +765,21 @@ static func _land(key: String, job: Dictionary) -> void:
 		_errors[key] = gen.failure(job)
 		push_warning("ghost: illustration %s failed - %s" % [key, _errors[key]])
 		return
+	var err := _add_version(key, img, {"sig": String(job["sig"]), "backend": String(job["backend"])},
+		String(job["description"]), String(job["placement"]))
+	if not err.is_empty():
+		_errors[key] = err
+		return
+	print("ghost: illustration %s ready (v%d)" % [key, versions(key).size()])
+	# The job's scratch is done with once the picture is in the library. A failed job keeps
+	# its directory: the event log in it is the only record of why.
+	_remove_tree(String(job.get("dir", "")))
+
+
+## [param img] into the library as [param key]'s newest version, chosen. [param rec] is the
+## version's record beyond its file and time. "" on success, else why not.
+static func _add_version(key: String, img: Image, rec: Dictionary, prompt: String,
+		placement: String) -> String:
 	var e := entry(key)
 	var vs: Array = e.get("versions", [])
 	# The first free number, not the count: after a version is deleted the count names a file
@@ -775,21 +792,44 @@ static func _land(key: String, job: Dictionary) -> void:
 	# Re-encoded rather than copied: whatever the painter wrote (a JPEG named .png has been
 	# seen from image tools), the library holds a real PNG.
 	if img.save_png(ProjectSettings.globalize_path(file)) != OK:
-		_errors[key] = "could not write %s" % file
-		return
-	vs.append({"file": file, "sig": String(job["sig"]), "backend": String(job["backend"]),
-		"at": int(Time.get_unix_time_from_system())})
+		return "could not write %s" % file
+	rec["file"] = file
+	rec["at"] = int(Time.get_unix_time_from_system())
+	vs.append(rec)
 	e["versions"] = vs
 	e["current"] = vs.size() - 1
-	e["prompt"] = String(job["description"])
-	e["placement"] = String(job["placement"])
+	e["prompt"] = prompt
+	e["placement"] = placement
 	_put_entry(key, e)
 	_errors.erase(key)
 	revision += 1
-	print("ghost: illustration %s ready (v%d)" % [key, vs.size()])
-	# The job's scratch is done with once the picture is in the library. A failed job keeps
-	# its directory: the event log in it is the only record of why.
-	_remove_tree(String(job.get("dir", "")))
+	return ""
+
+
+## USE A PICTURE FROM DISK instead of painting one: [param path] becomes [param image]'s newest
+## version, exactly as a generated one would (so the versions, the arrows and delete all work
+## on it), marked `imported` - it was made under no style, so a style change never calls it
+## stale. Spends no quota, so it is allowed whatever the painter. "" on success, else why not.
+static func import_file(image: Dictionary, path: String) -> String:
+	if read_only():
+		return "this session is read-only (a render or a probe) - nothing is imported here"
+	var key := String(image.get("key", ""))
+	if key.is_empty():
+		return "no picture to import for"
+	var img := Image.new()
+	if img.load(path) != OK or img.is_empty():
+		return "could not read %s" % path.get_file()
+	var err := _add_version(key, img, {"sig": "", "imported": path.get_file()},
+		String(image.get("prompt", "")), String(image.get("placement", "inline")))
+	if err.is_empty():
+		print("ghost: illustration %s imported from %s" % [key, path])
+	return err
+
+
+## Is [param key]'s current picture one imported from disk?
+static func is_imported(key: String) -> bool:
+	var i := current_index(key)
+	return i >= 0 and (versions(key)[i] as Dictionary).has("imported")
 
 
 static func _remove_tree(dir: String) -> void:

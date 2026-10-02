@@ -256,6 +256,26 @@ func _init() -> void:
 	_check(I.path_for(dk) == "" and I.status(dk) == "missing", "deleting every version did not leave it missing")
 	_check(not I.delete_version(dk, 0), "deleting from nothing claimed to delete something")
 
+	print("-- importing from disk")
+	var ik := "impk"
+	var src := dir.path_join("from_disk.jpg")
+	img.fill(Color(0, 0, 1))
+	img.save_jpg(src)
+	var ir: int = I.revision
+	_check(I.import_file({"key": ik, "prompt": "a picture from the book", "placement": "inline"}, src) == "",
+		"importing a picture from disk failed")
+	var got: String = I.path_for(ik)
+	_check(not got.is_empty() and got.ends_with(".png") and got != src,
+		"an import is a library version of its own (a png), not a link to the source")
+	_check(I.is_imported(ik) and not I.is_stale(ik), "an import is marked imported and never stale")
+	_check(I.revision > ir and I.status(ik) == "ready", "an import tells the pages to redraw")
+	I._land(ik, {"key": ik, "gen": G.make("codex"), "target": files[0], "sig": "s", "backend": "codex",
+		"description": "a picture from the book", "placement": "inline"})
+	_check(I.versions(ik).size() == 2 and not I.is_imported(ik), "a painted version after an import is just another version")
+	I.select_version(ik, 0)
+	_check(I.is_imported(ik), "...and stepping back reaches the import")
+	_check(I.import_file({"key": ik}, dir.path_join("nothing-here.png")) != "", "a file that is not there is refused")
+
 	print("-- read-only")
 	var ro := {}
 	I.use_for_test(ro, true)
@@ -264,6 +284,7 @@ func _init() -> void:
 	_check(I.busy() == 0, "...and queues nothing")
 	I.set_style("changed")
 	I.add_references([files[0]])
+	_check(I.import_file({"key": "k"}, files[0]) != "", "a read-only session refuses an import")
 	_check(ro.is_empty(), "...and writes nothing")
 
 	print("illustrations_check: %s" % ("PASS" if _fails == 0 else "%d FAILED" % _fails))

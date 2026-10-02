@@ -221,17 +221,6 @@ class Patcher:
         seq_len_with_next = tokens.shape[1] + (1 if include_next_token else 0)
         patch_lengths = patch_lengths_from_start_ids(patch_start_ids, seq_len_with_next)
 
-        # Create boundaries for compatibility (though not used in BLT)
-        boundaries = torch.zeros_like(tokens, dtype=torch.bool)
-        # Mark first positions as boundaries for visualization
-        boundaries[:, 0] = True
-        if patch_start_ids.shape[1] > 1 and patch_start_ids[0, 1] < tokens.shape[1]:
-            for b in range(tokens.shape[0]):
-                for p in range(1, patch_start_ids.shape[1]):
-                    start_pos = patch_start_ids[b, p].item()
-                    if start_pos < tokens.shape[1]:
-                        boundaries[b, start_pos] = True
-
         return self._postprocess_patch_lengths(
             patch_lengths, tokens, include_next_token, scores=None
         )

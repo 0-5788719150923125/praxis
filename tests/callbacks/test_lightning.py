@@ -1541,6 +1541,41 @@ def test_a_normal_step_dumps_nothing(tmp_path):
     assert "Traceback" not in log and "took" not in log
 
 
+def test_a_long_validation_of_quick_batches_dumps_nothing(tmp_path):
+    """Validation runs between two training batches and can outlast the timeout as
+    a whole. Each validation batch re-arms, so only a stuck batch dumps: the dump
+    reads other threads without the GIL and can segfault a healthy run."""
+    wd = StallWatchdogCallback(run_dir=tmp_path, timeout_s=0.3)
+    wd.POLL_S = 0.05
+    trainer = _WatchdogTrainer()
+    wd.on_fit_start(trainer, None)
+    wd.on_train_batch_start(trainer, None, None, 0)
+    wd.on_train_batch_end(trainer, None, None, None, 0)
+    for i in range(8):  # 0.8s of validation, every batch well inside the timeout
+        wd.on_validation_batch_start(trainer, None, None, i)
+        time.sleep(0.1)
+    wd.on_train_end(trainer, None)
+
+    log = (tmp_path / "stalls.log").read_text()
+    assert "Timeout" not in log and "has been running" not in log, log
+
+
+def test_a_stuck_validation_batch_still_dumps(tmp_path):
+    wd = StallWatchdogCallback(run_dir=tmp_path, timeout_s=0.2)
+    wd.POLL_S = 0.05
+    trainer = _WatchdogTrainer()
+    wd.on_fit_start(trainer, None)
+    wd.on_validation_batch_start(trainer, None, None, 3)
+    stalls = tmp_path / "stalls.log"
+    deadline = time.monotonic() + 5.0
+    while "priority dump" not in stalls.read_text() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    log = stalls.read_text()
+    wd.on_train_end(trainer, None)
+
+    assert "validation batch 3 after step 7 has been running" in log, log
+
+
 # ------------------------------------------------------------------------------
 # engagement: the live reward drain
 # ------------------------------------------------------------------------------
