@@ -74,6 +74,14 @@ static func strip_frontmatter(body: String) -> String:
 	return body          # unterminated: not frontmatter, the whole thing is text
 
 
+## [param text] with every HTML comment removed - for a reader that honours none of the marks
+## (the Synthesis panel). Without it a cue or a hesitation is READ: measured, "Hello there.
+## <!-- speaker: Emily --> And then." came out of [method Phonemes.parse] as "hello there
+## speaker emily and then".
+static func unspoken(text: String) -> String:
+	return _rx(COMMENT).sub(text, "", true)
+
+
 ## The speaker a line hands over to, or "" when the line is not a cue.
 static func speaker_of_line(line: String) -> String:
 	var m := _rx(SPEAKER).search(line)

@@ -181,6 +181,7 @@ var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
 var end_stream: Callable            # set by main: () -> void, tears the session down
 
 var _panel: PanelContainer
+var _writer: ScriptWriter
 var _doc: DocSource
 var _text: TextEdit
 var _status: Label
@@ -305,19 +306,15 @@ func _build_panel() -> void:
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
 
-	# WHERE THE WORDS COME FROM, above the box because it decides what the box IS: a draft
-	# to type in, or a live view of a file on disk that is re-read at every cast.
-	_doc = preload("res://scripts/doc_source.gd").new()
-	_doc.setup("synth", "synthesis")
+	# THE SCRIPT: a card here, the writing in the editor window it opens. Its source is a
+	# draft or a file on disk re-read at every cast; see ScriptWriter and DocSource.
+	_writer = preload("res://scripts/script_writer.gd").new()
+	_writer.setup("synth", "synthesis", "synthesis")
+	_doc = _writer.doc
 	_doc.capture = _doc_capture
 	_doc.apply = _doc_apply
-	box.add_child(_doc)
-
-	_text = TextEdit.new()
-	_text.custom_minimum_size = Vector2(360, 180)
-	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_text.placeholder_text = "Once upon a time..."
-	box.add_child(_text)
+	_text = _writer.text_edit
+	box.add_child(_writer)
 
 	# --- The HUD: the water. A dedicated LCD readout where the fishing is
 	# drawn - the candidate's constellation, the line that visibly pulls when
@@ -482,7 +479,7 @@ func can_export_take() -> bool:
 
 
 func export_take() -> String:
-	var text := _doc.pull().strip_edges()
+	var text := Manuscript.unspoken(_doc.pull()).strip_edges()
 	if text.is_empty():
 		return ""
 	# The export is independent of the realtime game: with nothing cast, the
@@ -2307,7 +2304,7 @@ func _apply() -> void:
 		return
 	# THE REAL-TIME READ, in sync mode: the file as it is on disk right now, so the author
 	# can keep writing in their own editor and hear the change at the next cast.
-	var text := _doc.pull().strip_edges()
+	var text := Manuscript.unspoken(_doc.pull()).strip_edges()
 	if text.is_empty():
 		_status.text = "write something, then throw"
 		return

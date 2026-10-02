@@ -18,8 +18,9 @@ class_name FrontMatter
 ##   returning to the first had lost it. A document that carries its own voice is a
 ##   document that sounds the same tomorrow.
 ##
-## THE WRITE IS THE DANGEROUS HALF, because the file is the author's work and ghost is not
-## its editor. Four rules, all enforced in [method write_block]:
+## THE WRITE IS THE DANGEROUS HALF, because the file is the author's work and is often open
+## in their own editor at the same time. Four rules, enforced in [method write_block] for the
+## voice and mirrored in [method write_body] for the words written in ghost's own editor:
 ##
 ##   1. NEVER FROM A CACHE. The file is re-read from disk immediately before the edit, so
 ##      what is written back is the document as it is now, not as it was when it was
@@ -44,6 +45,9 @@ const KEY := "ghost"
 ## Suffix for the temp file rule 4 renames from. Beside the original, because a rename is
 ## only atomic within one filesystem.
 const TEMP_SUFFIX := ".ghost-tmp"
+## Heads the reason [method write_body] gives when the file moved under the editor, so the
+## caller can tell "someone else edited this" from "the write failed".
+const CONFLICT := "conflict: "
 
 
 ## Cut [param raw] into its frontmatter and its body.
@@ -127,10 +131,20 @@ static func read_block(raw: String, key := KEY) -> Dictionary:
 ## Three cases, in the order they are tried: our key is already there and its block is
 ## replaced in place; the document has frontmatter without our key and the block is
 ## appended to it; the document has no frontmatter at all and a fresh one is opened above
-## the body.
+## the body. A null [param value] REMOVES the key (and changes nothing if it is absent).
 static func put_block(raw: String, value: Variant, key := KEY) -> String:
 	var parts := split(raw)
 	var nl := String(parts.nl)
+	if value == null:
+		if not parts.has:
+			return raw
+		var h := _lines(String(parts.head))
+		var sp := _span_of(h, key)
+		if sp.is_empty():
+			return raw
+		var kept: Array = [String(parts.open_fence)] + _without(h, sp) + [String(parts.fence)]
+		kept.append_array(_lines(String(parts.body)))
+		return ("﻿" if parts.bom else "") + nl.join(kept)
 	var block := _block_lines(value, key)
 	var prefix := "﻿" if parts.bom else ""
 	if not parts.has:
@@ -180,7 +194,106 @@ static func write_block(path: String, value: Variant, key := KEY) -> String:
 	var bad := _verify(before, after, key)
 	if not bad.is_empty():
 		return bad
-	# RULE 4: write beside, read back, rename over.
+	return _commit(path, after)
+
+
+## THE BODY, written from ghost's own editor ([ScriptWriter]). The mirror image of
+## [method write_block]: the same four rules with the roles swapped - here the body is
+## ours to replace and the frontmatter must survive BYTE FOR BYTE, ghost's own key
+## included (the voice is written by [method write_block] and nothing else).
+##
+## [param expected] is the body as ghost last read or wrote it. If the file's body is no
+## longer that, the author has edited the document somewhere else since, and replacing it
+## would throw that edit away - so the write is REFUSED with [constant CONFLICT] at the
+## head of the reason, which the caller turns into a choice rather than a loss. Bodies are
+## compared with their line endings folded, because the editor holds LF whatever the file
+## uses.
+static func write_body(path: String, body: String, expected: String) -> String:
+	if path.is_empty():
+		return "no document is open"
+	if not FileAccess.file_exists(path):
+		return "there is no file at %s" % path
+	var fh := FileAccess.open(path, FileAccess.READ)
+	if fh == null:
+		return "could not read %s (error %d)" % [path, FileAccess.get_open_error()]
+	var before := fh.get_as_text()
+	fh.close()
+	if lf(String(split(before).body)) != lf(expected):
+		return CONFLICT + "%s was changed outside ghost" % path.get_file()
+	var after := put_body(before, body)
+	if after.is_empty():
+		return "%s mixes line endings around its frontmatter - refusing to rewrite it" \
+			% path.get_file()
+	if after == before:
+		return ""
+	var bad := _verify_body(before, after)
+	if not bad.is_empty():
+		return bad
+	return _commit(path, after)
+
+
+## A NEW document: [param body] with [param value] stored at [param key]. What "Sync to…"
+## does. [param template] is the document being saved FROM, if any: its frontmatter (a
+## title, the other panel's voice) comes along. [param fields] are top-level keys (`title`,
+## `author`...) written ahead of ghost's block where the template does not have them. An
+## existing file at [param path] is replaced only because the save dialog has already asked;
+## the write is still atomic.
+static func create(path: String, value: Variant, body: String, template := "",
+		key := KEY, fields := {}) -> String:
+	if path.is_empty():
+		return "no path given"
+	var raw := lf(body)
+	if not template.is_empty():
+		raw = put_body(template, body)
+		if raw.is_empty():
+			return "the document being saved from mixes line endings - save it from a draft"
+	for f in fields:
+		if not String(fields[f]).is_empty() and not _has_key(raw, String(f)):
+			raw = put_block(raw, String(fields[f]), String(f))
+	return _commit(path, put_block(raw, value, key))
+
+
+static func _has_key(raw: String, key: String) -> bool:
+	var parts := split(raw)
+	return parts.has and not _span_of(_lines(String(parts.head)), key).is_empty()
+
+
+## The document with its body replaced by [param body] and every byte before the body
+## unchanged. Pure, like [method put_block]. Returns "" when the head cannot be cut off
+## exactly - a document whose line endings differ inside it - because a rewrite that
+## guessed would change bytes the author did not touch.
+static func put_body(raw: String, body: String) -> String:
+	var parts := split(raw)
+	var nl := String(parts.nl)
+	var old := String(parts.body)
+	if not raw.ends_with(old):
+		return ""
+	var head := raw.substr(0, raw.length() - old.length())
+	var text := lf(body).replace("\n", nl) if nl != "\n" else lf(body)
+	# `---` closing a file with no body yet: the first line of the new one must not weld to it.
+	if parts.has and not text.is_empty() and old.is_empty() and not head.ends_with("\n"):
+		head += nl
+	return head + text
+
+
+## [param text] with CRLF folded to LF.
+static func lf(text: String) -> String:
+	return text.replace("\r\n", "\n")
+
+
+## RULE 3 for a body write: everything ahead of the body - BOM, fences, every frontmatter
+## line - must be identical.
+static func _verify_body(before: String, after: String) -> String:
+	var a := split(before)
+	var b := split(after)
+	if a.has != b.has or String(a.head) != String(b.head) or a.bom != b.bom \
+			or String(a.fence) != String(b.fence) or String(a.open_fence) != String(b.open_fence):
+		return "the edit would have changed the frontmatter - refusing to write"
+	return ""
+
+
+## RULE 4: write beside, read back, rename over.
+static func _commit(path: String, after: String) -> String:
 	var tmp := path + TEMP_SUFFIX
 	var out := FileAccess.open(tmp, FileAccess.WRITE)
 	if out == null:

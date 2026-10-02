@@ -1,7 +1,7 @@
 extends VBoxContainer
 class_name DocSource
 
-## DocSource - where a reading's words come from: the text box, or a file on disk.
+## DocSource - where a reading's words come from: the editor alone, or a file it syncs to.
 ##
 ## THE TEXT BOX IS A DRAFT, and a chapter is not a draft. Everything the voice panels read
 ## until now was pasted in, which has three costs that only show up on real material: the
@@ -10,10 +10,18 @@ class_name DocSource
 ## silently inherits the last one's voice and coming back has lost it; and a fix to a
 ## sentence means finding the panel, clearing it and pasting again.
 ##
-## So a panel gets a SOURCE, and it is a toggle rather than a mode: INPUT is the box exactly
-## as it was, SYNC points at a file. The two do not share storage - the draft survives being
-## away from it - and nothing downstream of the panel knows which is in use, because both
-## end up as text in the same [TextEdit].
+## So a script can be SYNCED TO A FILE, and that is a standing state rather than an act: OPEN
+## reads a document and syncs to it, SYNC TO… writes the script into a new file and syncs to
+## that, and CLEAR detaches and empties the editor, leaving a script that is saved nowhere
+## until it is synced. Nothing downstream of the panel knows which is in use, because both end up
+## as text in the same [TextEdit] (the [ScriptWriter]'s editor). Unsynced text is the panel's
+## own: it persists it in Settings as before.
+##
+## THE DOCUMENT CAN BE WRITTEN HERE TOO. The editor shows the BODY only - the frontmatter is
+## the panel's business and is written by it - and an edit made in ghost is saved on the same
+## quiet period as a dial, through [method FrontMatter.write_body], which refuses if the file
+## changed on disk since ghost last read it. That refusal is a CONFLICT the author resolves
+## (keep ghost's text, or take the file's), never a silent winner either way.
 ##
 ## SYNC IS READ AT EVERY SPEAK, not at every keystroke and not when the document was picked.
 ## The point of it is that the author keeps working in their own editor while ghost is open:
@@ -54,10 +62,21 @@ const FrontMatter_ := preload("res://scripts/front_matter.gd")
 const AUTOSAVE_MS := 1200
 ## How often the snapshot is taken. Comparing it is cheap, but not free enough to do per frame.
 const POLL_MS := 250
+## Clear's tooltip; the button is on the [ScriptWriter] card.
+const CLEAR_TIP := ("Start an empty script that is saved nowhere, and forget the file it was "
+	+ "synced to. The file itself is left exactly as it is. Text that was not synced anywhere "
+	+ "can be brought back with Ctrl+Z in the editor.")
+## Open…'s tooltip; the button is on the [ScriptWriter] card.
+const OPEN_TIP := ("Open a Markdown file and sync to it: it is read fresh at every Speak, "
+	+ "and edits made here are saved into it. Edit it in your own editor too if you like. "
+	+ "Its YAML frontmatter is never shown or spoken - the panel keeps the voice there.")
 
 ## A document was opened and its voice (if it had one) applied.
 signal opened(path: String)
-## The toggle moved. The panel re-syncs its text box off this.
+## A status line was shown (or cleared, with ""). The panel's script card mirrors it, so a
+## failed save is visible with the editor window closed.
+signal noted(msg: String)
+## The script was synced to a file, or detached from one.
 signal mode_changed(sync: bool)
 
 ## The panel's settings, as they are right now -> the dictionary to store under this
@@ -69,16 +88,19 @@ var apply: Callable
 
 var _section := "generative"     # the [Settings] section this source's draft and path live in
 var _block := "generative"       # our sub-key inside the document's `ghost:` frontmatter
+## Where the file dialogs are added. A dialog parented inside the editor's own Window could
+## not be shown with that window closed, and Open… is on the panel's card too.
+var dialog_host: Node = null
+
 var _text: TextEdit              # the panel's box, driven by this widget in sync mode
-var _mode_input: Button
-var _mode_sync: Button
-var _row: HBoxContainer
+var _sync := false               # synced to _path
+var _fields := {}                # top-level frontmatter fields (title...) of an UNSYNCED script
 var _name: Label
 var _status: Label
+var _conflict_row: HBoxContainer
 var _path := ""
-var _draft := ""                 # the pasted text, kept aside while a document is open
-var _body := ""                  # the last body successfully read from _path
-var _dialog: FileDialog = null
+var _body := ""                  # the body as last read from or written to _path (LF)
+var _dialog: Window = null       # the one dialog open at a time (file or confirmation)
 var _syncing := false            # a programmatic write to the box must not mark it edited
 # AUTOSAVE. `_seen` is the last settings snapshot observed, `_saved` the last one written to
 # the document, and `_settled_ms` when `_seen` stopped changing. Three values rather than one
@@ -89,6 +111,11 @@ var _saved := ""
 var _settled_ms := 0
 var _polled_ms := 0
 var _autosave_note := ""         # last failure said, so a retry does not repeat it
+# THE BODY'S AUTOSAVE, the same quiet period keyed on the editor's version counter.
+var _body_seen_v := -1
+var _body_settled_ms := 0
+var _body_failed_v := -1         # a write refused at this version is not retried until an edit
+var _conflict := false           # the file moved under an unsaved edit; the author decides
 ## Let a gate that is specifically testing the autosave run it in a probe. Mirrors - and is
 ## deliberately separate from - [method Settings.allow_writes_for_test]: flipping the global
 ## would also let the gate write the author's real config, and the thing under test here is a
@@ -109,30 +136,28 @@ func setup(section: String, block: String) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
 	add_child(row)
-	var group := ButtonGroup.new()
-	_mode_input = _mode_button("Input", group,
-		"Read what is typed in the box below. The draft is remembered between sessions, "
-		+ "and it is kept while a document is open - switching back brings it straight back.")
-	_mode_sync = _mode_button("Sync", group,
-		"Read a file on disk instead, fresh at every Speak. Keep writing in your own "
-		+ "editor while ghost is open: save, press Speak, and the reading is the file as it "
-		+ "is now. YAML frontmatter at the top is never spoken - it is where the voice is "
-		+ "kept, written there on its own a moment after you stop adjusting a setting.")
-	row.add_child(_mode_input)
-	row.add_child(_mode_sync)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
-
-	_row = HBoxContainer.new()
-	_row.add_theme_constant_override("separation", 4)
-	add_child(_row)
 	_name = Label.new()
-	_name.add_theme_font_size_override("font_size", 12)
+	_name.add_theme_font_size_override("font_size", 13)
 	_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_row.add_child(_name)
-	_row.add_child(_tool("Open…", "Pick the document to read.", _open_dialog))
+	row.add_child(_name)
+	row.add_child(_tool("Sync to…", "Write this script into a Markdown file and keep it there: "
+		+ "from now on every edit is saved into the file a moment after you stop typing, with "
+		+ "this panel's voice in its frontmatter.", _sync_to_dialog))
+
+	_conflict_row = HBoxContainer.new()
+	_conflict_row.add_theme_constant_override("separation", 4)
+	_conflict_row.visible = false
+	add_child(_conflict_row)
+	var cl := Label.new()
+	cl.text = "Changed on disk and here:"
+	cl.add_theme_font_size_override("font_size", 12)
+	cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_conflict_row.add_child(cl)
+	_conflict_row.add_child(_tool("Keep mine", "Write the text in the editor over the file.",
+		func() -> void: _write_body(true)))
+	_conflict_row.add_child(_tool("Take the file's", "Throw away the edits made here and show "
+		+ "the file as it is on disk.", func() -> void: reload()))
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -142,18 +167,17 @@ func setup(section: String, block: String) -> void:
 	add_child(_status)
 
 	_path = str(Settings.read(_section, "doc_path", ""))
-	var want_sync: bool = bool(Settings.read(_section, "sync", false)) and not _path.is_empty()
-	_syncing = true
-	(_mode_sync if want_sync else _mode_input).button_pressed = true
-	_syncing = false
+	_sync = bool(Settings.read(_section, "sync", false)) and not _path.is_empty()
+	var f: Variant = Settings.read(_section, "fields", {})
+	_fields = (f as Dictionary).duplicate() if f is Dictionary else {}
 	_refresh_row()
 
 
 ## Hand the widget the panel's text box. It owns what is IN it from here on: a synced body
-## is written in read-only, and the draft is put back when the toggle returns to Input.
+## is shown in it, and unsynced text is the panel's persisted draft.
 ##
 ## Deliberately separate from [method setup] so the widget can be built above the box it
-## drives - the toggle belongs over the text, and a Control is added where it is shown.
+## drives - the source row belongs over the text, and a Control is added where it is shown.
 ##
 ## IN SYNC MODE THE DOCUMENT IS THE SOURCE OF TRUTH, from the first frame, and that is a
 ## correction the autosave forced. This used to read only the BODY at boot and leave the
@@ -164,14 +188,14 @@ func setup(section: String, block: String) -> void:
 ## both directions, and for a file the author owns, the file wins.
 func bind_text(te: TextEdit) -> void:
 	_text = te
-	_draft = str(Settings.read(_section, "text", ""))
+	_body_seen_v = te.get_version()
 	if is_sync():
 		# The body AND the voice - and `reload` seeds the autosave's snapshot, so opening
-		# ghost on a document is not followed by ghost writing that document.
-		if not reload():
-			_show(_draft)
+		# ghost on a document is not followed by ghost writing that document. A file that has
+		# gone shows nothing and says so; Clear or Open moves on from it.
+		reload()
 	else:
-		_show(_draft)
+		_show(str(Settings.read(_section, "text", "")))
 	_apply_editable()
 
 
@@ -184,21 +208,58 @@ func is_quiet() -> bool:
 
 ## True when the reading comes from a file.
 func is_sync() -> bool:
-	return _mode_sync != null and _mode_sync.button_pressed and not _path.is_empty()
+	return _sync and not _path.is_empty()
 
 
-## The document's path, or "" in Input mode.
+## A TOP-LEVEL FRONTMATTER FIELD - `title:`, `author:`, `book:` - which is the document's own
+## metadata rather than ghost's block. Synced, it is read from the file as it is now (TEXTUALLY,
+## one line, so a head MiniYaml refuses still yields it); unsynced, it is what the panel set,
+## else the script's own frontmatter if it was pasted with one.
+func field(key: String) -> String:
+	if is_sync():
+		if not FileAccess.file_exists(_path):
+			return ""
+		return BookLayout.field_of(FileAccess.get_file_as_string(_path), key)
+	var v := str(_fields.get(key, ""))
+	if v.is_empty() and _text != null:
+		v = BookLayout.field_of(_text.text, key)
+	return v
+
+
+## Set a field. Synced, it is written into the file at once - one key, by the same checked line
+## surgery as the voice, and REMOVED when emptied rather than left as an empty key; unsynced, it
+## is kept with the script and goes into the file at Sync to…. Called on a person's edit, so not
+## refused in a read-only process (the same reasoning as the flush on Speak).
+func set_field(key: String, value: String) -> bool:
+	value = value.strip_edges()
+	if field(key) == value:
+		return true
+	if not is_sync():
+		if value.is_empty():
+			_fields.erase(key)
+		else:
+			_fields[key] = value
+		Settings.write(_section, "fields", _fields.duplicate())
+		return true
+	var err := FrontMatter_.write_block(_path, value if not value.is_empty() else null, key)
+	if not err.is_empty():
+		_note("⚠  " + err)
+		return false
+	return true
+
+
+## The document's path, or "" when the script is synced to nothing.
 func doc_path() -> String:
 	return _path if is_sync() else ""
 
 
-## WHAT TO PERSIST as the panel's text. In sync mode this is the draft that was set aside,
-## never the document's body - a panel that saved the body would overwrite the author's own
-## draft with a copy of a file that is already on disk.
+## WHAT TO PERSIST as the panel's text: the script when it is synced to nothing, and nothing
+## when it is - the file is where a synced script lives, and a copy in Settings would only be
+## a stale one.
 func draft() -> String:
-	if is_sync():
-		return _draft
-	return _text.text if _text != null else _draft
+	if is_sync() or _text == null:
+		return ""
+	return _text.text
 
 
 ## THE REAL-TIME READ: the document as it is on disk at this instant - its words AND its
@@ -211,20 +272,72 @@ func draft() -> String:
 ## Flushed, the panel's latest change is in the file, and what comes back is the file - the
 ## author's own edits to the frontmatter included.
 ##
-## In Input mode it is just the box. A read that fails keeps the last body rather than
+## Synced to nothing, it is just the box. A read that fails keeps the last body rather than
 ## falling silent - a file being saved under us is a moment, not a reason to stop a reading.
+##
+## AN EDIT MADE IN GHOST IS WRITTEN FIRST, for the same reason. If it cannot be - the file
+## changed outside ghost as well - the reading is the text on screen, and the file is left
+## for the author to reconcile; replacing their unsaved words with the file's would be the
+## one outcome nobody chose.
 func pull() -> String:
 	if not is_sync():
 		return _text.text if _text != null else ""
 	_flush()
+	_flush_body()
 	var raw: Variant = _read_raw()
 	if raw == null:
-		return _body
-	var parts := FrontMatter_.split(String(raw))
-	_body = String(parts.body)
+		return _text.text if _unsaved() else _body
+	if _unsaved():
+		_import(String(raw), true)
+		return _text.text
+	_body = FrontMatter_.lf(String(FrontMatter_.split(String(raw)).body))
 	_show(_body)
 	_import(String(raw), true)
 	return _body
+
+
+## The editor holds words the file does not.
+func _unsaved() -> bool:
+	return is_sync() and _text != null and _text.text != _body
+
+
+## Write the editor's body now if it is ahead of the file. Refused where the autosave is.
+func _flush_body() -> void:
+	if not _unsaved() or (Settings.is_read_only() and not _autosave_for_test):
+		return
+	_write_body(false)
+
+
+## THE BODY WRITE. [param force] is "Keep mine": the file's current body becomes the
+## expected one, so the editor's text replaces it - asked for by a person, never automatic.
+func _write_body(force: bool) -> bool:
+	if _text == null or _path.is_empty():
+		return false
+	var expected := _body
+	if force:
+		var raw: Variant = _read_raw()
+		if raw == null:
+			return false
+		expected = FrontMatter_.lf(String(FrontMatter_.split(String(raw)).body))
+	var mine := _text.text
+	var err := FrontMatter_.write_body(_path, mine, expected)
+	if err.is_empty():
+		_body = mine
+		_body_failed_v = -1
+		if _conflict:
+			_conflict = false
+			_conflict_row.visible = false
+			_note("✓  %s saved." % _path.get_file())
+		return true
+	_body_failed_v = _text.get_version()
+	if err.begins_with(FrontMatter_.CONFLICT):
+		_conflict = true
+		_conflict_row.visible = true
+		_note("⚠  %s was changed outside ghost while you were editing it here. Nothing is "
+			% _path.get_file() + "saved until you choose which to keep.")
+	else:
+		_note("⚠  " + err)
+	return false
 
 
 ## Write the panel's settings now if they differ from what was last written - the autosave's
@@ -250,8 +363,10 @@ func reload() -> bool:
 	var raw: Variant = _read_raw()
 	if raw == null:
 		return false
-	var parts := FrontMatter_.split(String(raw))
-	_body = String(parts.body)
+	_body = FrontMatter_.lf(String(FrontMatter_.split(String(raw)).body))
+	_conflict = false
+	_conflict_row.visible = false
+	_body_failed_v = -1
 	_show(_body)
 	_import(String(raw))
 	return true
@@ -302,7 +417,7 @@ func save() -> bool:
 ## before anything is written, so a slider dragged for ten seconds is one write at the end and
 ## not twelve along the way.
 func _process(_delta: float) -> void:
-	if not is_sync() or not capture.is_valid():
+	if not is_sync():
 		return
 	# An export render, the offline analyzer and a test probe all boot the whole app against
 	# the author's own settings - and would find their own document open. A person pressing Speak
@@ -313,6 +428,9 @@ func _process(_delta: float) -> void:
 	if now - _polled_ms < POLL_MS:
 		return
 	_polled_ms = now
+	_poll_body(now)
+	if not capture.is_valid():
+		return
 	var snap := _snapshot()
 	if snap != _seen:
 		_seen = snap
@@ -328,6 +446,22 @@ func _process(_delta: float) -> void:
 	if err != _autosave_note:
 		_autosave_note = err
 		_note("⚠  " + err)
+
+
+## The body's half of the autosave: written once the editor's version has held still for
+## [constant AUTOSAVE_MS]. A conflict or a refused write waits for the next edit (or a choice).
+func _poll_body(now: int) -> void:
+	if _text == null:
+		return
+	var v := _text.get_version()
+	if v != _body_seen_v:
+		_body_seen_v = v
+		_body_settled_ms = now
+		return
+	if _conflict or v == _body_failed_v or now - _body_settled_ms < AUTOSAVE_MS:
+		return
+	if _unsaved():
+		_write_body(false)
 
 
 ## See [member _autosave_for_test]. Nothing but a gate may call this.
@@ -437,19 +571,6 @@ func _merged_block() -> Dictionary:
 # --- internals ----------------------------------------------------------------
 
 
-func _mode_button(label: String, group: ButtonGroup, tip: String) -> Button:
-	var b := Button.new()
-	b.text = label
-	b.toggle_mode = true
-	b.button_group = group
-	b.tooltip_text = tip
-	b.custom_minimum_size = Vector2(60, 0)
-	b.toggled.connect(func(on: bool) -> void:
-		if on:
-			_on_mode(label == "Sync"))
-	return b
-
-
 func _tool(label: String, tip: String, action: Callable) -> Button:
 	var b := Button.new()
 	b.text = label
@@ -458,51 +579,35 @@ func _tool(label: String, tip: String, action: Callable) -> Button:
 	return b
 
 
-## THE SWAP, and the reason the draft is a member rather than a read of Settings: the box
-## holds the draft at the moment the toggle moves, and Settings holds whatever the panel's
-## debounce last wrote, which is up to a second behind.
-func _on_mode(sync: bool) -> void:
-	if _syncing:
-		return
-	if sync and _path.is_empty():
-		_refresh_row()
-		_open_dialog()
-		return
-	if _text != null:
-		if sync:
-			_draft = _text.text
-		else:
-			_show(_draft)
-	Settings.write(_section, "sync", sync)
-	_refresh_row()
-	_apply_editable()
-	if sync:
-		reload()
-	else:
-		_note("")
-	mode_changed.emit(sync)
+## Before the editor stops showing the document: write what it holds, and refuse to move
+## if that cannot be done - the edits would otherwise be replaced by the draft and lost.
+func _leave_document() -> bool:
+	if _text == null or _path.is_empty() or _text.text == _body:
+		return true
+	if _write_body(false):
+		return true
+	_note("⚠  Edits to %s could not be written - settle that first."
+		% _path.get_file())
+	return false
 
 
 func _apply_editable() -> void:
 	if _text == null:
 		return
-	# The box is a VIEW of the document in sync mode. It is still selectable and
-	# scrollable - being able to read along is most of why it is shown at all - but typing
-	# into it would be typing into something the next Speak overwrites.
-	_text.editable = not is_sync()
+	# Editable in both: in sync mode an edit is written back into the file's body (see
+	# [method _write_body]), so it no longer has to be made in another editor.
+	_text.editable = true
 	_text.placeholder_text = "Once upon a time..." if not is_sync() \
-		else "The document's text appears here when it is read."
+		else "This document has no text yet."
 
 
 func _refresh_row() -> void:
-	var sync: bool = _mode_sync != null and _mode_sync.button_pressed
-	_row.visible = sync
-	if _path.is_empty():
-		_name.text = "no document"
-		_name.tooltip_text = "Press Open… to pick one."
-	else:
-		_name.text = _path.get_file()
+	if is_sync():
+		_name.text = "Synced to %s" % _path.get_file()
 		_name.tooltip_text = _path
+	else:
+		_name.text = "Not synced to a file"
+		_name.tooltip_text = "This script is kept by ghost alone. Sync to… writes it into a file."
 
 
 func _show(body: String) -> void:
@@ -513,6 +618,7 @@ func _show(body: String) -> void:
 	_syncing = true
 	# The caret and the scroll, kept: a re-read at every Speak would otherwise throw the
 	# reader back to the top of the chapter every time.
+	body = FrontMatter_.lf(body)
 	var col := _text.get_caret_column()
 	var line := _text.get_caret_line()
 	var scroll := _text.scroll_vertical
@@ -520,6 +626,8 @@ func _show(body: String) -> void:
 	_text.set_caret_line(mini(line, maxi(0, _text.get_line_count() - 1)))
 	_text.set_caret_column(col)
 	_text.scroll_vertical = scroll
+	# A body shown is not an edit: the autosave starts counting from here.
+	_body_seen_v = _text.get_version()
 	_syncing = false
 
 
@@ -565,45 +673,159 @@ func _import(raw: String, quiet := false) -> void:
 	_settled_ms = Time.get_ticks_msec()
 
 
-func _open_dialog() -> void:
+## OPEN A DOCUMENT AND SYNC TO IT. Text synced to nothing would be replaced by the file's and
+## exists nowhere else, so that is asked about first; a synced script is in its file already.
+func open() -> void:
 	if _dialog != null and is_instance_valid(_dialog):
 		return
-	_dialog = FileDialog.new()
-	_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	if not is_sync() and _text != null and not _text.text.strip_edges().is_empty():
+		var ask := ConfirmationDialog.new()
+		ask.title = "Open a document"
+		ask.dialog_text = ("This script is not synced to a file, and opening one replaces it.\n"
+			+ "Use Sync to… first to keep it.")
+		ask.ok_button_text = "Open anyway"
+		ask.confirmed.connect(func() -> void:
+			_close_dialog()
+			_open_dialog())
+		ask.canceled.connect(_close_dialog)
+		_popup(ask)
+		return
+	_open_dialog()
+
+
+func _open_dialog() -> void:
+	var d := _file_dialog(FileDialog.FILE_MODE_OPEN_FILE, "Open and sync to a document")
+	d.filters = PackedStringArray(["*.md, *.markdown, *.txt ; Text", "* ; Every file"])
+	d.file_selected.connect(_on_picked)
+	_popup(d)
+
+
+func _sync_to_dialog() -> void:
+	if _dialog != null and is_instance_valid(_dialog):
+		return
+	var d := _file_dialog(FileDialog.FILE_MODE_SAVE_FILE, "Sync this script to a file")
+	d.filters = PackedStringArray(["*.md ; Markdown"])
+	d.current_file = _path.get_file() if not _path.is_empty() else "chapter.md"
+	d.file_selected.connect(sync_to)
+	_popup(d)
+
+
+func _file_dialog(mode: FileDialog.FileMode, title: String) -> FileDialog:
+	var d := FileDialog.new()
+	d.file_mode = mode
+	d.access = FileDialog.ACCESS_FILESYSTEM
 	# In-window, never native - the portal dialog shows nothing at all on a Linux box
 	# without xdg-desktop-portal, which is the "I pressed it and nothing happened" report
 	# the film importer already carries this note for.
-	_dialog.use_native_dialog = false
-	_dialog.title = "Read from a document"
-	_dialog.filters = PackedStringArray([
-		"*.md, *.markdown, *.txt ; Text", "* ; Every file"])
+	d.use_native_dialog = false
+	d.title = title
 	if not _path.is_empty():
-		_dialog.current_dir = _path.get_base_dir()
+		d.current_dir = _path.get_base_dir()
 	elif not OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS).is_empty():
-		_dialog.current_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
-	_dialog.size = Vector2i(820, 560)
-	_dialog.file_selected.connect(_on_picked)
-	_dialog.canceled.connect(_close_dialog)
-	add_child(_dialog)
-	_dialog.popup_centered()
+		d.current_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
+	d.size = Vector2i(820, 560)
+	d.canceled.connect(_close_dialog)
+	return d
+
+
+func _popup(d: Window) -> void:
+	_dialog = d
+	(dialog_host if dialog_host != null else self).add_child(d)
+	d.popup_centered()
 
 
 func _on_picked(path: String) -> void:
 	_close_dialog()
-	if _text != null and not is_sync():
-		_draft = _text.text     # the box is about to become the document's
+	if is_sync() and not _leave_document():
+		return
+	if not is_sync():
+		_fields = {}             # they belonged to the unsynced script this replaces
+		Settings.write(_section, "fields", {})
 	_path = path
+	_sync = true
 	Settings.write(_section, "doc_path", _path)
 	Settings.write(_section, "sync", true)
-	_syncing = true
-	_mode_sync.button_pressed = true
-	_syncing = false
 	_refresh_row()
 	_apply_editable()
 	if reload():
 		opened.emit(_path)
 	mode_changed.emit(true)
+
+
+## SYNC THE SCRIPT TO A FILE: write it there now - the panel's voice in the frontmatter - and
+## keep it there from then on. Synced already, the new file takes the old one's frontmatter
+## too (a title, the other panel's voice), and the old file is left as it was.
+func sync_to(path: String) -> bool:
+	_close_dialog()
+	if _text == null:
+		return false
+	if not path.get_extension().to_lower() in ["md", "markdown", "txt"]:
+		path += ".md"
+	var template := ""
+	var ghost := {}
+	if is_sync():
+		var raw: Variant = _read_raw()
+		if raw != null:
+			template = String(raw)
+			var res := FrontMatter_.read_block(template)
+			if res.data is Dictionary:
+				ghost = (res.data as Dictionary).duplicate(true)
+	if capture.is_valid() and capture.call() is Dictionary:
+		ghost[_block] = capture.call()
+	var fields := {}
+	for k in _fields:
+		fields[k] = _fields[k]
+	var err := FrontMatter_.create(path, ghost, _text.text, template, FrontMatter_.KEY,
+		{} if is_sync() else fields)
+	if not err.is_empty():
+		_note("⚠  " + err)
+		return false
+	_fields = {}                 # in the file now
+	Settings.write(_section, "fields", {})
+	_path = path
+	_sync = true
+	Settings.write(_section, "doc_path", _path)
+	Settings.write(_section, "sync", true)
+	_refresh_row()
+	_apply_editable()
+	reload()
+	_note("✓  Synced to %s - edits are saved there from now on." % _path.get_file())
+	opened.emit(_path)
+	mode_changed.emit(true)
+	return true
+
+
+## A SCRIPT SAVED NOWHERE, AND NO FILE REMEMBERED - and no title, author or book either. Synced, the file is left exactly as it is
+## (edits still waiting are written first, and a clash must be settled before the link is
+## dropped); not synced, the text is deleted as an EDIT, so Ctrl+Z brings it back.
+func clear() -> void:
+	if _text == null:
+		return
+	if is_sync():
+		if not _leave_document():
+			return
+		var was := _path.get_file()
+		_sync = false
+		Settings.write(_section, "text", "")
+		_show("")
+		_note("No longer synced to %s, which is unchanged. This script is saved nowhere until "
+			% was + "you Sync it to a file.")
+	else:
+		_text.begin_complex_operation()
+		_text.select_all()
+		_text.delete_selection()
+		_text.end_complex_operation()
+		_note("")
+	_path = ""
+	_fields = {}
+	Settings.write(_section, "sync", false)
+	Settings.write(_section, "doc_path", "")
+	Settings.write(_section, "fields", {})
+	_conflict = false
+	_conflict_row.visible = false
+	_refresh_row()
+	_apply_editable()
+	mode_changed.emit(false)
 
 
 func _close_dialog() -> void:
@@ -615,3 +837,4 @@ func _close_dialog() -> void:
 func _note(msg: String) -> void:
 	_status.text = msg
 	_status.visible = not msg.is_empty()
+	noted.emit(msg)

@@ -217,6 +217,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "doc_source.gd",
             "front_matter.gd",
             "manuscript.gd",
+            "script_marks.gd",
+            "script_highlighter.gd",
+            "script_writer.gd",
             "subtitles.gd",
             "voice_host.gd",
             "generative_editor.gd",
@@ -1016,6 +1019,67 @@ def _const_block(text: str, name: str) -> str:
     return m.group(1) if m else ""
 
 
+def _gd_string(lit: str) -> str:
+    """A GDScript string literal's value (the escapes the registries use)."""
+    return lit.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
+
+
+def _render_script_doc(marks: Script) -> str:
+    """docs/script.md, from ScriptMarks.REGISTRY + GROUPS: every authoring mark a script
+    may carry, as the editor's palette offers them."""
+    groups = re.findall(
+        r'"(\w+)":\s*\{"label":\s*"([^"]*)"', _const_block(marks.text, "GROUPS")
+    )
+    block = _const_block(marks.text, "REGISTRY")
+    entries = re.findall(r'\n\t"(\w+)": \{(.*?)\n\t\},', block, re.S)
+    if not groups or not entries:
+        warn("could not parse ScriptMarks.REGISTRY / GROUPS")
+    str_field = r'"{}":\s*"((?:[^"\\]|\\.)*)"'
+    rows = []
+    for key, body in entries:
+        f = {}
+        for name in ("label", "group", "blurb", "before", "fill", "after"):
+            m = re.search(str_field.format(name), body)
+            f[name] = _gd_string(m.group(1)) if m else ""
+            if not m and name in ("label", "group", "blurb"):
+                warn(f"ScriptMarks.REGISTRY['{key}'] has no {name}")
+        modes = re.search(r'"modes":\s*\[([^\]]*)\]', body)
+        f["modes"] = re.findall(r'"(\w+)"', modes.group(1)) if modes else []
+        rows.append((key, f))
+    lines = [
+        AUTOGEN_HEADER,
+        "# Writing a script",
+        "",
+        "Every mark a Generative or Synthesis script may carry - the list the "
+        "script editor's palette (**Edit script…** on either panel) is built "
+        "from, and the patterns it highlights with. A script is Markdown; "
+        "YAML frontmatter at the top is the panel's and never shown in the "
+        "editor or spoken.",
+        "",
+        _full_doc(marks.doc),
+        "",
+        f"Registry: `ScriptMarks.REGISTRY` in {_source_link(marks.rel)} "
+        f"({len(rows)} entries). Each one is proven against the parser that "
+        "reads it by `tests/script_marks_check.gd`.",
+        "",
+    ]
+    for gkey, glabel in groups:
+        mine = [(k, f) for k, f in rows if f["group"] == gkey]
+        if not mine:
+            continue
+        lines.extend([f"## {glabel}", "", "| Mark | Example | Panels | What it does |",
+                      "|---|---|---|---|"])
+        for k, f in mine:
+            ex = (f["before"] + f["fill"] + f["after"]).strip().replace("|", "\\|")
+            panels = ", ".join(m.capitalize() for m in f["modes"])
+            lines.append(f"| {f['label']} | `{ex}` | {panels} | {f['blurb']} |")
+        lines.append("")
+    for k, f in rows:
+        if f["group"] not in [g for g, _ in groups]:
+            warn(f"ScriptMarks.REGISTRY['{k}'] names unknown group '{f['group']}'")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _render_stage_doc(cast: Script, actions: Script, track: Script) -> str:
     action_pairs = _parse_registry_dict(actions.text)
     cast_pairs = _parse_registry_dict(cast.text)
@@ -1480,6 +1544,11 @@ def main() -> int:
             "Filters",
             "the look registry - the post-process over the whole picture.",
         ),
+        (
+            "script",
+            "Writing a script",
+            "every authoring mark a script may carry (the editor's palette).",
+        ),
         ("cli", "CLI flags", "every ghost command-line flag."),
     ]
 
@@ -1514,6 +1583,7 @@ def main() -> int:
     )
     _write_if_changed(DOCS / "media.md", _render_media_doc(scripts["medium"]))
     _write_if_changed(DOCS / "filters.md", _render_filters_doc(scripts["filters"]))
+    _write_if_changed(DOCS / "script.md", _render_script_doc(scripts["script_marks"]))
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))
     _write_if_changed(DOCS / "index.md", _render_index(scripts, scenes, pages))
 

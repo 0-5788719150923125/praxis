@@ -302,6 +302,7 @@ const TONE_PRESETS := {
 
 var _host: VoiceHost
 var _panel: PanelContainer
+var _writer: ScriptWriter
 var _doc: DocSource
 var _text: TextEdit
 var _voices: OptionButton
@@ -556,25 +557,20 @@ func _build_panel() -> void:
 	title_row.add_child(hide)
 
 	var hint := Label.new()
-	hint.text = "Paste a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Inline phonetics still work: [K AE T]. A line reading <!-- speaker: Emily --> hands the rest to Emily's tab; <!-- hesitation --> is a longer rest for effect."
+	hint.text = "Write or open a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Edit script… lists every mark the reading understands - speakers, hesitations, pictures, pronunciations."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
 
-	# WHERE THE WORDS COME FROM, above the box because it decides what the box IS: a draft
-	# to type in, or a live view of a file on disk that is re-read at every Speak.
-	_doc = preload("res://scripts/doc_source.gd").new()
-	_doc.setup("generative", "generative")
+	# THE SCRIPT: a card here, the writing in the editor window it opens. Where the words
+	# come from (a draft, or a file on disk re-read at every Speak) is the DocSource inside it.
+	_writer = preload("res://scripts/script_writer.gd").new()
+	_writer.setup("generative", "generative", "generative")
+	_doc = _writer.doc
 	_doc.capture = _doc_capture
 	_doc.apply = _doc_apply
-	box.add_child(_doc)
-
-	_text = TextEdit.new()
-	_text.custom_minimum_size = Vector2(360, 180)
-	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_text.placeholder_text = "Once upon a time..."
-	_text.tooltip_text = "The script to read. Paste a whole chapter - it is cut into sentences and only a couple are ever synthesized ahead, so the first words play within seconds however long it is. Square brackets pin a pronunciation: [B IY1 UW0 K S]. A line of its own reading <!-- speaker: Emily --> (or [speaker: Emily]) reads everything after it with Emily's tab, and the tabs follow the names the script uses. <!-- hesitation --> anywhere is a longer rest there (<!-- hesitation: 2.5 --> for exactly 2.5 seconds). Any other HTML comment is stripped rather than spoken. A template macro reads its default and never its own text: ${CHAPTERS_BEFORE_IN_WORDS:twenty-one} is read as \"twenty-one\"."
+	_text = _writer.text_edit
 	_text.text_changed.connect(func() -> void:
 		# The cast follows the text whoever changed it - a document arriving is exactly
 		# when a whole new set of names appears.
@@ -587,7 +583,7 @@ func _build_panel() -> void:
 			_stale = true            # the reading no longer matches the box
 			_show_speak_label()
 		)
-	box.add_child(_text)
+	box.add_child(_writer)
 
 	# A rule between the script and the cast. Everything from here to the tab bar
 	# is global; everything below the tab bar belongs to the tab that is showing.
@@ -1209,14 +1205,11 @@ func book_document(body := "") -> Dictionary:
 		"author": _doc_field(src, "author"), "inks": inks}
 
 
-## A top-level frontmatter field (`title:`, `book:`): the open document's, else the pasted
-## text's own. Read TEXTUALLY, one line, for the reason FrontMatter.read_block gives - a head
-## holding a construct MiniYaml refuses must still yield its title.
+## A top-level frontmatter field (`title:`, `book:`): what the source says (the synced file,
+## or the panel's own fields for an unsynced script), else [param src]'s own frontmatter.
 func _doc_field(src: String, key: String) -> String:
-	var raw := src
-	if _doc != null and _doc.is_sync() and FileAccess.file_exists(_doc.doc_path()):
-		raw = FileAccess.get_file_as_string(_doc.doc_path())
-	return BookLayout.field_of(raw, key)
+	var v := _doc.field(key) if _doc != null else ""
+	return v if not v.is_empty() else BookLayout.field_of(src, key)
 
 
 # --- voices, plural and named --------------------------------------------------

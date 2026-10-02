@@ -23,10 +23,10 @@ func _ready() -> void:
 	# host, and nothing here needs a python process.
 	_ed = GenerativeEditor.new()
 	_ed._build_panel()
-	# INPUT MODE, which every check here is written against: the settings are the author's own,
-	# and in Sync mode the open chapter's title would be read before every test script.
-	if _ed._doc != null and _ed._doc._mode_sync != null:
-		_ed._doc._mode_sync.set_pressed_no_signal(false)
+	# SYNCED TO NOTHING, which every check here is written against: the settings are the
+	# author's own, and synced, the open chapter's title would be read before every test script.
+	if _ed._doc != null:
+		_ed._doc._sync = false
 	# THE PANEL, HOWEVER, MUST BE IN THE TREE. Range only emits value_changed for
 	# an owner that is inside one (Range::Shared::emit_value_changed skips the
 	# rest), so a panel built outside it has every slider callback silently dead -

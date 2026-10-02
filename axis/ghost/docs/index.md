@@ -43,6 +43,7 @@ core. The commitments:
 - [Masking](masking.md) - the video chroma-key editor: model, effects, headless tools.
 - [Media](media.md) - the presentation registry - what the show is carried on.
 - [Filters](filters.md) - the look registry - the post-process over the whole picture.
+- [Writing a script](script.md) - every authoring mark a script may carry (the editor's palette).
 - [CLI flags](cli.md) - every ghost command-line flag.
 
 ## Directory layout
@@ -190,9 +191,12 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
 - [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
-- [`doc_source.gd`](../scripts/doc_source.gd) **DocSource** - where a reading's words come from: the text box, or a file on disk.
+- [`doc_source.gd`](../scripts/doc_source.gd) **DocSource** - where a reading's words come from: the editor alone, or a file it syncs to.
 - [`front_matter.gd`](../scripts/front_matter.gd) **FrontMatter** - YAML frontmatter on a Markdown document, read and (carefully) written.
 - [`manuscript.gd`](../scripts/manuscript.gd) **Manuscript** - what a chapter file SAYS about itself, beyond the words to be read.
+- [`script_marks.gd`](../scripts/script_marks.gd) **ScriptMarks** - every authoring mark a script may carry, registered with what it does.
+- [`script_highlighter.gd`](../scripts/script_highlighter.gd) **ScriptHighlighter** - colours a script by the marks the panel reading it understands.
+- [`script_writer.gd`](../scripts/script_writer.gd) **ScriptWriter** - where a voice panel's script is written: a card in the panel, and an editor window it opens.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 - [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
 - [`generative_editor.gd`](../scripts/generative_editor.gd) **GenerativeEditor** - the neural synthesis path (VOICE_PLAN.md P4).

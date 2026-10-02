@@ -24,6 +24,8 @@ extends SceneTree
 ##      and every foreign line - comments, blank lines, quoting styles, constructs MiniYaml
 ##      cannot even parse - exactly where it was.
 ##   4. THE DISK. A real file, written and read back, and a refusal that leaves it alone.
+##   5. THE BODY, written from ghost's own editor: everything ahead of it byte-identical, and
+##      a file edited elsewhere since it was read REFUSED rather than overwritten.
 ##
 ## Run: godot --headless --path axis/ghost --script tests/doc_source_check.gd
 
@@ -41,6 +43,7 @@ func _init() -> void:
 	_split()
 	_surgery()
 	_disk()
+	_body()
 	if fails == 0:
 		print("doc_source_check: ALL OK (%d checks)" % checks)
 	else:
@@ -383,6 +386,106 @@ func _disk() -> void:
 		"a missing document was CREATED by a save")
 
 	for f in [path, clean]:
+		DirAccess.remove_absolute(f)
+	DirAccess.remove_absolute(DIR)
+
+
+# --- 5. the body ---------------------------------------------------------------
+
+
+func _body() -> void:
+	const NEW := "\n# Chapter One\n\nThe rain had stopped.\n"
+	var old_body := String(FrontMatter_.split(AWKWARD).body)
+
+	# THE HEAD IS UNTOUCHED: comments, blank lines, a block scalar, the fences - every byte
+	# ahead of the body - and the body is exactly the new one.
+	var out := FrontMatter_.put_body(AWKWARD, NEW)
+	_ok(out.begins_with(AWKWARD.substr(0, AWKWARD.length() - old_body.length())),
+		"replacing the body changed the frontmatter ahead of it")
+	_ok(String(FrontMatter_.split(out).body) == NEW, "the new body did not land exactly")
+	_ok(FrontMatter_._verify_body(AWKWARD, out).is_empty(),
+		"the verifier refused an honest body edit")
+	# ...and the verifier is two-sided: a constructed edit that ALSO touches the head is refused.
+	var sneaky := out.replace("title: 'Chapter One'", "title: 'Chapter 1'")
+	_ok(not FrontMatter_._verify_body(AWKWARD, sneaky).is_empty(),
+		"a body write that also changed the title was allowed")
+	var unfenced := out.replace("summary: |", "summary: >")
+	_ok(not FrontMatter_._verify_body(AWKWARD, unfenced).is_empty(),
+		"a body write that rewrote a block scalar was allowed")
+
+	# CRLF AND A BOM SURVIVE. The editor holds LF; the file keeps its own line endings.
+	var crlf := "\ufeff---\r\ntitle: x\r\n---\r\nOld.\r\n"
+	var c2 := FrontMatter_.put_body(crlf, "New line one.\nTwo.\n")
+	_ok(c2 == "\ufeff---\r\ntitle: x\r\n---\r\nNew line one.\r\nTwo.\r\n",
+		"a CRLF document with a BOM was not kept as it was: %s" % c2.c_escape())
+	# No frontmatter: the whole file is body.
+	_ok(FrontMatter_.put_body("Just prose.\n", "Other prose.\n") == "Other prose.\n",
+		"a document with no frontmatter did not take its new body")
+	# Frontmatter closing at the end of the file: the body must not weld onto the fence.
+	_ok(FrontMatter_.put_body("---\ntitle: x\n---", "Body.") == "---\ntitle: x\n---\nBody.",
+		"a body welded onto a closing fence")
+
+	# ON DISK, with the conflict rule.
+	DirAccess.make_dir_recursive_absolute(DIR)
+	var path := DIR + "/body.md"
+	_write(path, AWKWARD)
+	var err := FrontMatter_.write_body(path, NEW, old_body)
+	_ok(err.is_empty(), "writing a body to a real file failed: %s" % err)
+	_ok(_read(path) == out, "the file is not the document put_body describes")
+	_ok(not FileAccess.file_exists(path + FrontMatter_.TEMP_SUFFIX),
+		"the body write left its temporary file behind")
+	# THE FILE MOVED: someone edited it elsewhere since ghost read `old_body`. Refused, marked
+	# as a conflict, and the file left exactly as the other editor wrote it.
+	var theirs := out.replace("had stopped", "had never stopped")
+	_write(path, theirs)
+	err = FrontMatter_.write_body(path, "Mine.\n", NEW)
+	_ok(err.begins_with(FrontMatter_.CONFLICT),
+		"a body write over an outside edit was not refused as a conflict: %s" % err)
+	_ok(_read(path) == theirs, "a refused body write touched the file")
+	err = FrontMatter_.write_body(DIR + "/gone.md", "x", "")
+	_ok(not err.is_empty() and not FileAccess.file_exists(DIR + "/gone.md"),
+		"a body write CREATED a missing document")
+
+	# SAVE AS: a draft becomes a document with the voice in its frontmatter; a document saved
+	# under a new name keeps its own frontmatter and takes the new voice.
+	var fresh := DIR + "/fresh.md"
+	err = FrontMatter_.create(fresh, {"generative": {"turn": 2.0}}, "A draft.\n")
+	_ok(err.is_empty(), "save as failed: %s" % err)
+	var made := _read(fresh)
+	_ok(String(FrontMatter_.split(made).body).strip_edges() == "A draft.",
+		"save as did not write the draft as the body: %s" % made)
+	var rb := FrontMatter_.read_block(made)
+	_ok(rb.ok and is_equal_approx(float(((rb.data as Dictionary).get("generative", {}) as Dictionary).get("turn", 0.0)), 2.0),
+		"save as did not put the voice in the frontmatter: %s" % made)
+	var copy := DIR + "/copy.md"
+	err = FrontMatter_.create(copy, {"generative": {"turn": 3.0}}, "Edited.\n", AWKWARD)
+	var copied := _read(copy)
+	_ok(err.is_empty() and copied.contains("summary: |") and copied.contains("# the author's own note")
+			and copied.contains("turn: 3.0") and copied.ends_with("Edited.\n"),
+		"save as from a document lost its frontmatter or its new body: %s" % copied)
+
+	# FIELDS: a fresh document gets the title ahead of ghost's block; a template that already
+	# has one keeps its own.
+	var titled := DIR + "/titled.md"
+	err = FrontMatter_.create(titled, {"generative": {}}, "Body.\n", "", FrontMatter_.KEY,
+		{"title": "A Title: With Colon", "author": ""})
+	var t := _read(titled)
+	_ok(err.is_empty() and t.find("title:") >= 0 and t.find("title:") < t.find("ghost:")
+			and not t.contains("author:"),
+		"a new document's fields are missing, misplaced or empty keys: %s" % t)
+	_ok(BookLayout.field_of(t, "title") == "A Title: With Colon", "a title with a colon did not survive")
+	err = FrontMatter_.create(titled, {}, "x\n", AWKWARD, FrontMatter_.KEY, {"title": "Other"})
+	_ok(_read(titled).count("title:") == 1 and BookLayout.field_of(_read(titled), "title") == "Chapter One",
+		"a template's own title was overwritten or doubled")
+
+	# REMOVAL: a null value takes the key out and nothing else; an absent key changes nothing.
+	var gone := FrontMatter_.put_block(AWKWARD, null, "title")
+	_ok(not gone.contains("title:") and gone.contains("# the author's own note")
+			and gone.contains("summary: |") and FrontMatter_._verify(AWKWARD, gone, "title").is_empty(),
+		"removing a key touched something else: %s" % gone)
+	_ok(FrontMatter_.put_block(AWKWARD, null, "nope") == AWKWARD, "removing an absent key changed the document")
+
+	for f in [path, fresh, copy, titled]:
 		DirAccess.remove_absolute(f)
 	DirAccess.remove_absolute(DIR)
 
