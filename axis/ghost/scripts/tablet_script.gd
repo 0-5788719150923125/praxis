@@ -27,7 +27,8 @@ class_name TabletScript
 ## with placeholder stories so there is something to scroll past.
 ##
 ## NOTHING IS READ OFF THE SCREEN. No title is announced and text before the first url is not
-## spoken: the voice is the reader's, and the reader only reads what is on a page.
+## spoken: the voice is the reader's, and the reader only reads what is on a page. Nor is a
+## page's own opening title (its first `#` heading) - shown, skipped, as readers do.
 ##
 ## A READER SKIMS. Wherever the reading passes over something it does not read - a skipped
 ## tail, a skipped paragraph, a picture, placeholder stories - the hand gets a SKIM: a beat of
@@ -69,8 +70,11 @@ const ARRIVE_LOOK := 3.0
 ## The pause before a new tab: deciding what to look for next.
 const THINK := 2.2
 const RETURN_LOOK := 1.5
-## What a skim costs a picture it passes: the drag to it and a look at it.
-const PICTURE_DWELL := 3.4
+## What a skim costs each picture it passes: a drag to it, then a real look at it - "we linger
+## for about 1 second... 3 is more appropriate".
+const PICTURE_DRAG := 1.4
+const PICTURE_HOLD := 3.0
+const PICTURE_DWELL := PICTURE_DRAG + PICTURE_HOLD
 ## A skim is owed for this many unread words, or for any picture or placeholder story.
 const SKIM_WORDS := 12
 
@@ -257,6 +261,7 @@ class _Walk:
 	var _hist: Array = [[]]      # per tab: the pages behind the one shown
 	var _tab := 0
 	var _returned := false       # back on a page already written: nothing more may be added to it
+	var _engine := ""            # the host of the search engine last searched on
 
 	func run(body: String) -> void:
 		for raw in body.split("\n"):
@@ -289,6 +294,12 @@ class _Walk:
 			if im.get_string(1) == "sketch":
 				key = Manuscript.image_key("sketch: " + prompt)
 			_block({"kind": "image", "prompt": prompt, "key": key})
+			return
+		if TabletScript._rx("^" + Manuscript.OUTRO + "$").search(s) != null:
+			# the end starts here - a mark for the voice, nothing on the page
+			_flush()
+			say.append(s)
+			say.append("")
 			return
 		if TabletScript._rx("^" + TabletScript.SKIP + "$").search(s) != null:
 			_flush()
@@ -332,6 +343,10 @@ class _Walk:
 			return
 		var page: Dictionary = pages[_cur]
 		var bi := (page["blocks"] as Array).size()
+		# A PAGE'S OPENING TITLE IS SHOWN, NOT READ - a site's name, an article's title: a reader
+		# skips straight to what they came for ("nobody really reads titles")
+		if bi == 0 and String(b["kind"]) == "heading" and int(b["level"]) == 1:
+			lead_skip = true
 		match String(b["kind"]):
 			"image":
 				_skim_pics.append(bi)
@@ -465,7 +480,8 @@ class _Walk:
 		var at := 0
 		for c in TabletScript._rx(Manuscript.COMMENT).search_all(t):
 			res += t.substr(at, c.get_start() - at)
-			if TabletScript._rx(Manuscript.HESITATION).search(c.get_string()) != null:
+			if TabletScript._rx(Manuscript.HESITATION).search(c.get_string()) != null \
+					or TabletScript._rx(Manuscript.OUTRO).search(c.get_string()) != null:
 				res += c.get_string()
 			at = c.get_end()
 		return (res + t.substr(at)).strip_edges()
@@ -489,6 +505,13 @@ class _Walk:
 			page["lingered"] = true
 			_act({"kind": "skim", "from": _cur, "n": TabletScript.REAL_LINGER_WORDS, "m": 1,
 				"pics": [], "word": -1, "depth": 0.35})
+
+	static func _written_blocks(p: Dictionary) -> int:
+		var n := 0
+		for b in p["blocks"]:
+			if (b as Dictionary)["kind"] != "filler":
+				n += 1
+		return n
 
 	func _new_page(url: String) -> int:
 		pages.append({"url": url, "host": TabletScript.host_of(url), "blocks": [], "links": {},
@@ -531,13 +554,24 @@ class _Walk:
 				var from := _cur
 				(_hist[_tab] as Array).append(from)
 				_returned = false
-				(pages[from] as Dictionary)["search_box"] = true
-				var host := String((pages[from] as Dictionary)["host"])
+				var fp: Dictionary = pages[from]
+				# WHERE THE QUERY IS TYPED. A search engine's page (a box and little else, or its
+				# results) takes it in its own box. Any other page - an article, say - does what a
+				# browser does: the query goes in the ADDRESS BAR and the results come from the
+				# engine last used. Giving an article a box of its own put the box far above
+				# the place being read, and the typing went in off screen.
+				var engine := bool(fp["results"]) or bool(fp["search_box"]) or _written_blocks(fp) <= 3
+				var host := String(fp["host"])
+				if engine:
+					fp["search_box"] = true
+					_engine = host
+				elif not _engine.is_empty():
+					host = _engine
 				var p := _new_page("%s/?q=%s" % [host, arg.uri_encode()])
 				(pages[p] as Dictionary)["query"] = arg
 				(pages[p] as Dictionary)["results"] = true
 				(pages[p] as Dictionary)["search_box"] = true
-				_act({"kind": "search", "text": arg, "page": p, "from": from})
+				_act({"kind": "search", "text": arg, "page": p, "from": from, "bar": not engine})
 				_cur = p
 				_skim_words = 0
 				_skim_fill = 0

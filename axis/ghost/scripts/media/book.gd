@@ -506,7 +506,8 @@ func advance(_features, delta: float, bookend: float) -> void:
 	var b := bookend
 	if slen <= 0.0 or t < slen * 0.5:
 		b = clampf(t / FADE_IN, 0.0, 1.0)
-	_env.adjustment_brightness = clampf(b, 0.0, 1.0)
+	# a live reading's outro mark fades the picture with the voice
+	_env.adjustment_brightness = clampf(b * Director.live_fade, 0.0, 1.0)
 	_ensure_layout()
 	if _layout == null:
 		return

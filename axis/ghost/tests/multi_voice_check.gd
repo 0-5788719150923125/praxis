@@ -55,6 +55,7 @@ func _ready() -> void:
 	_check_hum_is_held()
 	_check_timestamp_pauses()
 	_check_ink_travels()
+	_check_outro_mark()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -138,6 +139,42 @@ func _check_cues() -> void:
 
 ## NOTHING IN <!-- --> IS SPOKEN. The cues are comments, so the format invites
 ## authoring notes beside them, and the failure is that the reader says them.
+## THE OUTRO MARK: what follows it fades, only as much of it as the fade can carry is ever
+## synthesized, the mark is never spoken, and a chapter without one is untouched.
+func _check_outro_mark() -> void:
+	_slots(1)
+	var tail := ""
+	for i in 40:
+		tail += "Sentence number %d goes on a while. " % i
+	var chunks: Array = _ed._build_chunks("One. Two. <!-- outro --> Three four five. " + tail + "Zebedee.")
+	var said := ""
+	var before := 0
+	var fading := 0
+	for c in chunks:
+		var f := bool((c as Dictionary).get("fade", false))
+		for w in (c as Dictionary)["words"]:
+			said += String((w as Dictionary)["text"]) + " "
+			if not f:
+				before += 1
+		if f:
+			fading += 1
+	_ok(before == 2, "the words before the mark are read at full voice (got %d)" % before)
+	_ok(fading > 0 and said.contains("Three"), "the words after the mark are read, fading")
+	_ok(not said.to_lower().contains("outro"), "the outro mark was spoken: %s" % said)
+	_ok(not said.contains("Zebedee"), "text past the fade was synthesized anyway")
+	_ok(is_equal_approx(_ed._fade_len, maxf(0.5, Director.outro_hold)), "the fade is the Outro's length")
+	_ed._build_chunks("One. Two. Three.")
+	_ok(_ed._fade_len == 0.0, "a chapter with no mark has no fade")
+	# the fade itself: whole before, half way through at half, silent at the end
+	_ed._fade_at = 1000
+	_ed._fade_len = 2.0
+	var sr := float(_ed._sr)
+	_ok(is_equal_approx(_ed._fade_gain(999), 1.0) and absf(_ed._fade_gain(1000 + int(sr)) - 0.5) < 0.01
+		and _ed._fade_gain(1000 + int(2.0 * sr)) == 0.0, "the fade runs 1 -> 0 over its length")
+	_ed._fade_at = -1
+	_ed._fade_len = 0.0
+
+
 func _check_comments_never_spoken() -> void:
 	_slots(2)
 	var chunks: Array = _ed._build_chunks(

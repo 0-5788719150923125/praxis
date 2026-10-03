@@ -42,6 +42,10 @@ const IMAGE := "<!--\\s*(image|sketch)\\s*(?:\\(\\s*(full|inline|left|right)\\s*
 ## the author already put a hesitation of their own. The same forms the notebook sets in its
 ## margin ([method NotebookLayout._margin_lead]).
 const TIMESTAMP_LEAD := "(?m)^([ \\t]*[\\[(]?\\d{1,2}[:.h]\\d{2}(?::\\d{2})?(?:[ \\t]*[aApP]\\.?[mM]\\.?)?[\\])]?[,:;.]?)(?=[ \\t]+\\S)(?![ \\t]*<!--\\s*hesitation)"
+## THE END STARTS HERE: from this point the reading fades out - voice and picture together, over
+## the Outro setting - and whatever text is left is cut. Own line or mid-sentence; the first one
+## counts. Without it the outro is silence after the last word, as always.
+const OUTRO := "<!--\\s*outro\\s*-->"
 ## Any other comment is an authoring note.
 const COMMENT := "<!--[\\s\\S]*?-->"
 ## Text before the first cue belongs to this voice. A chapter that opens on a cue never has one.

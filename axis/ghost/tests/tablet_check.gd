@@ -75,6 +75,7 @@ func _initialize() -> void:
 	_check_back()
 	_check_real()
 	_check_arrivals()
+	_check_omnibox()
 	print("tablet_check: %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail > 0 else 0)
 
@@ -242,9 +243,50 @@ func _check_real() -> void:
 	var linger: Dictionary = d["actions"][3]
 	_ok(int(linger["from"]) == 1 and int(linger["word"]) == -1 and float(linger["dur"]) >= 6.0,
 		"the linger is long (%.1f s): nothing on it is read" % float(linger["dur"]))
+	_ok(not String(d["speakable"]).contains("An article") and String(d["speakable"]).contains("Read this"),
+		"a page's opening title is shown, not read; what follows it is read")
 	var snaps := TabletScript.snapshots(REAL)
 	_ok(snaps.size() == 1 and String(snaps[0]["url"]) == "https://www.shop.test/item/42" and String(snaps[0]["placement"]) == "page",
 		"the panel is offered the real page to capture")
+
+
+const OMNI := """<!-- url: engine.test -->
+
+# Engine
+
+<!-- search: first -->
+
+### [A result](site.test/article)
+
+<!-- url: site.test/article -->
+
+# An article
+
+One. Two. Three.
+
+Four. Five.
+
+Six. Seven.
+
+Eight.
+
+<!-- search: second -->
+
+### Another result
+"""
+
+
+func _check_omnibox() -> void:
+	var d := TabletScript.parse(OMNI)
+	var acts: Array = []
+	for a in d["actions"]:
+		if a["kind"] == "search":
+			acts.append(a)
+	var pages: Array = d["pages"]
+	_ok(acts.size() == 2 and not bool(acts[0].get("bar", false)), "a search on an engine's page goes in its box")
+	_ok(bool(acts[1].get("bar", false)) and not bool(pages[2]["search_box"]),
+		"a search from an article goes in the address bar - no box grows on the article")
+	_ok(String(pages[3]["host"]) == "engine.test", "...and its results come from the engine last used")
 
 
 func _check_arrivals() -> void:
@@ -269,3 +311,5 @@ func _check_untouched() -> void:
 	_ok(sk.size() == 1 and int(sk[0]["m"]) == 1 and float(sk[0]["dur"]) > TabletScript.PICTURE_DWELL,
 		"a skim stops on the picture it passes")
 	_ok(TabletScript.url_key("https://www.Duck.mom/") == "duck.mom", "addresses compare without scheme, www or slash")
+	var om := TabletScript.speakable("<!-- url: a.test -->\n\nOne. <!-- outro --> Two.\n\n<!-- outro -->\n\nThree.\n")
+	_ok(om.count("<!-- outro -->") == 2, "the outro mark reaches the voice, inline or on its own line")

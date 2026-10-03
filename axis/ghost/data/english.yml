@@ -96,6 +96,18 @@ names:
   biouk: B IY1 UW0 K
   biouks: B IY1 UW0 K S
   njandejara: N Y AA0 N D EH0 JH AA1 R AH0
+  # From north-star chapter 42: a gazebo crossed with a zebra, so it keeps the zebra -
+  # gah-ZEE-bruh. eSpeak, reading it as one unknown word, did not.
+  gazebra: G AA0 Z IY1 B R AH0
+  gazebras: G AA0 Z IY1 B R AH0 Z
+  # Also chapter 42. eSpeak read "organoids" as organo-IDs some of the time (its plural
+  # splits the -oid), and "heganoid" as HEG-anoid; the coinages rhyme with android.
+  organoid: AO1 R G AH0 N OY2 D
+  organoids: AO1 R G AH0 N OY2 D Z
+  heganoid: HH IY1 G AA0 N OY2 D
+  heganoids: HH IY1 G AA0 N OY2 D Z
+  herganoid: HH ER1 G AA0 N OY2 D
+  herganoids: HH ER1 G AA0 N OY2 D Z
 
 #
 # Words that carry no sentence accent in English. [Phrasing] reduces them and

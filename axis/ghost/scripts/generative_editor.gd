@@ -453,6 +453,11 @@ func _process(_delta: float) -> void:
 		_show_speak_label()
 	if _playback == null:
 		return
+	# THE PICTURE FADES WITH THE VOICE: the gain of the sample being heard right now, so the
+	# outro mark's fade is one fade, in sound and picture, whatever the buffer holds ahead
+	if _fade_at >= 0 and _ring_capacity > 0:
+		var heard := _pushed - maxi(0, _ring_capacity - int(_playback.get_frames_available()))
+		Director.live_fade = _fade_gain(heard)
 
 	# RE-BASE THE SUBTITLE CLOCK FIRST, and unconditionally.
 	#
@@ -487,6 +492,9 @@ func _process(_delta: float) -> void:
 	# the ambience runs HERE rather than in the host: it is stateful across
 	# chunk boundaries, so a seam must not reset the echo tail or the ring
 	var mono: PackedFloat32Array = _fx.process(_pending.slice(_read, _read + n))
+	if _fade_at >= 0:
+		for i in n:
+			mono[i] *= _fade_gain(_pushed + i)
 	var buf := PackedVector2Array()
 	buf.resize(n)
 	for i in n:
@@ -1480,6 +1488,14 @@ func _mark_stale() -> void:
 ## visualization and come back to it later". Reading again from the top is Stop, then Speak.
 var _stale := false
 var _outro_queued := false       # the outro's silence is on the stream (see the drain)
+## THE OUTRO MARK, live: how long the fade is (0 = no mark), the stream sample it starts at
+## (-1 until the first fading chunk is drained), and whether the reading has been cut.
+var _fade_len := 0.0
+var _fade_at := -1
+var _fade_done := false
+const OUTRO_MIN_FADE := 0.5
+## Enough words to fill a fade - a brisk pace, so the fade never runs out of voice early.
+const OUTRO_WORDS_PER_SECOND := 3.5
 
 ## A reading that is still going: planned, and not yet played out to the end. A generated
 ## stream never announces its end, so "every chunk played and the buffer drained" is the end -
@@ -1527,6 +1543,7 @@ func _split_speakers(body: String) -> Array:
 		body = TabletScript.speakable(body)
 		opens_on_hand = body.strip_edges().begins_with("<!-- action-hold")
 	var first := true
+	var fading := false
 	for p in Manuscript.passages(body):
 		var raw := String((p as Dictionary)["text"])
 		# the first passage with anything in it: a chapter opening on a cue has an empty one
@@ -1539,62 +1556,81 @@ func _split_speakers(body: String) -> Array:
 			first = false
 		# a log entry's time gets its pause before the markers are read, so it IS a marker
 		var t := Manuscript.mark_timestamp_pauses(raw)
-		var out := ""
-		var at := 0
-		var re := Manuscript._rx(Manuscript.COMMENT)
-		var hes := Manuscript._rx(Manuscript.HESITATION)
-		for m in re.search_all(t):
-			out += t.substr(at, m.get_start() - at)
-			at = m.get_end()
-			# THE TABLET'S HAND IS NOT A HESITATION: its rest is the time a tap or a typed
-			# address takes, so it stays when the Hesitate box is off
-			var secs := TabletScript.hold_of(m.get_string())
-			if secs < 0.0:
-				if not on:
-					continue
-				var hm := hes.search(m.get_string())
-				if hm == null:
-					continue             # an authoring note
-				var v := hm.get_string(1) if not hm.get_string(1).is_empty() else hm.get_string(2)
-				secs = clampf(float(v), 0.0, 30.0) if not v.is_empty() else bare
-			# WELDED, never left standing: a sentinel alone between two spaces is a token of
-			# its own, and a token that is not a word confuses the sentence splitter around
-			# it. Trailing whitespace is stepped over so it lands directly after the last
-			# character of the previous word.
-			var head := out.rstrip(" \t\n")
-			out = head + TextNorm.HOLD_MARK + out.substr(head.length())
-			_holds.append(secs)
-		out += t.substr(at)
-		# Sentinels with nothing before them in the passage LEAD the next word instead:
-		# close the gap after them so they weld on to it.
-		var body_t := out.strip_edges()
-		var n := 0
-		while body_t.begins_with(TextNorm.HOLD_MARK):
-			n += 1
-			body_t = body_t.substr(1).strip_edges(true, false)
-		# ...AFTER a heading's `#`s, never before them: `#` is only markup at the start of a
-		# line, and a sentinel in front of it left "##" to be read as a word (a hesitation
-		# standing alone above a dated entry did exactly that).
-		var marks := ""
-		if n > 0 and body_t.begins_with("#"):
-			var k := 0
-			while k < body_t.length() and body_t[k] == "#":
-				k += 1
-			marks = body_t.substr(0, k) + " "
-			body_t = body_t.substr(k).strip_edges(true, false)
-		out = marks + TextNorm.HOLD_MARK.repeat(n) + body_t
-		if not out.replace(TextNorm.HOLD_MARK, "").strip_edges().is_empty():
-			kept.append({"speaker": String((p as Dictionary)["speaker"]), "text": out})
-		else:
-			# A passage of nothing but hesitations: its rests would have no word to sit on.
-			for _i in out.count(TextNorm.HOLD_MARK):
-				_holds.pop_back()
+		# THE OUTRO MARK splits its passage: what comes after it is read FADING (see
+		# [method _build_chunks]), and so is every passage after that. The first mark counts.
+		var parts := [t]
+		var om: RegExMatch = null
+		if not fading:
+			om = Manuscript._rx(Manuscript.OUTRO).search(t)
+		if om != null:
+			parts = [t.substr(0, om.get_start()), t.substr(om.get_end())]
+		for k in parts.size():
+			if k == 1:
+				fading = true
+			var out := _resolve_marks(String(parts[k]), on, bare)
+			if not out.replace(TextNorm.HOLD_MARK, "").strip_edges().is_empty():
+				kept.append({"speaker": String((p as Dictionary)["speaker"]), "text": out,
+					"fade": fading})
+			else:
+				# A passage of nothing but hesitations: its rests would have no word to sit on.
+				for _i in out.count(TextNorm.HOLD_MARK):
+					_holds.pop_back()
 	# THE INTRO IS THE TABLET WAKING: the hand's opening run (wake, home screen, open the
 	# browser) plays inside the intro's silence, so the rest before the first word is only
 	# what the intro does not already cover - never the two end to end
 	if opens_on_hand and not _holds.is_empty():
 		_holds[0] = maxf(0.0, float(_holds[0]) - maxf(0.0, Director.intro_hold - 0.8))
 	return kept
+
+
+## A passage's marks resolved: every hesitation (and the tablet's action rests) becomes a
+## [constant TextNorm.HOLD_MARK] welded to the word before it - or leading the next, when
+## nothing precedes it - with its length queued on [member _holds]; every other comment goes.
+func _resolve_marks(t: String, on: bool, bare: float) -> String:
+	var out := ""
+	var at := 0
+	var re := Manuscript._rx(Manuscript.COMMENT)
+	var hes := Manuscript._rx(Manuscript.HESITATION)
+	for m in re.search_all(t):
+		out += t.substr(at, m.get_start() - at)
+		at = m.get_end()
+		# THE TABLET'S HAND IS NOT A HESITATION: its rest is the time a tap or a typed
+		# address takes, so it stays when the Hesitate box is off
+		var secs := TabletScript.hold_of(m.get_string())
+		if secs < 0.0:
+			if not on:
+				continue
+			var hm := hes.search(m.get_string())
+			if hm == null:
+				continue             # an authoring note
+			var v := hm.get_string(1) if not hm.get_string(1).is_empty() else hm.get_string(2)
+			secs = clampf(float(v), 0.0, 30.0) if not v.is_empty() else bare
+		# WELDED, never left standing: a sentinel alone between two spaces is a token of
+		# its own, and a token that is not a word confuses the sentence splitter around
+		# it. Trailing whitespace is stepped over so it lands directly after the last
+		# character of the previous word.
+		var head := out.rstrip(" \t\n")
+		out = head + TextNorm.HOLD_MARK + out.substr(head.length())
+		_holds.append(secs)
+	out += t.substr(at)
+	# Sentinels with nothing before them in the passage LEAD the next word instead:
+	# close the gap after them so they weld on to it.
+	var body_t := out.strip_edges()
+	var n := 0
+	while body_t.begins_with(TextNorm.HOLD_MARK):
+		n += 1
+		body_t = body_t.substr(1).strip_edges(true, false)
+	# ...AFTER a heading's `#`s, never before them: `#` is only markup at the start of a
+	# line, and a sentinel in front of it left "##" to be read as a word (a hesitation
+	# standing alone above a dated entry did exactly that).
+	var marks := ""
+	if n > 0 and body_t.begins_with("#"):
+		var k := 0
+		while k < body_t.length() and body_t[k] == "#":
+			k += 1
+		marks = body_t.substr(0, k) + " "
+		body_t = body_t.substr(k).strip_edges(true, false)
+	return marks + TextNorm.HOLD_MARK.repeat(n) + body_t
 
 
 func _selected_voice_id() -> String:
@@ -2693,6 +2729,9 @@ func _reset_playback() -> void:
 	# carried on.
 	_lead_in = 0.0
 	_outro_queued = false
+	_fade_at = -1
+	_fade_done = false
+	Director.live_fade = 1.0
 	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
 
 
@@ -2705,6 +2744,39 @@ func _sync_speak_buttons() -> void:
 	if not reading:
 		_stale = false
 	_show_speak_label()
+
+
+## THE OUTRO MARK, in chunks: the reading goes on past it only as far as the fade can carry
+## it. Enough fading chunks are kept to fill the Outro's length at a brisk reading pace (and
+## one more, since the fade is cut on the clock, not on a word), and the rest are dropped
+## BEFORE synthesis - text that would be cut is never made. Sets [member _fade_len] when there
+## is a mark, 0 when there is none.
+func _trim_to_outro(chunks: Array) -> Array:
+	_fade_len = 0.0
+	var first := -1
+	for i in chunks.size():
+		if bool((chunks[i] as Dictionary).get("fade", false)):
+			first = i
+			break
+	if first < 0:
+		return chunks
+	_fade_len = maxf(OUTRO_MIN_FADE, Director.outro_hold)
+	var budget := _fade_len * OUTRO_WORDS_PER_SECOND
+	var words := 0.0
+	var keep := first
+	while keep < chunks.size() and words < budget:
+		words += float(((chunks[keep] as Dictionary).get("words", []) as Array).size())
+		keep += 1
+	return chunks.slice(0, mini(keep + 1, chunks.size()))
+
+
+## The outro mark's fade at stream sample [param sample]: 1 before it starts, easing to 0 over
+## [member _fade_len], 0 after.
+func _fade_gain(sample: int) -> float:
+	if _fade_at < 0 or sample < _fade_at:
+		return 1.0
+	var u := float(sample - _fade_at) / maxf(1.0, _fade_len * float(_sr))
+	return 0.0 if u >= 1.0 else 0.5 + 0.5 * cos(PI * u)
 
 
 ## Plan a reading: tear the old one down, then cut the text into chunks.
@@ -2773,9 +2845,13 @@ func _build_chunks(body: String) -> Array:
 		# paragraphs - so measuring it against the whole chapter would hand the
 		# second voice the contour of a paragraph it is not in.
 		_place_chunks(chunks, text)
+		var fade := bool((seg as Dictionary).get("fade", false))
 		for c in chunks:
 			(c as Dictionary)["speaker"] = who
+			if fade:
+				(c as Dictionary)["fade"] = true
 		out.append_array(chunks)
+	out = _trim_to_outro(out)
 	# LAST, so it wins the status line. TextNorm has already warned into the log,
 	# but this is the surface someone is looking at with their hand on Speak, and
 	# a macro with no default is words missing from a reading about to be made.
@@ -3147,6 +3223,8 @@ func _pump() -> void:
 ## order arrivals wait: audio has to go out in the order it was written.
 func _drain_ready() -> void:
 	while true:
+		if _fade_done:
+			return                   # the outro mark's fade has run out: the reading is over
 		var found := -1
 		for i in _ready_takes.size():
 			if int(_ready_takes[i]["index"]) == _next_to_play:
@@ -3210,14 +3288,34 @@ func _drain_ready() -> void:
 			d["t0"] = _shifted(float(d["t0"]), spliced["cuts"], ratio, true) + _elapsed
 			d["t1"] = _shifted(float(d["t1"]), spliced["cuts"], ratio, false) + _elapsed
 			_sub_words.append(d)
+		# THE OUTRO MARK: the fade starts where the first chunk after it does
+		if _fade_len > 0.0 and _fade_at < 0 and idx >= 0 and idx < _chunks.size() \
+				and bool((_chunks[idx] as Dictionary).get("fade", false)):
+			_fade_at = _pushed + (_pending.size() - _read)
 		_pending.append_array(pcm)
 		_elapsed += float(pcm.size()) / float(_sr)
+		# ...and the reading ENDS where the fade does: the rest of this chunk, and every
+		# chunk after it, is never heard
+		if _fade_at >= 0 and not _fade_done:
+			var end := _fade_at + int(_fade_len * float(_sr))
+			var have := _pushed + (_pending.size() - _read)
+			if have >= end:
+				_pending.resize(_pending.size() - (have - end))
+				_elapsed -= float(have - end) / float(_sr)
+				_fade_done = true
+				_outro_queued = true
+				_chunks = _chunks.slice(0, _next_to_play)
 		# THE OUTRO, after the last chunk: silence on the stream, the way the intro is silence
 		# before the first and the export pads both ends. A stream that simply runs dry stops the
 		# session clock with it, so the show froze on the last word instead of playing out the
 		# outro ("it doesn't respect the 7.0 second outro I specified").
 		if _next_to_play >= _chunks.size() and not _outro_queued:
 			var outro := maxf(0.0, Director.outro_hold)
+			if _fade_at >= 0:
+				# the text ran out inside the fade: silence to the fade's end, no more
+				var have := _pushed + (_pending.size() - _read)
+				outro = maxf(0.0, float(_fade_at + int(_fade_len * float(_sr)) - have) / float(_sr))
+				_fade_done = true
 			var tail := PackedFloat32Array()
 			tail.resize(int(outro * float(_sr)))
 			_pending.append_array(tail)
@@ -3730,6 +3828,7 @@ func export_take() -> String:
 	var marks: Array = []
 	var last_who := ""
 
+	var fade_start := -1          # the outro mark's fade, as a sample of the reading (-1: none)
 	for i in chunks.size():
 		_set_status("Rendering for export: %d of %d…" % [i + 1, chunks.size()])
 		# The SAME arguments the preview used, from the SAME builder. An export
@@ -3786,6 +3885,8 @@ func export_take() -> String:
 					+ elapsed,
 				"ok": span != null})
 		words.append_array(_bridge_words(rows, "export chunk %d" % i))
+		if fade_start < 0 and bool((chunks[i] as Dictionary).get("fade", false)):
+			fade_start = pcm.size()
 		pcm.append_array(part)
 		elapsed += float(part.size()) / float(_sr)
 
@@ -3801,9 +3902,22 @@ func export_take() -> String:
 	# through the outro. Pad the PCM afterwards and both ends are digital silence.
 	var intro := maxf(0.0, Director.intro_hold)
 	var outro := maxf(0.0, Director.outro_hold)
-	if intro > 0.0 or outro > 0.0:
+	# THE OUTRO MARK: the reading ends where its fade does - cut there (or filled out with
+	# silence, if the text ran out first) - and the fade IS the outro, so none is added after
+	var fade_n := int(_fade_len * float(_sr))
+	if fade_start >= 0:
+		pcm.resize(fade_start + fade_n)
+		var cut := float(fade_start + fade_n) / float(_sr)
+		var heard: Array = []
+		for w in words:
+			if float((w as Dictionary).get("t0", 0.0)) < cut:
+				heard.append(w)
+		words = heard
+		outro = _fade_len
+	var pad_out := 0.0 if fade_start >= 0 else outro
+	if intro > 0.0 or pad_out > 0.0:
 		var padded := PackedFloat32Array()
-		padded.resize(int(intro * float(_sr)) + pcm.size() + int(outro * float(_sr)))
+		padded.resize(int(intro * float(_sr)) + pcm.size() + int(pad_out * float(_sr)))
 		var head := int(intro * float(_sr))
 		for i in pcm.size():
 			padded[head + i] = pcm[i]
@@ -3843,6 +3957,12 @@ func export_take() -> String:
 		_apply_fx(fx, _cfg_of(String((marks[k] as Dictionary)["speaker"])))
 		wet.append_array(fx.process(pcm.slice(a, b)))
 	pcm = wet
+	# ...faded AFTER the effects, so the room and the ambience bed go down with the voice
+	if fade_start >= 0:
+		var f0 := head + fade_start
+		for i in range(f0, pcm.size()):
+			var u := float(i - f0) / maxf(1.0, float(fade_n))
+			pcm[i] *= 0.0 if u >= 1.0 else 0.5 + 0.5 * cos(PI * u)
 
 	var path := TAKE_DIR + "/take_%d.wav" % stamp
 	var abs_path := _write_wav(path, pcm)

@@ -69,6 +69,9 @@ const ARC_WORDS := 40.0
 const CAM_LEAD := 4.0
 ## While reading, the share of the screen's height the camera's aim stays within.
 const AIM_BAND := Vector2(0.4, 0.6)
+## A link this close to the top or bottom of the screen (share of its height) is scrolled into
+## view before it is tapped; anywhere else on screen it is tapped where it is.
+const LINK_MARGIN := 0.06
 ## How far into its arc the camera comes for a real page, which is looked at, not read.
 const REAL_LOOK := 0.5
 ## Each page's set-up, degrees: an offset per page plus a slow wander. Small on purpose - a
@@ -350,7 +353,8 @@ func advance(_features, delta: float, bookend: float) -> void:
 	var t := maxf(Spectrum.current.time, 0.0)
 	var slen := Spectrum.song_length()
 	var b := bookend if slen > 0.0 and t > slen * 0.5 else clampf(t / 1.2, 0.0, 1.0)
-	_env.adjustment_brightness = clampf(b, 0.0, 1.0)
+	# a live reading's outro mark fades the picture with the voice
+	_env.adjustment_brightness = clampf(b * Director.live_fade, 0.0, 1.0)
 	_ensure_doc()
 	_now = _subs.now() if _subs != null and is_instance_valid(_subs) else t
 	if not _doc.is_empty():
@@ -688,23 +692,26 @@ func _build_flings() -> void:
 						# screen for an unread page, a third of one on a real page, whose top is
 						# the part worth looking at
 						stops.append(clampf(_eval(list, t) + vh * float(x["depth"]), 0.0, mx))
+					# each picture: dragged to, then held still for a real look; the last stop (the
+					# next words) takes whatever of the window is left
 					var win := float(x["w"])
-					var seg := win / float(stops.size())
+					var tk := t
 					for k in stops.size():
-						var ts := t + seg * float(k)
 						var last := k == stops.size() - 1
-						var from := _eval(list, ts)
-						if absf(float(stops[k]) - from) < 6.0:
-							continue
-						# a picture is dragged to and then LOOKED AT, longer than it took to reach; the
-						# last stop takes its whole share
-						var dur := seg if last else seg * 0.4
-						list.append({"t": ts, "from": from, "to": stops[k], "dur": dur, "drag": true, "o": o})
+						var from := _eval(list, tk)
+						var dur := maxf(1.0, t + win - tk) if last else TabletScript.PICTURE_DRAG
+						if absf(float(stops[k]) - from) >= 6.0:
+							list.append({"t": tk, "from": from, "to": stops[k], "dur": dur, "drag": true, "o": o})
+						tk += TabletScript.PICTURE_DWELL
 					cur = float(stops.back())
 					busy_until = t + win
 				"link":
-					var want := clampf(r.position.y - vh * 0.45, 0.0, mx)
 					var from := _eval(list, t)
+					# A LINK ON SCREEN IS TAPPED WHERE IT IS. Scrolling it to the middle first was a
+					# move no reader makes; only a link off screen (or at its very edge) is fetched
+					if r.position.y >= from + vh * LINK_MARGIN and r.end.y <= from + vh * (1.0 - LINK_MARGIN):
+						continue
+					var want := clampf(r.position.y - vh * 0.45, 0.0, mx)
 					if absf(want - from) < 8.0:
 						continue
 					var flicks := maxi(1, int(ceil(absf(want - from) / (vh * 1.1))))
@@ -819,10 +826,11 @@ func _state_at(t: float) -> Dictionary:
 				_load(st, u, ph, int(a["page"]))
 			"type", "search":
 				var was_editing := not String(st["editing"]).is_empty()
-				var target := "search" if kind == "search" else "bar"
+				var in_box := kind == "search" and not bool(a.get("bar", false))
+				var target := "search" if in_box else "bar"
 				if not was_editing:
 					var at := _bar_rect(o).get_center()
-					if kind == "search":
+					if in_box:
 						var sp := int(a["from"])
 						at = layout(sp, o).search_rect.get_center() + Vector2(0.0, TOP - scroll_of(sp, t, o))
 					_touch(st, u, float(ph["tap"]), at)
@@ -1396,6 +1404,10 @@ func _tab_title(p: int) -> String:
 func _shown_url(p: int) -> String:
 	if p < 0:
 		return ""
+	# a results page shows what was searched for, as a browser's bar does
+	var pg: Dictionary = _doc["pages"][p]
+	if bool(pg.get("results", false)) and not String(pg.get("query", "")).is_empty():
+		return String(pg["query"])
 	return TabletScript.host_of(String((_doc["pages"][p] as Dictionary)["url"]))
 
 

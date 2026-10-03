@@ -473,6 +473,9 @@ const OUTRO_MIN := 0.0
 const OUTRO_MAX := 20.0
 var intro_hold := 5.0
 var outro_hold := 6.0
+## A LIVE reading's own fade-out, 0..1 - the outro mark's, driven by the Generative panel from
+## the sample being heard. 1 always in a render, where the take's own length and bookend do it.
+var live_fade := 1.0
 
 
 # The Director is an autoload, so this runs long before attach() builds the first scene - which is
@@ -1024,7 +1027,7 @@ func _locked_scene_arg() -> int:
 func _bookend_fade() -> float:
 	var slen := Spectrum.song_length()
 	if slen <= 0.0:
-		return 1.0                                    # idle / no song: no bookend
+		return live_fade                              # idle / no song: no bookend
 	var t := Spectrum.current.time
 	# PAST THE END IS NOT BLACK. A synthesis take reports its length once, then loops
 	# inside the generator without restarting the player, so the playback position runs
@@ -1040,7 +1043,7 @@ func _bookend_fade() -> float:
 	var fade_out := maxf(0.5, Spectrum.tail if Spectrum.tail > 0.001 else _bookend_time)
 	var a_in := clampf(t / fade_in, 0.0, 1.0)           # 0 at the very start -> 1 after fade_in
 	var a_out := clampf((slen - t) / fade_out, 0.0, 1.0)  # 1 -> 0 over the final fade_out seconds
-	return minf(a_in, a_out)
+	return minf(minf(a_in, a_out), live_fade)
 
 
 # Fixed simulation timestep. The SIM is advanced in chunks of this size (decoupled from the drawn
