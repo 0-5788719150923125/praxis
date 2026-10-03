@@ -80,7 +80,12 @@ func _init(width := 380.0) -> void:
 	_pad.add_child(body)
 
 
+## What other furniture keeps clear of: the scrub bar starts to the right of an open panel.
+const GROUP := &"side_panel"
+
+
 func _ready() -> void:
+	add_to_group(GROUP)
 	_restore = Button.new()
 	_restore.text = ("▸  " + title) if not title.is_empty() else "▸"
 	_restore.tooltip_text = "Show the panel again (F2)"

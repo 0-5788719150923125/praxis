@@ -9,7 +9,7 @@ A script is plain Markdown, and ghost reads more out of it than the words: speak
 
 AN ENTRY DOES NOT IMPLEMENT ITS MARK. The parsers of record stay where they are (`Manuscript` for cues, rests and pictures; `TextNorm` and `Phonemes` for the rest), and `tests/script_marks_check.gd` inserts every entry's example and asks THOSE parsers what they make of it - so an entry that drifts from what the reader actually does fails there, and a new entry without a check fails too.
 
-Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_marks.gd) (17 entries). Each one is proven against the parser that reads it by `tests/script_marks_check.gd`.
+Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_marks.gd) (26 entries). Each one is proven against the parser that reads it by `tests/script_marks_check.gd`.
 
 ## Voices
 
@@ -25,6 +25,7 @@ Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_
 | Timed hesitation | `<!-- hesitation: 2.5 -->` | Generative | A rest of exactly this many seconds, whatever the Hesitate dial says. |
 | Log-entry time | `21:40` | Generative | A time opening a paragraph is read as its heading, with a hesitation after it. The Notebook sets it in the margin. |
 | Thinking hum | `Hmm.` | Generative | Hm, Hmm, Mmm as a sentence of their own are held to most of a second, settling and falling in pitch, instead of read as a clipped syllable. |
+| Outro starts here | `<!-- outro -->` | Generative | The end begins at this point: the reading carries on but fades out - voice and picture together, over the Outro setting - and whatever text is left is cut. Own line or mid-sentence; the first one counts. |
 
 ## Pictures
 
@@ -56,6 +57,19 @@ Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_
 | Italic | `*emphasised*` | Generative, Synthesis | Never spoken as a mark; shown slanted in the subtitles and on the page. |
 | Bold | `**strong**` | Generative, Synthesis | Never spoken as a mark; shown emboldened in the subtitles and on the page. |
 | Scene break | `* * *` | Generative | A rule across the page between two scenes. Silent. |
+
+## Tablet
+
+| Mark | Example | Panels | What it does |
+|---|---|---|---|
+| Web page | `<!-- url: www.example.com -->` | Generative | Tablet: the page below lives at this address. How it is reached is worked out - a link on the page on screen is tapped, anything else is typed in. With nothing written under it, it is the REAL page there, captured from the web. |
+| Search | `<!-- search: what is the 7th realm -->` | Generative | Tablet: type this into a search box - the page's own, on a search engine, else the address bar - and the results page follows. |
+| New tab | `<!-- new tab -->` | Generative | Tablet: a pause to think, then a blank tab; the next web page is typed into it. |
+| Back | `<!-- back -->` | Generative | Tablet: back to the page before, scrolled where it was left. An unread page is glanced down first. Follow it with a mark, not text. |
+| Landscape | `<!-- landscape -->` | Generative | Tablet: turn to landscape. The camera turns; the tablet stays where it lies. |
+| Portrait | `<!-- portrait -->` | Generative | Tablet: turn back to portrait. |
+| Skip | `<!-- skip -->` | Generative | Tablet: shown, not read. Mid-paragraph, the rest of it from the end of that sentence; on its own line, the whole paragraph below. |
+| Placeholder stories | `<!-- filler: 3 -->` | Generative | Tablet: this many placeholder stories - squiggles where writing would be - on the page here. |
 
 ## Notes
 

@@ -83,6 +83,14 @@ var _state := "idle"     # idle | baking | rendering | transcoding | done
 var _bake_pid := -1
 var _render_pid := -1
 var _transcode_pid := -1
+## THE SLIDING WINDOW. The transcode runs DURING the render, reading the AVI as Movie Maker
+## writes it (`-follow`), and on Linux the bytes it has already read are released from disk
+## behind it (`fallocate --punch-hole`), so the scratch AVI holds seconds of video, not the film.
+## A 250 GB intermediate for a few-GB result was the report; measured on a 1080p render: 47 MB
+## written, 9.4 MB ever on disk, every frame and the audio intact.
+var _live_encode := false        # the transcode is following the render
+var _punched := 0                # bytes released from the head of the AVI so far
+var _punch_t := 0.0
 ## True when this render is running on the real desktop rather than a display of its own -
 ## the state in which burying the window corrupts the picture. Shown to the user, because a
 ## six-hour job that can be spoiled by another window needs to say so BEFORE it is spoiled.
@@ -114,6 +122,13 @@ var _synth_autoplay := false   # UI_TOGGLE_ID checked at export time (synth take
 # of a 344 s take is 3.4 s of video, which a heavy scene can spend over a minute
 # producing, and a healthy 720p render was killed for it.
 const STALL_LIMIT := 300.0
+## How long the following encoder waits on a file that has stopped growing before it decides the
+## render is over (microseconds, ffmpeg's unit). Longer than any pause a live render makes.
+const FOLLOW_TIMEOUT_US := 60000000
+## The head of the AVI is never released: Movie Maker seeks back there to finish its header.
+const PUNCH_KEEP := 1 << 20
+## ...and the release stays this far behind the encoder's read position.
+const PUNCH_BEHIND := 8 << 20
 const STALL_MIN_GROWTH := 65536   # bytes; below this the file is not really moving
 
 ## Synthesis hook: a mode whose audio is REPRODUCIBLE ON DEMAND (the voice is
@@ -259,6 +274,13 @@ func _process(dt: float) -> void:
 					_stall_frac = frac
 					_stall_t = 0.0
 				var sz := _file_size(_avi)
+				if not _live_encode and _transcode_pid <= 0 and sz > 65536:
+					_start_transcode(true)
+				if _live_encode:
+					_punch_t -= dt
+					if _punch_t <= 0.0:
+						_punch_t = 2.0
+						_punch_behind_encoder()
 				if sz > _stall_size + STALL_MIN_GROWTH:
 					_stall_size = sz
 					_stall_t = 0.0
@@ -287,7 +309,11 @@ func _process(dt: float) -> void:
 				_clear_override()                # render finished -> restore live resolution
 				# The render only reports success by PID exit; make sure it actually produced the AVI
 				# (a crashed Movie Maker exits too) before spending minutes transcoding nothing.
-				if FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
+				if _live_encode:
+					# the encoder has been following all along; it finishes by itself once the
+					# file stops growing (FOLLOW_TIMEOUT_US)
+					_state = "transcoding"
+				elif FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
 					_repair_avi_sizes(_avi)
 					_start_transcode()
 				else:
@@ -506,6 +532,9 @@ func _start_bake() -> void:
 # Step 2: Movie Maker render that loads the cache (--bake-file) and draws at once.
 func _start_render() -> void:
 	_pct = 0
+	_transcode_pid = -1
+	_live_encode = false
+	_punched = PUNCH_KEEP
 	Bake.write_progress(0.0)
 	# Movie Maker locks its output resolution to the project's viewport size at engine
 	# startup, before any script runs - so the only way to drive it is override.cfg, which
@@ -613,9 +642,10 @@ func _start_render() -> void:
 # 32-bit and corrupts past 4 GB, which is why 4K exports had a broken index and glitchy audio), and
 # H.264 is ~10-20x smaller than the MJPEG intermediate. `-fflags +genpts` re-derives timestamps so a
 # damaged AVI index is bypassed; audio is re-encoded from decoded PCM, so it comes out clean.
-func _start_transcode() -> void:
+func _start_transcode(follow := false) -> void:
 	var dur := _song_dur
-	_pct = 0                  # reset from the render's 100% so "Finalizing" starts fresh, not stuck full
+	if not follow:
+		_pct = 0              # reset from the render's 100% so "Finalizing" starts fresh, not stuck full
 	_progress_reset()
 	# COLOUR SIGNALLING. Godot's MJPEG is yuvj420p - FULL range, BT.601 matrix - and ffmpeg passes
 	# those pixels through untouched (measured: blacks bit-exact, no gamma, mean delta -0.33 of a
@@ -644,8 +674,12 @@ func _start_transcode() -> void:
 	var vf := "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt470bg:range=pc"
 	if _render_w() != int(_quality.w):
 		vf = "scale=%d:%d:flags=lanczos," % [int(_quality.w), int(_quality.h)] + vf
-	var args := PackedStringArray([
-		"-y", "-fflags", "+genpts", "-i", _avi,
+	# FOLLOWING THE RENDER: read the AVI as it grows, and take a quiet file as the end of it
+	var input := PackedStringArray(["-i", _avi])
+	if follow:
+		input = PackedStringArray(["-nostdin", "-follow", "1", "-rw_timeout", str(FOLLOW_TIMEOUT_US),
+			"-i", "file:" + _avi])
+	var args := PackedStringArray(["-y", "-fflags", "+genpts"]) + input + PackedStringArray([
 		"-vf", vf,
 		# crf 20 is NOT the quality floor - the MJPEG intermediate is, and crf 16 measured +0.1 dB
 		# for +51% size. What DOES pay is `-tune grain`: on bright frames the default settings smear
@@ -662,6 +696,13 @@ func _start_transcode() -> void:
 		"-progress", ProjectSettings.globalize_path(_PROGRESS_FILE), "-nostats", "-loglevel", "error",
 		_out])
 	_transcode_pid = Subprocess.start("ffmpeg", args, "transcode")
+	if follow:
+		_live_encode = _transcode_pid > 0
+		_punched = PUNCH_KEEP
+		_punch_t = 2.0
+		if _live_encode:
+			print("ghost: encoding while rendering (pid %d) %s -> %s" % [_transcode_pid, _avi, _out])
+		return
 	if _transcode_pid > 0:
 		_state = "transcoding"
 		print("ghost: transcoding (pid %d, %.0fs) %s -> %s" % [_transcode_pid, dur, _avi, _out])
@@ -670,6 +711,59 @@ func _start_transcode() -> void:
 		_state = "done"
 		_done_t = 30.0
 		_set_status("⚠  ffmpeg not found; raw file kept: %s" % _avi, Color(1.0, 0.7, 0.6))
+
+
+## Release the AVI's bytes the following encoder has already read. Linux only (a punched hole
+## frees the blocks while the file keeps its length, so Movie Maker writes on undisturbed); the
+## encoder's read position comes from /proc. Elsewhere the encode still follows the render, it
+## just cannot give the space back until the end.
+func _punch_behind_encoder() -> void:
+	if OS.get_name() != "Linux" or _transcode_pid <= 0 or not Deps.has("fallocate"):
+		return
+	# ONLY WHILE THE HEADER SAYS "SIZE UNKNOWN". Mid-render Movie Maker writes 0 for the RIFF
+	# size (measured), so the encoder can only read straight through and everything behind its
+	# position is done with. A finished header names the index at the end, and a reader that
+	# jumps there would have its unread data released under it - never release then.
+	var hf := FileAccess.open(_avi, FileAccess.READ)
+	if hf == null:
+		return
+	hf.seek(4)
+	var riff := hf.get_32()
+	hf.close()
+	if riff != 0:
+		return
+	var pos := _encoder_read_pos()
+	var upto := (pos - PUNCH_BEHIND) / 4096 * 4096
+	if pos < 0 or upto <= _punched:
+		return
+	var out: Array = []
+	var code := Deps.execute("fallocate", ["--punch-hole", "--offset", str(_punched),
+		"--length", str(upto - _punched), ProjectSettings.globalize_path(_avi)], out)
+	if code == 0:
+		_punched = upto
+	else:
+		push_warning("ghost export: could not release scratch space (%s) - the file will grow" % str(out))
+		_punched = 1 << 62               # stop trying
+
+
+## How far into the AVI the encoder has read: its open descriptor's offset, from /proc.
+func _encoder_read_pos() -> int:
+	var dir := "/proc/%d/fd" % _transcode_pid
+	var d := DirAccess.open(dir)
+	if d == null:
+		return -1
+	var want := ProjectSettings.globalize_path(_avi)
+	for fd in DirAccess.get_files_at(dir):
+		if d.read_link(dir.path_join(fd)) != want:
+			continue
+		# READ, NOT SIZED: /proc files report a length of 0, so a whole-file read returns nothing
+		var f := FileAccess.open("/proc/%d/fdinfo/%s" % [_transcode_pid, fd], FileAccess.READ)
+		if f == null:
+			return -1
+		for line in f.get_buffer(4096).get_string_from_utf8().split("\n"):
+			if line.begins_with("pos:"):
+				return int(line.substr(4).strip_edges())
+	return -1
 
 
 const _PROGRESS_FILE := "user://transcode_progress.txt"

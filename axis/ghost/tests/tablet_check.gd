@@ -311,5 +311,8 @@ func _check_untouched() -> void:
 	_ok(sk.size() == 1 and int(sk[0]["m"]) == 1 and float(sk[0]["dur"]) > TabletScript.PICTURE_DWELL,
 		"a skim stops on the picture it passes")
 	_ok(TabletScript.url_key("https://www.Duck.mom/") == "duck.mom", "addresses compare without scheme, www or slash")
+	var run := TabletScript.find_run(PackedStringArray(["a", "b", "it", "was", "2009", "then"]),
+		PackedStringArray(["it", "was", "twothousandnine", "then"]))
+	_ok(run == 2, "a mid-way start finds its words, one spelled differently (%d)" % run)
 	var om := TabletScript.speakable("<!-- url: a.test -->\n\nOne. <!-- outro --> Two.\n\n<!-- outro -->\n\nThree.\n")
 	_ok(om.count("<!-- outro -->") == 2, "the outro mark reaches the voice, inline or on its own line")

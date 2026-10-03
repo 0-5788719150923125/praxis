@@ -56,6 +56,7 @@ func _ready() -> void:
 	_check_timestamp_pauses()
 	_check_ink_travels()
 	_check_outro_mark()
+	_check_scrub()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -173,6 +174,38 @@ func _check_outro_mark() -> void:
 		and _ed._fade_gain(1000 + int(2.0 * sr)) == 0.0, "the fade runs 1 -> 0 over its length")
 	_ed._fade_at = -1
 	_ed._fade_len = 0.0
+
+
+## LIVE SCRUBBING, BY SENTENCE: a planned reading lays the bar out over its sentences, a seek
+## settles on the sentence under it, and a reading started there plays from it with no intro and
+## tells the media where it starts. Speak from the top hands them nothing.
+func _check_scrub() -> void:
+	_slots(1)
+	var text := ""
+	for i in 12:
+		text += "Sentence number %d goes here. " % i
+	_ed._plan(text)
+	var n: int = _ed._chunks.size()
+	_ok(n >= 10 and Spectrum.seekable(), "a planned reading can be scrubbed (%d sentences)" % n)
+	var ordered := _ed._chunk_t.size() == n + 1
+	for i in n:
+		ordered = ordered and _ed._chunk_t[i + 1] > _ed._chunk_t[i]
+	_ok(ordered and is_equal_approx(_ed._scrub_len(), _ed._chunk_t[n]), "the bar runs sentence by sentence, first to last")
+	_ed._scrub_seek(_ed._chunk_t[5] + 0.05)
+	_ok(_ed._seek_k == 5 and is_equal_approx(_ed._scrub_pos(), _ed._chunk_t[5]),
+		"a seek waits on the sentence under it, and the bar shows it there")
+	_ed._seek_k = -1
+	var k: int = _ed._start_at(5)
+	_ok(k == 5 and _ed._next_to_request == 5 and _ed._next_to_play == 5,
+		"a reading started there requests and plays from it")
+	_ok(_ed._lead_in == 0.0 and _ed._pending.is_empty(), "...with no intro")
+	var sw: PackedStringArray = _ed._start_words()
+	_ok(sw.size() >= 4 and sw[0] == "sentence" and sw[2] == "5", "the media are told where it starts: %s" % str(sw))
+	_ok(_ed.book_document(text)["start_words"] == sw, "...through the document they read")
+	_ed._plan(text)
+	_ok(_ed._start_words().is_empty(), "Speak from the top hands them nothing")
+	_ed._reset_playback()
+	_ok(not Spectrum.seekable(), "a stopped reading is no longer scrubbable")
 
 
 func _check_comments_never_spoken() -> void:

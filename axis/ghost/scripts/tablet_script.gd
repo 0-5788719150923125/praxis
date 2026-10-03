@@ -177,6 +177,23 @@ static func norm(s: String) -> String:
 	return _rx("[^\\p{L}\\p{N}]").sub(s.to_lower(), "", true)
 
 
+## Where a reading that STARTS MID-WAY joins [param norms] (a medium's own words, normalized):
+## the first index at which [param start] (the first few words read, normalized) lines up, one
+## mismatch allowed - the voice and the page spell a number or a dash differently. -1 for none.
+static func find_run(norms: PackedStringArray, start: PackedStringArray) -> int:
+	var m := mini(4, start.size())
+	if m == 0:
+		return -1
+	for i in norms.size() - m + 1:
+		var hits := 0
+		for k in m:
+			if norms[i + k] == start[k]:
+				hits += 1
+		if hits >= m - 1 and norms[i] == start[0]:
+			return i
+	return -1
+
+
 ## An address as a key: no scheme, no `www.`, no trailing slash, lower case.
 static func url_key(url: String) -> String:
 	var u := url.strip_edges().to_lower()

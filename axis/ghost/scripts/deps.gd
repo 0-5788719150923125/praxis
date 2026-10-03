@@ -196,6 +196,22 @@ const TOOLS := [
 		"site": "https://developers.openai.com/codex/cli",
 	},
 	{
+		"key": "fallocate",
+		"name": "fallocate (util-linux)",
+		"bins": ["fallocate"],
+		"no_version": true,
+		"tier": TIER_FEATURE,
+		"platforms": ["linux"],
+		"used_for": "Keeping a video export's scratch file SMALL: the render's AVI is encoded "
+			+ "as it is written, and the part already encoded is released from disk as it goes "
+			+ "(a punched hole), so the intermediate never grows past a few seconds of video. "
+			+ "Without it the scratch file grows to the whole film before it is deleted.",
+		"install": {
+			"linux": "part of util-linux - installed on every mainstream distribution",
+		},
+		"site": "https://github.com/util-linux/util-linux",
+	},
+	{
 		"key": "xvfb",
 		"name": "xvfb-run",
 		"bins": ["xvfb-run"],

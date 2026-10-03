@@ -77,6 +77,13 @@ func _patterns_match_examples() -> void:
 		_ok(hit, "%s's pattern does not find its own example %s" % [k, ex.c_escape()])
 
 
+func _kinds(d: Dictionary) -> Array:
+	var out := []
+	for a in d["actions"]:
+		out.append(String(a["kind"]))
+	return out
+
+
 ## THE PROOF: each example, read by the parser of record. A key missing from this match is a
 ## failure, so a new entry cannot ship unverified.
 func _parsers_agree() -> void:
@@ -99,6 +106,47 @@ func _parsers_agree() -> void:
 					var want := -1.0 if fill.is_empty() else float(fill)
 					_ok(is_equal_approx(float(h[0]["seconds"]), want),
 						"%s rests %s, not %s" % [k, h[0]["seconds"], want])
+			"outro":
+				# Read here by the parsers that see it; the fade itself is the Generative panel's,
+				# gated in multi_voice_check (_check_outro_mark).
+				_ok(RegEx.create_from_string(Manuscript.OUTRO).search("A %s B." % ex) != null,
+					"the outro example is not the outro mark")
+				_ok(not _words(Manuscript.unspoken("Before. %s After." % ex)).has("outro"),
+					"the outro mark would be spoken")
+				_ok(TabletScript.speakable("<!-- url: a.test -->\n\nOne. %s Two.\n" % ex).contains(ex),
+					"a tablet chapter loses the outro mark before the voice sees it")
+			"url":
+				var d := TabletScript.parse("%s\n\nText.\n" % ex)
+				_ok((d["pages"] as Array).size() == 1 and String(d["pages"][0]["url"]) == fill,
+					"a url mark does not open a page at %s" % fill)
+			"search":
+				var d := TabletScript.parse("<!-- url: engine.test -->\n\n# Engine\n\n%s\n\nA result.\n" % ex)
+				_ok(_kinds(d).has("search") and String((d["pages"] as Array).back()["query"]) == fill,
+					"a search mark does not search for '%s'" % fill)
+			"new_tab":
+				_ok(_kinds(TabletScript.parse("<!-- url: a.test -->\n\nText.\n\n%s\n<!-- url: b.test -->\n\nMore.\n" % ex)).has("tab"),
+					"a new tab mark opens no tab")
+			"back":
+				var d := TabletScript.parse("<!-- url: a.test -->\n\nOne.\n\n<!-- url: b.test -->\n\nTwo.\n\n%s\n" % ex)
+				_ok(_kinds(d).has("back"), "a back mark goes nowhere")
+			"landscape", "portrait":
+				var pre := "<!-- landscape -->\n" if k == "portrait" else ""
+				var d := TabletScript.parse("<!-- url: a.test -->\n%s%s\n\nText.\n" % [pre, ex])
+				var to := -1
+				for a in d["actions"]:
+					if a["kind"] == "rotate":
+						to = int(a["to"])
+				_ok(to == (1 if k == "landscape" else 0), "%s does not turn to %s" % [k, k])
+			"skip":
+				var sp := TabletScript.speakable("<!-- url: a.test -->\n\nRead this. %s Not this.\n" % ex)
+				_ok(sp.contains("Read this") and not sp.contains("Not this"), "a skip mark does not stop the reading")
+			"filler":
+				var d := TabletScript.parse("<!-- url: a.test -->\n\nText.\n\n%s\n" % ex)
+				var n := 0
+				for b in (d["pages"][0]["blocks"] as Array):
+					if b["kind"] == "filler":
+						n += int(b["n"])
+				_ok(n == int(fill), "a filler mark does not put %s stories in" % fill)
 			"timestamp":
 				var t := Manuscript.mark_timestamp_pauses(ex + "The subject was moved.")
 				_ok(Manuscript.hesitations(t).size() == 1, "a log-entry time gets no rest")

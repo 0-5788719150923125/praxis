@@ -161,7 +161,13 @@ var _line_y := 0.0
 var _ctx := ""
 var _quick := 0.0
 var _snap := true
-var _page_span := {}             # page -> Vector2i(first, last) spoken index on it
+var _last_now := 0.0
+var _page_span := {}
+var _start_si := -1              # a mid-way start: the spoken index the reading begins at
+## Where the words before a mid-way start are placed in time: long past, so all of it has
+## happened before the first frame.
+const START_PAST := -100000.0
+             # page -> Vector2i(first, last) spoken index on it
 
 
 # --- mount ---------------------------------------------------------------------------
@@ -325,6 +331,15 @@ func _reset_reading() -> void:
 	_built_n = -1
 	_sched = []
 	_flings = {}
+	# A READING STARTED MID-WAY (a scrub): everything before its first word was "read" long ago,
+	# so every tap, page, scroll and turn up to there has happened before the first frame and the
+	# screen opens where the reading is - the voice's words then match on from that point
+	if _start_si > 0:
+		_map_j = _start_si
+		for j in mini(_start_si, n):
+			_st0[j] = START_PAST + float(j) * 0.5
+			_st1[j] = _st0[j] + 0.3
+
 
 
 # --- the Medium contract ---------------------------------------------------------------
@@ -345,6 +360,10 @@ func bind_captions(subs) -> bool:
 	_subs = subs
 	_source = ""
 	_doc = {}
+	# the old screen goes with the old document: a frame drawn before the next advance would
+	# otherwise draw a page of a chapter that is no longer loaded
+	_st = {}
+	_lays = {}
 	_reset_reading()
 	return true
 
@@ -357,6 +376,11 @@ func advance(_features, delta: float, bookend: float) -> void:
 	_env.adjustment_brightness = clampf(b * Director.live_fade, 0.0, 1.0)
 	_ensure_doc()
 	_now = _subs.now() if _subs != null and is_instance_valid(_subs) else t
+	# A SEEK (the scrubber, in a file session) is a cut, not a move: the camera lands at once
+	# rather than gliding across the desk from where the old moment had it
+	if absf(_now - _last_now) > 1.0:
+		_snap = true
+	_last_now = _now
 	if not _doc.is_empty():
 		_extend_map()
 		if _map.size() != _built_n:
@@ -395,6 +419,14 @@ func _ensure_doc() -> void:
 		_textures = {}
 	_rev = Illustrations.revision
 	_doc = TabletScript.parse(src)
+	_start_si = -1
+	if _subs != null and is_instance_valid(_subs):
+		var sw: Variant = (_subs.document as Dictionary).get("start_words", PackedStringArray())
+		if sw is PackedStringArray and not (sw as PackedStringArray).is_empty():
+			var norms := PackedStringArray()
+			for wi in (_doc["spoken"] as PackedInt32Array):
+				norms.append(String((_doc["words"][wi] as Dictionary)["norm"]))
+			_start_si = TabletScript.find_run(norms, sw)
 	_page_span = {}
 	var sp: PackedInt32Array = _doc["spoken"]
 	for si in sp.size():
@@ -1124,6 +1156,9 @@ func _current_page() -> int:
 ## Draw the screen. [param layer] 0 is the screen as it is; 1 is the INCOMING layout of a turn,
 ## drawn on a second canvas faded in over the first - a dissolve, so the glass is always full.
 func draw_screen(ci: CanvasItem, layer := 0) -> void:
+	if _doc.is_empty():
+		ci.draw_rect(Rect2(0.0, 0.0, SW, SH), Color.BLACK)
+		return
 	var fade: Vector3 = _st.get("fade", Vector3(0, 0, -1))
 	if layer == 1 and fade.z < 0.0:
 		return

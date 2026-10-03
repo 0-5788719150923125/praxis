@@ -90,3 +90,8 @@ read the hand lingers on it (a long glance down it) before moving on.
 A first visit's pop-ups (cookie consent, newsletter, "open in app") are answered before the
 capture - the most private choice first - and anything still covering the page is cleared. A site
 that defeats this can still be screenshotted by hand and imported.
+
+## Marks
+
+Every mark is in the script editor's palette (group "Tablet", plus "Outro starts here" under
+Timing), documented in `docs/script.md` and proven in `tests/script_marks_check.gd`.

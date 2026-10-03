@@ -112,7 +112,7 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _dragging:
 		_seek_to(event.position.x)
 		get_viewport().set_input_as_handled()
-	elif event is InputEventKey and event.pressed and not event.echo:
+	elif event is InputEventKey and event.pressed and not event.echo and not _typing():
 		# Arrow keys are the control that actually gets used while watching, because they
 		# need no aim: a fixed step, repeatable, without taking the eye off the frame.
 		#
@@ -132,6 +132,14 @@ func _input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 
 
+## Is someone typing? Then the arrow keys and Home are theirs, not the playhead's: a live reading
+## seeks by RESTARTING from a sentence, and a cursor key pressed in the script editor did exactly
+## that, silently, mid-sentence.
+func _typing() -> bool:
+	var f := get_viewport().gui_get_focus_owner()
+	return f is TextEdit or f is LineEdit
+
+
 ## 10 s normally, 60 s with shift - the difference between "I missed a word" and "that
 ## scene was a couple of minutes back".
 func _step(event: InputEventKey) -> float:
@@ -149,8 +157,17 @@ func _seek_to(x: float) -> void:
 func _rail() -> Rect2:
 	var vp := _root.get_viewport_rect().size
 	var margin := maxf(40.0, vp.x * 0.06)
-	return Rect2(Vector2(margin, vp.y - PAD),
-		Vector2(maxf(10.0, vp.x - margin * 2.0), BAR_H))
+	# CLEAR OF AN OPEN SIDE PANEL: the bar starts to the right of it, and has the whole width
+	# back when the panel is hidden - it was drawing (and taking clicks) over the panel's rows
+	var left := margin
+	for n in get_tree().get_nodes_in_group(SidePanel.GROUP):
+		var c := n as Control
+		if c != null and c.is_visible_in_tree():
+			var r := c.get_global_rect()
+			if r.position.x < vp.x * 0.5:
+				left = maxf(left, r.end.x + 24.0)
+	return Rect2(Vector2(left, vp.y - PAD),
+		Vector2(maxf(10.0, vp.x - margin - left), BAR_H))
 
 
 static func _clock(t: float) -> String:

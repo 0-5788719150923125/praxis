@@ -696,6 +696,15 @@ func _extend_map() -> void:
 		_lay_t = {}
 		_lay_t0 = {}
 	var lw := _layout.words
+	# A READING STARTED MID-WAY (a scrub): match from where it starts, so the book opens at that
+	# spread rather than looking for those words on page one
+	if _map.is_empty() and _map_j == 0:
+		var sw: Variant = (_subs.document as Dictionary).get("start_words", PackedStringArray())
+		if sw is PackedStringArray and not (sw as PackedStringArray).is_empty():
+			var norms := PackedStringArray()
+			for w in lw:
+				norms.append(String((w as Dictionary)["norm"]))
+			_map_j = maxi(0, TabletScript.find_run(norms, sw))
 	for i in range(_map.size(), words.size()):
 		var n := _layout.norm(String((words[i] as Dictionary).get("text", "")))
 		var got := -1

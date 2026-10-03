@@ -442,6 +442,10 @@ ENGINE_FLAGS = {
     # setpriv's interface (subprocess.gd binds every child's lifetime to ghost's with it),
     # an argument to a subprocess, not a ghost flag.
     "--pdeathsig",
+    # fallocate's interface (exporter.gd releases the scratch AVI behind its encoder with it).
+    "--punch-hole",
+    "--offset",
+    "--length",
     # What deps.gd ASKS other programs, to read their versions out - every one of
     # these is an argument handed to somebody else's binary, not a ghost flag.
     "--version",

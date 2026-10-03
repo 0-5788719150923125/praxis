@@ -26,6 +26,7 @@ class_name GenerativeEditor
 
 ## Set by main: open ONE generator session for the whole chapter.
 var begin_stream: Callable     # begin_stream.call(fp, sample_rate, words) -> playback
+
 ## The other half of begin_stream: closes the stream, detaches the Director from the stage and
 ## frees the subtitle overlay. Optional - an owner that does not set it simply cannot Stop.
 var end_stream: Callable
@@ -708,6 +709,11 @@ func _build_panel() -> void:
 	_cast_timer.wait_time = 0.4
 	_cast_timer.timeout.connect(func() -> void: _refresh_cast(_text.text))
 	add_child(_cast_timer)
+	_seek_timer = Timer.new()
+	_seek_timer.one_shot = true
+	_seek_timer.wait_time = SEEK_SETTLE
+	_seek_timer.timeout.connect(_seek_now)
+	add_child(_seek_timer)
 
 	var vrow := HBoxContainer.new()
 	vrow.add_theme_constant_override("separation", 8)
@@ -746,6 +752,7 @@ func _build_panel() -> void:
 	_stop.disabled = true
 	_stop.pressed.connect(_stop_speaking)
 	vrow.add_child(_stop)
+
 	# AUDITION ONE VOICE, without the chapter. In a script with seven speakers the last one
 	# first speaks forty minutes in, so tuning that voice by reading the whole script is not
 	# a loop anyone can iterate in. This reads a fixed passage (TEST_PASSAGE) in the voice on
@@ -1210,7 +1217,7 @@ func book_document(body := "") -> Dictionary:
 		if not v.is_empty():
 			inks[who] = v
 	return {"source": src, "title": _doc_field(src, "title"), "book": _doc_field(src, "book"),
-		"author": _doc_field(src, "author"), "inks": inks}
+		"author": _doc_field(src, "author"), "inks": inks, "start_words": _start_words()}
 
 
 ## A top-level frontmatter field (`title:`, `book:`): what the source says (the synced file,
@@ -1492,6 +1499,22 @@ var _outro_queued := false       # the outro's silence is on the stream (see the
 ## (-1 until the first fading chunk is drained), and whether the reading has been cut.
 var _fade_len := 0.0
 var _fade_at := -1
+## LIVE SCRUBBING, BY SENTENCE. A live reading is synthesized a sentence or two ahead, so there
+## is no audio behind or ahead of the playhead to seek within. The scrub bar (Chrome's Scrubber,
+## through Spectrum's scrub hooks) therefore seeks by SENTENCE: its positions are estimated
+## sentence starts, and a seek is Stop + Speak from that sentence - a fresh reading that is only
+## synthesized from there on. The media start in the state they would be in at that point
+## (book_document()["start_words"]). The in-place generator seek recorded above _repace stays
+## withdrawn; this never seeks a stream, it ends one and starts another, as Stop then Speak does.
+var _start_chunk := 0
+var _chunk_at := {}                      # chunk -> the stream sample its audio starts at
+var _chunk_t := PackedFloat32Array()     # chunk -> its estimated start along the reading, s (n + 1)
+var _seek_k := -1                        # a seek waiting for the bar to settle
+var _seek_timer: Timer
+## The estimate the bar is laid out by: a reading pace, plus every rest at its own length.
+const SCRUB_SECONDS_PER_WORD := 0.38
+## A drag restarts the reading once, when it settles - not once per pixel.
+const SEEK_SETTLE := 0.4
 var _fade_done := false
 const OUTRO_MIN_FADE := 0.5
 ## Enough words to fill a fade - a brisk pace, so the fade never runs out of voice early.
@@ -2770,6 +2793,115 @@ func _trim_to_outro(chunks: Array) -> Array:
 	return chunks.slice(0, mini(keep + 1, chunks.size()))
 
 
+## The scrub bar's length: the whole reading, estimated.
+func _scrub_len() -> float:
+	return _chunk_t[_chunk_t.size() - 1] if not _chunk_t.is_empty() else 0.0
+
+
+## The scrub bar's position: where a waiting seek is going, else the sentence being heard and
+## how far through it, on the estimated scale.
+func _scrub_pos() -> float:
+	var n := _chunk_t.size() - 1
+	if n <= 0:
+		return 0.0
+	if _seek_k >= 0:
+		return _chunk_t[clampi(_seek_k, 0, n)]
+	var i := _start_chunk
+	var f := 0.0
+	if _playback != null and _ring_capacity > 0 and not _chunk_at.is_empty():
+		var heard := _pushed - maxi(0, _ring_capacity - int(_playback.get_frames_available()))
+		var best := -1
+		for c in _chunk_at:
+			if int(_chunk_at[c]) <= heard and int(c) > best:
+				best = int(c)
+		if best >= 0:
+			i = best
+			var est := maxf(0.2, _chunk_t[mini(i + 1, n)] - _chunk_t[mini(i, n)])
+			f = clampf(float(heard - int(_chunk_at[best])) / float(_sr) / est, 0.0, 0.99)
+	i = clampi(i, 0, n - 1)
+	return lerpf(_chunk_t[i], _chunk_t[i + 1], f)
+
+
+## The scrub bar asks to go to [param t] (estimated seconds): remember the sentence there and
+## restart from it once the bar settles.
+func _scrub_seek(t: float) -> void:
+	var k := 0
+	for i in _chunk_t.size() - 1:
+		if _chunk_t[i] <= t:
+			k = i
+	_seek_k = k
+	if _seek_timer != null and _seek_timer.is_inside_tree():
+		_seek_timer.start()
+
+
+func _seek_now() -> void:
+	var k := _seek_k
+	if k >= 0:
+		_speak_from(k)
+
+
+## Read from sentence [param k]: Stop, then Speak from there. The old stream is ENDED (the voice
+## stops at once and the stage is handed back), then a fresh reading is planned and requested
+## from [param k] on, with no intro. The media start where it starts ([method _start_words]).
+func _speak_from(k: int) -> void:
+	_seek_k = -1
+	if _host == null or not _host.is_up() or _voices.selected < 0:
+		_set_status("The voice is not ready yet - wait for it, then scrub.")
+		return
+	var body := _doc.pull().strip_edges()
+	if body.is_empty():
+		return
+	if not _chunks.is_empty() or _playback != null:
+		Spectrum.set_stream_paused(false)
+		_reset_playback()
+		if end_stream.is_valid():
+			end_stream.call()
+	_refresh_cast(body)
+	if _test_busy():
+		_stop_test()
+	_plan(body)
+	if _chunks.is_empty():
+		_set_status("Nothing speakable in that text.")
+		return
+	k = _start_at(k)
+	_stale = false
+	Spectrum.set_stream_paused(false)
+	_sync_speak_buttons()
+	_set_status("Reading from sentence %d of %d…%s" % [k + 1, _chunks.size(), _plan_note])
+	_pump()
+
+
+## A planned reading made to start at chunk [param k]: requested and played from there, with no
+## intro. Returns the chunk it will start at.
+func _start_at(k: int) -> int:
+	k = clampi(k, 0, maxi(0, _chunks.size() - 1))
+	_start_chunk = k
+	if k > 0:
+		_pending = PackedFloat32Array()
+		_read = 0
+		_lead_in = 0.0
+		_elapsed = 0.0
+		_next_to_request = k
+		_next_to_play = k
+	return k
+
+
+## The first words of the chunk a reading starts at, normalized - how a medium finds its place.
+## Empty for a reading from the top.
+func _start_words() -> PackedStringArray:
+	var out := PackedStringArray()
+	if _start_chunk <= 0 or _start_chunk >= _chunks.size():
+		return out
+	for ci in range(_start_chunk, mini(_start_chunk + 2, _chunks.size())):
+		for w in (_chunks[ci] as Dictionary).get("words", []):
+			var n := TabletScript.norm(String((w as Dictionary).get("text", "")))
+			if not n.is_empty():
+				out.append(n)
+			if out.size() >= 6:
+				return out
+	return out
+
+
 ## The outro mark's fade at stream sample [param sample]: 1 before it starts, easing to 0 over
 ## [member _fade_len], 0 after.
 func _fade_gain(sample: int) -> float:
@@ -2789,6 +2921,24 @@ func _plan(body: String) -> void:
 		_pending.resize(int(_lead_in * float(_sr)))
 		_elapsed = _lead_in
 	_chunks = _build_chunks(body)
+	_start_chunk = 0
+	_chunk_at = {}
+	_seek_k = -1
+	_chunk_t = PackedFloat32Array()
+	var at := 0.0
+	for c in _chunks:
+		_chunk_t.append(at)
+		var rest := 0.0
+		for h in (c as Dictionary).get("holds", []):
+			if h is Dictionary:
+				rest += float((h as Dictionary).get("sec", 0.0))
+		at += maxf(0.2, float(((c as Dictionary).get("words", []) as Array).size())
+			* SCRUB_SECONDS_PER_WORD + rest)
+	_chunk_t.append(at)
+	if not _chunks.is_empty():
+		Spectrum.scrub_pos = _scrub_pos
+		Spectrum.scrub_len = _scrub_len
+		Spectrum.scrub_seek = _scrub_seek
 
 
 ## STOP: end the reading and hand the stage back.
@@ -3288,6 +3438,7 @@ func _drain_ready() -> void:
 			d["t0"] = _shifted(float(d["t0"]), spliced["cuts"], ratio, true) + _elapsed
 			d["t1"] = _shifted(float(d["t1"]), spliced["cuts"], ratio, false) + _elapsed
 			_sub_words.append(d)
+		_chunk_at[idx] = _pushed + (_pending.size() - _read)
 		# THE OUTRO MARK: the fade starts where the first chunk after it does
 		if _fade_len > 0.0 and _fade_at < 0 and idx >= 0 and idx < _chunks.size() \
 				and bool((_chunks[idx] as Dictionary).get("fade", false)):
