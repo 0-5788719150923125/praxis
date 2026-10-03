@@ -74,6 +74,7 @@ func _initialize() -> void:
 	_check_untouched()
 	_check_back()
 	_check_real()
+	_check_arrivals()
 	print("tablet_check: %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail > 0 else 0)
 
@@ -244,6 +245,16 @@ func _check_real() -> void:
 	var snaps := TabletScript.snapshots(REAL)
 	_ok(snaps.size() == 1 and String(snaps[0]["url"]) == "https://www.shop.test/item/42" and String(snaps[0]["placement"]) == "page",
 		"the panel is offered the real page to capture")
+
+
+func _check_arrivals() -> void:
+	# a page that comes up is looked at before anything else happens on it
+	for kind in ["open", "link", "type", "search"]:
+		var ph := TabletScript.phases(kind, "what is it?")
+		_ok(float(ph["end"]) - float(ph["show"]) >= TabletScript.ARRIVE_LOOK - 0.001,
+			"%s ends on a look at the new page (%.1f s)" % [kind, float(ph["end"]) - float(ph["show"])])
+	var bk := TabletScript.phases("back")
+	_ok(float(bk["end"]) - float(bk["show"]) >= TabletScript.RETURN_LOOK - 0.001, "back ends on a shorter look")
 
 
 func _check_untouched() -> void:

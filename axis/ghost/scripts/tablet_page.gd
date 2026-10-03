@@ -188,7 +188,10 @@ func _text(b: Dictionary, level: int, emph: int, col := Color(0, 0, 0, 0), centr
 		var sp := f.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		if _line_x > 0.0 and _line_x + ww > _col:
 			_end_line()
-		var link := not String(w["link"]).is_empty()
+		# A LINK LOOKS LIKE ONE ONLY INLINE. A heading that links is set as a heading - a site's
+		# titles are all clickable, by convention, and say so by being titles; blue and
+		# underlined, it announced the tap before it happened
+		var link := not String(w["link"]).is_empty() and level == 0
 		var c := col if col.a > 0.0 else (accent if link else ink)
 		_line.append({"kind": "word", "wi": wi, "x": _line_x, "w": ww, "fs": fs, "lvl": lvl,
 			"col": c, "link": link})

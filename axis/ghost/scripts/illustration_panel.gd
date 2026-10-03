@@ -283,6 +283,9 @@ func _row(im: Dictionary) -> Control:
 		parts.append("imported")
 	meta.text = "  ·  ".join(parts)
 	meta.add_theme_font_size_override("font_size", 10)
+	# WRAPS, ALWAYS: a status line that does not wrap sets the WHOLE panel's width - every tag
+	# added to it ("imported") widened the side panel by its length
+	meta.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	meta.modulate = Color(1, 1, 1, 0.6)
 	if st == "error":
 		meta.text += "  -  " + Illustrations.error_of(key)
@@ -292,6 +295,11 @@ func _row(im: Dictionary) -> Control:
 	elif Illustrations.is_stale(key):
 		meta.tooltip_text = "Made under a different style or reference set. Still used; regenerate to repaint it."
 	col.add_child(meta)
+	# THE BUTTONS ARE A LINE OF THEIR OWN under the text, not beside it: side by side they were
+	# the panel's minimum width (thumbnail + label + five buttons), and the side panel grew
+	var acts := HBoxContainer.new()
+	acts.add_theme_constant_override("separation", 4)
+	col.add_child(acts)
 
 	if vs.size() > 1:
 		var at := Illustrations.current_index(key)
@@ -302,10 +310,10 @@ func _row(im: Dictionary) -> Control:
 			b.tooltip_text = "Show the %s version." % ("previous" if step < 0 else "next")
 			b.disabled = at + step < 0 or at + step >= vs.size()
 			b.pressed.connect(func() -> void: Illustrations.select_version(key, at + step))
-			row.add_child(b)
+			acts.add_child(b)
 	if not path.is_empty():
 		var del := _delete_button("✕", key, Illustrations.current_index(key))
-		row.add_child(del)
+		acts.add_child(del)
 	var go := Button.new()
 	go.focus_mode = Control.FOCUS_NONE
 	go.text = "Regenerate" if not path.is_empty() else "Generate"
@@ -316,8 +324,8 @@ func _row(im: Dictionary) -> Control:
 		go.tooltip_text = "Capture this page from the web as it is now (headless Chromium, via Playwright). Any current capture is kept as an earlier version."
 	go.disabled = st in ["queued", "running"] or Illustrations.read_only()
 	go.pressed.connect(func() -> void: _ask(im))
-	row.add_child(go)
-	row.add_child(_import_button(im))
+	acts.add_child(go)
+	acts.add_child(_import_button(im))
 	return row
 
 

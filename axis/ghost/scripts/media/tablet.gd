@@ -67,6 +67,8 @@ const ARC_IN := 0.15
 const ARC_OUT := 0.15
 const ARC_WORDS := 40.0
 const CAM_LEAD := 4.0
+## While reading, the share of the screen's height the camera's aim stays within.
+const AIM_BAND := Vector2(0.4, 0.6)
 ## How far into its arc the camera comes for a real page, which is looked at, not read.
 const REAL_LOOK := 0.5
 ## Each page's set-up, degrees: an offset per page plus a slow wander. Small on purpose - a
@@ -784,8 +786,12 @@ func _state_at(t: float) -> Dictionary:
 		var ph := _ph(a)
 		var u := (t - t0) / float(e["s"])
 		if u < float(ph["end"]):
-			# a skim is reading, not handling: the camera stays on the page for it
-			st["skim" if kind == "skim" else "busy"] = true
+			# a skim is reading, not handling: the camera stays on the page for it - and so does
+			# the thinking before a new tab, which is the page still being looked at
+			if kind == "skim" or u < float(ph.get("think", -1.0)):
+				st["skim"] = true
+			else:
+				st["busy"] = true
 		match kind:
 			"wake":
 				st["on"] = smoothstep(float(ph["on0"]), float(ph["on1"]), u)
@@ -991,8 +997,12 @@ func _tick_camera(delta: float) -> void:
 		var wi := _camera_word(page)
 		var lp := layout(page, o)
 		if wi >= 0 and lp.word_rect.has(wi):
+			# THE EYES STAY PUT, THE PAGE MOVES. The aim is held in the middle band of the screen
+			# and only leans toward the line within it: the reading drags keep the line in that
+			# band, so a scroll brings the next lines to where the camera already looks. Chasing
+			# the line itself sent the camera up the slab after every scroll - "floaty".
 			line = clampf((lp.word_rect[wi] as Rect2).get_center().y - scroll_of(page, t, o) + TOP,
-				TOP + 220.0, L.y - 280.0)
+				TOP + _vh(o) * AIM_BAND.x, TOP + _vh(o) * AIM_BAND.y)
 	if _snap or _quick > 0.98:
 		_line_y = line
 	_line_y = lerpf(_line_y, line, 1.0 - exp(-maxf(delta, 0.0) / LINE_TAU))

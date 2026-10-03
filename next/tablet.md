@@ -86,3 +86,7 @@ Illustrations panel as a "web page" row: **Capture** takes it once with Playwrig
 the cached browser is reused), and **Import…** takes a screenshot instead, for a site that blocks
 headless browsers. On the tablet the capture is the page, edge to edge, and since nothing on it is
 read the hand lingers on it (a long glance down it) before moving on.
+
+A first visit's pop-ups (cookie consent, newsletter, "open in app") are answered before the
+capture - the most private choice first - and anything still covering the page is cleared. A site
+that defeats this can still be screenshotted by hand and imported.

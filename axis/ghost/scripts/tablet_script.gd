@@ -61,6 +61,14 @@ const WORD_PAUSE := 0.3
 ## How long a reader lingers on a real page before moving on: it is not read aloud, so it is
 ## looked at - as long as a skim past a picture and a screenful of text.
 const REAL_LINGER_WORDS := 120
+## Seconds a page that has just come up is looked at, still, before anything else happens on
+## it - "it almost immediately moves on... not enough time to digest what they're seeing", and
+## of a search: "the reading of results is IMMEDIATE... give viewers a chance to orient
+## themselves to the context switch". A page come back to is known: a shorter look.
+const ARRIVE_LOOK := 3.0
+## The pause before a new tab: deciding what to look for next.
+const THINK := 2.2
+const RETURN_LOOK := 1.5
 ## What a skim costs a picture it passes: the drag to it and a look at it.
 const PICTURE_DWELL := 3.4
 ## A skim is owed for this many unread words, or for any picture or placeholder story.
@@ -99,6 +107,11 @@ static func hold_of(comment: String) -> float:
 ## THE TIMING OF EACH ACTION, in seconds from its start: every key is a moment the medium draws
 ## something at, `end` is how long the voice rests for it. Scaled as a whole when a reading
 ## leaves less room than this.
+##
+## EVERY ARRIVAL ENDS ON A LOOK: an action that brings up a page (open, link, type, search) runs
+## on for [constant ARRIVE_LOOK] after the page shows, so the new page sits still - unread,
+## unscrolled - while the viewer takes in the context switch. Back, to a page already seen,
+## looks for [constant RETURN_LOOK].
 static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 	match kind:
 		"skim":
@@ -112,10 +125,10 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 			return {"on0": 1.0, "on1": 1.8, "end": 3.2}
 		"open":
 			return {"tap": 0.3, "open0": 0.55, "open1": 1.05, "load0": 1.05, "show": 1.6,
-				"load1": 1.9, "end": 2.4}
+				"load1": 1.9, "end": 1.6 + ARRIVE_LOOK}
 		"link":
 			return {"scroll0": 0.0, "scroll1": 1.5, "tap": 1.75, "load0": 1.9, "show": 2.5,
-				"load1": 2.8, "end": 3.3}
+				"load1": 2.8, "end": 2.5 + ARRIVE_LOOK}
 		"type", "search":
 			# reach for the field, the keyboard rises, type, look at it, go, wait for the page
 			var c0 := 1.6
@@ -123,12 +136,15 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 			var go := c1 + 0.8
 			return {"tap": 0.5, "edit": 0.85, "kb1": 1.3, "chars0": c0, "chars1": c1,
 				"go": go, "kb0": go + 0.45, "load0": go + 0.1, "show": go + 1.0,
-				"load1": go + 1.4, "end": go + 2.0}
+				"load1": go + 1.4, "end": go + 1.0 + ARRIVE_LOOK}
 		"tab":
-			return {"tap": 0.6, "add": 1.05, "end": 2.2}
+			# A NEW TAB IS A DECISION: the hand rests on the page it is leaving while the reader
+			# thinks about where to go next, then reaches for the + - "the jump to a new tab and a
+			# search is immediate and jarring"
+			return {"think": THINK, "tap": THINK + 0.6, "add": THINK + 1.05, "end": THINK + 2.2}
 		"back":
 			# the page was seen already: it comes straight back, no load to wait for
-			return {"tap": 0.6, "show": 1.0, "end": 1.9}
+			return {"tap": 0.6, "show": 1.0, "end": 1.0 + RETURN_LOOK}
 		"rotate":
 			# the camera turns with the screen still showing the old layout ON it, then the new
 			# layout dissolves in over it - the content never leaves the glass

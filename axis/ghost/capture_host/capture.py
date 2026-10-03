@@ -13,7 +13,92 @@ anything else is a failure, with the reason on stderr.
 import json
 import sys
 
+import re
+
 from playwright.sync_api import sync_playwright
+
+# THE POP-UPS A FIRST VISIT GETS - cookie consent, newsletter, "open in app" - answered the way a
+# person would, most private answer first: a site's own button takes its own backdrop and scroll
+# lock with it, which removing elements by force does not always manage.
+DECLINE = re.compile(
+    r"^\s*(accept (only )?(necessary|essential|required)( cookies)?( only)?|"
+    r"(only|use) (necessary|essential|required)( cookies)?( only)?|"
+    r"reject( all)?( cookies)?|decline( all)?|deny( all)?|refuse( all)?|"
+    r"continue without accepting|necessary cookies only)\s*$",
+    re.I,
+)
+DISMISS = re.compile(
+    r"^\s*(accept( all)?( cookies)?|allow( all)?( cookies)?|i accept|agree|i agree|"
+    r"got it|ok(ay)?|close|dismiss|no,? thanks|not now|maybe later|continue|×|✕)\s*$",
+    re.I,
+)
+
+# Whatever is still pinned over the page and looks like a modal: a dialog, or a fixed layer
+# covering a good part of the screen. Removed, and the page's scroll lock released.
+CLEAR_OVERLAYS = """
+() => {
+  const vw = innerWidth, vh = innerHeight;
+  let gone = 0;
+  for (const el of document.querySelectorAll('body *')) {
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+    const r = el.getBoundingClientRect();
+    const share = (Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0)) *
+                   Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0))) / (vw * vh);
+    const dialog = el.matches('[role=dialog],[role=alertdialog],[aria-modal=true],dialog') ||
+                   el.querySelector('[role=dialog],[role=alertdialog],[aria-modal=true],dialog');
+    // a site's own header bar is fixed too: only something covering a real share goes, or a
+    // dialog of any size
+    if (share > 0.25 || (dialog && share > 0.02)) { el.remove(); gone++; }
+  }
+  for (const el of [document.documentElement, document.body]) {
+    if (!el) continue;
+    el.style.setProperty('overflow', 'visible', 'important');
+    el.style.setProperty('position', 'static', 'important');
+  }
+  return gone;
+}
+"""
+
+
+# Where an answer may be clicked: inside something that IS a pop-up - never an ordinary "OK" or
+# "Continue" on the page itself. A consent tool's own iframe counts as one whole.
+POPUP = (
+    "[role=dialog], [role=alertdialog], [aria-modal=true], dialog, "
+    "[id*=consent i], [class*=consent i], [id*=cookie i], [class*=cookie i], "
+    "[id*=gdpr i], [class*=gdpr i], [class*=modal i], [id*=modal i], [class*=popup i]"
+)
+
+
+def _click_first(page, pattern) -> bool:
+    for frame in page.frames:
+        try:
+            scope = frame.locator(POPUP) if frame == page.main_frame else frame.locator("body")
+            for role in ("button", "link"):
+                loc = scope.get_by_role(role, name=pattern)
+                for i in range(min(loc.count(), 6)):
+                    el = loc.nth(i)
+                    if el.is_visible():
+                        el.click(timeout=2000)
+                        return True
+        except Exception:
+            continue
+    return False
+
+
+def tidy(page) -> None:
+    for _ in range(3):  # a second pop-up sometimes follows the first
+        if not (_click_first(page, DECLINE) or _click_first(page, DISMISS)):
+            break
+        page.wait_for_timeout(700)
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+    removed = page.evaluate(CLEAR_OVERLAYS)
+    if removed:
+        print(f"cleared {removed} overlay(s)")
+    page.wait_for_timeout(400)
 
 
 def main() -> int:
@@ -39,6 +124,8 @@ def main() -> int:
             except Exception:
                 pass
             page.wait_for_timeout(1500)
+            if spec.get("tidy", True):
+                tidy(page)
             full = page.evaluate(
                 "Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)"
             )
