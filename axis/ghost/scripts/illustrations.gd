@@ -616,22 +616,40 @@ static func is_stale(key: String) -> bool:
 
 ## "missing", "queued", "running", "ready" or "error".
 static func status(key: String) -> String:
-	if _jobs.has(key):
+	if _jobs.has(key) or PageCapture.busy(key):
 		return "running"
 	for q in _queue:
 		if String((q as Dictionary)["key"]) == key:
 			return "queued"
-	if _errors.has(key) and current_index(key) < 0:
+	if (_errors.has(key) or not PageCapture.error_of(key).is_empty()) and current_index(key) < 0:
 		return "error"
 	return "ready" if current_index(key) >= 0 else "missing"
 
 
 static func error_of(key: String) -> String:
-	return String(_errors.get(key, ""))
+	var e := String(_errors.get(key, ""))
+	return e if not e.is_empty() else PageCapture.error_of(key)
 
 
 static func busy() -> int:
-	return _jobs.size() + _queue.size()
+	return _jobs.size() + _queue.size() + PageCapture.pending()
+
+
+## CAPTURE A REAL PAGE as [param image]'s picture - a tablet page with a `url` (see
+## [PageCapture]). Like generation it is explicit, and a recapture is a new version. "" when
+## queued, else why not.
+static func capture(image: Dictionary) -> String:
+	if read_only():
+		return "this session is read-only (a render or a probe) - nothing is captured here"
+	var url := String(image.get("url", ""))
+	if url.is_empty():
+		return "not a page"
+	if not url.begins_with("http://") and not url.begins_with("https://"):
+		url = "https://" + url
+	var err := PageCapture.request(String(image["key"]), url)
+	if err.is_empty():
+		pump()
+	return err
 
 
 # --- generation --------------------------------------------------------------
@@ -660,6 +678,15 @@ static func generate(image: Dictionary) -> String:
 static func pump() -> void:
 	if read_only():
 		return
+	for c in PageCapture.pump():
+		var img := Image.new()
+		if img.load(String(c["file"])) != OK:
+			_errors[String(c["key"])] = "the capture could not be read"
+			continue
+		var err := _add_version(String(c["key"]), img, {"sig": "", "imported": "captured",
+			"url": String(c["url"])}, String(c["url"]), "page")
+		if err.is_empty():
+			print("ghost: page %s captured" % String(c["url"]))
 	for key in _jobs.keys():
 		var job: Dictionary = _jobs[key]
 		var pid := int(job["pid"])

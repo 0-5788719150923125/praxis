@@ -189,6 +189,9 @@ func sync_from_library() -> void:
 func set_script_text(body: String) -> void:
 	_images = Manuscript.images(body)
 	Illustrations.set_chapter(_images)
+	# a tablet chapter's REAL pages, after its pictures: captured, never painted, and never in
+	# the painter's self-reference chain
+	_images.append_array(TabletScript.snapshots(body))
 	_seen = ""
 	if is_inside_tree():
 		_refresh()
@@ -230,6 +233,8 @@ func _refresh() -> void:
 	_all_btn.disabled = _images.is_empty() or Illustrations.read_only()
 	var n := Illustrations.busy()
 	_status.text = ("⏳  Painting %d…" % n) if n > 0 else ""
+	if not PageCapture.doing().is_empty():
+		_status.text = "⏳  " + PageCapture.doing() + "…"
 
 
 func _row(im: Dictionary) -> Control:
@@ -306,6 +311,9 @@ func _row(im: Dictionary) -> Control:
 	go.text = "Regenerate" if not path.is_empty() else "Generate"
 	go.tooltip_text = ("Paint it again. The current picture is kept as an earlier version."
 		if not path.is_empty() else "Paint this picture.")
+	if im.has("url"):
+		go.text = "Recapture" if not path.is_empty() else "Capture"
+		go.tooltip_text = "Capture this page from the web as it is now (headless Chromium, via Playwright). Any current capture is kept as an earlier version."
 	go.disabled = st in ["queued", "running"] or Illustrations.read_only()
 	go.pressed.connect(func() -> void: _ask(im))
 	row.add_child(go)
@@ -327,7 +335,7 @@ func _import_button(im: Dictionary) -> Button:
 
 
 func _ask(im: Dictionary) -> void:
-	var err := Illustrations.generate(im)
+	var err := Illustrations.capture(im) if im.has("url") else Illustrations.generate(im)
 	if not err.is_empty():
 		_status.text = "⚠  " + err
 	_seen = ""
@@ -348,6 +356,8 @@ func _confirm_all() -> void:
 
 func _generate_all() -> void:
 	for im in _images:
+		if im.has("url"):
+			continue              # a real page is captured, never painted
 		if Illustrations.status(String(im["key"])) in ["queued", "running"]:
 			continue
 		var err := Illustrations.generate(im)
@@ -470,6 +480,8 @@ func _delete_button(label: String, key: String, version: int) -> Button:
 
 func _generate_missing() -> void:
 	for im in _images:
+		if im.has("url"):
+			continue
 		if Illustrations.status(String(im["key"])) in ["missing", "error"]:
 			var err := Illustrations.generate(im)
 			if not err.is_empty():
@@ -580,4 +592,6 @@ static func _placement_label(im: Dictionary) -> String:
 			return "full page"
 		"sketch":
 			return "sketch"
+		"page":
+			return "web page"
 	return "inline"

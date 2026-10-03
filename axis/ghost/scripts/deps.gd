@@ -250,6 +250,17 @@ const MANAGED := [
 			+ "first time you paste one into the source field above.",
 	},
 	{
+		"key": "capture_venv",
+		"name": "Page-capture environment",
+		"kind": KIND_MANAGED,
+		"path": "user://capture_venv",
+		"marker": "python",
+		"size": "~150 MB (+ Chromium, ~170 MB, unless Playwright already has it cached)",
+		"used_for": "Playwright, for the tablet medium's REAL pages: a url the chapter writes "
+			+ "nothing under is captured from the web once, as a picture. Created the first time "
+			+ "you press Capture on one.",
+	},
+	{
 		"key": "face_venv",
 		"name": "Body/face-tracking environment",
 		"kind": KIND_MANAGED,

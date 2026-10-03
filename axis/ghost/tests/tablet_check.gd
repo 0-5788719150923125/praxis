@@ -73,6 +73,7 @@ func _initialize() -> void:
 	_check_agreement()
 	_check_untouched()
 	_check_back()
+	_check_real()
 	print("tablet_check: %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail > 0 else 0)
 
@@ -210,6 +211,39 @@ func _check_back() -> void:
 	_ok(mono and is_equal_approx(float(ph["chars1"]) - float(ph["chars0"]), ct[text.length()]),
 		"each letter typed after the last, ending when the rest says")
 	_ok(ct[text.length()] / text.length() >= 0.18, "typing is unhurried (%.2f s a letter)" % (ct[text.length()] / text.length()))
+
+
+const REAL := """<!-- url: news.test/a -->
+
+# An article
+
+Read this, then [the listing](https://www.shop.test/item/42).
+
+<!-- url: https://www.shop.test/item/42 -->
+
+<!-- new tab -->
+<!-- url: engine.test -->
+
+# Engine
+"""
+
+
+func _check_real() -> void:
+	var d := TabletScript.parse(REAL)
+	var pages: Array = d["pages"]
+	_ok(bool(pages[1].get("real", false)) and not bool(pages[0].get("real", false)) and not bool(pages[2].get("real", false)),
+		"a url with nothing written under it is the real page; written ones are not")
+	_ok(String(pages[1]["snap"]) == TabletScript.snap_key("shop.test/item/42"), "its capture is keyed by its address")
+	var kinds := []
+	for a in d["actions"]:
+		kinds.append(String(a["kind"]))
+	_ok(kinds == ["wake", "open", "link", "skim", "tab", "type"], "the real page is reached by its link and lingered on: %s" % str(kinds))
+	var linger: Dictionary = d["actions"][3]
+	_ok(int(linger["from"]) == 1 and int(linger["word"]) == -1 and float(linger["dur"]) >= 6.0,
+		"the linger is long (%.1f s): nothing on it is read" % float(linger["dur"]))
+	var snaps := TabletScript.snapshots(REAL)
+	_ok(snaps.size() == 1 and String(snaps[0]["url"]) == "https://www.shop.test/item/42" and String(snaps[0]["placement"]) == "page",
+		"the panel is offered the real page to capture")
 
 
 func _check_untouched() -> void:

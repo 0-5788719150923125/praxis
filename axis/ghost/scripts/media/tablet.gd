@@ -40,6 +40,13 @@ const TOP := STATUS + TABS + BAR
 ## and a beat before the next.
 const LEAD := 0.35
 const TAIL := 0.3
+## When the tablet starts to wake, in show seconds: at once, under the intro.
+const WAKE_AT := 0.4
+## A tap: the finger coming down, then the press and its ripple; and how long a pressed link
+## stays shaded.
+const TOUCH_IN := 0.22
+const TOUCH_OUT := 0.6
+const PRESS_HOLD := 0.7
 ## The camera: a long lens, as in the book, and how far it stands for the whole slab and for
 ## the line being read, portrait -> landscape.
 const VFOV := 22.0
@@ -60,6 +67,8 @@ const ARC_IN := 0.15
 const ARC_OUT := 0.15
 const ARC_WORDS := 40.0
 const CAM_LEAD := 4.0
+## How far into its arc the camera comes for a real page, which is looked at, not read.
+const REAL_LOOK := 0.5
 ## Each page's set-up, degrees: an offset per page plus a slow wander. Small on purpose - a
 ## tablet turned much off square reads as wrong.
 const YAW_SPREAD := 2.2
@@ -526,6 +535,15 @@ func _build_schedule() -> void:
 			else:
 				s = maxf(room, total * 0.25) / total
 		var t := start
+		# THE OPENING RUN WAKES AT ONCE: the intro is the tablet waking, so the wake starts with
+		# the show, and the slack the intro leaves is spent on the home screen - the rest of
+		# the run still ends a beat before the first word
+		if n == 0 and not group.is_empty() and String((group[0] as Dictionary)["kind"]) == "wake" \
+				and start > WAKE_AT:
+			var wake: Dictionary = group[0]
+			_sched.append({"a": wake, "t0": WAKE_AT, "s": 1.0})
+			t = maxf(start + float(wake["dur"]) * s, WAKE_AT + float(wake["dur"]))
+			group = group.slice(1)
 		for a in group:
 			_sched.append({"a": a, "t0": t, "s": s})
 			t += float((a as Dictionary)["dur"]) * s
@@ -618,7 +636,7 @@ func _build_flings() -> void:
 			var ph := _ph(a)
 			if (a["kind"] == "link" or a["kind"] == "skim") and int(a["from"]) == p and a.has("word"):
 				ev.append({"t": float(e["t0"]) + float(ph["scroll0"]) * float(e["s"]), "kind": a["kind"],
-					"wi": int(a["word"]), "pics": a.get("pics", []),
+					"wi": int(a["word"]), "pics": a.get("pics", []), "depth": float(a.get("depth", 1.1)),
 					"w": (float(ph["scroll1"]) - float(ph["scroll0"])) * float(e["s"])})
 			elif a["kind"] == "rotate":
 				ev.append({"t": float(e["t0"]) + (float(ph["fade0"]) + float(ph["fade1"])) * 0.5
@@ -664,8 +682,10 @@ func _build_flings() -> void:
 					if int(x["wi"]) >= 0:
 						stops.append(clampf(r.position.y - vh * 0.22, 0.0, mx))
 					else:
-						# a glance before leaving: a screen or so further down, wherever that is
-						stops.append(clampf(_eval(list, t) + vh * 1.1, 0.0, mx))
+						# a glance before leaving: some way further down, wherever that is - a
+						# screen for an unread page, a third of one on a real page, whose top is
+						# the part worth looking at
+						stops.append(clampf(_eval(list, t) + vh * float(x["depth"]), 0.0, mx))
 					var win := float(x["w"])
 					var seg := win / float(stops.size())
 					for k in stops.size():
@@ -782,6 +802,11 @@ func _state_at(t: float) -> Dictionary:
 				var from := int(a["from"])
 				var lp := layout(from, o)
 				var r: Rect2 = lp.word_rect.get(int(a["word"]), Rect2())
+				# the link itself shades while it is pressed, as a link does under a finger
+				if u >= float(ph["tap"]) - 0.05 and u < float(ph["tap"]) + PRESS_HOLD:
+					st["press_word"] = int(a["word"])
+					st["press_page"] = from
+					st["press_k"] = 1.0 - clampf((u - float(ph["tap"])) / PRESS_HOLD, 0.0, 1.0) * 0.6
 				var tap_t := t0 + float(ph["tap"]) * float(e["s"])
 				_touch(st, u, float(ph["tap"]), Vector2(r.get_center().x,
 					r.get_center().y - scroll_of(from, tap_t, o) + TOP))
@@ -836,10 +861,13 @@ func _state_at(t: float) -> Dictionary:
 	return st
 
 
+## A finger at [param at], landing at nominal second [param tap]: `touch_dt` is how far from the
+## press this moment is (negative while the finger comes down), for the press and its ripple.
 func _touch(st: Dictionary, u: float, tap: float, at: Vector2) -> void:
-	if u >= tap - 0.18 and u <= tap + 0.45:
+	if u >= tap - TOUCH_IN and u <= tap + TOUCH_OUT:
 		st["touch"] = at
-		st["touch_k"] = 1.0 - absf(u - tap) / (0.45 if u > tap else 0.18)
+		st["touch_dt"] = u - tap
+		st["touch_k"] = 1.0
 
 
 ## The load bar, and the page arriving at `show`.
@@ -948,11 +976,18 @@ func _tick_camera(delta: float) -> void:
 		_quick = 1.0
 	_quick = maxf(0.0, _quick - delta / QUICK_TIME)
 	var k := 0.0 if busy or page < 0 else _arc(page)
+	# a REAL page is not read, it is looked at: part way in, on its upper half, for as long as
+	# the hand lingers there
+	var real := page >= 0 and bool((_doc["pages"][page] as Dictionary).get("real", false))
+	if real and not busy:
+		k = REAL_LOOK
 	# where on the screen the reading is: the line the voice will reach a little ahead,
 	# low-passed so line-by-line steps become a drift
 	var L := logical(o)
 	var line := TOP + _vh(o) * 0.45
-	if page >= 0 and not busy and not bool(_st.get("skim", false)):
+	if real:
+		line = TOP + _vh(o) * 0.35
+	elif page >= 0 and not busy and not bool(_st.get("skim", false)):
 		var wi := _camera_word(page)
 		var lp := layout(page, o)
 		if wi >= 0 and lp.word_rect.has(wi):
@@ -1097,14 +1132,45 @@ func draw_screen(ci: CanvasItem, layer := 0) -> void:
 		ci.draw_set_transform_matrix(xf)
 	_draw_status(ci, o, _st["app"] == "browser" and float(_st["open"]) > 0.5)
 	_draw_keyboard(ci, o)
-	var tk := float(_st["touch_k"])
-	if tk > 0.0:
-		var tp: Vector2 = _st["touch"]
-		ci.draw_circle(tp, 30.0 + 10.0 * (1.0 - tk), Color(0.5, 0.5, 0.55, 0.38 * tk))
-		ci.draw_arc(tp, 34.0 + 10.0 * (1.0 - tk), 0.0, TAU, 32, Color(1, 1, 1, 0.5 * tk), 2.5, true)
+	if float(_st["touch_k"]) > 0.0:
+		_draw_touch(ci, _st["touch"], float(_st.get("touch_dt", 0.0)))
 	ci.draw_set_transform_matrix(Transform2D.IDENTITY)
 	if on < 1.0:
 		ci.draw_rect(Rect2(0.0, 0.0, SW, SH), Color(0, 0, 0, 1.0 - on))
+
+
+## THE TAP, made to read on a white page: a dark press that grows as the finger comes down, and
+## on the press a ring of the system blue that spreads and fades - the first cut was a pale grey
+## dot that vanished against every page it was used on.
+func _draw_touch(ci: CanvasItem, at: Vector2, dt: float) -> void:
+	var blue := Color(0.16, 0.42, 1.0)
+	if dt < 0.0:
+		var k := 1.0 - (-dt) / TOUCH_IN
+		ci.draw_circle(at, lerpf(20.0, 38.0, k), Color(0.08, 0.1, 0.16, 0.55 * k))
+		return
+	var f := clampf(dt / TOUCH_OUT, 0.0, 1.0)
+	ci.draw_circle(at, 38.0, Color(0.08, 0.1, 0.16, 0.55 * (1.0 - smoothstep(0.0, 0.5, f))))
+	ci.draw_circle(at, lerpf(38.0, 90.0, f), Color(blue, 0.25 * (1.0 - f)))
+	# sized for the picture, not the page: the slab is a third of the frame, so the ring is bold
+	ci.draw_arc(at, lerpf(40.0, 150.0, sqrt(f)), 0.0, TAU, 64, Color(blue, 1.0 - f * f), lerpf(11.0, 5.0, f), true)
+
+
+## Shade the link under a pressing finger: every word of it, in its own colour, softly.
+func _draw_press(ci: CanvasItem, page: int, o: int) -> void:
+	var wi := int(_st.get("press_word", -1))
+	if wi < 0:
+		return
+	var dw: Array = _doc["words"]
+	var link := String((dw[wi] as Dictionary)["link"])
+	var lp := layout(page, o)
+	var dy := TOP - scroll_of(page, _now, o)
+	var k := float(_st.get("press_k", 0.0))
+	var i := wi
+	while i < dw.size() and String((dw[i] as Dictionary)["link"]) == link \
+			and int((dw[i] as Dictionary)["page"]) == page and lp.word_rect.has(i):
+		var r: Rect2 = lp.word_rect[i]
+		ci.draw_style_box(_box(Color(lp.accent, 0.34 * k), 10), Rect2(r.position + Vector2(-4.0, dy), r.size + Vector2(8.0, 0.0)))
+		i += 1
 
 
 func _hash01(salt) -> float:
@@ -1224,6 +1290,8 @@ func _draw_browser(ci: CanvasItem, o: int) -> void:
 	if page >= 0:
 		var lp := layout(page, o)
 		lp.draw(ci, TOP, scroll_of(page, _now, o), TOP, L.y, _lit(page), _now, _texture_for)
+		if int(_st.get("press_page", -9)) == page:
+			_draw_press(ci, page, o)
 	elif page == -1:
 		_draw_start(ci, o)
 	# the chrome over it

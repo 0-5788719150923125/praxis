@@ -92,6 +92,9 @@ func build(doc: Dictionary, pi: int, w: float, min_h: float) -> void:
 	_y = 34.0
 	var blocks: Array = page["blocks"]
 	title = String(page["host"])
+	if bool(page.get("real", false)):
+		_real(page, w, min_h)
+		return
 	var engine := bool(page["search_box"]) and not bool(page["results"]) and _written(blocks) <= 3
 	if engine:
 		_engine_home(blocks)
@@ -213,6 +216,22 @@ func _end_line() -> void:
 
 
 # --- the furniture ---------------------------------------------------------------------
+
+## A REAL page: its capture, edge to edge at the tablet's width, as long as the capture is. Not
+## captured yet, a plain page saying so - with the address, so the panel row is easy to find.
+func _real(page: Dictionary, w: float, min_h: float) -> void:
+	bg = Color.WHITE
+	var key := String(page["snap"])
+	var path := Illustrations.path_for(key)
+	var h := min_h
+	if not path.is_empty():
+		var img := Image.load_from_file(path)
+		if img != null and not img.is_empty():
+			h = w * float(img.get_height()) / float(img.get_width())
+	items.append({"kind": "snap", "rect": Rect2(0.0, 0.0, w, h), "key": key,
+		"url": String(page["url"])})
+	height = h
+
 
 ## The name an EARLIER page on this host gave the site (its opening H1, set as the masthead),
 ## or "" when this is the first page of the host seen - whose own H1 then becomes the masthead.
@@ -399,6 +418,19 @@ func draw(ci: CanvasItem, top: float, scroll: float, clip_y0: float, clip_y1: fl
 				_draw_image(ci, rr, d, textures)
 			"search":
 				_draw_search(ci, rr, String(d["query"]))
+			"snap":
+				var tex: Texture2D = textures.call(String(d["key"]))
+				if tex != null:
+					ci.draw_texture_rect(tex, rr, false)
+				else:
+					var f := face(false, 0)
+					var c := Vector2(width * 0.5, clip_y0 + 260.0)
+					ci.draw_string(face(false, 2), c - Vector2(width * 0.5, 0.0), "A real page, not captured yet",
+						HORIZONTAL_ALIGNMENT_CENTER, width, 34, ink.lerp(bg, 0.4))
+					ci.draw_string(f, c + Vector2(-width * 0.5, 56.0), String(d["url"]),
+						HORIZONTAL_ALIGNMENT_CENTER, width, 26, accent)
+					ci.draw_string(f, c + Vector2(-width * 0.5, 110.0), "Capture it, or import a screenshot, in the Illustrations panel.",
+						HORIZONTAL_ALIGNMENT_CENTER, width, 22, ink.lerp(bg, 0.55))
 			"foot":
 				ci.draw_rect(rr, ink.lerp(bg, 0.93))
 				for j in 3:

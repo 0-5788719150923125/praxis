@@ -7,7 +7,9 @@ class_name TabletScript
 ## is ordinary markdown - what is on each page - plus a handful of own-line marks for what the
 ## hand does between them:
 ##
-##     <!-- url: www.duckduckduck.mom -->    the page that follows lives at this address
+##     <!-- url: www.duckduckduck.mom -->    the page that follows lives at this address - and
+##                                             with nothing written under it, it is the REAL
+##                                             page there, shown as a capture ([PageCapture])
 ##     <!-- search: What is the 7th Realm? -->   type this into the page's search box; the
 ##                                             results page follows
 ##     <!-- new tab -->                        open a blank tab (the next url is typed into it)
@@ -56,6 +58,9 @@ const SKIP_MARK := ""
 ## ([method char_times]), and a word break costs WORD_PAUSE more.
 const CHAR := 0.21
 const WORD_PAUSE := 0.3
+## How long a reader lingers on a real page before moving on: it is not read aloud, so it is
+## looked at - as long as a skim past a picture and a screenful of text.
+const REAL_LINGER_WORDS := 120
 ## What a skim costs a picture it passes: the drag to it and a look at it.
 const PICTURE_DWELL := 3.4
 ## A skim is owed for this many unread words, or for any picture or placeholder story.
@@ -102,8 +107,9 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 			var e := clampf(1.8 + 0.025 * float(n), 2.0, 4.5) + PICTURE_DWELL * float(m)
 			return {"rest": 0.8, "scroll0": 0.8, "scroll1": e - 0.35, "end": e}
 		"wake":
-			# dark, then the screen comes up, then a beat on the home screen
-			return {"on0": 2.0, "on1": 2.8, "end": 4.4}
+			# a moment dark, the screen comes up, a beat on the home screen - which the intro
+			# stretches: the medium starts the wake at once and spends any slack on the home screen
+			return {"on0": 1.0, "on1": 1.8, "end": 3.2}
 		"open":
 			return {"tap": 0.3, "open0": 0.55, "open1": 1.05, "load0": 1.05, "show": 1.6,
 				"load1": 1.9, "end": 2.4}
@@ -180,6 +186,27 @@ static func parse(source: String) -> Dictionary:
 	w.run(_collapse_comments(Manuscript.strip_frontmatter(source)))
 	return {"pages": w.pages, "words": w.words, "spoken": w.spoken, "actions": w.actions,
 		"speakable": "\n".join(w.say)}
+
+
+## The REAL pages of [param body], as picture rows for the Illustrations panel:
+## `[{key, prompt, url, placement: "page"}]` - captured rather than painted.
+static func snapshots(body: String) -> Array:
+	if not is_tablet(body):
+		return []
+	var out: Array = []
+	var seen := {}
+	for p in parse(body)["pages"]:
+		var pg: Dictionary = p
+		if bool(pg.get("real", false)) and not seen.has(String(pg["snap"])):
+			seen[String(pg["snap"])] = true
+			out.append({"key": String(pg["snap"]), "prompt": String(pg["url"]), "url": String(pg["url"]),
+				"placement": "page"})
+	return out
+
+
+## The library key a real page's capture is kept under.
+static func snap_key(url: String) -> String:
+	return Manuscript.image_key("page: " + url_key(url))
 
 
 ## Newlines inside a comment become spaces, so every mark sits on one line - a picture's
@@ -436,6 +463,17 @@ class _Walk:
 		actions.append(a)
 		_hold += float(a["dur"])
 
+	## Leaving the page on screen. A REAL page - nothing written for it - is not read, so it is
+	## LOOKED AT before the hand moves on: a slow drag down it and a pause.
+	func _leave() -> void:
+		if _cur < 0 or _returned:
+			return
+		var page: Dictionary = pages[_cur]
+		if (page["blocks"] as Array).is_empty() and not bool(page.get("lingered", false)):
+			page["lingered"] = true
+			_act({"kind": "skim", "from": _cur, "n": TabletScript.REAL_LINGER_WORDS, "m": 1,
+				"pics": [], "word": -1, "depth": 0.35})
+
 	func _new_page(url: String) -> int:
 		pages.append({"url": url, "host": TabletScript.host_of(url), "blocks": [], "links": {},
 			"search_box": false, "query": "", "results": false})
@@ -446,6 +484,7 @@ class _Walk:
 			"url":
 				if arg.is_empty():
 					return
+				_leave()
 				var from := _cur
 				var p := _new_page(arg)
 				if from >= 0 and not _fresh_tab:
@@ -472,6 +511,7 @@ class _Walk:
 				if arg.is_empty() or _cur < 0 or _fresh_tab:
 					push_warning("tablet: a search needs a page to search from - '%s' ignored" % arg)
 					return
+				_leave()
 				var from := _cur
 				(_hist[_tab] as Array).append(from)
 				_returned = false
@@ -487,6 +527,7 @@ class _Walk:
 				_skim_fill = 0
 				_skim_pics = []
 			"new tab":
+				_leave()
 				if not _browser:
 					_act({"kind": "open", "page": -1, "from": -1})
 					_browser = true
@@ -503,9 +544,10 @@ class _Walk:
 					return
 				# A PAGE LEFT UNREAD IS GLANCED AT FIRST: a reader who opens a page and goes
 				# straight back has still looked down it
+				_leave()
 				var page: Dictionary = pages[_cur]
-				if not bool(page.get("read", false)) or _skim_words >= TabletScript.SKIM_WORDS \
-						or _skim_fill > 0 or not _skim_pics.is_empty():
+				if not bool(page.get("lingered", false)) and (not bool(page.get("read", false))
+						or _skim_words >= TabletScript.SKIM_WORDS or _skim_fill > 0 or not _skim_pics.is_empty()):
 					_act({"kind": "skim", "from": _cur, "n": _skim_words + 20 * _skim_fill,
 						"m": _skim_pics.size(), "pics": _skim_pics.duplicate(), "word": -1})
 				var p := int(behind.pop_back())
@@ -528,6 +570,9 @@ class _Walk:
 	## STUB: the page draws squiggles for its body.
 	func _finish_page(p: Dictionary) -> void:
 		var blocks: Array = p["blocks"]
+		if blocks.is_empty() and not bool(p["results"]):
+			p["real"] = true
+			p["snap"] = TabletScript.snap_key(String(p["url"]))
 		for i in blocks.size():
 			var b: Dictionary = blocks[i]
 			if b["kind"] != "heading":

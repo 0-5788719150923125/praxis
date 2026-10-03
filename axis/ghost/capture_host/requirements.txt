@@ -1,0 +1,4 @@
+# ghost's page-capture environment (user://capture_venv), for the tablet medium's REAL pages.
+# Pinned to the Playwright the Praxis checkout uses, so the browser it drives is the one
+# already in the shared ~/.cache/ms-playwright and nothing new is downloaded.
+playwright==1.58.0

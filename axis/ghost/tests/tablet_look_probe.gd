@@ -16,13 +16,14 @@ const H := 720
 const DT := 1.0 / 30.0
 
 var _out := "user://tablet"
-var _doc := "/home/crow/repos/rift/books/north-star/chapters/42-the-rabbit-hole.md"
+var _doc := "/home/crow/repos/rift/books/north-star/chapters/42-what-is-the-7th-realm.md"
 var _times: Array = [3.0, 10.0]
 var _word := 0.3
 var _screen := false
 var _every := 0.0
 var _image := ""
 var _flat := 0
+var _intro := -1.0      # --intro: the Director reloads its own at attach, so this is applied after
 
 
 func _ready() -> void:
@@ -42,6 +43,7 @@ func _run() -> void:
 			"--every": _every = float(args[i + 1])
 			"--image": _image = args[i + 1]
 			"--camera": Director.camera = float(args[i + 1])
+			"--intro": _intro = float(args[i + 1])
 			"--times":
 				_times = []
 				for s in String(args[i + 1]).split(","):
@@ -54,10 +56,16 @@ func _run() -> void:
 		get_tree().quit(2)
 		return
 	var title := BookLayout.field_of(body, "title")
+	# stand-ins: --image for every picture, and any capture already taken for a real page
+	var idx := {}
 	if not _image.is_empty():
-		var idx := {}
 		for im in Manuscript.images(body):
 			idx[String(im["key"])] = {"versions": [{"file": _image, "sig": ""}], "current": 0}
+	for sn in TabletScript.snapshots(body):
+		var cap := ProjectSettings.globalize_path(PageCapture.DIR.path_join("%s.png" % String(sn["key"])))
+		if FileAccess.file_exists(cap):
+			idx[String(sn["key"])] = {"versions": [{"file": cap, "sig": ""}], "current": 0}
+	if not idx.is_empty():
 		Illustrations.use_for_test({"index": idx}, true)
 	var stage := SubViewport.new()
 	stage.size = Vector2i(W, H)
@@ -70,6 +78,8 @@ func _run() -> void:
 	medium.mount(stage)
 	Director.attach(stage, medium)
 	Director.hold(true)
+	if _intro >= 0.0:
+		Director.intro_hold = _intro
 	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
 	subs.words = _timeline(body, title)
 	subs.document = {"source": body, "title": title}
@@ -123,8 +133,12 @@ func _timeline(body: String, title: String) -> Array:
 	for a in d["actions"]:
 		var n := int(a["after"])
 		holds[n] = float(holds.get(n, 0.0)) + float(a["dur"])
+	# as the panel does it: the intro's silence first, and the opening run's rest shortened by it
+	var intro := maxf(0.0, Director.intro_hold)
+	if holds.has(0):
+		holds[0] = maxf(0.0, float(holds[0]) - maxf(0.0, intro - 0.8))
 	var out: Array = []
-	var t := 2.0
+	var t := intro
 	var si := 0
 	var spoken: PackedInt32Array = d["spoken"]
 	for k in spoken.size():

@@ -1521,9 +1521,11 @@ func _split_speakers(body: String) -> Array:
 	var title := _doc_field(body, "title").strip_edges()
 	# A TABLET CHAPTER is read off the screen and nothing else: no title announced, skipped text
 	# out, link targets out, a rest for every run of taps
+	var opens_on_hand := false
 	if TabletScript.is_tablet(body):
 		title = ""
 		body = TabletScript.speakable(body)
+		opens_on_hand = body.strip_edges().begins_with("<!-- action-hold")
 	var first := true
 	for p in Manuscript.passages(body):
 		var raw := String((p as Dictionary)["text"])
@@ -1587,6 +1589,11 @@ func _split_speakers(body: String) -> Array:
 			# A passage of nothing but hesitations: its rests would have no word to sit on.
 			for _i in out.count(TextNorm.HOLD_MARK):
 				_holds.pop_back()
+	# THE INTRO IS THE TABLET WAKING: the hand's opening run (wake, home screen, open the
+	# browser) plays inside the intro's silence, so the rest before the first word is only
+	# what the intro does not already cover - never the two end to end
+	if opens_on_hand and not _holds.is_empty():
+		_holds[0] = maxf(0.0, float(_holds[0]) - maxf(0.0, Director.intro_hold - 0.8))
 	return kept
 
 

@@ -2,7 +2,7 @@
 
 A chapter read as somebody browsing on a tablet lying on a desk - a rabbit hole of pages, links
 and searches that keeps going deeper. Built 2026-10-01 as a proof of concept; worked example in
-`rift/books/north-star/chapters/42-the-rabbit-hole.md` .
+`rift/books/north-star/chapters/42-what-is-the-7th-realm.md` .
 
 ## What the author writes
 
@@ -10,7 +10,7 @@ Ordinary markdown is what is ON the screen. A few own-line marks say what the ha
 
 | mark | meaning |
 |---|---|
-| `<!-- url: www.duckduckduck.mom -->` | the page below lives at this address |
+| `<!-- url: www.duckduckduck.mom -->` | the page below lives at this address; with NOTHING written under it, it is the REAL page there, shown as a capture |
 | `<!-- search: What is the 7th Realm? -->` | type this into the page's search box; the results page follows |
 | `<!-- new tab -->` | open a blank tab |
 | `<!-- back -->` | back to the page before, scrolled where it was left (an unread page is glanced down first); follow it with a mark, not text |
@@ -77,3 +77,12 @@ Nothing is read off the screen: no title, and text before the first `url` is nei
 Every `<!-- image: -->` can be painted (Generate) or taken from disk (Import… on its row in the
 Illustrations panel, or in its preview). An import lands as a new version like a painted one, is
 marked `imported`, and is never stale.
+
+## Real pages
+
+A `url` with nothing written under it is the real page at that address. It appears in the
+Illustrations panel as a "web page" row: **Capture** takes it once with Playwright's Chromium
+(`capture_host/capture.py`, in ghost's own `user://capture_venv`, pinned to Praxis's Playwright so
+the cached browser is reused), and **Import…** takes a screenshot instead, for a site that blocks
+headless browsers. On the tablet the capture is the page, edge to edge, and since nothing on it is
+read the hand lingers on it (a long glance down it) before moving on.
