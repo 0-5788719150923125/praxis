@@ -512,6 +512,9 @@ func _shutdown() -> void:
 	# the kernel, which covers a ghost that is killed from outside; this covers the ghost
 	# that kills itself.
 	Subprocess.reap_all()
+	# The same goes for the --live-tap recording: Spectrum writes it in _exit_tree, which the
+	# hard exit never reaches - an armed tap was recorded all session and lost on quit.
+	Spectrum._write_tap()
 	print("ghost: bye (hard exit - audio-input teardown workaround, see main._shutdown)")
 	OS.kill(OS.get_process_id())
 

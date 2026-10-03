@@ -226,6 +226,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "subtitles.gd",
             "voice_host.gd",
             "generative_editor.gd",
+            "voice_readers.gd",
             "voice_fx.gd",
             "room_fx.gd",
         ],
@@ -295,6 +296,14 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         "The look over the whole picture for this run - `--filter "
         "monochrome=1,static=0.3`, or `--filter none`. Overrides the remembered "
         "set; see [filters.md](filters.md).",
+        False,
+    ),
+    (
+        "--live-tap",
+        "",
+        "Record what the mixer actually plays - the Master bus, the last two minutes - "
+        "to user://synth/live_tap.wav when ghost quits. For when what you hear and what "
+        "a measurement says disagree.",
         False,
     ),
     (

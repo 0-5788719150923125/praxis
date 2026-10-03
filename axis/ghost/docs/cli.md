@@ -9,6 +9,7 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--scene` | `<name\|N>` | Pin one scene for authoring (by script-name substring or registry index). |  |
 | `--medium` | `<name>` | What the show is carried on for this run: `full` (one scene filling the frame) or `comic` (a comic page). Overrides the remembered setting; see [media.md](media.md). |  |
 | `--filter` | `<k=v,...>` | The look over the whole picture for this run - `--filter monochrome=1,static=0.3`, or `--filter none`. Overrides the remembered set; see [filters.md](filters.md). |  |
+| `--live-tap` |  | Record what the mixer actually plays - the Master bus, the last two minutes - to user://synth/live_tap.wav when ghost quits. For when what you hear and what a measurement says disagree. |  |
 | `--clock-watch` |  | Report when the show's clock stops advancing while frames keep being written - the shape a frozen recording takes. On automatically in every render; useful on a plain session because that runs at the speed of the audio rather than the encoder. |  |
 | `--until` | `<seconds>` | Stop at this point on the show clock. Renders a slice instead of the whole thing, which is how a defect deep in a long export is reproduced without paying for the whole export. |  |
 | `--storyboard` | `<name>` | Manual mode: play `storyboards/<name>.yaml` (or `.json`). |  |

@@ -299,6 +299,10 @@ const STREAM_BUFFER := 4.0
 ## Flip off when the hunt is over. (Off since 2026-07-26 - the hunt ended:
 ## the noise was frication routing, voice_rca.md sections 11-16. Re-arm any
 ## time an ear/meter mismatch needs the actual mixer output on disk.)
+##
+## `--live-tap` arms it for one run without touching this constant (2026-10-03, for "I hear two
+## voices" against a probe that recorded one: the probe had no picture attached, so it could not
+## see what the live app's frame lag does to the stream).
 const LIVE_TAP := false
 const TAP_SECONDS := 120.0            # rolling window: the LAST two minutes
 
@@ -661,7 +665,7 @@ func _setup_analyzer() -> void:
 	AudioServer.add_bus_effect(bus, fx)
 	var idx := AudioServer.get_bus_effect_count(bus) - 1
 	_analyzer = AudioServer.get_bus_effect_instance(bus, idx)
-	if LIVE_TAP:
+	if LIVE_TAP or OS.get_cmdline_user_args().has("--live-tap"):
 		_tap = AudioEffectCapture.new()
 		_tap.buffer_length = 0.5
 		AudioServer.add_bus_effect(bus, _tap)

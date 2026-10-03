@@ -97,6 +97,18 @@ const PAD_VOICES := 5
 # pad safe to leave running under speech.
 const PAD_SCALE := [0, 3, 5, 7, 10]
 const PAD_OCTAVES := [0, 12, 12, 24]     # weighted toward one octave up
+## NO TONE IN THE READER'S REGISTER. The key sits two octaves under the voice, so the top octave
+## of the stack (degree + 24) landed ON the reader's own pitch and above it - measured, a 220 Hz
+## voice over a bed spanning 55-392 Hz - and a sustained tone there in the voice's own key is
+## heard as a second voice humming along: "basically 80% of all words a kind of echo effect".
+## A note above this many semitones over the key is dropped an octave: at most a fifth under
+## the voice (147 Hz on that reader), still well inside what a small speaker plays.
+const PAD_CEILING := 17
+## How long the speech envelope that ducks the bed takes to follow, in seconds. Written as a
+## per-SAMPLE constant (0.0004, "~1 s") it was ~0.11 s at the voice's 22.05 kHz, so the bed
+## dipped under each word and swelled back in each gap - a swell after every word, in the
+## voice's key, which is the other half of that echo.
+const SPEECH_TAU := 1.0
 const PAD_ATTACK := 3.5                  # seconds: tones swell, never start
 const PAD_HOLD_MIN := 5.0
 const PAD_HOLD_MAX := 14.0
@@ -379,7 +391,7 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 
 		# --- the pad: its own instrument, on its own clock ---
 		if pad > 0.0:
-			_speech += (absf(dry) - _speech) * 0.0004      # ~1 s envelope
+			_speech += (absf(dry) - _speech) / (SPEECH_TAU * sample_rate)
 			if _pitch > 0.0:
 				# two octaves down: a tonic in the speaking register would mask
 				# the voice instead of supporting it
@@ -542,7 +554,10 @@ func _start_tone() -> void:
 		return
 	var degree: int = int(PAD_SCALE[_rng.randi() % PAD_SCALE.size()])
 	var octave: int = int(PAD_OCTAVES[_rng.randi() % PAD_OCTAVES.size()])
-	var hz: float = _key_hz() * pow(2.0, float(degree + octave) / 12.0)
+	var semis := degree + octave
+	while semis > PAD_CEILING:
+		semis -= 12
+	var hz: float = _key_hz() * pow(2.0, float(semis) / 12.0)
 	if hz <= 0.0 or hz >= sample_rate * 0.45:
 		return
 	var w := TAU * hz / sample_rate

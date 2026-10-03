@@ -363,6 +363,8 @@ var _fx_presence: HSlider
 var _fx_pad: HSlider
 var _tone: OptionButton
 var _speaker: SpinBox
+var _speaker_about: Label        # who that speaker number is (VoiceReaders)
+var _speaker_browse: PopupPanel
 var _speaker_row: HBoxContainer
 var _turn: HSlider
 var _hesitate: HSlider
@@ -796,6 +798,22 @@ func _build_panel() -> void:
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	_speaker_row.add_child(_speaker)
+	_speaker.value_changed.connect(func(_v: float) -> void: _describe_speaker())
+	# BROWSE: every reader of the voice, with who they are - so a voice is chosen by
+	# description rather than by stepping through numbers and listening to each
+	var browse := Button.new()
+	browse.text = "Browse…"
+	browse.focus_mode = Control.FOCUS_NONE
+	browse.tooltip_text = "Every reader on this voice, with their gender and a description of how they sound (LibriTTS-P annotations). Filter, search, and pick one."
+	browse.pressed.connect(_open_speaker_browser)
+	_speaker_row.add_child(browse)
+
+	_speaker_about = Label.new()
+	_speaker_about.add_theme_font_size_override("font_size", 11)
+	_speaker_about.modulate = Color(1, 1, 1, 0.75)
+	_speaker_about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_speaker_about.tooltip_text = "Who this speaker number is: perceived gender and how the voice sounds, from LibriTTS-P (LINE Corporation, CC BY 4.0)."
+	_speaker_row.add_sibling(_speaker_about)
 
 	var trow := HBoxContainer.new()
 	trow.add_theme_constant_override("separation", 8)
@@ -2639,6 +2657,76 @@ func _fill_voices(voices: Array) -> void:
 	_show_voice_license()
 
 
+## Under the speaker number: who that reader is. Hidden on a single-speaker voice, or when nothing
+## is known about the reader.
+func _describe_speaker() -> void:
+	if _speaker_about == null:
+		return
+	var d := VoiceReaders.describe(_selected_voice_id(), int(_speaker.value))
+	_speaker_about.text = VoiceReaders.line(d, 8)
+	_speaker_about.visible = _speaker_row.visible and not d.is_empty()
+
+
+## The reader browser: a filter by gender, a search over the descriptions, and the list.
+## Picking one sets the speaker number (which regenerates what has not played, as a step does).
+func _open_speaker_browser() -> void:
+	var all := VoiceReaders.all(_selected_voice_id())
+	if all.is_empty():
+		_set_status("Nothing is known about this voice's readers (is it installed, and multi-speaker?).")
+		return
+	if _speaker_browse != null and is_instance_valid(_speaker_browse):
+		_speaker_browse.queue_free()
+	_speaker_browse = PopupPanel.new()
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(560, 460)
+	_speaker_browse.add_child(box)
+	var bar := HBoxContainer.new()
+	box.add_child(bar)
+	var which := OptionButton.new()
+	for label in ["All", "♀ Female", "♂ Male"]:
+		which.add_item(label)
+	bar.add_child(which)
+	var find := LineEdit.new()
+	find.placeholder_text = "Search: soft, deep, calm, raspy…"
+	find.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	find.clear_button_enabled = true
+	bar.add_child(find)
+	var list := ItemList.new()
+	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(list)
+	var note := Label.new()
+	note.text = "Descriptions: LibriTTS-P, LINE Corporation (CC BY 4.0)."
+	note.add_theme_font_size_override("font_size", 10)
+	note.modulate = Color(1, 1, 1, 0.55)
+	box.add_child(note)
+	var fill := func() -> void:
+		list.clear()
+		var want: String = ["", "F", "M"][which.selected]
+		var words := find.text.strip_edges().to_lower().split(" ", false)
+		for r in all:
+			var d: Dictionary = r
+			if not want.is_empty() and String(d["g"]) != want:
+				continue
+			var hay := String(d["d"]).to_lower()
+			var ok := true
+			for w in words:
+				ok = ok and hay.contains(w)
+			if not ok:
+				continue
+			var at := list.add_item("%d   %s" % [int(d["i"]), VoiceReaders.line(d, 10)])
+			list.set_item_metadata(at, int(d["i"]))
+			if int(d["i"]) == int(_speaker.value):
+				list.select(at)
+	which.item_selected.connect(func(_i: int) -> void: fill.call())
+	find.text_changed.connect(func(_t: String) -> void: fill.call())
+	list.item_selected.connect(func(at: int) -> void:
+		_speaker.value = float(int(list.get_item_metadata(at))))
+	add_child(_speaker_browse)
+	fill.call()
+	_speaker_browse.popup_centered()
+	list.ensure_current_is_visible()
+
+
 ## Always shown: these checkpoints are licensed individually and the terms are
 ## inherited through fine-tuning in a way nothing machine-readable records.
 func _show_voice_license() -> void:
@@ -2651,6 +2739,7 @@ func _show_voice_license() -> void:
 	if n > 1:
 		_speaker.max_value = n - 1
 		_speaker.value = clampf(_speaker.value, 0, n - 1)
+	_describe_speaker()
 	_set_status("%s - %s%s" % [String(v.get("id", "")), String(v.get("license", "unknown")),
 		("  (%d speakers)" % n) if n > 1 else ""])
 

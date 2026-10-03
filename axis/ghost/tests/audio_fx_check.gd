@@ -87,6 +87,7 @@ func _initialize() -> void:
 	ed.free()
 
 	_check_room()
+	_check_bed_under_voice()
 
 	print("")
 	if _fails.is_empty():
@@ -97,6 +98,104 @@ func _initialize() -> void:
 		for f in _fails:
 			print("audio_fx_check: FAIL - ", f)
 		quit(1)
+
+
+## THE BED STAYS UNDER THE VOICE, AND STILL. Reported as "basically 80% of all words a kind of
+## echo effect" at Ambience 1.0, and it was two faults: the top octave of the bed's stack landed
+## ON the reader's pitch (a tone in the voice's own key, humming along), and the speech envelope
+## that ducks the bed followed each word (~0.11 s, written as a per-sample constant meant to be
+## ~1 s), so the bed swelled back in every gap. A synthetic reader at 220 Hz speaking in word-
+## length bursts must get a bed with almost nothing in its register, and no louder between words
+## than during them.
+func _check_bed_under_voice() -> void:
+	var sr := 22050
+	var dry := PackedFloat32Array()
+	dry.resize(sr * 30)
+	for i in dry.size():
+		var t := float(i) / float(sr)
+		var on := fmod(t, 0.6) < 0.35                     # a word, then a gap
+		var v := 0.0
+		if on:
+			for h in range(1, 8):
+				v += sin(TAU * 220.0 * float(h) * t) / float(h)
+		dry[i] = v * 0.05
+	var bed := _bed_of(dry, sr)
+	# 1) the register: a steep high-pass at 180 Hz (two cascaded biquads) keeps the voice's band
+	var hp := _highpass(_highpass(bed, sr, 180.0), sr, 180.0)
+	var e_all := 0.0
+	var e_hi := 0.0
+	for i in range(sr * 5, bed.size()):                # past the bed's own attack
+		e_all += bed[i] * bed[i]
+		e_hi += hp[i] * hp[i]
+	var share := e_hi / maxf(e_all, 1e-12)
+	_expect(share < 0.15, "the ambience bed sits in the reader's register: %.0f%% of its energy above 180 Hz under a 220 Hz voice" % (share * 100.0))
+	# 2) the pumping: the bed in the gaps against the bed during words
+	var in_word := 0.0
+	var in_gap := 0.0
+	var nw := 0
+	var ng := 0
+	for i in range(sr * 5, bed.size()):
+		var t := fmod(float(i) / float(sr), 0.6)
+		if t > 0.05 and t < 0.30:
+			in_word += bed[i] * bed[i]
+			nw += 1
+		elif t > 0.40 and t < 0.58:
+			in_gap += bed[i] * bed[i]
+			ng += 1
+	var pump := sqrt((in_gap / float(ng)) / maxf(in_word / float(nw), 1e-12))
+	_expect(pump < 1.2, "the ambience bed swells between words: %.2fx louder in the gaps than under them" % pump)
+	print("  bed: %.1f%% above 180 Hz, gaps %.2fx the level under words" % [share * 100.0, pump])
+
+
+## What Ambience 1.0 adds to [param dry]: the chain at 1.0 minus the chain at 0, everything else off.
+func _bed_of(dry: PackedFloat32Array, sr: int) -> PackedFloat32Array:
+	var outs: Array = []
+	for pad in [0.0, 1.0]:
+		var fx := VoiceFX.new()
+		fx.pad_seed = 4321
+		fx.setup(sr)
+		fx.echo_wet = 0.0
+		fx.resonance = 0.0
+		fx.presence = 1.0
+		fx.pad = pad
+		fx.room.from_dial(0.0, 0.0)
+		fx.prime_key(dry)
+		var o := PackedFloat32Array()
+		var i := 0
+		while i < dry.size():
+			o.append_array(fx.process(dry.slice(i, i + 4096)))
+			i += 4096
+		outs.append(o)
+	var bed := PackedFloat32Array()
+	bed.resize(dry.size())
+	for i in dry.size():
+		bed[i] = float(outs[1][i]) - float(outs[0][i])
+	return bed
+
+
+## A Butterworth high-pass biquad at [param fc].
+static func _highpass(x: PackedFloat32Array, sr: int, fc: float) -> PackedFloat32Array:
+	var w := TAU * fc / float(sr)
+	var al := sin(w) / (2.0 * 0.7071)
+	var a0 := 1.0 + al
+	var b0 := (1.0 + cos(w)) * 0.5 / a0
+	var b1 := -(1.0 + cos(w)) / a0
+	var a1 := -2.0 * cos(w) / a0
+	var a2 := (1.0 - al) / a0
+	var y := PackedFloat32Array()
+	y.resize(x.size())
+	var x1 := 0.0
+	var x2 := 0.0
+	var y1 := 0.0
+	var y2 := 0.0
+	for i in x.size():
+		var v := b0 * x[i] + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2
+		x2 = x1
+		x1 = x[i]
+		y2 = y1
+		y1 = v
+		y[i] = v
+	return y
 
 
 ## ONE ROOM, TWO RENDERERS. Masking's room is Godot's [AudioEffectReverb] on the bus
