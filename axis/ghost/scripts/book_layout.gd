@@ -11,7 +11,7 @@ class_name BookLayout
 ##
 ## WHAT IT DOES, in the order a book does it: justified paragraphs with a first-line indent
 ## (none after a heading, a scene line or a picture - the convention that makes a novel read
-## as a novel rather than as a web page), scene lines set centred in italics, the chapter
+## as a novel rather than as a web page), scene lines set centered in italics, the chapter
 ## title sunk down the opening page, folios at the foot, inline pictures floated against one
 ## edge of the text block with the lines wrapping round them, and full-page pictures given a
 ## page of their own while the text keeps flowing past them.
@@ -450,7 +450,7 @@ func _is_wordy(tok: String, i: int) -> bool:
 
 
 ## Set one paragraph. Greedy line fill against the free span at each line, justified except
-## the last line; a scene line is centred and italic.
+## the last line; a scene line is centered and italic.
 func _paragraph(text: String, indent: bool, scene: bool) -> void:
 	var toks := tokens(text)
 	if toks.is_empty():
@@ -521,7 +521,7 @@ func _paragraph(text: String, indent: bool, scene: bool) -> void:
 		first = false
 
 
-## Set [param text] as WORDS on lines of its own, centred or from the column's left edge. A
+## Set [param text] as WORDS on lines of its own, centered or from the column's left edge. A
 ## heading is SPOKEN - a chapter's dated entries are read out - so it has to be words the
 ## reading can follow. Set as a label it was invisible to the highlight: the voice read the
 ## date, nothing on the page matched, and the highlight fell back to the previous paragraph's

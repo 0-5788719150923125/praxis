@@ -208,7 +208,7 @@ class OldPath:
 			var poly: PackedVector2Array = scene.band_polygon(i)
 			draw_colored_polygon(poly, fill)
 			# The crest line too, so the only difference between this render and the scene's is
-			# the FILL PATH. The two colour formulas are copied here and could drift from the
+			# the FILL PATH. The two color formulas are copied here and could drift from the
 			# scene's - which is precisely what the "accepted state" comparison below would
 			# report, since it requires the two pictures to agree pixel for pixel.
 			var lcol := Color.from_hsv(h, clampf(float(scene.params["sat"]) * 0.55, 0.0, 1.0),
@@ -252,7 +252,7 @@ func _two_paths(st: Dictionary) -> float:
 	return _diff_frac(strip, poly)
 
 
-## Fraction of sampled pixels whose colour differs between two renders.
+## Fraction of sampled pixels whose color differs between two renders.
 func _diff_frac(a: Image, b: Image) -> float:
 	var hit := 0
 	var n := 0

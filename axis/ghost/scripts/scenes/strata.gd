@@ -10,7 +10,7 @@ extends GhostScene
 ##
 ## By seed the stack is a few big slabs or a deep receding pile ([constant STACKS]),
 ## each plane's edge follows one of three laws ([constant PROFILES]) - swells,
-## ridgelines or stepped terraces - and the whole thing is coloured from one
+## ridgelines or stepped terraces - and the whole thing is colored from one
 ## [Scheme], depth carrying the palette from its base hue to its accent.
 
 const OVER := 1.4
@@ -180,7 +180,7 @@ func _shape(profile: String, s: float, steps: int) -> float:
 			# A triangle wave: hard peaks and straight flanks, ridgelines not swells.
 			return 4.0 * absf(s - floor(s) - 0.5) - 1.0
 		"terrace":
-			# Quantised into treads, so each plane is a stepped bench of light.
+			# Quantized into treads, so each plane is a stepped bench of light.
 			return round(sin(s * TAU) * float(steps)) / float(steps)
 		_:
 			return sin(s * TAU)

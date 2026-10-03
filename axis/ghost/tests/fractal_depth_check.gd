@@ -10,7 +10,7 @@ extends Node
 ##
 ## WHY IT NEEDS A GATE AT ALL. The failure is silent and it looks like a design choice. A fractal
 ## zoom that has run out of float32 does not error, warn, or glitch: every pixel of the frame
-## computes the same complex number, so the frame comes out as ONE FLAT COLOUR. On a scene whose
+## computes the same complex number, so the frame comes out as ONE FLAT COLOR. On a scene whose
 ## palette is sampled per session, a flat frame reads as "this seed rolled a boring one" - and
 ## the scene would keep shipping that way. It already did once for a different reason: a stray
 ## `set_shader_parameter("u_ref_len", 0)` written after the reference orbit had been uploaded
@@ -132,9 +132,9 @@ func _run_seed(sv: int) -> void:
 		+ "and the scene is empty at every depth it was written for")
 	_ok(b_off > 0.70, "seed %d: the DIRECT render is only %.1f%% blocky at %s, where float32 "
 		% [used, b_off * 100.0, _sci(exp(sc._zl))] + "cannot resolve a pixel - it should be "
-		+ "almost entirely quantised, so this gate is not standing where it thinks it is")
+		+ "almost entirely quantized, so this gate is not standing where it thinks it is")
 	_ok(b_on < b_off - 0.20, "seed %d: perturbed %.1f%% blocky against the direct path's %.1f%% "
-		% [used, b_on * 100.0, b_off * 100.0] + "- the two paths are drawing the same quantised "
+		% [used, b_on * 100.0, b_off * 100.0] + "- the two paths are drawing the same quantized "
 		+ "picture, which is what perturbation being broken looks like")
 
 	sc.queue_free()
@@ -143,13 +143,13 @@ func _run_seed(sv: int) -> void:
 
 
 ## THE MEASURE THAT ACTUALLY SEPARATES THEM, and it took a render to find. The obvious one -
-## how much of the frame differs from its neighbourhood - does not work: a float32 render past
-## its limit is not FLAT, it is BLOCKY. The complex coordinate quantises to a few dozen distinct
-## values across the frame, so the picture becomes big hard-edged rectangles of uniform colour,
+## how much of the frame differs from its neighborhood - does not work: a float32 render past
+## its limit is not FLAT, it is BLOCKY. The complex coordinate quantizes to a few dozen distinct
+## values across the frame, so the picture becomes big hard-edged rectangles of uniform color,
 ## and every one of those edges reads as "structure". Measured 24-32% against the perturbed
 ## render's 44-74% - a difference, but nowhere near a verdict.
 ##
-## Blockiness is the verdict. Inside a quantised block EVERY adjacent pair of pixels is byte
+## Blockiness is the verdict. Inside a quantized block EVERY adjacent pair of pixels is byte
 ## identical; a resolved fractal changes from pixel to pixel almost everywhere it has detail.
 ## So this counts the share of horizontally adjacent pairs that are exactly equal.
 func _blocky(img: Image) -> float:

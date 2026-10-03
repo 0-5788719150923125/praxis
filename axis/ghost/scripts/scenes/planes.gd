@@ -3,7 +3,7 @@ extends Scene3D
 ## Planes - the spectrum as a ring of real planes under a forced-perspective camera.
 ##
 ## A deliberate echo of `spectrum_ring`: the bars are genuine [Plane3D] quads standing
-## on a ground plane in a circle, with an optional [Mesh3D] body tumbling at the centre,
+## on a ground plane in a circle, with an optional [Mesh3D] body tumbling at the center,
 ## projected and depth-sorted through one [Lens3D]. Nearly everything is sampled per
 ## scene so it is never the same shot twice: the lens / orbit (distance, pitch, yaw
 ## direction and speed), the ring radius and bar geometry, and the central body - which
@@ -14,7 +14,7 @@ extends Scene3D
 ## The ring's LAYOUT is sampled too ([constant RINGS]): even, woven, stepped or
 ## scalloped, so alternate panels can step in and out of the circle or stand at
 ## different heights instead of the one flat band of identical panels it always was,
-## and the panels themselves run from tall blades to stubby tiles. Colour comes from
+## and the panels themselves run from tall blades to stubby tiles. Color comes from
 ## one [Scheme] - the band grades from its base hue to its accent round the ring, the
 ## core body wears the accent, and the sky behind agrees instead of being fixed blue.
 
@@ -64,7 +64,7 @@ var _tumble_axis := Vector3.UP
 var _tumble_base := 0.05
 var _tumble_amp := 0.25
 var _tumble_rate := 0.3
-# A travelling TWIST in the band: around one point on the ring the panels rotate their slide axis
+# A traveling TWIST in the band: around one point on the ring the panels rotate their slide axis
 # from UP toward OUTWARD (and a little past it - an inversion), so the band's animation is
 # redirected radially over a phase of the circle. The twist point drifts slowly around the ring.
 var _twist_a := 0.0
@@ -150,7 +150,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 # The central body: by seed a rock, a hybrid, a platonic solid, or nothing - and small,
 # so it is an accent in the ring, not the whole screen.
 func _make_core(rng: RandomNumberGenerator) -> void:
-	_has_core = rng.randf() >= 0.22                       # ~1 in 5 has no centre at all
+	_has_core = rng.randf() >= 0.22                       # ~1 in 5 has no center at all
 	if not _has_core:
 		_core = null
 		return
@@ -195,7 +195,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 		var band := f.sample(float(bar.t))
 		var amp: float = band * 1.5 + f.beat * 0.12
 		var pl: Plane3D = planes[i]
-		# Twist: how much THIS panel is rotated, peaking at the travelling twist point and easing to
+		# Twist: how much THIS panel is rotated, peaking at the traveling twist point and easing to
 		# nothing a phase-window away. Its slide axis rotates from UP toward the OUTWARD radial (a
 		# bit past, an inversion), so near the twist the panel stands out radially and its animation
 		# is redirected outward instead of up.

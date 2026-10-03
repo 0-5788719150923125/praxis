@@ -2,7 +2,7 @@ extends GhostScene
 
 ## Rainfall - slanting rain over a brooding sky, fog rolling through it.
 ##
-## Fast streaks fall at a wind-blown slant whose angle sways with the bass; a low colour
+## Fast streaks fall at a wind-blown slant whose angle sways with the bass; a low color
 ## bed and drifting fog give it weather and depth. Density and slant ride the audio, so a
 ## loud passage is a downpour. The seed picks the STORM first - hanging mist, drizzle,
 ## steady rain, downpour, or rain in a lit street at night - and the storm decides its own
@@ -10,7 +10,7 @@ extends GhostScene
 
 # A storm is an intensity AND a light. Count, fall speed, slant and streak width belong
 # together (a downpour is not a drizzle with more drops), and so does what the water
-# catches: sunless mist is grey, a lit street is sodium and neon. One roll picks all of it.
+# catches: sunless mist is gray, a lit street is sodium and neon. One roll picks all of it.
 #   streak - which end of the scheme the drops take: 0 the base water, 2 the accent light
 const STORMS := {
 	"mist": {
@@ -38,7 +38,7 @@ const STORMS := {
 		"density": [0.68, 0.95], "veil": 0.62, "flare": 0.20, "streak": 0,
 	},
 	"lit": {
-		# Rain in a lit street at night: the streaks take the LAMP's colour, not the sky's,
+		# Rain in a lit street at night: the streaks take the LAMP's color, not the sky's,
 		# and there is a source in frame throwing a flare - the one warm, loud storm.
 		"moods": ["sodium", "ember", "magenta", "brass", "violet", "toxic", "rose", "teal", "dawn"],
 		"count": [150, 260], "fall": [1.1, 1.6], "slant": [0.15, 0.40], "width": [1.2, 1.8],
@@ -72,7 +72,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"count": rng.randi_range(int(st["fog_n"][0]), int(st["fog_n"][1])),
 	})
 	add_layer("rain", rng, {
-		# Water has no colour of its own - it shows whatever lights it, which is why the
+		# Water has no color of its own - it shows whatever lights it, which is why the
 		# storm names the end of the scheme its streaks are drawn from.
 		"hue": sch.hue_at(int(st["streak"]), 3),
 		"sat": clampf(sch.sat * (0.7 if int(st["streak"]) > 0 else 0.3), 0.05, 0.8),
@@ -85,7 +85,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"density_floor": float(st["density"][0]),
 		"density_gain": float(st["density"][1]),
 	})
-	# Harmonic obscuring veil: drifting grey sheets of rain that thicken on loud passages and soften
+	# Harmonic obscuring veil: drifting gray sheets of rain that thicken on loud passages and soften
 	# the view, then clear - moving patterns of visibility riding the music (the snow-squall effect,
 	# generalized). Heavier rain pushes a denser veil.
 	add_layer("veil", rng, {

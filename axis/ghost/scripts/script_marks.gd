@@ -7,7 +7,7 @@ class_name ScriptMarks
 ## hesitations, picture markers, inline pronunciations, template macros, emphasis. Each of
 ## those used to be documented only where it was implemented, so a new author had no way to
 ## find out what ghost understands short of reading the source. This is the one list: the
-## [ScriptWriter] palette is built from it, [ScriptHighlighter] colours a script with its
+## [ScriptWriter] palette is built from it, [ScriptHighlighter] colors a script with its
 ## patterns, and docs.py writes docs/script.md from it.
 ##
 ## AN ENTRY DOES NOT IMPLEMENT ITS MARK. The parsers of record stay where they are
@@ -24,9 +24,9 @@ class_name ScriptMarks
 ##            ends up in the fill is left selected so typing replaces it.
 ##   line     "own": the mark goes on a line of its own; "start": at the head of the line;
 ##            "" anywhere
-##   modes    the panels that honour it ("generative", "synthesis")
+##   modes    the panels that honor it ("generative", "synthesis")
 ##   pattern  how [ScriptHighlighter] finds it. Registry ORDER is highlight priority: a span
-##            claimed by an earlier entry is not recoloured by a later one.
+##            claimed by an earlier entry is not recolored by a later one.
 
 const REGISTRY := {
 	"speaker": {
@@ -137,7 +137,7 @@ const REGISTRY := {
 		"label": "Italic",
 		"group": "typography",
 		"blurb": "Never spoken as a mark; shown slanted in the subtitles and on the page.",
-		"before": "*", "fill": "emphasised", "after": "*", "line": "",
+		"before": "*", "fill": "emphasized", "after": "*", "line": "",
 		"modes": ["generative", "synthesis"],
 		"pattern": "(?<![*\\w])\\*(?![*\\s])[^*\\n]*?[^*\\s]\\*(?![*\\w])|(?<![*\\w])\\*[^*\\s]\\*(?![*\\w])",
 	},
@@ -239,7 +239,7 @@ const REGISTRY := {
 	},
 }
 
-## Palette sections, in order, with the colour [ScriptHighlighter] gives their marks.
+## Palette sections, in order, with the color [ScriptHighlighter] gives their marks.
 const GROUPS := {
 	"voices": {"label": "Voices", "color": Color(0.98, 0.72, 0.35)},
 	"timing": {"label": "Timing", "color": Color(0.55, 0.85, 0.95)},
@@ -252,7 +252,7 @@ const GROUPS := {
 }
 
 
-## The keys a panel honours, in registry order.
+## The keys a panel honors, in registry order.
 static func for_mode(mode: String) -> PackedStringArray:
 	var out := PackedStringArray()
 	for k in REGISTRY:
@@ -261,7 +261,7 @@ static func for_mode(mode: String) -> PackedStringArray:
 	return out
 
 
-## The highlight colour of a mark.
+## The highlight color of a mark.
 static func color_of(key: String) -> Color:
 	return GROUPS[REGISTRY[key]["group"]]["color"]
 

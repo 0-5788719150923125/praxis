@@ -4,7 +4,7 @@ extends GhostScene
 ##
 ## Gears go cheesy the instant they become decoration: brass cogs, googly spinning, a
 ## rainbow steampunk sticker. This scene avoids all of that by being a real mechanism in
-## the dark. Every gear is a luminous cog edge over a near-black body; the only colour is
+## the dark. Every gear is a luminous cog edge over a near-black body; the only color is
 ## one cold metal tint and the white specular that sweeps the lit teeth as the wheel
 ## turns. What sells it is the MOTION, and the motion is true:
 ##
@@ -23,14 +23,14 @@ extends GhostScene
 ##
 ## A scene's seed picks a mode (one big mechanism, scattered trains, a clock, a chorus)
 ## and then samples every constant, so it is never the same machine twice. Audio drives
-## the turn rate, the tick, the glow, and the travelling specular highlight.
+## the turn rate, the tick, the glow, and the traveling specular highlight.
 
 const MODES := ["orrery", "trains", "clockwork", "chorus", "split", "split"]   # split weighted up
 
 # METAL. This used to be five hardcoded tints, which meant five machines forever.
 # The restraint that keeps gears from going steampunk-clipart is not the SHORT LIST
 # though - it is the low saturation. So the list becomes any mood a worked metal
-# plausibly takes (blued steel, nickel, brass, copper, verdigris, anodised), and the
+# plausibly takes (blued steel, nickel, brass, copper, verdigris, anodized), and the
 # restraint becomes a CAP: whatever mood is drawn, its saturation is scaled down and
 # clamped, so the wheels always read as machined material lit in the dark.
 const METAL_MOODS := ["ash", "bone", "brass", "sodium", "ember", "glacier", "abyss",
@@ -60,16 +60,16 @@ const FINISHES := [
 const FILL_MIN := 0.12
 const FILL_MAX := 0.78
 
-## WHAT THE MACHINE HAS CORRODED INTO. Wear used to be one colour and one shape: the mark hue
+## WHAT THE MACHINE HAS CORRODED INTO. Wear used to be one color and one shape: the mark hue
 ## was `0.05 + hue * 0.1` (orange-brown, always), the saturation was the constant 0.60 and the
 ## value the constant 0.30, and every mark was a soft round blob. Reported as "rust is always
-## brown, and blotchy; it always looks exactly the same", and two of its three colour channels
+## brown, and blotchy; it always looks exactly the same", and two of its three color channels
 ## were literally constants, so it was.
 ##
 ## Metals do not all fail the same way, and the ones here are the ones you can name on sight:
 ## iron goes orange, copper and bronze go green, brass darkens to olive, a hot machine sooths
 ## over black, a neglected one pits, and a machine in service wears BRIGHT where it is handled.
-## `mark` picks the shape as well as the colour - a blotch, a radial streak, a scatter of pits,
+## `mark` picks the shape as well as the color - a blotch, a radial streak, a scatter of pits,
 ## or a burnished arc - because a patina that is always the same shape reads as a texture that
 ## was pasted on rather than as something that happened to the metal.
 const WEARS := [
@@ -87,7 +87,7 @@ var _gears: Array = []        # each: {group, pos, R, teeth, phase, omega, depth
 var _groups: Array = []       # each: motion driver shared by its gears (see _new_group)
 var _hue := 0.58
 var _sat := 0.18
-var _glow_hue := 0.08        # the scheme's accent: the hub light, a colour the metal is not
+var _glow_hue := 0.08        # the scheme's accent: the hub light, a color the metal is not
 var _glow_sat := 0.10
 var _flat_p := 0.4           # this machine's finish: chance any one wheel is a solid plate
 var _spoke_pool: Array = [3, 4, 5, 6]   # its spoke vocabulary (usually one repeated count)
@@ -111,7 +111,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_hue = sch.hue
 	_sat = clampf(sch.sat * rng.randf_range(0.30, 0.60), 0.04, SAT_CAP)
 	# The hub light is the scheme's accent, unclamped-ish: the one warm/cold spark in
-	# an otherwise grey mechanism, and harmonious with the metal by construction.
+	# an otherwise gray mechanism, and harmonious with the metal by construction.
 	_glow_hue = sch.accent
 	_glow_sat = clampf(sch.sat * 0.55, 0.03, 0.55)
 	var finish: Dictionary = FINISHES[rng.randi() % FINISHES.size()]
@@ -248,7 +248,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	# arms can be hairlines or nearly touching and can never overlap, and the same number means
 	# the same visual weight whether the wheel has two arms or eight.
 	#
-	# Arc length was the first parameterisation and it does not survive a wide arm: a straight
+	# Arc length was the first parameterization and it does not survive a wide arm: a straight
 	# bar of half-width w subtends 2*asin(w/r), not 2w/r, so a "78% of the circumference" wheel
 	# with two arms came out with a half-width of 2.03 - an arm twice as wide as the wheel it
 	# was on. Measured, before this line was rewritten.
@@ -259,7 +259,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	var holes := _rng.randf() < _hole_p
 
 	# WEAR: patches of whatever this machine has corroded into (see WEARS), pinned to the wheel
-	# in polar (a, d) so they turn with it. Every mark rolls its OWN colour inside the finish's
+	# in polar (a, d) so they turn with it. Every mark rolls its OWN color inside the finish's
 	# ranges - the old code fixed saturation at 0.60 and value at 0.30 for every mark on every
 	# wheel of every machine, which is most of why it always looked the same.
 	var rust := []
@@ -275,7 +275,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 				"d": _rng.randf_range(hub_r * 0.6, root_r * 0.95),
 				"r": root_r * _rng.randf_range(big * 0.35, big),
 				"al": _rng.randf_range(0.14, 0.50),
-				# the mark's own colour, inside the finish's ranges
+				# the mark's own color, inside the finish's ranges
 				"h": _rng.randf_range(float(_wear_kind["h"][0]), float(_wear_kind["h"][1])),
 				"s": _rng.randf_range(float(_wear_kind["s"][0]), float(_wear_kind["s"][1])),
 				"v": _rng.randf_range(float(_wear_kind["v"][0]), float(_wear_kind["v"][1])),
@@ -298,8 +298,8 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	return g
 
 
-# The meshing solution: given a parent gear and the direction `alpha` from parent centre
-# to the child centre, return the child's [phase, omega] so the two interlock tip-into-gap
+# The meshing solution: given a parent gear and the direction `alpha` from parent center
+# to the child center, return the child's [phase, omega] so the two interlock tip-into-gap
 # and remain meshed for all time. Counter-rotation and the 1/N speed ratio fall out; the
 # phase is solved so the contact-line tooth coordinates stay complementary (sum = 1/2),
 # which - because d(sum)/ds = 0 - holds forever, not just at the first frame.
@@ -321,15 +321,15 @@ func _build_orrery(rng: RandomNumberGenerator) -> void:
 	var module := rng.randf_range(0.018, 0.030) * _mod_mul
 	var rc := rng.randf_range(0.24, 0.48)
 	var nc := maxi(9, roundi(2.0 * rc / module))
-	var centre := Vector2(rng.randf_range(-0.12, 0.12), rng.randf_range(-0.12, 0.12))
-	var driver := _add_gear(grp, centre, rc, nc, rng.randf_range(-PI, PI), 1.0, depth)
+	var center := Vector2(rng.randf_range(-0.12, 0.12), rng.randf_range(-0.12, 0.12))
+	var driver := _add_gear(grp, center, rc, nc, rng.randf_range(-PI, PI), 1.0, depth)
 	_groups[grp].tooth_step = TAU / float(nc)
 	var sat := rng.randi_range(3, 8)
 	for i in sat:
 		var rs := rng.randf_range(0.10, 0.19)
 		var ns := maxi(7, roundi(2.0 * rs / module))
 		var a := TAU * float(i) / float(sat) + rng.randf_range(-0.18, 0.18)
-		var pos := centre + Vector2(cos(a), sin(a)) * (rc + rs)
+		var pos := center + Vector2(cos(a), sin(a)) * (rc + rs)
 		var m := _mesh(driver, a, ns)
 		_add_gear(grp, pos, rs, ns, m[0], m[1], clampf(depth + rng.randf_range(-0.04, 0.10), 0.0, 1.0))
 
@@ -482,7 +482,7 @@ func _build_bg(rng: RandomNumberGenerator, n: int) -> void:
 		var r := rng.randf_range(0.26, 0.85)
 		var teeth := maxi(16, roundi(2.0 * r / module))
 		_groups[grp].tooth_step = TAU / float(teeth)
-		var pos := Vector2(rng.randf_range(-0.45, 0.45), rng.randf_range(-0.4, 0.4))   # overlap centre
+		var pos := Vector2(rng.randf_range(-0.45, 0.45), rng.randf_range(-0.4, 0.4))   # overlap center
 		_add_gear(grp, pos, r, teeth, rng.randf_range(-PI, PI), 1.0, depth)
 
 
@@ -533,11 +533,11 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 	var grp: Dictionary = _groups[int(g.group)]
 	var theta: float = float(g.phase) + float(g.omega) * float(grp.s)
 	var sc: float = float(g.R) * u
-	var centre: Vector2 = (Vector2(g.pos) + Vector2(grp.sway_off)) * u
+	var center: Vector2 = (Vector2(g.pos) + Vector2(grp.sway_off)) * u
 	var co := cos(theta)
 	var si := sin(theta)
 	# Rotation+scale+translation in one transform; applies to the whole tooth ring at once.
-	var xf := Transform2D(Vector2(co, si) * sc, Vector2(-si, co) * sc, centre)
+	var xf := Transform2D(Vector2(co, si) * sc, Vector2(-si, co) * sc, center)
 
 	var depth: float = float(g.depth)
 	var db := 0.35 + 0.65 * depth                         # nearer wheels read brighter ...
@@ -548,7 +548,7 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 	var rim_in: float = float(g.rim_in)
 	var hub_r: float = float(g.hub_r)
 	if String(g.style) == "flat":
-		# Solid flat-colour cog: the whole tooth ring filled, with a dark rim edge for relief.
+		# Solid flat-color cog: the whole tooth ring filled, with a dark rim edge for relief.
 		draw_colored_polygon(world, Color.from_hsv(_hue, _sat, clampf(0.16 * db + 0.26 + 0.30 * _glow, 0.0, 1.0), 0.95 * af))
 		draw_polyline(world, Color.from_hsv(_hue, _sat, 0.05, 0.6 * af), maxf(1.0, rw * 0.7), true)
 		# ...and, if this shop drills them, lightening holes: one in each gap between the arms
@@ -563,16 +563,16 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 			if hr > 0.01:
 				for sa in g.spokes:
 					var ha := theta + float(sa) + gap * 0.5
-					draw_circle(centre + Vector2(cos(ha), sin(ha)) * mid_r * sc, hr * sc, hole_c)
+					draw_circle(center + Vector2(cos(ha), sin(ha)) * mid_r * sc, hr * sc, hole_c)
 	else:
 		# Skeletal wire wheel: a dark body, a rim band, the arms, and a bright tooth rim.
-		draw_circle(centre, float(g.body_r) * sc, Color.from_hsv(_hue, _sat * 0.55, 0.05 * db + 0.015, 0.6 * af))
+		draw_circle(center, float(g.body_r) * sc, Color.from_hsv(_hue, _sat * 0.55, 0.05 * db + 0.015, 0.6 * af))
 		var spoke_c := Color.from_hsv(_hue, _sat * 0.85, clampf(0.22 * db + 0.20 + 0.30 * _glow, 0.0, 1.0), 0.85 * af)
 		# THE RIM AS A BAND, not as a line. It is what the arms stop against, and without it a
 		# wheel with short heavy arms reads as a hub with stubs rather than as a cast wheel.
 		var band: float = (float(g.body_r) - rim_in) * sc
 		if band > 1.0:
-			draw_arc(centre, (rim_in + float(g.body_r)) * 0.5 * sc, 0.0, TAU, 48, spoke_c, band, true)
+			draw_arc(center, (rim_in + float(g.body_r)) * 0.5 * sc, 0.0, TAU, 48, spoke_c, band, true)
 		# THE ARMS, as filled bars rather than as lines, which is the whole of "fewer, shorter,
 		# wider". A line has one width for every wheel; a bar has the width the casting was
 		# given, and it is flared where it meets the hub the way a fillet is.
@@ -587,25 +587,25 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 			# flare grows with the thing it is supposed to be a detail on.
 			var flare := 1.0 + 0.9 * minf(1.0, 3.0 / maxf(1.0, half))
 			draw_colored_polygon(PackedVector2Array([
-				centre + d * r0 * sc - q * half * flare,
-				centre + d * r0 * sc + q * half * flare,
-				centre + d * rim_in * sc + q * half,
-				centre + d * rim_in * sc - q * half]), spoke_c)
+				center + d * r0 * sc - q * half * flare,
+				center + d * r0 * sc + q * half * flare,
+				center + d * rim_in * sc + q * half,
+				center + d * rim_in * sc - q * half]), spoke_c)
 			# A BOLT IS A BOLT, whatever the arm is. Sized to the wheel, not to the arm, and
 			# only where there is arm to put it on - scaled to the arm it became a round pad
 			# the width of the arm, and every wide wheel came out looking like a propeller.
 			var boss := clampf(0.022 * sc, 1.2, half * 0.7)
-			draw_circle(centre + d * (rim_in * sc - boss * 1.6), boss, spoke_c)
+			draw_circle(center + d * (rim_in * sc - boss * 1.6), boss, spoke_c)
 		draw_polyline(world, Color.from_hsv(_hue, _sat, clampf(0.26 * db + 0.28 + 0.35 * _glow, 0.0, 1.0), 0.92 * af), rw, true)
 
 	# WEAR, in whatever this machine corroded into and in that finish's own shape - see WEARS.
 	# Pinned to the wheel in polar (a, d) so it turns with the metal, and every mark carries the
-	# colour it rolled for itself rather than one the whole scene shares.
+	# color it rolled for itself rather than one the whole scene shares.
 	var mark := String(g.wear_mark)
 	for sp in g.rust:
 		var ra := theta + float(sp.a)
 		var dir := Vector2(cos(ra), sin(ra))
-		var rp := centre + dir * float(sp.d) * sc
+		var rp := center + dir * float(sp.d) * sc
 		var wc := Color.from_hsv(float(sp.h), float(sp.s), float(sp.v) * (0.55 + 0.45 * db),
 			float(sp.al) * af)
 		match mark:
@@ -621,15 +621,15 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 			"arc":
 				# Burnished where the wheel is handled: a bright band worn along its travel.
 				var aw := maxf(float(sp.r) * 0.8 * sc, 1.5)
-				draw_arc(centre, float(sp.d) * sc, ra, ra + float(sp.span), 20, wc, aw, true)
+				draw_arc(center, float(sp.d) * sc, ra, ra + float(sp.span), 20, wc, aw, true)
 			_:
 				Layer.soft_blob(self, rp, float(sp.r) * sc, wc, 5)
 
 	# Hub and bore.
-	draw_circle(centre, float(g.hub_r) * sc, Color.from_hsv(_hue, _sat, clampf(0.30 * db + 0.18 + 0.30 * _glow, 0.0, 1.0), 0.95 * af))
-	draw_circle(centre, float(g.bore_r) * sc, Color(0.015, 0.02, 0.03, af))
+	draw_circle(center, float(g.hub_r) * sc, Color.from_hsv(_hue, _sat, clampf(0.30 * db + 0.18 + 0.30 * _glow, 0.0, 1.0), 0.95 * af))
+	draw_circle(center, float(g.bore_r) * sc, Color(0.015, 0.02, 0.03, af))
 
 	# Hub glow, flaring on the beat.
 	var gv := clampf(0.12 + 0.7 * _glow, 0.0, 1.0) * af
-	Layer.glow(self, centre, float(g.hub_r) * sc * (1.3 + 1.4 * _glow),
+	Layer.glow(self, center, float(g.hub_r) * sc * (1.3 + 1.4 * _glow),
 		Color.from_hsv(_glow_hue, _glow_sat, 1.0, 0.5 * gv), 4)

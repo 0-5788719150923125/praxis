@@ -93,7 +93,7 @@ var _gy0 := PackedFloat32Array()
 var _a1 := PackedFloat32Array()      # current figure
 var _gx1 := PackedFloat32Array()
 var _gy1 := PackedFloat32Array()
-var _raw := PackedFloat32Array()     # un-normalised |w|, the gradient pass's input
+var _raw := PackedFloat32Array()     # un-normalized |w|, the gradient pass's input
 
 # Mode-independent per-cell geometry, built once.
 var _rr := PackedFloat32Array()      # circle: radius 0..1
@@ -339,7 +339,7 @@ func _lookup(lut: PackedFloat32Array, r: float) -> float:
 	return a + (lut[s + 1] - a) * (x - float(s))
 
 
-# One row of |w|, un-normalised, plus a running maximum for the normalisation the
+# One row of |w|, un-normalized, plus a running maximum for the normalization the
 # gradient pass applies.
 func _field_row(j: int) -> void:
 	var base := j * res
@@ -401,7 +401,7 @@ func _field_row(j: int) -> void:
 				_amax = a
 
 
-# One row of the finished grids: |w| normalised to 0..1 and its central-difference
+# One row of the finished grids: |w| normalized to 0..1 and its central-difference
 # gradient. Reads _raw (whole rows above and below), writes _a1 / _gx1 / _gy1, so the
 # two passes never tread on each other.
 func _grad_row(j: int) -> void:

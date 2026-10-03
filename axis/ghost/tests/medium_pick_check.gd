@@ -145,10 +145,10 @@ func _run() -> void:
 				print("vpick: FAILED - '%s' shows %s, the Director holds %.2f"
 					% [k, "on" if cb.button_pressed else "off", live])
 				fails += 1
-			# A GREYED DIAL MUST BE GREYED, or an inert control looks live.
+			# A GRAYED DIAL MUST BE GRAYED, or an inert control looks live.
 			if sl.editable != (live > 0.0):
 				print("vpick: FAILED - '%s' dial is %s while the filter is %s"
-					% [k, "live" if sl.editable else "greyed", "on" if live > 0.0 else "off"])
+					% [k, "live" if sl.editable else "grayed", "on" if live > 0.0 else "off"])
 				fails += 1
 		# One round trip through the FIRST filter, then put it back. Ticking it on with the
 		# dial at zero must land on the registry's default rather than on silence - a box that

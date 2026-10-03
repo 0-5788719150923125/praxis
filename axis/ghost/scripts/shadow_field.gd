@@ -10,7 +10,7 @@ class_name ShadowField
 ## Self-shadowing (a building darkening its own sunlit face) is avoided by biasing each building's own
 ## query by its own light-depth extent: moving a point along the light never changes its cell (the axis
 ## is perpendicular), only its depth, so a large-enough bias lifts it clear of its own body while a
-## TALLER neighbour still occludes it.
+## TALLER neighbor still occludes it.
 
 const SHADOW_MIN := 0.5          # brightness of a fully cast-shadowed surface (0 = black, 1 = lit)
 
@@ -72,7 +72,7 @@ func build(light_dir: Vector3, wmin: Vector3, wmax: Vector3, res := 220) -> void
 ## STARTED and ENDED on a texel boundary. Two things follow from that and both were visible: the edge
 ## is a hard staircase however smoothly [method factor] then interpolates the verdicts, because there
 ## is no partial cell anywhere to interpolate; and as the light drifts the rect's bounds cross whole
-## texels one at a time, so the whole patch STEPS instead of travelling. Storing the fraction of each
+## texels one at a time, so the whole patch STEPS instead of traveling. Storing the fraction of each
 ## border cell the silhouette actually covers puts the edge back at its true sub-texel position, and
 ## it moves continuously because the fraction does.
 ##
@@ -130,7 +130,7 @@ func add_box(base: Vector3, up: Vector3, bx: Vector3, bz: Vector3, w: float, h: 
 			var idx := row + cx
 			if maxld > _grid[idx]:
 				_grid[idx] = maxld
-			# Coverage accumulates as a MAX over occluders rather than travelling with the depth that
+			# Coverage accumulates as a MAX over occluders rather than traveling with the depth that
 			# won: a cell grazed by one tree and filled by another is filled. It can therefore only
 			# ever soften what the old whole-cell rasterizer wrote, never darken it.
 			if cov > _cov[idx]:
@@ -149,7 +149,7 @@ func light_depth(p: Vector3) -> float:
 ## for its own faces; a small value for the ground).
 ##
 ## BILINEAR, and that is half the fix for "very blocky" shadows. The lookup used to be one nearest
-## -neighbour tap, so a shadow edge was a hard staircase on the cell grid: at canopy's world span
+## -neighbor tap, so a shadow edge was a hard staircase on the cell grid: at canopy's world span
 ## (about 8.5 units across `_res` cells) one cell is roughly a dozen screen pixels at 1920x1080,
 ## which is exactly the size of step the wood's shadows were reported to have. `Terrain.shadow_at`
 ## - the terrain's own, older shadow map - already samples bilinearly for this reason; this is the
@@ -157,15 +157,15 @@ func light_depth(p: Vector3) -> float:
 ## between four cells that are each fully lit or fully shadowed can only ever produce a one-cell
 ## ramp, and a one-cell ramp on a grid this size IS the staircase.
 ##
-## The FOUR FACTORS are blended, not the four depths: neighbouring cells hold the depth of
+## The FOUR FACTORS are blended, not the four depths: neighboring cells hold the depth of
 ## DIFFERENT occluders, and the average of two unrelated occluder depths is not a surface. Each
 ## cell's own lit/shadowed verdict is computed first and only those are mixed, which soft-edges the
 ## silhouette without inventing geometry between two trees.
 func factor(p: Vector3, bias := 0.06) -> float:
 	if not _ready:
 		return 1.0
-	# Cell CENTRES sit at +0.5, so subtracting it puts the sample point in the frame where the
-	# integer part is the lower-left neighbour and the fraction is the blend weight.
+	# Cell CENTERS sit at +0.5, so subtracting it puts the sample point in the frame where the
+	# integer part is the lower-left neighbor and the fraction is the blend weight.
 	var fx := (p.dot(_lr) - _minx) * _sx - 0.5
 	var fy := (p.dot(_lu) - _miny) * _sy - 0.5
 	var x0 := floori(fx)

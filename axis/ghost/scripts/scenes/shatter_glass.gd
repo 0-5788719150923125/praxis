@@ -6,12 +6,12 @@ extends Scene3D
 ## [Lens3D] camera (not pinned flat to the screen). On a beat it fractures into
 ## irregular angular shards - [Geo.fracture] cracks that radiate from an impact, not
 ## pizza slices - and the shards burst off the plane and **tumble through space**,
-## each spiralling on its own 3D axis, before easing back together (loop) or
+## each spiraling on its own 3D axis, before easing back together (loop) or
 ## drifting to rest (oneshot). Real depth: a shard in front occludes one behind, and
 ## the glass catches the light by how each shard faces the camera. The old version
 ## was flat shards sliding in the 2D plane; this one is dimensional.
 
-## Glass takes a tint; it does not take a soil colour. Everything cool or jewelled
+## Glass takes a tint; it does not take a soil color. Everything cool or jeweled
 ## reads as glass, plus the warm ones that read as hot or amber glass - what is left
 ## out is the organic/earthy end (verdant, toxic, sodium), which reads as liquid.
 const GLASS_MOODS := ["glacier", "teal", "abyss", "violet", "magenta",
@@ -72,7 +72,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		var local := PackedVector2Array()
 		for v in poly:
 			local.append(v - cen)
-		# Each shard resonates on its own spectral CHANNEL: centre shards on the low end
+		# Each shard resonates on its own spectral CHANNEL: center shards on the low end
 		# (bass), rim shards on the high end (treble), with a little jitter so it is not a
 		# clean ring. Its channel level drives transparency in _draw, so quiet shards turn
 		# glassy and reveal the ones behind them.
@@ -84,7 +84,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"basis": Basis.IDENTITY,
 			"vel": Vector3.ZERO,
 			"spin": Vector3.ZERO,
-			# Centre shards hold the scheme's base; the rim travels toward its accent,
+			# Center shards hold the scheme's base; the rim travels toward its accent,
 			# so the pane is a graded piece of one glass rather than a hue plus a number.
 			"hue": _toward_accent(0.75 * cen.length() / PANE + 0.25 * chan),
 			"noise": Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1)),
@@ -237,7 +237,7 @@ func _split_shard_at(idx: int, pane_pt: Vector2, dir: Vector2) -> bool:
 	var hsep := Vector3(nrm.x, nrm.y, 0.0) * hgap
 	_shards.append(_child_from(s, a, wnrm * sep, hsep))
 	_shards.append(_child_from(s, b, -wnrm * sep, -hsep))
-	# Flash this segment of the running crack, centred at the crack head and along the line.
+	# Flash this segment of the running crack, centered at the crack head and along the line.
 	var wpt: Vector3 = (s.basis as Basis) * Vector3(local_pt.x, local_pt.y, 0.0) + Vector3(s.pos)
 	var lined: Vector3 = (s.basis as Basis) * Vector3(dir.x, dir.y, 0.0)
 	var halflen := sqrt(maxf(Geo.area(s.poly), 0.001)) * 0.7
@@ -245,7 +245,7 @@ func _split_shard_at(idx: int, pane_pt: Vector2, dir: Vector2) -> bool:
 	return true
 
 
-# Build a child shard from one piece of a split: re-centre the piece on its own centroid and
+# Build a child shard from one piece of a split: re-center the piece on its own centroid and
 # place it so it sits EXACTLY where it currently is on the parent (no jump), with a matching
 # resting home in the pane, then inherit motion plus the small separating kick.
 func _child_from(parent: Dictionary, piece: PackedVector2Array, kick: Vector3, home_off := Vector3.ZERO) -> Dictionary:

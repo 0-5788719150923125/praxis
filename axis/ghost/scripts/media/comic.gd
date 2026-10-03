@@ -83,7 +83,7 @@ const PAPER_GRID := 4
 ## Segments per rounded corner.
 const CORNER_SEGS := 5
 
-## ONE PAGE is this many units wide in the world, so the spread is twice it and is centred
+## ONE PAGE is this many units wide in the world, so the spread is twice it and is centered
 ## on the origin with the spine on the world Y axis. Deliberately unchanged from the
 ## single-page medium: a panel therefore has exactly the world size it always had, every
 ## framing constant below keeps the meaning it was tuned with, and the only thing that grew
@@ -92,7 +92,7 @@ const PAGE_W := 2.0
 
 ## HOW MANY PANELS MAY RUN AT ONCE. See [method _update_liveness]: everything on screen
 ## moves, and the budget is what keeps that affordable. Three covers the panel being read
-## plus the neighbours crowding the frame edges at the reading distance. NOT raised for the
+## plus the neighbors crowding the frame edges at the reading distance. NOT raised for the
 ## spread even though a wider shot puts more panels in frame - the shot is wider, so each
 ## panel is smaller, and the budget is about scene cost rather than about screen area.
 const LIVE_MAX := POOL
@@ -261,7 +261,7 @@ const CONTAIN_DESK := 1.0
 ## the constraint that fights containing a wide panel. Measured on a rolled spread at a
 ## moderate rake: containing the widest panel wanted 3.03 world units while the sheet stopped
 ## covering the frame past 2.13. Flattening buys most of that back, and it is also just the
-## right shot: a face is the most recognisable thing this medium ever puts on the page, and a
+## right shot: a face is the most recognizable thing this medium ever puts on the page, and a
 ## hard angle across a face reads as damage rather than as depth.
 ## LOWERED FROM 0.78, and the first value had the sign of its own effect backwards. Flattening
 ## turns the sheet square-on, which presents the panel at its FULL area - so the harder it
@@ -359,7 +359,7 @@ const FOV := Vector2(38.0, 54.0)
 ## floor existed because a shot looser than "the panel IS the picture" put a portrait page
 ## inside a landscape frame and filled the rest with desk - so a wide shot was not a shot,
 ## it was a framing failure. A spread covers the frame at a much looser shot, so a panel at
-## 0.78 frames tall now sits inside a picture that is entirely paper and neighbouring
+## 0.78 frames tall now sits inside a picture that is entirely paper and neighboring
 ## panels. That is a comic being READ rather than a video with a border, and it is the shot
 ## the vocabulary was missing.
 const FILL := Vector2(0.78, 1.30)
@@ -372,7 +372,7 @@ const FILL := Vector2(0.78, 1.30)
 ## leaving the strip of desk down the side that this whole pass exists to remove. A floor
 ## that binds in the ordinary case is not a floor, it is the rule.
 const CROP_MAX := 4.5
-## How far the aim is pulled from the panel's centre toward the middle of ITS OWN PAGE. A
+## How far the aim is pulled from the panel's center toward the middle of ITS OWN PAGE. A
 ## panel at the outer trim, framed dead on, puts the trim edge - and the void behind the
 ## paper - into shot; pulling the aim in keeps the sheet under the panel at every panel.
 ##
@@ -380,7 +380,7 @@ const CROP_MAX := 4.5
 ## The middle of a spread IS THE SPINE - the widest gutter on the sheet - so pulling every
 ## aim toward it biases every shot toward the one place with no picture in it, which is the
 ## defect this pass exists to remove arriving by the other door. Pulling toward the page's
-## own centre keeps the original purpose exactly: the risk was always the OUTER trim, and
+## own center keeps the original purpose exactly: the risk was always the OUTER trim, and
 ## the inner edge has a whole second page beyond it.
 const AIM_PULL := 0.12
 
@@ -403,7 +403,7 @@ const TURN_ARC := PI
 ## has to drop any quad with a corner behind the eye (it inverts through infinity) - so the
 ## world-quad version simply never drew, at any of the sizes worth having. A defocused
 ## surface has no texture to rake anyway; what it needs to be is present and not black.
-## How dark the wash goes at the corners of the frame, as a fraction of the desk colour.
+## How dark the wash goes at the corners of the frame, as a fraction of the desk color.
 const DESK_VIGNETTE := 0.55
 ## The sheet's shadow on it: offset in page widths, and how far off the paper it is cast.
 const SHADOW_OFF := Vector2(0.045, 0.055)
@@ -467,7 +467,7 @@ var _att_basis := Basis.IDENTITY
 # THE CAMERA STATE, expressed in SPREAD-LOCAL SPHERICAL rather than as a world position: an
 # azimuth around the aim and an elevation off the paper. That is what makes the rake real -
 # an eye on the sheet's normal sees a flat rectangle however the sheet is rotated - and it is
-# also what makes travelling between panels a move PARALLEL TO THE PAPER, because the
+# also what makes traveling between panels a move PARALLEL TO THE PAPER, because the
 # direction is held and only the point it looks at changes.
 # Keys: aim (spread coords), az, el, roll, fill, fov. See _target_for, which builds one.
 ## The spread's SET-UP: the side the camera is on, its height, its tilt and its lens. Fixed
@@ -591,7 +591,7 @@ func _reset_book() -> void:
 ## A window resize changes what a panel is worth in pixels, but NOTHING is resized here.
 ##
 ## A render target reallocated while it is being sampled is the black-triangle and
-## colour-noise corruption main's stage governor documents at length - and worse, a resize
+## color-noise corruption main's stage governor documents at length - and worse, a resize
 ## also throws away the held panels' pictures. So the new figure is remembered and applied
 ## at the next spread, where every target is repainted from scratch anyway.
 func on_stage_resized(size: Vector2) -> void:
@@ -916,7 +916,7 @@ func _cast_panel(i: int) -> void:
 		return
 	var vp := _open_slot(i, _panel_px_for(i))
 	# FOOTAGE, where the spread called for it. Cast directly rather than through the
-	# Director: a film is not in the catalogue (see FilmScene), because a scene that only
+	# Director: a film is not in the catalog (see FilmScene), because a scene that only
 	# exists when the viewer has imported something would make the running order depend on
 	# the library.
 	if i == _film_at and not _film_clip.is_empty():
@@ -976,7 +976,7 @@ func _open_slot(i: int, px := -1) -> SubViewport:
 ## with a floor so a panel in the far distance is still a picture and a ceiling at the full
 ## target so the one being read is as sharp as the medium can make it.
 ##
-## THIS IS ALSO THE PIXELATION ANSWER. A panel rasterises into its target and is then textured
+## THIS IS ALSO THE PIXELATION ANSWER. A panel rasterizes into its target and is then textured
 ## onto the paper, so a shot tighter than the target is magnifying a bitmap - "some of the
 ## in-frame scenes looked a bit pixelated". Re-opening the focal panel at the resolution the
 ## camera is actually asking for is what removes that, and it costs nothing on the panels that
@@ -1021,7 +1021,7 @@ func _blank(vp: SubViewport) -> void:
 ## A spread whose panels arrive one at a time is a slideshow with gutters; a comic page has
 ## all of it drawn at once. But a dozen live scenes is not a thing that runs - the stage
 ## governor spends its whole budget on one - so liveness follows the CAMERA instead of the
-## clock. At the reading distance one panel fills the frame and its neighbours crowd the
+## clock. At the reading distance one panel fills the frame and its neighbors crowd the
 ## edges, so what is on screen is typically one to three panels; the rest are stopped
 ## render targets holding their last frame, exactly as before, and they resume when the
 ## camera comes back to them.
@@ -1157,7 +1157,7 @@ func _tick_cast(features, delta: float) -> void:
 ## THE SHOT VOCABULARY. A cut picks one of these and the camera travels TOWARD it.
 ##
 ## The first cut of this had no vocabulary: every cut set a new target and the camera eased
-## toward it, which is a spring settling, not a camera. It gave one behaviour - bounce to
+## toward it, which is a spring settling, not a camera. It gave one behavior - bounce to
 ## the next panel, sit on it, bounce again - and settling on a single panel is a shot that
 ## should be an EVENT, not the rule.
 ##
@@ -1180,7 +1180,7 @@ const SHOTS := {
 	# WHAT EACH ENTRY MEANS. `fill` is a band MULTIPLYING the panel's natural framing, so a
 	# shot is expressed as "how much tighter or wider than this panel reads at" rather than as
 	# an absolute the panel's size can invalidate. `aim` is how far the station sits off the
-	# panel's centre, in page widths. `az` is how far round it swings, in radians. `rate` is
+	# panel's center, in page widths. `az` is how far round it swings, in radians. `rate` is
 	# how fast the follower closes on it, multiplying the severity rate. `hard` means the shot
 	# begins with a cut - see _cut_to, the only place in this file that assigns the camera.
 	#
@@ -1198,7 +1198,7 @@ const SHOTS := {
 	# had no way to say "here is the sheet you are reading": "it never pulls-back, to reveal the
 	# greater page and multiple frames; it's just a constant bouncing around between individual
 	# frames, close-up". `page` aims at the middle of the panel's own page and frames wide
-	# enough that its neighbours and the gutters between them are the composition.
+	# enough that its neighbors and the gutters between them are the composition.
 	"page":    {"w": 2.0, "fill": [0.26, 0.46], "aim": 0.10, "az": 0.15, "rate": 0.55,
 		"wide": true},
 	# The quick one. Same grammar, four times the rate - a whip is a fast move, not a jump,
@@ -1223,7 +1223,7 @@ const PUSH_FILL := Vector2(2.2, 3.8)
 const DIP_OUT := 0.16
 const DIP_IN := 0.34
 
-## HOW MUCH OF THE TIME BEFORE THE NEXT CUT A MOVE MAY SPEND TRAVELLING.
+## HOW MUCH OF THE TIME BEFORE THE NEXT CUT A MOVE MAY SPEND TRAVELING.
 ##
 ## A move used to sample its duration from the vocabulary and nothing else, while the cut that
 ## ends it comes from the Director's hold - which shrinks with the music's drive. Seven to
@@ -1265,10 +1265,10 @@ const TURN_AZ := 1.2
 
 
 ## THE CAMERA KNOB, applied. See [member Director.camera] for what it is - the slider is
-## labelled "Camera"; `severity` is only this file's word for it.
+## labeled "Camera"; `severity` is only this file's word for it.
 ##
 ## Every constant that describes how MUCH the camera does is read through _sev(), so the slider
-## moves the whole behaviour along one axis. What it scales, and why each belongs to it:
+## moves the whole behavior along one axis. What it scales, and why each belongs to it:
 ##   how far a shot travels and how wide its framing band is - see REACH_CALM
 ##   how fast the follower closes                            - see RATE_CALM
 ##   the angular arc a shot may reach, and the walk step      - how far it can swing at all
@@ -1278,7 +1278,7 @@ const TURN_AZ := 1.2
 ##
 ## REACH IS THE ONE THAT MATTERS FOR HOLDING, and the previous design had only speed. Scaling
 ## speed alone means a gentle camera makes the same journeys more slowly, so it spends MORE of
-## the hold travelling: measured at 71% held at camera 0 against 86% at camera 1, an inversion
+## the hold traveling: measured at 71% held at camera 0 against 86% at camera 1, an inversion
 ## that is exactly why turning the slider down never helped.
 
 ## HOW MUCH GENTLER A FIELD SCENE IS RAKED, 0..1 toward square-on.
@@ -1286,7 +1286,7 @@ const TURN_AZ := 1.2
 ## ghost already types every scene as `subject` (a discrete object) or `field` (fills the
 ## frame), and [Shots] already gives field scenes the gentle moves only. The same rule
 ## belongs here for the same reason, and the reason is visible: a hard rake reads as
-## FORESHORTENING when there is a recognisable object in the panel to be foreshortened, and
+## FORESHORTENING when there is a recognizable object in the panel to be foreshortened, and
 ## as WARPING when there is not. A fractal field at 30 degrees off the paper does not look
 ## like a picture seen at an angle, it looks like a broken picture - which is exactly how it
 ## was reported.
@@ -1316,7 +1316,7 @@ const CONTENT_EDGE := 0.98
 ## refuse to go this wide - see _place_eye - and on a spread it usually does not have to.
 const OFF_FILL := 0.62
 ## How much content a move's RESTING aim must have. Not 1.0: snapping every terminal aim to
-## a panel's dead centre would make every settled shot the same shot, and the whole point of
+## a panel's dead center would make every settled shot the same shot, and the whole point of
 ## sampling a station is that it is not. This is "far enough inside the panel that the shot
 ## is of the panel", and _settle_aim walks the aim in until it clears the bar.
 const SETTLE_CONTENT := 0.72
@@ -1362,7 +1362,7 @@ func _choose_spread_look() -> void:
 ##
 ## THIS IS WHAT STOPS THE PING-PONG. The plan has always been in reading order - top-left,
 ## across, down and back, then the other page - but the MOVES were not. A sweep took whichever
-## end of the row was FARTHER from the camera, to maximise travel; a spine traverse crossed to
+## end of the row was FARTHER from the camera, to maximize travel; a spine traverse crossed to
 ## the other page whenever it was drawn. So the reading advanced rightward while the shot that
 ## carried it ran left, and the next cut pulled it back. Reported as "the camera can bounce up
 ## and down and up and down, or left to right and left to right... like ping-pong all over the
@@ -1420,7 +1420,7 @@ func _content_at(aim: Vector2) -> float:
 	return best
 
 
-## THE SHARE OF A HOLD THIS CAMERA MAY SPEND TRAVELLING. See ARRIVE and ARRIVE_CALM.
+## THE SHARE OF A HOLD THIS CAMERA MAY SPEND TRAVELING. See ARRIVE and ARRIVE_CALM.
 func _arrive_frac() -> float:
 	return lerpf(ARRIVE_CALM, ARRIVE, clampf(_sev(), 0.0, 1.0))
 
@@ -1432,10 +1432,10 @@ func _open_to() -> float:
 
 
 ## WHICH PANEL SETS THE FRAMING SCALE: the one the aim is most inside, and only failing that
-## the one whose centre is nearest.
+## the one whose center is nearest.
 ##
-## _nearest_panel alone was wrong and measurably so. It compares CENTRES, so an aim sitting
-## squarely inside a wide panel can be nearer to the centre of the small panel beside it -
+## _nearest_panel alone was wrong and measurably so. It compares CENTERS, so an aim sitting
+## squarely inside a wide panel can be nearer to the center of the small panel beside it -
 ## and then _fit sizes the shot to the small panel, which is a framing computed for
 ## something that is not in the middle of the picture.
 func _framing_panel(aim: Vector2) -> int:
@@ -1471,7 +1471,7 @@ func _settle_aim(aim: Vector2) -> Vector2:
 	return aim
 
 
-## THE PANELS A SWEEP MAY TRAVEL BETWEEN: the leftmost and rightmost panel centres that
+## THE PANELS A SWEEP MAY TRAVEL BETWEEN: the leftmost and rightmost panel centers that
 ## share a row with `panel`, so a horizontal pan starts on content and ends on content.
 ## Falls back to the panel itself when it is alone on its row - a sweep with nowhere to go
 ## becomes a shot that sits, which is better than one that pans across the margin.
@@ -1506,7 +1506,7 @@ func _col_span(panel: int) -> Vector2:
 	return Vector2(lo, hi) if hi - lo > 0.02 else Vector2(c.y, c.y)
 
 
-## The panel of page [param side] whose centre is nearest the row [param y] - the two ends
+## The panel of page [param side] whose center is nearest the row [param y] - the two ends
 ## of a `spine` traverse. Returns -1 when that page has nothing (which cannot happen, but a
 ## caller that indexes -1 is a crash and a caller that checks is not).
 func _panel_on_side(side: int, y: float) -> int:
@@ -1531,7 +1531,7 @@ func _panel_on_side(side: int, y: float) -> int:
 #
 # WHAT THIS REPLACES AND WHY. A move used to be a pair of poses, a duration and an ease curve,
 # with `_ease` interpolating between them. That made continuity a CONVENTION that thirteen
-# branches were each expected to honour - and at least two of them did not, while the comment
+# branches were each expected to honor - and at least two of them did not, while the comment
 # above them asserted that none did. It also meant "is the camera holding" was a question about
 # which of thirteen names was active, so every fix had to be restated for each. Four rounds of
 # guards were spent on defects that were all one defect: nothing owned how much the picture may
@@ -1559,7 +1559,7 @@ func _panel_on_side(side: int, y: float) -> int:
 ## at the end of it: measured with cuts running, 53% held at camera 0 against 82% at camera 2,
 ## the calm end holding LEAST. That is the same inversion as the old `_budget`, arriving by a
 ## different road, and the cure is the same: express the intent (how much of the scene is
-## spent looking rather than travelling) and let the rate fall out of it.
+## spent looking rather than traveling) and let the rate fall out of it.
 ##
 ## THE RATE ACCOUNTS FOR HOW FAR THE SHOT HAS TO GO. An exponential follower closes a gap of G
 ## down to the arrival threshold in ln(G)/rate seconds, so the rate that arrives in a chosen
@@ -1584,7 +1584,7 @@ const ARRIVE_SHARE_BUSY := 0.55
 const ARRIVE_TAPER := 0.28
 const ARRIVE_FLOOR := 1.8
 ## 10, not 17. A pan may be unhurried and still has to LAND: at 17 a shot spent fourteen
-## seconds of a twenty-second scene travelling and held for 3% of it. The variety comes from
+## seconds of a twenty-second scene traveling and held for 3% of it. The variety comes from
 ## PAN_SPEED sampling inside this bound, not from the bound itself being generous.
 const ARRIVE_CEIL := 10.0
 ## HOW FAST THE CAMERA CROSSES THE PAPER, in page widths per second, sampled per shot.
@@ -1608,7 +1608,7 @@ const RATE_ANGLE := 0.62
 ##
 ## THIS IS WHAT MAKES THE SLIDER MONOTONE IN HOLDING, and the old design had it backwards.
 ## Scaling only the SPEED means a gentle camera makes the same journeys more slowly, so it
-## spends MORE of the hold travelling and less of it arrived - measured on the previous build
+## spends MORE of the hold traveling and less of it arrived - measured on the previous build
 ## at 71% held at camera 0 against 86% at camera 1, which is why turning the slider down never
 ## helped. A gentle camera makes SMALL journeys: it arrives early and looks for a long time.
 const REACH_CALM := 0.35
@@ -1617,7 +1617,7 @@ const REACH_BUSY := 1.35
 ## _pose_gap: page widths of aim, log-ratio of framing, radians of swing. One is the threshold
 ## because _pose_gap divides each channel by its own tolerance first.
 const ARRIVED := 1.0
-## The tolerances _pose_gap normalises by: aim in page widths, framing as a log ratio (0.06 is
+## The tolerances _pose_gap normalizes by: aim in page widths, framing as a log ratio (0.06 is
 ## about 6%), swing in radians.
 const GAP_AIM := 0.035
 const GAP_FILL := 0.06
@@ -1667,7 +1667,7 @@ func _reach() -> float:
 ## ARRIVE_SHARE_CALM.
 ## How long this shot should take to arrive: the distance it has to cross, at a speed sampled
 ## for this shot. See PAN_SPEED. The Director's hold is a CEILING on that, not the source of
-## it - a shot may not spend more than its share of the scene travelling, but within that it
+## it - a shot may not spend more than its share of the scene traveling, but within that it
 ## goes at its own pace.
 func _arrive_time(r: RandomNumberGenerator, travel: float, kind: String) -> float:
 	# BIASED TOWARD THE SLOW END, and the bias has to be applied to the SPEED to come out right
@@ -1782,7 +1782,7 @@ func _target_for(r: RandomNumberGenerator, panel: int, kind: String) -> Dictiona
 	var spec: Dictionary = SHOTS[kind]
 	var reach := _reach()
 	var base := _spread.panel_center(panel)
-	# THE FILM PANEL IS FRAMED DEAD CENTRE AND WHOLE - see CONTAIN_FILL. Everywhere else the
+	# THE FILM PANEL IS FRAMED DEAD CENTER AND WHOLE - see CONTAIN_FILL. Everywhere else the
 	# aim leans toward the middle of its own page, which keeps the outer trim out of shot...
 	if panel != _film_at:
 		base = base.lerp(_page_center(panel), AIM_PULL)
@@ -1796,7 +1796,7 @@ func _target_for(r: RandomNumberGenerator, panel: int, kind: String) -> Dictiona
 	# `lerp(1.0, sampled, reach)` with reach floored at 0.35, which dragged EVERY framing 65% of
 	# the way back to 1.04 at camera 0 - one close-up value for the whole vocabulary, which is
 	# the whole of "it never pulls back... it's just a constant bouncing around between
-	# individual frames, close-up". What a gentle camera should do less of is TRAVELLING; how
+	# individual frames, close-up". What a gentle camera should do less of is TRAVELING; how
 	# varied its framing is belongs to composition, not to restlessness.
 	var fill := lerpf(1.0, r.randf_range(float(span[0]), float(span[1])),
 		clampf(0.6 + reach * 0.4, 0.0, 1.0))
@@ -1817,7 +1817,7 @@ func _target_for(r: RandomNumberGenerator, panel: int, kind: String) -> Dictiona
 		+ float(spec["az"]) * _sev() * (1.0 if r.randf() < 0.5 else -1.0)
 	# A WIDE SHOT IS EXEMPT FROM _settle_aim. That guard walks an aim toward its panel until
 	# enough panel is under it, which is right for a shot OF a panel and destroys a shot of the
-	# page - the composition it is reaching for has gutters and neighbours in it by design.
+	# page - the composition it is reaching for has gutters and neighbors in it by design.
 	return {
 		"aim": _clamp_aim(aim) if bool(spec.get("wide", false)) \
 			else _settle_aim(_clamp_aim(aim)),
@@ -1835,7 +1835,7 @@ func _panel_fill(_panel: int) -> float:
 	return (FILL.x + FILL.y) * 0.5
 
 
-## HOW FAR THIS SHOT STILL HAS TO GO, normalised so that 1.0 is "arrived" on every channel.
+## HOW FAR THIS SHOT STILL HAS TO GO, normalized so that 1.0 is "arrived" on every channel.
 func _pose_gap() -> float:
 	var g: float = (_cam.aim as Vector2).distance_to(_tgt.aim) / GAP_AIM
 	var fa := maxf(float(_cam.fill), 0.01)
@@ -1948,7 +1948,7 @@ func _dip_alpha() -> float:
 ## Put the eye on its spread-local spherical offset from where the camera is aiming.
 ##
 ## The offset direction is built in SPREAD space and then rotated by the sheet's attitude,
-## so it is a fixed station relative to the paper: travelling from panel to panel slides the
+## so it is a fixed station relative to the paper: traveling from panel to panel slides the
 ## camera ACROSS the spread at a constant angle, which is the move a copy-stand shot makes
 ## and the one the eye reads as flying over a comic. Building it in world space instead
 ## would swing the angle around every time the sheet moved.
@@ -1978,8 +1978,8 @@ func _place_eye(delta := 0.0) -> void:
 	_roll = roll
 	_fov = float(_cam.fov)
 	var dir := _att_basis * Vector3(cos(_cam.az) * cos(el), sin(_cam.az) * cos(el), sin(el))
-	# SCALE IS SET BY WHICHEVER PANEL THE AIM IS INSIDE, not by the nearest centre and not by
-	# the one being read: a travelling move spends most of its time between panels, and
+	# SCALE IS SET BY WHICHEVER PANEL THE AIM IS INSIDE, not by the nearest center and not by
+	# the one being read: a traveling move spends most of its time between panels, and
 	# framing those seconds against a panel that is off screen puts the scale somewhere
 	# arbitrary. See _framing_panel.
 	var pw := _panel_world(fp)
@@ -2234,7 +2234,7 @@ func shot_debug() -> String:
 		(_eye - c).length(), _att.x, _att.y, _att.z]
 
 
-## Which panel the camera is over. Nearest centre in spread coordinates - the fallback for
+## Which panel the camera is over. Nearest center in spread coordinates - the fallback for
 ## [method _framing_panel] when the aim is inside nothing at all.
 func _nearest_panel(aim: Vector2) -> int:
 	var best := 0
@@ -2435,7 +2435,7 @@ func _world(p: Vector2, m: Basis, aspect := -1.0, mirror := false, depth := 0.0)
 	var a := aspect if aspect > 0.0 else _spread.aspect
 	var x := (2.0 * ComicSpread.SPINE - p.x) if mirror else p.x
 	# THE TURN HINGES ON THE SPINE, and on a spread the spine is the origin - so unlike the
-	# single page, which had to rotate about an off-centre pivot to avoid reading as a card
+	# single page, which had to rotate about an off-center pivot to avoid reading as a card
 	# spinning in place, there is no pivot term here at all. The leaf's rotation is simply
 	# part of `m`.
 	return m * Vector3(
@@ -2524,7 +2524,7 @@ func _draw_leaf(sp: ComicSpread, side: int, pool: int, drawn: Callable, m: Basis
 	_paper_quad(sp, side, m, u, origin, paper, mirror)
 	# THE PANELS. Painter's order along the page normal is irrelevant - they are coplanar
 	# and never overlap - so reading order is the order, which is also the order the ink
-	# wants (a canted panel's border must sit over its neighbour's paper, not under it).
+	# wants (a canted panel's border must sit over its neighbor's paper, not under it).
 	var on_page := sp.page_panels(side)
 	for i in on_page:
 		if bool(drawn.call(i)):
@@ -2590,7 +2590,7 @@ func _paper_quad(sp: ComicSpread, side: int, m: Basis, u: float, origin: Vector2
 			var good := pr.z > _lens.near
 			ok.append(good)
 			pts.append((Vector2(pr.x, pr.y) * u + origin) if good else Vector2.ZERO)
-			# radial falloff from the sheet's centre, at a few percent
+			# radial falloff from the sheet's center, at a few percent
 			var d := Vector2(fu - 0.5, fv - 0.5).length() / 0.707
 			var kk := 1.0 - 0.10 * d * d
 			cols.append(Color(paper.r * kk, paper.g * kk, paper.b * kk, paper.a))
@@ -2607,7 +2607,7 @@ func _paper_quad(sp: ComicSpread, side: int, m: Basis, u: float, origin: Vector2
 ## surface the moment one vertex went behind the camera. On a single page that was rare
 ## enough to be invisible. On a spread it is not: the sheet is twice as wide, so at a rake
 ## the far corners go behind the eye at framings that are otherwise perfectly good, and a
-## page that vanishes entirely for a second is a far worse artefact than a page missing the
+## page that vanishes entirely for a second is a far worse artifact than a page missing the
 ## cell that could not be projected.
 ## RETURNS the buffer rather than filling one handed in: a PackedInt32Array is a value
 ## type in GDScript, so a callee that appends to a parameter appends to its own copy and the
@@ -2636,8 +2636,8 @@ func _panel_quad(sp: ComicSpread, i: int, pool: int, m: Basis,
 	if not rid.is_valid():
 		return
 	# HALF A TEXEL IN, on every side. UVs of exactly 0 and 1 sample the outermost texel's
-	# EDGE, where the bilinear filter reaches for a neighbour that is not there - and what
-	# it finds depends on the repeat mode, which showed as a stray coloured fringe along
+	# EDGE, where the bilinear filter reaches for a neighbor that is not there - and what
+	# it finds depends on the repeat mode, which showed as a stray colored fringe along
 	# the bottom rule of a panel. Insetting by half a texel keeps every sample inside the
 	# panel's own picture; the loss is half a pixel of a 700-pixel render.
 	var tw := maxf(float(vp.size.x), 1.0)
@@ -2795,7 +2795,7 @@ func _rounded_uv(sp: ComicSpread, i: int) -> PackedVector2Array:
 		return PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
 	var ru := rad / r.size.x
 	var rv := rad / r.size.y
-	# corner centres in uv, and the angle each arc sweeps from
+	# corner centers in uv, and the angle each arc sweeps from
 	var arcs := [
 		[Vector2(ru, rv), PI],
 		[Vector2(1.0 - ru, rv), -PI * 0.5],

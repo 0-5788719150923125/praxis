@@ -170,7 +170,7 @@ Each span:
 | `desync` | break the phase-lock | - |
 | `hold_still` | damp a prism's own spin to rest (latches) | - |
 | `sway` | slip the anchor and drift weightlessly around it | `amp` |
-| `counterflow` | the pair take OPPOSITE HIGHWAYS: a slow CURRENT catches the drifting pair and eases them onto their lanes and up to cruise (passing mid-scene, rolling about their travel axes); in the final stretch each pulls a loop off its lane that tightens into a spiral sinking toward the centre-depth - both converge on the point the ouroboros blossoms out of, hiding the cut inside the convergence. Speed rides the live `time_scale`, so specialize couples in. Give the span `ease: linear` | `lane`, `speed`, `loop_k` |
+| `counterflow` | the pair take OPPOSITE HIGHWAYS: a slow CURRENT catches the drifting pair and eases them onto their lanes and up to cruise (passing mid-scene, rolling about their travel axes); in the final stretch each pulls a loop off its lane that tightens into a spiral sinking toward the center-depth - both converge on the point the ouroboros blossoms out of, hiding the cut inside the convergence. Speed rides the live `time_scale`, so specialize couples in. Give the span `ease: linear` | `lane`, `speed`, `loop_k` |
 | `specialize` | scale to `size` x, tempo to `tempo` x, latch a pulse | `size`, `tempo`, `pulse {amp, rate}` |
 | `gather` | swarm members ease in one at a time | - |
 | `fly` | the swarm flies its track; the stage camera follows a touch slower | `speed`, `follow` |
@@ -190,7 +190,7 @@ Each span:
   crystallization begins.
 
 The five bespoke the-point scene files (`eye`, `two_eyes`, `eye_prism`,
-`two_prisms`, `prism_swarm`) remain in the AUTO catalogue, but the storyboard path
+`two_prisms`, `prism_swarm`) remain in the AUTO catalog, but the storyboard path
 runs entirely on `stage` data now.
 
 ## Roadmap

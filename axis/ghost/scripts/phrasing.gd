@@ -12,7 +12,7 @@ class_name Phrasing
 ##
 ## The accent must not come from the walk's coin flip: a `randf() < 0.22 * appetite`
 ## decision stresses different words on different seeds and no seed stresses them where
-## English does, which is the walk GENERATING prosody it should only be COLOURING.
+## English does, which is the walk GENERATING prosody it should only be COLORING.
 ##
 ## So this stage sets the baseline from four well-established, parser-free rules, and
 ## [Voice.ProsodyWalk] modulates around it. Nothing here is seeded - the same text always

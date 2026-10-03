@@ -14,7 +14,7 @@ extends Scene3D
 ## "Blue" is now a mood rather than a constant: the crystal takes a cool [Scheme] -
 ## glacier, abyss, teal, violet, ash - carried on the [PrismBody] itself as a hue
 ## offset from [constant HUE_BLUE], so `two_prisms` (which draws that same live body at
-## HUE_BLUE) inherits the colour across the morph instead of popping back to blue. The
+## HUE_BLUE) inherits the color across the morph instead of popping back to blue. The
 ## eyes take an iris mood, and the pair's composition a named spacing.
 
 ## Iris moods, matching `eye.gd` and `two_eyes.gd` - the same face arrives here.
@@ -65,7 +65,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_eye.autonomous = false
 	_reye.autonomous = false
 	_blue = PrismBody.new(rng.randi())
-	# The crystal's colour rides on the BODY as an offset from HUE_BLUE, because the
+	# The crystal's color rides on the BODY as an offset from HUE_BLUE, because the
 	# body outlives this scene: two_prisms keeps drawing it at HUE_BLUE and gets this
 	# mood for free, with no jump at the hand-off.
 	var crystal := Scheme.among(CRYSTAL_MOODS, rng)

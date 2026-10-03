@@ -11,7 +11,7 @@ THAT IS ALSO THE LIMIT, and it is a deliberate one: subtitles are NOT filtered. 
 
 FILTERS COMBINE, which is the reason this is a registry of amounts and not a picker. Being asked to choose between monochrome and grain is the wrong question - black and white film HAS grain - so every entry has its own 0..1 dial and they are all applied, in one fragment shader, in one pass. A filter at 0 is arithmetically a no-op, and when every filter is at 0 the material is removed from the rect entirely, so the default show is not merely unchanged but is running the code it always ran.
 
-THE REGISTRY ORDER IS THE PIPELINE ORDER, top to bottom, and it is the one thing here that cannot be read off the shader: dots are laid first (they RE-SAMPLE the picture, so anything after them grades the dots rather than the photograph), then the optics that a lens would add, then the grade, then the emulsion, then the frame. Monochrome before Noir is what makes the pair read as black-and-white noir rather than as a tinted colour picture - Noir's split-tone is applied to whatever it is handed.
+THE REGISTRY ORDER IS THE PIPELINE ORDER, top to bottom, and it is the one thing here that cannot be read off the shader: dots are laid first (they RE-SAMPLE the picture, so anything after them grades the dots rather than the photograph), then the optics that a lens would add, then the grade, then the emulsion, then the frame. Monochrome before Noir is what makes the pair read as black-and-white noir rather than as a tinted color picture - Noir's split-tone is applied to whatever it is handed.
 
 ADDING A FILTER is an entry in each of the four tables below plus a `u_<key>` uniform and a block in `shaders/stage_filter.gdshader`. Nothing in main, the Director or the panel changes - the controls are built off `Filters.REGISTRY`. A key with no matching uniform is the failure this arrangement is exposed to, because `set_shader_parameter` on a name the shader does not declare is a SILENT no-op; the gate reads the shader source and fails on it.
 
@@ -36,7 +36,7 @@ Uniform `u_slip`, default 0.45 when first switched on.
 
 ## `pointillism` - Pointillism
 
-The picture re-laid as overlapping dots of paint on a jittered lattice, each dot taking its colour from where it sits and its size from how bright that is. The dial is the size of the dots, so a little is a canvas texture and a lot is a painting you have to stand back from.
+The picture re-laid as overlapping dots of paint on a jittered lattice, each dot taking its color from where it sits and its size from how bright that is. The dial is the size of the dots, so a little is a canvas texture and a lot is a painting you have to stand back from.
 
 Uniform `u_pointillism`, default 0.35 when first switched on.
 
@@ -48,7 +48,7 @@ Uniform `u_bloom`, default 0.45 when first switched on.
 
 ## `monochrome` - Monochrome
 
-Colour taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same grey.
+Color taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same gray.
 
 Uniform `u_monochrome`, default 1.0 when first switched on.
 

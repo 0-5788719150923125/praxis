@@ -20,7 +20,7 @@ class_name Phonemes
 
 # Formants are neutral adult targets; [Voice] scales them per-voice (vocal tract
 # length) and EMA-smooths across segments (coarticulation), so the numbers here
-# are centres, not absolutes.
+# are centers, not absolutes.
 const TABLE := {
 	# vowels: f = [F1, F2, F3], dur in ms
 	"IY": {"type": "vowel", "f": [270.0, 2290.0, 3010.0], "dur": 110.0},
@@ -53,9 +53,9 @@ const TABLE := {
 	# Obstruents. Two independent things, and conflating them is what made every
 	# fricative sound the same:
 	#   `f`   - the TRACT POSTURE (the locus). Where the articulators are, which
-	#           is what bends the neighbouring vowel's formants. This is the
+	#           is what bends the neighboring vowel's formants. This is the
 	#           primary place cue for /f/ and /th/, whose own noise is weak.
-	#   `par` - the PARALLEL BRANCH: [centre Hz, bandwidth Hz, amplitude] triples
+	#   `par` - the PARALLEL BRANCH: [center Hz, bandwidth Hz, amplitude] triples
 	#           describing the front-cavity resonances the turbulence excites.
 	#           These are summed AFTER the cascade, never through it: the cascade
 	#           is an all-pole lowpass whose top pole sits near 4.7 kHz, so
@@ -64,7 +64,7 @@ const TABLE := {
 	#           (Klatt 1980 splits cascade and parallel for exactly this reason.)
 	#   `namp`- the branch's overall level; FRIC_LEVEL in [Voice] seats the set.
 	# Bandwidths here are ABSOLUTE and are NOT scaled by vocal tract length; only
-	# the centres are (a short tract raises the resonance, it does not sharpen it).
+	# the centers are (a short tract raises the resonance, it does not sharpen it).
 	"S": {"type": "fric", "voiced": false, "f": [320.0, 1750.0, 2600.0],
 		"namp": 1.0,
 		"pa": [0, 0, 0, 0, 0, 0, 0.7943], "ab": 0, "dur": 105.0},
@@ -83,7 +83,7 @@ const TABLE := {
 	# /f/ and /th/ are labiodental and dental: almost no front cavity, so their
 	# spectra are FLAT and DIFFUSE rather than peaked, and quiet in absolute
 	# terms. They are audible because they sit in 4-10 kHz where vowels have
-	# nothing - the cue is spectral CONTRAST against the neighbour, not level.
+	# nothing - the cue is spectral CONTRAST against the neighbor, not level.
 	"F": {"type": "fric", "voiced": false, "f": [320.0, 900.0, 2200.0],
 		"namp": 0.226,
 		"pa": [0, 0, 0, 0, 0, 0, 0], "ab": 0.7079, "dur": 95.0},
@@ -399,7 +399,7 @@ static func parse(text: String) -> Array:
 					"emph": emph,
 				}
 				# A CAPITAL "A" INSIDE A SENTENCE IS THE LETTER. The article is only ever
-				# capitalised where a sentence starts, so "groups, A and B" can only mean the
+				# capitalized where a sentence starts, so "groups, A and B" can only mean the
 				# letter - and read as the article it came out as a clipped schwa, all but
 				# inaudible. Pinned as `literal` so eSpeak cannot reduce it again downstream.
 				# Only mid-sentence: a sentence-initial "A" is the article, and stays one.
@@ -519,7 +519,7 @@ static func _literal_word(token: String) -> Dictionary:
 # data, not configuration: the language itself, external so it can be read and
 # corrected without touching the synthesizer, and so a wrong word is a one-line
 # diff instead of a code change. The built-in EXCEPTIONS above remain the
-# fallback, so a missing or malformed file degrades to the old behaviour rather
+# fallback, so a missing or malformed file degrades to the old behavior rather
 # than breaking speech.
 const DATA_PATH := "res://data/english.yml"
 # CMUdict: 126k words with LEXICAL STRESS, vendored (BSD-2-Clause, see
@@ -622,7 +622,7 @@ static func _phone_list(v: Variant) -> Array:
 ## karaoke line still shows `2009`). A token with no digits and no letters is a symbol - there is
 ## nothing to say for it, and the caller warns and drops it.
 ##
-## This is deliberately defence in depth rather than the fix: numerals are expanded before the
+## This is deliberately defense in depth rather than the fix: numerals are expanded before the
 ## tokenizer ever sees them (see TextNorm), and if one reaches here at all that is a bug in the
 ## normalizer. It just must not be an INAUDIBLE bug.
 static func _rescue_phones(bare: String) -> Dictionary:
@@ -1217,7 +1217,7 @@ const SPEAK_AS := {
 }
 
 
-## Pick each homograph's reading from its neighbours, once the whole sentence is known.
+## Pick each homograph's reading from its neighbors, once the whole sentence is known.
 static func _resolve_homographs(sentences: Array) -> void:
 	for s in sentences:
 		var sent: Array = s
@@ -1246,7 +1246,7 @@ static func _resolve_homographs(sentences: Array) -> void:
 			# rule keyed to the following word cannot tell "the ledgers record a loss" (verb)
 			# from "the record a clerk kept" (noun) - the word after is "a" in both. A
 			# determiner or preposition immediately before the word settles it, so that case
-			# is answered by the left neighbour and never reaches the right one.
+			# is answered by the left neighbor and never reaches the right one.
 			var vetoed: bool = (rule.get("keep_prev", []) as Array).has(prev)
 			var alt: bool = rule.has("alt") and not vetoed \
 				and ((rule.get("alt_prev", []) as Array).has(prev) \

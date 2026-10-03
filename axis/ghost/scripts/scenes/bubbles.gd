@@ -1,12 +1,12 @@
 extends GhostScene
 
-## Bubbles - an underwater drift of rising bubbles in coloured depths.
+## Bubbles - an underwater drift of rising bubbles in colored depths.
 ##
 ## Bubbles wobble upward with rim highlights, fine suspended particles hang in the
-## water, and a bed with slow colour pools gives the sense of light filtering down
-## from above. The water's colour comes from a [Scheme] and its CHARACTER from a
+## water, and a bed with slow color pools gives the sense of light filtering down
+## from above. The water's color comes from a [Scheme] and its CHARACTER from a
 ## column below, so a mineral spring and a black trench are different places rather
-## than the same picture recoloured. `bed` (+ `surface`) + `kelp` + `dust` + `bubbles`.
+## than the same picture recolored. `bed` (+ `surface`) + `kelp` + `dust` + `bubbles`.
 
 # WATER COLUMNS. The scene used to be one column - 36-60 bubbles rising slowly
 # through the same kelp, always - so every seed produced the same aquarium. A
@@ -31,7 +31,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
 	# Water is not always teal: mineral springs run green, deep water goes indigo,
-	# and a still pool under a grey sky is nearly colourless. Anything but a warm
+	# and a still pool under a gray sky is nearly colorless. Anything but a warm
 	# hue, which would read as air rather than depth.
 	var sch := Scheme.among(["teal", "glacier", "abyss", "verdant", "toxic", "violet", "ash"], rng)
 	var col: Dictionary = COLUMNS[rng.randi() % COLUMNS.size()]

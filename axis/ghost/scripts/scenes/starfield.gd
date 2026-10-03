@@ -2,21 +2,21 @@ extends GhostScene
 
 ## Starfield - a deep night sky, twinkling, with the occasional shooting star.
 ##
-## A parallax field of stars over a near-black nebula bed and a wisp of coloured fog;
+## A parallax field of stars over a near-black nebula bed and a wisp of colored fog;
 ## brighter stars glow, and every so often a meteor streaks across (more often on a
-## beat). Calm and vast - the celestial corner of the catalogue. The seed picks WHERE
+## beat). Calm and vast - the celestial corner of the catalog. The seed picks WHERE
 ## in the galaxy the sky is looked at from first, and that decides the crowding, the
 ## dust and the company as one choice. `bed` + `fog` + `stars` (+ `cosmos` / `volumetric`
 ## / `planet` / `flare`).
 
-# A sky is a PLACE before it is a colour. A crowded dusty core and an empty deep field
+# A sky is a PLACE before it is a color. A crowded dusty core and an empty deep field
 # differ in star count, in how much lit dust hangs between them and in what else shares
 # the frame - so one roll moves all of it together, and the mood set follows from the
 # same place rather than being sampled loose.
 #   count - stars; val - the bed's brightness; fog - haze alpha; the rest are chances of company
 const SKIES := {
 	"core": {
-		# Toward the galactic centre: thousands of stars reddened by the dust in front of them.
+		# Toward the galactic center: thousands of stars reddened by the dust in front of them.
 		"moods": ["sodium", "dawn", "brass", "bone", "ember", "magenta", "violet", "rose"],
 		"count": [420, 700], "val": [0.10, 0.17], "fog": [0.035, 0.06], "fog_n": [5, 9],
 		"cosmos": 0.85, "cosmos_n": [1, 3], "volumetric": 0.65, "planet": 0.15, "flare": 0.80,

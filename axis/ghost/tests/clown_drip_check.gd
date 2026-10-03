@@ -42,7 +42,7 @@ extends SceneTree
 ##   OUTBOARD it CURVES outward as it descends, down the outer cheek rather than
 ##            straight past the nose and the lips. Measured as the shift between
 ##            the two rows, never against the eye: the drain point already sits
-##            outside the eye's centre, so a straight-down run passes a test
+##            outside the eye's center, so a straight-down run passes a test
 ##            written that way (verified - it did).
 ##
 ## All three verified two-sided by breaking the shader three ways (constant width,
@@ -138,8 +138,8 @@ func _initialize() -> void:
 	print("the left run occupies y %.3f .. %.3f" % [y0, y1])
 	var near := _spans(straight, lerpf(y0, y1, 0.10))
 	var far := _spans(straight, lerpf(y0, y1, 0.90))
-	print("left run: %d span(s) at 10%% down it totalling %.3f wide, "
-		% [near.size(), _width(near)] + "%d span(s) at 90%% down it totalling %.3f"
+	print("left run: %d span(s) at 10%% down it totaling %.3f wide, "
+		% [near.size(), _width(near)] + "%d span(s) at 90%% down it totaling %.3f"
 		% [far.size(), _width(far)])
 	# TAPER - wide at the source, one thin streak at the tail. A lane bundle is the
 	# same hairline all the way down, so its ratio is about 1.
@@ -162,11 +162,11 @@ func _initialize() -> void:
 	# OUTBOARD - it must CURVE, drifting further outboard as it descends, rather
 	# than falling straight down past the nose and the lips. Measured as the shift
 	# between the two rows, not against the eye: the drain point is already outside
-	# the eye's centre, so a straight-down run scores 0.028 against the eye and
+	# the eye's center, so a straight-down run scores 0.028 against the eye and
 	# would pass a test written that way (verified - it did).
 	if not far.is_empty() and not near.is_empty():
-		var cx_far := _centre(far)
-		var cx_near := _centre(near)
+		var cx_far := _center(far)
+		var cx_near := _center(near)
 		print("  the run leaves the socket at x=%.3f and is at x=%.3f down the cheek: "
 			% [cx_near, cx_far] + "%+.3f OUTBOARD over that descent" % (cx_near - cx_far))
 		_expect(cx_far < cx_near - 0.020,
@@ -238,7 +238,7 @@ func _spans(f: Image, uy: float) -> Array:
 
 
 ## The midpoint of the painted material on a scanline, across all its spans.
-func _centre(spans: Array) -> float:
+func _center(spans: Array) -> float:
 	var acc := 0.0
 	var w := 0.0
 	for sp in spans:
@@ -255,7 +255,7 @@ func _width(spans: Array) -> float:
 	return w
 
 
-## How far the painted run sits from the face's centre line, averaged down the
+## How far the painted run sits from the face's center line, averaged down the
 ## cheek - the quantity a contour-following march changes and a vertical one does
 ## not.
 func _lean(f: Image) -> float:
@@ -376,7 +376,7 @@ func _frame(ridge: bool) -> Texture2D:
 				# 0.03 of the frame, which is 0.05 across that spacing. The
 				# sawtooth reaches that magnitude everywhere AND keeps its tangent
 				# pointing one way, so the deflection accumulates instead of
-				# cancelling.
+				# canceling.
 				l = 0.45 * fposmod((u - v) * 10.0, 1.0)
 			img.set_pixel(x, y, Color(0.55 + l, 0.42 + l * 0.8, 0.36 + l * 0.7))
 	return ImageTexture.create_from_image(img)

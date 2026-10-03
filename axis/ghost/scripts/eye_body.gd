@@ -8,8 +8,8 @@ class_name EyeBody
 ## fidelity the flat-shaded mesh can't reach:
 ##   sclera  - a glossy near-white SPHERE ([Mesh3D] icosphere, smooth-shaded), with a
 ##             wet specular sheen and a soft limbal shadow where the iris is set in.
-##   iris    - a projected disc with procedural radial fibres (the vein-like detail), a
-##             dark limbal ring, a ciliary->collarette colour gradient, and crypts.
+##   iris    - a projected disc with procedural radial fibers (the vein-like detail), a
+##             dark limbal ring, a ciliary->collarette color gradient, and crypts.
 ##   pupil   - a black disc with a soft inner shadow, dilating with the audio AND
 ##             *accommodating* to focus depth (a near focus constricts it).
 ##   cornea  - a wet catchlight (a real reflection point toward the light) plus a faint
@@ -18,7 +18,7 @@ class_name EyeBody
 ## Gaze: the eye looks at a 3D point. [method look_at_point] aims it from its own world
 ## position, so two eyes sharing a focus *verge* - they toe in on a near point and run
 ## parallel on a far one - rather than just rotating to the same direction. When no
-## owner drives it, it self-saccades (centre-biased).
+## owner drives it, it self-saccades (center-biased).
 
 # Ocular motility limits: a real eyeball rotates only so far in its orbit before the
 # muscles stop it (roughly 35 deg). The gaze and its target are held inside this cone so
@@ -54,7 +54,7 @@ var _light := 0.6              # 0..1 ambient light ON the eye: drives BOTH the 
 var _rng := RandomNumberGenerator.new()
 
 var _sclera: Mesh3D
-var _fibres: Array = []        # seeded iris vein fibres (stable per eye)
+var _fibers: Array = []        # seeded iris vein fibers (stable per eye)
 var _crypts: Array = []        # seeded iris crypts (small dark lacunae)
 var _flecks: Array = []        # seeded faint sclera veins near the periphery
 
@@ -66,11 +66,11 @@ func _init(seed_value := 0, hue_override := -1.0) -> void:
 	_dwell = _rng.randf_range(0.6, 1.5)
 	_sclera = Mesh3D.icosphere(3)            # finer -> rounder silhouette; smooth-shaded
 	_sclera.compute_normals()
-	# Radial vein fibres: many thin strands from the collarette out to the limbus, each
+	# Radial vein fibers: many thin strands from the collarette out to the limbus, each
 	# at its own angle, length, curve, and shade (bright striae and dark furrows).
 	var nf := _rng.randi_range(70, 110)
 	for i in nf:
-		_fibres.append({
+		_fibers.append({
 			"a": TAU * float(i) / float(nf) + _rng.randf_range(-0.03, 0.03),
 			"ri": _rng.randf_range(0.30, 0.40),
 			"ro": _rng.randf_range(0.84, 0.99),
@@ -167,14 +167,14 @@ func blink(dur := 0.32) -> void:
 	_blink_t = 0.0
 
 
-# A centre-biased saccade target (radians). Static helper so a multi-eye owner can
+# A center-biased saccade target (radians). Static helper so a multi-eye owner can
 # reuse the same distribution to drive a SHARED gaze.
 static func saccade_target(rng: RandomNumberGenerator) -> Vector2:
 	if rng.randf() < 0.4:
 		return Vector2.ZERO                             # prefer the neutral forward gaze
 	var a := rng.randf() * TAU
 	var r := rng.randf()
-	r = r * r * 0.5                                     # squared -> centre bias
+	r = r * r * 0.5                                     # squared -> center bias
 	return Vector2(cos(a), sin(a)) * r
 
 
@@ -231,7 +231,7 @@ func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, f
 
 
 # Two curved lid shutters over the projected eyeball: the upper takes ~65% of the
-# travel and the lower ~35% (they meet a little below centre, like real lids), each a
+# travel and the lower ~35% (they meet a little below center, like real lids), each a
 # spherical-cap polygon whose edge bows toward the pupil, with a soft lash line.
 func _draw_lids(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, fade: float) -> void:
 	if lid <= 0.005:
@@ -288,7 +288,7 @@ func _lid_shutter(ci: CanvasItem, c: Vector2, r: float, cover: float, upper: boo
 
 
 # The screen vector that the iris-plane unit axis `e` maps to (foreshortened by the
-# projection), measured from the iris centre.
+# projection), measured from the iris center.
 func _axis(lens: Lens3D, u: float, c3: Vector3, e: Vector3, world_r: float, center: Vector2) -> Vector2:
 	var p := lens.project(c3 + e * world_r)
 	return Vector2(p.x, p.y) * u - center
@@ -309,8 +309,8 @@ func _ring(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, r: float, 
 	ci.draw_polyline(pts, col, maxf(1.0, (ua.length() + va.length()) * 0.5 * 0.04), true)
 
 
-# The iris body: a limbus->collarette colour gradient (concentric discs), then the
-# radial vein fibres, crypts, and the collarette ridge.
+# The iris body: a limbus->collarette color gradient (concentric discs), then the
+# radial vein fibers, crypts, and the collarette ridge.
 func _draw_iris(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, iris_px: float, a: float) -> void:
 	var layers := 8
 	for i in layers:
@@ -321,9 +321,9 @@ func _draw_iris(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, iris_
 		var sat := clampf(_sat * lerpf(1.05, 0.82, t), 0.0, 1.0)
 		var hh := fposmod(hue + 0.03 * t, 1.0)
 		ci.draw_colored_polygon(_disc(center, ua, va, r, 44), Color.from_hsv(hh, sat, val, a))
-	# Radial fibres - the vein-like detail. A gently curved 3-point strand each.
+	# Radial fibers - the vein-like detail. A gently curved 3-point strand each.
 	var lw: float = maxf(0.8, iris_px * 0.014)
-	for f in _fibres:
+	for f in _fibers:
 		var ca: float = cos(f.a)
 		var sa: float = sin(f.a)
 		var perp_a: float = f.a + PI * 0.5

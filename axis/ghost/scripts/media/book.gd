@@ -66,14 +66,14 @@ const ANGLE_SLOW := 3.0
 const VFOV := 20.0
 ## THE HIGHLIGHT IS A TRAIL THAT DECAYS IN TIME. Each word lights in its own rainbow hue the
 ## moment it is spoken and fades back to ink over [constant TRAIL_TAU] seconds, whatever the
-## sentence and paragraph boundaries - so the colour follows the voice down the page and
-## cools behind it. The first cut coloured the SENTENCE, with hues drifting over time: every
-## sentence reset the colour, and a long one sat bright and shifting for as long as it was on
+## sentence and paragraph boundaries - so the color follows the voice down the page and
+## cools behind it. The first cut colored the SENTENCE, with hues drifting over time: every
+## sentence reset the color, and a long one sat bright and shifting for as long as it was on
 ## screen ("there is no continuity"). A word's hue is FIXED by its position, so a word never
-## changes colour, it only fades. Words not yet spoken are plain ink. Darkened from the
+## changes color, it only fades. Words not yet spoken are plain ink. Darkened from the
 ## overlay's values to read as ink on paper.
 const HUE_STEP := 0.011      # hue per LETTER along the text - the subtitles' HUE_SPAN
-const TRAIL_TAU := 2.6       # seconds for a spoken word's colour to fall to about a third
+const TRAIL_TAU := 2.6       # seconds for a spoken word's color to fall to about a third
 
 const LEAF_SHADER := """
 shader_type spatial;
@@ -97,7 +97,7 @@ uniform float ext = 0.0;
 uniform float ext_top = 0.0;
 uniform float ext_bot = 0.0;
 
-// The leaf's centre line, arc length s from the spine, as (across, up): it leaves the spine
+// The leaf's center line, arc length s from the spine, as (across, up): it leaves the spine
 // at `angle` and bends by `curl` along its width, then the gutter swell is added along its
 // own normal so a resting page still rises out of the spine.
 vec2 profile(float s) {
@@ -294,8 +294,8 @@ func _build_world() -> void:
 	desk.mesh = dm
 	var dmat := StandardMaterial3D.new()
 	# DIRT, not wood grain: soft gaussian blotches over a finer mottle, low contrast, so the
-	# desk stops reading as a flat colour without becoming a surface anyone looks at. The
-	# texture sits around mid-grey, which is why the albedo is set at twice the wanted brown.
+	# desk stops reading as a flat color without becoming a surface anyone looks at. The
+	# texture sits around mid-gray, which is why the albedo is set at twice the wanted brown.
 	dmat.albedo_color = Color(0.40, 0.24, 0.15)
 	dmat.albedo_texture = _grime(0x5EED, 0.02, 5, 0.16)
 	dmat.uv1_scale = Vector3(8.0, 8.0, 1.0)
@@ -313,7 +313,7 @@ func _build_world() -> void:
 	var cmat := StandardMaterial3D.new()
 	cmat.albedo_color = Color(0.32, 0.07, 0.06)
 	# BOOK CLOTH: a fine, very faint mottle - the weave and handling of a used cover, barely
-	# there. Same mid-grey convention as the desk, so begin_session doubles the cloth colour.
+	# there. Same mid-gray convention as the desk, so begin_session doubles the cloth color.
 	cmat.albedo_texture = _grime(0xC10F, 0.09, 3, 0.06)
 	cmat.uv1_scale = Vector3(2.0, 2.0, 1.0)
 	cmat.roughness = 0.85
@@ -326,7 +326,7 @@ func _build_world() -> void:
 	_root3.add_child(_pivot)
 	_cover_l = MeshInstance3D.new()
 	_cover_l.mesh = cm
-	_cover_l.material_override = cmat          # one material: begin_session colours both
+	_cover_l.material_override = cmat          # one material: begin_session colors both
 	_cover_l.position = Vector3(-0.53, -0.058, 0.0)
 	_pivot.add_child(_cover_l)
 	# THE NAME ON THE COVER lies on the cover's UNDERSIDE, facing down, reading toward the far
@@ -344,7 +344,7 @@ func _build_world() -> void:
 	_cover_label.transform = Transform3D(Basis(Vector3(-1, 0, 0), Vector3(0, 0, -1),
 		Vector3(0, -1, 0)), Vector3(-0.53, -0.0745, -0.22))
 	_pivot.add_child(_cover_label)
-	# THE AUTHOR, set the way a cover sets a byline: centred near the foot, much smaller than
+	# THE AUTHOR, set the way a cover sets a byline: centered near the foot, much smaller than
 	# the title and a shade quieter, in the same gilt. Same orientation trick as the title.
 	_cover_author = Label3D.new()
 	_cover_author.font = cf
@@ -369,10 +369,10 @@ func _build_world() -> void:
 	_leaf_t.visible = false
 
 
-## A seamless, low-contrast noise texture around mid-grey: [param freq] sets the blotch size
+## A seamless, low-contrast noise texture around mid-gray: [param freq] sets the blotch size
 ## (per pixel of a 512 texture), [param octaves] how much finer detail rides on it, and
-## [param contrast] how far it strays from grey. Built SYNCHRONOUSLY - a NoiseTexture2D
-## generates on a thread, and an export's first frames would show the bare colour.
+## [param contrast] how far it strays from gray. Built SYNCHRONOUSLY - a NoiseTexture2D
+## generates on a thread, and an export's first frames would show the bare color.
 static func _grime(seed: int, freq: float, octaves: int, contrast: float) -> Texture2D:
 	var n := FastNoiseLite.new()
 	n.seed = seed
@@ -437,7 +437,7 @@ func begin_session() -> void:
 	var r := RandomNumberGenerator.new()
 	r.seed = _seed ^ 0xB00C
 	# Paper is cream, never white; ink is a warm near-black; the cloth is one of the dark
-	# colours books are actually bound in.
+	# colors books are actually bound in.
 	_paper = Color.from_hsv(r.randf_range(0.09, 0.13), r.randf_range(0.07, 0.14),
 		r.randf_range(0.93, 0.97))
 	_ink = Color.from_hsv(r.randf_range(0.04, 0.10), r.randf_range(0.15, 0.35),
@@ -445,10 +445,10 @@ func begin_session() -> void:
 	var cloth := [Color(0.34, 0.07, 0.06), Color(0.07, 0.19, 0.14), Color(0.08, 0.11, 0.24),
 		Color(0.25, 0.15, 0.07), Color(0.16, 0.16, 0.17)]
 	var cl: Color = cloth[r.randi() % cloth.size()]
-	# x2: the cloth texture sits around mid-grey (see _build_world)
+	# x2: the cloth texture sits around mid-gray (see _build_world)
 	(_cover.material_override as StandardMaterial3D).albedo_color = Color(
 		minf(cl.r * 2.0, 1.0), minf(cl.g * 2.0, 1.0), minf(cl.b * 2.0, 1.0))
-	# the gilt title in a colour that belongs to the cloth: lighter, warmer, never white
+	# the gilt title in a color that belongs to the cloth: lighter, warmer, never white
 	_cover_label.modulate = Color(0.88, 0.74, 0.44)
 	_reset_reading()
 	_snap = true
@@ -625,7 +625,7 @@ func _texture_for(key: String) -> Texture2D:
 ## [param key]'s picture as INK: white taken out, what is left drawn in [member _ink]. A sketch
 ## is generated black on white because an image model reliably draws that and does not
 ## reliably draw on transparency; the page then needs only the lines. Darkness becomes
-## coverage, so a hatched grey is a lighter stroke rather than a grey box. Cached per file and
+## coverage, so a hatched gray is a lighter stroke rather than a gray box. Cached per file and
 ## ink; shrunk first, because it is a pass over every pixel in GDScript and the page never
 ## shows it larger than half its own width.
 var _sketches := {}
@@ -645,7 +645,7 @@ func _sketch_texture_for(key: String) -> Texture2D:
 	return _sketches[ck]
 
 
-## [param img] as ink of colour [param ink] on transparency: white (>= 235) is paper, black
+## [param img] as ink of color [param ink] on transparency: white (>= 235) is paper, black
 ## (<= 60) is full ink, between is a lighter stroke. Static, so a gate can hold it to that.
 static func ink_texture(img: Image, ink: Color) -> ImageTexture:
 	img = img.duplicate()
@@ -954,7 +954,7 @@ func _highlight_for(page: int, r: Dictionary) -> Dictionary:
 	var cooling := li > hi and now - float(_lay_t.get(hi, -1e9)) < TRAIL_TAU * 4.0
 	if li < lo or (li > hi and not cooling):
 		return {"read": li} if li > hi else {}
-	# Quantised, so a page redraws some twenty times a second while its trail cools rather
+	# Quantized, so a page redraws some twenty times a second while its trail cools rather
 	# than on every float wobble.
 	return {"word": li, "now": snappedf(now, 0.05), "read": li,
 		"frac": snappedf(float(r["frac"]), 0.02), "alpha": snappedf(float(r["alpha"]), 0.02)}
@@ -978,7 +978,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		var ink := _ink_for(w)
 		var i := int(wi)
 		if read >= 0 and i < read:
-			ink = ink.lerp(_paper, 0.12)          # read: the faintest lift of ITS ink - a voice's colour stays its colour
+			ink = ink.lerp(_paper, 0.12)          # read: the faintest lift of ITS ink - a voice's color stays its color
 		var font := _layout.face(int(w["emph"]))
 		var text := String(w["text"])
 		var fs := int(w["fs"])
@@ -986,11 +986,11 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 		if lit and i < li and now - float(_lay_t.get(i, -1e9)) > TRAIL_TAU * 4.0:
 			lit = false                            # long cooled: all ink
 		# EVERY WORD IS DRAWN THE SAME WAY, lit or not: its own shaped glyphs, each at its own
-		# shaped position, each given a colour. Switching from a whole-word draw to a letter-
+		# shaped position, each given a color. Switching from a whole-word draw to a letter-
 		# by-letter one when the highlight arrived moved letters by a pixel - two drawing
 		# paths snap glyphs to the pixel grid differently, and no offset arithmetic makes
 		# them agree ("the k shifts weirdly when the highlights touch it"). With one path the
-		# highlight can only ever change a colour.
+		# highlight can only ever change a color.
 		var t0 := float(_lay_t0.get(i, now))
 		var t1 := float(_lay_t.get(i, now))
 		var n := text.length()
@@ -1010,7 +1010,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 					var ci_i := _char0[i] + k if i < _char0.size() else k
 					var hue := fposmod(_seed_hue + float(ci_i) * HUE_STEP, 1.0)
 					# the subtitles' saturation wave: two slow incommensurate ripples along
-					# the text, so the colour breathes instead of sitting at one intensity
+					# the text, so the color breathes instead of sitting at one intensity
 					var sw := 0.5 + 0.35 * sin(float(ci_i) * 0.21 - now * 0.9) \
 						+ 0.15 * sin(float(ci_i) * 0.36 + now * 0.45)
 					var sat := lerpf(0.45, 0.9, clampf(sw, 0.0, 1.0))
@@ -1204,7 +1204,7 @@ func _page_state(_page: int) -> String:
 	return ""
 
 
-## The colour word [param _w] is set in. One ink, in print.
+## The color word [param _w] is set in. One ink, in print.
 func _ink_for(_w: Dictionary) -> Color:
 	return _ink
 

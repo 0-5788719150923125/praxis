@@ -21,7 +21,7 @@ no live tracker can supply it.
 
 THE CAST DIRECTION is a property of the ROOM, not of the frame, so it is
 measured once over the whole clip rather than re-derived every tick. It is
-measured TEMPORALLY, needing no colour model: her shadow is the part of the
+measured TEMPORALLY, needing no color model: her shadow is the part of the
 background that CHANGES AS SHE MOVES. Cells the person mask never covers, ranked
 by luminance variance over the clip, are her moving shadow plus whatever else
 flickers; the vector from her mean centroid to that variance mass is the
@@ -212,9 +212,9 @@ def main() -> int:
         # samples a scattering of source pixels and leaves a mask that is
         # noisy at exactly the scale we are about to magnify. Area averaging
         # is a box filter, which is what "coverage of this cell" means.
-        grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         lum = (
-            cv2.resize(grey, (mw, mh), interpolation=cv2.INTER_AREA).astype(np.float32)
+            cv2.resize(gray, (mw, mh), interpolation=cv2.INTER_AREA).astype(np.float32)
             / 255.0
         )
         lum_sum += lum
@@ -333,7 +333,7 @@ def _cast_direction(
     take the cells the person mask essentially never covers, rank them by how
     much their luminance varied over the clip, keep the ones well above the
     background's own median variation, and point from her mean centroid at
-    what is left. No colour model, no surface hypothesis, no per-frame
+    what is left. No color model, no surface hypothesis, no per-frame
     decision - and nothing here can be fooled by a wall that simply happens to
     be painted darker than the door opposite it, which is what defeats every
     "which side of her is dimmer" formulation on the reference clip.

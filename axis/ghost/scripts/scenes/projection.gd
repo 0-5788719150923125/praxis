@@ -6,7 +6,7 @@ extends GhostScene
 ## 3D point cloud shaped like a CALM model's latent centers - an elongated blob with a
 ## dense pupil nucleus and an iris ring, the "single eye" those gaussian-ish latents
 ## settle into - projected through a slowly tumbling 3D pose down to 2D (the top-2
-## projection) and rendered as a **binned density grid with log colour**, exactly the
+## projection) and rendered as a **binned density grid with log color**, exactly the
 ## figure's look. Audio drives DRAMATIC poses: the pupil dilates, the eye stretches, and
 ## beats snap the projection to a new angle. Nonlinear activations shape the cloud and
 ## the drive. One eye, varied by seed - its structure ([constant FORMS]: a plain iris,
@@ -68,7 +68,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		rng.randf_range(0.08, 0.30) * (1.0 if rng.randf() < 0.5 else -1.0),
 		rng.randf_range(-0.15, 0.15))
 	# Sampled eye geometry: elongation (round through to very wide), iris ring, pupil
-	# nucleus, depth. The pupil can also sit OFF centre, so the eye looks aside.
+	# nucleus, depth. The pupil can also sit OFF center, so the eye looks aside.
 	var form := String(FORMS[rng.randi() % FORMS.size()])
 	var ex := rng.randf_range(1.0, 2.3)
 	var ey := rng.randf_range(0.55, 1.10)
@@ -198,14 +198,14 @@ func _draw() -> void:
 		_win = Rect2i(0, 0, 0, 0)
 		return
 	_win = Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
-	# Log-normalise.
+	# Log-normalize.
 	var maxd := 1.0
 	for wy in range(y0, y1 + 1):
 		var row := wy * _gx
 		for wx in range(x0, x1 + 1):
 			maxd = maxf(maxd, _grid[row + wx])
 	var lmax := log(1.0 + maxd)
-	# Render the grid as a heatmap, centred on the frame and covering the whole of it.
+	# Render the grid as a heatmap, centered on the frame and covering the whole of it.
 	var origin := Vector2(-float(_gx) * cell * 0.5, -float(_gy) * cell * 0.5)
 	var glow: float = 0.3 + 0.7 * _f.energy
 	for wy in range(y0, y1 + 1):

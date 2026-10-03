@@ -11,7 +11,7 @@ from torcheval.metrics.functional import perplexity
 
 from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.metrics import compute_softmax_collapse
-from praxis.metrics.copy_probe import copy_gain
+from praxis.metrics.copy_probe import COPY_PROBE_ROWS, copy_gain
 from praxis.metrics.trunk_probe import trunk_swap_cost
 from praxis.trainers.compile import try_compile
 
@@ -544,9 +544,11 @@ class BackpropagationTrainer(LightningModule):
             )
             stats["val_perplexity"] = perplexity(val_logits, labels)
 
-        # Once per validation run: does the model use its long-range context?
-        # See praxis/metrics/copy_probe.py.
-        if batch_idx == 0:
+        # Does the model use its long-range context? Read over the first
+        # COPY_PROBE_ROWS validation rows, whatever the batch size; each batch
+        # logs its own value and the epoch reduction averages them. See
+        # praxis/metrics/copy_probe.py.
+        if batch_idx * input_ids.size(0) < COPY_PROBE_ROWS:
             gain = copy_gain(self.model, input_ids, aligned=self.outputs_are_aligned)
             if gain is not None:
                 stats["val_copy_gain"] = gain

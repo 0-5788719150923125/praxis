@@ -36,7 +36,7 @@ const SHAPES := [
 	["landscape 16:9", Vector2i(640, 360)],
 	["portrait 9:16", Vector2i(360, 640)],
 ]
-## Where the face is drawn, as a fraction of the frame: centred horizontally,
+## Where the face is drawn, as a fraction of the frame: centered horizontally,
 ## slightly high, and sized against the SHORTER side so both renders show the
 ## same physical face.
 const FACE_CX := 0.5
@@ -45,11 +45,11 @@ const FACE_CY := 0.42
 ## of that side, which is ordinary talking-head framing - and the framing the
 ## sim's own caps were tuned for. Drawn much bigger (a tight close-up) the coat
 ## caps legitimately bite and the coat comes out shorter than the face; that is
-## the shipped behaviour on any shape and not what this check is about.
+## the shipped behavior on any shape and not what this check is about.
 const FACE_R_SHORT := 0.20
 const FACE_TALL := 1.30       # a head is this much taller than it is wide
-const EYE_DX := 0.42          # eye offset from centre, in face half-widths
-const EYE_DY := -0.30         # ...and above centre, in face half-HEIGHTS
+const EYE_DX := 0.42          # eye offset from center, in face half-widths
+const EYE_DY := -0.30         # ...and above center, in face half-HEIGHTS
 const MOUTH_DY := 0.48
 
 ## Mirrors of clown_paint.gdshader's coat cap - the last thing between the fitted
@@ -101,7 +101,7 @@ func _initialize() -> void:
 			% [got.rx_h, got.ry_h, got.true_rx_h, got.true_ry_h])
 		print("  DRAWN coat        %.4f x %.4f   -> %.0f%% / %.0f%% of the real face"
 			% [got.coat_x, got.coat_y, got.fx * 100.0, got.fy * 100.0])
-		print("  centre          (%.3f, %.3f)   eyes L(%.3f,%.3f) R(%.3f,%.3f)  mouth (%.3f,%.3f)"
+		print("  center          (%.3f, %.3f)   eyes L(%.3f,%.3f) R(%.3f,%.3f)  mouth (%.3f,%.3f)"
 			% [got.cx, got.cy, got.eye_l.x, got.eye_l.y,
 			   got.eye_r.x, got.eye_r.y, got.mouth.x, got.mouth.y])
 		print("  eye separation  %.0f%% of the real pair's" % [got.fsep * 100.0])
@@ -121,9 +121,9 @@ func _initialize() -> void:
 		# blob fitter, not a landmark detector; it is the SHAPE-DEPENDENCE that is
 		# the bug, not the last few percent of accuracy.
 		_expect(absf(got.cx - FACE_CX) < 0.10,
-			"%s: face centre x %.3f, drawn at %.3f" % [got.name, got.cx, FACE_CX])
+			"%s: face center x %.3f, drawn at %.3f" % [got.name, got.cx, FACE_CX])
 		_expect(absf(got.cy - FACE_CY) < 0.14,
-			"%s: face centre y %.3f, drawn at %.3f" % [got.name, got.cy, FACE_CY])
+			"%s: face center y %.3f, drawn at %.3f" % [got.name, got.cy, FACE_CY])
 		_expect(got.eye_l.y < got.mouth.y and got.eye_r.y < got.mouth.y,
 			"%s: the mouth did not come out below the eyes (eyes %.3f/%.3f, mouth %.3f)"
 			% [got.name, got.eye_l.y, got.eye_r.y, got.mouth.y])
@@ -132,7 +132,7 @@ func _initialize() -> void:
 
 	# THE POINT OF THE WHOLE CHECK: it should not MATTER which shape the clip is.
 	# Each fit is graded against its own face above; here the two grades are
-	# compared to each other, so a rule that quietly favours one shape fails even
+	# compared to each other, so a rule that quietly favors one shape fails even
 	# if both happen to sit inside the absolute tolerances.
 	var a: Dictionary = seen[0]
 	var b: Dictionary = seen[1]
@@ -147,7 +147,7 @@ func _initialize() -> void:
 	#
 	# Height and separation are held looser on purpose: at ordinary framing the
 	# coat's own height cap legitimately bites on a 16:9 clip and not on a
-	# portrait one, which is shipped, tuned behaviour rather than a shape bug.
+	# portrait one, which is shipped, tuned behavior rather than a shape bug.
 	for row in [["coat half-width", a.fx, b.fx, 0.85, 1.20],
 			["coat half-height", a.fy, b.fy, 0.70, 1.45],
 			["eye separation", a.fsep, b.fsep, 0.75, 1.35]]:
@@ -235,7 +235,7 @@ func _session() -> MaskSession:
 ## A crude but unambiguous face: a warm oval on a cool ground, two dark eye
 ## sockets, a red mouth. Every cue the model actually uses (key-hue projection,
 ## warm-chroma skin, brightness against the frame's own mean, dark-in-a-skin-
-## neighbourhood) is present, and nothing else in the frame competes.
+## neighborhood) is present, and nothing else in the frame competes.
 func _draw_face(size: Vector2i, rx: float, ry: float, dx := 0.0) -> Image:
 	var img := Image.create_empty(size.x, size.y, false, Image.FORMAT_RGBA8)
 	var cx := FACE_CX + dx

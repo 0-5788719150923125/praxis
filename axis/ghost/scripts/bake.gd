@@ -89,7 +89,7 @@ static func bake(song_path: String, fps: int, band_count: int,
 		re.resize(WIN)
 		im.resize(WIN)
 		for k in WIN:
-			var s := pos + k - WIN / 2          # window centred on the frame time
+			var s := pos + k - WIN / 2          # window centered on the frame time
 			re[k] = (samples[s] if (s >= 0 and s < n) else 0.0) * hann[k]
 			im[k] = 0.0
 		_fft(re, im)

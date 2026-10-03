@@ -4,9 +4,9 @@ extends Node
 ## speaker cues in the script that hand a passage to one of them.
 ##
 ## Every claim here fails SILENTLY if it breaks, which is the only reason this file
-## exists. A cue that is not recognised does not error; it reads the second half of
+## exists. A cue that is not recognized does not error; it reads the second half of
 ## the chapter in the narrator's voice, and the first person to notice is whoever
-## listens to forty minutes of it. A cue recognised where none was meant does the
+## listens to forty minutes of it. A cue recognized where none was meant does the
 ## same thing in reverse. And a per-tab setting that never reaches the request is a
 ## dial that appears to work - it moves, it saves, it reloads - and changes nothing.
 ##
@@ -270,7 +270,7 @@ func _check_settings_reach_the_request() -> void:
 		"the seam did not follow the tab")
 
 
-## The room is per voice too, and it is applied by DIALLING one shared chain
+## The room is per voice too, and it is applied by DIALING one shared chain
 ## rather than by building a second - so the check is that the same chain answers
 ## two slots differently.
 func _check_room_is_per_voice() -> void:
@@ -302,10 +302,10 @@ func _check_handover_is_sample_accurate() -> void:
 	_ed._fx_marks = [{"at": 0, "speaker": "Narrator"}, {"at": 1000, "speaker": "Voice 2"}]
 	_ed._fx_live_name = ""
 	_ed._pushed = 0
-	# at the head: the first voice is dialled in, and the push stops at the change
+	# at the head: the first voice is dialed in, and the push stops at the change
 	_ok(_ed._fx_admit(4096) == 1000, "the push must stop at the handover, got %d"
 		% _ed._fx_admit(4096))
-	_ok(_ed._fx_live_name == "Narrator", "the opening voice's room was not dialled in")
+	_ok(_ed._fx_live_name == "Narrator", "the opening voice's room was not dialed in")
 	_ok(_ed._fx.echo_wet < 0.1, "the second voice's room arrived early")
 	# short of it, nothing changes and the remaining distance is what is offered
 	_ed._pushed = 600
@@ -327,14 +327,14 @@ func _check_tabs() -> void:
 	_ed._rebuild_tabs()
 	_ok(_ed._tabs.get_child_count() == 1, "a fresh panel is one tab")
 
-	_ed._arc.value = 0.20                      # something to recognise the narrator by
+	_ed._arc.value = 0.20                      # something to recognize the narrator by
 	_ed._refresh_cast("Opening.\n\n<!-- speaker: Emily White -->\n\nHis.\n\n"
 		+ "<!-- speaker: Judge -->\n\nOverruled.")
 	_ok(_ed._names == PackedStringArray(["Narrator", "Emily White", "Judge"]),
 		"the tabs are not the script's names in order: %s" % [_ed._names])
 	_ok(_ed._tabs.get_child_count() == 3, "one button per name, got %d" % _ed._tabs.get_child_count())
 	_ok(String((_ed._tabs.get_child(1) as Button).text).begins_with("Emily White"),
-		"the tab is not labelled with the name")
+		"the tab is not labeled with the name")
 	_ok(_ed._slot == 0 and absf(_ed._arc.value - 0.20) < 0.001,
 		"the voice on screen moved when names were added")
 
@@ -859,7 +859,7 @@ func _check_timestamp_pauses() -> void:
 
 ## A VOICE'S INK is a setting like any other on it: it survives the panel capturing the slot
 ## (which rebuilds the slot from the controls - a key the controls do not carry is erased on
-## the next autosave), a hex colour the Ink list does not offer is kept rather than replaced,
+## the next autosave), a hex color the Ink list does not offer is kept rather than replaced,
 ## and it reaches the page beside the text as the document's `inks`.
 func _check_ink_travels() -> void:
 	_ok(String(_ed._merge({"ink": "blue"})["ink"]) == "blue", "the slot schema drops `ink`")

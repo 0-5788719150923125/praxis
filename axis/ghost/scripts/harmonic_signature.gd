@@ -10,7 +10,7 @@ class_name HarmonicSignature
 ##
 ## Descriptor (DIM floats) = a 12-bin CHROMA (the 64 log-bands folded onto octave-wrapped pitch
 ## classes, so it is timbre- and octave-robust and survives re-encoding) + a few coarse shape
-## scalars (low / mid / high tilt, onset flux) for discrimination. It is L2-NORMALISED (gain
+## scalars (low / mid / high tilt, onset flux) for discrimination. It is L2-NORMALIZED (gain
 ## and compression don't matter) and EMA-SMOOTHED over a few seconds (stable, not jittery) and
 ## LOCAL (depends only on a recent window, so a cut-out segment carries its own signature).
 ##
@@ -29,7 +29,7 @@ const REF_FREQ := 16.35    # C0, for pitch-class folding
 const TAU_SMOOTH := 2.5     # default EMA time constant (seconds of context integrated)
 
 var tau := TAU_SMOOTH                # this instance's EMA time constant (see _init)
-var _vec := PackedFloat32Array()     # current smoothed, normalised descriptor (DIM)
+var _vec := PackedFloat32Array()     # current smoothed, normalized descriptor (DIM)
 var _pc := PackedInt32Array()        # band index -> pitch class (0..11), precomputed
 var _planes: Array = []              # BITS hyperplanes of DIM floats (fixed)
 
@@ -37,12 +37,12 @@ var _planes: Array = []              # BITS hyperplanes of DIM floats (fixed)
 ## [param smooth_tau] trades stability for reaction time: the default suits seeding
 ## and slow modulation; a listener that must NOTICE a change quickly (the [Echo]
 ## re-localizer) runs a second, faster instance.
-func _init(band_centres: PackedFloat32Array, smooth_tau := TAU_SMOOTH) -> void:
+func _init(band_centers: PackedFloat32Array, smooth_tau := TAU_SMOOTH) -> void:
 	tau = maxf(0.05, smooth_tau)
 	_vec.resize(DIM)
-	_pc.resize(band_centres.size())
-	for i in band_centres.size():
-		var f: float = maxf(band_centres[i], 1.0)
+	_pc.resize(band_centers.size())
+	for i in band_centers.size():
+		var f: float = maxf(band_centers[i], 1.0)
 		_pc[i] = int(posmod(round(12.0 * log(f / REF_FREQ) / log(2.0)), 12.0))
 	# Fixed gaussian hyperplanes from a baked seed -> the SimHash is the same everywhere.
 	var r := RandomNumberGenerator.new()
@@ -55,8 +55,8 @@ func _init(band_centres: PackedFloat32Array, smooth_tau := TAU_SMOOTH) -> void:
 		_planes.append(pl)
 
 
-## Fold this frame's bands into the descriptor (chroma + coarse shape), normalise, and ease the
-## smoothed vector toward it by `dt`. Call once per analysed frame.
+## Fold this frame's bands into the descriptor (chroma + coarse shape), normalize, and ease the
+## smoothed vector toward it by `dt`. Call once per analyzed frame.
 func update(bands: PackedFloat32Array, low: float, mid: float, high: float, flux: float, dt: float) -> void:
 	var raw := PackedFloat32Array()
 	raw.resize(DIM)
@@ -66,7 +66,7 @@ func update(bands: PackedFloat32Array, low: float, mid: float, high: float, flux
 	raw[13] = mid
 	raw[14] = high
 	raw[15] = flux
-	var n := 0.0                                 # L2 normalise -> loudness invariance
+	var n := 0.0                                 # L2 normalize -> loudness invariance
 	for d in DIM:
 		n += raw[d] * raw[d]
 	n = sqrt(maxf(n, 1e-9))

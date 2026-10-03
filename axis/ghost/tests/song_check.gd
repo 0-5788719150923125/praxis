@@ -68,7 +68,7 @@ func _init() -> void:
 		print("        -> %s" % Voice_.write_wav(OUT_DIR + "/song_%.0f.wav" % (song * 10.0), pcm))
 	# how often a WILD roll sings at all, and how strongly. The belt compounds
 	# whatever the roll gives it - acceptance-weighted parents inside a trust
-	# region centred on the party mean - so the roll has to sit BELOW the rate
+	# region centered on the party mean - so the roll has to sit BELOW the rate
 	# you want to meet in play. Reported here because ~90% of found seeds
 	# singing was the symptom that sent us looking.
 	var rng := RandomNumberGenerator.new()

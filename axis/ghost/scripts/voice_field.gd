@@ -150,7 +150,7 @@ static func source(traits: Dictionary, genome: Dictionary, lineage: Array,
 
 
 ## Evaluate the field at `p`. Returns the modulation vector, its energy, and the
-## proximity/centre-frequency the reception filter wants - one field, so the
+## proximity/center-frequency the reception filter wants - one field, so the
 ## water a player HEARS and the forces a candidate FEELS agree by construction.
 static func evaluate(sources: Array, p: Vector3, mode := "sum") -> Dictionary:
 	# stable order: the belt is an array and eviction reorders it, but a field
@@ -212,11 +212,11 @@ static func evaluate(sources: Array, p: Vector3, mode := "sum") -> Dictionary:
 			# SUPERPOSITION, the default and the physical one. `cos` has zero
 			# spatial mean, so this perturbs WITHOUT biasing toward the belt's
 			# centroid - which is the structural reason the field cannot
-			# collapse every candidate onto the party centre the way a fourth
+			# collapse every candidate onto the party center the way a fourth
 			# attraction term would.
 			for c in contrib:
 				vec += (c.u as Vector3) * (float(c.a) * trim * cos(float(c.th)))
-	# reception: proximity is how much total amplitude arrives, the centre
+	# reception: proximity is how much total amplitude arrives, the center
 	# frequency the amplitude-weighted geometric blend of the sources reached
 	var prox := clampf(atot * trim, 0.0, 1.0)
 	var flog := 0.0

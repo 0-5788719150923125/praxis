@@ -3,7 +3,7 @@ render_mode blend_add;
 
 // Vapor field - the volumetric body of [Layer.Vapor].
 //
-// WHAT IT IS. Coloured vapour: heavy, twisting masses of ink-in-water with torn, wispy
+// WHAT IT IS. Colored vapor: heavy, twisting masses of ink-in-water with torn, wispy
 // fronts and threads of stretched cotton pulling off them, lit from inside. Every pixel of
 // one quad evaluates the same density field; the structure is in the arithmetic, not in a
 // crowd of sprites.
@@ -11,7 +11,7 @@ render_mode blend_add;
 // WHY IT IS A FIELD AT ALL. ghost's existing atmosphere - `clouds`, `fog_bank`,
 // `fog_volume`, `aurora` - is stacked gaussian puffs, and a stack of puffs can only ever be
 // SOFT: no front, no interior, one hue per sheet. The look this file is for is diffuse but
-// HARD, with a boundary you can see, filaments inside the mass, and colour that changes
+// HARD, with a boundary you can see, filaments inside the mass, and color that changes
 // across it. None of that is a blob's to draw.
 //
 // THE GENERATOR IS A RIDGED MULTIFRACTAL, and that choice is the whole file. Two earlier
@@ -38,14 +38,14 @@ render_mode blend_add;
 //   toward the lamp and used as optical depth: exp(-k * occlusion). The far side of a mass
 //   goes dark and its near side glows, which is why it reads as volume and not as a gradient.
 //
-// COLOUR is per PLUME, mixed by contribution, so a violet mass and a teal one blend where
+// COLOR is per PLUME, mixed by contribution, so a violet mass and a teal one blend where
 // they overlap and stay themselves where they do not; and it has DEPTH - the fringe takes
 // the scheme's second hue, the core keeps its own, the hottest creases bleach to white.
 //
 // Time is a uniform (the layer's clock), never TIME - live and the offline bake step the
-// same clock, so a seed reproduces its vapour. Same rule as flame.gdshader.
+// same clock, so a seed reproduces its vapor. Same rule as flame.gdshader.
 
-// The plumes: centre, amplitude, elliptical radii, colour. Each is driven by its own
+// The plumes: center, amplitude, elliptical radii, color. Each is driven by its own
 // harmonic band on the CPU side (see Layer.Vapor).
 uniform int u_n = 5;
 uniform float u_px[8];
@@ -66,7 +66,7 @@ uniform float u_glow[8];
 // teleported the entire field. Reported as the scene being "EXTREMELY unstable".
 uniform float u_time = 0.0;
 // The medium's own steady travel, integrated by the layer the same way. This is the
-// "continuous movement forward": the vapour streams through the frame at a constant rate
+// "continuous movement forward": the vapor streams through the frame at a constant rate
 // whatever the music does.
 uniform vec2 u_drift = vec2(0.0);
 uniform vec2 u_half = vec2(0.9, 0.55);   // quad half-extents in unit fractions
@@ -156,7 +156,7 @@ float env(vec2 p) {
 	return min(m, 1.35);
 }
 
-// The same envelope, also returning the colour the plumes mix to here - weighted by
+// The same envelope, also returning the color the plumes mix to here - weighted by
 // contribution, so an overlap blends and an isolated mass keeps its own hue.
 float env_col(vec2 p, out vec3 chroma, out float glow) {
 	float m = 0.0;
@@ -181,7 +181,7 @@ float env_col(vec2 p, out vec3 chroma, out float glow) {
 void fragment() {
 	vec4 fade = COLOR;  // white quad texture x modulate: the scene's fade rides in here
 
-	vec2 p = (UV - 0.5) * 2.0 * u_half;   // unit fractions, y down, (0,0) at centre
+	vec2 p = (UV - 0.5) * 2.0 * u_half;   // unit fractions, y down, (0,0) at center
 	float tt = u_time;      // already a phase (see the uniform)
 
 	// --- TWIST: two domain warps, both scrolling ---
@@ -207,7 +207,7 @@ void fragment() {
 	vec2 pd = pw2 + u_drift;
 	vec2 pf = vec2(dot(pd, dir), dot(pd, per) * u_stretch);
 
-	// --- the mass, its colour, and how deep inside it we are ---
+	// --- the mass, its color, and how deep inside it we are ---
 	vec3 chroma;
 	float plume_glow;
 	float m = env_col(pw2, chroma, plume_glow);
@@ -223,7 +223,7 @@ void fragment() {
 	float soft = mix(0.34, 0.030, hardk);
 	float body = smoothstep(u_thresh - soft, u_thresh + soft, d);
 	// THICKNESS - how far past the front, normalized. This is what gives a mass an
-	// INTERIOR: brightness and colour both ride it, so the vapour reads as something with
+	// INTERIOR: brightness and color both ride it, so the vapor reads as something with
 	// depth rather than a flat shape with texture on it.
 	// The divisor is generous on purpose. Capped mass times a near-1 multifractal puts the
 	// whole core of a mass past a tight divisor, so thickness saturates over a wide region
@@ -238,11 +238,11 @@ void fragment() {
 	float lit = exp(-u_shadow * occ);
 	float lamp = 1.0 / (1.0 + 1.9 * dot(lv, lv));         // the lamp's own falloff
 	float shade = 0.26 + 1.05 * lit * (0.45 + 0.80 * lamp);
-	// A filament lying crossways to the lamp catches it, the way real fibre does. `nb` is
+	// A filament lying crossways to the lamp catches it, the way real fiber does. `nb` is
 	// high exactly on the creases, so this rides the threads and not the mass.
 	float sheen = pow(1.0 - abs(dot(dir, ldir)), 4.0) * smoothstep(0.45, 0.95, nb) * lit;
 
-	// --- COLOUR: chromatic DEPTH ---
+	// --- COLOR: chromatic DEPTH ---
 	// The fringe of a mass is not a dimmer version of its middle: a thin edge takes the
 	// scheme's second hue and the core keeps its own, so one mass grades across the wheel
 	// the way ink in water does, and the hottest creases bleach toward white.
@@ -254,11 +254,11 @@ void fragment() {
 
 	// The emission: the lit body, brightening with thickness and creased by the same field
 	// that cuts its edge, plus an unthresholded HAZE so the masses sit in their own glow
-	// instead of being cut out of black. The haze carries most of the frame's diffuse colour
+	// instead of being cut out of black. The haze carries most of the frame's diffuse color
 	// and is what keeps a hard front from reading as a decal.
 	float glow = body * (0.26 + 0.80 * pow(thick, mix(1.15, 0.50, hardk))) * (0.55 + 0.85 * nb);
 	// THE FRONT GLINT. A band of extra light right at the boundary, and only when the mass is
-	// a hard one - the leading edge of lit vapour really is brighter than its interior
+	// a hard one - the leading edge of lit vapor really is brighter than its interior
 	// (backscatter), and it is what makes a front read AS a front rather than as the place the
 	// gradient happens to end. Modest on purpose: pushed further it starts drawing every
 	// fractal wobble of the level set as its own bright line, which is the engraved-satin
@@ -271,17 +271,17 @@ void fragment() {
 	// (plume_glow, localized) and the transient lifts the frame a little (u_burst), and neither
 	// moves anything.
 	emit *= u_gain * (1.0 + 0.30 * u_burst) * (1.0 + 0.55 * plume_glow);
-	// A SOFT SHOULDER, ON LUMINANCE. Additive light over a colour bed has no ceiling, and
+	// A SOFT SHOULDER, ON LUMINANCE. Additive light over a color bed has no ceiling, and
 	// without this the densest part of a mass clips flat over a good fraction of the frame
 	// (rendered, looked at - it did). Compressing PER CHANNEL fixes the clipping but washes
-	// the core toward pale grey, because the channel already near the ceiling is compressed
+	// the core toward pale gray, because the channel already near the ceiling is compressed
 	// hardest and the ratios between them collapse - which is the same plateau one step
 	// desaturated. Scaling all three by one luminance-derived factor keeps the hue and the
 	// saturation exactly and only takes the level down, so a hot core stays hot MAGENTA.
 	float lum = dot(emit, vec3(0.299, 0.587, 0.114));
 	emit *= 1.0 / (1.0 + 0.55 * lum);
 	// ... and a small saturation push AFTER it. Compression plus additive overlap still walks
-	// the brightest masses toward cream; a scene whose subject is colour should end up more
+	// the brightest masses toward cream; a scene whose subject is color should end up more
 	// saturated than a photograph, not less.
 	float lum2 = dot(emit, vec3(0.299, 0.587, 0.114));
 	emit = mix(vec3(lum2), emit, 1.28);

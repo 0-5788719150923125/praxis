@@ -10,7 +10,7 @@ extends GhostScene
 ## The seed picks a FIGURE first, and the four figures are different curves, not different
 ## tunings of one: incommensurate frequencies fold a rosette that never repeats, small
 ## integer ratios close into a braid, a carrier plus a fast epicycle loops petals around
-## an open ring, and a heavily damped pair spirals inward to a point. Colour comes from a
+## an open ring, and a heavily damped pair spirals inward to a point. Color comes from a
 ## shared [Scheme] mood, so a session is not one hue every time.
 
 const SAMPLES := 480
@@ -40,7 +40,7 @@ const FIGURES := {
 	},
 	"pendulum": {
 		# Heavily damped and nearly in tune with itself: an ellipse that spirals in and
-		# dies at the centre, the way a real harmonograph ends its run.
+		# dies at the center, the way a real harmonograph ends its run.
 		"curves": [2, 4], "ratio": "detune", "w2": [0.08, 0.22], "damp": [0.14, 0.26],
 		"span": [26.0, 34.0], "amp": [0.30, 0.44], "width": [1.2, 2.2], "bed": 0.45,
 	},
@@ -49,7 +49,7 @@ const FIGURES := {
 var _f: AudioFeatures = AudioFeatures.new()
 var _gphase := 0.0
 var _curves: Array = []
-var _ch := Vector2.ZERO       # live tonal colour (hue, strength) from the harmonic signature
+var _ch := Vector2.ZERO       # live tonal color (hue, strength) from the harmonic signature
 var _sch: Scheme = null
 
 

@@ -159,7 +159,7 @@ static func put_block(raw: String, value: Variant, key := KEY) -> String:
 	var span := _span_of(head, key)
 	if span.is_empty():
 		# Appended rather than inserted: an author's own keys stay where they were put,
-		# and ghost's block is recognisably the machine-written one at the bottom.
+		# and ghost's block is recognizably the machine-written one at the bottom.
 		head.append_array(block)
 	else:
 		var tail: Array = head.slice(int(span[1]))

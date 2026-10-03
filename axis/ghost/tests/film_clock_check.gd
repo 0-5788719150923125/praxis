@@ -10,7 +10,7 @@ extends Node
 ## but a seek that silently does nothing looks exactly like a clip that plays from zero,
 ## and at a glance so does a clip that is simply short. So this measures the picture.
 ##
-## HOW IT MEASURES. The fixture is a clip whose COLOUR ENCODES ITS OWN TIMESTAMP - red
+## HOW IT MEASURES. The fixture is a clip whose COLOR ENCODES ITS OWN TIMESTAMP - red
 ## ramps 0..1 across its length while blue ramps the other way - built here with ffmpeg
 ## and cached. Reading the mean red off the rendered panel therefore reads the clip's
 ## position back out of the pixels, which is the only way to be sure the seek reached the
@@ -39,7 +39,7 @@ extends Node
 const W := 256
 const H := 192
 ## The fixture's length: long enough to span three windows, so the boundary arithmetic is
-## exercised rather than assumed. Flat colour, so it encodes in a moment despite the length.
+## exercised rather than assumed. Flat color, so it encodes in a moment despite the length.
 const DUR := 100.0
 const FIXTURE := "user://films_test/ramp.mp4"
 ## Frames to let the decoder settle before reading pixels. The seek is deferred a frame
@@ -138,7 +138,7 @@ func _check_windows() -> void:
 ## arithmetic. [FilmScene] sized itself with `GhostScene.view_half_px`, which is a deliberate
 ## OVERDRAW bound - a 1.06 margin, measured about the origin so any pan inflates it - and it
 ## then drew through the view transform, which the Director's shot bias had panned. Measured
-## with a fixture painted a different colour on each edge: at a 2.4-aspect panel ALL FOUR
+## with a fixture painted a different color on each edge: at a 2.4-aspect panel ALL FOUR
 ## edges were gone.
 ##
 ## This is the arithmetic half, kept honest here because it is cheap and exact; the pixels
@@ -264,7 +264,7 @@ func _check_boundary() -> void:
 ## HOW OFTEN FOOTAGE ACTUALLY APPEARS, driven through the real chooser over many pages.
 ##
 ## The worry this answers is a reasonable one to have: with seventy-odd scene types in the
-## catalogue, a film sounds like it would be picked one time in seventy and never seen. It
+## catalog, a film sounds like it would be picked one time in seventy and never seen. It
 ## is not in that draw at all - [method ComicMedium._choose_film] runs when the page turns
 ## and decides before the Director is asked for anything - but "not in the lottery" is a
 ## claim about control flow, and the thing worth pinning is the RATE that comes out of it.
@@ -436,7 +436,7 @@ func _read_position(rig: Dictionary) -> float:
 	return (r / maxf(1.0, float(n))) * DUR
 
 
-## Build the colour-ramp fixture if it is not already there. It is a SOURCE file, the kind
+## Build the color-ramp fixture if it is not already there. It is a SOURCE file, the kind
 ## a viewer would import - windows are cut from it by the code under test, which is the
 ## point. Cached, since it is the same hundred seconds every run.
 func _ensure_fixture() -> bool:
@@ -445,7 +445,7 @@ func _ensure_fixture() -> bool:
 		return true
 	DirAccess.make_dir_recursive_absolute(abs.get_base_dir())
 	var out: Array = []
-	# geq writes the colour from T directly, so the file's own timestamps and its picture
+	# geq writes the color from T directly, so the file's own timestamps and its picture
 	# cannot disagree - which matters, because disagreement is what this gate looks for.
 	var rc := Deps.execute("ffmpeg", ["-y", "-loglevel", "error",
 		"-f", "lavfi", "-i", "color=c=black:s=192x144:d=%d:r=12" % int(DUR),

@@ -109,13 +109,13 @@ func _check_the_button_follows_the_state() -> void:
 	print("")
 	print("the_button_follows_the_state")
 	_ok(_ed._stop != null, "there is a Stop button")
-	_ok(_ed._stop.disabled, "Stop is greyed with nothing playing")
+	_ok(_ed._stop.disabled, "Stop is grayed with nothing playing")
 	_ed._text.text = "One sentence is enough."
 	_ed._plan(_ed._text.text)
 	_ed._sync_speak_buttons()
 	_ok(not _ed._stop.disabled, "and live once a reading is planned")
 	_ed._stop_speaking()
-	_ok(_ed._stop.disabled, "and greyed again after Stop")
+	_ok(_ed._stop.disabled, "and grayed again after Stop")
 	_ok(_ed._go.text == "Speak",
 		"Speak has dropped its unsaved-edit dot after a stop (%s)" % _ed._go.text)
 

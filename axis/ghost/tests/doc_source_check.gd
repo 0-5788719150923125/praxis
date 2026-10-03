@@ -148,7 +148,7 @@ func _split() -> void:
 
 	var doc := "---\ntitle: Chapter One\n---\n\n# Chapter One\n\nThe rain.\n"
 	p = FrontMatter_.split(doc)
-	_ok(p.has, "frontmatter was not recognised")
+	_ok(p.has, "frontmatter was not recognized")
 	_ok(String(p.head) == "title: Chapter One", "frontmatter head is wrong: %s" % p.head)
 	_ok(String(p.body) == "\n# Chapter One\n\nThe rain.\n",
 		"the body after frontmatter is wrong: %s" % p.body)
@@ -166,7 +166,7 @@ func _split() -> void:
 
 	# `...` closes a YAML document too, and it is not ours to rewrite.
 	p = FrontMatter_.split("---\ntitle: x\n...\nbody\n")
-	_ok(p.has and String(p.fence) == "...", "the `...` closing fence was not honoured")
+	_ok(p.has and String(p.fence) == "...", "the `...` closing fence was not honored")
 
 	# CRLF, and a BOM: both survive a round trip through put_block.
 	var crlf := "---\r\ntitle: x\r\n---\r\n\r\nBody line.\r\n"

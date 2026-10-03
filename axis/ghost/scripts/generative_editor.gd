@@ -5,7 +5,7 @@ class_name GenerativeEditor
 ##
 ## Deliberately NOT a backend swap inside [SynthEditor]. The fishing game's
 ## economy is defined over the procedural engine's parameter space - difficulty
-## is nearest-neighbour distance in a 25-dimensional trait-plus-genome vector,
+## is nearest-neighbor distance in a 25-dimensional trait-plus-genome vector,
 ## the toll anneals a genome toward the belt's forces - and a neural backend
 ## exposes a speaker id and three global scalars. One UI serving both would be
 ## built for the intersection of their capabilities, which is nearly empty.
@@ -145,7 +145,7 @@ const SLOT_DEFAULTS := {
 	"dynamics": 0.5, "arc": 0.4, "effort": 0.35,
 	"echo": 0.0, "room": 0.0, "resonance": 0.0, "presence": 1.0, "ambience": 0.0,
 	# the pen this voice writes in, in a medium that writes by hand - a name from
-	# NotebookLayout.INKS or a hex colour; "" is the default black
+	# NotebookLayout.INKS or a hex color; "" is the default black
 	"ink": "",
 }
 ## Seconds of audio that must be queued before the first sample is heard, when there is
@@ -276,7 +276,7 @@ const TONE_PRESETS := {
 	# reader's Presence dial, which stays theirs for the room.
 	#
 	# The timing is deliberate rather than drawled - this voice is forcing the
-	# words out, not savouring them - so `noise_w` sits low, near Fierce.
+	# words out, not savoring them - so `noise_w` sits low, near Fierce.
 	"Gruff":     {"pace": 0.90, "semis": -4.0, "noise": 0.88, "noise_w": 0.30, "muffle": 0.55, "whisper": 0.0},
 	# WHISPERED is the one manner in this bank that no inference parameter can
 	# reach, and the only one that is not a setting at all. A VITS checkpoint
@@ -295,7 +295,7 @@ const TONE_PRESETS := {
 	# the theory that someone lowering their voice does; that came out as "too
 	# quiet, and there is no way to correct that", and the distance was never the
 	# reason - a half blend of two UNCORRELATED signals loses 3 dB all by itself
-	# (piper._whisper, which now normalises for it). The dial is back at 1.0 and
+	# (piper._whisper, which now normalizes for it). The dial is back at 1.0 and
 	# the reader can push it away if they want the distance.
 	"Whispered": {"pace": 0.92, "semis":  0.0, "noise": 0.55, "noise_w": 0.35, "muffle": 0.0, "whisper": 1.0},
 	"Hushed":    {"pace": 0.94, "semis": -0.5, "noise": 0.55, "noise_w": 0.33, "muffle": 0.0, "whisper": 0.45},
@@ -386,10 +386,10 @@ var _syncing := false          # writing controls from a slot must not re-plan
 # chain is stateful across chunk boundaries - that is the whole reason it runs
 # here rather than in the host - so a second speaker cannot get their own chain
 # without cutting the first one's tail off mid-decay. What they get instead is
-# the same chain re-dialled at the exact frame their first sample is heard,
+# the same chain re-dialed at the exact frame their first sample is heard,
 # which is what a live slider move already does, just scheduled.
 var _fx_marks: Array = []      # [{at: int, speaker: String}], ascending, absolute
-var _fx_live_name := ""        # which voice the live chain is currently dialled to
+var _fx_live_name := ""        # which voice the live chain is currently dialed to
 var _fx_queued_name := ""      # ...and the last one a mark was written for
 # WHAT THE LAST PLAN NOTICED about the script - a speaker cue with no tab, a
 # macro with no default. Not written straight to the status line, for two
@@ -657,7 +657,7 @@ func _build_panel() -> void:
 	_hesitate_on.button_pressed = true
 	_hesitate_on.custom_minimum_size = Vector2(72, 0)
 	_hesitate_on.add_theme_font_size_override("font_size", 12)
-	_hesitate_on.tooltip_text = ("Honour the script's <!-- hesitation --> markers: a longer rest "
+	_hesitate_on.tooltip_text = ("Honor the script's <!-- hesitation --> markers: a longer rest "
 		+ "at exactly that point, mid-sentence or between paragraphs, for dramatic effect. Off "
 		+ "reads straight through them as if they were not there.")
 	hrow.add_child(_hesitate_on)
@@ -722,7 +722,7 @@ func _build_panel() -> void:
 	box.add_child(vrow)
 	_voices = OptionButton.new()
 	_voices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_voices.tooltip_text = "Which Piper model reads. Each is a different person with its own accent, recording and licence - the licence appears under the panel when you pick one. Changing this regenerates whatever has not been played yet."
+	_voices.tooltip_text = "Which Piper model reads. Each is a different person with its own accent, recording and license - the license appears under the panel when you pick one. Changing this regenerates whatever has not been played yet."
 	_voices.item_selected.connect(func(_i: int) -> void:
 		if _syncing:
 			return
@@ -786,7 +786,7 @@ func _build_panel() -> void:
 	_speaker = SpinBox.new()
 	_speaker.min_value = 0
 	_speaker.step = 1
-	_speaker.tooltip_text = "Which reader, on a model that holds more than one (libritts carries 904). Same model and same accent, a different person - so it changes WHO is reading, not how. Greyed out on single-speaker voices. Regenerates the un-played chunks."
+	_speaker.tooltip_text = "Which reader, on a model that holds more than one (libritts carries 904). Same model and same accent, a different person - so it changes WHO is reading, not how. Grayed out on single-speaker voices. Regenerates the un-played chunks."
 	_speaker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_speaker.value_changed.connect(func(_v: float) -> void:
 		if _syncing:
@@ -953,7 +953,7 @@ func _build_panel() -> void:
 		"The size of the space around the reader. Where Echo is a repeat you can hear arrive, "
 		+ "this is the diffuse tail behind it - no countable events, just the room answering. "
 		+ "Low is a small studio whose tail is gone before the next word; the top is a hall that "
-		+ "rings for seconds. Resonance sets its colour, exactly as it does in Masking: dark and "
+		+ "rings for seconds. Resonance sets its color, exactly as it does in Masking: dark and "
 		+ "swallowed at 0, bright and ringing at 1. It is baked into the exported take, so what "
 		+ "you hear here is what renders.")
 	_fx_res = _fx_slider(box, "Resonance", 0.0,
@@ -1006,7 +1006,7 @@ func _build_panel() -> void:
 	_camera = _director_slider(box, "Camera", Director.CAMERA_MIN, Director.CAMERA_MAX, 0.05,
 		Director.camera,
 		"How severe the camera is on the Comic book medium - one knob over the whole "
-		+ "behaviour. 0 is a slow gentle drift that barely turns and never cuts; 1 is the "
+		+ "behavior. 0 is a slow gentle drift that barely turns and never cuts; 1 is the "
 		+ "default; 2 is fast, restless and cinematic, with real jump cuts. It scales how far "
 		+ "a shot may swing, how many shots that swing is spread over, how long a move lasts "
 		+ "and how deep a push goes. It is shown only for the media that fly a camera.",
@@ -1288,7 +1288,7 @@ func _cast_from_rows(rows: Array, body := "") -> Dictionary:
 ## THE TABS FOLLOW THE SCRIPT. Re-derive them from [param body]: every name it cues, in order
 ## of first appearance, each with its own settings - kept if it had a tab, restored if it was
 ## stashed, and otherwise a COPY of the first voice (a new character is reached by changing
-## one thing about the reader you already have, not by re-dialling a room from nothing).
+## one thing about the reader you already have, not by re-dialing a room from nothing).
 ## Names that left the script go to [member _stash]. The tab on screen stays on the same
 ## NAME when it survives, since its index means nothing once names come and go.
 ##
@@ -1917,9 +1917,9 @@ func _tick_test() -> void:
 		_set_status("Tested %s - %.1fs." % [_test_name, float(_test_pushed) / float(_sr)])
 
 
-## One labelled 0..1 slider, live: these are buffer effects, so a change is
+## One labeled 0..1 slider, live: these are buffer effects, so a change is
 ## audible on the very next frame rather than needing a re-synthesis.
-## One labelled slider that drives the [Director] directly. Unlike the voice controls these need
+## One labeled slider that drives the [Director] directly. Unlike the voice controls these need
 ## no re-plan and no persistence here - the Director clamps, applies immediately to the scene on
 ## screen, and owns its own saved value.
 ## [param tag] names the medium feature this row belongs to (see [constant Medium.USES]);
@@ -1989,7 +1989,7 @@ func _sync_medium_rows() -> void:
 ## HAS grain - so every filter is independently switchable and they are all applied in one
 ## pass, in the registry's order.
 ##
-## The dial is greyed rather than hidden while its filter is off: a control that vanishes
+## The dial is grayed rather than hidden while its filter is off: a control that vanishes
 ## takes its value with it as far as anyone looking can tell, and the value is kept.
 func _build_filters(box: VBoxContainer) -> void:
 	var head := HBoxContainer.new()
@@ -2033,7 +2033,7 @@ func _build_filters(box: VBoxContainer) -> void:
 		_put_slider(sl, readout, live if live > 0.0 else float(Filters.DEFAULTS.get(k, 0.5)))
 		sl.editable = live > 0.0
 		# TICKING A FILTER ON MUST DO SOMETHING VISIBLE. A box whose dial happens to be at 0
-		# reads as a broken checkbox, so switching on with nothing dialled in lands on the
+		# reads as a broken checkbox, so switching on with nothing dialed in lands on the
 		# registry's own starting point rather than on silence.
 		cb.toggled.connect(func(on: bool) -> void:
 			if on and sl.value <= 0.0:
@@ -2043,7 +2043,7 @@ func _build_filters(box: VBoxContainer) -> void:
 			_refresh_filters())
 		sl.value_changed.connect(func(v: float) -> void:
 			if not cb.button_pressed:
-				return          # a greyed dial keeps its value and changes nothing
+				return          # a grayed dial keeps its value and changes nothing
 			Director.set_filter(k, v)
 			_refresh_filters())
 		_filter_rows[k] = {"box": cb, "slider": sl}
@@ -2311,7 +2311,7 @@ func _medium_option(box: VBoxContainer) -> OptionButton:
 	return opt
 
 
-## A voice/delivery slider. `tip` is not optional in practice: an unlabelled dial
+## A voice/delivery slider. `tip` is not optional in practice: an unlabeled dial
 ## is a dial nobody touches, and every other slider in this panel carries one.
 ## Give every chunk its place in the reading, so the delivery plan can be a plan.
 ##
@@ -2479,9 +2479,9 @@ func _build_ink_row(box: VBoxContainer) -> void:
 	_ink_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for k in NotebookLayout.INKS:
 		_ink_pick.add_item(String(k).capitalize())
-	_ink_pick.tooltip_text = ("The pen this voice writes in, in the Notebook: a colour per speaker "
+	_ink_pick.tooltip_text = ("The pen this voice writes in, in the Notebook: a color per speaker "
 		+ "tells the voices apart on the page without naming them. Black unless set. Saved on "
-		+ "the voice as `ink:` - a hex colour written there works too.")
+		+ "the voice as `ink:` - a hex color written there works too.")
 	_ink_pick.item_selected.connect(func(i: int) -> void:
 		if _syncing:
 			return
@@ -2556,7 +2556,7 @@ func _apply_fx(fx: VoiceFX, s: Dictionary) -> void:
 	fx.presence = _presence_of(s)
 	fx.pad = _pad_level_of(s)
 	# One dial, so [RoomFX] does the collapsing: size and wet open together, and
-	# Resonance colours the tail the same way it does on Masking's bus.
+	# Resonance colors the tail the same way it does on Masking's bus.
 	fx.room.from_dial(float(s["room"]), float(s["resonance"]))
 
 
@@ -3504,14 +3504,14 @@ func _drain_ready() -> void:
 			_pending.append_array(gap)
 			_elapsed += seam
 		# SCHEDULE THE ROOM, do not switch it here. This runs when a chunk is
-		# DECODED, which is seconds ahead of when it is heard - dialling the
+		# DECODED, which is seconds ahead of when it is heard - dialing the
 		# chain now would put the next speaker's room over the end of this one's
 		# last sentence. The mark carries the frame instead, and _process applies
 		# it as the playhead reaches it. The first mark sits at 0 so the intro is
 		# already in the opening voice's room rather than in nobody's.
 		#
 		# AFTER the gap, deliberately: the handover silence belongs to the voice
-		# leaving it, whose reverb is still decaying through it. Dialling the new
+		# leaving it, whose reverb is still decaying through it. Dialing the new
 		# room at the start of the rest would cut that tail over to a different
 		# space halfway down, which is the one thing a room never does.
 		if who != _fx_queued_name:
@@ -3746,7 +3746,7 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 ## HUMS ARE HELD. "Hmm." read as a thinking hum is most of a second; the voice renders it in
 ## about 0.15 s, and asking for more `M`s does not help - measured, eight of them come back
 ## as 0.30 s, the model compresses the repeats. So the hum is LENGTHENED after the fact, by
-## pitch-synchronous overlap-add of its own steadiest periods: same voice and colour.
+## pitch-synchronous overlap-add of its own steadiest periods: same voice and color.
 ## Target length in seconds, per spelling.
 const HUM_SECONDS := {"hm": 0.45, "mm": 0.5, "hmm": 0.75, "mmm": 0.85, "hmmm": 0.95}
 ## Pitch marks either side of the anchor the held hum wanders over. Wandering, rather than
@@ -3902,7 +3902,7 @@ func _hum_cut(pcm: PackedFloat32Array, t0: float, t1: float, target: float, rati
 
 
 ## The pitch period of [param n] samples from [param s0] (fractional, in samples), how
-## periodic they are (normalised correlation at that lag, 0..1), and the same correlation two
+## periodic they are (normalized correlation at that lag, 0..1), and the same correlation two
 ## periods on, over a voice's 60-350 Hz. The SHORTEST lag within 90% of the best wins, so a
 ## stretch that also matches itself two periods on does not read as an octave down.
 func _period_of(pcm: PackedFloat32Array, s0: int, n: int) -> Vector3:
@@ -3936,7 +3936,7 @@ func _period_of(pcm: PackedFloat32Array, s0: int, n: int) -> Vector3:
 	return Vector3.ZERO
 
 
-## Normalised correlation of pcm[s0, s0 + n) with itself [param lag] on, every other sample.
+## Normalized correlation of pcm[s0, s0 + n) with itself [param lag] on, every other sample.
 func _corr_at(pcm: PackedFloat32Array, s0: int, n: int, lag: int, e0: float) -> float:
 	var r := 0.0
 	var e1 := 0.0
@@ -3966,7 +3966,7 @@ func _align_mark(pcm: PackedFloat32Array, c: int, guess: int, half: int) -> int:
 	return best
 
 
-## Energy of one period centred on [param m].
+## Energy of one period centered on [param m].
 func _grain_energy(pcm: PackedFloat32Array, m: int, half: int) -> float:
 	var e := 0.0
 	for d in range(-half / 2, half / 2):
@@ -4177,9 +4177,9 @@ func export_take() -> String:
 	# key up front is what lets the bed be playing before the first word.
 	if intro > 0.0:
 		fx.prime_key(pcm)
-	# ONE CHAIN, RE-DIALLED per passage - never one chain per voice. The effects
+	# ONE CHAIN, RE-DIALED per passage - never one chain per voice. The effects
 	# are stateful, so a second chain would start each speaker in a dead room and
-	# cut the previous one's tail off at the change; re-dialling shares the decay
+	# cut the previous one's tail off at the change; re-dialing shares the decay
 	# across the join, which is what a room in the world does when the person
 	# talking in it changes.
 	if marks.is_empty():
@@ -4267,7 +4267,7 @@ func _write_wav(path: String, pcm: PackedFloat32Array) -> String:
 ## SILENT, and it would hide the next one just as well).
 ##
 ## A word with no span keeps its text and takes a timing interpolated across the gap between its
-## nearest aligned neighbours, so the line reads correctly and the highlight sweeps through it at
+## nearest aligned neighbors, so the line reads correctly and the highlight sweeps through it at
 ## a plausible rate. The count is reported once per take, because an aligner that misses words is
 ## a real fault worth seeing in the log even when the subtitle no longer loses them.
 static func _bridge_words(rows: Array, label: String) -> Array:
@@ -4277,7 +4277,7 @@ static func _bridge_words(rows: Array, label: String) -> Array:
 		if bool((rows[i] as Dictionary)["ok"]):
 			continue
 		missing += 1
-		# The aligned neighbours either side, and how many unaligned words share the gap.
+		# The aligned neighbors either side, and how many unaligned words share the gap.
 		var lo := i - 1
 		while lo >= 0 and not bool((rows[lo] as Dictionary)["ok"]):
 			lo -= 1

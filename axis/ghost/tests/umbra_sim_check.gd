@@ -16,7 +16,7 @@ const H := 216
 
 func _initialize() -> void:
 	# HER silhouette, at the grid the pose track writes: a head on a pair of
-	# shoulders, left of centre. R is the body the throw magnifies, B is the same
+	# shoulders, left of center. R is the body the throw magnifies, B is the same
 	# mask dilated - the guard, read at plain screen uv (see _pt_upload_mask).
 	var region := Image.create_empty(96, 54, false, Image.FORMAT_RGBA8)
 	for y in 54:

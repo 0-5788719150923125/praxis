@@ -3,7 +3,7 @@ extends GhostScene
 ## Fractal zoom - falling into (or back out of) an escape-time set, forever.
 ##
 ## The frame is one fragment program over the complex plane (shaders/fractal_field.gdshader);
-## this half chooses WHICH set, WHERE in it, HOW it is coloured, and how the camera moves
+## this half chooses WHICH set, WHERE in it, HOW it is colored, and how the camera moves
 ## through it. Every one of those is sampled per session, because the whole point of the scene
 ## is the spectrum: the same three lines of arithmetic are a spiral, a seahorse valley, a
 ## dendrite, a filigree web or a burning coastline depending on six or seven rolls.
@@ -47,7 +47,7 @@ extends GhostScene
 ## WHAT THE SEED DECIDES: the family (mandelbrot / julia / burning ship / tricorn / celtic /
 ## buffalo) and its integer power; for a Julia set, where its parameter sits on the cardioid
 ## and how it drifts; the anchor, found by a local search that walks toward the boundary; the
-## colouring (smooth escape count, stripe average, three orbit traps, exterior distance) and
+## coloring (smooth escape count, stripe average, three orbit traps, exterior distance) and
 ## its parameters; the palette, built as a seamless cyclic ramp from a [Scheme]; how the
 ## interior is treated; the iteration budget; the zoom's direction, speed and turning points;
 ## the frame's slow rotation; and the vignette.
@@ -63,7 +63,7 @@ const SHADER := preload("res://shaders/fractal_field.gdshader")
 ## classified interior, so the set grows a flat black skirt, and the pixels just outside it
 ## escape at wildly different counts and come out as confetti. The first cut ran 335 iterations
 ## at a depth needing about 1400 and most of the frame was exactly that - a black blob with a
-## band of grey mush around it. FLOOR_PERTURB is set from this, not the other way round.
+## band of gray mush around it. FLOOR_PERTURB is set from this, not the other way round.
 const ITER_MAX := 3000
 
 ## How long a reference orbit may be. The shader rebases whenever it runs off the end, so a
@@ -72,15 +72,15 @@ const ITER_MAX := 3000
 const REF_MAX := 4096
 
 ## The palette ramp's resolution. It is sampled with fract() and interpolated, so this is
-## about banding rather than about how many colours there are.
+## about banding rather than about how many colors there are.
 const RAMP := 256
 
 ## Families, by shader index. Each is the same iteration under a different fold of the plane,
-## which is why they can share one program - and why the catalogue is this cheap to widen.
+## which is why they can share one program - and why the catalog is this cheap to widen.
 const FAMILIES := ["mandelbrot", "julia", "burning_ship", "tricorn", "celtic", "buffalo"]
 
-## Colourings, by shader index.
-const COLOURS := ["smooth", "stripe", "trap_point", "trap_cross", "trap_circle", "distance"]
+## Colorings, by shader index.
+const COLORS := ["smooth", "stripe", "trap_point", "trap_cross", "trap_circle", "distance"]
 
 ## The zoom's directions, as a bag rather than a list: the fall inward is the picture people
 ## come to a fractal for, and the climb out is the one worth being rarer. See the class doc for
@@ -129,7 +129,7 @@ var _sch: Scheme
 # The definition.
 var _family := 0
 var _power := 2
-var _colour := 0
+var _color := 0
 var _perturb := false
 var _iter_base := 320
 var _iter_gain := 90.0
@@ -213,21 +213,21 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var floor_scale := FLOOR_PERTURB if _perturb else FLOOR_DIRECT
 	_find_anchor(rng, floor_scale)
 
-	# The colouring, which is where most of the visual range lives. The distance estimate needs
+	# The coloring, which is where most of the visual range lives. The distance estimate needs
 	# a derivative the perturbed path does not carry, so it is offered only on the direct one -
 	# chosen here rather than in the shader so the two can never disagree.
 	var pool: Array = [0, 0, 1, 1, 2, 3, 4]
 	if not _perturb and (_family == 0 or _family == 1):
 		pool.append(5)
-	_colour = int(pool[rng.randi() % pool.size()])
+	_color = int(pool[rng.randi() % pool.size()])
 	_stripe = float(rng.randi_range(2, 9))
 	var ta := rng.randf() * TAU
 	var td := rng.randf_range(0.0, 0.9)
 	_trap_p = Vector2(cos(ta) * td, sin(ta) * td)
 	_trap_r = rng.randf_range(0.25, 1.10)
 	# A bigger escape radius makes the smooth iteration count smoother; a small one makes the
-	# bands crisp. Trap colourings want a large one so the orbit gets a chance to pass the trap.
-	_bail = rng.randf_range(64.0, 400.0) if _colour < 2 else rng.randf_range(400.0, 4000.0)
+	# bands crisp. Trap colorings want a large one so the orbit gets a chance to pass the trap.
+	_bail = rng.randf_range(64.0, 400.0) if _color < 2 else rng.randf_range(400.0, 4000.0)
 
 	# The budget, and its RAMP WITH DEPTH is the part that matters - see ITER_MAX. Escape takes
 	# longer the nearer the boundary a point is, so a fixed budget that looks generous on the
@@ -236,7 +236,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_iter_gain = rng.randf_range(115.0, 200.0)
 	# One palette turn per 30 to 140 iterations. Faster than this and the bands are finer than
 	# the screen can resolve, which the mip sampling then averages back to a flat wash - the
-	# first cut ran to 0.075 (a turn every 13) and most of the frame came out as grey confetti.
+	# first cut ran to 0.075 (a turn every 13) and most of the frame came out as gray confetti.
 	_cycle = rng.randf_range(0.007, 0.033)
 	_phase_rate = rng.randf_range(-0.045, 0.045)
 	_gain = rng.randf_range(0.92, 1.18)
@@ -280,7 +280,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"family": FAMILIES[_family],
 		"power": _power,
 		"perturbed": _perturb,
-		"colour": COLOURS[_colour],
+		"color": COLORS[_color],
 		"direction": dir_name,
 		"speed": _speed,
 		"journey": "%.0fs" % journey,
@@ -418,7 +418,7 @@ func _find_anchor(rng: RandomNumberGenerator, floor_scale: float) -> void:
 	# NO COMPOSITION PASS, and that was tried and removed rather than never considered. The
 	# obvious next step is to judge the FRAME each candidate would give - how much of it is
 	# interior, how wide a spread of escape times it holds - and keep the best. It cannot work
-	# here: composing a frame means moving the centre by a fraction of THAT frame's width, and
+	# here: composing a frame means moving the center by a fraction of THAT frame's width, and
 	# the frame being composed is a mid-depth one whose width is thousands of times the final
 	# anchor's refinement. Every such nudge threw away the entire descent. Measured: three of
 	# four seeds went from a full frame of structure to a flat wash, including the deep
@@ -427,7 +427,7 @@ func _find_anchor(rng: RandomNumberGenerator, floor_scale: float) -> void:
 	#
 	# What is here instead is the descent's own guarantee: the anchor is on the boundary at
 	# every scale it passed through, so the boundary crosses the frame at every depth the zoom
-	# visits. A frame can still come out half flat colour; a fractal frame legitimately can.
+	# visits. A frame can still come out half flat color; a fractal frame legitimately can.
 	if _perturb:
 		_upload_reference()
 
@@ -500,20 +500,20 @@ func _upload_reference() -> void:
 # The palette
 # ---------------------------------------------------------------------------------
 
-## Build the colour ramp as a CLOSED LOOP of control colours, which is the only way it can be
+## Build the color ramp as a CLOSED LOOP of control colors, which is the only way it can be
 ## right: the shader samples it with fract(), so a ramp whose two ends differ would put a hard
 ## seam through the picture at every palette repeat - and on a smooth iteration count those
 ## repeats are the contour lines of the whole image.
 ##
 ## The hues walk out from the scheme's base toward its accent and back over the cycle, so a
-## palette is always two-coloured rather than a rainbow; the values do the same, so there is a
+## palette is always two-colored rather than a rainbow; the values do the same, so there is a
 ## dark band and a bright band in every one and the bands read as bands.
 func _build_ramp(rng: RandomNumberGenerator) -> void:
 	var n := rng.randi_range(3, 6)
 	# The sweep stays INSIDE the scheme's two hues, give or take a third. It was allowed to run
-	# to 2.2x and that is a third of the colour wheel past the accent: the ramp crossed three
+	# to 2.2x and that is a third of the color wheel past the accent: the ramp crossed three
 	# more hues on its way, and once the mip filtering averaged the fine detail the whole frame
-	# came out olive whatever mood had been picked. A palette here is two colours and the walk
+	# came out olive whatever mood had been picked. A palette here is two colors and the walk
 	# between them, which is what [Scheme] is for.
 	var arc := fposmod(_sch.accent - _sch.hue + 0.5, 1.0) - 0.5
 	arc *= rng.randf_range(0.7, 1.35)
@@ -539,7 +539,7 @@ func _build_ramp(rng: RandomNumberGenerator) -> void:
 			fr * fr * (3.0 - 2.0 * fr)))
 	# MIPMAPPED, and the picture depends on it. Near the set the palette repeats many times
 	# across a single pixel, and point-sampling that is confetti; the shader picks a mip level
-	# from the screen-space rate of change instead, which averages exactly the colours the pixel
+	# from the screen-space rate of change instead, which averages exactly the colors the pixel
 	# spans. See the ANTIALIASING note in the shader.
 	img.generate_mipmaps()
 	_mat.set_shader_parameter("u_ramp", ImageTexture.create_from_image(img))
@@ -555,7 +555,7 @@ func _push_static() -> void:
 	_mat.set_shader_parameter("u_family", _family)
 	_mat.set_shader_parameter("u_power", _power)
 	_mat.set_shader_parameter("u_perturb", _perturb)
-	_mat.set_shader_parameter("u_colour", _colour)
+	_mat.set_shader_parameter("u_color", _color)
 	_mat.set_shader_parameter("u_trap_p", _trap_p)
 	_mat.set_shader_parameter("u_trap_r", _trap_r)
 	_mat.set_shader_parameter("u_stripe", _stripe)
@@ -578,9 +578,9 @@ func _push_live() -> void:
 	_mat.set_shader_parameter("u_glow", _glow)
 	_mat.set_shader_parameter("u_gain", _gain * (0.94 + 0.12 * _energy))
 	# THE ITERATION BUDGET RIDES THE DEPTH. Points near the boundary take longer to escape the
-	# deeper the view goes, so a fixed budget draws a deep frame as one flat interior-coloured
+	# deeper the view goes, so a fixed budget draws a deep frame as one flat interior-colored
 	# sheet - the detail is all in orbits that had not finished yet. It scales with the number
-	# of e-folds travelled, which is the honest measure of how much magnification is in force.
+	# of e-folds traveled, which is the honest measure of how much magnification is in force.
 	var efolds := maxf(0.0, log(SCALE_WIDE) - _zl)
 	_mat.set_shader_parameter("u_iter",
 		clampi(_iter_base + int(_iter_gain * efolds), 64, ITER_MAX))

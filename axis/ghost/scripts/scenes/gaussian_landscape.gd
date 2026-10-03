@@ -9,7 +9,7 @@ extends GhostScene
 ## scrolls sideways - the valleys breathing in a gentle wind while the peaks stay
 ## clear above it.
 ##
-## The land is not one shape or one colour: a [Scheme] mood colours the ridgelines (with the
+## The land is not one shape or one color: a [Scheme] mood colors the ridgelines (with the
 ## fog and the sky layers on its accent, so the weather belongs to the same evening), and a
 ## sampled RELIEF picks the landform - broad dunes, rolling hills, a crowded range of narrow
 ## ridges, or a couple of massifs - along with how finely it is drawn.
@@ -76,7 +76,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"rows": _rows,
 		"bumps": n,
 		# How far the receding rows walk from the base hue toward the accent - some evenings
-		# are one colour into the distance, others grade the whole way across the scheme.
+		# are one color into the distance, others grade the whole way across the scheme.
 		"reach": rng.randf_range(0.25, 1.0),
 		"height": rng.randf_range(float(rl.height[0]), float(rl.height[1])),  # fraction of unit
 		"fog_bands": _fog_bands,

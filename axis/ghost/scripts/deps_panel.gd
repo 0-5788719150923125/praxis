@@ -84,7 +84,7 @@ func _build_ui() -> void:
 	grow_vertical = Control.GROW_DIRECTION_BEGIN
 	custom_minimum_size = Vector2(360, 0)
 	# Own panel style rather than the theme's: the splash is nearly black and the
-	# default StyleBoxFlat is a mid grey slab that reads as a modal dialog.
+	# default StyleBoxFlat is a mid gray slab that reads as a modal dialog.
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.07, 0.08, 0.11, 0.92)
 	sb.border_color = Color(0.18, 0.21, 0.27)

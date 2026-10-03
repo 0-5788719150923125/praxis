@@ -172,7 +172,7 @@ func finished() -> bool:
 
 ## Override (morph sources): a small typed bag of state the outgoing scene hands to
 ## the incoming one during a morph, so the transition is *continuous* - e.g. the eye
-## passes its colour / gaze / size so the two it splits into are the SAME eye, not
+## passes its color / gaze / size so the two it splits into are the SAME eye, not
 ## new ones. Keys are by convention; the receiver reads what it understands.
 func morph_payload() -> Dictionary:
 	return {}
@@ -191,7 +191,7 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_on_resize)
 	# Disable premature canvas-item culling. Scenes draw through a view transform (pan /
 	# zoom), so content near the frame edge - especially big soft glows / lighting whose
-	# centre drifts off-screen while their halo still bleeds in - would pop out abruptly
+	# center drifts off-screen while their halo still bleeds in - would pop out abruptly
 	# when the item's auto-computed bounds crossed the viewport. A large custom rect keeps
 	# the item always considered visible, so things ease off the edge instead of clipping.
 	RenderingServer.canvas_item_set_custom_rect(
@@ -244,9 +244,9 @@ static func fill_aa_on(ci: CanvasItem, pts: PackedVector2Array, col: Color, widt
 ##
 ## `bed` cannot do this, and not by accident: it paints top / middle / bottom at
 ## val*0.5, val*1.0 and val*0.35 around a default val of 0.32, so its brightest
-## possible pixel is a mid tone and its edges are always darker than its centre. That
+## possible pixel is a mid tone and its edges are always darker than its center. That
 ## is exactly right for a luminous subject floating in a dark frame, which is what 29
-## of the catalogue's scenes are. It is exactly wrong for paper, daylight, or water
+## of the catalog's scenes are. It is exactly wrong for paper, daylight, or water
 ## seen from above, where the ground IS the subject and must read as flat and bright.
 ##
 ## Three deliberate differences from `bed`:
@@ -298,13 +298,13 @@ func view_half_px() -> Vector2:
 ## USE THIS INSTEAD OF THE SHORTEST-ARC FORM. Every audio-driven tint in this project was written
 ## as `base + (fposmod(toward - base + 0.5, 1.0) - 0.5) * k`, which takes the short way round the
 ## wheel - and that expression is DISCONTINUOUS at the antipode, where it flips between +0.5 and
-## -0.5. A tonal centre drifting onto the point opposite a scene's own hue therefore made the
-## colour jump by `k` of a whole turn from one frame to the next, and a tonal centre parked ON
+## -0.5. A tonal center drifting onto the point opposite a scene's own hue therefore made the
+## color jump by `k` of a whole turn from one frame to the next, and a tonal center parked ON
 ## that point dithered between the two: "the color is unstable, and will often flicker between
 ## two colors at random, then stabilize upon ONE of those colors". It is not a rate problem, so
 ## slowing the drive does not fix it - the jump is the same size however slowly the input moves.
 ##
-## Blending the two hues as VECTORS on the colour wheel has no such boundary. As `toward` sweeps
+## Blending the two hues as VECTORS on the color wheel has no such boundary. As `toward` sweeps
 ## through the antipode the resultant swings smoothly through `base` instead of leaping across
 ## it, and its length shrinks - which is the honest reading anyway, since a hue exactly opposite
 ## the base is not evidence for either direction. For k < 0.5 the resultant can never be
@@ -410,9 +410,9 @@ func wobble(key: String, i: int) -> float:
 	return mod.value("%s_%d" % [key, i]) * g
 
 
-## Tonal colour from the live harmonic signature - the CONTINUOUS, expressive half of harmonic
+## Tonal color from the live harmonic signature - the CONTINUOUS, expressive half of harmonic
 ## seeding (the discrete half is the seed_bias mixed into seeds; see next/harmonic_seeding.md).
-## The 12 chroma bins are placed on the colour wheel and summed: the result's angle is the
+## The 12 chroma bins are placed on the color wheel and summed: the result's angle is the
 ## music's tonality (its "key" as a hue) and its length is how tonal the moment is. Returns
 ## Vector2(hue 0..1, strength 0..1); a scene can pull its palette toward the hue by the strength.
 func chroma_hue() -> Vector2:

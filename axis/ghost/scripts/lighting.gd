@@ -1,10 +1,10 @@
 extends RefCounted
 class_name Lighting
 
-## Lighting - audio-reactive colour, not scale.
+## Lighting - audio-reactive color, not scale.
 ##
 ## The preferred channel for sound to drive a scene. Pulsing geometry *size* with
-## amplitude reads as cheap throbbing; driving *colour* reads as alive. Lighting
+## amplitude reads as cheap throbbing; driving *color* reads as alive. Lighting
 ## provides moving bright **hotspots** that sweep the frame (region-aware lighting
 ## / gradient swipes), a global **glow** that flares on beats and decays slowly,
 ## and a slow **hue drift**. Geometry stays structurally stable; the light moves.

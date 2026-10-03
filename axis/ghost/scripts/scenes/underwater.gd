@@ -1,17 +1,17 @@
 extends GhostScene
 
 ## Underwater - looking up through flowing water: shafts of light from the surface, bubbles
-## rising, a deep blue-green wash. The submerged corner of the weather catalogue.
+## rising, a deep blue-green wash. The submerged corner of the weather catalog.
 ##
 ## A blue-green bed, swaying god-[Rays] from the surface above, and [Bubbles] drifting up
 ## through them. The light shafts brighten with the music; the whole frame drifts gently.
 
 # WATERS. The hue was pinned to 0.50-0.58 and the layer mix never changed, so
 # every dive was the same blue-green room with the same tall kelp. A water is a
-# whole place: its colour, how much light reaches it, what grows there, and how
+# whole place: its color, how much light reaches it, what grows there, and how
 # much life is suspended in it.
 #
-# `depth` is the organising idea - a bright shallow reef gets many rays, small
+# `depth` is the organizing idea - a bright shallow reef gets many rays, small
 # stiff plants and busy bubbles; an abyss gets almost no light, sparse tall
 # whips and bioluminescence instead. `silt` adds suspended matter, which is what
 # makes an estuary read as murky rather than merely darker.

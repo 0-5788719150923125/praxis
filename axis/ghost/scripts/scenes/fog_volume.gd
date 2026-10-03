@@ -8,7 +8,7 @@ extends GhostScene
 # The air the haze hangs in. A thin one is nearly clear and shows the sky through it; a soup
 # is tinted, layered and starless. What accompanies the volume is the scene's shape here,
 # since the puff field itself is built inside the layer.
-#   tint - chance the volume takes the mood's hue rather than neutral grey
+#   tint - chance the volume takes the mood's hue rather than neutral gray
 const AIRS := {
 	"thin":   {"tint": 0.45, "sheets": 0, "stars": 0.65, "val": [0.08, 0.15]},
 	"tinted": {"tint": 1.00, "sheets": 1, "stars": 0.30, "val": [0.09, 0.17]},
@@ -19,7 +19,7 @@ const AIRS := {
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	# Haze is the colour of whatever lights it - sodium street lamps, a green swamp, a cold
+	# Haze is the color of whatever lights it - sodium street lamps, a green swamp, a cold
 	# dawn - so no mood is off the table. It was locked to one narrow blue before.
 	var sch := Scheme.pick(rng)
 	var keys := AIRS.keys()
@@ -36,7 +36,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(50, 140), "hue": sch.accent})
 	var p := {"mode": "fog"}
 	if rng.randf() < float(a["tint"]):
-		p["hue"] = sch.vary(rng)        # a tinted haze; otherwise neutral grey fog
+		p["hue"] = sch.vary(rng)        # a tinted haze; otherwise neutral gray fog
 	add_layer("volumetric", rng, p)
 	# 2D sheets rolling THROUGH the volume: the flat drift reads as nearer air moving past
 	# the depth behind it, which is what makes a soup feel like it has layers.

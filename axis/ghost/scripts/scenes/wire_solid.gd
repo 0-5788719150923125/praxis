@@ -5,17 +5,17 @@ extends Scene3D
 ## A true cube / octahedron / tetrahedron / icosahedron ([Mesh3D]) projected through
 ## a [Lens3D]: perspective, depth sorted, faces faint and edges bright so you see
 ## *through* it. Because it is genuinely 3D it rotates slowly and continuously - that
-## is how the volume reveals itself. Migrated off the old centred draw_shaded
+## is how the volume reveals itself. Migrated off the old centered draw_shaded
 ## projector onto [Scene3D]: the body now lives in a camera world (it could share
 ## the frame with planes or other bodies), and the lens eases in instead of a fixed
 ## focal. Rotation is gentle; energy only nudges its pace, and audio drives the glow.
 ##
 ## The hue was already free, but everything AROUND it was not: the solid was always a
 ## regular polyhedron at 1:1:1 proportions and always mid-saturation, so every seed
-## produced the same object in a different colour. Now a [constant SOLID] rolls the
+## produced the same object in a different color. Now a [constant SOLID] rolls the
 ## form and the proportions together, and a [Scheme] supplies the saturation as well
 ## as the hue - which is what makes an ash body read as smoked glass and a toxic one
-## as acid, rather than both reading as "a coloured shape".
+## as acid, rather than both reading as "a colored shape".
 
 ## The body: which forms suit a given set of proportions, how far they are stretched,
 ## and how transparent the faces are. These belong together - a dense geodesic cage

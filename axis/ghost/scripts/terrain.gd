@@ -5,7 +5,7 @@ class_name Terrain
 ##
 ## The composable landscape: a type (rolling hills, mountains, valleys, fissured canyon,
 ## islands, banded mesa) selects a recipe of [Field]s that becomes a height grid, sampled
-## ONCE at build (terrain is static) into world vertices and per-vertex colours from a
+## ONCE at build (terrain is static) into world vertices and per-vertex colors from a
 ## [Palette] plus a fine surface-texture field and slope shading. Thereafter the grid is
 ## just projected and depth-sorted each frame - cheap. It exposes height(wx, wz) and a
 ## surface normal so other scenes can stand things on it (blocks, water, growth).
@@ -25,7 +25,7 @@ var type := "hills"
 var palette: Palette
 var hgrid := PackedFloat32Array()   # heights 0..1
 var _world := PackedVector3Array()  # world-space vertices
-var _vcol: PackedColorArray         # base per-vertex colour (palette + texture + slope)
+var _vcol: PackedColorArray         # base per-vertex color (palette + texture + slope)
 var _vnorm := PackedVector3Array()  # per-vertex surface normal (for the moving directional light)
 
 # Cinematic area light + cast shadows: a low directional key light whose azimuth drifts, so the
@@ -47,8 +47,8 @@ var _fog_col := Color(0.62, 0.66, 0.72)
 var _wdepth := 0.0                   # deepest point of the SMOOTHED water column (0 = the map is dry)
 var _wsub := PackedFloat32Array()    # per-vertex water column, smoothed (see _measure_water)
 
-# Biome colour sets [h, s, v] for grass / dirt / low rock / high rock / snow / sand /
-# water. A climate gives the natural look (green lowland, brown+grey rock, snow peaks,
+# Biome color sets [h, s, v] for grass / dirt / low rock / high rock / snow / sand /
+# water. A climate gives the natural look (green lowland, brown+gray rock, snow peaks,
 # blue water) chosen by height + slope + moisture, instead of one height ramp.
 const CLIMATES := {
 	"temperate": {"grass": [0.28, 0.55, 0.50], "dirt": [0.09, 0.50, 0.42],
@@ -97,7 +97,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 	var regions := Field.make("fbm", rng.randi(), rng.randf_range(0.35, 0.65), 2)
 	var region_depth := rng.randf_range(0.45, 0.85)
 	# Surface texture: a coarse mottle plus a fine grain and a rocky ridged striation,
-	# combined - so the land reads as a textured material, not a bare coloured mesh.
+	# combined - so the land reads as a textured material, not a bare colored mesh.
 	var mottle := Field.make("fbm", rng.randi(), 14.0, 4)
 	var grain := Field.make("fbm", rng.randi(), 34.0, 3)
 	var striate := Field.make("ridged", rng.randi(), 22.0, 3)
@@ -122,7 +122,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 	# Micro-relief: overlay fine GEOMETRIC detail over the whole surface so the land reads as
 	# textured ground, not low-res smooth blobs. Three octaves - a coarse roll, a ridged grain,
 	# and a fine crinkle - tiled across the terrain and added AFTER the smoothing pass (so it
-	# survives), turned into real height (not just colour). This catches the slope shading and the
+	# survives), turned into real height (not just color). This catches the slope shading and the
 	# per-vertex normals, so the surface keeps crisp bumps and creases even under a close camera,
 	# instead of the over-smoothed sheen that read as blur when the push-in magnified it.
 	var micro := Field.combine(
@@ -140,7 +140,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			var i := gy * res + gx
 			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
 			_world[i] = Vector3(p.x * half, (hgrid[i] - water) * relief, p.y * half)
-	# Per-vertex colour: palette by height, mottled by the detail field, shaded by slope.
+	# Per-vertex color: palette by height, mottled by the detail field, shaded by slope.
 	for gy in res:
 		for gx in res:
 			var i := gy * res + gx
@@ -152,10 +152,10 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			if _biome_on:
 				_vcol[i] = _biome(hgrid[i], slope, moist.at(p), tex)
 				continue
-			# Palette path (surreal climates): take the palette's ACTUAL interpolated colour
+			# Palette path (surreal climates): take the palette's ACTUAL interpolated color
 			# (smooth in RGB) and just shade it by slope and surface detail. Rebuilding it via
-			# from_hsv(c.h, ...) flipped the hue wildly wherever the RGB lerp crossed grey - that
-			# was the wrong colours and the hard edges. The detail field still shifts the band a
+			# from_hsv(c.h, ...) flipped the hue wildly wherever the RGB lerp crossed gray - that
+			# was the wrong colors and the hard edges. The detail field still shifts the band a
 			# little and grains the brightness, so the surface keeps its striation.
 			var c := palette.at(clampf(hgrid[i] + 0.18 * (tex - 0.5), 0.0, 1.0))
 			var contour := 0.94 + 0.06 * sin(hgrid[i] * PI * 9.0)
@@ -227,7 +227,7 @@ func _measure_water() -> void:
 	_wsub = col
 
 
-# Resolve a climate's material colours (jittered per seed so no two are identical).
+# Resolve a climate's material colors (jittered per seed so no two are identical).
 func _setup_climate(name: String, rng: RandomNumberGenerator) -> void:
 	var cl: Dictionary = CLIMATES.get(name, CLIMATES["temperate"])
 	var jh := rng.randf_range(-0.025, 0.025)
@@ -246,9 +246,9 @@ func _hsv(a: Array, jh: float, rng: RandomNumberGenerator) -> Color:
 		clampf(float(a[2]) * rng.randf_range(0.92, 1.08), 0.0, 1.0))
 
 
-# Pick a vertex colour from elevation, slope, moisture and surface detail: green lowland
-# grading to brown/grey rock on steeps and heights, snow on high flats, sand at the
-# shore - the natural colour variety, all from cheap per-vertex fields.
+# Pick a vertex color from elevation, slope, moisture and surface detail: green lowland
+# grading to brown/gray rock on steeps and heights, snow on high flats, sand at the
+# shore - the natural color variety, all from cheap per-vertex fields.
 func _biome(h: float, slope: float, moist: float, det: float) -> Color:
 	var t := clampf((h - water) / maxf(0.25, 1.0 - water), 0.0, 1.0)    # 0 shore .. 1 peak
 	var ground := _c_grass.lerp(_c_dirt, clampf(0.45 - 0.7 * (moist - 0.5) + 0.5 * (det - 0.5), 0.0, 1.0))
@@ -311,7 +311,7 @@ func _recipe(rng: RandomNumberGenerator) -> Field:
 		"islands":
 			water = 0.42
 			var land := Field.make("fbm", rng.randi(), f * 1.1, 5)
-			var bowl := Field.make("gradient", 0).scale(1.4).curve("smoothstep")   # centre high
+			var bowl := Field.make("gradient", 0).scale(1.4).curve("smoothstep")   # center high
 			return Field.combine(land, "mask", bowl, 1.0)
 		"mesa":
 			water = 0.12
@@ -409,7 +409,7 @@ func light_dir() -> Vector3:
 ## The target is FEATHERED ACROSS THE LATTICE on the way in, and that is the fix for "the shadows
 ## are blocky". Two separate things made them so, and the temporal ease addresses neither:
 ##   - the march itself (see [method _cast_at]) is a coarse 17-step walk over a bumpy heightfield,
-##     so neighbouring vertices disagree by more than the surface does - per-vertex noise, which
+##     so neighboring vertices disagree by more than the surface does - per-vertex noise, which
 ##     Gouraud shading then draws as visible facets;
 ##   - a shadow edge lands BETWEEN two vertices and there is nothing in between to carry it, so the
 ##     drawn edge is a staircase whose step is one quad. At this map's scale a near quad is tens of
@@ -441,7 +441,7 @@ func step_light(delta: float) -> void:
 	# Feather the band that just changed, plus the two rows either side (their kernels reach in).
 	# A 5-tap binomial (1 4 6 4 1), applied separably through `_cast_blur` as a horizontal pass and
 	# then a vertical one, so an edge is carried by about five vertices instead of one - measured,
-	# the worst neighbour-to-neighbour step falls from 84% of the map's whole lit-to-shadowed range
+	# the worst neighbor-to-neighbor step falls from 84% of the map's whole lit-to-shadowed range
 	# to a third of it. See tests/shadow_feather_check.gd.
 	for k in range(-4, rows + 4):
 		var gy := posmod(first + k, res)
@@ -525,13 +525,13 @@ func _refresh_slow(from: int, count: int, sxd: float, szd: float, shadow: Shadow
 ## Nothing split them, so the 5x coarser water cell carried one depth key against the ~25 land quads
 ## it covered and won or lost as a block: measured, 20-40% of DRY land quads were painted over by
 ## the sheet and 34-45% of submerged ones punched through it. That is the reported jaggedness, and
-## since each cell also got ONE flat colour (the land is Gouraud-shaded) it is the blockiness too.
+## since each cell also got ONE flat color (the land is Gouraud-shaded) it is the blockiness too.
 ##
 ## So the water is drawn where water actually IS: the visible surface is the heightfield CLIPPED AT
 ## THE DATUM. A submerged vertex is lifted to y = 0 - which is exactly the water surface - and
-## coloured as water in proportion to how deep it is. The lift equals the depth, so it vanishes at
+## colored as water in proportion to how deep it is. The lift equals the depth, so it vanishes at
 ## the waterline and the mesh never tears; the waterline itself is the land's own contour at full
-## grid resolution rather than a staircase off a coarser lattice; and the colour interpolates
+## grid resolution rather than a staircase off a coarser lattice; and the color interpolates
 ## between vertices like every other surface here. It also costs nothing: no extra quads, no
 ## separate untextured run (which was measured at 894 extra batch cuts, i.e. ~895 draw calls a
 ## frame instead of 1), and no alpha at all - the surface is opaque again.
@@ -546,7 +546,7 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 	# sunlit gaps - layered under the directional key light and the mountains' cast shadows.
 	var sxd := shimmer * 0.035
 	var szd := shimmer * 0.028
-	# The final lit colour per vertex: base colour x audio brightness x cloud shadow x directional
+	# The final lit color per vertex: base color x audio brightness x cloud shadow x directional
 	# key light (n.l) x mountain cast shadow, then valley fog blended over the low ground. Computed
 	# once here so both triangles of every quad reuse it.
 	var vc := PackedColorArray()
@@ -558,14 +558,14 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 	var wet := _wsub.size() == n
 	# WATER CONSTANTS, hoisted. The shading below is written out inline rather than called per
 	# vertex because an archipelago submerges ~10k of them: as a helper doing its own normalize()
-	# calls and Colour lerps it measured 22.3 ms/frame, which is a whole 60fps budget on the one
+	# calls and Color lerps it measured 22.3 ms/frame, which is a whole 60fps budget on the one
 	# scene that runs collect_surface on the main thread.
 	var lx := _light_dir.x
 	var ly := _light_dir.y
 	var lz := _light_dir.z
 	# THE SUN'S GLITTER PATH, placed rather than searched for. For a flat surface at y = 0, a
 	# directional light and a fixed eye, the mirror image of the sun sits at exactly one point on
-	# the plane - so the highlight's centre is a frame constant and its falloff is a cheap function
+	# the plane - so the highlight's center is a frame constant and its falloff is a cheap function
 	# of distance from it. A per-vertex half-vector costs three normalize() calls; a single
 	# frame-constant one is cheap but degenerate, since n.h is then near-constant too and h^32
 	# either vanishes or whites out the whole sea depending on where the camera happens to be.
@@ -627,7 +627,7 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 		# across the water being most of what reads as water at all. The swells are functions of
 		# WORLD position, never of the grid indices: the old sheet's sin(gx * 0.7 + gy * 0.5) was
 		# one value per QUAD, which both flat-shaded it and pinned the pattern to the lattice, so
-		# it marched over the map as a hard-edged plaid instead of travelling as waves.
+		# it marched over the map as a hard-edged plaid instead of traveling as waves.
 		if sub > 0.0:
 			var wa := p.x * 2.7 + p.z * 1.1 + shimmer * 0.85
 			var wb := p.z * 3.3 - p.x * 0.9 - shimmer * 0.62
@@ -692,7 +692,7 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 	return quads
 
 
-## Tint a PROP's vertex colour for the water it stands in - buildings, spire shafts, anything a
+## Tint a PROP's vertex color for the water it stands in - buildings, spire shafts, anything a
 ## scene embeds in the land. Returns `c` unchanged above the waterline and on dry maps.
 ##
 ## The surface itself now hides what is under it (the water is part of the mesh, opaque where it is
@@ -807,12 +807,12 @@ static func _lit(c: Color, k: float) -> Color:
 	return Color(c.r * k, c.g * k, c.b * k, c.a)
 
 
-## Draw a 4-point quad as its two Gouraud (per-vertex-coloured) triangles, split on the
+## Draw a 4-point quad as its two Gouraud (per-vertex-colored) triangles, split on the
 ## 0-2 diagonal. A projected heightfield quad can fold into a bowtie that a single
 ## polygon can't triangulate; two triangles never can, and degenerate ones are skipped.
-## Per-vertex colour is what makes the surface texture read instead of flat facets. If `uvs`
-## + `tex` are given, the vertex colours are MODULATED by a tiling detail texture (world-space
-## UVs) - genuine sub-vertex surface grain (a value/bump texture), not just interpolated colour.
+## Per-vertex color is what makes the surface texture read instead of flat facets. If `uvs`
+## + `tex` are given, the vertex colors are MODULATED by a tiling detail texture (world-space
+## UVs) - genuine sub-vertex surface grain (a value/bump texture), not just interpolated color.
 static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColorArray,
 		uvs := PackedVector2Array(), tex: Texture2D = null) -> void:
 	if poly.size() < 4:
@@ -835,14 +835,14 @@ static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColo
 
 
 # A tiling grayscale DETAIL texture (built once): fbm value-noise crossed with a ridged streak, so
-# terrain quads carry fine sub-vertex grain when this modulates their colour. Tiled finely across
+# terrain quads carry fine sub-vertex grain when this modulates their color. Tiled finely across
 # the land via world-space UVs, so the seams (it is not perfectly seamless) fall well below a pixel.
 static var _dtex: Texture2D = null
 static func detail_texture() -> Texture2D:
 	if _dtex == null:
-		# A fine, ISOTROPIC grey grain (two plain fbm octaves, no ridged noise - the ridged fractal
+		# A fine, ISOTROPIC gray grain (two plain fbm octaves, no ridged noise - the ridged fractal
 		# baked in directional streaks that tiled into visible diagonal lines). Higher-res and gentler
-		# contrast so it reads as a subtle ground grain modulating the vertex colour, not a stretched,
+		# contrast so it reads as a subtle ground grain modulating the vertex color, not a stretched,
 		# blotchy, low-res overlay. FastNoiseLite is seamless enough at these frequencies to tile.
 		var s := 256
 		var img := Image.create(s, s, false, Image.FORMAT_RGBA8)

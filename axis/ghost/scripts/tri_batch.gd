@@ -8,7 +8,7 @@ class_name TriBatch
 ## own array allocation - and THAT, not the geometry count, was the frame
 ## cost (metropolis: 48x48 tiles x ~4-15 calls each = an unfinishable
 ## render). The professional shape of the fix is batching: accumulate every
-## triangle into one vertex/colour/index buffer and submit it with a single
+## triangle into one vertex/color/index buffer and submit it with a single
 ## [method RenderingServer.canvas_item_add_triangle_array] - the 2D twin of
 ## a MultiMesh. Triangles render in append order, so the painter's
 ## back-to-front discipline scenes already follow is preserved exactly.
@@ -42,7 +42,7 @@ func set_run(ci: CanvasItem, textured: bool, rid: RID) -> void:
 	tex_rid = rid if textured else RID()
 
 
-## A quad with per-vertex colours AND uvs (a textured-run face).
+## A quad with per-vertex colors AND uvs (a textured-run face).
 func quad_textured(p: PackedVector2Array, c: PackedColorArray, uv: PackedVector2Array) -> void:
 	if p.size() < 4 or c.size() < 4 or uv.size() < 4:
 		return
@@ -71,7 +71,7 @@ func tri(a: Vector2, b: Vector2, c: Vector2, col: Color) -> void:
 	idx.append(base + 2)
 
 
-## A triangle with per-vertex colours (the Gouraud path).
+## A triangle with per-vertex colors (the Gouraud path).
 func tri_colored(a: Vector2, b: Vector2, c: Vector2,
 		ca: Color, cb: Color, cc: Color) -> void:
 	var base := pts.size()
@@ -102,7 +102,7 @@ func quad(a: Vector2, b: Vector2, c: Vector2, d: Vector2, col: Color) -> void:
 	idx.append(base + 3)
 
 
-## A quad with per-vertex colours (Gouraud-shaded walls, fogged corners).
+## A quad with per-vertex colors (Gouraud-shaded walls, fogged corners).
 func quad_colored(p: PackedVector2Array, c: PackedColorArray) -> void:
 	if p.size() < 4 or c.size() < 4:
 		return
@@ -125,7 +125,7 @@ func quad_colored(p: PackedVector2Array, c: PackedColorArray) -> void:
 ## never applies to it; and Godot's msaa_2d does almost nothing for this drawing path (measured:
 ## the fraction of edge pixels with no partial coverage moves only 75.0% -> 73.8% going from MSAA
 ## off to 8x, and in the export's "viewport" stretch mode MSAA is inert entirely - frames come out
-## byte-identical at 0, 4x and 8x). A hard-edged 1px quad of bright colour on ghost's near-black
+## byte-identical at 0, 4x and 8x). A hard-edged 1px quad of bright color on ghost's near-black
 ## backgrounds is the worst case there is: it steps, and it crawls as the geometry turns.
 ##
 ## 0.8 px rather than a full pixel: wide enough to give the rasterizer a real gradient to

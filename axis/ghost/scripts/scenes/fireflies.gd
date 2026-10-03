@@ -25,7 +25,7 @@ const SWARMS := [
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	# A dusk is dark and cool - blue night, green twilight, a colourless overcast one -
+	# A dusk is dark and cool - blue night, green twilight, a colorless overcast one -
 	# and the bugs glow in that night's accent, so the two never clash.
 	var sch := Scheme.among(["abyss", "violet", "teal", "verdant", "ash", "glacier", "magenta"], rng)
 	var sw: Dictionary = SWARMS[rng.randi() % SWARMS.size()]

@@ -17,7 +17,7 @@ extends SceneTree
 ##                 noun against `record` the verb). Some are resolved by the SPEAK_AS
 ##                 table; the ones that are NOT are listed with their context so a
 ##                 human can judge, because several of them - `read` above all - are
-##                 genuinely ambiguous from the neighbours alone and no rule can settle
+##                 genuinely ambiguous from the neighbors alone and no rule can settle
 ##                 them without understanding the sentence.
 ##   PINNED      - already handled, listed so it is visible that it was handled rather
 ##                 than missed. Silence about a fix is how the fix gets undone.
@@ -29,7 +29,7 @@ extends SceneTree
 ## It always exits 0. This is a report, not a gate: an unknown word is a thing to look
 ## at, not a build failure, and a chapter full of invented names is allowed to exist.
 
-## Words with two live readings that the neighbours cannot reliably separate. Being on
+## Words with two live readings that the neighbors cannot reliably separate. Being on
 ## this list does not mean the word is wrong - it means a human should look. `read` is
 ## the reason the list exists: past and present are spelled identically, the choice
 ## depends on the tense of the surrounding discourse rather than on any adjacent word,
@@ -37,7 +37,7 @@ extends SceneTree
 ## about four fifths of them, which is right far more often than not but wrong dozens of
 ## times per book.
 const AMBIGUOUS := {
-	"read": "past /rɛd/ or present /riːd/ - decided by tense, not by neighbours",
+	"read": "past /rɛd/ or present /riːd/ - decided by tense, not by neighbors",
 	"lead": "the metal /lɛd/ or the verb /liːd/",
 	"live": "the adjective /laɪv/ or the verb /lɪv/",
 	"wind": "moving air /wɪnd/ or to coil /waɪnd/",
@@ -117,7 +117,7 @@ func _init() -> void:
 
 	print("pronounce_audit: %d files, %d words" % [files.size(), total])
 	_report("UNKNOWN - no dictionary entry; the front end is guessing", unknown, true)
-	_report("AMBIGUOUS - two live readings, no rule can settle it from the neighbours",
+	_report("AMBIGUOUS - two live readings, no rule can settle it from the neighbors",
 		ambiguous, true)
 	_report("PINNED - already resolved by data/english.yml or an inline override",
 		pinned, false)

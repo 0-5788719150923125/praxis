@@ -128,7 +128,7 @@ func _observe() -> void:
 
 
 ## The serial the geometry carries. The job encodes it in its VERTEX COUNT, so this reads the
-## packet itself rather than anything that travelled beside it.
+## packet itself rather than anything that traveled beside it.
 func _serial_of(forge: FrameForge) -> int:
 	var pk: Array = forge._packet
 	if pk.is_empty():

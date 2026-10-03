@@ -115,9 +115,9 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_copy_gain": {
         "description": (
-            "Bits per token saved on a passage's second copy (each row's first "
-            "half, repeated). 0 = no use of long-range context; near the first "
-            "copy's cost = copies from context."
+            "Bits per token saved on a passage's second copy (a row's first 256 "
+            "tokens, repeated), over 64 validation rows. 0 = no long-range use; "
+            "near the first copy's cost = copying."
         ),
         "chart": {
             "title": "In-Context Copy Gain",

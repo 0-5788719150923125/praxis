@@ -12,7 +12,7 @@ extends SceneTree
 ## through-cascade synth it converged, reported a healthy 0.35, and declared
 ## success on fricatives that had 0.02-0.06% of their energy above 4 kHz, whose
 ## S/SH/F/TH spectra correlated at 0.99-1.00, and which carried -0.2 dB of
-## 6-10 kHz contrast against the neighbouring vowel. Two whole RCA rounds
+## 6-10 kHz contrast against the neighboring vowel. Two whole RCA rounds
 ## passed on a metric that could not fail. A level meter cannot detect a
 ## timbre collapse.
 ##
@@ -198,7 +198,7 @@ func _report_distinctness(pcm: PackedFloat32Array, phones: Array) -> float:
 			# /f/ and /th/ are exempt from the collapse gate: they are the one
 			# genuinely confusable pair in English frication (Jongman et al.
 			# classify them near chance from the noise alone), and their real
-			# cue is the F2 locus on the neighbouring vowel - 900 Hz vs 1400 Hz
+			# cue is the F2 locus on the neighboring vowel - 900 Hz vs 1400 Hz
 			# in the table - which a frication-only spectrum cannot see.
 			if _lenient(pair):
 				continue
@@ -223,7 +223,7 @@ func _adjacent_vowel(phones: Array, i: int) -> int:
 
 
 ## Energy in the phoneme's OWN band, derived from its declared parallel poles:
-## an octave centred on its highest front-cavity resonance. A fixed 3-8 kHz
+## an octave centered on its highest front-cavity resonance. A fixed 3-8 kHz
 ## window is wrong for /sh/, whose energy sits at 2.4-3.6 kHz - it scored the
 ## correctly-built /sh/ at -2.9 dB and would have sent me tuning a phoneme that
 ## was already right. Reading the band from the table means the metric follows
@@ -231,7 +231,7 @@ func _adjacent_vowel(phones: Array, i: int) -> int:
 func _fric_band(p: String) -> Array:
 	var par: Array = Phonemes.TABLE.get(p, {}).get("par", [])
 	# span the poles that actually CARRY the phoneme (amplitude >= 0.5), each
-	# widened by half its bandwidth. An octave centred on the topmost pole was
+	# widened by half its bandwidth. An octave centered on the topmost pole was
 	# the first attempt and it overshot: it gave /sh/ a 2.2-5.0 kHz window when
 	# its poles stop at 3.85 kHz, so a fifth of the window was pure vowel and
 	# the ratio read 3 dB low. The band has to be the phoneme's own support.
@@ -263,7 +263,7 @@ func _band(pcm: PackedFloat32Array, ph: Dictionary, band: Array) -> float:
 ## Log-magnitude spectrum on a log-spaced grid, mean-removed so the
 ## correlation measures SHAPE and not level. The grid starts ABOVE the voice:
 ## below ~1.5 kHz every fricative window carries the same leakage from the
-## neighbouring vowel and the cascade ring, and including it made two
+## neighboring vowel and the cascade ring, and including it made two
 ## completely different fricatives correlate at 0.91 with frication switched
 ## OFF entirely - the metric was measuring the shared tail, not the sound.
 func _shape(pcm: PackedFloat32Array, ph: Dictionary) -> PackedFloat32Array:

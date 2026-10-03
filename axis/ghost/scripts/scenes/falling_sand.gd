@@ -8,9 +8,9 @@ extends GhostScene
 ## level and soaks into whatever it lands on; oil, being lighter, floats on the water as a
 ## thin film; an ember dropped into that oil eats through it and leaves ash. The pile builds
 ## all song. On a beat a hatch opens in the floor and the column drains, a collapse front
-## travelling UPWARD through material that was settled a second ago.
+## traveling UPWARD through material that was settled a second ago.
 ##
-## It is the catalogue's first scene whose every frame is a STATE rather than a picture.
+## It is the catalog's first scene whose every frame is a STATE rather than a picture.
 ## Everything else here draws something - a skyline, a lattice, a flame. This draws a
 ## [Grains] grid where each cell holds exactly one thing, and its silhouette is produced by
 ## nothing but local rules applied a few thousand times. The angle of repose is a slide
@@ -23,7 +23,7 @@ extends GhostScene
 ## pour, stepped ledges the material cascades down, or open sides it walks off), its grid
 ## and wall thickness; a two-to-four material subset of [constant Grains.MATTER] with every
 ## property of every material sampled from its own range - so this sand is not the last
-## sand, it has its own repose, density, colour and susceptibility to the draft; the ember
+## sand, it has its own repose, density, color and susceptibility to the draft; the ember
 ## and ash chain, added only when a flammable material was drawn; the spouts, each with its
 ## own column, width, material, spectral band, gain and slow duty cycle; the hatch
 ## positions, widths and dwell; how far gravity may tilt and for how long; a steady ambient
@@ -46,10 +46,10 @@ extends GhostScene
 ## floor hatch. f.movement past a sampled gate eases gravity off vertical by a sampled
 ## ANGLE (0.12-0.35 rad, applied as its tangent, which is the per-step sideways probability
 ## that a cellular gravity actually takes), so a section change shears the whole pile and it
-## re-settles into a different landscape. f.flux scales ember ignition. The tonal centre
+## re-settles into a different landscape. f.flux scales ember ignition. The tonal center
 ## from chroma_hue() drags every material's hue by a quarter of its strength, and f.energy
 ## feeds [method Nonlinear.flare] into the emissive materials' VALUE only. Nothing anywhere
-## touches grain size or grid scale: the sound colours this world and gates its activity, it
+## touches grain size or grid scale: the sound colors this world and gates its activity, it
 ## does not resize it.
 ##
 ## MEASURED CONSTANTS. f.energy is a mean over 64 bands and rarely passes 0.5, and f.flux
@@ -93,7 +93,7 @@ const CHAMBERS := {
 const POURABLE := ["sand", "water", "oil", "salt", "dust"]
 
 ## Elevation ramps for the chamber wall, so the stone reads as strata rather than as one
-## flat grey behind the material.
+## flat gray behind the material.
 const WALL_RAMPS := ["earth", "desert", "alpine", "ocean"]
 
 var _w := 192
@@ -246,7 +246,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		if extra > 0:
 			_cascade(sim, stone, thick, extra, CHAMBERS["ledges"], rng)
 
-	# Strata: the wall takes its colour from an elevation ramp by row, which is the one
+	# Strata: the wall takes its color from an elevation ramp by row, which is the one
 	# place a [Palette] belongs here - everything else is matter, and matter has its own.
 	var ramp := Palette.named(String(WALL_RAMPS[rng.randi() % WALL_RAMPS.size()]), rng)
 	var wall_v := rng.randf_range(0.30, 0.62)
@@ -336,7 +336,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	sand_v /= maxf(1.0, float(mats.size()))
 	# TAKE THE SIDE THAT HAS ROOM. Dark is the better picture - the sand glows out of it
 	# and an ember actually reads as hot - so it is the default rather than a coin flip.
-	# But "always darker than the sand" is not a guarantee that can always be honoured:
+	# But "always darker than the sand" is not a guarantee that can always be honored:
 	# with a chamber of ash and stone the mean material value is already down at 0.2, and
 	# there is no room left underneath it for a full margin. Measured over 400 seeds, the
 	# first version of this promised 0.34 and delivered 0.15 on those chambers. So the
@@ -352,7 +352,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_air_val = rng.randf_range(clampf(room_lit, 0.55, 0.97), 0.99)
 	else:
 		# A saturated background carries more apparent weight than its value alone, so the
-		# deeper the colour the further down it sits - taken off the CEILING of the range
+		# deeper the color the further down it sits - taken off the CEILING of the range
 		# rather than off the result, which is what keeps the margin a guarantee.
 		_air_val = rng.randf_range(0.02, maxf(0.03, minf(room_dark, 0.55) - 0.10 * _air_sat))
 	if rng.randf() < 0.5:
@@ -434,7 +434,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 			_drain_x1 = -1
 	elif beat_up and _hatch_arm >= _hatch_gap and not _hatches.is_empty():
 		# The WHICH is an index step, never an rng draw: drawing on an audio-conditioned
-		# event would desynchronise an export from its preview for the rest of the song.
+		# event would desynchronize an export from its preview for the rest of the song.
 		var hh: Dictionary = _hatches[_hatch_i % _hatches.size()]
 		_hatch_i += 1
 		_hatch_arm = 0.0
@@ -476,8 +476,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# and the side walls run off the frame, which is what makes it read as an interior.
 	_org = Vector2(-float(_w) * _cell * 0.5, size.y * 0.5 - _cell - float(_h) * _cell)
 	# Blended on the wheel, not along the shortest arc (GhostScene.blend_hue). The arc form flips
-	# sign at the antipode, so a tonal centre drifting opposite this chamber's base hue swung every
-	# material's colour by a quarter turn between two consecutive frames - a second, slower colour
+	# sign at the antipode, so a tonal center drifting opposite this chamber's base hue swung every
+	# material's color by a quarter turn between two consecutive frames - a second, slower color
 	# instability in the same scene as the grain flicker, and one the sim fix does not touch.
 	var hue_rot := blend_hue(_hue_base, _ch.x, 0.25 * _ch.y)
 

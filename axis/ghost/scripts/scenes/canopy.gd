@@ -25,11 +25,11 @@ extends Scene3D
 ##
 ##   DENSITY. Two to six hundred trees.
 ##
-##   DISTRIBUTION. Stands, built as stands: clump centres rejection-sampled against a
+##   DISTRIBUTION. Stands, built as stands: clump centers rejection-sampled against a
 ##   density field, trees scattered around them with a gaussian falloff, and a minority of
 ##   stragglers on the open ground between. A minimum-distance test cannot do this -
-##   forbidding close neighbours is its whole job - and measures as a lattice
-##   (nearest-neighbour spread 0.20, where a random scatter is 0.52 and stands are above
+##   forbidding close neighbors is its whole job - and measures as a lattice
+##   (nearest-neighbor spread 0.20, where a random scatter is 0.52 and stands are above
 ##   0.6). This reads 0.9 to 1.3.
 ##
 ##   WHERE. [method _density_at]: a tree line the wood thins out under, wetness that gathers
@@ -39,13 +39,13 @@ extends Scene3D
 ##
 ##   FOLIAGE. [constant FOLIAGE] - broadleaf, needle, frond, blossom, scrub - deciding
 ##   cluster size (as a fraction of the crown, so it scales with the tree), rim shape, and
-##   the band the mood may move its colour inside. A wood carries TWO STANDS, a canopy and
+##   the band the mood may move its color inside. A wood carries TWO STANDS, a canopy and
 ##   an understory, each with its own architecture, hue and leaf form, and a share of
 ##   clusters in a second hue taken along the arc toward the scheme's base. Crowns are
 ##   shaded by which side of the crown a cluster sits on, which makes a cluster cloud read
 ##   as a lit mass.
 ##
-## WIND IS A TRAVELLING FRONT, not a global multiplier. A gust has a real position, crossing
+## WIND IS A TRAVELING FRONT, not a global multiplier. A gust has a real position, crossing
 ## speed and gaussian width, so it sweeps the hillside as a visible wave and the far trees
 ## answer LATE. That delay falls out of the geometry rather than being scheduled, and it is
 ## the single detail that stops a field of trees reading as one object jiggling. The two
@@ -81,7 +81,7 @@ extends Scene3D
 ## SEASONS - the top-level choice, made before anything else, adapted from rooted_growth's
 ## table for a canopy rather than a root system.
 ##
-## The point of the table is that colour, density and form cannot disagree about what time of
+## The point of the table is that color, density and form cannot disagree about what time of
 ## year it is, because they are all read off one entry. An autumn wood is not a summer wood
 ## with an orange filter: it is thinner in the leaf, harder-turning from base to tip, and
 ## actively shedding, and those belong together.
@@ -134,7 +134,7 @@ const TERRAINS := {
 	"islands": ["verdant", "temperate"],
 }
 
-## FOLIAGE ARCHETYPES - what the leaf mass IS, which is a different question from what colour
+## FOLIAGE ARCHETYPES - what the leaf mass IS, which is a different question from what color
 ## it is and was previously not asked at all: every tree in every wood carried the same round
 ## cluster at the same size, and the size was small enough that a crown read as a handful of
 ## specks on a stick. Reported as trees that "look kind of weird... the way they grow is weird".
@@ -143,7 +143,7 @@ const TERRAINS := {
 ##          Branch3D lays through the outer orders. The two numbers are one decision: a few big
 ##          clusters overlap into a smooth mass (a cloud), and many small ones read as grain (a
 ##          canopy). Both extremes have been rendered and looked at - specks on a stick at one
-##          end, plates of coloured card at the other.
+##          end, plates of colored card at the other.
 ## `sides`  rim points on the billboard fan, and `ragged` how far the rim wanders: a needle
 ##          cluster is a spiky little tuft, a broadleaf mass is a round blob, a frond is torn.
 ## `hard`   how much alpha the cluster's RIM keeps (see Branch3D.billboard_fan). This is the
@@ -155,7 +155,7 @@ const TERRAINS := {
 ##          mood - that is how a `bone` or `ash` scheme produced white-cream leaves. Leaves are
 ##          saturated things; the mood chooses where in the plausible band, not whether.
 ## `turn`   scales the season's base-to-tip hue walk.
-## `acc`    the share of clusters that take a SECOND hue (the scheme's opposed colour), which is
+## `acc`    the share of clusters that take a SECOND hue (the scheme's opposed color), which is
 ##          what gives a wood flowers, new growth, or a turning crown that is not uniform.
 ## `stride` thins the cluster count (a conifer has many small tufts, a palm a few big fronds).
 const FOLIAGE := {
@@ -186,7 +186,7 @@ const LAWS := ["even", "ridge", "valley", "glade"]
 
 var _terrain: Terrain
 var _models: Array = []              # the grown tree models (immutable after build)
-var _stands: Array = []              # one entry per stand: foliage archetype + its colour
+var _stands: Array = []              # one entry per stand: foliage archetype + its color
 # The distribution field (see _density_at).
 var _elev_bias := 0.0                # <0 the wood prefers valleys, >0 it climbs the ridges
 var _tree_line := 0.8                # normalized height where the wood gives up
@@ -252,7 +252,7 @@ var _embed := 0.03
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
-	# The season first: every colour, density and climate decision below is read through it.
+	# The season first: every color, density and climate decision below is read through it.
 	_season = String(SEASONS.keys()[rng.randi() % SEASONS.size()])
 	var sea: Dictionary = SEASONS[_season]
 	_sch = Scheme.among(sea["moods"], rng)
@@ -317,7 +317,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# yawed copy leans a little off-sun; at 8-35 degrees of elevation that is invisible, and
 	# the alternative is one model per tree, which is the cost this whole design exists to avoid.
 	# TWO STANDS, not one species. A real wood is a canopy and an understory - and even where it
-	# is one species, it is not one COLOUR. The dominant stand takes most of the trees; the
+	# is one species, it is not one COLOR. The dominant stand takes most of the trees; the
 	# second is shorter, differently leaved and differently tinted, so the wood has depth and
 	# variety without a second L-system per tree.
 	_species = Branch3D.sample_species(rng)
@@ -362,7 +362,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"acc": rng.randf_range(float(fo["acc"][0]), float(fo["acc"][1])),
 			# The accent clusters' hue shift, taken along the arc from the foliage hue toward the
 			# scheme's OWN base rather than as a free offset: at +-0.3 of a turn a green wood grew
-			# cyan blossom, which is the sort of colour nothing in a landscape has.
+			# cyan blossom, which is the sort of color nothing in a landscape has.
 			"acc_dh": (fposmod(_sch.hue - _sch.accent + 0.5, 1.0) - 0.5)
 				* rng.randf_range(0.45, 1.0),
 			"stride": int(fo["stride"]),
@@ -398,7 +398,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				# DAPPLE. Every cluster taking the same value is the other half of the cloud
 				# look: a smooth mass. Real foliage is a hundred separate things catching the
 				# light separately, so each cluster is a little brighter or darker than its
-				# neighbour for good.
+				# neighbor for good.
 				lf["dap"] = rng.randf_range(0.74, 1.26)
 			model["stand"] = si
 			_models.append(model)
@@ -440,16 +440,16 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var slope_min: float = slopes[clampi(int(reject * 256.0), 0, 255)]
 	# THE WOOD GROWS IN STANDS, and that has to be built rather than hoped for. A minimum-
 	# distance (Poisson-disc) test, however its radius is modulated, CANNOT produce stands: its
-	# whole job is to forbid close neighbours, so what comes out is evenly spread by
-	# construction. Measured on the nearest-neighbour coefficient of variation, where a random
+	# whole job is to forbid close neighbors, so what comes out is evenly spread by
+	# construction. Measured on the nearest-neighbor coefficient of variation, where a random
 	# scatter reads 0.52 and real stands read above 0.6: one radius everywhere gave 0.20, and
 	# scaling the radius by the density field only reached 0.34. That is the arithmetic behind
 	# "placement is far too sparse... proper tree coverage will be dense in some places, sparse
 	# in others".
 	#
-	# So: CLUMP CENTRES first, rejection-sampled against the density field (so a stand sits
+	# So: CLUMP CENTERS first, rejection-sampled against the density field (so a stand sits
 	# where a stand would - in the wet valley, inside a grove, below the tree line), then trees
-	# scattered around each centre with a gaussian falloff, each still tested against the land
+	# scattered around each center with a gaussian falloff, each still tested against the land
 	# and against the field. A minority are STRAGGLERS, placed the old way, which is what keeps
 	# the gaps between stands from reading as walls. The only distance test left is a trunk
 	# guard - trees may crowd, they may not intersect.
@@ -457,8 +457,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# The trunk guard, and it is DELIBERATELY SMALL. It is the only distance test left, and its
 	# job is to stop two trees occupying one trunk - not to space the wood. Set anywhere near the
 	# nominal spacing it saturates every stand instead: a stand packed to its limit has every
-	# tree exactly one guard from its neighbour, which measures as a lattice however far apart
-	# the stands are (0.39-0.52 on the nearest-neighbour spread, against 0.55 for a wood).
+	# tree exactly one guard from its neighbor, which measures as a lattice however far apart
+	# the stands are (0.39-0.52 on the nearest-neighbor spread, against 0.55 for a wood).
 	var guard := spacing * rng.randf_range(0.07, 0.16)
 	var hmax := 0.001
 	for hv in _terrain.hgrid:
@@ -471,16 +471,16 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var clump_n := rng.randi_range(5, 14)
 	# THE STANDS MUST NOT TILE THE HILL. Sampling a count and a radius independently let the two
 	# multiply into full coverage - eighteen stands of a quarter-hill radius is one continuous
-	# wood, and its nearest-neighbour spread measured 0.21, back at a lattice. So the radius is
+	# wood, and its nearest-neighbor spread measured 0.21, back at a lattice. So the radius is
 	# SOLVED from a target coverage: whatever the count, the stands together claim a third or so
 	# of the usable ground, which is what guarantees the gaps between them.
 	var cover := rng.randf_range(0.09, 0.26)
 	var usable := (2.0 * margin) * (2.0 * margin)
 	var clump_r: float = sqrt(cover * usable / (PI * float(clump_n)))
 	var stragglers := rng.randf_range(0.06, 0.18)
-	var centres: Array = []
+	var centers: Array = []
 	var ctries := 0
-	while centres.size() < clump_n and ctries < clump_n * 60:
+	while centers.size() < clump_n and ctries < clump_n * 60:
 		ctries += 1
 		var cxw := rng.randf_range(-margin, margin)
 		var czw := rng.randf_range(-margin, margin)
@@ -491,41 +491,41 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		if cn.y < slope_min:
 			continue
 		var cd := _density_at(cxw, czw, clampf(chh / hmax, 0.0, 1.0), cn.y)
-		# A stand centre is held to a HIGHER bar than a single tree: this is where the wood is
+		# A stand center is held to a HIGHER bar than a single tree: this is where the wood is
 		# thickest, so it belongs on ground that would carry a wood.
 		if rng.randf() > cd * cd:
 			continue
-		centres.append(Vector2(cxw, czw))
+		centers.append(Vector2(cxw, czw))
 	# PER-STAND QUOTAS, and unequal ones. A stand filled to its packing limit is locally a
-	# lattice - every tree exactly the trunk guard from its neighbour - so a wood of saturated
+	# lattice - every tree exactly the trunk guard from its neighbor - so a wood of saturated
 	# stands measures as evenly spread however far apart the stands are. Weighting the quotas
 	# heavily (a squared uniform) makes some stands thick and others a handful of trees, which
-	# is what a real wood looks like and what the nearest-neighbour spread actually reads.
+	# is what a real wood looks like and what the nearest-neighbor spread actually reads.
 	var quotas := PackedFloat32Array()
 	var wsum := 0.0
-	for ci in centres.size():
+	for ci in centers.size():
 		var w := rng.randf()
 		w = w * w * rng.randf_range(0.5, 1.5) + 0.05
 		quotas.append(w)
 		wsum += w
 	var placed_target := int(round(float(want) * (1.0 - stragglers)))
 	var tries := 0
-	for ci in centres.size():
-		var c: Vector2 = centres[ci]
+	for ci in centers.size():
+		var c: Vector2 = centers[ci]
 		var quota := int(round(placed_target * quotas[ci] / maxf(0.0001, wsum)))
 		# Each stand crowds to its own degree - understory thickets sit tighter than a stand of
 		# mature crowns.
 		var guard_i := guard * rng.randf_range(0.7, 1.7)
 		# ...and its own SPREAD. One radius for every stand is the same saturation trap one
 		# level up: a tight copse and a broad open stand are different things, and the mix of
-		# the two is most of what the nearest-neighbour spread is measuring.
+		# the two is most of what the nearest-neighbor spread is measuring.
 		var clump_ri := clump_r * rng.randf_range(0.45, 1.85)
 		var got := 0
 		var t2 := 0
 		while got < quota and t2 < quota * 14 + 40:
 			t2 += 1
 			tries += 1
-			# Gaussian about the centre (three uniforms summed is close enough and cheap), so a
+			# Gaussian about the center (three uniforms summed is close enough and cheap), so a
 			# stand has a dense heart and a ragged edge rather than a hard rim.
 			var off := Vector2(rng.randf() + rng.randf() + rng.randf() - 1.5,
 				rng.randf() + rng.randf() + rng.randf() - 1.5) * clump_ri
@@ -549,8 +549,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 
 	# WHERE THE SHOT LOOKS. The wood is in stands now, so the middle of the map is as likely to be
 	# bare ground as trees - and a canopy scene framed on an empty hillside is a bug however good
-	# the wood is elsewhere. The orbit centres on the densest part of the wood: every tree votes,
-	# weighted by how many neighbours it has, so the target lands inside a stand rather than at
+	# the wood is elsewhere. The orbit centers on the densest part of the wood: every tree votes,
+	# weighted by how many neighbors it has, so the target lands inside a stand rather than at
 	# the mean of two stands with a gap between them.
 	if not _trees.is_empty():
 		var best := Vector3.ZERO
@@ -579,11 +579,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_span = _terrain.half * 1.8
 	_front = -_span
 
-	# Colour. Bark takes the mood's base darkened and drained; foliage takes the accent, and
+	# Color. Bark takes the mood's base darkened and drained; foliage takes the accent, and
 	# the season scales both rather than replacing them.
 	# BARK IS BROWN, tinted toward the scheme rather than taken from it. Straight off the mood
 	# it produced teal trunks under a `teal` scheme and green ones under `verdant` - visible in
-	# the render as sticks the colour of the grass.
+	# the render as sticks the color of the grass.
 	_bark_hue = _blend_hue(rng.randf_range(0.045, 0.10), _sch.hue,
 		rng.randf_range(0.12, 0.30))
 	# BARK IS WOOD. Drained off the mood it came out near-white on any pale scheme (bone, ash,
@@ -801,7 +801,7 @@ func _density_at(wx: float, wz: float, hn: float, ny: float) -> float:
 
 
 # Tint the season's airborne layer to the wood it falls from: blossom and dry leaves take the
-# foliage hue, snow and fog the pale sky colour the distance already fades to.
+# foliage hue, snow and fog the pale sky color the distance already fades to.
 func _air_cfg(kind: String, n: int) -> Dictionary:
 	match kind:
 		"petals":
@@ -920,7 +920,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.bark_sat = _bark_sat
 	job.bark_val = _bark_val
 	# Foliage is pulled toward the music's own tonality - the hue of its key - by a quarter of
-	# how tonal the moment actually is. Sound drives colour.
+	# how tonal the moment actually is. Sound drives color.
 	job.leaf_hue = _blend_hue(_leaf_hue, _chroma.x, 0.25 * _chroma.y)
 	job.leaf_sat = _leaf_sat
 	job.leaf_val = _leaf_val
@@ -931,9 +931,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# AERIAL PERSPECTIVE IS A PROPERTY OF THE LANDSCAPE, not of where the camera happens to
 	# stand. Tied to `_dist` (which it was), pulling the camera into the wood pulled the fog in
 	# with it: at a three-unit orbit the haze began 1.4 units away and was total by 6, so most of
-	# the wood was better than half faded to the pale sky colour and the foliage measured at
-	# saturation 0.12 - grey popcorn on a hillside, which is what it looked like. Anchored to the
-	# terrain's own extent the far rim hazes and the wood in front of it keeps its colour.
+	# the wood was better than half faded to the pale sky color and the foliage measured at
+	# saturation 0.12 - gray popcorn on a hillside, which is what it looked like. Anchored to the
+	# terrain's own extent the far rim hazes and the wood in front of it keeps its color.
 	job.fog_near = _dist + _terrain.half * 0.45
 	job.fog_far = _dist + _terrain.half * 2.3
 	job.lod_near = _lod_near
@@ -1038,7 +1038,7 @@ class CanopyJob:
 	var leaf_turn := 0.1
 	var leaf_density := 1.0
 	## One entry per stand (see the scene's FOLIAGE table): the foliage look each tree draws
-	## with. Hue/sat/val here are DELTAS and multipliers on the job's global leaf colour, so the
+	## with. Hue/sat/val here are DELTAS and multipliers on the job's global leaf color, so the
 	## live chroma modulation still reaches every stand.
 	var stands: Array = []
 	var size := Vector2(1920, 1080)  # the frame, for the frustum cull in run()
@@ -1203,7 +1203,7 @@ class CanopyJob:
 		var th: float = maxf(0.001, float(tr["h"]))
 		var inv_h := 1.0 / th
 		# THE GUST, arriving here and not everywhere. `along` is this tree's coordinate on the
-		# wind axis; the front is a gaussian window travelling along it, so a tree on the far
+		# wind axis; the front is a gaussian window traveling along it, so a tree on the far
 		# side answers late by exactly the crossing time - physics, not a schedule.
 		var along := wind.x * base.x + wind.z * base.z
 		var ph := (along - front) / maxf(0.05, gust_width)
@@ -1305,7 +1305,7 @@ class CanopyJob:
 			var h := fposmod(leaf_hue + st_dh + hue_off + float(lf["hue"])
 				+ leaf_turn * st_turn * float(lf["along"])
 				+ st_acc * float(lf.get("acc", 0.0)), 1.0)
-			# CROWN VOLUME. Every cluster took the same colour, so a crown was a flat green
+			# CROWN VOLUME. Every cluster took the same color, so a crown was a flat green
 			# splotch however many billboards went into it. Shading each one by which SIDE of
 			# the crown it sits on - toward the key light or away from it - is what turns the
 			# cluster cloud into a lit mass, and it costs one dot product per billboard. The
@@ -1342,7 +1342,7 @@ class CanopyJob:
 		var puffs: Array = model["puffs"]
 		# ROUNDER AND WIDER-FACETED THAN A LEAF CLUSTER, because it is standing in for a whole
 		# crown: a five-point fan with a leaf's raggedness reads as a cream STAR floating over
-		# the ridge, which is what the far half of every wood looked like. Same colour as the
+		# the ridge, which is what the far half of every wood looked like. Same color as the
 		# near trees' foliage now, too - it used to take the global leaf tint while the near
 		# trees took the stand's.
 		var cen: Vector3 = model["crown"]

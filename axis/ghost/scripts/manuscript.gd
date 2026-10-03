@@ -78,7 +78,7 @@ static func strip_frontmatter(body: String) -> String:
 	return body          # unterminated: not frontmatter, the whole thing is text
 
 
-## [param text] with every HTML comment removed - for a reader that honours none of the marks
+## [param text] with every HTML comment removed - for a reader that honors none of the marks
 ## (the Synthesis panel). Without it a cue or a hesitation is READ: measured, "Hello there.
 ## <!-- speaker: Emily --> And then." came out of [method Phonemes.parse] as "hello there
 ## speaker emily and then".

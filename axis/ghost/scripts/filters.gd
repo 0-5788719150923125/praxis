@@ -25,7 +25,7 @@ class_name Filters
 ## cannot be read off the shader: dots are laid first (they RE-SAMPLE the picture, so anything
 ## after them grades the dots rather than the photograph), then the optics that a lens would
 ## add, then the grade, then the emulsion, then the frame. Monochrome before Noir is what
-## makes the pair read as black-and-white noir rather than as a tinted colour picture - Noir's
+## makes the pair read as black-and-white noir rather than as a tinted color picture - Noir's
 ## split-tone is applied to whatever it is handed.
 ##
 ## ADDING A FILTER is an entry in each of the four tables below plus a `u_<key>` uniform and a
@@ -69,9 +69,9 @@ const LABELS := {
 ## continuation silently truncates the blurb at the first line.
 const BLURBS := {
 	"slip": "Tearing: now and then a band of the picture jumps sideways for one frame and snaps back, the way a frame that does not seat squarely in a projector's gate is printed offset. The dial is how often and how far.",
-	"pointillism": "The picture re-laid as overlapping dots of paint on a jittered lattice, each dot taking its colour from where it sits and its size from how bright that is. The dial is the size of the dots, so a little is a canvas texture and a lot is a painting you have to stand back from.",
+	"pointillism": "The picture re-laid as overlapping dots of paint on a jittered lattice, each dot taking its color from where it sits and its size from how bright that is. The dial is the size of the dots, so a little is a canvas texture and a lot is a painting you have to stand back from.",
 	"bloom": "Light bleeding out of the bright parts, the way it does through a lens. Only what is already brighter than the picture's own highlights blooms, so it lifts lamps, sparks and speculars without fogging the whole frame.",
-	"monochrome": "Colour taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same grey.",
+	"monochrome": "Color taken out, weighted the way the eye weighs it rather than by averaging the channels - so a red and a green of the same brightness do not come out as the same gray.",
 	"noir": "The hard grade: contrast pushed until the blacks close up and the highlights burn, with cold shadows against warm highlights. It grades whatever it is handed, so put Monochrome above it for black-and-white and leave it off for something closer to Technicolor.",
 	"static": "Fine noise over the picture, strongest in the midtones and nearly absent in the blacks and the blown highlights, where the emulsion's own noise lives, and it moves at a film's frame rate.",
 	"dust": "Dirt on the print: specks of dust (mostly dark, some light), the odd curled hair, and now and then a scratch down the frame that holds for a moment and wanders. It changes every film frame, the way dirt on a moving print does.",

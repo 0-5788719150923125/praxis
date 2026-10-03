@@ -4,7 +4,7 @@ extends Node
 ##
 ## It is not one mark. An index contour appears at EVERY occurrence of its elevation, so
 ## lighting a different one relights loops all over the map at once. The music's tonal
-## centre chose it, and chose it by mapping `chroma_hue`'s angle straight onto the ladder -
+## center chose it, and chose it by mapping `chroma_hue`'s angle straight onto the ladder -
 ## which is circular against a ladder that is not, so a small harmonic move across the wrap
 ## (0.99 to 0.01) threw the highlight from the top of the country to the bottom, instantly.
 ## Reported as pink loops appearing and vanishing every few seconds, and reading as the
@@ -14,7 +14,7 @@ extends Node
 ## why a slow travel rate alone was not enough (measured: it changed just as often, because
 ## the eased position hovered at the half-way mark and the rounding chattered):
 ##
-##   RESTLESS MUSIC MUST NOT MOVE IT. A tonal centre sweeping continuously through the wrap
+##   RESTLESS MUSIC MUST NOT MOVE IT. A tonal center sweeping continuously through the wrap
 ##   has no settled answer, so the sheet should hold its elevation rather than straddle two.
 ##
 ##   SETTLED MUSIC MUST MOVE IT. A sustained change has to arrive, or the highlight is
@@ -50,12 +50,12 @@ func _ready() -> void:
 	print("contour_pick_check: restless 20s -> %d change(s), largest %d level(s)"
 		% [restless, jump])
 	_ok(restless <= 2,
-		"a restless tonal centre must not keep relighting the sheet - %d changes in 20s"
+		"a restless tonal center must not keep relighting the sheet - %d changes in 20s"
 		% restless)
 	_ok(jump <= sc._index_every,
 		"the highlight must only ever step to an ADJACENT index line, jumped %d" % jump)
 
-	# --- settled: a sustained tonal centre at the far end ---
+	# --- settled: a sustained tonal center at the far end ---
 	var settled := 0
 	for i in 3000:
 		sc._ch = Vector2(0.97, 0.9)

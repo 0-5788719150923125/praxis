@@ -107,7 +107,7 @@ func _ready() -> void:
 	_style = TextEdit.new()
 	_style.custom_minimum_size = Vector2(0, 72)
 	_style.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_style.placeholder_text = "e.g. muted watercolour and ink, like a mid-century storybook plate"
+	_style.placeholder_text = "e.g. muted watercolor and ink, like a mid-century storybook plate"
 	_style.tooltip_text = ("How every picture of the chosen kind should look - medium, palette, "
 		+ "linework, mood. Added to each one's own description. Changing it does not "
 		+ "throw away pictures already made: they are marked stale and kept until you regenerate them.")

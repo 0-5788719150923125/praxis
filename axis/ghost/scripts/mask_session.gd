@@ -9,7 +9,7 @@ class_name MaskSession
 ## - the same shape as the harmonic-signature / seed-bias vectors elsewhere in this project,
 ## and inspectable the same way instead of living as opaque nested JSON.
 ##
-## EVERY MARKER IS ONE LAYER, carrying a single channel - one target colour, one effect, one
+## EVERY MARKER IS ONE LAYER, carrying a single channel - one target color, one effect, one
 ## strength, one pattern placement - plus its own transition envelope. Layers STACK
 ## chronologically: place a marker that devours the blues, and a later marker adding fire to
 ## the reds layers on top WITHOUT disturbing the blue layer.
@@ -31,16 +31,16 @@ class_name MaskSession
 ##      is on screen while it happens, so composition history never crosses a raw boundary -
 ##      a sliding window whose edges are explicit, user-authored timeline events rather than
 ##      a silent time constant.
-##   2. "restore" - fades out earlier layers matching ITS colour. It draws nothing of its
-##      own: it targets a colour exactly like a keying marker does (own picker, own
-##      threshold for how wide around that colour it reaches, own envelope, intensity = how
-##      completely it restores) and fades out every EARLIER layer on that colour over its
+##   2. "restore" - fades out earlier layers matching ITS color. It draws nothing of its
+##      own: it targets a color exactly like a keying marker does (own picker, own
+##      threshold for how wide around that color it reaches, own envelope, intensity = how
+##      completely it restores) and fades out every EARLIER layer on that color over its
 ##      window.
-##   3. "clear" - restore for ALL colours at once.
+##   3. "clear" - restore for ALL colors at once.
 ##
-## Layering is otherwise continuous and ADDITIVE: a later marker keying a second colour,
+## Layering is otherwise continuous and ADDITIVE: a later marker keying a second color,
 ## however near or far in hue, stacks WITH the earlier work rather than superseding it. Mask
-## a colour out at minute one, restore it at minute five, mask it differently at minute six
+## a color out at minute one, restore it at minute five, mask it differently at minute six
 ## - a chain of explicit operations.
 ##
 ## THE TRANSITION CONTRACT. Every visual quantity leaving at_time() must be
@@ -51,7 +51,7 @@ class_name MaskSession
 ##   2. PRESENCE    - which screen layers are up (view_mode): the discrete value is kept for
 ##      storage and labeling, but the visuals consume the derived AMOUNT_FIELDS, which lerp.
 ##      A mode change is a presence fade.
-##   3. LAYER       - everything a marker's own channel carries (colour, effect, strength,
+##   3. LAYER       - everything a marker's own channel carries (color, effect, strength,
 ##      placement, coverage, contrast, resonance), baked into that marker's layer, whose
 ##      ENVELOPE does the transitioning. An identity change is two layers with complementary
 ##      envelopes - a dissolve, never a swap.
@@ -64,7 +64,7 @@ const VECTOR_FIELDS := [
 	"time",             # seconds into the clip
 	"kind",             # 0=ramp (eases in before the anchor) / 1=damp (accumulates after)
 	"hue_a",            # THE layer's target hue, 0..1
-	"hue_b",            # umbra's ACCENT hue - the colour of the ghost's eyes
+	"hue_b",            # umbra's ACCENT hue - the color of the ghost's eyes
 	                    #   (was "legacy, unused"; 0.0 = red, the default)
 	"threshold",        # key distance threshold, 0..1 (global)
 	"feather",          # edge softness, 0..1 (global)
@@ -88,7 +88,7 @@ const VECTOR_FIELDS := [
 	"fx_lag",           # echo: how far back the lagged frame reaches, seconds
 	"fx_smooth",        # echo: 0 = discrete stutter, 1 = wide temporal blend (EMA-like)
 	"fx_stick",         # fur: 0 = free coat everywhere (default look), 1 = strands cling
-	                    #   to natural anchors (key-colour concentration, the tracked
+	                    #   to natural anchors (key-color concentration, the tracked
 	                    #   landmark/motion centroid, luminance) - see the shader's fur branch
 	"fx_tint",          # Morph: rotates the EFFECT'S OWN palette hue (0 = natural colors).
 	                    #   Decoupled from hue_a on purpose: the color picker says what to
@@ -101,11 +101,11 @@ const VECTOR_FIELDS := [
 	# effect's private knob: it multiplies into EVERY layer's on-screen weight
 	# (see the shader's apply_layer), so any effect can be confined without each
 	# one growing its own version. Default is the whole frame, which is exactly
-	# the behaviour every session had before it existed.
+	# the behavior every session had before it existed.
 	#
-	# What it is FOR: a colour key is a colour key - it cannot tell the yellow
+	# What it is FOR: a color key is a color key - it cannot tell the yellow
 	# wall behind a subject from a gold coin hanging at their neck, because they
-	# ARE the same colour. No amount of hue selectivity separates them. Space
+	# ARE the same color. No amount of hue selectivity separates them. Space
 	# does: the wall is up there, the coin is down here.
 	"reg_x0",           # region left edge, 0..1 UV
 	"reg_y0",           # region top edge
@@ -116,9 +116,9 @@ const VECTOR_FIELDS := [
 	                    #   rectangular cut reads as a rectangular cut.
 	# THE KEY SWATCH'S other two components. The key itself is a HUE - that is what
 	# the shader matches on, and hue_a above is the whole of it - but the picker is
-	# a colour picker, and it used to store only `.h` and rebuild the swatch as
-	# from_hsv(hue_a, 0.85, 0.9). So a colour picked off the footage came back a
-	# different colour: pick a pale yellow off a wall, reopen the session, and the
+	# a color picker, and it used to store only `.h` and rebuild the swatch as
+	# from_hsv(hue_a, 0.85, 0.9). So a color picked off the footage came back a
+	# different color: pick a pale yellow off a wall, reopen the session, and the
 	# swatch is a saturated yellow. Reported as "the key color is not persisted...
 	# the UI never reads that color from state, so you never actually know what
 	# color is being keyed to". These carry the rest of the pick so the swatch is
@@ -141,7 +141,7 @@ const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## the layer dictionary, and a `layer.get("threshold", 0.24)` then returns the
 ## default forever, silently. That is exactly how umbra's Reach/Lead/Gaze
 ## shipped inert. hue_b was dead weight ("legacy, unused") and is now umbra's
-## accent hue - the colour of the ghost's eyes.
+## accent hue - the color of the ghost's eyes.
 ## intensity_b was the other half of the old two-channels-per-marker model and has
 ## been dead weight since; it is the clown's Drip curve now, and `swap` - dead the
 ## same way and for the same length of time - is its Smudge, both following hue_b,
@@ -176,28 +176,28 @@ const MAX_LAYERS := 6
 ##   freeze    near-static crystalline veins.
 ##   smoke     soft billowing gauze.
 ##   restore   SUBTRACTIVE: draws nothing, fades out every earlier layer whose
-##             target hue lies within ITS OWN `threshold` of its picked colour,
+##             target hue lies within ITS OWN `threshold` of its picked color,
 ##             over its own envelope, scaled by intensity. The shader never sees
 ##             it - layers_at resolves it into the other layers' envelopes.
 ##   whisp     content-aware volumetric: its field is advected along the
 ##             picture's luminance edges, and placement auto-locks to the target
-##             colour's mass centroid, EMA-tracked by the editor.
-##   crystal   fractal faceted glass drawn IN PLACE of the target colour -
+##             color's mass centroid, EMA-tracked by the editor.
+##   crystal   fractal faceted glass drawn IN PLACE of the target color -
 ##             voronoi facets refracting the footage, cold edge light.
 ##             Projection-based like erase, so no gates and no rings.
 ##   echo      temporal lag: the target region shows a muted, delayed echo of the
 ##             footage, optionally cloned with accumulating offsets into
 ##             staircase "time-shapes".
-##   clear     restore generalized to EVERY colour - the explicit "delete the old
+##   clear     restore generalized to EVERY color - the explicit "delete the old
 ##             effects" primitive. Like restore, the shader never sees it.
 ##   snow      KEYLESS. Foreground vs background is decided per pixel from motion
-##             (the echo ring's two newest captures) and colour intensity, so
+##             (the echo ring's two newest captures) and color intensity, so
 ##             flakes fall over the background and thin over the subject with no
-##             colour pick. Contrast is relabeled Sensitivity; Pan X/Y become
+##             color pick. Contrast is relabeled Sensitivity; Pan X/Y become
 ##             Wind X/Y (a fall DIRECTION, decoupled from Velocity's speed);
 ##             Gust (fx_smooth) adds irregular swings to both.
 ##   fur       hair ANCHORED on the keyed surface. Strand roots are the key
-##             colour's own pixels, read live by crystal's aligned-fraction
+##             color's own pixels, read live by crystal's aligned-fraction
 ##             projection (fur_root_mass() in mask_split.gdshader), so the coat
 ##             tracks the moving face with no tap-ring estimate. A pixel carries
 ##             hair only if marching upstream against the local current reaches
@@ -205,7 +205,7 @@ const MAX_LAYERS := 6
 ##             face. One shared slowly-breathing current field every strand rides
 ##             together gives the swarm dynamic. Its emissive is tinted BY the
 ##             key hue - the one deliberate exception to "never the key hue",
-##             because fur being the colour it grew from is the point.
+##             because fur being the color it grew from is the point.
 ##             Undulation (fx_smooth) sends waves down each strand; Coil (fx_lag)
 ##             spins the local flow frame into eddies.
 ##   oracle    echo INVERTED. Echo lags the region behind a live world; oracle
@@ -225,7 +225,7 @@ const MAX_LAYERS := 6
 ##             frame-to-frame motion so the swarm gathers in the model's wake.
 ##             Fixed viridian-to-jade palette.
 ##   chimera   the imported track's video grafted INTO the main frame. A soft
-##             window rides u_anchor (keyed by this marker's colour, falling back
+##             window rides u_anchor (keyed by this marker's color, falling back
 ##             to the MOTION centroid when nothing keys). Per pixel, whichever
 ##             side carries more feature energy owns the pixel, so the heads
 ##             interleave structurally instead of double-exposing. Needs an
@@ -287,10 +287,10 @@ const EFFECT_AREALIGHT := 14
 const EFFECT_META := 15
 const EFFECT_CLOWN := 16
 const EFFECT_UMBRA := 17
-## REPAINT: replace one colour with another. Projection-based like erase and
+## REPAINT: replace one color with another. Projection-based like erase and
 ## crystal - no keying gates and no pattern - but where erase SUBTRACTS the keyed
 ## chroma, this substitutes a chosen one, because "make the yellow wall black" is
-## not the same request as "take the yellow out" and the second leaves grey.
+## not the same request as "take the yellow out" and the second leaves gray.
 ## Its selection is an angular CONE around the key rather than the raw projection
 ## the other two use: a replacement is all-or-nothing, and skin sitting 28 degrees
 ## off a yellow wall must not take a share of it (see tests/repaint_check.gd).
@@ -331,7 +331,7 @@ const EFFECT_CONTROLS := {
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
 	16: ["pattern", "clown"],     # clown (pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow)
 	17: ["pattern", "umbra"],     # umbra (keyless - the ghost IS her silhouette; coverage=Loom, contrast=Roil, + its own Stand/Lead/Lean/Narrow/Gaze/Wisp/Cling/Depth)
-	18: ["repaint"],              # repaint (projection-based like erase/crystal: no keying gates, no pattern - just the paint colour + its reach and edge smoothing)
+	18: ["repaint"],              # repaint (projection-based like erase/crystal: no keying gates, no pattern - just the paint color + its reach and edge smoothing)
 	19: ["pattern", "rain"],      # rain (keyless: coverage=Amount, velocity=fall speed, scale=streak length, pan=wind, contrast=Depth - where near rain gives way to far - plus its own Squall)
 	20: ["audio"],                # audio (draws nothing: lag=Echo time, smooth=Echo mix, density=Ambience, scale=Room, contrast=Resonance, stick=Bass)
 }

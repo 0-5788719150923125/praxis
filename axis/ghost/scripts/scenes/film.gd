@@ -27,7 +27,7 @@ class_name FilmScene
 ## flush every time. What it does instead is watch for DRIFT: a panel that was frozen
 ## while the camera looked elsewhere has a stopped clock while the show's kept running.
 ##
-## NOT IN THE DIRECTOR'S CATALOGUE. This scene is never minted by [Director.mint_scene]:
+## NOT IN THE DIRECTOR'S CATALOG. This scene is never minted by [Director.mint_scene]:
 ## there is nothing to show unless the viewer has imported something, and a scene that is
 ## sometimes not there at all would make the running order depend on the library. The
 ## comic casts it directly. See [ComicMedium._film_at].
@@ -223,8 +223,8 @@ func finished() -> bool:
 ## frame however the camera moves and has no edge of its own to protect. Footage is the
 ## opposite: it HAS edges, and every pixel of overdraw is a pixel cropped off them.
 ##
-## Measured with a fixture painted a different colour on each edge: at a 2.4-aspect panel
-## ALL FOUR coloured edges were gone, and in the app the Director's shot bias slid the crop
+## Measured with a fixture painted a different color on each edge: at a 2.4-aspect panel
+## ALL FOUR colored edges were gone, and in the app the Director's shot bias slid the crop
 ## to one side as well - "videos that are cropped on ALL edges except at the bottom".
 ##
 ## The film IS the panel, so it is drawn in the panel's own coordinates: the viewport rect,

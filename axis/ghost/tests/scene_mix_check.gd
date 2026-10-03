@@ -1,6 +1,6 @@
 extends Node
 
-## scene_mix_check - that the running order is RANDOM-LIKE, not a rotation through the catalogue.
+## scene_mix_check - that the running order is RANDOM-LIKE, not a rotation through the catalog.
 ##
 ## The complaint this gates: "the variety of generated scenes is not truly random... I've seen
 ## most of our newly-added scene types used FIRST, before falling back to older scenes later."
@@ -8,13 +8,13 @@ extends Node
 ## THE STATISTIC. Over K distinct scene kinds, a genuinely random draw repeats one after about
 ## sqrt(pi*K/2) cuts - the birthday number, roughly 9 at K = 52. A rotation that visits every
 ## kind before repeating any repeats first at K + 1. That one number separates the two
-## completely and needs no judgement, so it is what this asserts.
+## completely and needs no judgment, so it is what this asserts.
 ##
 ## Alongside it, the user's own observation, measured directly: the mean position at which the
 ## ten kinds added in dfa51d57 first appear, against the mean for every older kind. Under any
 ## honest scheduler those are the same number; a sweep makes them the same too, so this is a
-## check on FAIRNESS rather than on the sweep - it is what would catch a scheduler that favours
-## the end (or the start) of the catalogue array.
+## check on FAIRNESS rather than on the sweep - it is what would catch a scheduler that favors
+## the end (or the start) of the catalog array.
 ##
 ## The selection under test is Director._pick_index() itself, driven exactly as _next_entry and
 ## _swap drive it. Anything else would be measuring a copy of the code rather than the code.
@@ -122,13 +122,13 @@ func _ready() -> void:
 	# from what it just showed - but not a sweep: three times the birthday number still leaves the
 	# order visibly shuffled, while a sweep sits up at one more than the kind count.
 	if mean_rep > expect * 3.0:
-		_fails.append("first repeat at cut %.1f against a random-draw expectation of %.1f - the catalogue is being rotated through, not sampled"
+		_fails.append("first repeat at cut %.1f against a random-draw expectation of %.1f - the catalog is being rotated through, not sampled"
 			% [mean_rep, expect])
 	if swept > SESSIONS / 10:
 		_fails.append("%d of %d sessions showed EVERY kind before repeating any - that is a rotation by definition"
 			% [swept, SESSIONS])
 	# TWO-SIDED, deliberately: the first-repeat target above could also be met by flattening the
-	# draw until the catalogue chatters, so the anti-repeat guarantee is asserted against it.
+	# draw until the catalog chatters, so the anti-repeat guarantee is asserted against it.
 	if adjacent > 0:
 		_fails.append("%d cuts showed the same scene KIND twice in a row" % adjacent)
 	if near > SESSIONS * CUTS / 50:

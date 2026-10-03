@@ -4,7 +4,7 @@ extends Node
 ##
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/draw_cost_probe.gd 300
 ##
-## (1) WHAT ONE CANVAS DRAW CALL COSTS FROM GDSCRIPT. The catalogue sweep says a scene's frame
+## (1) WHAT ONE CANVAS DRAW CALL COSTS FROM GDSCRIPT. The catalog sweep says a scene's frame
 ## tracks its DRAW-CALL COUNT far better than its geometry (starfield/static: 3029 calls,
 ## 194k prims, 56 ms; rocks: 3 calls, 19k prims, 24 ms). That is a claim about the per-call
 ## GDScript -> RenderingServer round trip, and it is testable directly: draw the SAME triangles

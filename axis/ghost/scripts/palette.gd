@@ -1,10 +1,10 @@
 extends RefCounted
 class_name Palette
 
-## Palette - a colour ramp sampled by a scalar (0..1). The colour half of the texture
+## Palette - a color ramp sampled by a scalar (0..1). The color half of the texture
 ## story: a [Field] gives a scalar (height, mottle, development); a Palette turns it into
-## colour. Themed presets map terrain elevation to believable bands (water -> shore ->
-## green -> rock -> snow), but a Palette colours anything driven by a 0..1 field.
+## color. Themed presets map terrain elevation to believable bands (water -> shore ->
+## green -> rock -> snow), but a Palette colors anything driven by a 0..1 field.
 
 var _stops: Array = []     # [{t: float, c: Color}] sorted by t
 
@@ -48,7 +48,7 @@ static func _ramp(rows: Array) -> Palette:
 	return Palette.from_stops(stops)
 
 
-## Colour at t (0..1), linearly interpolated between the stops.
+## Color at t (0..1), linearly interpolated between the stops.
 func at(t: float) -> Color:
 	t = clampf(t, 0.0, 1.0)
 	if _stops.is_empty():

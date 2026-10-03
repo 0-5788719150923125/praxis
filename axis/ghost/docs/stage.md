@@ -17,13 +17,13 @@ Registry: `Cast.REGISTRY` in [scripts/cast.gd](../scripts/cast.gd) (3 kinds)
 
 ### `eye` - EyeActor
 
-A human eye (`EyeBody`) on a slot. Gaze is driven by a look verb feeding `state.focus` (shared focus = real vergence); when no verb has fed it for a moment it falls back to the body's own centre-biased self-saccades.
+A human eye (`EyeBody`) on a slot. Gaze is driven by a look verb feeding `state.focus` (shared focus = real vergence); when no verb has fed it for a moment it falls back to the body's own center-biased self-saccades.
 
 Source: [scripts/cast.gd:134](../scripts/cast.gd#L134)
 
 ### `prism` - PrismActor
 
-A living wireframe prism (`PrismBody`) on a slot, drawn through the projected-slot bridge (world slot -> screen centre + perspective scale) so it lines up exactly with 3D bodies sharing the lens.
+A living wireframe prism (`PrismBody`) on a slot, drawn through the projected-slot bridge (world slot -> screen center + perspective scale) so it lines up exactly with 3D bodies sharing the lens.
 
 Source: [scripts/cast.gd:495](../scripts/cast.gd#L495)
 

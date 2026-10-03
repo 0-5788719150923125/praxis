@@ -10,10 +10,10 @@ extends GhostScene
 ## and clearing them when it comes round again.
 ##
 ## THREE ABSENCES AT ONCE, which is why it exists. Nothing else here is a PLAN VIEW -
-## every other framing is eye-level horizon, three-quarter isometric or centred abstract.
+## every other framing is eye-level horizon, three-quarter isometric or centered abstract.
 ## Nothing else is HIGH-KEY. And nothing else is a DIAGRAM. It is the same substance as
 ## `terrain` - a [Field] heightfield - rendered as line art on paper, which is a different
-## visual language and not a recolour.
+## visual language and not a recolor.
 ##
 ## THE LAND EVOLVES, EVERYWHERE, AT DIFFERENT RATES. Ground rises and subsides under the
 ## ink and ridges wander - contours crowding into a new hill here while a mile away the
@@ -28,7 +28,7 @@ extends GhostScene
 ## window is SNAPPED TO ITS OWN LATTICE, so consecutive extractions read the same points
 ## and the sheet only has to be translated (see _kick); the hatching's pitch is fixed by
 ## the seed and anchored to the ground rather than the window (see _kick and
-## [method Contour.hatch]); and the tonal centre is EASED, because the ink of the
+## [method Contour.hatch]); and the tonal center is EASED, because the ink of the
 ## highlighted contour is baked into the packet (see _ease_audio).
 ##
 ## THE CONTOUR INTERVAL NEVER CHANGES. An interval is a claim about the land, so it is
@@ -65,12 +65,12 @@ extends GhostScene
 ## like a pen, and also why the window has to be snapped. In an export the forge builds
 ## synchronously - slower to render, identical output.
 ##
-## THE HIGH-KEY GROUND fights three dark assumptions in this project (the clear colour,
+## THE HIGH-KEY GROUND fights three dark assumptions in this project (the clear color,
 ## [Layer]'s bed being a vignette whose brightest pixel is a mid tone, and the veil's alpha
 ## cap), so the paper is painted by [method GhostScene.paint_ground] - a flat full-bleed
 ## quad through plain `draw_colored_polygon`. Not `fill_aa`: that strokes the outline over
 ## the fill, and on a full-frame quad the rim lands on the frame edge as a bright hairline.
-## The margin is then painted back OVER the contours in the same colour, which gives the
+## The margin is then painted back OVER the contours in the same color, which gives the
 ## sheet a real neatline for four quads.
 ##
 ## WHAT THE SEED DECIDES: the two spectral bases the land evolves through - how many waves,
@@ -81,7 +81,7 @@ extends GhostScene
 ## a blueprint (roughly one in four); the ink itself from a [Scheme] at a quarter of its
 ## nominal saturation; the hatch angle and spacing; the sea level and whether there is
 ## water; the graticule divisions and margin; how many survey marks the sheet may carry;
-## the re-extraction cadence; whether a second colour plate prints out of register; the
+## the re-extraction cadence; whether a second color plate prints out of register; the
 ## sweep's period in beats; the section-change threshold and warp duration; and the whole
 ## invented hand the labels are written in.
 ##
@@ -136,19 +136,19 @@ var _fld: Field
 var _sch: Scheme
 var _gs: GlyphSet
 var _f: AudioFeatures = AudioFeatures.new()
-# The tonal centre, EASED - and eased as a VECTOR, because a hue is circular and an average
-# of 0.99 and 0.01 is not 0.5. Everything colour on this sheet reads this rather than
+# The tonal center, EASED - and eased as a VECTOR, because a hue is circular and an average
+# of 0.99 and 0.01 is not 0.5. Everything color on this sheet reads this rather than
 # `chroma_hue()` itself: the ink of the highlighted contour is baked into a packet that is
-# only rebuilt a couple of times a second, so a jittery tonal centre arrives as a step
+# only rebuilt a couple of times a second, so a jittery tonal center arrives as a step
 # rather than as a drift. Slow enough that a re-print moves it by a fraction of a percent,
-# fast enough that a chord change still re-prints the sheet in a new colour.
+# fast enough that a chord change still re-prints the sheet in a new color.
 var _ch := Vector2.ZERO
 var _ch_v := Vector2.ZERO
 var _ch_raw := Vector2.ZERO
 var _ch_seeded := false
-## Seconds for the tonal centre and the flux to close most of the way onto a new value.
-## Set from the measurement in `tests/contour_flow_check.gd`: against a tonal centre
-## sweeping continuously through the wrap, this is what keeps the inked contour's colour
+## Seconds for the tonal center and the flux to close most of the way onto a new value.
+## Set from the measurement in `tests/contour_flow_check.gd`: against a tonal center
+## sweeping continuously through the wrap, this is what keeps the inked contour's color
 ## step across one re-print under 0.05, and 2.5 s did not (0.076 at seed 11).
 const EASE_SECS := 4.0
 # Flux, eased for the same reason: it is the hatching's ink density and the hatching is in
@@ -212,11 +212,11 @@ var _warp_a := Vector2.ZERO
 var _warp_b := Vector2.ZERO
 var _warp_t := 1.0
 var _warp_idle := 0.0               # seconds since the window last moved (see _step)
-## THE LAND'S OWN EVOLUTION - a small spectral basis of travelling waves, evaluated in FIELD
+## THE LAND'S OWN EVOLUTION - a small spectral basis of traveling waves, evaluated in FIELD
 ## coordinates off one clock. See [method _step_tectonics] and [SheetJob].
 ##
 ## Two fields, both `sum_i a_i sin(k_i . q + w_i t + phi_i)`. UPLIFT adds elevation, so ground
-## rises and subsides and the contours reorganise - new closed rings appear, saddles open and
+## rises and subsides and the contours reorganize - new closed rings appear, saddles open and
 ## shut. DRIFT displaces the point the land is READ at, so ridges meander and, where the
 ## displacement converges, contours crowd - which is the only thing here that looks like two
 ## plates pushing against each other.
@@ -228,7 +228,7 @@ var _up_kx := PackedFloat32Array()   # wavevector, radians per sheet width
 var _up_ky := PackedFloat32Array()
 var _up_w := PackedFloat32Array()    # radians per second, either sign
 var _up_ph := PackedFloat32Array()
-var _up_a := PackedFloat32Array()    # weight, normalised so sum(a * |w|) == 1
+var _up_a := PackedFloat32Array()    # weight, normalized so sum(a * |w|) == 1
 var _dr_kx := PackedFloat32Array()
 var _dr_ky := PackedFloat32Array()
 var _dr_w := PackedFloat32Array()
@@ -404,7 +404,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# The budget, per re-print rather than per second, because a print is the unit the viewer
 	# actually sees: whatever the cadence, this is the largest step any line can take between
 	# two frames of the sheet. An interval's worth of movement is a contour arriving where its
-	# neighbour used to be, so a twentieth of one is a line creeping by a pixel.
+	# neighbor used to be, so a twentieth of one is a line creeping by a pixel.
 	_up_print = rng.randf_range(0.026, 0.033)
 	_dr_print = rng.randf_range(0.00036, 0.00046)
 
@@ -520,7 +520,7 @@ func _ease_audio(dt: float) -> void:
 	var k := 1.0 - exp(-dt / maxf(0.05, EASE_SECS))
 	var raw := _ch_raw
 	# On the wheel, not on the number line: the hue is an angle and its strength is the
-	# vector's length, so a tonal centre with no answer shrinks toward the middle instead of
+	# vector's length, so a tonal center with no answer shrinks toward the middle instead of
 	# racing round the rim.
 	_ch_v = _ch_v.lerp(Vector2(cos(raw.x * TAU), sin(raw.x * TAU)) * raw.y, k)
 	if _ch_v.length() > 0.0001:
@@ -626,7 +626,7 @@ func _ensure_sites() -> void:
 ## line moves by `dv / |grad v|`, so on a basin where the contours already stand a long way
 ## apart a change the eye can barely justify sends a line across a quarter of the sheet, while
 ## on a scarp the same change is invisible. Unlimited, that is the sheet's flat parts swimming
-## while its mountains sit still - a different flavour of exactly the wrong picture.
+## while its mountains sit still - a different flavor of exactly the wrong picture.
 ##
 ## Measured at the SHEET'S OWN PITCH, not on the coarse survey grid above: relief is a
 ## fractal, so a grid three times coarser reads a gradient several times smaller and the
@@ -697,7 +697,7 @@ func _rewarp() -> void:
 ## actually look like: everywhere always changing, and the places changing fastest keep
 ## moving.
 ##
-## THE MECHANISM is a small spectral basis - five to nine travelling waves for uplift, three
+## THE MECHANISM is a small spectral basis - five to nine traveling waves for uplift, three
 ## to five for drift - summed in FIELD coordinates:
 ##
 ##   d(q, t) = sum_i a_i sin(k_i . q + w_i t + phi_i)
@@ -707,7 +707,7 @@ func _rewarp() -> void:
 ## the sum has crests (ground rising fast), troughs (subsiding) and nodes (holding still)
 ## scattered across the sheet - and since the waves travel at different speeds in different
 ## directions, those nodes are never in the same place twice. A region quiet now is the
-## region visibly reorganising two minutes from now.
+## region visibly reorganizing two minutes from now.
 ##
 ## Four things make it safe:
 ##
@@ -746,7 +746,7 @@ func _step_tectonics(dt: float) -> void:
 ## Roll one spectral basis into the arrays given. Wavelengths are sheet WIDTHS, periods scale
 ## with wavelength (so every wave contributes about equally to the rate, and the longest waves
 ## are the slowest), amplitudes follow a red spectrum - longer waves are taller, the way any
-## natural relief is - and the whole set is normalised so `sum(a * |w|) == 1`. That last step
+## natural relief is - and the whole set is normalized so `sum(a * |w|) == 1`. That last step
 ## is what makes the budget in [method _step_tectonics] mean something: multiply these weights
 ## by a rate and the basis moves at that rate, whatever was rolled.
 func _roll_waves(rng: RandomNumberGenerator, n: int, lam_lo: float, lam_hi: float,
@@ -793,9 +793,9 @@ func _site_pos(i: int) -> Vector2:
 
 # The harmony picks an ALTITUDE, and it MIGRATES there rather than arriving.
 #
-# chroma_hue's angle is the music's tonal centre, and it used to be mapped straight across
+# chroma_hue's angle is the music's tonal center, and it used to be mapped straight across
 # the index contours: `_pick = first + int(t * n) * _index_every`. Two things made that the
-# worst mark on the sheet. The inked line is the one saturated colour here and it appears
+# worst mark on the sheet. The inked line is the one saturated color here and it appears
 # at EVERY occurrence of its elevation, so it is not one loop but loops all over the map -
 # and an instant re-pick relights all of them somewhere else at once. Worse, hue is
 # CIRCULAR while an elevation ladder is not, so a small harmonic move across the wrap
@@ -838,7 +838,7 @@ func _pick_index(dt: float) -> void:
 	# position simply hovers near the half-way mark, and round() then flips on every
 	# micro-crossing: 21 changes in twenty seconds, which is the flashing being fixed.
 	# The line only moves once the position has committed three quarters of the way to a
-	# neighbour, so a hovering target holds the current elevation instead of straddling it.
+	# neighbor, so a hovering target holds the current elevation instead of straddling it.
 	if absf(_pick_k - float(_pick_level)) > 0.75:
 		_pick_level = clampi(_pick_level + (1 if _pick_k > float(_pick_level) else -1), 0, n - 1)
 	_pick = first + clampi(_pick_level, 0, n - 1) * _index_every
@@ -958,7 +958,7 @@ func _make_job() -> SheetJob:
 	#   The wavevectors are radians per sheet WIDTH, so dividing by the sheet's width in field
 	#   units anchors every wave to the ground - which is what keeps the lattice snap exact.
 	#
-	#   The weights are normalised so `sum(a |w|) == 1`, so multiplying by a rate makes the
+	#   The weights are normalized so `sum(a |w|) == 1`, so multiplying by a rate makes the
 	#   basis move at that rate. The rate is the per-PRINT budget divided by the cadence,
 	#   because the cadence is how often that step is actually taken: a sheet re-printed three
 	#   times a second may evolve three times as fast per second and still step no further.
@@ -1018,7 +1018,7 @@ func _make_job() -> SheetJob:
 
 
 # ---------------------------------------------------------------------------------
-# Colour
+# Color
 # ---------------------------------------------------------------------------------
 
 func _paper_color() -> Color:
@@ -1034,7 +1034,7 @@ func _ink_color(a: float) -> Color:
 
 
 func _pick_color() -> Color:
-	# The inked index line takes the accent, pulled toward the music's tonal centre by
+	# The inked index line takes the accent, pulled toward the music's tonal center by
 	# however tonal the moment is. This is the one saturated mark on the sheet.
 	var h := _sch.opposed(_ink_h, 0.22)
 	var d := _ch.x - h
@@ -1408,7 +1408,7 @@ class SheetJob:
 			# limited to before. The lattice snap survives this pass.
 			# Solved into its own buffer and added afterwards, because the limit reads the
 			# base grid's gradient: written in place, every sample would be differencing land
-			# its own neighbour had already lifted.
+			# its own neighbor had already lifted.
 			var du := PackedFloat32Array()
 			du.resize(nx * ny)
 			var floor_g := RELIEF_FLOOR * relief
@@ -1467,7 +1467,7 @@ class SheetJob:
 		for k in count:
 			levels[k] = Contour.simplify(Contour.smooth(levels[k], smooth_iters), eps)
 
-		# The second colour plate, printed first and a hair out of register - the drop
+		# The second color plate, printed first and a hair out of register - the drop
 		# shadow a two-pass press leaves when the paper has moved between plates.
 		if plate:
 			for k in count:

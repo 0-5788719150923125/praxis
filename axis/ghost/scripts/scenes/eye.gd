@@ -4,15 +4,15 @@ extends Scene3D
 ##
 ## A real-3D floating eyeball ([EyeBody]) - sclera sphere, recessed iris, glossy
 ## cornea - drawn through the [Scene3D] camera with a real light, no eyelids, no
-## blink. It looks around in centre-preferring saccades by rotating in 3D. The pupil
+## blink. It looks around in center-preferring saccades by rotating in 3D. The pupil
 ## dilates with the audio. Declares `morph_out = "eye"` so the Director can morph it
 ## into two_eyes (the split) rather than cutting.
 ##
-## The iris colour comes from a [Scheme] mood and the eye's size on screen from a
+## The iris color comes from a [Scheme] mood and the eye's size on screen from a
 ## named tier, so two seeds are two different eyes at two different distances rather
 ## than the same golf-ball in the same brown.
 
-## Iris moods. An eye can be brown, amber, hazel, green, grey or blue - and, this
+## Iris moods. An eye can be brown, amber, hazel, green, gray or blue - and, this
 ## being ghost, something no eye ever was. Magenta and rose are left out: at iris
 ## saturation they read as blood, not as an eye.
 const IRIS_MOODS := ["dawn", "ember", "sodium", "brass", "bone", "verdant", "toxic",
@@ -54,7 +54,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"mood": sch.name, "size": size_name, "hue": _eye.hue}
 
 
-## Hand the eye's identity (colour, gaze, size) to a morph target, so the split is
+## Hand the eye's identity (color, gaze, size) to a morph target, so the split is
 ## continuous - two_eyes becomes the SAME eye, not new ones.
 func morph_payload() -> Dictionary:
 	return {"hue": _eye.hue, "gaze": _eye.gaze, "size": float(params.radius)}

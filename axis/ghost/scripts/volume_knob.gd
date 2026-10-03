@@ -48,7 +48,7 @@ const _D0 := 45.0    # pixels of pull for ~63% - the "feel" scale of the rope; h
 const _AMBIENT_TAU := 18.0   # seconds - how slowly the resting horizon eases toward the cursor
 const _RELEASE_SNAP_EPS := 0.03   # release-time pull below this snaps to exact 0 - keeps 0 reachable
 var _pulling := false
-var _anchor := Vector2.ZERO   # knob centre in global (screen) space, fixed at grab
+var _anchor := Vector2.ZERO   # knob center in global (screen) space, fixed at grab
 var _ambient_ema := 0.0      # 0..1, eased fraction of headroom the resting horizon eats into
 var _ambient_dir := Vector2.UP   # eased split-axis direction for the resting horizon (see class doc)
 var _pull_axis := Vector2.UP    # the horizon direction, frozen for the duration of an active pull
@@ -134,7 +134,7 @@ func _draw() -> void:
 		_draw_speaker_icon()
 	if not _pulling:
 		return
-	# The rope: from the knob centre to the cursor, thickening/brightening as it's pulled
+	# The rope: from the knob center to the cursor, thickening/brightening as it's pulled
 	# louder, a grabbed end that swells with the level, and a live readout.
 	var m := get_local_mouse_position()
 	var pv := _v_from_pull(maxf(_signed_pull(get_global_mouse_position()), 0.0))
@@ -144,9 +144,9 @@ func _draw() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.95))
 
 
-## Direction from the knob's centre to the cursor (global space, unit length) - the axis
+## Direction from the knob's center to the cursor (global space, unit length) - the axis
 ## the fill split stays perpendicular to. Falls back to straight up if the cursor sits
-## exactly on the centre (normalize guard).
+## exactly on the center (normalize guard).
 func _cursor_dir() -> Vector2:
 	var d := get_global_mouse_position() - (global_position + size * 0.5)
 	return d.normalized() if d.length_squared() > 0.0001 else Vector2.UP
@@ -176,7 +176,7 @@ func _fill_polygon(c: Vector2, dir: Vector2, vd: float) -> PackedVector2Array:
 	return out
 
 
-## A small speaker glyph (body + cone + sound arcs) centred in the block - the one-time
+## A small speaker glyph (body + cone + sound arcs) centered in the block - the one-time
 ## "this is audio" hint for the main track's knob only (see show_icon / feedback/0008).
 func _draw_speaker_icon() -> void:
 	var h := size.y

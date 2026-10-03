@@ -18,7 +18,7 @@ renders each. F1 is the discriminator: this reader's /iː/ sits at F1 343 and it
 is the SYMBOL STRING, not the word. Any consonant in front of the ɹ recovers it;
 so does changing the coda. That is the signature of a contaminated training set:
 eSpeak phonemized the LibriTTS transcripts the same way, so every past-tense
-"read" was labelled `ɹˈiːd` over audio of a reader saying `ɹˈɛd`, and the
+"read" was labeled `ɹˈiːd` over audio of a reader saying `ɹˈɛd`, and the
 checkpoint hedges to a mid vowel.
 
 THE REPAIR IS PHONETICALLY NULL. English /iː/ in a stressed syllable before a
@@ -135,7 +135,7 @@ PROBE_PARAMS = {"noise_scale": 0.0, "noise_w": 0.0, "length_scale": 3.0}
 #     en_US-kristin-medium  0.10
 #     en_US-norman-medium   0.02
 #
-# 1.0 sits between the two nearest neighbours with about a threefold margin on each
+# 1.0 sits between the two nearest neighbors with about a threefold margin on each
 # side, and it is a meaningful place to put a line rather than a gap in the data: at 1.0
 # the model is rendering the string further from the vowel it names than its own lax
 # vowel is. Below that is a reader with an unremarkable spread; john is the one to watch

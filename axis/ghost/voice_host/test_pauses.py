@@ -419,7 +419,7 @@ def test_synth_tokens_inserts_the_right_totals():
     zero = synth(TOKENS_MARKS, {"pause_scale": 0.0})
     one = synth(TOKENS_MARKS, {"pause_scale": 1.0})
     two = synth(TOKENS_MARKS, {"pause_scale": 2.0})
-    eq(zero["sentences"], 2, "two sentences (the ? is recognised as one end)")
+    eq(zero["sentences"], 2, "two sentences (the ? is recognized as one end)")
 
     def frames(r):
         return (r["bytes"] - 44) // 2
@@ -829,7 +829,7 @@ def check_hyphen_is_a_word_boundary():
     token's own text, because the karaoke draws the source spelling, and a token
     must never be handed to the phonemizer as an empty string - phonemizer drops
     an empty input instead of returning "" for it, which pairs every later word
-    with its neighbour's phonemes.
+    with its neighbor's phonemes.
     """
     from backends.piper import LEAD_IN_SPACES, PiperBackend, _espeak_word
 

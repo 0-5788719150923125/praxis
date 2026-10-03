@@ -19,12 +19,12 @@ Voice checkpoints are licensed individually AND the license is transitive
 through fine-tuning, which is not obvious and is not flagged anywhere machine
 readable. Piper's own default demo voice, `lessac`, is Blizzard 2013, which
 restricts use to research and explicitly excludes "the development, marketing,
-commercialisation, sale or licencing of voice synthesis products". Voices
+commercialization, sale or licencing of voice synthesis products". Voices
 fine-tuned FROM lessac inherit that: amy, joe, hfc_female, hfc_male, libritts_r.
 Separately ryan and the hfc pair are CC BY-NC-SA, and kathleen is CC0 data
 fine-tuned from ryan.
 
-So VOICES below is an allowlist, not a catalogue, and every entry records its
+So VOICES below is an allowlist, not a catalog, and every entry records its
 dataset AND its derivation chain. Adding a voice means reading its MODEL_CARD.
 """
 
@@ -65,7 +65,7 @@ SENTENCE_END = {".", "!", "?"}
 #
 # The three sentence-final marks are 0.32 because that is EXACTLY the `sentence_gap` default
 # this file ships: the table subsumes that parameter rather than stacking on it, so
-# `pause_scale` = 1.0 with no explicit `sentence_gap` reproduces the old behaviour sample for
+# `pause_scale` = 1.0 with no explicit `sentence_gap` reproduces the old behavior sample for
 # sample. A caller still sending `sentence_gap` still wins for . ! ? - same knob.
 #
 # Anyone wanting more reaches for the Pause slider, which runs to 10x (see
@@ -113,7 +113,7 @@ DWELL: dict[str, float] = {
 # A POWER LAW, not a saturating exponential: an exponential that reaches 3.2 at the top of
 # the dial reaches 3.28 at 20 and 3.29 at 100, so raising the dial's ceiling buys nothing.
 #
-# `d ** PAUSE_GAIN` is exactly 1.0 at 1.0 by construction (no normalising constant, no
+# `d ** PAUSE_GAIN` is exactly 1.0 at 1.0 by construction (no normalizing constant, no
 # default to drift) and keeps climbing instead of flattening: 5.0x at the top of the dial,
 # where a full stop rests two and a half seconds. The exponent is the reach: log(5)/log(10).
 #
@@ -437,7 +437,7 @@ def _effort(a, sr: int, tilt: float, gain_db: float):
         # A TILT, so the low band is cut by as much as the high band is lifted -
         # `a + tilt*(a - lo)` only ADDS treble, which is a level change wearing a
         # filter's clothes (measured +5.7 dB where +2.6 was asked for, and the two
-        # controls stop being independent). Then renormalise to the level the
+        # controls stop being independent). Then renormalize to the level the
         # sentence came in at, so `gain_db` below is the ONLY thing that sets level
         # and the number in the tooltip is the number you get.
         rms0 = float(np.sqrt(np.mean(a.astype(np.float64) ** 2)))
@@ -489,7 +489,7 @@ def _resample(a, ratio: float):
 # NUMPY ONLY. voice_host/requirements.txt is deliberately tiny and scipy is not in
 # it, which rules out lfilter and every IIR path. Nothing below needs one: both
 # effects are magnitude edits on a windowed FFT, overlap-added back, which numpy
-# does natively. The Levinson recursion is vectorised ACROSS frames - the loop
+# does natively. The Levinson recursion is vectorized ACROSS frames - the loop
 # runs `order` times over a few hundred frames at once rather than a few hundred
 # times over one - so a sentence costs milliseconds rather than seconds.
 
@@ -532,7 +532,7 @@ def _framed(x, win: int, hop: int):
 def _lpc_envelopes(frames, order: int, nfft: int, gamma: float = 1.0):
     """The spectral envelope of every frame at once.
 
-    Levinson-Durbin, vectorised across frames: the recursion is over the ORDER,
+    Levinson-Durbin, vectorized across frames: the recursion is over the ORDER,
     and every quantity in it is a scalar per frame, so each of the `order` steps
     is one vector operation over all of them. The autocorrelation comes from an
     FFT for the same reason - one batched transform instead of a loop.
@@ -582,7 +582,7 @@ def _lpc_envelopes(frames, order: int, nfft: int, gamma: float = 1.0):
 
 
 def _overlap_add(frames, hop: int, length: int, window, incoherent: bool = False):
-    """Frames back to a signal, windowed again and normalised by what overlapped.
+    """Frames back to a signal, windowed again and normalized by what overlapped.
 
     The second window is not decoration: a frame whose magnitude spectrum has been
     edited is no longer confined to the frame it came from, and adding the raw
@@ -592,7 +592,7 @@ def _overlap_add(frames, hop: int, length: int, window, incoherent: bool = False
     `incoherent` is for frames that are NOISE. Overlapping copies of a signal add
     up; overlapping independent noise adds up in POWER, so the same division
     leaves it 2.7 dB quiet - measured, and heard as the whisper being too far
-    away. The square root is the right normaliser there. (Making the noise
+    away. The square root is the right normalizer there. (Making the noise
     continuous instead, so that it adds coherently, is the obvious alternative and
     is worse: the frames then agree with each other once per hop, which puts a
     125 Hz buzz right in the middle of the pitch range a whisper is supposed to
@@ -651,7 +651,7 @@ def _whisper(a, sr: int, amount: float):
     built = _rms_match(built, frames)
     wet = _overlap_add(built, hop, a.size, window, incoherent=True)
     # ...and the level trimmed once at the end. The per-frame match and the
-    # incoherent normaliser between them still land about a decibel low, and a
+    # incoherent normalizer between them still land about a decibel low, and a
     # whisper that arrives quieter than it was asked to be is indistinguishable
     # from the Presence dial having moved on its own.
     dry = a.astype(np.float64)
@@ -821,7 +821,7 @@ def _nominal_seconds(frames, ratio: float, sr: int) -> float:
 
 
 # A first guess at that fixed fraction, used to ASK for a length scale that will land near
-# the pitch move requested. It only has to be in the right neighbourhood: whatever it gets
+# the pitch move requested. It only has to be in the right neighborhood: whatever it gets
 # wrong, `_nominal_seconds` measures afterwards and the resample corrects, so the timing is
 # exact either way and only the delivered semitones drift a little with it.
 PACE_FIXED_GUESS = 0.30
@@ -891,7 +891,7 @@ def _quiet_point(
     # NEVER EARLIER THAN THE NOMINAL POINT. A cut before the mark's own token ends would put
     # the silence inside that token's own word, and would shift the token by its own pause.
     # The gap we are looking for is always at or after the boundary, so `back` is only ever a
-    # refinement allowance, never a licence to precede it.
+    # refinement allowance, never a license to precede it.
     # THE CUT LIVES IN [token end, next token start], and nowhere else.
     #   - never EARLIER than the nominal end, or the silence lands inside the mark's own word
     #     and that word shifts by its own pause;
@@ -911,18 +911,18 @@ def _quiet_point(
     if mag.size > w:
         c = np.concatenate(([0.0], np.cumsum(mag)))
         smooth = (c[w:] - c[:-w]) / float(w)
-        centre = low + w // 2 + int(np.argmin(smooth))
+        center = low + w // 2 + int(np.argmin(smooth))
     else:
-        centre = low + int(np.argmin(mag))
+        center = low + int(np.argmin(mag))
     # Stage 2: nearest zero crossing to that trough, so neither new edge steps.
-    zl = max(lo, want, centre - search)
-    zh = min(top, centre + search + 1)
+    zl = max(lo, want, center - search)
+    zh = min(top, center + search + 1)
     if zl >= zh:
-        return max(centre, lo)
+        return max(center, lo)
     win = np.abs(audio[zl:zh])
     best = float(win.min())
     cand = np.nonzero(win <= best + 1e-6)[0] + zl
-    return int(cand[np.argmin(np.abs(cand - centre))])
+    return int(cand[np.argmin(np.abs(cand - center))])
 
 
 def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
@@ -956,7 +956,7 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
 
     CLICKS. Cutting a waveform at an arbitrary sample and butting digital zero
     against it is a step discontinuity, which is a click - this project has been
-    bitten by exactly that before. Two cheap defences, both applied:
+    bitten by exactly that before. Two cheap defenses, both applied:
       1. the cut moves up to SPLICE_SEARCH_MS to the quietest sample in reach,
          i.e. the nearest zero crossing on voiced material, so the two new edges
          are already near zero;
@@ -1302,7 +1302,7 @@ LEAD_IN_SPACES = 2
 #
 # A zero-width space is the whole fix. It is a word boundary to eSpeak, so nothing welds
 # across it; it has no phones of its own, so nothing leaks into the transcription; and it
-# does not stop eSpeak analysing the sentence, so the stresses stay the sentence's own.
+# does not stop eSpeak analyzing the sentence, so the stresses stay the sentence's own.
 # Same chapter: 6 of 230 sentences still come back with a different number of pieces than
 # words (2.6%, and those fall back to the old path), and of the 127 a plain join DID align,
 # the zero-width version agrees on 124. A pipe behaves identically; a double bar disturbs
@@ -1343,7 +1343,7 @@ VOICES: dict[str, dict] = {
         "license": "CC BY 4.0 (LibriTTS, openslr.org/60) - attribution required",
         "chain": "trained from scratch",
         "speakers": 904,
-        "notes": "904 speakers under one checkpoint. The natural analogue of the "
+        "notes": "904 speakers under one checkpoint. The natural analog of the "
         "fishing game's genome: identity becomes a speaker id you can "
         "throw, catch and interpolate.",
     },
@@ -1654,7 +1654,7 @@ class PiperBackend(Backend):
 
         EVERY token contributes its spelling to the sentence, including the ones that
         are not in `need`: a word carrying an authored override or a homograph reading
-        still conditions the stress of its neighbours, and dropping it from the string
+        still conditions the stress of its neighbors, and dropping it from the string
         would be asking eSpeak about a sentence nobody wrote. Only the pieces for `need`
         are read back out.
 
@@ -1755,7 +1755,7 @@ class PiperBackend(Backend):
         # result must be checked rather than trusted. phonemizer DROPS an empty or
         # whitespace-only input instead of returning "" for it - measured, [" ", "the"]
         # comes back as ["ðə"], one item for two - and the zip below then pairs every
-        # remaining word with its NEIGHBOUR'S phonemes and lets the last one fall
+        # remaining word with its NEIGHBOR'S phonemes and lets the last one fall
         # through to ghost's ARPAbet. Silently. The whole tail of a sentence would be
         # spoken one word out of step, and the one word that reached the fallback would
         # take CMUdict's reading, which for a homograph is not the same reading eSpeak
@@ -2139,7 +2139,7 @@ class PiperBackend(Backend):
                 # ...AND THE FILTER HELD STILL WHILE THE SOURCE MOVES. Default on:
                 # the arc is a change of REGISTER, and a register change that also
                 # changes how big the speaker is was the bug. `formant_lock` = 0
-                # restores the old behaviour, which is what the gate A/Bs against.
+                # restores the old behavior, which is what the gate A/Bs against.
                 if float(params.get("formant_lock", 1.0)) > 0.5:
                     shifted = _restore_formants(shifted, audio, pr, sr)
                 audio = shifted

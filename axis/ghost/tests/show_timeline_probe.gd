@@ -13,7 +13,7 @@ extends Node
 ## THE SHOW IS A PURE FUNCTION, which is what makes this possible at all. The session seed is
 ## `hash(fingerprint(audio) : SEED_SALT)` with a CONSTANT salt (see Director._salt_seed), the
 ## running order falls out of that seed, and every cut is driven by the spectrum - which for a
-## render is not analysed live but read from a baked file that is still on disk. So the whole
+## render is not analyzed live but read from a baked file that is still on disk. So the whole
 ## schedule can be replayed with no audio device, no window and no encoder: feed the Director
 ## the same features in the same order and it makes the same decisions.
 ##
@@ -127,7 +127,7 @@ func _report(length: float) -> void:
 	_say("the whole running order:")
 	for c in _cuts:
 		_say("   %8.1fs  %s" % [float(c["t"]), c["scene"]])
-	# The neighbourhood of each mark, so a scene that merely STARTED near it is visible too.
+	# The neighborhood of each mark, so a scene that merely STARTED near it is visible too.
 	for m in _marks:
 		_say("")
 		_say("cuts within 40s of %.1fs:" % float(m))

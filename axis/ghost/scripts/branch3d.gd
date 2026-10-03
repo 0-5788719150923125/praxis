@@ -256,7 +256,7 @@ static func grow(sp: Dictionary, rng: RandomNumberGenerator, height: float,
 		if int(sg["depth"]) >= leaf_order:
 			outer.append(sg)
 	# THE CAP IS THE FOLIAGE'S GRAIN. At 46 sites a crown has to be filled with clusters a third
-	# of its own radius across, and a hard-edged cluster that big is a plate of coloured card -
+	# of its own radius across, and a hard-edged cluster that big is a plate of colored card -
 	# coarse at the wrong scale. Three times the sites lets each one be a third the size, which
 	# is grain rather than plating, and the near LOD band is capped at a dozen trees so the
 	# billboards this adds are bounded.
@@ -363,7 +363,7 @@ static func cam_axes(lens: Lens3D) -> Array:
 	return [right, right.cross(fwd).normalized()]
 
 
-## THE TAPERED-TUBE LOFT, generalised out of spires' private one (which lofted SIDES x LEVELS
+## THE TAPERED-TUBE LOFT, generalized out of spires' private one (which lofted SIDES x LEVELS
 ## rings for a whole tower and could not be reused for anything else). One segment becomes a
 ## closed `sides`-gon tube from radius [param w0] to [param w1], back-face culled - which
 ## halves the face count for free, and is safe here precisely because the tube IS closed,
@@ -422,7 +422,7 @@ static func loft_tube(faces: Array, lens: Lens3D, u: float, a: Vector3, b: Vecto
 
 ## The LOD form of the same segment: one camera-facing tapered ribbon instead of a tube.
 ##
-## Built in SCREEN space on purpose. A twig a few millimetres thick at eight world units
+## Built in SCREEN space on purpose. A twig a few millimeters thick at eight world units
 ## projects to well under a pixel, and a sub-pixel quad is either discarded by the area guard
 ## or rasterized as nothing - so a lofted twig simply vanishes and the crown goes bald at
 ## exactly the distance where it matters most. Widening to a floor of [param min_px] after

@@ -10,7 +10,7 @@ class_name Exporter
 ##
 ##   1. BAKE (headless, no window): a one-shot `bake_runner` process analyzes the song
 ##      into a spectrum cache. This is the slow part, and it now runs windowless and
-##      off the render's critical path - so there is no grey, frozen render window.
+##      off the render's critical path - so there is no gray, frozen render window.
 ##      Cached per song, so only the first export of a song pays for it.
 ##   2. RENDER (Movie Maker): a second process loads that cache (`--bake-file`, no
 ##      in-process baking) and draws immediately, recording the visualization + audio
@@ -68,8 +68,8 @@ const SYNTH_AUTOPLAY_DURATION := 150.0
 ## pipeline, so it builds its own button - at the same bottom-right offsets,
 ## because that is where an export button lives in every mode. This layer is 250
 ## and the editor's is 100, so without this the shared button is drawn OVER the
-## working one and eats its clicks while greyed out, which is exactly how it was
-## reported: "the export button is greyed-out and I cannot click it".
+## working one and eats its clicks while grayed out, which is exactly how it was
+## reported: "the export button is grayed-out and I cannot click it".
 var suppressed := false
 ## How far up the current mode has asked the bottom-right row to sit. See
 ## Chrome.bottom_inset.
@@ -139,7 +139,7 @@ var take_provider := Callable()
 
 ## Optional companion to [member take_provider]: returns true when the provider
 ## has something worth rendering (in synthesis: at least one seed on the belt,
-## or a voice already cast). When it returns false the button greys out - a
+## or a voice already cast). When it returns false the button grays out - a
 ## click could only produce a video of nothing.
 var take_ready := Callable()
 
@@ -357,7 +357,7 @@ func _process(dt: float) -> void:
 		print("ghost: export ready (⤓ bottom-right)")
 	_btn.modulate.a = lerpf(_btn.modulate.a, 1.0 if want else 0.0, 1.0 - exp(-6.0 * dt))
 	_btn.visible = _btn.modulate.a > 0.02
-	# greyed, never gone: nothing to render yet (see _can_export's history)
+	# grayed, never gone: nothing to render yet (see _can_export's history)
 	var content := _has_content()
 	_btn.disabled = not content
 	_btn.tooltip_text = ("Render this visualization + audio to a video file (in the background)"
@@ -374,7 +374,7 @@ func _process(dt: float) -> void:
 # iterates. Each version HID the button from someone.
 #
 # So the rule is: never hide it, and never gate it on TIMING. It may only be
-# DISABLED (greyed, still there, with a tooltip that says why) for the one
+# DISABLED (grayed, still there, with a tooltip that says why) for the one
 # honest reason - there is no content: no song loaded, and no provider that
 # could make one (synthesis with an empty belt and nothing cast).
 func _can_export() -> bool:
@@ -415,7 +415,7 @@ func _on_export() -> void:
 		return
 	# Only the FISHING game has a game to automate. take_provider is no longer a
 	# proxy for that - the generative path sets one too - so the option is driven
-	# by an explicit flag and REMOVED rather than greyed where it is meaningless,
+	# by an explicit flag and REMOVED rather than grayed where it is meaningless,
 	# since a permanently disabled item just invites the question of what it is.
 	var ui_idx := _quality_menu.get_item_index(UI_TOGGLE_ID)
 	if automation_available and ui_idx < 0:
@@ -587,14 +587,14 @@ func _start_render() -> void:
 	# Godot does not render while the compositor is not drawing its window
 	# (`window_can_draw()`), and the movie writer then re-captures the LAST BUFFER while the
 	# audio clock keeps advancing - so the film holds a still for exactly as long as the
-	# window was minimised, covered or throttled. boot.gd has carried that explanation since
+	# window was minimized, covered or throttled. boot.gd has carried that explanation since
 	# the "4K exports partially freeze for seconds" bug, along with the remedy it could not
 	# reach at the time: "avoidable without a virtual display; this gets it as close as
 	# possible". Shrinking the window to a 480x270 floater got close - it is drawable, and it
 	# is also easy to bury under another window for an hour without thinking about it.
 	#
 	# A render that takes six hours cannot ask for the machine to be left alone for six
-	# hours. On its own X display there is no compositor, nothing to minimise and nothing to
+	# hours. On its own X display there is no compositor, nothing to minimize and nothing to
 	# throttle: the NVIDIA driver still renders on the real GPU (tests/run_quiet.sh has
 	# relied on exactly that for the pixel gates), and the desktop is free.
 	#
@@ -617,7 +617,7 @@ func _start_render() -> void:
 		# so the advice is the whole message there.
 		var fix := ("  " + Deps.hint("xvfb")) if OS.get_name() == "Linux" else ""
 		push_warning("ghost export: no virtual display; the render window must stay drawable "
-			+ "for the WHOLE render. Minimising or burying it freezes the recorded picture "
+			+ "for the WHOLE render. Minimizing or burying it freezes the recorded picture "
 			+ "while the audio keeps going." + fix)
 		_note_no_virtual_display = true
 	_render_pid = Subprocess.start(runner, run_args, "render")
@@ -647,7 +647,7 @@ func _start_transcode(follow := false) -> void:
 	if not follow:
 		_pct = 0              # reset from the render's 100% so "Finalizing" starts fresh, not stuck full
 	_progress_reset()
-	# COLOUR SIGNALLING. Godot's MJPEG is yuvj420p - FULL range, BT.601 matrix - and ffmpeg passes
+	# COLOR SIGNALING. Godot's MJPEG is yuvj420p - FULL range, BT.601 matrix - and ffmpeg passes
 	# those pixels through untouched (measured: blacks bit-exact, no gamma, mean delta -0.33 of a
 	# code value). What it did NOT do was SAY so: primaries and transfer came out "unspecified" and
 	# the container had no `colr` box at all, so a player reading only the container guesses - and

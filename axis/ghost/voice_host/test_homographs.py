@@ -120,7 +120,7 @@ SWITCHES = [
     ("The letter was read aloud.", "read", "past", ()),
     ("The names were read out in order.", "read", "past", ()),
     # AN ADVERB DOES NOT BREAK THE AUXILIARY'S GRIP. All three of these missed the
-    # auxiliary rule while it only looked at the immediate neighbour, and a whole-book
+    # auxiliary rule while it only looked at the immediate neighbor, and a whole-book
     # measurement is what turned them up.
     ("A book that is not read has to live somewhere else.", "read", "past", ()),
     ("You have never read the first thing.", "read", "past", ()),
@@ -152,7 +152,7 @@ SWITCHES = [
         "past",
         (),
     ),  # no tense in the clause at all - the narrative decides
-    # the same shapes, generalised
+    # the same shapes, generalized
     ("She sat down and read for an hour.", "read", "past", ()),
     ("We read it and left.", "read", "past", ()),  # first conjunct, tense on the right
     ("I read it last night.", "read", "past", PAST_NARRATIVE),

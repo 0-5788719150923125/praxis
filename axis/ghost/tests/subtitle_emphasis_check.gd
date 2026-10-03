@@ -5,7 +5,7 @@ extends Node
 ## Markdown emphasis used to be deleted outright by [TextNorm._strip_markdown], for a good
 ## reason: a marker is not silent to a phonemizer, it is a word, and eSpeak reads
 ## `*I will never hurt you*` as "ASTERISK I will never hurt you ASTERISK". That fixed the
-## mouth and broke the page - the subtitle under an emphasised line came out as flat prose
+## mouth and broke the page - the subtitle under an emphasized line came out as flat prose
 ## with nothing anywhere to say the writing had leaned on those words. Reported as
 ## "ghost strips quotes and italics/bold in the subtitles"; the quotes had already been
 ## fixed by the time it was measured, the emphasis had not.

@@ -26,14 +26,14 @@ shader_type canvas_item;
 // that is fine: an error in Z perturbs `d` by a relative amount, never by an absolute one.
 //
 // REBASING is the other half and without it perturbation is visibly broken. Where the true
-// orbit passes very close to zero, |z| falls far below |Z| and the linearisation loses all
-// its significant digits - the classic "glitch blobs" of wrong colour. The fix (Zhuoran's)
+// orbit passes very close to zero, |z| falls far below |Z| and the linearization loses all
+// its significant digits - the classic "glitch blobs" of wrong color. The fix (Zhuoran's)
 // is two lines: whenever |z| < |d|, the current z IS a better delta than d, so restart the
 // reference from its beginning with d = z. It also covers running off the end of a reference
 // that escaped. The reference must therefore start at Z(0) = 0, which the Mandelbrot's does.
 //
 // PERTURBATION IS FOR THE QUADRATIC MANDELBROT ONLY, deliberately. Every other family here
-// needs its own perturbation formula (the burning ship's absolute values do not linearise
+// needs its own perturbation formula (the burning ship's absolute values do not linearize
 // cleanly, and rebasing a Julia set is invalid because its reference does not start at zero),
 // and those families do not need the depth: a Julia set is at its best over a few decades,
 // not a dozen. The scene knows which path it is on and clamps its zoom range to match, so
@@ -41,9 +41,9 @@ shader_type canvas_item;
 //
 // WHAT THE SPECTRUM OF POSSIBILITIES IS MADE OF. Six FAMILIES, each a pre- or post-transform
 // on the same iteration (mandelbrot, julia, burning ship, tricorn, celtic, buffalo) times an
-// integer POWER, times six COLOURINGS (smooth escape, stripe average, three orbit traps, and
+// integer POWER, times six COLORINGS (smooth escape, stripe average, three orbit traps, and
 // exterior distance), times a palette ramp built on the CPU from a [Scheme], times an
-// interior treatment. The colouring is where most of the visual range actually lives - the
+// interior treatment. The coloring is where most of the visual range actually lives - the
 // same set is a different picture entirely under a stripe average and under a circle trap.
 
 // The reference orbit, one texel per iteration, (Zx, Zy) in RG float32. Bound only when
@@ -60,7 +60,7 @@ uniform int u_family = 0;
 uniform int u_power = 2;
 uniform vec2 u_julia = vec2(-0.8, 0.156);
 
-uniform vec2 u_center = vec2(0.0);         // the direct path's centre (perturbation uses the orbit)
+uniform vec2 u_center = vec2(0.0);         // the direct path's center (perturbation uses the orbit)
 uniform float u_scale = 1.5;               // half-HEIGHT of the view, in complex units
 uniform float u_rot = 0.0;
 uniform vec2 u_half = vec2(0.9, 0.55);     // quad half-extents in unit fractions
@@ -69,7 +69,7 @@ uniform int u_iter = 400;
 uniform float u_bail = 256.0;              // squared escape radius
 
 // 0 smooth, 1 stripe average, 2 point trap, 3 cross trap, 4 circle trap, 5 distance estimate
-uniform int u_colour = 0;
+uniform int u_color = 0;
 uniform vec2 u_trap_p = vec2(0.0);
 uniform float u_trap_r = 0.6;
 uniform float u_stripe = 5.0;
@@ -108,13 +108,13 @@ vec2 fam_post(vec2 z) {
 	return z;
 }
 
-// Every orbit trap this file offers, as one distance. A trap colours a pixel by how CLOSE its
+// Every orbit trap this file offers, as one distance. A trap colors a pixel by how CLOSE its
 // orbit ever came to a shape rather than by how long it took to leave, which turns the same
 // set into something structurally different to look at - webs and filigree instead of bands.
 float trap_of(vec2 z) {
-	if (u_colour == 2) { return length(z - u_trap_p); }
-	if (u_colour == 3) { return min(abs(z.x - u_trap_p.x), abs(z.y - u_trap_p.y)); }
-	if (u_colour == 4) { return abs(length(z - u_trap_p) - u_trap_r); }
+	if (u_color == 2) { return length(z - u_trap_p); }
+	if (u_color == 3) { return min(abs(z.x - u_trap_p.x), abs(z.y - u_trap_p.y)); }
+	if (u_color == 4) { return abs(length(z - u_trap_p) - u_trap_r); }
 	return 1e20;
 }
 
@@ -136,10 +136,10 @@ void fragment() {
 	float stripe_prev = 0.0;
 	float stripe_n = 0.0;
 	// Both of these cost real time inside the loop - an atan a step for the stripe, a length a
-	// step for the trap - and most colourings read neither. The tests are on uniforms, so every
+	// step for the trap - and most colorings read neither. The tests are on uniforms, so every
 	// pixel takes the same branch and the cost is genuinely skipped rather than merely masked.
-	bool want_stripe = (u_colour == 1);
-	bool want_trap = (u_colour >= 2 && u_colour <= 4) || (u_interior != 0);
+	bool want_stripe = (u_color == 1);
+	bool want_trap = (u_color >= 2 && u_color <= 4) || (u_interior != 0);
 	float dist = 0.0;                   // exterior distance estimate
 	vec2 z = vec2(0.0);
 
@@ -178,7 +178,7 @@ void fragment() {
 		z = (u_family == 1) ? (u_center + d) : vec2(0.0);
 		vec2 dv = vec2(1.0, 0.0);       // d z / d(parameter), for the distance estimate
 		for (int i = 0; i < u_iter; i++) {
-			if (u_colour == 5) {
+			if (u_color == 5) {
 				// (z^p)' = p z^(p-1); the +1 is dc/dc and is absent for a Julia set, whose
 				// parameter is the starting point rather than the constant.
 				vec2 dp = cmul(cpowi(z, u_power - 1) * float(u_power), dv);
@@ -207,21 +207,21 @@ void fragment() {
 	// derivative taken inside per-pixel control flow is undefined at exactly the boundary
 	// between the two branches, which here is the subject of the picture.
 	float t = u_phase;
-	if (u_colour == 1) {
+	if (u_color == 1) {
 		// STRIPE AVERAGE: the running mean of a sinusoid of the orbit's angle. It draws the
 		// FLOW around the set rather than the bands of constant escape time, and it is the one
-		// colouring that finds structure inside what the smooth count renders as a flat sheet.
+		// coloring that finds structure inside what the smooth count renders as a flat sheet.
 		// Interpolated between the mean before the last step and after it by the fractional
 		// escape, which is what removes the band boundary the raw average would show.
 		float avg = stripe / max(1.0, stripe_n);
 		float d = fract(it);
 		t += u_cycle * (0.35 * it + 22.0 * mix(stripe_prev, avg, d));
-	} else if (u_colour == 5) {
+	} else if (u_color == 5) {
 		// DISTANCE: how far the pixel is from the set, in units of its own pixel size. Near-set
 		// pixels go bright and everything else falls away, so the boundary draws as a filament
 		// rather than as a filled region.
 		t += u_cycle * 40.0 * clamp(log(1.0 + dist / max(1e-12, u_scale * 0.004)) * 0.32, 0.0, 1.0);
-	} else if (u_colour >= 2) {
+	} else if (u_color >= 2) {
 		t += 1.4 * exp(-2.2 * min(trap, 8.0));
 	} else {
 		t += u_cycle * it;
@@ -234,7 +234,7 @@ void fragment() {
 	// is to say, over most of the frame.
 	//
 	// The fix is to sample the palette at the right MIP LEVEL rather than to supersample the
-	// fractal: the ramp is one dimensional, so the average of the colours a pixel spans IS a
+	// fractal: the ramp is one dimensional, so the average of the colors a pixel spans IS a
 	// lower mip of it, and `fwidth` says how many texels that is. One texture read, no extra
 	// iterations, and it converges to the same answer a 16x supersample would.
 	float lod = log2(max(1.0, fwidth(t) * 256.0));
@@ -253,7 +253,7 @@ void fragment() {
 		}
 	} else {
 		col = textureLod(u_ramp, vec2(fract(t), 0.5), lod).rgb;
-		if (u_colour == 5) {
+		if (u_color == 5) {
 			col *= clamp(1.35 - log(1.0 + dist / max(1e-12, u_scale * 0.004)) * 0.30, 0.0, 1.4);
 		}
 	}

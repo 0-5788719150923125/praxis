@@ -3,7 +3,7 @@ extends Scene3D
 ## Tunnel run - the camera on a track, falling forward through a tube that twists, banks and
 ## sometimes turns right over.
 ##
-## The one thing in this catalogue that is a RIDE. Everything else is looked AT - a body in a
+## The one thing in this catalog that is a RIDE. Everything else is looked AT - a body in a
 ## void, a field, a landscape under an orbiting camera - and the difference a first-person track
 ## makes is not a matter of degree: the frame stops being a picture and becomes a place the
 ## viewer is inside of. That is also why it is the scene with the strongest opinion about its own
@@ -139,7 +139,7 @@ var _band_wind := 0.05                  # how fast the spectrum spirals along th
 
 # Look.
 var _hue := 0.0
-var _hue_travel := 0.004                # colour zones per unit of track (a period, not a rate)
+var _hue_travel := 0.004                # color zones per unit of track (a period, not a rate)
 var _fog := Color.BLACK
 var _lit := 1.0
 var _mote_n := 0
@@ -286,7 +286,7 @@ func _extend() -> void:
 	b = b.rotated(b.y, _curve(_k_yaw, s) * STEP)
 	b = b.rotated(b.x, _curve(_k_pitch, s) * STEP)
 	b = b.rotated(-b.z, _curve(_k_roll, s) * STEP)
-	# Re-orthonormalised every step. Three successive rotations of a stored basis accumulate
+	# Re-orthonormalized every step. Three successive rotations of a stored basis accumulate
 	# skew, and over the thousands of stations one song's worth of track is, the frame quietly
 	# stops being orthogonal - which shows up as the tube shearing into an ellipse.
 	b = b.orthonormalized()
@@ -410,8 +410,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.seams = _seams
 	job.band_gain = _band_gain
 	job.band_wind = _band_wind
-	# The wall's hue travels along the track, so the ride passes through colour zones instead of
-	# being one tinted pipe; the tonal centre pulls the whole thing toward the music's key.
+	# The wall's hue travels along the track, so the ride passes through color zones instead of
+	# being one tinted pipe; the tonal center pulls the whole thing toward the music's key.
 	job.hue = GhostScene.blend_hue(_hue, _ch.x, clampf(_ch.y, 0.0, 1.0) * 0.35)
 	job.hue_travel = _hue_travel
 	job.accent = _sch.accent
@@ -434,7 +434,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 
 func _draw() -> void:
 	begin_draw()
-	# The fog colour behind everything: the far end of the tube fades into it, and the ring of
+	# The fog color behind everything: the far end of the tube fades into it, and the ring of
 	# frame outside the near wall on a hard bend is it too.
 	var x := size.x * 0.5 * 1.25 / maxf(0.001, view.zoom_actual())
 	var y := size.y * 0.5 * 1.25 / maxf(0.001, view.zoom_actual())
@@ -522,7 +522,7 @@ class TunnelJob:
 		# --- THE RING VERTICES, projected AND SHADED once each. Adjacent quads share them, so
 		# doing either per quad would repeat the work four times over - and shading per quad is
 		# also what made the first cut read as a stack of flat plates rather than as a tube.
-		# Colour belongs to the vertex here (Gouraud): the wall is a smooth surface and its
+		# Color belongs to the vertex here (Gouraud): the wall is a smooth surface and its
 		# shading has to be continuous across a quad edge or the facets ARE the picture.
 		var vx := PackedFloat32Array()
 		var vy := PackedFloat32Array()
@@ -562,11 +562,11 @@ class TunnelJob:
 				rr *= 1.0 - rib_depth
 			rad[i] = rr
 			var base := i * sides
-			# THE HUE WALKS BETWEEN THE SCHEME'S TWO COLOURS AND COMES BACK, rather than
+			# THE HUE WALKS BETWEEN THE SCHEME'S TWO COLORS AND COMES BACK, rather than
 			# accumulating. `hue + travel * s` was the first cut and arclength grows without
 			# bound: fourteen seconds in, the hue had turned two thirds of the way round the
-			# wheel and the tunnel was a colour the scheme never contains. Bounded, it does what
-			# it was for - the ride passes through colour zones - and stays on palette.
+			# wheel and the tunnel was a color the scheme never contains. Bounded, it does what
+			# it was for - the ride passes through color zones - and stays on palette.
 			var hue_i := GhostScene.blend_hue(hue, accent,
 				0.5 - 0.5 * cos(TAU * si * hue_travel))
 			for k in sides:
@@ -767,8 +767,8 @@ class TunnelJob:
 
 
 	## Sutherland-Hodgman against the eye plane: keep the part of a polygon in front of the
-	## camera, cutting each crossing edge at the plane and interpolating its colour there.
-	## Returns [points, colours].
+	## camera, cutting each crossing edge at the plane and interpolating its color there.
+	## Returns [points, colors].
 	func _clip_near(pts: Array, dep: Array, cols: Array) -> Array:
 		var op: Array = []
 		var oc: Array = []

@@ -6,7 +6,7 @@ extends SceneTree
 ## `rb, -rb`, and `rb` flips with the generation - so a fluid cell with passable space on
 ## both sides took the first option every single tick and walked right, left, right, left
 ## for ever. Each of those swaps empties the cell it leaves, so a settled pool read as
-## grains blinking between their colour and the background: "almost every single grain is
+## grains blinking between their color and the background: "almost every single grain is
 ## flickering between black and color, as if the pixels were vibrating".
 ##
 ## MEASURED, not eyeballed. Before the fix, with nothing pouring in: a water-only pool had

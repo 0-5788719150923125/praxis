@@ -41,7 +41,7 @@ var face_tint := PackedFloat32Array()
 ## so faces can light up independently (e.g. an async per-face flicker). Empty = off.
 var face_glow := PackedFloat32Array()
 ## Optional per-vertex normals (see [method compute_normals]) for smooth (Gouraud)
-## shading - the colour is interpolated across each triangle instead of flat, so a
+## shading - the color is interpolated across each triangle instead of flat, so a
 ## subdivided sphere reads as a smooth ball, not faceted.
 var vertex_normals := PackedVector3Array()
 
@@ -144,19 +144,19 @@ static func tetrahedron() -> Mesh3D:
 
 
 ## A circular cap of `rings` concentric rings and `segments` around, radius 1 at the
-## rim (z=0), with a spherical-cap profile to `height` at the centre: height > 0 is a
+## rim (z=0), with a spherical-cap profile to `height` at the center: height > 0 is a
 ## dome bulging toward +z (a cornea/lens), height < 0 a funnel/recess (an iris bowl),
 ## 0 a flat disc. Built facing +z; orient it with the draw basis.
 static func dome(rings: int, segments: int, height: float) -> Mesh3D:
 	var m := Mesh3D.new()
-	m.verts.append(Vector3(0, 0, height))                       # centre
+	m.verts.append(Vector3(0, 0, height))                       # center
 	for ri in range(1, rings + 1):
 		var rr := float(ri) / float(rings)
 		var z := height * sqrt(maxf(0.0, 1.0 - rr * rr))       # spherical-cap profile
 		for si in segments:
 			var a := TAU * float(si) / float(segments)
 			m.verts.append(Vector3(cos(a) * rr, sin(a) * rr, z))
-	for si in segments:                                         # centre fan (first ring)
+	for si in segments:                                         # center fan (first ring)
 		m.faces.append(PackedInt32Array([0, 1 + si, 1 + (si + 1) % segments]))
 	for ri in range(1, rings):                                  # strips between rings
 		var b0 := 1 + (ri - 1) * segments
@@ -169,7 +169,7 @@ static func dome(rings: int, segments: int, height: float) -> Mesh3D:
 
 
 ## Push each vertex out/in along its direction by seeded *uncorrelated* noise - a
-## quick fuzzy lump. Neighbours are independent, so the surface reads as a noisy
+## quick fuzzy lump. Neighbors are independent, so the surface reads as a noisy
 ## ball; for a believable solid prefer [method warp] (coherent), which is what the
 ## rock factory uses. Kept as a cheap primitive. Shared vertices stay watertight.
 func displace(amp: float, rng: RandomNumberGenerator) -> void:
@@ -178,7 +178,7 @@ func displace(amp: float, rng: RandomNumberGenerator) -> void:
 
 
 ## Coherent fractal displacement: move each vertex along its own direction by a
-## sum of noise octaves sampled in 3D over the *position*, so neighbouring vertices
+## sum of noise octaves sampled in 3D over the *position*, so neighboring vertices
 ## move together. The surface deforms in smooth correlated lumps - a real mass with
 ## bulges and hollows - instead of the per-vertex fuzz [method displace] gives.
 ## `amp` is the peak fraction of radius, `detail` the octave count (finer crag),
@@ -201,7 +201,7 @@ func warp(amp: float, detail: int, gain: float, freq: float, rng: RandomNumberGe
 ## poking past a plane is pushed back onto it. Turns a rounded lump into an angular
 ## stone with flat fracture faces (the conchoidal flats of broken rock, the facets
 ## of a crystal). Watertight: a shared vertex is only ever moved inward. `depth` is
-## the closest a cut sits to the centre (smaller = deeper bites, blockier result).
+## the closest a cut sits to the center (smaller = deeper bites, blockier result).
 func facet(count: int, depth: float, rng: RandomNumberGenerator) -> void:
 	for c in count:
 		var nrm := Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1),
@@ -239,7 +239,7 @@ func compute_normals() -> void:
 ## Bake a coherent surface texture: a value-noise mottle sampled at each face
 ## centroid, stored in [member face_tint] and applied as a per-face brightness /
 ## saturation variation when drawn - patches of light and dark across the surface,
-## the way real stone is never one flat colour. `amount` is the depth of the mottle.
+## the way real stone is never one flat color. `amount` is the depth of the mottle.
 func texturize(amount: float, freq: float, rng: RandomNumberGenerator) -> void:
 	var noise := FastNoiseLite.new()
 	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
@@ -367,7 +367,7 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		var spec := gloss * pow(maxf(0.0, n.dot(half)), shininess) if gloss > 0.0 else 0.0
 		var tint := face_tint[fi] if textured else 0.0
 		var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow + spec) * (1.0 + tint), 0.0, 1.0)
-		# Specular washes the colour toward white; texture pulls saturation around.
+		# Specular washes the color toward white; texture pulls saturation around.
 		var fsat := clampf(sat * (1.0 - 0.6 * spec) * (1.0 - 0.25 * absf(tint)), 0.0, 1.0)
 		var push := n * explode
 		var poly := PackedVector2Array()
@@ -397,7 +397,7 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 
 ## Build a gaussian alpha mask for the partial-reveal look: a coherent noise field
 ## thresholded into a sparse pattern of solid coat (alpha 1) and holes (alpha 0), with
-## a soft edge. RGB stays white so the face colour shows through where the coat is
+## a soft edge. RGB stays white so the face color shows through where the coat is
 ## present. `threshold` is the sampleable masking knob - low leaves mostly coat with a
 ## few bare patches, near 0 makes it roughly half coat / half holes. `soft` sets how
 ## feathered the hole edges are; `freq` the patch scale. One texture per rock, built
@@ -453,7 +453,7 @@ func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		rv[i] = basis * verts[i]
 
 	# Collect the front-facing faces (back-face culled) with their projected polygon,
-	# coat colour, UVs, and depth.
+	# coat color, UVs, and depth.
 	var fronts: Array = []
 	for fi in faces.size():
 		var f: PackedInt32Array = faces[fi]
@@ -499,7 +499,7 @@ func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 			var motion := 0.5 + 0.5 * sin(uv.x * 4.7 + uv.y * 6.1 + pan_seed)
 			var ddir := sin(uv.y * 3.3 - uv.x * 2.7 + pan_seed * 1.7)
 			var scl := 1.0 + 0.12 * sin(uv.x * 5.5 - uv.y * 4.3 + pan_seed)
-			uv = Vector2(0.5, 0.5) + (uv - Vector2(0.5, 0.5)) * scl   # blended local scale (centred)
+			uv = Vector2(0.5, 0.5) + (uv - Vector2(0.5, 0.5)) * scl   # blended local scale (centered)
 			uv.x += pan * motion * ddir                              # uneven drift, seamless in X
 			uvs.append(uv)
 		var tint := face_tint[fi] if textured else 0.0
@@ -523,10 +523,10 @@ func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 
 ## Draw the mesh as a body in a [Lens3D] world: rotate by `basis`, scale, place at
 ## `pos` (world units), then project every vertex through the camera - true forced
-## perspective, not the fixed centred projector of [method draw_shaded]. Faces are
+## perspective, not the fixed centered projector of [method draw_shaded]. Faces are
 ## depth-sorted against the camera and flat-shaded; normals face the eye. `u_px` is
-## the pixel unit (projection returns centred unit-fractions). This is the [Scene3D]
-## counterpart used by the unified path; draw_shaded stays for the legacy centred
+## the pixel unit (projection returns centered unit-fractions). This is the [Scene3D]
+## counterpart used by the unified path; draw_shaded stays for the legacy centered
 ## look. A face is skipped if any of its vertices fall behind the camera.
 func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: Vector3,
 		scale: float, hue: float, sat: float, edge: int, face_alpha := 1.0,
@@ -551,7 +551,7 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 	var order := range(faces.size())
 	order.sort_custom(func(a, b): return depth[a] > depth[b])   # far first
 
-	# Smooth (Gouraud) path: per-vertex normals -> per-vertex colour interpolated
+	# Smooth (Gouraud) path: per-vertex normals -> per-vertex color interpolated
 	# across each triangle, so a sphere reads smooth, not faceted. Back-face culled.
 	if smooth and vertex_normals.size() == verts.size():
 		for fi in order:

@@ -10,7 +10,7 @@ class_name Scene3D
 ## forced perspective. A subclass just populates the world and flies the camera:
 ##
 ##   build_params(rng)  - add_plane(...) / set up meshes; place the lens.
-##   update(f, delta)    - move the lens, restate per-frame bodies, recolour planes.
+##   update(f, delta)    - move the lens, restate per-frame bodies, recolor planes.
 ##   _draw()             - begin_draw(); render_world().
 ##
 ## Bodies are restated each frame (their basis/glow change), so the usual shape is
@@ -56,7 +56,7 @@ func add_plane(pl: Plane3D) -> void:
 ## Project, depth-sort the whole world back-to-front, and draw it through the lens.
 ## Call from _draw() after begin_draw(). Bodies sort by their centroid (pos); for
 ## well-separated bodies that reads correctly, and each mesh still resolves its own
-## faces. Planes sort by their centre.
+## faces. Planes sort by their center.
 func render_world() -> void:
 	lens.prepare()
 	var u := unit()

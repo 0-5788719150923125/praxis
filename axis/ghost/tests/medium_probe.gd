@@ -46,8 +46,8 @@ func _run() -> void:
 
 # --- assumption 1 ------------------------------------------------------------
 
-## Paint a solid colour into a SubViewport, freeze it, free the painter, and read the
-## target back several frames later. The colour must still be there.
+## Paint a solid color into a SubViewport, freeze it, free the painter, and read the
+## target back several frames later. The color must still be there.
 func _check_freeze() -> bool:
 	var vp := SubViewport.new()
 	vp.size = PANEL
@@ -132,7 +132,7 @@ func _check_textured_grid() -> bool:
 	var affine: float = results[1]
 	var correct: float = results[8]
 	# the texture arrived at all: a missing/invalid RID draws the polygon in its
-	# modulate colour, so NEITHER half is found and _seam_x returns -1.
+	# modulate color, so NEITHER half is found and _seam_x returns -1.
 	var arrived := affine >= 0.0 and correct >= 0.0
 	# and subdivision moved the seam: if it did not, the projection is not actually
 	# foreshortening and this probe is measuring nothing.
@@ -158,8 +158,8 @@ func _sample(vp: SubViewport) -> Color:
 	return img.get_pixel(int(vp.size.x * 0.5), int(vp.size.y * 0.5))
 
 
-## The x of the red/blue boundary along the quad's centre scanline, in pixels, or -1
-## if neither colour is on that line at all.
+## The x of the red/blue boundary along the quad's center scanline, in pixels, or -1
+## if neither color is on that line at all.
 func _seam_x(vp: SubViewport) -> float:
 	var img := vp.get_texture().get_image()
 	if img == null:
@@ -186,7 +186,7 @@ func _fmt(c: Color) -> String:
 	return "(%.2f,%.2f,%.2f)" % [c.r, c.g, c.b]
 
 
-## Paints a flat colour, or a red/left blue/right split, over its whole viewport.
+## Paints a flat color, or a red/left blue/right split, over its whole viewport.
 class _Painter extends Node2D:
 	var col := Color.WHITE
 	var split := false

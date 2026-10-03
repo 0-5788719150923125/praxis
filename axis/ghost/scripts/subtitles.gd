@@ -208,7 +208,7 @@ func _process(delta: float) -> void:
 	presence = lerpf(presence, _presence_target(now), 1.0 - exp(-delta / maxf(0.01, FADE)))
 	# Snap the tail of the ease to zero. An exponential never actually arrives, and a
 	# plate at alpha 0.003 is still a plate - over a dark scene it is invisible, over a
-	# bright one it is a faint grey bar sitting at the bottom of the frame for the whole
+	# bright one it is a faint gray bar sitting at the bottom of the frame for the whole
 	# silence, which is the complaint in miniature.
 	if presence < 0.004:
 		presence = 0.0
@@ -240,7 +240,7 @@ class Overlay:
 	const MAX_LINES := 3
 	## The frame height every hard-coded pixel below is expressed against.
 	const REF_H := 1080.0
-	# The colour is a GRADIENT keyed on the CHARACTER index across the whole
+	# The color is a GRADIENT keyed on the CHARACTER index across the whole
 	# sentence, not the word - so a band of hue drifts through the text spanning
 	# several words at once, and the reader can watch it flow rather than catch
 	# it word by word. HUE_SPAN sets how tight the band is (how much the hue
@@ -248,19 +248,19 @@ class Overlay:
 	# slides forward over time. LINGER is the payload of the request: a spoken
 	# glyph does NOT snap back to its resting dim the instant the voice leaves
 	# it - it holds its vivid gradient hue and cools over this many characters
-	# behind the cursor, so the colour stays long enough to rest the eye on and
+	# behind the cursor, so the color stays long enough to rest the eye on and
 	# read what the change meant.
 	const HUE_SPAN := 0.011          # hue turned per character (band tightness)
 	const HUE_DRIFT := 0.02          # hue slid per second (the band flows)
 	const LINGER := 24.0             # characters a spoken glyph stays lit behind the cursor
 	# A SECOND channel: SATURATION ebbs and flows in slow bands along the text, at
 	# a tighter, differently-timed rhythm than the hue (two incommensurate waves so
-	# the pattern never quite repeats). It pulls the colour down toward a grounded,
-	# near-grey calm in the valleys and lets it burn full in the peaks - so the line
-	# is not a solid rainbow but stable regions with colour activity between them.
+	# the pattern never quite repeats). It pulls the color down toward a grounded,
+	# near-gray calm in the valleys and lets it burn full in the peaks - so the line
+	# is not a solid rainbow but stable regions with color activity between them.
 	const SAT_SPAN := 0.17           # saturation band spatial frequency (a valley ~every 37 glyphs)
 	const SAT_DRIFT := 0.09          # the bands drift per second (their own rhythm)
-	const SAT_FLOOR := 0.14          # how far the grounded valleys desaturate (0 = grey)
+	const SAT_FLOOR := 0.14          # how far the grounded valleys desaturate (0 = gray)
 	# EMPHASIS IS DRAWN, NOT SPELLED. `*I will never hurt you*` reaches here as a level on
 	# the word (see TextNorm's emphasis sentinels), never as asterisks - printing the
 	# markers would be showing the reader the source code of the typography. Godot can
@@ -322,7 +322,7 @@ class Overlay:
 			lines = _wrap(line_words, font, fs, max_w)
 		var lh := float(fs) + 12.0 * k
 		# the harmonic hue is now the BASE the gradient rides from, not the one
-		# colour of the whole line - each glyph turns off it by its position and
+		# color of the whole line - each glyph turns off it by its position and
 		# by time (see _glyph_color)
 		var base_hue := _harmonic_hue()
 		var now := owner_node._now()
@@ -332,7 +332,7 @@ class Overlay:
 		var ccur: float = _char_cursor(line_words)
 		var y: float = vp.y - 70.0 * k - (lines.size() - 1) * lh
 		# THE PLATE: scenes range from black voids to white-hot fields, so
-		# colour alone can never keep text legible. Each line gets a rounded
+		# color alone can never keep text legible. Each line gets a rounded
 		# dark plate sized to its own width (a full-width band would read as
 		# broadcast furniture and cover the show), and every glyph is drawn
 		# once in near-black underneath - the plate carries most of the
@@ -348,8 +348,8 @@ class Overlay:
 			y += lh
 		y = vp.y - 70.0 * k - (lines.size() - 1) * lh
 		# the pen advances glyph by glyph so the gradient can turn WITHIN a word,
-		# and so a spoken glyph keeps its own lingering colour independent of its
-		# neighbours - the whole reason to key on characters instead of words
+		# and so a spoken glyph keeps its own lingering color independent of its
+		# neighbors - the whole reason to key on characters instead of words
 		for row in lines:
 			var total := -gap
 			for item in row:
@@ -374,16 +374,16 @@ class Overlay:
 				x += gap
 			y += lh
 
-	## A single glyph's colour: a hue that drifts by position AND time (the band
+	## A single glyph's color: a hue that drifts by position AND time (the band
 	## flowing through the sentence), and a brightness that tells the reading
 	## state - a muted preview ahead of the voice, a vivid flare as it is spoken,
-	## then a slow cool over LINGER characters behind so the colour stays to be
+	## then a slow cool over LINGER characters behind so the color stays to be
 	## looked at rather than snapping dim the instant the word ends.
 	func _glyph_color(base_hue: float, ci: int, ccur: float, t: float) -> Color:
 		var hue := fposmod(base_hue + float(ci) * HUE_SPAN - t * HUE_DRIFT, 1.0)
 		# the saturation band at this glyph: two incommensurate waves -> organic,
-		# non-repeating valleys (grounded) and peaks (colourful). Scales the state's
-		# own saturation from a near-grey floor up to full.
+		# non-repeating valleys (grounded) and peaks (colorful). Scales the state's
+		# own saturation from a near-gray floor up to full.
 		var s1 := sin(float(ci) * SAT_SPAN - t * SAT_DRIFT)
 		var s2 := sin(float(ci) * SAT_SPAN * 1.73 + t * SAT_DRIFT * 0.5)
 		var sat_env := clampf(0.5 + 0.35 * s1 + 0.15 * s2, 0.0, 1.0)
@@ -391,7 +391,7 @@ class Overlay:
 		var d := ccur - float(ci)                       # >0 spoken (behind), <=0 waiting (ahead)
 		if d <= 0.0:
 			# ahead of the voice: dim but present, faintly tinted so the coming
-			# colour is previewed rather than a wall of grey
+			# color is previewed rather than a wall of gray
 			return Color.from_hsv(hue, 0.22 * sm, 0.6, 0.92)
 		# spoken: full flare at the front, cooling to a resting tint over LINGER
 		var glow := clampf(1.0 - (d - 1.0) / LINGER, 0.0, 1.0)
@@ -418,7 +418,7 @@ class Overlay:
 
 	## The current sentence as [{idx (global), word, w (pixel width), cstart}]
 	## items. cstart is the word's first-character index WITHIN the sentence
-	## (words separated by one gap character), so colour can be keyed on the
+	## (words separated by one gap character), so color can be keyed on the
 	## continuous character sequence rather than reset at every word.
 	func _current_sentence(t: float) -> Array:
 		var all: Array = owner_node.words

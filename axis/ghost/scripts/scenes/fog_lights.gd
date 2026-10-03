@@ -9,7 +9,7 @@ extends GhostScene
 ## swelling on the louder passages.
 
 ## How the lamps are ARRANGED - the scene's silhouette, and the thing a viewer reads before
-## any colour. Scattered is the original haze of orbs; a row is street lighting seen down a
+## any color. Scattered is the original haze of orbs; a row is street lighting seen down a
 ## street, a ring is something enclosing you, a pair is two sources facing off across the
 ## frame. Same lights, same physics, four different pictures.
 const LAYOUTS := ["scatter", "row", "ring", "pair"]
@@ -24,7 +24,7 @@ var _beat_prev := 0.0
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
-	# Lights in fog can be any colour at all - a sodium street, a green exit sign, cold
+	# Lights in fog can be any color at all - a sodium street, a green exit sign, cold
 	# moonlight - so the mood is unrestricted and the lamps drift around it by its spread.
 	var sch := Scheme.pick(rng)
 	var layout := String(LAYOUTS[rng.randi() % LAYOUTS.size()])

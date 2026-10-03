@@ -36,8 +36,8 @@ extends SceneTree
 ##   filters on together must differ from either one alone AND keep each other's property.
 ##
 ## THE TEST IMAGE is built here rather than rendered from a scene, because a measurement needs
-## a picture whose answer is known before it is taken: a colour ramp to desaturate, a black, a
-## mid-grey and a white patch for the grain weighting, and one small very bright spot on a dark
+## a picture whose answer is known before it is taken: a color ramp to desaturate, a black, a
+## mid-gray and a white patch for the grain weighting, and one small very bright spot on a dark
 ## field for the bloom threshold.
 
 const Filters_ := preload("res://scripts/filters.gd")
@@ -132,7 +132,7 @@ func _check_off_is_off() -> void:
 		"an empty filter set left a material on the stage view")
 	# ...and a filter at zero is the same as no filter, because `sanitize` drops it.
 	Filters_.apply(rect, {"monochrome": 0.0}, Vector2(W, H))
-	_ok(rect.material == null, "a filter dialled to zero still hung a material on the view")
+	_ok(rect.material == null, "a filter dialed to zero still hung a material on the view")
 	Filters_.apply(rect, {"monochrome": 1.0}, Vector2(W, H))
 	_ok(rect.material != null, "the control is wrong - a live filter hung no material")
 	# AND IT COMES BACK OFF. Writing only the live uniforms would leave the last value of a
@@ -181,12 +181,12 @@ func _check_each_filter_acts() -> void:
 # --- each filter's own claim --------------------------------------------------
 
 
-## COLOUR IS GONE, measured as chroma (max channel minus min), not as "the picture changed".
+## COLOR IS GONE, measured as chroma (max channel minus min), not as "the picture changed".
 func _check_monochrome() -> void:
 	var got := await _render({"monochrome": 1.0})
 	var before := _mean_chroma(_plain)
 	var after := _mean_chroma(got)
-	_ok(before > 0.15, "the control is wrong - the test image is not colourful (%.3f)" % before)
+	_ok(before > 0.15, "the control is wrong - the test image is not colorful (%.3f)" % before)
 	_ok(after < 0.02, "monochrome left %.3f of chroma behind (was %.3f)" % [after, before])
 	# ...and it must not just be darkening everything: brightness is roughly preserved.
 	_ok(absf(_mean_luma(got) - _mean_luma(_plain)) < 0.06,
@@ -198,8 +198,8 @@ func _check_monochrome() -> void:
 ## the mid-left 0.87 of the way to a corner and the mid-top 0.49, so below about 0.6 the sides
 ## were black and the top and bottom untouched ("you expect it to start creeping in from ALL
 ## sides"). Now an oval fitted to the frame: the top and the side move alike at a low setting,
-## the corners most, the centre not at all; and it is DARK - its depth was once the dial
-## itself, a grey veil at 0.5. (The shape between, an inset rounded rectangle, passed all of
+## the corners most, the center not at all; and it is DARK - its depth was once the dial
+## itself, a gray veil at 0.5. (The shape between, an inset rounded rectangle, passed all of
 ## this and was rejected by eye as "very square"; roundness is not gated.)
 func _check_vignette() -> void:
 	var low := await _render({"vignette": 0.3})
@@ -212,7 +212,7 @@ func _check_vignette() -> void:
 		"at 0.3 the mid-left fell by %.3f and the mid-top by %.3f - one pair of sides is "
 		% [left, top] + "doing the work (the circular lens separated them by 2x and more)")
 	_ok(nook >= maxf(left, top) - 0.01, "the corners (%.3f) are lighter than the edges" % nook)
-	_ok(_fall(low, Rect2i(W / 2 - 16, H / 2 - 16, 32, 32)) < 0.02, "at 0.3 the centre darkened")
+	_ok(_fall(low, Rect2i(W / 2 - 16, H / 2 - 16, 32, 32)) < 0.02, "at 0.3 the center darkened")
 
 	var lens := await _render({"vignette": 0.5})
 	var dark := 0.5 * (_fall(lens, Rect2i(0, 0, 12, 12)) + _fall(lens, Rect2i(W - 12, H - 12, 12, 12)))
@@ -223,7 +223,7 @@ func _check_vignette() -> void:
 		+ _fall(shut, Rect2i(W - 24, H - 24, 24, 24)))
 	var middle := _fall(shut, Rect2i(W / 2 - 16, H / 2 - 16, 32, 32))
 	_ok(corner > 0.3, "at full strength the vignette barely darkened the corners (%.3f)" % corner)
-	_ok(middle < 0.02, "the vignette darkened the CENTRE by %.3f" % middle)
+	_ok(middle < 0.02, "the vignette darkened the CENTER by %.3f" % middle)
 	var edges := {
 		"left": Rect2i(0, H / 2 - 12, 24, 24),
 		"right": Rect2i(W - 24, H / 2 - 12, 24, 24),
@@ -326,7 +326,7 @@ func _check_bloom() -> void:
 
 ## DOTS HAVE EDGES, and re-laying a picture as dots is not the same as washing it out. Two
 ## claims together: local contrast goes UP (the rim of every dab), and the picture's overall
-## colour stays where it was (a dab takes its colour from where it sits).
+## color stays where it was (a dab takes its color from where it sits).
 func _check_pointillism() -> void:
 	var got := await _render({"pointillism": 0.6})
 	var steps_before := _step_fraction(_plain)
@@ -339,7 +339,7 @@ func _check_pointillism() -> void:
 		% absf(_mean_luma(got) - _mean_luma(_plain)))
 
 
-## CONTRAST UP, AND STILL IN COLOUR. Noir grades whatever it is handed; a version that
+## CONTRAST UP, AND STILL IN COLOR. Noir grades whatever it is handed; a version that
 ## desaturated on its own would make Monochrome redundant and Technicolor impossible.
 func _check_noir() -> void:
 	var got := await _render({"noir": 1.0})
@@ -351,7 +351,7 @@ func _check_noir() -> void:
 		"noir raised the tonal spread from %.4f to only %.4f"
 		% [_luma_spread_of(_plain, ramp), _luma_spread_of(got, ramp)])
 	_ok(_mean_chroma(got) > 0.04,
-		"noir took the colour out by itself (%.3f chroma left) - that is Monochrome's job"
+		"noir took the color out by itself (%.3f chroma left) - that is Monochrome's job"
 		% _mean_chroma(got))
 
 
@@ -366,7 +366,7 @@ func _check_combining() -> void:
 		"monochrome + grain is indistinguishable from grain alone")
 	# ...and each keeps its own property in the pair.
 	_ok(_mean_chroma(both) < 0.02,
-		"grain put the colour back into a monochrome picture (%.3f)" % _mean_chroma(both))
+		"grain put the color back into a monochrome picture (%.3f)" % _mean_chroma(both))
 	# MOTTLE leaves whole regions nearly clean for a while, so one frame can catch the mid patch
 	# in a quiet spell: the best of a few pinned frames, never the clock (which made this pass
 	# or fail on how long the checks before it took).
@@ -422,7 +422,7 @@ func _make_test_image() -> ImageTexture:
 		for x in W:
 			var c: Color
 			if y < H / 2:
-				# A full hue sweep at a brightness ramp - colour to take out, tones to curve.
+				# A full hue sweep at a brightness ramp - color to take out, tones to curve.
 				c = Color.from_hsv(float(x) / float(W), 0.85,
 					0.25 + 0.55 * (float(y) / float(H / 2)))
 			else:
@@ -451,7 +451,7 @@ func _mean_diff(a: Image, b: Image) -> float:
 	return sum / (float(W * H) / 4.0 * 3.0)
 
 
-## The share of sampled pixels whose colour moved at all - a channel step of more than 1/255
+## The share of sampled pixels whose color moved at all - a channel step of more than 1/255
 ## twice over, so filtering noise and dithering do not count as an effect.
 func _changed_fraction(a: Image, b: Image, eps := 0.008) -> float:
 	var hits := 0
@@ -479,7 +479,7 @@ func _max_diff(a: Image, b: Image) -> float:
 func _mean_chroma(img: Image) -> float:
 	var sum := 0.0
 	var n := 0
-	# The colour ramp only - the grey patches have no chroma to lose and would dilute it.
+	# The color ramp only - the gray patches have no chroma to lose and would dilute it.
 	for y in range(0, H / 2, 2):
 		for x in range(0, W, 2):
 			var c := img.get_pixel(x, y)

@@ -134,7 +134,7 @@ func _check(size: Vector2i, label: String) -> void:
 			% label + "but never built, so every panel refresh throws")
 		_expect(row.label != null,
 			"%s: a registered panel row has no label - _apply_sort moves the two "
-			% label + "together and will desynchronise the whole list")
+			% label + "together and will desynchronize the whole list")
 
 	# 2c. NO LABEL HAS BEEN SQUEEZED INTO A COLUMN OF LETTERS. Every label in this
 	# panel word-wraps - deliberately, because an unwrapped one's natural width

@@ -554,7 +554,7 @@ const F2_REF := 1720.0
 
 
 ## LPC formant estimate: median F1/F2 across strong voiced frames (the vowel
-## space's centre of mass). Levinson-Durbin on pre-emphasized 30 ms frames;
+## space's center of mass). Levinson-Durbin on pre-emphasized 30 ms frames;
 ## the envelope's peaks are picked on a coarse frequency grid - medians need
 ## no root-finding. Returns [F1_med, F2_med, frames_used]; F1_med <= 0 when
 ## tracking failed (too few clean frames).

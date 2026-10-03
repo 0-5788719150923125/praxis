@@ -106,7 +106,7 @@ def vowel(seconds: float = 1.2, f0: float = F0) -> np.ndarray:
 
 
 def _autocorr(x: np.ndarray) -> np.ndarray:
-    """Autocorrelation by FFT, normalised to 1 at lag zero.
+    """Autocorrelation by FFT, normalized to 1 at lag zero.
 
     Not np.correlate: that is O(n^2) and takes half a minute on a second of audio
     here, which is a gate nobody runs. This is the same Wiener-Khinchin route the
@@ -133,7 +133,7 @@ def measure_f0(x: np.ndarray, lo: float = 60.0, hi: float = 400.0) -> float:
 
 
 def harmonicity(x: np.ndarray, lo: float = 60.0, hi: float = 400.0) -> float:
-    """Peak normalised autocorrelation in the pitch band: 1 buzzes, 0 breathes."""
+    """Peak normalized autocorrelation in the pitch band: 1 buzzes, 0 breathes."""
     ac = _autocorr(x)
     band = ac[int(SR / hi) : int(SR / lo)]
     return float(np.max(band)) if band.size else 0.0
@@ -346,7 +346,7 @@ def check_real_voice() -> None:
         be._load(voice)
         tokens = [
             {"text": w, "punct": "." if w == "shadows" else ""}
-            for w in "the harbour lights are drowning in the shadows".split()
+            for w in "the harbor lights are drowning in the shadows".split()
         ]
         out = Path("/tmp/ghost_source_filter_probe.wav")
         # ONE render, and the transform applied to THAT. Two renders cannot be
@@ -402,7 +402,7 @@ def check_real_voice() -> None:
 
     # THE PARAGRAPH ARC MUST NOT TILT THE PACE. The arc buys its pitch move by rendering at
     # a different length scale and playing back to compensate, and the two do not cancel by
-    # themselves - part of every sentence is frame-quantised and does not scale - so the
+    # themselves - part of every sentence is frame-quantized and does not scale - so the
     # reading used to accelerate into each paragraph and drag out of it, by 5.1% and 2.0% at
     # the top of the dial. "The pace grows slower and slower over time, decreasing in speed
     # with the increase in the Arc value." Measured here on the real voice, both ends of the

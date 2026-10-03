@@ -1,6 +1,6 @@
 extends SceneTree
 
-## Does "repaint" actually replace the keyed colour with the colour asked for -
+## Does "repaint" actually replace the keyed color with the color asked for -
 ## and does "erase" do what it claims (which is NOT the same thing)?
 ##   godot --path axis/ghost --script res://tests/repaint_check.gd
 ## NOT --headless: the dummy renderer returns no viewport image, so a readback
@@ -13,9 +13,9 @@ extends SceneTree
 ## poor answer to "replace yellow with black", so the two are measured together
 ## here and each is held to its own claim:
 ##
-##   erase   - the keyed colour loses its chroma. Its RESULT is neutral-ish and
-##             darker; it is NOT expected to reach the paint colour.
-##   repaint - the keyed colour lands ON the chosen colour. Black means black.
+##   erase   - the keyed color loses its chroma. Its RESULT is neutral-ish and
+##             darker; it is NOT expected to reach the paint color.
+##   repaint - the keyed color lands ON the chosen color. Black means black.
 ##
 ## The swatches are graded by how related they are to the key, because the two
 ## effects owe different things to the middle grade:
@@ -26,7 +26,7 @@ extends SceneTree
 ##             all-or-nothing and a face flashing to black is not a near miss.
 ##             This grade is why repaint selects on an angular cone instead of
 ##             the raw projection erase uses - see the shader branch.
-##   UNRELATED blue and neutral grey. Nothing may touch these, either effect.
+##   UNRELATED blue and neutral gray. Nothing may touch these, either effect.
 
 const W := 64
 const H := 96
@@ -42,7 +42,7 @@ const SWATCHES := [
 	["yellow wall (washed out)", Color(0.86, 0.82, 0.68), MEMBER],
 	["skin", Color(0.78, 0.58, 0.47), ADJACENT],
 	["blue shirt", Color(0.20, 0.28, 0.62), UNRELATED],
-	["neutral grey", Color(0.50, 0.50, 0.50), UNRELATED],
+	["neutral gray", Color(0.50, 0.50, 0.50), UNRELATED],
 ]
 
 var _fails: PackedStringArray = []
@@ -116,8 +116,8 @@ func _initialize() -> void:
 
 	print("")
 	if _fails.is_empty():
-		print("repaint_check: PASS - repaint lands the keyed colour on the chosen ",
-			"colour, erase subtracts its chroma, the region confines it, and the ",
+		print("repaint_check: PASS - repaint lands the keyed color on the chosen ",
+			"color, erase subtracts its chroma, the region confines it, and the ",
 			"edge is anti-aliased.")
 		quit(0)
 	else:
@@ -126,15 +126,15 @@ func _initialize() -> void:
 		quit(1)
 
 
-## THE REGION. A colour key cannot separate two things that are the same colour;
-## the whole point of the box is that position can. So: the SAME key colour top
+## THE REGION. A color key cannot separate two things that are the same color;
+## the whole point of the box is that position can. So: the SAME key color top
 ## and bottom, a box over the top half only, and the bottom must survive - which
 ## is literally the reported case (a yellow wall to remove, a gold coin to keep).
 func _check_region() -> void:
 	var img := Image.create_empty(W, H, false, Image.FORMAT_RGBA8)
 	for y in H:
 		for x in W:
-			img.set_pixel(x, y, Color(0.85, 0.72, 0.35))   # one uniform keyed colour
+			img.set_pixel(x, y, Color(0.85, 0.72, 0.35))   # one uniform keyed color
 	var tex := ImageTexture.create_from_image(img)
 	var got := await _render(tex, MaskSession.EFFECT_REPAINT,
 		{"accent": 0.0, "stick": 0.0, "tint": 0.0, "con": 0.5,
@@ -159,7 +159,7 @@ func _check_region() -> void:
 			% [_fmt(full.get_pixel(p.x, p.y)), p.x, p.y] + "vignetting")
 
 	# THE FLUSH EDGE, and THE UNIFORM INTERIOR. Reported from a real session: a box
-	# taken over the whole upper half left a band of the removed colour hugging the
+	# taken over the whole upper half left a band of the removed color hugging the
 	# very top of the picture. Two causes, both checked here - the border fade used
 	# to run inward from a side even when that side sat ON the frame's edge (so the
 	# first rows were only partly painted), and Region edge defaulted to soft, which
@@ -174,7 +174,7 @@ func _check_region() -> void:
 			% [soft, _fmt(row0), int(H * 0.25), _fmt(flush.get_pixel(W / 2, int(H * 0.25)))])
 		_expect(_dist(row0, Color(0, 0, 0)) < 0.16,
 			"edge %.1f: the box is flush with the top of the frame but row 0 is %s - "
-			% [soft, _fmt(row0)] + "a band of the removed colour survives at the border")
+			% [soft, _fmt(row0)] + "a band of the removed color survives at the border")
 		# Uniform inside: every row from the top down to where the border shoulder
 		# legitimately begins must be painted the SAME. The shoulder runs inward
 		# from the box's bottom edge (0.5) by soft x half the box's smaller side
@@ -187,10 +187,10 @@ func _check_region() -> void:
 			inner_max = maxf(inner_max, _dist(flush.get_pixel(W / 2, y), Color(0, 0, 0)))
 		_expect(inner_max < 0.16,
 			"edge %.1f: inside the box the paint varies (worst %.3f from the paint " % [soft, inner_max]
-			+ "colour) - a region is a selection, not a gradient")
+			+ "color) - a region is a selection, not a gradient")
 
 
-## THE EDGE. A hard colour boundary keyed per pixel steps straight from painted
+## THE EDGE. A hard color boundary keyed per pixel steps straight from painted
 ## to unpainted in one pixel, which is what reads as blocky and crawls once the
 ## source is compressed video. Anti-aliased, the boundary spends a few pixels in
 ## between. Measured as how many rows are strictly between the two extremes.
@@ -198,7 +198,7 @@ func _check_smoothing() -> void:
 	var img := Image.create_empty(W, H, false, Image.FORMAT_RGBA8)
 	for y in H:
 		for x in W:
-			# Keyed colour above the midline, an unrelated blue below it.
+			# Keyed color above the midline, an unrelated blue below it.
 			img.set_pixel(x, y, Color(0.85, 0.72, 0.35) if y < H / 2 else Color(0.20, 0.28, 0.62))
 	var tex := ImageTexture.create_from_image(img)
 	print("")

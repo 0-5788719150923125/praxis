@@ -23,7 +23,7 @@ extends GhostScene
 const Flow2D := preload("res://scripts/flow.gd")
 
 # COATS. The scene grew one pelt forever - 160-230 strands, all 0.34-0.62 long -
-# so every seed was the same animal in a different colour. A coat is a whole habit
+# so every seed was the same animal in a different color. A coat is a whole habit
 # of growth: how many strands, how long, how thick, and how many segments they bend
 # through (few long segments read as stiff spines, many short ones as soft hair).
 const COATS := [
@@ -49,7 +49,7 @@ var _sway_gain := 0.0     # EMA'd energy, widens the sway with the music
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	# Any mood: fur comes in every colour there is, and the mood carries the coat's
+	# Any mood: fur comes in every color there is, and the mood carries the coat's
 	# saturation and value too - a "bone" pelt is pale AND washed out, an "ember" one
 	# saturated AND bright, which a bare random hue could never say.
 	var sch := Scheme.pick(rng)

@@ -3,7 +3,7 @@ extends GhostScene
 ## Tidepool - sunlight through a hand's depth of moving water.
 ##
 ## Looking STRAIGHT DOWN into a clear pool over rounded stones, sand and weed, in full
-## daylight. It is the first overhead shot in the catalogue and one of the first bright
+## daylight. It is the first overhead shot in the catalog and one of the first bright
 ## grounds, where the pale bed IS the subject. The surface is a real wave field: a swell
 ## arriving from one edge, finer chop crossing it, and ring waves spreading and dying where
 ## drips land. What you watch is the CAUSTIC NET on the bed - a mesh of bright ribs that
@@ -68,9 +68,9 @@ extends GhostScene
 ## nowhere near its Nyquist limit.
 ##
 ## The grid is sized against [constant SWEEP_BUDGET], which counts the O(nodes) work as
-## well as the sweep. The mesh is one vertex per NODE plus one per cell centre with shared
-## indices, so a frame rewrites only the colours. Cells are CROSS-SPLIT into four triangles
-## about that centre rather than two about a diagonal, without which a 25-pixel cell reads
+## well as the sweep. The mesh is one vertex per NODE plus one per cell center with shared
+## indices, so a frame rewrites only the colors. Cells are CROSS-SPLIT into four triangles
+## about that center rather than two about a diagonal, without which a 25-pixel cell reads
 ## as a herringbone of creases rather than water. Arrays handed to the main thread are
 ## never written again; a change allocates a new one, which is the only discipline that
 ## makes a pipelined worker safe.
@@ -157,7 +157,7 @@ var _ring_damp := 0.6
 
 var _t_sim := 0.0
 var _kicked := false
-var _ch := Vector2.ZERO           # the SMOOTHED tonal centre, as (hue, strength)
+var _ch := Vector2.ZERO           # the SMOOTHED tonal center, as (hue, strength)
 var _ch_vec := Vector2.ZERO       # ... carried in CARTESIAN form, which is what makes it smooth
 var _glare_e := 0.0               # enveloped energy behind the glare threshold
 
@@ -401,20 +401,20 @@ func update(f: AudioFeatures, delta: float) -> void:
 		return
 	_kicked = true
 
-	# The water's own colour, dragged a little toward the music's tonal centre - a wash,
+	# The water's own color, dragged a little toward the music's tonal center - a wash,
 	# not a repaint, since a bright scene reacts by shifting temperature rather than by
 	# changing what it is.
 	# Blended on the wheel rather than along the shortest arc (GhostScene.blend_hue): the arc form
 	# flips sign at the antipode, which put a jump of 0.30 of a turn in the water and 0.45 in the
-	# sky between two consecutive frames whenever the tonal centre drifted opposite this pool's
-	# own hue - the other half of the reported colour flicker, and the half that easing alone
+	# sky between two consecutive frames whenever the tonal center drifted opposite this pool's
+	# own hue - the other half of the reported color flicker, and the half that easing alone
 	# cannot reach, since the jump is the same size however slowly the input crosses the boundary.
 	var wh := blend_hue(_hue, _ch.x, 0.3 * _ch.y)
 	var sh := blend_hue(_sky_hue, _ch.x, 0.45 * _ch.y)
 	# Glare threshold is the ONLY thing energy touches: a loud passage lowers the bar the
 	# specular lobe has to clear, so highlights bloom shut over the bed and open again. It reads
 	# the ENVELOPED energy (see _advance) rather than the raw frame value - the glare it gates
-	# lays the sky's whole colour over the pool, and on a jumpy source that strobed.
+	# lays the sky's whole color over the pool, and on a jumpy source that strobed.
 	var thr := lerpf(_glare_hi, _glare_lo, _glare_e)
 
 	var rings: Array = []
@@ -462,8 +462,8 @@ func _advance(dt: float, f: AudioFeatures) -> void:
 	# the ribs; it moves nothing and resizes nothing.
 	_steep = Nonlinear.flare(_steep, 1.0 + _move_gain * f.movement, dt, 1.6, 0.7)
 
-	# THE TONAL CENTRE, EASED IN CARTESIAN FORM. chroma_hue() hands back an ANGLE, and an angle is
-	# exactly the wrong quantity to use raw: when two tonal centres a tritone apart trade dominance
+	# THE TONAL CENTER, EASED IN CARTESIAN FORM. chroma_hue() hands back an ANGLE, and an angle is
+	# exactly the wrong quantity to use raw: when two tonal centers a tritone apart trade dominance
 	# the resultant passes near the origin and its angle flips half a turn between one frame and
 	# the next, so the water's tint and the ground's wash snapped between two hues and then settled
 	# on whichever won - "the color is unstable, and will often flicker between two colors at
@@ -557,7 +557,7 @@ static func _halton(i: int, b: int) -> float:
 ## scratch buffer, the static depth and absorption maps and the baked bed texture; the
 ## scene never reads any of them, which is what makes a Director cut mid-build harmless.
 ##
-## The mesh is one vertex per NODE with a shared index buffer, so a frame writes colours
+## The mesh is one vertex per NODE with a shared index buffer, so a frame writes colors
 ## and nothing else. `pts` and `idx` are rebuilt (as NEW arrays, never in place) only when
 ## the frame size changes, because an array already handed to the main thread must never
 ## be written again.
@@ -642,7 +642,7 @@ class PoolJob:
 		wet_nodes = maxi(1, wet_nodes)
 
 
-	## Bake the bed: sand, stones, weed and shell, into a colour texture the render pass
+	## Bake the bed: sand, stones, weed and shell, into a color texture the render pass
 	## samples bilinearly through the refracted view ray.
 	##
 	## The texture spans half again the pool so the refracted lookup never runs off it, and
@@ -776,9 +776,9 @@ class PoolJob:
 		if cell != pts_cell:
 			_build_mesh(cell)
 		var cols := PackedColorArray()
-		cols.resize(n + (gw - 1) * (gh - 1))     # nodes, then the cross-split cell centres
+		cols.resize(n + (gw - 1) * (gh - 1))     # nodes, then the cross-split cell centers
 		_shade(s, norm, cols)
-		_centres(cols)
+		_centers(cols)
 		return [{"pts": pts, "cols": cols, "idx": idx}]
 
 
@@ -916,7 +916,7 @@ class PoolJob:
 						+ 0.25 * (tmp[r1 + ix] + tmp[r3 + ix]) + 0.375 * tmp[row + ix]
 
 
-	## One colour per node: the refracted image of the bed, lit by the caustic net,
+	## One color per node: the refracted image of the bed, lit by the caustic net,
 	## absorbed by the water above it, with the sky and its glare laid over the top.
 	func _shade(s: Dictionary, norm: float, cols: PackedColorArray) -> void:
 		var water: Color = s["water"]
@@ -1026,7 +1026,7 @@ class PoolJob:
 	## Vertex positions and the index buffer for the node mesh. Built once per frame SIZE,
 	## never per frame, and always as new arrays - the previous ones may still be on the
 	## main thread inside a packet being drawn.
-	## CROSS-SPLIT, four triangles about a centre vertex, not two about a diagonal.
+	## CROSS-SPLIT, four triangles about a center vertex, not two about a diagonal.
 	##
 	## This is the fix for "the waves are blocky and jagged... even though their behavior is
 	## smooth". A cell is 21 to 24 screen pixels across at 1920x1080 (the grid is
@@ -1037,12 +1037,12 @@ class PoolJob:
 	## herringbone of straight creases all leaning one way. That reads as jagged even where
 	## nothing about the light is.
 	##
-	## Fanning from the centre is symmetric, so the artifact has no direction left to have, and
-	## the centre's colour is the mean of the four corners - which is exactly the value bilinear
+	## Fanning from the center is symmetric, so the artifact has no direction left to have, and
+	## the center's color is the mean of the four corners - which is exactly the value bilinear
 	## interpolation gives there, i.e. the one point the two old triangles disagreed about most.
 	## Cost: one extra vertex and two extra triangles per cell, 12.6k triangles against 6.3k on
 	## the coarse grid, still one draw call - and the positions and indices are built once per
-	## frame SIZE, so a frame only pays for the extra colours (about 3.2k cheap averages).
+	## frame SIZE, so a frame only pays for the extra colors (about 3.2k cheap averages).
 	##
 	## What it does NOT do is raise the sampling rate: the caustic buffer is still accumulated at
 	## node resolution, so a rib is still one to two cells wide. That is why the blur passes were
@@ -1059,7 +1059,7 @@ class PoolJob:
 			for ix in gw:
 				p[i] = Vector2(ox + float(ix) * cell, y)
 				i += 1
-		for iy in gh - 1:                      # the cell centres, appended after the nodes
+		for iy in gh - 1:                      # the cell centers, appended after the nodes
 			var y := oy + (float(iy) + 0.5) * cell
 			for ix in gw - 1:
 				p[i] = Vector2(ox + (float(ix) + 0.5) * cell, y)
@@ -1096,8 +1096,8 @@ class PoolJob:
 		pts_cell = cell
 
 
-	## The cell-centre colours, filled after _shade has written the node colours.
-	func _centres(cols: PackedColorArray) -> void:
+	## The cell-center colors, filled after _shade has written the node colors.
+	func _centers(cols: PackedColorArray) -> void:
 		var j := gw * gh
 		for iy in gh - 1:
 			var row := iy * gw

@@ -32,7 +32,7 @@ render_mode blend_disabled;
 // freezes the liquid and export traces the same currents.
 
 uniform sampler2D u_prev : hint_default_black;
-// The live frame + the face's own colour statistics: the deposits below are
+// The live frame + the face's own color statistics: the deposits below are
 // EVIDENCE-DRIVEN, not stamped shapes. A landmark only says WHERE TO LOOK;
 // the pixels say what the feature's shape is (dark socket, red lip line, lit
 // nose ridge), the same way the white coat is a per-pixel face-tint match
@@ -75,7 +75,7 @@ const float MOUTH_CAP_XHI = 0.0978;   // was clamp(u_mouth_r.x, ..., 0.055)
 // an attractor pull of 2.4 per unit of offset - so it settles a little under the
 // socket rather than streaming off the chin. See the deposit's advection call.
 const float EYE_DRIP = 0.10;
-// How hard the COAT channel is pulled toward the face centre, against 2.4 for the
+// How hard the COAT channel is pulled toward the face center, against 2.4 for the
 // features. See the deposit's advection call for why it is nearly still.
 const float COAT_PULL = 0.35;
 // The three clown-specific knobs, each a view onto an existing per-layer
@@ -150,7 +150,7 @@ float vnoisep(vec2 p) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Distance from a point to a SEGMENT. The eye-drip marches a centreline in steps
+// Distance from a point to a SEGMENT. The eye-drip marches a centerline in steps
 // and shades a lobe around it; measuring to the step's END POINT leaves a gap
 // wherever the step is longer than the lobe is wide, which on a real face drew the
 // run as a chain of beads rather than a streak. Measuring to the segment makes the
@@ -206,7 +206,7 @@ void fragment() {
 	float dark = 0.0;
 	float bright = 0.0;
 	float redness = -1.0;
-	float bright0 = 0.0;   // the CENTRE tap only - see the hollow gate below
+	float bright0 = 0.0;   // the CENTER tap only - see the hollow gate below
 	float dark0 = 0.0;     // ...and its darkness, which is what Evidence shapes
 	float red0 = 0.0;
 	for (int k = 0; k < 9; k++) {
@@ -240,7 +240,7 @@ void fragment() {
 	// meet across the bridge and run onto the forehead. That is not Scale being
 	// set too high, it is Scale having no idea the face has other features on it.
 	//
-	// So each radius is capped against the distance to its NEIGHBOURS - which the
+	// So each radius is capped against the distance to its NEIGHBORS - which the
 	// detector already knows - at fractions that keep a real gap between windows.
 	// Scale still grows everything and still reads as Scale; it now approaches the
 	// packing limit of the face instead of sailing past it.
@@ -328,7 +328,7 @@ void fragment() {
 		vec2 frel_e = (p - fc) / max(distance(er, el), 1e-4);
 		vec2 fco_e = vec2(dot(frel_e, fdir_e), dot(frel_e, vec2(-fdir_e.y, fdir_e.x)));
 		float rag_e = vnoisep(fco_e * (7.0 + 5.0 * smd) + vec2(3.1, 8.4));
-		// THE RAMP IS CENTRED ON THE CONTOUR. Widening it from a fixed lower edge
+		// THE RAMP IS CENTERED ON THE CONTOUR. Widening it from a fixed lower edge
 		// walks the 50% point inward, so the first cut of this made the patch
 		// visibly SHRINK as it softened - and "rubbed" is not "smaller". Solving
 		// thr + band/2 = 0.5 keeps the average boundary exactly where the polygon
@@ -377,7 +377,7 @@ void fragment() {
 		// Third pass. The first was a bundle of hairlines keyed on frame columns;
 		// the second fixed the count and the taper but sized itself off `rl`, the
 		// LOOK-WINDOW radius (1.75x the measured eye), and started 0.8 of that
-		// BELOW the eye centre. On the author's own clip that put a lobe most of an
+		// BELOW the eye center. On the author's own clip that put a lobe most of an
 		// eye wide on the cheekbone with a gap between it and the eye paint: "a
 		// gigantic upside-down teardrop that starts at the upper cheekbone and does
 		// not blend into the eye shadow". Every number in it was a guess about a
@@ -388,7 +388,7 @@ void fragment() {
 		// already knows the eye's real outline, how far Eye size grew it and how
 		// far Hollow opened it:
 		//
-		//   WHERE IT LEAVES  walk down-and-outward from the eye centre until the
+		//   WHERE IT LEAVES  walk down-and-outward from the eye center until the
 		//                    patch ends. That is the lash line's lower-outer corner
 		//                    on THIS face at THIS moment, not an offset from a
 		//                    radius. The head of the run is then set slightly INSIDE
@@ -408,7 +408,7 @@ void fragment() {
 		// If the walk finds no patch at all - eyes lost to a turn, a hand, a blink
 		// with Hollow wide open - there is no run. That is the gate; there is no
 		// separate "is there paint" test to get wrong. (One was written, sampling
-		// the eye CENTRE, which is a HOLE in a ring - it read zero everywhere and
+		// the eye CENTER, which is a HOLE in a ring - it read zero everywhere and
 		// Drip went completely inert.)
 		//
 		// It is not evidence-gated. It used to be folded into the eye window, which
@@ -472,10 +472,10 @@ void fragment() {
 				float w0 = halfw * clamp(u_drip_w, 0.05, 1.6);
 				// The head sits INSIDE the patch - that overlap is what makes the run
 				// and the eye shadow read as one shape instead of two.
-				// ...capped at half the way back to the eye centre, since w0 is now a
+				// ...capped at half the way back to the eye center, since w0 is now a
 				// socket-sized number and burying the head by all of it would start
 				// the run above the eye.
-				// ...capped at half the way back to the eye centre, since w0 is a
+				// ...capped at half the way back to the eye center, since w0 is a
 				// socket-sized number and burying the head by all of it would start
 				// the run above the eye.
 				vec2 srcp = eye_c + ex_d * (sgn * low * 0.45)
@@ -525,7 +525,7 @@ void fragment() {
 					// hard-edged lobe is what made the run read as a stripe drawn
 					// with a marker: pigment carried in liquid does not have one
 					// width, it has a wet core and a halo where it has spread and
-					// thinned. Two profiles off the same centreline give that for
+					// thinned. Two profiles off the same centerline give that for
 					// one distance calculation.
 					float dd = seg_dist(p, pcp, cp);
 					float core = 1.0 - smoothstep(w * 0.10, w * 0.45, dd);
@@ -580,13 +580,13 @@ void fragment() {
 	// shade shows through the paint. Low is a flat fill of the measured outline;
 	// high paints only where the frame is genuinely dark or red, so the eye's
 	// crease and the lip line come through as texture.
-	// It shapes the CENTRE tap, not the dilated one. `dark`, `bright` and
+	// It shapes the CENTER tap, not the dilated one. `dark`, `bright` and
 	// `redness` are each a MAX over a ring of nine taps - a dilation, there so the
 	// paint covers a feature robustly rather than pinholing on it - and a dilated
 	// max saturates: measured, every evidence term sat at 1.0 across the whole
 	// window, so shaping them changed the output by 0.0007, which is nothing. The
-	// centre tap is the one that still VARIES pixel to pixel, so Evidence blends
-	// from the dilated term (a flat fill of the outline) toward the centre tap's
+	// center tap is the one that still VARIES pixel to pixel, so Evidence blends
+	// from the dilated term (a flat fill of the outline) toward the center tap's
 	// own value (the picture's texture showing through).
 	float ev_mix = clamp(u_evidence, 0.0, 1.0);
 	// The socket's paint is evidence-shaped; the run below it is not (see the drip
@@ -598,7 +598,7 @@ void fragment() {
 	// of this did - makes a feature vanish wherever the evidence is weak, and
 	// clown_scale_check caught exactly that: the nose fell to 0.14 at low Scale.
 	// The floor is what guarantees a feature is PAINTED at all. So Evidence blends
-	// between two live behaviours - a reliable fill at 0 (the original look) and
+	// between two live behaviors - a reliable fill at 0 (the original look) and
 	// the picture's own texture at 1 - rather than between a fill and nothing.
 	float eye_tex = smoothstep(0.02, 0.42, dark0);
 	// THE FLAT END IS ACTUALLY FLAT, once there is a measured outline. Evidence's
@@ -615,7 +615,7 @@ void fragment() {
 	// grown by Eye size - so filling it is the whole point, and Evidence is what
 	// lets the picture back through. WITHOUT one, `wl` is a deliberately generous
 	// analytic ellipse and a flat fill of THAT is the "circles drawn over the face"
-	// complaint, so the old evidence-shaped behaviour is what the fallback keeps.
+	// complaint, so the old evidence-shaped behavior is what the fallback keeps.
 	float eye_flat = u_has_stencil > 0.5 ? 1.0 : (0.22 + 0.78 * eye_ev);
 	float tblack = max(wl, wr) * mix(eye_flat, eye_tex * eye_tex, ev_mix)
 		* (1.0 - u_hollow * hole_e * hole_k);
@@ -638,7 +638,7 @@ void fragment() {
 	float lip_ev = max(smoothstep(0.005, 0.075, fred - u_face_red),
 		smoothstep(0.07, 0.38, dark) * 0.9);
 	// Same hollow rule for the lips: teeth are the bright thing inside an
-	// open mouth, so the centre clears when it opens and fills when shut.
+	// open mouth, so the center clears when it opens and fills when shut.
 	float hole_m = smoothstep(0.45, 0.0, length((p - mo) / max(lr, vec2(1e-4)))) * hole_gate;
 	float lipw = win(p, mo, lr);
 	if (u_has_stencil > 0.5) {
@@ -657,7 +657,7 @@ void fragment() {
 	// still hugs the actual nose rather than sitting as a decal.
 	float nr = clamp(rl * 0.55 + rr * 0.55, 0.018, 0.075) * u_scale;
 	// The nose sits BETWEEN the eye line and the mouth and is the feature with a
-	// neighbour on both sides, so it takes the tightest bound of the three - half
+	// neighbor on both sides, so it takes the tightest bound of the three - half
 	// the way down to the lips, and clear of the eye windows above it.
 	nr = min(nr, min(d_nm * 0.48, d_en * 0.55));
 	// Brightness leads. The shadow UNDER the nose is dark evidence too, and
@@ -698,7 +698,7 @@ void fragment() {
 		// The jawline itself, so the coat stops at the face instead of at an
 		// ellipse that is too wide at the temples and too narrow at the chin -
 		// and FEATHERED, by averaging the silhouette over a small disc. Two rings
-		// plus the centre: enough taps that the ramp is smooth rather than
+		// plus the center: enough taps that the ramp is smooth rather than
 		// banded, few enough to be free. Round in pixels (u_texel_c carries the
 		// aspect), so the feather is the same width top and side.
 		float acc_f = texture(u_stencil, UV).a;
@@ -718,7 +718,7 @@ void fragment() {
 	} else {
 		// Carry: advection toward each channel's OWN attractor (the eye
 		// channel flows to whichever eye is nearer, the coat to the face
-		// centre), folded with a touch of blur so edges soften in transit.
+		// center), folded with a touch of blur so edges soften in transit.
 		vec2 eatt = distance(p, el) < distance(p, er) ? el : er;
 		// THE EYE PAINT RUNS DOWNWARD. Every other channel just flows to its own
 		// attractor, which is isotropic - paint that ends up above an eye creeps
@@ -729,7 +729,7 @@ void fragment() {
 		// of it - equilibrium settles just below the socket, and anything that
 		// strays upward is pulled back down instead of lingering.
 		// THE COAT BARELY DRIFTS, and the features still do. Advection samples
-		// BACKWARD along the flow, so a channel pulled toward the face centre
+		// BACKWARD along the flow, so a channel pulled toward the face center
 		// reads, at its own outer boundary, from just OUTSIDE itself - where
 		// there is no paint. The deposit refills that from zero every step, so
 		// the rim sits at whatever one step of refill reaches and never catches
@@ -782,7 +782,7 @@ void fragment() {
 		// the deposit was where Bleed's outward coat spread lived, but it is also
 		// what would refill the eye openings the moment they were cut out of the
 		// silhouette: advection reads from just outside a hole, and just outside a
-		// hole the coat is solid, so a few steps of it put a soft grey blob back
+		// hole the coat is solid, so a few steps of it put a soft gray blob back
 		// over the eyeball. The coat is a MASK - the sentence above already says so
 		// - so it is the deposit, exactly, and every question about where it lies
 		// is answered by the polygon. Bleed keeps its whole effect on the features

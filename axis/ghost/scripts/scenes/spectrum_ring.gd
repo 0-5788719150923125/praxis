@@ -39,14 +39,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_free = 0.0 if rng.randf() < 0.65 else rng.randf_range(0.3, 1.0)
 	_use_eye = rng.randf() < 0.4
 	if _use_eye:
-		_eye = EyeBody.new(rng.randi())          # looks around in centre-biased saccades
+		_eye = EyeBody.new(rng.randi())          # looks around in center-biased saccades
 		_lens = Lens3D.new()
 		_lens.eye = Vector3(0.0, 0.0, 4.0)
 		_lens.look = Vector3.ZERO
 		_lens.fov = 48.0
 	var sch := Scheme.pick(rng)                  # a ring of pure spectrum: any mood fits
 	# The band sweep runs base -> accent the SHORT way round, so low and high bands are
-	# two ends of one relationship rather than an arbitrary arc of the colour wheel.
+	# two ends of one relationship rather than an arbitrary arc of the color wheel.
 	var span := wrapf(sch.accent - sch.hue, -0.5, 0.5) * rng.randf_range(0.35, 1.0)
 	return {
 		"hue": sch.hue,
@@ -115,7 +115,7 @@ func _draw() -> void:
 		var r_i := base_r * (1.0 + 0.10 * wobble("bar", i))
 		var ang := _spin + TAU * float(i) / float(count) + 0.05 * wobble("ang", i)
 		var dir := Vector2(cos(ang), sin(ang))
-		# Colour, not size, carries the audio: a moving hotspot lights the bars it
+		# Color, not size, carries the audio: a moving hotspot lights the bars it
 		# sweeps over, and the global glow lifts everything on a beat.
 		var lit := _light.at(dir * radius_frac)
 		var h := fposmod(hue + hue_spread * float(band_i) / float(n) + 0.10 * lit + _light.hue_shift(), 1.0)
@@ -166,7 +166,7 @@ func _bar(a: Vector2, b: Vector2, dir: Vector2, col: Color, form: String, thickn
 
 # A pseudo-3D sphere: opaque circles stacked large-dark to small-bright, each nudged
 # toward the light, so a highlight sits up-left and the lower-right falls into shadow.
-# `s_mul` scales the saturation to the ring's mood - an ash ring gets a grey ball.
+# `s_mul` scales the saturation to the ring's mood - an ash ring gets a gray ball.
 func _draw_sphere(c: Vector2, radius: float, hue: float, glow: float, s_mul := 1.0) -> void:
 	# Soft outer halo (a couple of faint wide discs).
 	for h in 3:

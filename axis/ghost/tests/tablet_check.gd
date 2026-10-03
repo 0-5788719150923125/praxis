@@ -7,7 +7,7 @@ extends SceneTree
 ##
 ## The sharp check is the AGREEMENT. The medium finds the word being said by walking the
 ## chapter's spoken words alongside the voice's; a word the voice reads that the screen thinks
-## is skipped (or the reverse) desynchronises every highlight, scroll and tap after it, silently.
+## is skipped (or the reverse) desynchronizes every highlight, scroll and tap after it, silently.
 ## So the voice's text ([method TabletScript.speakable]) is tokenized the way the voice would see
 ## it and compared, word for word, with the words the parse marks spoken. And a chapter that is
 ## NOT a tablet chapter must come back byte-identical, because this runs on every reading.
@@ -93,17 +93,17 @@ func _check_inference() -> void:
 	var kinds := []
 	for a in d["actions"]:
 		kinds.append(String(a["kind"]))
-	_ok(kinds == ["wake", "open", "skim", "link", "tab", "type", "search", "link", "rotate"],
+	_ok(kinds == ["wake", "open", "type", "skim", "link", "tab", "type", "search", "link", "rotate"],
 		"actions inferred: %s" % str(kinds))
 	var pages: Array = d["pages"]
 	_ok(pages.size() == 5, "five pages (got %d)" % pages.size())
 	var acts: Array = d["actions"]
-	var link: Dictionary = acts[3]
+	var link: Dictionary = acts[4]
 	_ok(String(d["words"][int(link["word"])]["text"]) == "A", "the link tapped is the headline's first word")
-	_ok(String(acts[5]["text"]) == "www.engine.test", "a url with no link to it is typed")
+	_ok(String(acts[6]["text"]) == "www.engine.test", "a url with no link to it is typed")
 	# below a skipped masthead and two placeholder stories, the reader skims to the headline;
 	# on the article, a short skipped tail is no skim
-	_ok(int(acts[2]["word"]) == int(link["word"]) and int(acts[2]["from"]) == 0,
+	_ok(int(acts[3]["word"]) == int(link["word"]) and int(acts[3]["from"]) == 0,
 		"the hand skims past what is not read to what is")
 	_ok(bool(pages[2]["search_box"]) and not bool(pages[2]["results"]), "a page searched from has a box")
 	_ok(bool(pages[3]["results"]) and String(pages[3]["query"]) == "what is it?", "the results page knows its query")
@@ -114,6 +114,8 @@ func _check_inference() -> void:
 	_ok(stubs == ["Nobody wrote this one"], "a heading with nothing under it is a stub, a skipped body is not: %s" % str(stubs))
 	# NOTHING IS READ OFF THE SCREEN: the narration before the first url is not a word at all
 	_ok(int(acts[0]["after"]) == 0 and int(acts[1]["after"]) == 0, "nothing is read before the browser opens")
+	_ok(String(acts[1]["kind"]) == "open" and int(acts[1]["page"]) == -1 and String(acts[2]["kind"]) == "type"
+		and String(acts[2]["text"]) == "news.test", "the browser opens on a blank tab and the first address is typed")
 	var first: Dictionary = d["words"][(d["spoken"] as PackedInt32Array)[0]]
 	_ok(int(first["page"]) == 0 and String(first["text"]) == "A", "the first word read is on the first page")
 	# a skip mark mid-sentence holds off to the sentence's end
@@ -192,11 +194,11 @@ func _check_back() -> void:
 	var kinds := []
 	for a in d["actions"]:
 		kinds.append(String(a["kind"]))
-	_ok(kinds == ["wake", "open", "link", "skim", "back", "link"], "back inferred, with a glance first: %s" % str(kinds))
+	_ok(kinds == ["wake", "open", "type", "link", "skim", "back", "link"], "back inferred, with a glance first: %s" % str(kinds))
 	var acts: Array = d["actions"]
-	_ok(int(acts[4]["page"]) == 0 and int(acts[4]["from"]) == 1, "back returns to the page before")
-	_ok(int(acts[3]["word"]) == -1, "an unread page is glanced at before leaving it")
-	_ok(int(acts[5]["from"]) == 0 and String(d["words"][int(acts[5]["word"])]["text"]) == "One",
+	_ok(int(acts[5]["page"]) == 0 and int(acts[5]["from"]) == 1, "back returns to the page before")
+	_ok(int(acts[4]["word"]) == -1, "an unread page is glanced at before leaving it")
+	_ok(int(acts[6]["from"]) == 0 and String(d["words"][int(acts[6]["word"])]["text"]) == "One",
 		"after back, the next link is found on the page returned to")
 	var all := []
 	for w in d["words"]:
@@ -239,8 +241,8 @@ func _check_real() -> void:
 	var kinds := []
 	for a in d["actions"]:
 		kinds.append(String(a["kind"]))
-	_ok(kinds == ["wake", "open", "link", "skim", "tab", "type"], "the real page is reached by its link and lingered on: %s" % str(kinds))
-	var linger: Dictionary = d["actions"][3]
+	_ok(kinds == ["wake", "open", "type", "link", "skim", "tab", "type"], "the real page is reached by its link and lingered on: %s" % str(kinds))
+	var linger: Dictionary = d["actions"][4]
 	_ok(int(linger["from"]) == 1 and int(linger["word"]) == -1 and float(linger["dur"]) >= 6.0,
 		"the linger is long (%.1f s): nothing on it is read" % float(linger["dur"]))
 	_ok(not String(d["speakable"]).contains("An article") and String(d["speakable"]).contains("Read this"),

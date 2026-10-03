@@ -8,7 +8,7 @@ class_name Field
 ## hills, ridged mountains, billow puffs, cells/cracks, strata bands, a gradient), then
 ## shape it: domain-WARP it by another field, push it through a Nonlinear CURVE, scale /
 ## offset it, and COMBINE fields (add / mul / mask / max / min / sub) into a tree. The
-## same field drives a mountain's height, mottles a rock's colour, carves a fissure, or
+## same field drives a mountain's height, mottles a rock's color, carves a fissure, or
 ## modulates any scalar elsewhere - textures abstracted into one primitive.
 ##
 ## Sampling is pure and stateless, so a scene samples a Field once into a grid at build
@@ -131,7 +131,7 @@ func _raw(p: Vector2) -> float:
 		q += Vector2(_warp.at(p) - 0.5, _warp.at(p + Vector2(5.2, 1.3)) - 0.5) * _warp_amt
 	if _kind == "gradient":
 		if _grad == Vector2.ZERO:
-			return clampf(1.0 - q.length(), 0.0, 1.0)      # radial (centre high)
+			return clampf(1.0 - q.length(), 0.0, 1.0)      # radial (center high)
 		return clampf(0.5 + 0.5 * q.dot(_grad.normalized()), 0.0, 1.0)
 	var n := _noise.get_noise_2d(q.x, q.y)                  # ~ -1..1
 	return clampf(n * 0.5 + 0.5, 0.0, 1.0)

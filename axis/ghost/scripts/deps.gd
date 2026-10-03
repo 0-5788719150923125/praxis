@@ -750,7 +750,7 @@ static func _scan_for(prog: String) -> String:
 
 ## The fallback, and only ever reached on a miss: ask the OS's own lookup, which
 ## can still know something the scan does not (a PATH entry behind a symlinked
-## directory the scan normalised differently, a shim registered by an app store).
+## directory the scan normalized differently, a shim registered by an app store).
 static func _ask_the_shell(prog: String) -> String:
 	var out: Array = []
 	var finder := "where" if _is_windows() else "which"

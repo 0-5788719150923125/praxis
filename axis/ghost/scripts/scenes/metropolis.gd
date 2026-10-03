@@ -3,17 +3,17 @@ extends GhostScene
 ## Metropolis - a city of thousands of blocks growing over a countryside.
 ##
 ## A large isometric landscape: Gaussian hills carry a grid of blocks whose heights
-## and colours are driven by a [Swarm] field - no per-block scripting. By seed:
+## and colors are driven by a [Swarm] field - no per-block scripting. By seed:
 ##   growth - development creeps outward from a few seeds, the city spreading across
 ##            the hills over time, breathing with the music.
-##   pulse  - the city is already built; colour pulses are injected on the beat and
+##   pulse  - the city is already built; color pulses are injected on the beat and
 ##            ripple outward across the blocks as expanding fronts.
-## A second WAVE swarm always carries the colour pulses. Fog pools in the low
+## A second WAVE swarm always carries the color pulses. Fog pools in the low
 ## ground. The grid is drawn far larger than the frame, so it runs off every edge.
 ##
 ## What KIND of place it is is one roll, not several. The hue was already free here,
 ## but the character never was: always a 48x48 grid on the same rolling hills at the
-## same mid saturation, so every seed built the same city in a different colour. A
+## same mid saturation, so every seed built the same city in a different color. A
 ## [constant CHARACTER] now decides palette, block size, how flat the land is, how
 ## tall the buildings stand and how broad the hue districts are together - because
 ## those are the same decision. Ground takes the [Scheme]'s base and the buildings its
@@ -58,7 +58,7 @@ var _fog := 0.05       # fog density over the low ground
 var _hue := 0.0
 var _city_hue := 0.0
 var _dev: Swarm         # development / building height
-var _pulse: Swarm       # colour wave
+var _pulse: Swarm       # color wave
 var _terrain := PackedFloat32Array()
 var _detail := PackedFloat32Array()    # per-tile ground/wall grain (texture)
 var _district := PackedFloat32Array()  # per-tile low-freq hue zone (city QUADRANTS - siblings share a hue)
@@ -98,7 +98,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"x": rng.randf(), "y": rng.randf(),
 			"s": _band(ch["hill_s"], rng), "a": rng.randf_range(0.4, 1.0)})
 	# A fine detail field (ground/wall grain) and a low-frequency DISTRICT field (broad hue zones, so
-	# neighbouring buildings share a colour and the city reads as quadrants rather than noise).
+	# neighboring buildings share a color and the city reads as quadrants rather than noise).
 	var detf := Field.make("fbm", rng.randi(), 9.0, 4)
 	var distf := Field.make("fbm", rng.randi(), _band(ch["district"], rng), 3)
 	_detail.resize(_g * _g)
@@ -142,7 +142,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	var drive := f.energy * 0.8 + f.beat * 0.6
 	if _theme == "growth":
 		_dev.step(drive, delta, 0.02)    # grows, slight decay so it breathes
-	# Inject a colour pulse at one origin on each beat, then let it ripple outward.
+	# Inject a color pulse at one origin on each beat, then let it ripple outward.
 	if f.beat > 0.5 and _beat_prev <= 0.5 and _origins.size() > 0:
 		var o: Vector2i = _origins[_opick % _origins.size()]
 		_pulse.inject(o.x, o.y, 1.0)
@@ -207,8 +207,8 @@ static func _build_city(s: Dictionary) -> Array:
 			var cy := (float(gx + gy) - float(g - 1)) * th - top_z
 			var side := building * z_build + 2.0
 			var det: float = detail[i]
-			# Hue: a DISTRICT base (broad zones so neighbours match) drifting with height, development
-			# and the colour pulse - a real varied field, and buildings vs ground read differently.
+			# Hue: a DISTRICT base (broad zones so neighbors match) drifting with height, development
+			# and the color pulse - a real varied field, and buildings vs ground read differently.
 			var district: float = district_f[i] - 0.5
 			var is_bldg := building > 0.12
 			var base_h: float = city_hue if is_bldg else hue0
@@ -216,7 +216,7 @@ static func _build_city(s: Dictionary) -> Array:
 			# Value: terrain + development + audio + pulse, grained by the detail texture.
 			var lit := 0.08 + 0.52 * terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse + 0.28 * (det - 0.5)
 			# Cast shadow: taller buildings drop a soft dark diamond onto the ground toward the back-left
-			# (light reads from the front-right), grounding them instead of floating on flat colour.
+			# (light reads from the front-right), grounding them instead of floating on flat color.
 			if building > 0.25:
 				var so := building * z_build
 				var shp := Vector2(cx - tw * 0.5 - so * 0.35, cy + top_z - th * 0.4 - so * 0.15)
@@ -241,7 +241,7 @@ static func _block(tb: TriBatch, base: Vector2, tw: float, th: float, side: floa
 	tb.quad(w_t, s_t, s_t + down, w_t + down, Color.from_hsv(hue, sat, lit * 0.55))
 	tb.quad(s_t, e_t, e_t + down, s_t + down, Color.from_hsv(hue, sat, lit * 0.75))
 	# Building features: FLOOR bands + a few LIT WINDOWS on the two visible walls, so a tall block
-	# reads as a building with structure instead of a flat coloured slab. Only tall blocks, capped.
+	# reads as a building with structure instead of a flat colored slab. Only tall blocks, capped.
 	if building > 0.3 and side > 14.0:
 		var floors := clampi(int(side / 8.0), 2, 7)
 		_wall(tb, w_t, s_t, down, floors, hue, lit * 0.55, sat, det)          # left wall
@@ -290,7 +290,7 @@ func _draw_fog(left: float, w: float, foot: float, u: float) -> void:
 			pts[c] = Vector2(left + fx * w, minf(y, foot - 1.0))
 		pts[cols] = Vector2(left + w, foot)
 		pts[cols + 1] = Vector2(left, foot)
-		# The fog is the ground's own colour, thinned - a dustbowl's air hangs heavier
+		# The fog is the ground's own color, thinned - a dustbowl's air hangs heavier
 		# than a megacity's, so the character sets how much of it there is.
 		draw_colored_polygon(pts, Color.from_hsv(_hue, _sat * 0.2, 0.9,
 			_fog + 0.02 * _f.low_mid))

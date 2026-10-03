@@ -4,12 +4,12 @@ extends GhostScene
 ##
 ## A grid of iso cubes whose stack height tracks the spectrum, a 3D equalizer
 ## terrain. By seed it is one of three scales (see [constant SCALES]):
-##   plot    - a small grid held centred in the frame (the original look).
+##   plot    - a small grid held centered in the frame (the original look).
 ##   terrace - a mid grid that just overflows the frame, stacks running tall.
 ##   city    - thousands of blocks spilling off every edge, the camera down among
 ##             them like a skyline. City blocks carry a structural base height so
 ##             the skyline stands even in quiet, the spectrum bouncing on top.
-## The iso squash and the colour scheme are sampled too, so the same grid can be
+## The iso squash and the color scheme are sampled too, so the same grid can be
 ## looked down on steeply or almost edge-on, in any of [Scheme]'s moods.
 ## Whichever it is, an [Activation] decides who moves: with sparsity some columns stay
 ## rooted (a still skyline) while others rise and fall - so it is not one uniform
@@ -58,7 +58,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	else:
 		sparsity = rng.randf_range(0.45, 0.8)
 	_act = Activation.new(grid * grid, rng, sparsity)
-	# Tall blocks travel toward the accent hue, so height is a colour axis on the
+	# Tall blocks travel toward the accent hue, so height is a color axis on the
 	# scheme rather than an arbitrary shift off an arbitrary hue.
 	var to_accent := fposmod(_sch.accent - _sch.hue + 0.5, 1.0) - 0.5
 	return {
@@ -114,7 +114,7 @@ func _draw() -> void:
 	var g := int(params.grid)
 	var over: float = params.over
 	# City sizes tiles to overflow the frame (zoomed in among the blocks); plot uses
-	# the fixed centred tile.
+	# the fixed centered tile.
 	var tw: float = (size.x * over) / float(g) * 0.5 if over > 0.0 else float(params.tile) * u
 	var th: float = tw * float(params.pitch)            # iso squash: how steeply we look down
 	var bh: float = float(params.max_h) * u
@@ -148,7 +148,7 @@ func _draw_cube(base: Vector2, tw: float, th: float, top: float, e: float, hue: 
 
 	var lit := (0.26 + 0.6 * e) / NOMINAL_VAL
 	# Faces differ only in how much light they catch; the mood decides the character
-	# they catch it WITH, so an ash city is grey and dim where a toxic one glares.
+	# they catch it WITH, so an ash city is gray and dim where a toxic one glares.
 	# Dividing by NOMINAL_VAL keeps a mid-brightness mood at the old exposure.
 	var left_face := _sch.color(h, 0.85, lit * 0.55)
 	var right_face := _sch.color(h, 0.85, lit * 0.86)

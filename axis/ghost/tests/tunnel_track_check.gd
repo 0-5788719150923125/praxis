@@ -29,7 +29,7 @@ extends Node
 ## station, and a song's worth of it is tens of thousands of stations. Rotation matrices drift:
 ## round-off accumulates, the axes stop being perpendicular, and the tube shears into an ellipse
 ## that slowly flattens. It fails gradually and looks like a design choice, which is exactly the
-## kind of thing that ships. The scene re-orthonormalises every step; this measures that it works
+## kind of thing that ships. The scene re-orthonormalizes every step; this measures that it works
 ## over far more track than any session will ever generate.
 ##
 ## And that the buffer stays BOUNDED - the track is endless, so the one thing it must not do is
@@ -263,7 +263,7 @@ func _motes_stream() -> void:
 
 ## Carry the frame over far more track than a session will ever generate and measure how far it
 ## has drifted from orthonormal: the axes' mutual dot products (0 when perpendicular) and their
-## lengths (1 when normalised).
+## lengths (1 when normalized).
 func _orthonormal() -> void:
 	var sc = _make(7717, "")
 	if sc == null:

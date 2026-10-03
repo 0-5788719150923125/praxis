@@ -70,7 +70,7 @@ float fbm(vec2 p) {
 void fragment() {
 	vec4 tint = COLOR; // white quad texture x modulate: the scene's fade rides in here
 
-	vec2 p = (UV - 0.5) * 2.0 * u_half; // unit fractions, y down, (0,0) at centre
+	vec2 p = (UV - 0.5) * 2.0 * u_half; // unit fractions, y down, (0,0) at center
 	float yu = u_base - p.y;            // height above the bed, up-positive
 	float y = max(yu, 0.0);
 

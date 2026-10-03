@@ -289,7 +289,7 @@ def measure_vowel_space(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
     """Vowel-space area in Bark^2, split by whether the planner reduced it.
 
     Sampled at the segment midpoint over a 40% window, which is where a vowel
-    is closest to its target and furthest from its neighbours' coarticulation.
+    is closest to its target and furthest from its neighbors' coarticulation.
     """
     groups: dict[str, list[tuple[float, float]]] = {"stressed": [], "reduced": []}
     tokens: dict[str, list[tuple[float, float]]] = {}
@@ -420,7 +420,7 @@ def measure_artifacts(x: np.ndarray, sr: int) -> dict:
 
     A click is a first-difference outlier against the LOCAL texture, not a
     fixed threshold: real plosive releases are legitimately steep, so the test
-    is whether a step stands out from its own neighbourhood.
+    is whether a step stands out from its own neighborhood.
     """
     peak = float(np.max(np.abs(x))) or 1.0
     d = np.abs(np.diff(x))

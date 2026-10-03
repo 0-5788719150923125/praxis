@@ -5,7 +5,7 @@ extends GhostScene
 ## Wavy ribbons drift and undulate, each tied to a band of the spectrum so the curtains
 ## brighten and ripple with the music, hung over a faint starfield and a dark bed. The
 ## northern-lights corner. `bed` + `stars` + `aurora`, in whichever of the sky's own
-## colours the seed draws - and as broad drapes, fine ribbons, or a doubled curtain.
+## colors the seed draws - and as broad drapes, fine ribbons, or a doubled curtain.
 
 # The curtain's FORM: how many ribbons hang, how saturated they are, and whether a second
 # set hangs behind on the accent hue. One display is a couple of slow drapes and another is
@@ -46,7 +46,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"count": rng.randi_range(int(cnt[0]), int(cnt[1])),
 	})
 	if bool(f["second"]):
-		# A second, thinner curtain on the accent: the banded two-colour display.
+		# A second, thinner curtain on the accent: the banded two-color display.
 		add_layer("aurora", rng, {
 			"hue": sch.accent,
 			"sat": rng.randf_range(float(sat_r[0]), float(sat_r[1])) * 0.8,

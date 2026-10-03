@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Render the intelligibility fixture set: text in, WAV + timing JSON out.
 ##
-## This is deliberately dumb. It owns no metrics and makes no judgements - it
+## This is deliberately dumb. It owns no metrics and makes no judgments - it
 ## exists so the Python analyzer (axis/ghost/measure_voice.py) has real audio
 ## with a real alignment to measure. Every acoustic threshold lives there,
 ## where numpy can do FFTs and LPC; GDScript's job is to be the synthesizer.
@@ -34,7 +34,7 @@ const FIXTURES := {
 	"pairs": "Bat pat mat cat. Din tin sin thin. Pin bin. Tin din. Kin gin. Fin thin sin shin. Sum sun sung. Rip lip. Bitter better butter. The water in the winter is bitter.",
 }
 
-# Zero trait vector = the hand-curated default speaker (Spec.from_traits centres
+# Zero trait vector = the hand-curated default speaker (Spec.from_traits centers
 # everything). Lineage [1] is the root seed. Both fixed: a gate that moves with
 # the seed measures the seed, not the engine.
 const LINEAGE := [1]

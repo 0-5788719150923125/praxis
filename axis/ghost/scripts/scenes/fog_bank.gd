@@ -1,14 +1,14 @@
 extends GhostScene
 
-## Fog bank - rolling coloured fog, light glowing from within.
+## Fog bank - rolling colored fog, light glowing from within.
 ##
-## The explicit "rolling fog with colours underneath / inside" idea: a rich colour bed
+## The explicit "rolling fog with colors underneath / inside" idea: a rich color bed
 ## with slow pools breathing on the spectrum, then several fog layers of different tint
-## and speed rolling over and through it, so the colour bleeds up through the cloud. The
+## and speed rolling over and through it, so the color bleeds up through the cloud. The
 ## bank lurches on the beat and coasts down (velocity + decay, not a uniform drift).
 ## `bed` + stacked `fog` layers - atmosphere from pure composition.
 
-# How heavy the bank is. A thin one barely veils the colour and a deep one buries it in
+# How heavy the bank is. A thin one barely veils the color and a deep one buries it in
 # sheets, which is the difference between a glow with mist over it and weather - so the
 # sheet count, their opacity and the bed's brightness all move together.
 const BANKS := {
@@ -21,7 +21,7 @@ const BANKS := {
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	# Any mood is fair here: the bank is the constant, the colour under it is the variable.
+	# Any mood is fair here: the bank is the constant, the color under it is the variable.
 	var sch := Scheme.pick(rng)
 	var keys := BANKS.keys()
 	var bank := String(keys[rng.randi() % keys.size()])
@@ -30,7 +30,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var alpha_r: Array = b["alpha"]
 	var cnt_r: Array = b["count"]
 	var sheet_r: Array = b["sheets"]
-	# A bright, saturated bed so the colour reads strongly *through* the fog above it.
+	# A bright, saturated bed so the color reads strongly *through* the fog above it.
 	add_layer("bed", rng, {
 		"hue": sch.hue,
 		"sat": clampf(sch.sat * rng.randf_range(0.85, 1.2), 0.05, 1.0),

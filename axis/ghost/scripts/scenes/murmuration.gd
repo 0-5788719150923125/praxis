@@ -8,18 +8,18 @@ extends GhostScene
 ## and thins to a haze where they roll edge-on. Waves of that darkening travel across the
 ## whole flock in half a second. A hawk cuts through the middle on a beat, the flock opens
 ## around it and closes behind, and a pale wave of alarm spreads outward from the strike
-## by neighbour contact alone - faster than any bird in it is flying.
+## by neighbor contact alone - faster than any bird in it is flying.
 ##
-## WHY IT IS NEW. Nothing in the catalogue flocks. `prism_swarm` is a scripted formation on
+## WHY IT IS NEW. Nothing in the catalog flocks. `prism_swarm` is a scripted formation on
 ## a fixed double-helix track, and [Primitives]' eight forces are field-like: every agent
 ## reads the same wind and the same attractor, and none of them has ever had an opinion
 ## about the agent beside it. This is the first subject whose shape is decided by consensus
 ## rather than by a seeded parameter, and the first crowd - the alarm wave is the point of
-## it, a signal propagating through neighbours at a speed that has nothing to do with the
+## it, a signal propagating through neighbors at a speed that has nothing to do with the
 ## audio that triggered it, so what you watch outlives its own trigger.
 ##
 ## WHAT THE SEED DECIDES. How many birds and how far they can see; the k-nearest cap and
-## the scan cap that bound the neighbour loop; the fixed separation weight and the two
+## the scan cap that bound the neighbor loop; the fixed separation weight and the two
 ## endpoints the cohesion/alignment pair walks between; speed range and the acceleration
 ## ceiling that is really a turn-rate ceiling; the roost's position, its pull and how far
 ## it may wander; whether there is a hawk at all (about seven seeds in ten), and if so its
@@ -159,7 +159,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_bands = rng.randi_range(12, 22)
 	# The land below the horizon: never black, because at dusk it is lit by the same sky
 	# it sits under, but always darker than the air it meets - which is the only thing that
-	# makes the horizon read as an edge rather than as a colour change.
+	# makes the horizon read as an edge rather than as a color change.
 	_ground_val = _horizon_val * rng.randf_range(0.35, 0.78)
 	_ground_sat = rng.randf_range(0.08, 0.34)
 
@@ -191,7 +191,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_flock.sep_radius = _flock.radius * rng.randf_range(0.30, 0.50)
 	_flock.k_cap = rng.randi_range(6, 14)
 	# The scan cap must stay comfortably above k_cap or a dense knot starves: a bird that
-	# spends its whole budget on the first cell never reaches the seven neighbours it is
+	# spends its whole budget on the first cell never reaches the seven neighbors it is
 	# allowed to have.
 	_flock.scan_cap = _flock.k_cap + rng.randi_range(8, 16)
 	_flock.query_stride = 2 if count > 1600 else rng.randi_range(1, 2)
@@ -206,7 +206,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_flock.flap_lo = rng.randf_range(5.5, 8.0)
 	_flock.flap_hi = _flock.flap_lo + rng.randf_range(2.5, 6.0)
 
-	# The travelling roll wave. Its speed is sampled as a CROSSING TIME rather than as a
+	# The traveling roll wave. Its speed is sampled as a CROSSING TIME rather than as a
 	# frequency, because what the eye reads is "the darkening got from one side of the
 	# flock to the other in about half a second" - so the wavelength and the box width fix
 	# the temporal frequency rather than the other way round.
@@ -545,9 +545,9 @@ func _draw() -> void:
 	draw_layers("front")
 
 
-## The sky colour at height [param t] (0 at the horizon, 1 at the zenith), dragged toward
-## the music's tonal centre by [param tint]. Saturation climbs and value falls with height,
-## which is what makes a dusk sky read as depth rather than as a two-colour gradient.
+## The sky color at height [param t] (0 at the horizon, 1 at the zenith), dragged toward
+## the music's tonal center by [param tint]. Saturation climbs and value falls with height,
+## which is what makes a dusk sky read as depth rather than as a two-color gradient.
 func _sky_at(t: float, dh: float, tint: float) -> Color:
 	var e := t * t * (3.0 - 2.0 * t)                 # smoothstep: the band edges vanish
 	var h := fposmod(_sky_hue + dh * e, 1.0)
@@ -574,7 +574,7 @@ func _ground_color(t: float) -> Color:
 ## The triangle layout is FIXED - three triangles, nine vertices, per bird, always, with a
 ## culled bird written as degenerate zero-alpha geometry rather than skipped. Two things
 ## follow. The index buffer is built ONCE at setup and never touched again, since it is
-## just 0..9n-1 and the triangle count never changes. And the vertex and colour buffers
+## just 0..9n-1 and the triangle count never changes. And the vertex and color buffers
 ## are written BY INDEX rather than appended to, so a bird costs no GDScript method calls
 ## at all - where [TriBatch]'s tri() would be three calls and eighteen appends each, which
 ## at two thousand birds a frame is the whole budget.
@@ -630,7 +630,7 @@ class FlockJob:
 
 	## Allocate the scratch once. The index buffer is the only thing that survives between
 	## builds: it is shared into every packet and never written after this, so the main
-	## thread submitting an old packet can never see a torn one. The vertex and colour
+	## thread submitting an old packet can never see a torn one. The vertex and color
 	## buffers are minted fresh per build for the same reason - the previous packet is
 	## still in flight and must not be rewritten under it, and a resize of a few hundred
 	## kilobytes is a memset, far below the cost of the geometry that fills it.

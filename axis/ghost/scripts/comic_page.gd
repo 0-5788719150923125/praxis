@@ -6,7 +6,7 @@ class_name ComicPage
 ## Cattle, not pets, applied to page design: a page is not a hand-drawn template picked
 ## from a list of six, it is a RECIPE - a row split, a per-row column split, gutters, a
 ## corner radius, a cant - whose numbers are all sampled from ranges around sensible
-## centres. So the show does not cycle through the same half-dozen grids; it draws from
+## centers. So the show does not cycle through the same half-dozen grids; it draws from
 ## the space of comic pages, and a given song always draws the same ones.
 ##
 ## The page lives in PAGE SPACE: x and y both in [-1, 1], y DOWN, so a panel rect is
@@ -81,7 +81,7 @@ var panels: Array = []
 ## the corner radius - leaving only the panel GRID to be rolled here. That is how
 ## [ComicSpread] makes two facing pages read as one printed sheet: those four numbers belong
 ## to the edition, not to the page, and sampling them per page put square corners opposite
-## rounded ones across the spine. An empty dictionary keeps the old behaviour exactly, so a
+## rounded ones across the spine. An empty dictionary keeps the old behavior exactly, so a
 ## page rolled on its own is unchanged.
 func _init(key: int, style: Dictionary = {}) -> void:
 	var rng := RandomNumberGenerator.new()
@@ -199,7 +199,7 @@ func _split(n: int, rng: RandomNumberGenerator, even_floor: float) -> Array:
 
 
 ## The panel's four corners in the normalized page box, with its cant applied about its
-## own centre. Counter-clockwise from the top-left, so a caller can walk them directly.
+## own center. Counter-clockwise from the top-left, so a caller can walk them directly.
 func corners(i: int) -> PackedVector2Array:
 	var p: Dictionary = panels[i]
 	var r: Rect2 = p["rect"]
@@ -237,7 +237,7 @@ func panel_aspect(i: int) -> float:
 	return r.size.x / maxf(r.size.y, 1e-4)
 
 
-## The centre of panel [param i] in the normalized page box - what the reading camera
+## The center of panel [param i] in the normalized page box - what the reading camera
 ## aims at.
 func panel_center(i: int) -> Vector2:
 	var r: Rect2 = panels[i]["rect"]

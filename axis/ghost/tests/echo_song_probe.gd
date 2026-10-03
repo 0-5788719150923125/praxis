@@ -29,7 +29,7 @@ func _named(raw: PackedFloat32Array, lo: float, hi: float) -> float:
 	return s / float(maxi(1, b1 - b0 + 1))
 
 
-func _centres() -> PackedFloat32Array:
+func _centers() -> PackedFloat32Array:
 	var c := PackedFloat32Array()
 	c.resize(BANDS)
 	var ratio := FMAX / FMIN
@@ -59,7 +59,7 @@ func _probe(tau: float) -> void:
 	var dt := 1.0 / float(FPS)
 	var n := _frames.size()
 	var song_len := float(n) * dt
-	var sig := HarmonicSignature.new(_centres(), tau)
+	var sig := HarmonicSignature.new(_centers(), tau)
 	var echo := Echo.new()
 	var prev := PackedFloat32Array()
 	var heard := 0.0

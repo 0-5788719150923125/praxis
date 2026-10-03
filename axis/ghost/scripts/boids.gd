@@ -3,17 +3,17 @@ class_name Boids
 
 ## Boids - a flock that decides together, over packed arrays and a uniform grid hash.
 ##
-## The catalogue had no neighbour queries anywhere. [Primitives]' eight forces are all
+## The catalog had no neighbor queries anywhere. [Primitives]' eight forces are all
 ## FIELD-like - every agent reads the same wind, the same gravity, the same attractor -
 ## so nothing in ghost has ever had an opinion about the agent next to it. [Swarm] comes
 ## closest, but it is a scalar field on a fixed lattice, not free bodies. This is the
-## missing half: local rules between MOVING neighbours, which is where a shape decided by
+## missing half: local rules between MOVING neighbors, which is where a shape decided by
 ## consensus rather than by a seeded parameter comes from.
 ##
 ## THE HASH IS THE WHOLE FEASIBILITY ARGUMENT. Naive flocking is every pair: 2000 birds is
 ## 4 million distance tests per tick, which GDScript will not do at any rate worth having.
 ## So the birds are bucketed into a uniform grid whose cell edge is exactly 2 x [member
-## radius], which means every neighbour within the perception radius of a bird lies inside
+## radius], which means every neighbor within the perception radius of a bird lies inside
 ## the 2x2x2 block of cells starting at floor((p - radius - origin) / cell) - eight cells,
 ## not the twenty-seven a radius-sized cell would need, and no search beyond them. The
 ## bucketing itself is a counting sort into two packed int arrays ([member _start], one
@@ -22,15 +22,15 @@ class_name Boids
 ##
 ## THREE BOUNDS, because a murmuration is not uniformly dense and the dense part is the
 ## whole point. A flock that balls up puts hundreds of birds in one cell, and an
-## unbounded neighbour loop would quietly go quadratic exactly when the picture is at its
+## unbounded neighbor loop would quietly go quadratic exactly when the picture is at its
 ## most interesting.
 ##   [member scan_cap]     - how many candidates a bird may EXAMINE before it stops. Caps
 ##                           the work, whatever the local density.
-##   [member k_cap]        - how many neighbours a bird may be INFLUENCED by. This is the
+##   [member k_cap]        - how many neighbors a bird may be INFLUENCED by. This is the
 ##                           k-nearest cap real starlings appear to use (the measured
 ##                           figure is about seven); it also keeps a bird in a dense knot
 ##                           from being averaged into paralysis.
-##   [member query_stride] - re-query neighbours for only every s-th bird each tick,
+##   [member query_stride] - re-query neighbors for only every s-th bird each tick,
 ##                           reusing the stored steering directions in between. Boid
 ##                           steering is a low-frequency signal - a bird's heading takes
 ##                           the better part of a second to swing - so querying at 12 Hz
@@ -40,7 +40,7 @@ class_name Boids
 ## what the audio does) without the flock waiting a stride for it.
 ##
 ## ALARM is a scalar per bird that spreads by contact and by nothing else. A bird the hawk
-## passes gets 1.0; every tick, a bird takes the maximum alarm among the neighbours it
+## passes gets 1.0; every tick, a bird takes the maximum alarm among the neighbors it
 ## queried, multiplied by [member alarm_transfer], or its own decayed value, whichever is
 ## larger. That is a front advancing one perception radius per tick, so at a 25 Hz clock
 ## and a 0.03 radius it crosses the flock at about three quarters of a unit a second while
@@ -51,9 +51,9 @@ class_name Boids
 ##
 ## BANK is computed here rather than at draw time because only the solver knows the
 ## acceleration. A bird rolls into its turn - the bank angle is atan of the lateral
-## acceleration, exactly as an aircraft's is - and on top of that rides a travelling plane
+## acceleration, exactly as an aircraft's is - and on top of that rides a traveling plane
 ## wave in roll ([member wave_amp]), because the density waves that cross a real
-## murmuration in half a second are a manoeuvre propagating through the flock, and at a
+## murmuration in half a second are a maneuver propagating through the flock, and at a
 ## few thousand birds the emergent version is too faint to read. The renderer turns roll
 ## into how much wing area faces the lens, which is where the dark sheets and pale hazes
 ## come from.
@@ -69,22 +69,22 @@ class_name Boids
 ## after [method build] - see [member ext_max].
 var ext := Vector3(0.78, 0.44, 0.62)
 
-## The largest box [method build] must lay a neighbour grid for. Set this BEFORE build when the
+## The largest box [method build] must lay a neighbor grid for. Set this BEFORE build when the
 ## walls are going to move outward later: the grid's dimensions are fixed there, and a scene that
 ## has to widen its box (because the camera pulled back and the birds were visibly turning at
 ## nothing - see scenes/murmuration.gd) would otherwise be flying most of its flock outside the
-## grid, where every cell index clamps to the rim and neighbour queries quietly stop working.
+## grid, where every cell index clamps to the rim and neighbor queries quietly stop working.
 ## Left at zero it means "the same as ext", which is what a fixed-box flock wants.
 var ext_max := Vector3.ZERO
 ## Perception radius. The grid cell edge is twice this, which is what reduces the
-## neighbour search to eight cells.
+## neighbor search to eight cells.
 var radius := 0.032
 ## Below this, birds actively push apart. Kept well under [member radius] so separation
 ## is a personal-space rule rather than a second cohesion term with the sign flipped.
 var sep_radius := 0.013
 ## Candidates a bird may examine per query (bounds work in a dense knot).
 var scan_cap := 22
-## Neighbours a bird may be influenced by (the k-nearest cap).
+## Neighbors a bird may be influenced by (the k-nearest cap).
 var k_cap := 9
 ## Re-query one bird in this many per tick; 1 = every bird, every tick.
 var query_stride := 1
@@ -113,7 +113,7 @@ var hawk := Vector3.ZERO
 var hawk_radius := 0.11
 var hawk_push := 7.0
 
-## Alarm decay time constant, neighbour transfer coefficient, and how much alarm lifts a
+## Alarm decay time constant, neighbor transfer coefficient, and how much alarm lifts a
 ## bird's speed (a startled starling flies faster - that is why the hole opens).
 var alarm_tau := 1.1
 var alarm_transfer := 0.87
@@ -122,7 +122,7 @@ var alarm_speed := 0.4
 ## Roll: gain from lateral acceleration, and how fast the roll itself eases toward target.
 var bank_gain := 2.6
 var bank_rate := 7.0
-## The travelling roll wave: unit direction, spatial frequency (radians per unit),
+## The traveling roll wave: unit direction, spatial frequency (radians per unit),
 ## temporal frequency (radians per second), amplitude (radians), and a phase offset.
 var wave_dir := Vector3(1, 0, 0)
 var wave_k := 9.0
@@ -171,7 +171,7 @@ var _cz := PackedFloat32Array()
 var _ax := PackedFloat32Array()
 var _ay := PackedFloat32Array()
 var _az := PackedFloat32Array()
-var _na := PackedFloat32Array()          # max neighbour alarm seen at the last query
+var _na := PackedFloat32Array()          # max neighbor alarm seen at the last query
 
 # The hash.
 var _cell := 0.064
@@ -276,7 +276,7 @@ func step(dt: float) -> void:
 		var piy := py[i]
 		var piz := pz[i]
 
-		# ---- neighbours (only on this bird's query tick) --------------------------
+		# ---- neighbors (only on this bird's query tick) --------------------------
 		if stride == 1 or ((i + gen) % stride) == 0:
 			var bx := int((pix - radius - _org.x) * _inv)
 			var by := int((piy - radius - _org.y) * _inv)
@@ -447,7 +447,7 @@ func step(dt: float) -> void:
 		var nz := piz + viz * dt
 		# Hard box, softly: the roost pull normally keeps the flock inside, but a hawk
 		# pass can throw a bird past the wall and it must not leave the world (it would
-		# fall outside the grid and stop having neighbours forever).
+		# fall outside the grid and stop having neighbors forever).
 		if nx < -ext.x:
 			nx = -ext.x
 			vx[i] = absf(vix) * 0.4

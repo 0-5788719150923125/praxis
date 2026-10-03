@@ -8,7 +8,7 @@ extends SceneTree
 ##
 ##   INDEPENDENCE  Every drop must go its own way. Column-based shader rain hashes
 ##                 each LANE once, so every drop down a lane repeats the identical
-##                 position, calibre and angle forever - reported, exactly, as
+##                 position, caliber and angle forever - reported, exactly, as
 ##                 "painting thirty train-track paths across the screen, then
 ##                 sending trains down the exact same track every single time".
 ##                 Hashing on the cell index as well as the lane gives each PASS
@@ -57,7 +57,7 @@ func _initialize() -> void:
 	#   given row depends on its PHASE, so crossings differ between moments even
 	#   when every drop reuses one fixed path. It passed the bug it was written for.
 	#
-	#   "are positions quantised to lanes", from one instant - there are ~200 lanes
+	#   "are positions quantized to lanes", from one instant - there are ~200 lanes
 	#   across the frame, so a snapshot of fixed offsets and a snapshot of random
 	#   ones look alike: 0.70 against 0.76, no separation.
 	#
@@ -82,7 +82,7 @@ func _initialize() -> void:
 	var lane_n := 0
 	for step in 30:
 		var img := await _render(tex, 1.0, 1.0, 0.0, 2.0 + float(step) * 0.211)
-		for c in _centres(img, src):
+		for c in _centers(img, src):
 			if c < win_lo or c > win_hi:
 				continue
 			lane_n += 1
@@ -149,10 +149,10 @@ func _expect(ok: bool, msg: String) -> void:
 ## saturates and reports 88% overlap for rain that is in fact scattered. A single
 ## row asks the question that was actually reported: is a drop crossing HERE, now,
 ## and is it crossing the same HERE a moment later.
-## The CENTRE x of every streak crossing a set of rows, over the background half.
-## Centres rather than wet pixels: a streak is several pixels wide, and counting
+## The CENTER x of every streak crossing a set of rows, over the background half.
+## Centers rather than wet pixels: a streak is several pixels wide, and counting
 ## each of them would report a wide drop as several distinct positions.
-func _centres(got: Image, src: Image) -> Array:
+func _centers(got: Image, src: Image) -> Array:
 	var out := []
 	for row in [int(H * 0.30), int(H * 0.50), int(H * 0.70)]:
 		var run_start := -1

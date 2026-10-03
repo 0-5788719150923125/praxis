@@ -17,7 +17,7 @@ extends GhostScene
 ##
 ## The pair takes a [Scheme] mood: the lead on its base hue, the counter on the mood's opposed
 ## hue. Both ride on the BODIES as offsets from [constant HUE_BLUE] / [constant HUE_RED] (the
-## convention `eye_prism` established), so a body handed across a morph keeps its colour and this
+## convention `eye_prism` established), so a body handed across a morph keeps its color and this
 ## scene inherits whatever the eye crystallized into instead of snapping back to blue. When that
 ## happens the red is re-derived from the arriving hue, so the pair is always ONE mood's
 ## opposition rather than two unrelated ones.
@@ -36,8 +36,8 @@ const STAGING := {
 var _f: AudioFeatures = AudioFeatures.new()
 var _blue: PrismBody
 var _red: PrismBody
-var _bpos := Vector2(0.15, 0.0)     # blue centre, unit-fractions from screen centre
-var _rpos := Vector2(-0.15, 0.0)    # red centre
+var _bpos := Vector2(0.15, 0.0)     # blue center, unit-fractions from screen center
+var _rpos := Vector2(-0.15, 0.0)    # red center
 var _banch := Vector2(0.15, 0.0)    # anchors the pair sway around
 var _ranch := Vector2(-0.15, 0.0)
 var _bscale := 0.18                 # blue draw scale (unit-fraction)
@@ -71,7 +71,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_blue = PrismBody.new(rng.randi())
 	_red = PrismBody.new(rng.randi())
 	# One mood, two roles. `+=` rather than `=` so each body keeps the small cast it rolled for
-	# itself - the pair are two prisms of one colour family, not two copies of one hue.
+	# itself - the pair are two prisms of one color family, not two copies of one hue.
 	var sch := Scheme.pick(rng)
 	var lead := sch.vary(rng)
 	var counter := sch.opposed(lead)
@@ -118,7 +118,7 @@ func begin_morph(from: GhostScene) -> void:
 		_blue = p["blue"]
 		# The arriving body carries the mood the eye crystallized into. Re-derive the red from
 		# THAT hue at the separation this build rolled, so the morph lands one mood's opposition
-		# instead of the eye's colour beside an unrelated red.
+		# instead of the eye's color beside an unrelated red.
 		_lead_off = _blue.hue_shift
 		var lead := fposmod(HUE_BLUE + _lead_off, 1.0)
 		_red.hue_shift = _red_cast + wrapf(fposmod(lead + _sep, 1.0) - HUE_RED, -0.5, 0.5)
@@ -199,14 +199,14 @@ func _draw() -> void:
 	var bc := _bpos * u
 	var rc := _rpos * u
 	# The red bursts into being where the eye was: a bright flash that fades as it forms. The
-	# flash is the counter's own colour, so it is not a red bloom on a green prism.
+	# flash is the counter's own color, so it is not a red bloom on a green prism.
 	if _burst > 0.001:
 		var fc := Color.from_hsv(fposmod(HUE_RED + _red.hue_shift, 1.0), 0.5, 1.0)
 		draw_circle(rc, _rscale * u * (0.6 + 1.6 * _burst), Color(fc.r, fc.g, fc.b, 0.5 * _burst))
 		draw_circle(rc, _rscale * u * (0.3 + 0.7 * _burst), Color(1, 1, 1, 0.6 * _burst))
 	_blue.draw(self, bc, _bscale * u, HUE_BLUE, 1.0)
 	_red.draw(self, rc, _rscale * u, HUE_RED, clampf(1.0 - _burst * 0.5, 0.0, 1.0))
-	# The phase-lock snap: a brief bright tie between the two centres as they sync.
+	# The phase-lock snap: a brief bright tie between the two centers as they sync.
 	if _lockflash > 0.001:
 		var mid := (bc + rc) * 0.5
 		draw_line(bc, rc, Color(1, 1, 1, 0.5 * _lockflash), 2.0, true)

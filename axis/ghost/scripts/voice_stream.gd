@@ -43,7 +43,7 @@ const P_GLIDE := 0.00011            # per-sample presence glide (~0.2 s at 44.1k
 # LOCATION RECEPTION: as the line nears the beacon (the source of the frequency
 # it is receiving), a resonant band TUNED to that source swells into the voice -
 # the "interesting auditory conditions" of a fishing spot, and a diverse timbral
-# colour to catch and blend. A state-variable bandpass (stable while the centre
+# color to catch and blend. A state-variable bandpass (stable while the center
 # stays well under Nyquist) blended by proximity, with a faint carrier of the
 # source riding the voice at close range. Applied at push time like presence, so
 # the canonical WAV take is untouched.
@@ -143,7 +143,7 @@ func set_presence(p: float) -> void:
 func set_location(prox: float, freq: float) -> void:
 	_loc_prox = clampf(prox, 0.0, 1.0)
 	# kept under SR/6 (~3675 Hz) so the state-variable filter stays unconditionally
-	# stable; the voice's colour lives well below this anyway
+	# stable; the voice's color lives well below this anyway
 	_loc_freq = clampf(freq, 80.0, 3000.0)
 
 
@@ -155,7 +155,7 @@ func set_location(prox: float, freq: float) -> void:
 ## result). A no-op far from any source.
 static func bake_location(pcm: PackedFloat32Array, prox: float, freq: float) -> PackedFloat32Array:
 	if Voice.RAW_MODE:
-		return pcm                   # raw diagnostic: no reception colour baked
+		return pcm                   # raw diagnostic: no reception color baked
 	prox = clampf(prox, 0.0, 1.0)
 	if prox <= 0.004:
 		return pcm

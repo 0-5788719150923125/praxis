@@ -59,7 +59,7 @@ var _stage_frame := 0
 # NO dynamic resolution: per-level render-target scaling was tried and
 # every level change REALLOCATED the SubViewport target while the backdrop
 # sampled it - black triangular chunks, split/stretched banding, and
-# uninitialized-VRAM colour noise on every heavy scene ENTRY (the cut
+# uninitialized-VRAM color noise on every heavy scene ENTRY (the cut
 # resets the level, then the escalation ladder resizes repeatedly). The
 # scenes are CPU-bound anyway; resolution bought little and cost all that.
 const STAGE_PERIODS := [1, 2, 3, 6]
@@ -582,7 +582,7 @@ func _open_generative_editor() -> void:
 	_generative = editor
 	add_child(editor)
 	# Export was left wired to the fishing game's rules, so the button stayed
-	# greyed with "catch a seed first" - a gate that has no meaning on this path.
+	# grayed with "catch a seed first" - a gate that has no meaning on this path.
 	# Here the requirement is simply text and a loaded voice.
 	if _chrome.exporter != null:
 		_chrome.exporter.take_provider = editor.export_take

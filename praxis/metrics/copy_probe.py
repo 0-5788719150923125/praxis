@@ -20,6 +20,12 @@ from torch import Tensor
 # path sees a few dozen, so a copy this long puts its source out of local reach.
 COPY_PROBE_LEN: int = 256
 
+# Validation rows per reading. Passages differ a lot in how copyable they are:
+# on byte-latent-e at step 24.6k one passage's gain had sd 0.049 bits, so a
+# reading from one 4-row batch carried +-0.025 of noise and swung past the
+# effect it measures. 64 rows bring that to +-0.006.
+COPY_PROBE_ROWS: int = 64
+
 
 @torch.no_grad()
 def copy_gain(

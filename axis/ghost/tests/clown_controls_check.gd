@@ -9,7 +9,7 @@ extends SceneTree
 ## the honest answer needed a measurement rather than a reading of the code. It
 ## turned out one was weak and one was genuinely dead:
 ##
-##   Smear     0.010 - present, but far below its neighbours, so it read as inert
+##   Smear     0.010 - present, but far below its neighbors, so it read as inert
 ##                     beside them. Its wobble range was widened.
 ##   Evidence  0.0004 - nothing at all. It was a FLOOR under the evidence terms,
 ##                     and the contour work had quietly made it redundant: a floor
@@ -17,7 +17,7 @@ extends SceneTree
 ##                     IS the feature the evidence is strong throughout it. Worse,
 ##                     the evidence terms are each a dilated MAX over nine taps,
 ##                     which saturates at 1.0 - so even reshaping them did nothing.
-##                     It now blends toward the CENTRE tap, the one that still
+##                     It now blends toward the CENTER tap, the one that still
 ##                     varies pixel to pixel.
 ##
 ## So this sweeps every control the clown exposes, renders the whole pipeline -

@@ -8,11 +8,11 @@ extends Scene3D
 ## there - the geometry never changes for the whole life of the scene. What changes is which
 ## edges are LIT, and an edge lights only when BOTH endpoints are firing at the same time.
 ## That single rule is the whole scene: not a uniform twitch, but a shifting subset of
-## ROUTES through a slab. Nothing is destroyed, nothing is re-randomised, and loudness alone
+## ROUTES through a slab. Nothing is destroyed, nothing is re-randomized, and loudness alone
 ## lights nothing.
 ##
 ## WHAT THE SEED DECIDES. The mood ([Scheme], every hue from one family, each sheet taking
-## `hue_at(l, layers)` so depth reads as a colour gradient too). How many sheets, and their
+## `hue_at(l, layers)` so depth reads as a color gradient too). How many sheets, and their
 ## TOPOLOGY - `slab` keeps every sheet the same size, `funnel` narrows toward the output,
 ## `fan_out` widens, `bottleneck` pinches in the middle and opens again - so the silhouette
 ## of the network is sampled too. Rows and columns, the positional jitter that keeps the
@@ -36,10 +36,10 @@ extends Scene3D
 ## the same frame independently. On a beat onset a bright PACKET leaves the input sheet and
 ## walks one pre-rolled route forward, one layer per `beat_period * hops`, lighting each
 ## neuron it lands on. A `movement` spike eases the lens toward a new seeded three-quarter
-## angle. `chroma_hue()` pulls every hue toward the tonal centre by `0.35 * strength`.
+## angle. `chroma_hue()` pulls every hue toward the tonal center by `0.35 * strength`.
 ##
 ## NOTHING MULTIPLIES A RADIUS BY ENERGY. The discs are a constant world size and shrink
-## only with distance; sound moves colour, brightness and which routes exist.
+## only with distance; sound moves color, brightness and which routes exist.
 ##
 ## MEASUREMENT AND THE COSTS THAT SHAPED THE CODE.
 ##
@@ -84,7 +84,7 @@ const MAX_SEGMENTS := 2600
 ## Beat level a rising edge must cross to count as an onset.
 const BEAT_ON := 0.55
 
-## How far every hue is pulled toward the live tonal centre, scaled by how tonal the moment is.
+## How far every hue is pulled toward the live tonal center, scaled by how tonal the moment is.
 const CHROMA_PULL := 0.35
 
 ## Below this the material counts as SILENCE and the drive reference stops learning, so a held
@@ -94,7 +94,7 @@ const CHROMA_PULL := 0.35
 const SILENCE_FLOOR := 0.03
 
 ## Where the material's OWN AVERAGE lands on the 0..1 drive dial. Half, so an ordinary passage
-## sits mid-scale and a passage that leans in has somewhere to go. This is a normalisation
+## sits mid-scale and a passage that leans in has somewhere to go. This is a normalization
 ## convention, not a look knob - the look knobs are all sampled.
 const DRIVE_MID := 0.5
 
@@ -184,7 +184,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_layers = rng.randi_range(3, 6)
 	_rows = rng.randi_range(4, 9)
 	# Draw the column count from what the per-sheet budget leaves, so the sampled range is
-	# honoured wherever it can be and the item count is still bounded.
+	# honored wherever it can be and the item count is still bounded.
 	_cols = rng.randi_range(4, clampi(MAX_PER_SHEET / _rows, 4, 9))
 	var topo := String(TOPOLOGIES[rng.randi() % TOPOLOGIES.size()])
 	var jitter := rng.randf_range(0.0, 0.35)
@@ -213,7 +213,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# sentence's own loudness; long = it tracks the passage.
 	_ref_tau = rng.randf_range(15.0, 40.0)
 	# The lit/unlit mapping (see NeuralJob.run). `bleach` is how completely a firing route burns
-	# out to white, `ghost_sat` how much colour the unlit graph keeps, `a_floor` how present the
+	# out to white, `ghost_sat` how much color the unlit graph keeps, `a_floor` how present the
 	# unlit graph is at all, and the gammas how sharply firing translates into light.
 	# The gammas are ABOVE one, which is the opposite of the 0.75 that shipped - and that is the
 	# tell that the old exponent was compensating for a signal that was not there. With the drive
@@ -301,7 +301,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			_eoff[i] = _esrc.size()
 			var picked: Array = []
 			for _t in k:
-				# Targets are drawn from a NEIGHBOURHOOD of the source's own position in the
+				# Targets are drawn from a NEIGHBORHOOD of the source's own position in the
 				# next sheet, so the graph reads as a fan of local connections rather than as
 				# spaghetti - which is what makes a route legible to the eye at all.
 				var tgt := _near_target(rng, i, s1, n1, reach, picked)
@@ -313,7 +313,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				var w := pow(rng.randf(), wexp)
 				var neg := rng.randf() < inhib
 				_ew.append((-w) if neg else w)
-				# An edge takes the colour of the gap it crosses: halfway between its two
+				# An edge takes the color of the gap it crosses: halfway between its two
 				# sheets' hues, or the opposed hue when it is inhibitory.
 				_ehue.append(opp if neg else fposmod(hue_a + dh * 0.5, 1.0))
 			_ecnt[i] = _esrc.size() - int(_eoff[i])
@@ -333,7 +333,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# --- pre-rolled packet routes and lens angles ---
 	# Both are drawn HERE, never at the moment of the audio event that uses them: a live
 	# analyzer and an offline bake do not produce identical feature streams, so an rng draw on
-	# a beat would desynchronise the export from the preview.
+	# a beat would desynchronize the export from the preview.
 	var nroutes := rng.randi_range(10, 24)
 	for _r in nroutes:
 		var chain := PackedInt32Array()
@@ -368,7 +368,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_yaw_i = 1
 	# CLOSE. At the old 2.2-4.0 the whole slab sat in the middle of the frame as a small object -
 	# on a unit-radius slab at distance 3 with a 50 degree lens, a neuron disc projects to a ~14 px
-	# radius with ~135 px between neighbours, which is a diagram seen from across the room. Halving
+	# radius with ~135 px between neighbors, which is a diagram seen from across the room. Halving
 	# the distance doubles both, so the near sheet overruns the frame and the far ones recede: you
 	# are inside the fan rather than looking at the whole graph. The near sheet still clears the
 	# 0.05 near plane by a wide margin (worst case ~0.7 world units in front of the eye).
@@ -418,7 +418,7 @@ func _topo_scale(topo: String, l: int) -> float:
 #
 # `reach` is expressed as how many seeded candidates get compared: best-of-8 lands almost on the
 # source's own axis, best-of-4 wanders. Sampling candidates and keeping the closest UNTAKEN one
-# is what stops a five-way fan from collapsing onto the same two neighbours, which is what a
+# is what stops a five-way fan from collapsing onto the same two neighbors, which is what a
 # plain independent draw per edge does. Returns -1 when the sheet has nothing left to give.
 func _near_target(rng: RandomNumberGenerator, src: int, s1: int, n1: int, reach: int,
 		taken: Array) -> int:
@@ -456,7 +456,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_launch(f)
 	_prev_beat = f.beat
 
-	# A section change re-frames the slab: ease the yaw centre toward the next PRE-ROLLED
+	# A section change re-frames the slab: ease the yaw center toward the next PRE-ROLLED
 	# three-quarter angle. Rate-limited, because a busy passage would otherwise re-aim every
 	# few frames and the camera would read as nervous rather than as deliberate.
 	if f.movement > _move_thresh and _life - _last_reframe > _reframe_gap and _yaw_bag.size() > 0:
@@ -535,7 +535,7 @@ func _step(dt: float) -> void:
 	# a mastered track sits at even at rest. Fed in raw it left every Activation threshold
 	# unreachable, so `min(level_a, level_b)` peaked at 0.045 across the whole take and the
 	# brightest edge in eleven minutes reached 20/255 on black. That is the reported "impossible
-	# to see them", and no amount of remapping the colour can recover a signal that is not there.
+	# to see them", and no amount of remapping the color can recover a signal that is not there.
 	#
 	# Director._lean() already learned this exact lesson one layer up ("a ratio has no genre baked
 	# into it: it fires on the passage where THIS material leans in, whatever this material
@@ -566,7 +566,7 @@ func _step(dt: float) -> void:
 		var act: Activation = _acts[l]
 		# The sheet's AGGREGATE drives the gate: which neurons are eligible this passage.
 		#
-		# SELF-NORMALISED, so that transmission alone decides how far activity reaches. Each
+		# SELF-NORMALIZED, so that transmission alone decides how far activity reaches. Each
 		# Activation is a soft THRESHOLD, not a scale: once a sheet's aggregate falls under the
 		# thresholds its gates collapse to `gate_floor` and everything past it is dead - a cliff,
 		# not a slope. Handing sheet L+1 the raw firing measure walked straight off that cliff
@@ -661,7 +661,7 @@ func _packet_marks() -> Array:
 
 
 ## The whole frame, built off the main thread (the [FrameForge] job object form): project every
-## neuron once, colour and SPLIT every edge, sort the lot together, and cut it into batch runs.
+## neuron once, color and SPLIT every edge, sort the lot together, and cut it into batch runs.
 ## Reads only its own members - never the scene node - so a Director cut mid-build is harmless.
 class NeuralJob:
 	extends RefCounted
@@ -721,10 +721,10 @@ class NeuralJob:
 		var inv := 1.0 / float(segs)
 
 		# EDGES. Every one is emitted, every frame - the geometry is immutable and only the
-		# colour moves. `min(level_a, level_b) * |weight|` is the discipline of the scene: an
+		# color moves. `min(level_a, level_b) * |weight|` is the discipline of the scene: an
 		# edge is bright only when BOTH ends are hot, so what lights up is a route, not a mood.
 		# A FIRING ROUTE RUNS TO WHITE. The background is black, so the only way a lit edge reads
-		# as lit is to leave the mood's colour behind on its way up: the hue carries the middle of
+		# as lit is to leave the mood's color behind on its way up: the hue carries the middle of
 		# the range and burns out at the top. `lit_val` is therefore ~1, not the mood's own value.
 		var lit_val := lerpf(val, 1.0, 0.72 + 0.24 * glow)
 		for e in esrc.size():
@@ -741,7 +741,7 @@ class NeuralJob:
 			var sh := pow(minf(level[a], level[b]), edge_gamma * (1.6 - 0.8 * minf(absf(ew[e]), 1.0)))
 			var v := dark + maxf(0.0, lit_val - dark) * sh
 			var h := _tonal(ehue[e])
-			# Colour in the middle, white at the top: hold most of the mood's saturation until the
+			# Color in the middle, white at the top: hold most of the mood's saturation until the
 			# edge is genuinely lit, then bleach it out.
 			var csat := sat * (ghost_sat + (1.0 - ghost_sat) * minf(sh * 3.0, 1.0)) * (1.0 - bleach * sh)
 			var col := Color.from_hsv(h, clampf(csat, 0.0, 1.0),
@@ -820,7 +820,7 @@ class NeuralJob:
 				tb.line(d2["a"], d2["b"], d2["col"], float(d2["w"]), d2.has("soft"))
 		return tb.take_chunks()
 
-	# Pull a hue toward the music's tonal centre, the shortest way round the wheel, scaled by
+	# Pull a hue toward the music's tonal center, the shortest way round the wheel, scaled by
 	# how tonal the moment actually is (0 when the spectrum is noise, so nothing shifts).
 	func _tonal(h: float) -> float:
 		var d := ch_h - h

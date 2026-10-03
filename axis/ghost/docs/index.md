@@ -23,7 +23,7 @@ core. The commitments:
    Adding to a registry is the extension mechanism - not new control flow.
 3. **Sampled, not baked ("cattle, not pets").** Every tunable constant is a
    candidate for sampling from a per-instance range, so two things of a
-   kind always differ and the catalogue gains expression for free.
+   kind always differ and the catalog gains expression for free.
 4. **Convergence over lockstep.** Presentation state never snaps to its
    target: cameras, activations, glows, and the Echo cursor all move by
    exponential smoothing toward targets that may jump discontinuously.
@@ -36,7 +36,7 @@ core. The commitments:
 
 ## Pages
 
-- [Scene catalogue](scenes.md) - every visualizer scene, from its own doc comment.
+- [Scene catalog](scenes.md) - every visualizer scene, from its own doc comment.
 - [Layers](layers.md) - the visual-component registry (weather, skies, atmosphere).
 - [Forces](forces.md) - the physics-primitive registry particles compose.
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
@@ -51,7 +51,7 @@ core. The commitments:
 - `project.godot` - Godot 4.6 project; autoloads `Boot`, `Spectrum`, `Director`; `scenes/main.tscn` is the entry scene.
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](../docs/index.md); the subsystem groups are described there too.
-- `scripts/scenes/` - The visualizer scene catalogue - one class per scene. See [docs/scenes.md](../docs/scenes.md).
+- `scripts/scenes/` - The visualizer scene catalog - one class per scene. See [docs/scenes.md](../docs/scenes.md).
 - `scripts/media/` - The medium registry - what the show is carried ON (full frame, comic page). See [docs/media.md](../docs/media.md).
 - `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects).
 - `storyboards/` - Manual-mode scene scores (YAML; JSON accepted). [storyboards/README.md](../storyboards/README.md) is the data spec.
@@ -117,7 +117,7 @@ What every scene is built on: the `GhostScene` base, the camera, framing pools, 
 - [`shots.gd`](../scripts/shots.gd) **Shots** - the registry of camera framings (composition + slow moves).
 - [`mod_bank.gd`](../scripts/mod_bank.gd) **ModBank** - the organic-motion engine.
 - [`activation.gd`](../scripts/activation.gd) **Activation** - per-element response gating with EMA decay (who moves, and how much).
-- [`lighting.gd`](../scripts/lighting.gd) **Lighting** - audio-reactive colour, not scale.
+- [`lighting.gd`](../scripts/lighting.gd) **Lighting** - audio-reactive color, not scale.
 - [`nonlinear.gd`](../scripts/nonlinear.gd) **Nonlinear** - the shared library of activation / response curves.
 - [`flow.gd`](../scripts/flow.gd) **Flow2D** - a divergence-free curl-noise vector field.
 - [`filament.gd`](../scripts/filament.gd) **Filament** - an organic growing path: root, tendril, lightning, or thread.
@@ -169,8 +169,8 @@ The unified software-3D renderer: a positionable perspective camera, mesh/plane 
 - [`mesh3d.gd`](../scripts/mesh3d.gd) **Mesh3D** - a tiny software 3D mesh for the 2D canvas.
 - [`geometry.gd`](../scripts/geometry.gd) **Geo** - small reusable polygon helpers (area, centroid, convex split, fracture). Shared geometry, not a scene's private code - the fracture that shatters glass can shatter anything.
 - [`field.gd`](../scripts/field.gd) **Field** - a composable procedural scalar field; the universal "texture / modulation".
-- [`scheme.gd`](../scripts/scheme.gd) **Scheme** - a scene's colour identity, drawn from a named mood.
-- [`palette.gd`](../scripts/palette.gd) **Palette** - a colour ramp sampled by a scalar (0..1). The colour half of the texture story: a `Field` gives a scalar (height, mottle, development); a Palette turns it into colour. Themed presets map terrain elevation to believable bands (water -> shore -> green -> rock -> snow), but a Palette colours anything ...
+- [`scheme.gd`](../scripts/scheme.gd) **Scheme** - a scene's color identity, drawn from a named mood.
+- [`palette.gd`](../scripts/palette.gd) **Palette** - a color ramp sampled by a scalar (0..1). The color half of the texture story: a `Field` gives a scalar (height, mottle, development); a Palette turns it into color. Themed presets map terrain elevation to believable bands (water -> shore -> green -> rock -> snow), but a Palette colors anything ...
 - [`terrain.gd`](../scripts/terrain.gd) **Terrain** - a heightfield assembled from `Field`s and drawn through a `Lens3D`.
 - [`shadow_field.gd`](../scripts/shadow_field.gd) **ShadowField** - A cheap CPU SHADOW MAP in light space - the honest version of "cast shadows" for the canvas 3D scenes. Occluders (buildings, spires) are rasterized into a grid on the plane perpendicular to the light; each cell keeps the occluder surface CLOSEST to the light. A surface point is then in shadow if ...
 
@@ -198,7 +198,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`manuscript.gd`](../scripts/manuscript.gd) **Manuscript** - what a chapter file SAYS about itself, beyond the words to be read.
 - [`tablet_script.gd`](../scripts/tablet_script.gd) **TabletScript** - a chapter written as somebody browsing on a tablet.
 - [`script_marks.gd`](../scripts/script_marks.gd) **ScriptMarks** - every authoring mark a script may carry, registered with what it does.
-- [`script_highlighter.gd`](../scripts/script_highlighter.gd) **ScriptHighlighter** - colours a script by the marks the panel reading it understands.
+- [`script_highlighter.gd`](../scripts/script_highlighter.gd) **ScriptHighlighter** - colors a script by the marks the panel reading it understands.
 - [`script_writer.gd`](../scripts/script_writer.gd) **ScriptWriter** - where a voice panel's script is written: a card in the panel, and an editor window it opens.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 - [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
@@ -242,4 +242,4 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
 - [`assistant_backends.gd`](../scripts/assistant_backends.gd) **AssistantBackends** - the CLIs `Assistant` can dispatch a feedback note to, and everything that differs between them: how a run is launched, how it is resumed, and how its event stream reads.
 
-Scene scripts (59) are catalogued separately in [scenes.md](scenes.md).
+Scene scripts (59) are cataloged separately in [scenes.md](scenes.md).

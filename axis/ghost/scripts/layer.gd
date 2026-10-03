@@ -12,7 +12,7 @@ class_name Layer
 ## not bespoke per-scene code.
 ##
 ## A scene composes layers through [GhostScene] helpers (add_layer / update_layers /
-## draw_layers); see snowfall.gd, fog_bank.gd, etc. Layers draw in ghost's centred
+## draw_layers); see snowfall.gd, fog_bank.gd, etc. Layers draw in ghost's centered
 ## unit-fraction space (multiply by the scene's unit() at draw time) and are handed the
 ## visible half-extents each frame, so they fill any aspect ratio / fullscreen / 4K
 ## without showing an edge.
@@ -39,7 +39,7 @@ class Base:
 		rng.seed = seed_rng.randi()
 		# SEED THE CLOCK, not just the randomness. `t` started at 0 in every layer of
 		# every session, and several layers drive slow patterns straight off it - the snow
-		# squall centres and the rain's slant sway among them. Those therefore traced the
+		# squall centers and the rain's slant sway among them. Those therefore traced the
 		# IDENTICAL path with the IDENTICAL phase in every session of every song: they
 		# looked procedural and were a fixed animation. An offset costs nothing and makes
 		# them genuinely per-session. Large, because the periods involved run to 90 s.
@@ -74,7 +74,7 @@ class Base:
 # Shared drawing helpers (used by several layers and by scenes drawing flakes).
 # ---------------------------------------------------------------------------------
 
-## A soft glowing disc: concentric circles, bright tight centre to a wide faint halo.
+## A soft glowing disc: concentric circles, bright tight center to a wide faint halo.
 static func glow(ci: CanvasItem, c: Vector2, radius: float, color: Color, layers := 6) -> void:
 	for i in layers:
 		var frac := float(i) / float(layers - 1)
@@ -131,7 +131,7 @@ static func puff(ci: CanvasItem, c: Vector2, radius: float, color: Color) -> voi
 		Rect2(c - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0)), false, color)
 
 
-## Drifting gaussian "squall" centres in normalized [-1, 1] frame space - the wandering hot-spots
+## Drifting gaussian "squall" centers in normalized [-1, 1] frame space - the wandering hot-spots
 ## where a harmonic-coverage veil (snow, rain, ...) piles heaviest. Deterministic from time so it
 ## never flickers; shared so every obscuring effect moves the same way.
 static func squall_centers(time: float) -> Array:
@@ -173,7 +173,7 @@ static func ellipse(c: Vector2, rx: float, ry: float, segs := 22) -> PackedVecto
 	return pts
 
 
-## Draw a procedural six-fold snow-crystal dendrite, centred at `c`, of `radius` pixels,
+## Draw a procedural six-fold snow-crystal dendrite, centered at `c`, of `radius` pixels,
 ## rotated by `ang`. Generated, not hard-coded: a main arm per fold with a few side
 ## branches at the natural 60° dendrite angle, their length and placement varied by
 ## `shape` (0..1) so every flake differs. This is the elegant-procedural answer to the
@@ -226,9 +226,9 @@ static func draw_flake_basis(ci: CanvasItem, c: Vector2, ex: Vector2, ey: Vector
 
 
 # ---------------------------------------------------------------------------------
-# Bed - a full-frame colour wash: a soft vertical gradient plus a few slow colour
-# pools that breathe with the spectrum. The "colours underneath / inside" that fog,
-# snow, or stars sit on; on its own it is a calm aurora-of-colour ground.
+# Bed - a full-frame color wash: a soft vertical gradient plus a few slow color
+# pools that breathe with the spectrum. The "colors underneath / inside" that fog,
+# snow, or stars sit on; on its own it is a calm aurora-of-color ground.
 # ---------------------------------------------------------------------------------
 class Bed:
 	extends Base
@@ -258,7 +258,7 @@ class Bed:
 		_energy = lerpf(_energy, f.energy, 1.0 - exp(-3.0 * dt))
 
 	func draw(ci: CanvasItem, u: float) -> void:
-		# Vertical gradient quad (per-vertex colours), darker at the edges.
+		# Vertical gradient quad (per-vertex colors), darker at the edges.
 		var sat: float = num("sat", 0.5)
 		var val: float = num("val", 0.32) * (0.7 + 0.5 * _energy)
 		var top := Color.from_hsv(fposmod(_hue, 1.0), sat, val * 0.5)
@@ -274,7 +274,7 @@ class Bed:
 		ci.draw_polygon(PackedVector2Array([
 			Vector2(-x, 0), Vector2(x, 0), Vector2(x, y), Vector2(-x, y)]),
 			PackedColorArray([midc, midc, bot, bot]))
-		# Slow colour pools breathing with their band.
+		# Slow color pools breathing with their band.
 		for p in _pools:
 			var c: Vector2 = (p.home + Vector2(
 				p.rx * sin(t * 0.18 + p.px), p.ry * cos(t * 0.15 + p.py))) * u
@@ -433,7 +433,7 @@ class Snow:
 		var base_h: float = num("hue", 0.58)
 		var sat: float = num("sat", 0.06)
 		var centers := Layer.squall_centers(t)
-		# Whiteout veil: soft gaussian masses of heavy snow centred on the squalls, swelling with
+		# Whiteout veil: soft gaussian masses of heavy snow centered on the squalls, swelling with
 		# the harmonic coverage - at a peak they merge into a near-white that obscures the view.
 		var va := clampf((_coverage - 0.12) * 0.85, 0.0, 0.62)
 		if va > 0.004:
@@ -476,7 +476,7 @@ class Snow:
 		_tb.flush(ci)
 
 	## One banked crystal, placed. The crystal TUMBLES rather than spinning in plane: a
-	## six-fold figure turning about its own centre barely reads, because it maps onto
+	## six-fold figure turning about its own center barely reads, because it maps onto
 	## itself every sixty degrees, whereas foreshortening one axis makes it visibly a
 	## plate turning in space and thinning to a line edge-on.
 	func _draw_crystal(shape: Crystal.Shape, c: Vector2, r: float, tilt: float,
@@ -1052,7 +1052,7 @@ class Bubbles:
 		_pops = lp
 
 	func draw(ci: CanvasItem, u: float) -> void:
-		var tint := Color.from_hsv(num("hue", 0.55), 0.25, 1.0)   # the water's colour bleeds into the glass
+		var tint := Color.from_hsv(num("hue", 0.55), 0.25, 1.0)   # the water's color bleeds into the glass
 		for b in _bubbles:
 			# Ease in at birth AND ease out in the last moments, so a bubble doesn't blink
 			# out abruptly - it thins away just before it pops.
@@ -1157,7 +1157,7 @@ class Embers:
 # ---------------------------------------------------------------------------------
 # Cosmos - large, distant background bodies that give a star field DEPTH instead of just
 # dots: a shaded PLANET (a lit crescent over a dark globe, sometimes ringed), a soft
-# coloured NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the
+# colored NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the
 # stars (z = back). Seeded; a scene adds it sometimes so the void isn't barren.
 # ---------------------------------------------------------------------------------
 class Cosmos:
@@ -1212,7 +1212,7 @@ class Cosmos:
 			pts.append(pts[0])
 			ci.draw_polyline(pts, Color.from_hsv(hue, 0.3, 0.55 * dep, 0.5), maxf(1.0, r * 0.03), true)
 
-	# A soft coloured cloud from a few overlapping faint blobs, drifting slowly.
+	# A soft colored cloud from a few overlapping faint blobs, drifting slowly.
 	func _nebula(ci: CanvasItem, u: float, c: Vector2, b: Dictionary) -> void:
 		var r: float = float(b.size) * u
 		var hue: float = float(b.hue)
@@ -1232,7 +1232,7 @@ class Cosmos:
 		var wind: float = float(b.wind)
 		var arm_h := fposmod(hue * 0.2 + 0.58, 1.0)            # arms cool blue-white (mostly), lightly tinted
 		# Spiral arms first (under the core): bands of soft stars and dust jittered off the spiral
-		# line, brightening toward the centre. Soft sprites, not hard dots - no flat "vortex".
+		# line, brightening toward the center. Soft sprites, not hard dots - no flat "vortex".
 		for arm in arms:
 			var a0 := TAU * float(arm) / float(arms) + rot
 			for k in 80:
@@ -1306,7 +1306,7 @@ class Clouds:
 # licks; tongues pinch free, climb and dissolve. On top, CPU SPARKS ride a curl-noise
 # wind out of the hottest regions and crackle up on beats. The dynamic range is the
 # point: a quiet passage sits as a seam of embers, a swell sends columns up the frame -
-# and WHERE it roars is the spectrum (bass at the centre, treble at the rim).
+# and WHERE it roars is the spectrum (bass at the center, treble at the rim).
 # ---------------------------------------------------------------------------------
 class Fire:
 	extends Base
@@ -1328,7 +1328,7 @@ class Fire:
 		super(seed_rng, c)
 		_flow = FlowField.new(seed_rng.randi(), 3.2, 0.5)
 		# The bed sources: spread across the width with jitter, each listening to the
-		# band its POSITION maps to - bass at the centre (the heart of the fire), treble
+		# band its POSITION maps to - bass at the center (the heart of the fire), treble
 		# out at the rim - so a bassline roars the middle while hats shiver the edges.
 		var nsrc := seed_rng.randi_range(5, 7)
 		var span := 0.82 * num("spread", 1.0)
@@ -1537,20 +1537,20 @@ class FieldQuad:
 
 
 # ---------------------------------------------------------------------------------
-# Vapor - coloured ink-in-water: heavy twisting masses with fibrous strands drawn out
+# Vapor - colored ink-in-water: heavy twisting masses with fibrous strands drawn out
 # of them, lit from inside. The GPU field lives in shaders/vapor_field.gdshader (read
-# its header for the twist / fibre / hardness construction and why blobs cannot do it);
+# its header for the twist / fiber / hardness construction and why blobs cannot do it);
 # this half is the part that has to be a simulation rather than arithmetic - WHERE the
-# masses are, WHAT COLOUR each one is, and HOW LOUD it is right now.
+# masses are, WHAT COLOR each one is, and HOW LOUD it is right now.
 #
 # A PLUME is one mass: an elliptical gaussian that listens to its own harmonic band
 # (fast attack, slow release, expanded through a per-plume gamma), drifts on a slow
-# lissajous about its home, and carries its own hue. The field mixes their colours by
+# lissajous about its home, and carries its own hue. The field mixes their colors by
 # contribution, so a violet mass and a teal one blend where they overlap and stay
-# themselves where they do not - that two-sided colour is the whole point, and it is
+# themselves where they do not - that two-sided color is the whole point, and it is
 # the reason plumes are separate objects instead of one density.
 #
-# THE LAMP is a real position in the same space, travelling on its own slow orbit. The
+# THE LAMP is a real position in the same space, traveling on its own slow orbit. The
 # shader tapping the plume envelope toward it is what makes the masses read as volume;
 # moving it is what keeps them from looking like a still.
 #
@@ -1582,10 +1582,10 @@ class Vapor:
 	var _lamp_ph := Vector2(0.0, 1.7)
 	var _rim := 0.55                  # the fringe / shadow hue (the scheme's accent)
 
-	## The live tonal centre as Vector2(hue, strength), pushed by the SCENE each frame
+	## The live tonal center as Vector2(hue, strength), pushed by the SCENE each frame
 	## (see GhostScene.chroma_hue - the scene owns the harmonic read; a layer only ever
 	## sees AudioFeatures). Every plume's hue is pulled toward it by its strength, so the
-	## vapour's colour is the music's key and drifts as the key does. Left at zero it is
+	## vapor's color is the music's key and drifts as the key does. Left at zero it is
 	## simply not used and the seeded hues stand.
 	var tonal := Vector2.ZERO
 
@@ -1599,7 +1599,7 @@ class Vapor:
 		# THE HUE LADDER. Plume hues walk from the scheme's base to its accent across the
 		# frame (the arc Scheme.hue_at describes, taken the short way round the wheel) rather
 		# than all sitting within a few hundredths of one hue. That is what makes the frame
-		# genuinely two-coloured - a violet mass beside a teal one, blending only where they
+		# genuinely two-colored - a violet mass beside a teal one, blending only where they
 		# overlap - and a single-hue field was the first cut's flattest failing.
 		var arc := fposmod(accent_h - base_h + 0.5, 1.0) - 0.5
 		# THE BAND LADDER. Plume 0 listens lowest and is the largest and slowest; the
@@ -1616,13 +1616,13 @@ class Vapor:
 			var home: Vector2
 			match layout:
 				# EDGES - the masses hug the borders and leave the middle dark, so
-				# whatever else the scene puts at the focal point is framed by vapour
+				# whatever else the scene puts at the focal point is framed by vapor
 				# rather than buried in it.
 				"edges":
 					var a := TAU * (float(i) + seed_rng.randf_range(-0.25, 0.25)) / float(n)
 					var r := seed_rng.randf_range(0.78, 1.12)
 					home = Vector2(cos(a) * r * 1.05, sin(a) * r * 0.78)
-				# SWEEP - one diagonal current of vapour crossing the frame.
+				# SWEEP - one diagonal current of vapor crossing the frame.
 				"sweep":
 					var s := lerpf(-1.05, 1.05, f) + seed_rng.randf_range(-0.1, 0.1)
 					home = Vector2(cos(sweep), sin(sweep) * 0.7) * s \
@@ -1645,7 +1645,7 @@ class Vapor:
 				"amp": 0.0, "kick": 0.0,
 				"hue": _plume_hue(seed_rng, base_h, arc, i, n, spread),
 				# Its own slow travel: two decorrelated rates, so the arrangement never
-				# repeats a pose. These are SLOW on purpose - vapour this heavy moves
+				# repeats a pose. These are SLOW on purpose - vapor this heavy moves
 				# like weather, and the fast motion is all in the shader's warp.
 				"orb": Vector2(seed_rng.randf_range(0.02, 0.09), seed_rng.randf_range(0.02, 0.08)),
 				"orbr": Vector2(seed_rng.randf_range(0.05, 0.20), seed_rng.randf_range(0.04, 0.16)),
@@ -1654,7 +1654,7 @@ class Vapor:
 			})
 		_spin = seed_rng.randf_range(-0.030, 0.030)
 		# THE FORWARD MOTION. One steady direction, at a rate the music may only nudge - the
-		# vapour is always going somewhere, which is what a still frame with a pulsing size is
+		# vapor is always going somewhere, which is what a still frame with a pulsing size is
 		# not. Seeded phase for the same reason Base seeds its clock: otherwise every session
 		# starts its warp at exactly the same place.
 		_drift_dir = Vector2.from_angle(seed_rng.randf() * TAU)
@@ -1686,7 +1686,7 @@ class Vapor:
 	# standard complement idiom, as furry uses for its repulsors). A scheme's accent can sit
 	# a few hundredths from its base, and a field of one hue is flat however well it moves:
 	# the reference for this scene is magenta on one side and teal on the other, and that is
-	# a complement, not a neighbour.
+	# a complement, not a neighbor.
 	func _plume_hue(seed_rng: RandomNumberGenerator, base_h: float, arc: float,
 			i: int, n: int, spread: float) -> float:
 		var h := base_h + arc * (float(i) / float(maxi(1, n - 1))) \
@@ -1698,7 +1698,7 @@ class Vapor:
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
 		# THE IDLE DRIFT, on fire's gate: with no audio (or sustained true silence) a
-		# gentle synthetic pulse keeps the vapour breathing, and any real music switches
+		# gentle synthetic pulse keeps the vapor breathing, and any real music switches
 		# it fully onto the harmonics. A quiet passage in a song still reads as quiet -
 		# only dead silence re-lights the idle.
 		_sig = maxf(_sig * exp(-0.25 * dt), f.energy)
@@ -1712,13 +1712,13 @@ class Vapor:
 			var raw := clampf(f.sample(float(pl.band)) * 1.25, 0.0, 1.0)
 			raw = maxf(raw, idle * (0.34 + 0.28 * sin(t * float(pl.breathe) + float(pl.ph.x))))
 			# THE MASS IS ALMOST STEADY, and that is the fix for the worst thing this layer did.
-			# A plume's amplitude is the mass at its centre and the body exists where mass beats
+			# A plume's amplitude is the mass at its center and the body exists where mass beats
 			# u_thresh, so amplitude IS the size of the mass - it was swinging 0.35..1.4 on the
 			# band, with a third-of-a-second attack, and the masses visibly inflated and
 			# collapsed with the music: "it expands and contracts rapidly with the harmonics.
 			# That really shouldn't be happening at all". The band still moves it, by a fifth,
 			# over SECONDS (attack 0.45..0.8 is a 1-2 s constant), so a swell reads as the
-			# vapour thickening rather than as a pulse. Everything the music used to do to the
+			# vapor thickening rather than as a pulse. Everything the music used to do to the
 			# SIZE it now does to the LIGHT.
 			var target := (0.66 + 0.26 * pow(raw, float(pl.gam))) * (0.90 + 0.14 * _energy)
 			pl.amp = maxf(Nonlinear.flare(float(pl.amp), target, dt,
@@ -1736,7 +1736,7 @@ class Vapor:
 		# brightness step on every beat is its own kind of chaotic.
 		_burst = maxf(_burst * exp(-1.3 * dt), clampf(0.45 * f.beat + 0.9 * f.flux, 0.0, 0.85))
 		# An onset kicks ONE plume - the loudest flares alone and decays, so a hit belongs
-		# to a place in the vapour rather than throbbing the whole frame.
+		# to a place in the vapor rather than throbbing the whole frame.
 		if f.beat > _last_beat + 0.30:
 			var hot: Dictionary = _plumes[0]
 			for pl in _plumes:
@@ -1779,7 +1779,7 @@ class Vapor:
 			glows.append(float(pl.kick))
 			# The plume's own hue, pulled toward the music's key by its strength. Blended
 			# on the wheel (see GhostScene.blend_hue) - the shortest-arc form flips at the
-			# antipode and made tints jump between two colours.
+			# antipode and made tints jump between two colors.
 			var hue := GhostScene.blend_hue(float(pl.hue), tonal.x, clampf(tonal.y, 0.0, 1.0) * 0.30)
 			var c := Color.from_hsv(hue, clampf(sat, 0.0, 1.0), clampf(val, 0.0, 1.0))
 			cols.append(Vector3(c.r, c.g, c.b))
@@ -1805,7 +1805,7 @@ class Vapor:
 		_mat.set_shader_parameter("u_burst", _burst)
 		_mat.set_shader_parameter("u_light", _lamp * half)
 		# CONSTANT. The warp gain is the shape of the twist, and modulating it re-warps space
-		# under the masses - which is not "the vapour twisting harder", it is every feature in
+		# under the masses - which is not "the vapor twisting harder", it is every feature in
 		# the frame jumping to a new place. Loudness reaches the motion through the RATE the
 		# phase is integrated at (see update), where it can only ever change the speed.
 		_mat.set_shader_parameter("u_swirl", _swirl)
@@ -2037,7 +2037,7 @@ class Volumetric:
 # ---------------------------------------------------------------------------------
 # Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic
 # streak, plus a chain of translucent "ghost" discs and rings marching along the line from the
-# source through the optical centre to the far side (where real lens flares sit). Its brightness
+# source through the optical center to the far side (where real lens flares sit). Its brightness
 # pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so
 # any scene can wear a flare over the top. Add it LAST (front).
 # ---------------------------------------------------------------------------------
@@ -2054,7 +2054,7 @@ class Flare:
 		_src = Vector2(cos(ang), sin(ang)) * seed_rng.randf_range(0.5, 0.85)   # source toward an edge
 		for i in seed_rng.randi_range(6, 10):
 			_ghosts.append({
-				"t": seed_rng.randf_range(-0.3, 1.7),         # position along source->centre->far line
+				"t": seed_rng.randf_range(-0.3, 1.7),         # position along source->center->far line
 				"size": seed_rng.randf_range(0.02, 0.09),
 				"hue_off": seed_rng.randf_range(-0.18, 0.22),
 				"sat": seed_rng.randf_range(0.1, 0.5),
@@ -2088,7 +2088,7 @@ class Flare:
 				Color.from_hsv(base_h, 0.2, 1.0, 0.16 * e), maxf(1.0, diag * 0.0035), true)
 		ci.draw_line(src_px - Vector2(diag * 0.95, 0), src_px + Vector2(diag * 0.95, 0),
 			Color.from_hsv(base_h, 0.25, 1.0, 0.09 * e), maxf(1.0, diag * 0.006), true)
-		# Ghosts along the source -> centre -> far line.
+		# Ghosts along the source -> center -> far line.
 		for g in _ghosts:
 			var p := src * (1.0 - 2.0 * float(g.t))
 			var pp := _px(p, k_fish, u)
@@ -2220,7 +2220,7 @@ class Kelp:
 		# because height, width and sway were fixed ranges. A form is a whole
 		# growth habit - how tall, how broad, how stiff, how much it leans - so
 		# a reef of short stiff fans reads as a different place from a kelp
-		# forest, not as the same place recoloured.
+		# forest, not as the same place recolored.
 		var form := txt("form", "kelp")
 		var hs := Vector2(0.55, 1.25)      # height range, unit fractions
 		var ws := Vector2(0.02, 0.055)     # width

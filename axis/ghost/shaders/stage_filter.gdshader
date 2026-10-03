@@ -25,7 +25,7 @@ shader_type canvas_item;
 // COST. Measured in AUDIT.md, ghost's GPU sits at 0.2-0.9 ms while a frame costs 30-170 ms of
 // GDScript - the machine is CPU-bound by a wide margin, and a full-frame fragment shader is
 // paid out of the idle part. The only filter with real fill cost is POINTILLISM (nine taps for
-// the neighbourhood, see below) and it is still a fraction of one scene's `_draw`.
+// the neighborhood, see below) and it is still a fraction of one scene's `_draw`.
 //
 // NOTHING HERE READS THE AUDIO, deliberately. A look is a decision about the photograph; a look
 // that pumped on the beat would be a scene effect, and ghost has a registry for those.
@@ -49,7 +49,7 @@ uniform int u_frame = -1;
 
 // Rec. 709 luma. NOT the channel average: the eye is about six times more sensitive to green
 // than to blue, so an average turns a saturated red and a saturated green of the same
-// brightness into the same grey and flattens exactly the contrast a monochrome pass is for.
+// brightness into the same gray and flattens exactly the contrast a monochrome pass is for.
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
 // Grain and the gate both re-roll at a FILM's rate, not at whatever the machine manages.
@@ -59,7 +59,7 @@ const float FILM_FPS = 24.0;
 // How often the transport misbehaves at the top of the Gate slip dial: a share of film frames.
 const float GATE_MAX = 0.22;
 // How heavy the grain field's tail is. Higher is sparser: the exponent is applied to a signed
-// noise centred on zero, so it pushes the bulk toward nothing and leaves the extremes alone.
+// noise centered on zero, so it pushes the bulk toward nothing and leaves the extremes alone.
 const float GRAIN_TAIL = 3.4;
 // ...and what a surviving grain is worth. This is the amplitude of the FEW, not of the many,
 // and it is small because grain MODULATES the picture - it does not punch through it. At 2.3
@@ -137,17 +137,17 @@ vec2 gate_slip(vec2 uv, float amount) {
 // --- 1. POINTILLISM ----------------------------------------------------------------------
 //
 // The picture re-laid as overlapping dots of paint. A regular lattice of discs is a halftone
-// screen and reads as print, so the cell centres are JITTERED and the dots are allowed to
+// screen and reads as print, so the cell centers are JITTERED and the dots are allowed to
 // overlap; what makes it read as paint rather than as a dotted grid is that each dot takes its
-// colour from its own centre and its RADIUS from how bright that is.
+// color from its own center and its RADIUS from how bright that is.
 //
-// THE NEIGHBOURHOOD IS THE WHOLE TRICK. A pixel belongs to one cell, but at this dot size the
+// THE NEIGHBORHOOD IS THE WHOLE TRICK. A pixel belongs to one cell, but at this dot size the
 // dot covering it is very often the one from the cell NEXT DOOR - a version that only asked its
 // own cell leaves a hard rectangular gap around every dot and reads as a grid of stamps. So the
 // 3x3 cells around the pixel are tested and the nearest covering dot wins. Nine taps, which is
 // this filter's entire cost.
 //
-// The ground between the dots is the containing cell's own colour, well dimmed: pointillism on
+// The ground between the dots is the containing cell's own color, well dimmed: pointillism on
 // white paper looks right on a bright painting and turns a night scene into a blank sheet, and
 // a dark ground keeps a dark picture legible at any exposure.
 vec3 pointillism(sampler2D tex, vec2 uv, vec3 src, float amount) {
@@ -215,7 +215,7 @@ vec3 monochrome(vec3 src, float amount) {
 // --- 4. NOIR ------------------------------------------------------------------------------
 //
 // The hard grade, and it is three things rather than a contrast slider. An S-curve closes the
-// blacks and burns the highlights; a little of the remaining colour is pulled out, because
+// blacks and burns the highlights; a little of the remaining color is pulled out, because
 // noir is not saturated even when it is not monochrome; and the shadows go COLD against warm
 // highlights, which is the split-tone that reads as noir rather than as "high contrast".
 vec3 noir(vec3 src, float amount) {
@@ -253,7 +253,7 @@ vec3 noir(vec3 src, float amount) {
 //   power gives the heavy tail a real grain field has: most of the frame carries nearly
 //   nothing and the few grains that land, land hard.
 //
-//   IT IS UNEVENLY DENSE. Real stock mottles - regions grainier than their neighbours,
+//   IT IS UNEVENLY DENSE. Real stock mottles - regions grainier than their neighbors,
 //   drifting slowly. Without it even sparse grain reads as an even wash at a distance.
 //
 //   ...AND IT IS IN THE MIDTONES. Silver that did and did not develop: none in a black that
@@ -282,14 +282,14 @@ vec3 static_noise(vec2 uv, vec3 src, float amount) {
 	float sn = n * 2.0 - 1.0;
 	sn = sign(sn) * pow(abs(sn), GRAIN_TAIL);
 
-	// MOTTLE. Whole REGIONS grainier than their neighbours, drifting slowly. Without it even
+	// MOTTLE. Whole REGIONS grainier than their neighbors, drifting slowly. Without it even
 	// sparse grain averages out to an even wash at any distance, which is the other half of
 	// "uniform and consistent". Anisotropic and in frame units, so it does not read as a
 	// circular pattern and does not change scale with the window.
 	float m = vnoise(uv * vec2(5.0, 3.0) + vec2(t * 0.011, t * -0.008));
 	float density = 0.06 + 1.9 * smoothstep(0.34, 0.86, m);
 
-	// ...and the exposure weight, peaking at mid-grey and vanishing at both ends.
+	// ...and the exposure weight, peaking at mid-gray and vanishing at both ends.
 	float l = luma(src);
 	float weight = 4.0 * l * (1.0 - l);
 	return src + vec3(sn * amount * GRAIN_GAIN * density * weight);
@@ -309,7 +309,7 @@ vec3 static_noise(vec2 uv, vec3 src, float amount) {
 // every edge, fixed that and "looks very square, which I've never seen before with a vignette".
 //
 // A VIGNETTE IS DARK, NOT TINTED. The depth used to be the dial itself, so at 0.5 even the
-// corner was only half dark and the frame read as a grey veil ("very transparent, even at
+// corner was only half dark and the frame read as a gray veil ("very transparent, even at
 // high values"). The depth saturates early (0.3 is two-thirds dark, 0.5 nearly black), and the
 // dial's travel is mostly REACH: both ends of the falloff move inward with it, so the top of
 // the range is solid black at every edge.

@@ -10,7 +10,7 @@ extends SceneTree
 ## head slides through it: reported for the cracks as "squiggly smears", and for
 ## the drip as "the streaks remain fixed, rooted in place, and more streaks pop in
 ## from nowhere". Both are the same bug and the same fix - evaluate the pattern in
-## the FACE's own frame (origin at its centre, x along the eye line, scaled by the
+## the FACE's own frame (origin at its center, x along the eye line, scaled by the
 ## eye separation) so it travels, rotates and resizes with the head.
 ##
 ## The test: render the SAME face at two positions and ask whether the paint moved

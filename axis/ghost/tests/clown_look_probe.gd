@@ -11,7 +11,7 @@ extends SceneTree
 ## looking at it, and each time the reasoning was wrong about something the frame
 ## would have shown immediately. Run it, open the PNG.
 ##
-## It also PRINTS the model it resolved - eye centres, measured radii, the derived
+## It also PRINTS the model it resolved - eye centers, measured radii, the derived
 ## drip source and width - because those numbers are what the geometry is actually
 ## built from, and a shape that is wrong on a real face is usually one of them
 ## being much larger or smaller than the guess in the code assumed.
@@ -73,7 +73,7 @@ func _initialize() -> void:
 		quit(2)
 		return
 
-	# The blob fitter runs once, only for its COLOUR statistics (mean tint and
+	# The blob fitter runs once, only for its COLOR statistics (mean tint and
 	# luminance) - landmarks cannot give those and the coat's match test needs
 	# them. Every geometric term it sets is overwritten by _ft_apply_model.
 	_ed._update_face_model(img)
@@ -134,7 +134,7 @@ func _one(knobs: Dictionary, t: float, out_path: String) -> void:
 	_ed._clown_smile_w = 1.0 + (clampf(float(l["feather"]), 0.0, 0.5) - 0.12) * 8.0
 	_ed._clown_smile_curve = (clampf(float(l["fx_speed"]), 0.0, 2.0) - 1.0) * 0.12
 	_ed._clown_feather = 0.012 + clampf(float(l["fx_x"]), 0.0, 1.0) * 0.055
-	# The blob fitter is run only for its COLOUR statistics (mean tint/luminance),
+	# The blob fitter is run only for its COLOR statistics (mean tint/luminance),
 	# which landmarks cannot give and the coat's match test needs; the landmark
 	# model is applied after it and overwrites every geometric term.
 	_ed._ft_apply_model(t)
@@ -150,7 +150,7 @@ func _one(knobs: Dictionary, t: float, out_path: String) -> void:
 		% [_ed._face_eye_l_ema, _ed._face_eye_r_ema, el.distance_to(er)])
 	print("  measured eye radii  L %.4f  R %.4f   (uv height units)"
 		% [_ed._face_eye_lr_ema, _ed._face_eye_rr_ema])
-	print("  face centre %s  semi-axes %s" % [_ed._face_c_ema, _ed._face_r_ema])
+	print("  face center %s  semi-axes %s" % [_ed._face_c_ema, _ed._face_r_ema])
 	print("  nose %s   mouth %s" % [_ed._face_nose_ema, _ed._face_mouth_ema])
 	print("  chin (face_c.y + face_r.y) %.4f -> eye-to-chin %.4f"
 		% [_ed._face_c_ema.y + _ed._face_r_ema.y,
@@ -159,16 +159,16 @@ func _one(knobs: Dictionary, t: float, out_path: String) -> void:
 		% [_ed._clown_drip, _ed._clown_drip_w, _ed._clown_drip_curve, _ed._clown_eye_size])
 
 	var paint := await _sim()
-	# The eye channel on its own, as grey. mask_split's own gating, the coat and
+	# The eye channel on its own, as gray. mask_split's own gating, the coat and
 	# the craquelure all sit on top of this in the composite, so a run that looks
 	# wrong there might be wrong here or might be wrong there.
 	var pi: Image = paint.get_image()
-	var grey := Image.create_empty(pi.get_width(), pi.get_height(), false, Image.FORMAT_RGB8)
+	var gray := Image.create_empty(pi.get_width(), pi.get_height(), false, Image.FORMAT_RGB8)
 	for gy in pi.get_height():
 		for gx in pi.get_width():
 			var v := clampf(pi.get_pixel(gx, gy).r, 0.0, 1.0)
-			grey.set_pixel(gx, gy, Color(v, v, v))
-	grey.save_png(out_path.get_basename() + "_paint.png")
+			gray.set_pixel(gx, gy, Color(v, v, v))
+	gray.save_png(out_path.get_basename() + "_paint.png")
 	var out := await _composite(paint)
 	out.save_png(out_path)
 	print("clown_look_probe: wrote ", out_path)

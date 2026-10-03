@@ -18,10 +18,10 @@ extends Scene3D
 ## Both liberties this scene takes are about the SWARM: a [constant FORMATION] decides how many
 ## prisms there are and how the track carries them (a lean three-body pair, the seven-strong file
 ## the sequence was designed around, or a shoal of a dozen small ones on a tight fast helix), and
-## a [Scheme] mood decides the two strands' colours. The strand hues ride on the BODIES as offsets
+## a [Scheme] mood decides the two strands' colors. The strand hues ride on the BODIES as offsets
 ## from [constant HUE_BLUE] / [constant HUE_RED], the convention the rest of the prism family
-## uses, so the lead handed over by `two_prisms` keeps its colour - and the strand it joins is
-## re-based onto that colour, rather than the swarm reverting to blue the moment it arrives.
+## uses, so the lead handed over by `two_prisms` keeps its color - and the strand it joins is
+## re-based onto that color, rather than the swarm reverting to blue the moment it arrives.
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
@@ -88,7 +88,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_stagger = GATHER_F / float(maxi(1, _n))
 
 	# One mood, two strands. The offsets ride on the bodies (see the class docs) and `+=` keeps
-	# each member's own small cast, so a strand is a colour family rather than a stack of clones.
+	# each member's own small cast, so a strand is a color family rather than a stack of clones.
 	var sch := Scheme.pick(rng)
 	var lead := sch.vary(rng)
 	var counter := sch.opposed(lead)
@@ -124,7 +124,7 @@ func _band(b, rng: RandomNumberGenerator) -> float:
 
 # The prism family's second hue: the mood's own accent, never closer to the lead than Scheme.opposed allows.
 # Several moods keep their accent within a few hundredths of the base, and two strands that close
-# together would weave past each other in the same colour and stop reading as two. Those are
+# together would weave past each other in the same color and stop reading as two. Those are
 # pushed out along the DIRECTION the mood already chose rather than replaced by a generic
 # complement. Measured against the drifted lead, not the mood's nominal hue, since `vary` moves it.
 
@@ -137,7 +137,7 @@ func begin_morph(from: GhostScene) -> void:
 	if p.has("blue") and not _blue.is_empty():
 		_blue[0] = p["blue"]
 		# The arriving lead carries its own mood. Re-base BOTH strands by the same amount, so the
-		# swarm becomes the lead's colour family and the two strands keep the separation this
+		# swarm becomes the lead's color family and the two strands keep the separation this
 		# build rolled - otherwise the handed-over prism would fly at the head of a strand it
 		# does not match.
 		var carried: float = (_blue[0] as PrismBody).hue_shift
@@ -252,7 +252,7 @@ func _draw() -> void:
 		it.body.draw(self, it.center, it.size, it.hue, clampf(it.alpha, 0.0, 1.0))
 
 
-# Project a world point on the track to a draw item (screen centre, perspective size, depth fade),
+# Project a world point on the track to a draw item (screen center, perspective size, depth fade),
 # or {} if it is behind the camera.
 func _project_item(world: Vector3, u: float) -> Dictionary:
 	var pj := lens.project(world)

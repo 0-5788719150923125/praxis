@@ -4,7 +4,7 @@ class_name PrismBody
 ## PrismBody - the browser Prism, ported (praxis web, dark mode).
 ##
 ## A see-through wireframe tetrahedron: only the four corner points and the thin
-## glowing edges are drawn - NO faces, NO fill. At the centre floats a living core:
+## glowing edges are drawn - NO faces, NO fill. At the center floats a living core:
 ## fine neural tendrils that flow and branch outward from the middle, staying inside
 ## the shell, growing and fading, surging brighter with the audio. The shell's edges
 ## light up where the tendrils approach them (so the wireframe flickers with the
@@ -32,12 +32,12 @@ const TENDRIL_MAX_LEN := 0.46     # keep tendrils inside the shell
 ## the tetra topology stretched on one axis, and nearly four in ten were a five-point bipyramid
 ## or an octahedron, which are different solids wearing the prism's name. The tetrahedron is the
 ## prism's identity, not one option among five, and the deviations were reported as simply not
-## looking good. The variety that stays is COLOUR, which is orthogonal to this and unaffected.
+## looking good. The variety that stays is COLOR, which is orthogonal to this and unaffected.
 var form := "tetra"
 ## Hue offset in turns, added to whatever hue a caller draws this body with. Small by
 ## default (a "blue" prism stays blue, a "red" one red), but a scene may set it
 ## outright - see `eye_prism`, which crystallizes its eye on a [Scheme] mood this way.
-## It rides on the INSTANCE so a body handed across a morph keeps its colour.
+## It rides on the INSTANCE so a body handed across a morph keeps its color.
 var hue_shift := 0.0
 
 var rot := Vector3.ZERO
@@ -203,10 +203,10 @@ func draw(ci: CanvasItem, center: Vector2, scale: float, hue: float, fade := 1.0
 		var col := Color.from_hsv(hue, 0.35 if e[2] else 0.6, 1.0, illum * fade)
 		_glow_line(ci, pa, pb, col, (1.0 + illum * 2.0), es * fade)
 
-	# Tendrils: a wavy strand from the centre outward, drawn as a GRADIENT (browser-faithful) - white
+	# Tendrils: a wavy strand from the center outward, drawn as a GRADIENT (browser-faithful) - white
 	# hot at the base where it leaves the core, through the body hue, brightening again at the tip -
 	# and the whole strand breathes brighter with the shared pulse. The white-hot bases of all the
-	# tendrils pile up at the centre, which is what makes the light gather and breathe "near the core".
+	# tendrils pile up at the center, which is what makes the light gather and breathe "near the core".
 	var body := Color.from_hsv(hue, 0.55, 1.0)
 	var glow := 0.5 + 0.55 * clampf(_breath, 0.0, 1.0)
 	for td in _tendrils:
@@ -236,7 +236,7 @@ func draw(ci: CanvasItem, center: Vector2, scale: float, hue: float, fade := 1.0
 		if pr > 0.85:
 			ci.draw_circle(pts[pts.size() - 1], thick * 0.9, Color(1, 1, 1, clampf(op * 0.6, 0.0, 1.0)))
 
-	# The living nucleus: a soft radial gradient (white-hot centre -> body hue -> faint rim) that
+	# The living nucleus: a soft radial gradient (white-hot center -> body hue -> faint rim) that
 	# BREATHES in both size and brightness with the shared pulse - a fast size shimmer plus the swell
 	# of the breath - so the core pulses like the browser's does, in step with the tendrils and edges.
 	var breath := clampf(_breath, 0.0, 1.2)
@@ -244,7 +244,7 @@ func draw(ci: CanvasItem, center: Vector2, scale: float, hue: float, fade := 1.0
 	var cg := (0.4 + 0.6 * clampf(breath, 0.0, 1.0)) * fade
 	var rings := 7
 	for k in rings:
-		var fr := 1.0 - float(k) / float(rings - 1)       # k=0 rim (fr=1) .. last ring the centre (fr=0)
+		var fr := 1.0 - float(k) / float(rings - 1)       # k=0 rim (fr=1) .. last ring the center (fr=0)
 		var rr := cr * (0.1 + 1.5 * fr)
 		ci.draw_circle(c, rr, Color.from_hsv(hue, lerpf(0.0, 0.6, fr), 1.0, clampf(cg * (1.0 - 0.92 * fr), 0.0, 1.0)))
 

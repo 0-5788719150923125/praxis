@@ -2,16 +2,16 @@ extends GhostScene
 
 ## Clouds - REAL 3D cloud masses drifting across the sky, lit by the sun.
 ##
-## A coloured sky bed, sometimes stars behind, sometimes haze rolling in front, and a
+## A colored sky bed, sometimes stars behind, sometimes haze rolling in front, and a
 ## [Volumetric] cloudscape: soft gaussian puffs placed in 3D, self-shadowed (bright sunlit
 ## tops, darker undersides) and drifting/billowing over time. The seed picks a WEATHER
 ## first and the weather decides both which moods the sky may be drawn from and what else
 ## is in the frame. `bed` + `stars?` + `volumetric` + `haze?`.
 
-# A sky is a weather before it is a colour - what accompanies the clouds (starlight behind,
+# A sky is a weather before it is a color - what accompanies the clouds (starlight behind,
 # haze in front, how heavily the bed sits) follows from the same roll, so one choice moves
 # the whole read of the scene rather than just its tint.
-#   stars/haze/tint - probabilities; pools - the bed's colour-pool count range
+#   stars/haze/tint - probabilities; pools - the bed's color-pool count range
 const SKIES := {
 	"clear": {
 		"moods": ["glacier", "abyss", "teal", "violet", "bone"],

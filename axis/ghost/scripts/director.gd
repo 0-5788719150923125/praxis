@@ -67,7 +67,7 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/bubbles.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/motes.gd"), "behavior": "drift"},
 	# Vapors - the FIELD half of the atmosphere: a fragment program, not puffs, which is
-	# what lets it have a hard front and fibre (see scenes/vapors.gd). Registered on both
+	# what lets it have a hard front and fiber (see scenes/vapors.gd). Registered on both
 	# behaviors: the drifting camera suits the nebula characters and a held one suits the
 	# denser ink, where the twisting is already all the movement the frame needs.
 	{"script": preload("res://scripts/scenes/vapors.gd"), "behavior": "drift"},
@@ -79,15 +79,15 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/terrain_city.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/spires.gd"), "behavior": "drift"},
-	# Simulation, structure and graphic work - the batch that widened the catalogue past
-	# "particles over a colour bed" and "a body in a void", which between them were most
+	# Simulation, structure and graphic work - the batch that widened the catalog past
+	# "particles over a color bed" and "a body in a void", which between them were most
 	# of what came before. Each of these is a language nothing else here speaks: a running
 	# physical state, a real symmetry group, a written script, a routed graph, a plant in
 	# depth, standing waves.
 	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "drift"},
 	# wallpaper is DEREGISTERED, not deleted. Judged in the field: "everything about it
-	# looked bad - the colours, the way the patterns were exactly the same everywhere, and
+	# looked bad - the colors, the way the patterns were exactly the same everywhere, and
 	# no movement at all besides a camera that shifted every once in a while."
 	#
 	# That is not a bug report, it is the design being wrong, and the design is mine. The
@@ -112,7 +112,7 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/contour_map.gd"), "behavior": "drift"},
-	# Two things the catalogue had no version of at all. `fractal_zoom` is the only scene whose
+	# Two things the catalog had no version of at all. `fractal_zoom` is the only scene whose
 	# subject has detail at every scale, so it is the only one that can move FORWARD forever
 	# without repeating - and the only one where the camera's motion is the whole content.
 	# `tunnel_run` is the only RIDE: everything else here is looked at, and a first-person track
@@ -231,13 +231,13 @@ var pacing: float = 1.0
 ## punches. 1.0 is the tuned default, 0.0 turns them off entirely, and the top of the range makes
 ## them a regular feature. Separate from `pacing` on purpose: pacing is how long an ordinary scene
 ## holds, this is how often the show breaks that rhythm, and the reported problem was that raising
-## one while the other ran hot cancelled it out.
+## one while the other ran hot canceled it out.
 var flourish: float = 1.0
 ## HOW SEVERE THE CAMERA IS, for a medium that flies one (see [ComicMedium]). 0 is a slow,
 ## gentle drift that barely turns; 1 is the tuned default; the top of the range is fast,
 ## restless and cinematic, with real jump cuts in it.
 ##
-## ONE KNOB OVER A WHOLE BEHAVIOUR, not a new setting per symptom. It scales the angular
+## ONE KNOB OVER A WHOLE BEHAVIOR, not a new setting per symptom. It scales the angular
 ## excursion a shot may take, how quickly that excursion is spent, how long a move lasts, how
 ## much of the bag is discontinuous, how deep a push goes and how fast the sheet drifts - so
 ## it moves the whole camera along one axis from "slow" to "chaotic" instead of asking anyone
@@ -362,7 +362,7 @@ const BURST_BASE := 0.012
 const BURST_GAIN := 0.05
 const FLURRY_CD_MIN := 6     # never fewer scenes between flurries, whatever the pacing (see _flurry_spacing)
 # Rapid-fire STINGER: instead of cutting through different scenes (jarring at speed), a run of
-# beat-synced PUNCHES that contort / recolour / zoom the CURRENT scene - BANG, BANG, BANG - then
+# beat-synced PUNCHES that contort / recolor / zoom the CURRENT scene - BANG, BANG, BANG - then
 # settle. A universal modulation: it rides the SceneView pulse + node tint, so it works on any scene.
 #
 # Zoom kick ranges, sampled per punch (never baked to one value). Asymmetric on
@@ -467,10 +467,11 @@ var _dial_demo := false              # --dial-demo: scripted turning, for headle
 ## ambience actually complete its own gesture at each end.
 ## ONE RANGE FOR BOTH ENDS, so the two sliders put a value at the same place; with Intro
 ## to 15 and Outro to 20, "9.0" sat at different positions on sliders stacked one above the other.
+## A minute, for a long fade-out at the end of a chapter.
 const INTRO_MIN := 0.0
-const INTRO_MAX := 20.0
+const INTRO_MAX := 60.0
 const OUTRO_MIN := 0.0
-const OUTRO_MAX := 20.0
+const OUTRO_MAX := 60.0
 var intro_hold := 5.0
 var outro_hold := 6.0
 ## A LIVE reading's own fade-out, 0..1 - the outro mark's, driven by the Generative panel from
@@ -490,7 +491,7 @@ func _ready() -> void:
 ##
 ## The change takes effect on the scene ALREADY on screen, not just the next one. The hold bounds are
 ## re-derived from `pacing` every frame in _should_change / _ready_to_exit, so nothing caches them -
-## and that is the behaviour we want: someone reaching for this slider is reacting to the cutting
+## and that is the behavior we want: someone reaching for this slider is reacting to the cutting
 ## they are watching right now, so dragging it up should stretch THIS scene rather than make them sit
 ## through one more cut to hear the difference. The one exception is a live BURST, whose bounds were
 ## sampled when the burst started (see _maybe_start_burst) and stay fixed for its 2-3 cuts, because a
@@ -538,7 +539,7 @@ func set_flourish(v: float) -> void:
 
 ## The camera severity knob. Takes effect on the NEXT move the medium plans, which is at
 ## most one shot away - the same "reach for the slider and hear the difference" the pacing
-## slider gives, without re-planning a move that is already travelling.
+## slider gives, without re-planning a move that is already traveling.
 func set_camera(v: float) -> void:
 	var c := clampf(v, CAMERA_MIN, CAMERA_MAX)
 	if is_equal_approx(c, camera):
@@ -948,7 +949,7 @@ func _arm() -> void:
 # meaningless, which is the one place an ABSOLUTE test still belongs: this instant is silent, or the
 # material's own normal level is silence. `silence_floor` is reused for both (it is already the
 # "nothing is playing" line the cut logic trusts), so a dead track, a silent tail, and a session with
-# no audio at all can never flurry no matter how favourable the ratio between two tiny numbers looks.
+# no audio at all can never flurry no matter how favorable the ratio between two tiny numbers looks.
 #
 # This replaced a pair of hard `_audio_ema < 0.15` / `>= 0.2` gates. Those are levels a mastered
 # track clears at rest (measured ~0.40) and speech mostly does not (measured ~0.09-0.14), so a spoken
@@ -1038,7 +1039,7 @@ func _bookend_fade() -> float:
 		return 1.0
 	# The fade windows follow the BOOKEND when there is one, so the picture arrives
 	# exactly as the held silence ends rather than over the opening words. Without a
-	# bookend it falls back to the per-song sampled length, which is the old behaviour.
+	# bookend it falls back to the per-song sampled length, which is the old behavior.
 	var fade_in := maxf(0.5, Spectrum.lead_in if Spectrum.lead_in > 0.001 else _bookend_time)
 	var fade_out := maxf(0.5, Spectrum.tail if Spectrum.tail > 0.001 else _bookend_time)
 	var a_in := clampf(t / fade_in, 0.0, 1.0)           # 0 at the very start -> 1 after fade_in
@@ -1227,7 +1228,7 @@ func _drive_stinger(delta: float, bf: float) -> void:
 	# that moved the camera without asking - so a scene whose whole design is "hold
 	# still and let the audio speak" got slammed exactly as hard as one built to
 	# swoop. The floor keeps the accent present everywhere rather than deleting it
-	# from half the catalogue. The brightness flash is not a camera move and stays
+	# from half the catalog. The brightness flash is not a camera move and stays
 	# universal, which is what a static scene gets instead.
 	var g: float = 0.35 + 0.65 * float(_current.behavior.get("view", 1.0))
 	# ...and a reading is not a music video. See STING_READING.
@@ -1552,7 +1553,7 @@ func _pacing_scale() -> float:
 
 # A hold bound: a storyboard-explicit value is taken literally (already sensitivity-scaled in
 # _make_scene); the auto-mode default is pace-scaled AND divided by the active sensitivity, so a
-# higher tempo also makes auto cuts come faster (more of the catalogue in the same time), then
+# higher tempo also makes auto cuts come faster (more of the catalog in the same time), then
 # multiplied by the user's `pacing`. Multiplying LAST and multiplying BOTH bounds by the same factor
 # is what preserves the show's variance: _pacing_scale still swings the hold by ~3.4x across the
 # music's drive, and max/min keeps its exact ratio - the whole distribution just slides longer.
@@ -1629,7 +1630,7 @@ func set_aura(v: float) -> void:
 
 ## Jump the show to the scene a seed OWNS: the index derives from the seed
 ## value, so each seed's scene is part of its identity - catching it, or
-## restoring it from the belt, brings back its place in the catalogue.
+## restoring it from the belt, brings back its place in the catalog.
 var _jump_next := -1
 
 func jump(seed_val: int) -> void:
@@ -1797,7 +1798,7 @@ func _begin_transition() -> void:
 		_arm()
 		return
 
-	# Layer overlap: pan / zoom only the INCOMING scene into an off-centre region so it composes
+	# Layer overlap: pan / zoom only the INCOMING scene into an off-center region so it composes
 	# beside the outgoing one without sitting on the same focal point. The OUTGOING scene is left
 	# exactly where it is (it just fades) - it must never re-shift to "make room", which read as a
 	# jarring lurch. The incoming eases from neutral into this bias (a pan-in) and then holds it.
@@ -1846,11 +1847,11 @@ func _finish_transition() -> void:
 	_current.view.presence = 1.0
 	_current.view.reveal = 1.0
 	# The survivor of a LAYER HOLDS the position it took during the overlap - it does not shift
-	# back to the centred focal point (that snap-back read as wrong). Its bias stays as set.
+	# back to the centered focal point (that snap-back read as wrong). Its bias stays as set.
 	_arm()
 
 
-# Novelty-weighted scene choice. The catalogue lists several entries per scene
+# Novelty-weighted scene choice. The catalog lists several entries per scene
 # *kind* (the same script with different behaviors), and a uniform random pick
 # clusters - the same kind recurs while others go unseen. Instead, weight each
 # candidate by how long its kind has gone unshown, so long-unseen scenes are drawn
@@ -1868,7 +1869,7 @@ func _pick_index() -> int:
 	# Identity-keyed weighted selection (Efraimidis-Spirakis): each candidate gets a STABLE
 	# per-cut uniform from a hash of (session, cut#, this scene's identity), and we keep the one
 	# with the largest key = u^(1/weight). Because each scene's key depends only on ITS OWN
-	# identity - never on the catalogue's size or order - adding a new animation can only change
+	# identity - never on the catalog's size or order - adding a new animation can only change
 	# the cuts it actually wins; it does not reshuffle the rest of the show. The hash is fully
 	# DETERMINISTIC per song (the session seed is the song fingerprint): the same audio picks the
 	# same scenes in the same order. It used to also fold in the live Spectrum.seed_bias(), but
@@ -1889,7 +1890,7 @@ func _pick_index() -> int:
 	return best if best >= 0 else _rng.randi() % SCENES.size()   # all suppressed: fall back
 
 
-# A STABLE identity for a catalogue entry: a hash of (scene name, behavior), independent of its
+# A STABLE identity for a catalog entry: a hash of (scene name, behavior), independent of its
 # position in SCENES. Keying seeds and selection off this - not the array index - is what lets us
 # add or reorder scenes without changing how the existing ones are chosen or how they look.
 func _scene_key(i: int) -> int:
@@ -1899,7 +1900,7 @@ func _scene_key(i: int) -> int:
 
 ## How many cuts back the novelty term can see. Past this a kind is simply DUE, and no more due
 ## than any other kind that is also due - which is the whole difference between sampling the
-## catalogue and queueing it. Chosen by measuring the first-repeat statistic, not by taste; see
+## catalog and queueing it. Chosen by measuring the first-repeat statistic, not by taste; see
 ## tests/scene_mix_check.gd.
 const NOVELTY_SPAN := 5.0
 
@@ -1907,7 +1908,7 @@ const NOVELTY_SPAN := 5.0
 const NOVELTY_EXP := 1.0
 
 
-# Selection weight for one catalogue entry: 0 for the entry on screen (never an
+# Selection weight for one catalog entry: 0 for the entry on screen (never an
 # immediate repeat), tiny for another behavior of the *same* scene (so we don't
 # show two of one kind back to back), and otherwise a MILD preference for kinds that
 # have not been seen lately.
@@ -1916,13 +1917,13 @@ const NOVELTY_EXP := 1.0
 # never been shown handed `age = _swaps + 1000` by the dictionary default - a weight of about
 # 251,000 against 40 for a kind last seen ten cuts ago, or 6,300 to 1. At odds like that the
 # scheduler could not repeat anything until it had shown EVERYTHING, so the running order was a
-# rotation through the catalogue wearing the clothes of a weighted random draw, and the function
+# rotation through the catalog wearing the clothes of a weighted random draw, and the function
 # above promised "a soft priority queue, not a hard rotation" while delivering the opposite.
 #
 # Measured before the change (tests/scene_mix_check.gd, 40 sessions x 140 cuts over 52 kinds):
 # the first repeated kind arrived at cut 50.0, where a genuine random draw over 52 kinds repeats
 # at about cut 9.0 and a complete sweep would be cut 53. A video therefore played very nearly
-# the whole catalogue once through before it ever came back to anything, which is what "the
+# the whole catalog once through before it ever came back to anything, which is what "the
 # variety of generated scenes is not truly random" was describing.
 #
 # Novelty is BOUNDED now, so the tail cannot dominate. What it still buys is the thing it was

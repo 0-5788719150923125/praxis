@@ -10,7 +10,7 @@ extends GhostScene
 ## stroke by stroke, words group, lines fill, the page scrolls, and when the music
 ## goes quiet the pen simply stops where it is, mid-stroke, resting on the paper.
 ##
-## It is the catalogue's whole missing axis. Not one of the other scenes draws a
+## It is the catalog's whole missing axis. Not one of the other scenes draws a
 ## letter, numeral, rune or ideogram, and it is the first whose content has a READING
 ## DIRECTION rather than being a physical process - a page has a beginning, an order,
 ## and an accumulating history, which is a different kind of picture from fog or fire.
@@ -27,7 +27,7 @@ extends GhostScene
 ## section changes; a hand with punctuation marks (see [GlyphSet]'s reserve) closes the
 ## word with one. [member AudioFeatures.flux] presses the nib - up to a sampled 35% of
 ## extra weight, and no more, because ink weight is the only thing here that may track
-## amplitude at all. Everything else the sound does, it does to colour: tonality
+## amplitude at all. Everything else the sound does, it does to color: tonality
 ## (`chroma_hue().y`) raises the ink's saturation and warms the paper.
 ##
 ## SILENCE IS A STATE, NOT AN IDLE. Below [member Director.silence_floor] (0.03) the
@@ -36,13 +36,13 @@ extends GhostScene
 ## stops, and is far more alive than any animation would be.
 ##
 ## WHAT THE SEED DECIDES beyond the hand itself: the layout (a full page, a narrow
-## column, a centred banner that recentres itself as each line grows, or a spiral
-## written outward and drawn slowly back toward its own centre), the margins, the line
+## column, a centered banner that recenters itself as each line grows, or a spiral
+## written outward and drawn slowly back toward its own center), the margins, the line
 ## height, beats per character, how strongly a section change breaks a word, whether
 ## the paper is ruled and carries a margin line, how much of the page is already
 ## written when we arrive, and the ground: high-key paper with dark ink, or bright ink
 ## on a dark bed. Both grounds exist because a page is the one subject in this
-## catalogue that genuinely reads either way.
+## catalog that genuinely reads either way.
 ##
 ## COST. The writing is ONE draw call however full the page. Every character's
 ## geometry is baked once in em
@@ -97,7 +97,7 @@ var _run := 0
 var _cx := 0.0
 var _cy := 0.0
 var _line := 0
-var _shifts: Dictionary = {}      # finished line -> its frozen centring shift
+var _shifts: Dictionary = {}      # finished line -> its frozen centering shift
 var _shift_cur := 0.0
 var _scroll := 0.0
 var _scroll_to := 0.0
@@ -108,7 +108,7 @@ var _scroll_to := 0.0
 ##
 ## The old rule was a position lerp at 0.7, switched to 9.0 whenever the nib left the frame.
 ## That is faster on paper and it is what made the camera jerky: a lerp's speed IS its error, so
-## every commit and every switch was a step change in how fast the frame was travelling.
+## every commit and every switch was a step change in how fast the frame was traveling.
 const CAM_PULL := 8.0
 const CAM_ACCEL := 16.0
 
@@ -117,7 +117,7 @@ const CAM_ACCEL := 16.0
 # happening. The view now sits IN the text: glyphs are large enough to overflow the frame,
 # and the camera follows the pen instead of the paper, with a slow independent downward
 # creep so the frame is never quite still even while a single character is being drawn.
-var _cam := Vector2.ZERO          # eased camera centre, in the same unit space as _cx/_cy
+var _cam := Vector2.ZERO          # eased camera center, in the same unit space as _cx/_cy
 var _cam_vel := Vector2.ZERO      # its SPEED, which is what is eased now - see _track_pen
 var _cam_drift := 0.0             # seconds, for the bounded breath (see _track_pen)
 var _zoom_in := 2.6               # how far the framing is pushed past whole-page
@@ -165,9 +165,9 @@ var _line_step := 0.12
 var _fit := 1.0
 var _open := false                # has the page been laid out and pre-written yet
 
-# Sampled look / behaviour.
+# Sampled look / behavior.
 var _layout := "page"
-var _centred := false
+var _centered := false
 var _margin := 0.08
 var _col_frac := 0.48
 var _line_h := 1.6
@@ -225,7 +225,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_mean_ink /= maxf(1.0, float(_gs.count()))
 	_sch = Scheme.pick(rng)
 	_layout = String(LAYOUTS[rng.randi() % LAYOUTS.size()])
-	_centred = _layout == "banner"
+	_centered = _layout == "banner"
 	_margin = rng.randf_range(0.04, 0.14)
 	_col_frac = rng.randf_range(0.38, 0.60)
 	_line_h = rng.randf_range(1.30, 2.10)
@@ -245,7 +245,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	#
 	# A SPIRAL IS THE EXCEPTION and is framed whole. The zoom exists so the eye has lines to
 	# read along; a coil has none, its nib orbits rather than travels (see _pen_at), and at a
-	# page's zoom the frame lands inside the coil's own empty hub - the hole at the centre is
+	# page's zoom the frame lands inside the coil's own empty hub - the hole at the center is
 	# `_line_step` across, which at 2.1x to 3.4x is the size of the visible height. So the
 	# composition is shown as a composition, with just enough push to crop its outermost turn.
 	_zoom_in = rng.randf_range(1.02, 1.30) if _layout == "spiral" else rng.randf_range(2.1, 3.4)
@@ -327,9 +327,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 	if not _open:
 		_open = true
 		_write_opening()
-		_shift_cur = _shift_target()     # arrive centred; the ease is for what happens after
+		_shift_cur = _shift_target()     # arrive centered; the ease is for what happens after
 		# The page arrives already part written (see _write_opening), so it should arrive
-		# already FRAMED. Easing in from the centre would have the opening seconds of every
+		# already FRAMED. Easing in from the center would have the opening seconds of every
 		# session drift across whatever the prefill happened to leave under the middle.
 		_cam = _clamp_cam(_pen_at())
 		_cam_vel = Vector2.ZERO
@@ -394,9 +394,9 @@ func _step(dt: float) -> void:
 	_ease_shift(dt)
 
 
-# THE CENTRED LINE'S SHIFT, and why it is integrated here rather than computed at draw time.
+# THE CENTERED LINE'S SHIFT, and why it is integrated here rather than computed at draw time.
 #
-# A banner recentres its live line, so every glyph on it is drawn at `p.x + _shift_cur`. That
+# A banner recenters its live line, so every glyph on it is drawn at `p.x + _shift_cur`. That
 # shift used to be recomputed inside _ink() as `-(_cx + _adv + _left) * 0.5` - straight off the
 # page CURSOR, which advances by a whole character at a time in _advance(). So the entire row
 # stepped left by half an advance the instant each character was committed, and the row a reader
@@ -420,14 +420,14 @@ func _step(dt: float) -> void:
 # the line is - and _newline freezes it as the line's final shift, so a finished line stops
 # exactly where it was last drawn rather than at a recomputed value half an advance away.
 func _ease_shift(dt: float) -> void:
-	if not _centred:
+	if not _centered:
 		_shift_cur = 0.0
 		return
 	_shift_cur = lerpf(_shift_cur, _shift_target(), 1.0 - exp(-14.0 * dt))
 
 
 func _shift_target() -> float:
-	if not _centred:
+	if not _centered:
 		return 0.0
 	var w := _adv * (0.62 if _cur_mark else 1.0)
 	return -(_cx + w * clampf(_reveal, 0.0, 1.0) + _left) * 0.5
@@ -532,7 +532,7 @@ func _write_opening() -> void:
 		_cur = {}
 		if _prng.randf() < 0.16:
 			_pending_word = true
-		# The pre-write is instantaneous, so the centring is SNAPPED along with it - the ease is
+		# The pre-write is instantaneous, so the centering is SNAPPED along with it - the ease is
 		# for a hand that is writing. It has to be kept up to date here even so, because
 		# _newline() freezes the live shift as each line's final one, and a run of opening lines
 		# frozen at a stale value would left-align the whole page above the pen.
@@ -604,7 +604,7 @@ func _advance(gi: int) -> void:
 			# was frozen on `_words`. It is NOT what the repetition report was: this branch is
 			# very nearly unreachable, since `_sig.size()` is always 16 (HarmonicSignature.DIM)
 			# and reaching it needs `_ch.y <= 0.0005` while the energy is above the silence
-			# floor, which is the 12 chroma channels cancelling to one part in three thousand.
+			# floor, which is the 12 chroma channels canceling to one part in three thousand.
 			# A latent bug found while reading, fixed while here - the repetition itself came
 			# from the tonal branch above.
 			idx = (_written * 7 + _words * 5) % maxi(1, _gs.count())
@@ -620,18 +620,18 @@ func _advance(gi: int) -> void:
 
 
 func _newline() -> void:
-	if _centred:
-		# Freeze this line's centring the moment it is finished, at the value it was last DRAWN
+	if _centered:
+		# Freeze this line's centering the moment it is finished, at the value it was last DRAWN
 		# with rather than a recomputed one - a recomputed freeze differs from the live shift by
 		# the last character's half advance, which is one more jump at every carriage return.
-		# The live line goes on recentring itself as it grows (see _ease_shift).
+		# The live line goes on recentering itself as it grows (see _ease_shift).
 		_shifts[_line] = _shift_cur
 	_line += 1
 	_cx = _left
-	if _centred:
+	if _centered:
 		# A CARRIAGE RETURN IS A DISCONTINUITY, and easing it is wrong. The line just finished
 		# keeps the shift it was drawn with (frozen above), and the new line has nothing on it
-		# yet - so snapping its centring moves no ink at all, while easing it drags the first
+		# yet - so snapping its centering moves no ink at all, while easing it drags the first
 		# glyph of the new line across the page from wherever the old line ended. That is a
 		# 9-advance glide, measured, and far more visible than the per-character step this ease
 		# exists to remove.
@@ -653,7 +653,7 @@ func _drop_lines() -> void:
 			keep.append(e)
 			lowest = mini(lowest, int(e["line"]))
 	_placed = keep
-	# The centring table would otherwise grow one entry per line for the life of the
+	# The centering table would otherwise grow one entry per line for the life of the
 	# session; nothing above the page can ever be asked for again.
 	for k in _shifts.keys():
 		if int(k) < lowest:
@@ -728,7 +728,7 @@ func _draw() -> void:
 		draw_layers("front")
 
 
-## Push the view into the text: zoom past whole-page and centre on the tracked pen.
+## Push the view into the text: zoom past whole-page and center on the tracked pen.
 ##
 ## Composed onto the scene's view matrix rather than into [member view] itself, so it
 ## replaces its own contribution every frame instead of accumulating one.
@@ -815,7 +815,7 @@ func _track_pen(delta: float) -> void:
 		_cam_vel = (_cam - was) / delta
 	# NOTE the camera is NOT written into `view`. Doing that compounds: `view.zoom` and
 	# `view.offset` are only re-set each frame by the assigned SHOT, and a scene running
-	# without one - the catalogue smoke gate builds every scene shotless - multiplies its
+	# without one - the catalog smoke gate builds every scene shotless - multiplies its
 	# own zoom by _zoom_in every frame. Measured before it was caught: zoom reached 3.9e13
 	# after one second and inf within half a minute. The framing is applied as its own
 	# transform at draw time instead, which is idempotent by construction.
@@ -830,7 +830,7 @@ func _track_pen(delta: float) -> void:
 ##   The camera therefore sat on that corner watching blank paper while the writing went round
 ##   the middle of the frame.
 ##
-##   BANNER recentres its live line, so a glyph is drawn at `p.x + _shift_cur` (see _pose and
+##   BANNER recenters its live line, so a glyph is drawn at `p.x + _shift_cur` (see _pose and
 ##   _ink). At the start of a line that shift is nearly half the measure - about 0.5 in unit
 ##   fractions against a visible half-width of 0.26 to 0.42 at this zoom - so aiming at the raw
 ##   cursor put the pen entirely outside the frame and only walked back into it as the line
@@ -880,15 +880,15 @@ func _pen_at() -> Vector2:
 func _clamp_cam(c: Vector2) -> Vector2:
 	var h := _half / maxf(0.001, _zoom_in)          # visible half-extent, in unit fractions
 	if _layout == "spiral":
-		# A coil is written outward from its centre, so the written DISC is the bound, and it
-		# grows with `_s` - which is also why the opening frame stays centred: at `_s_min` the
+		# A coil is written outward from its center, so the written DISC is the bound, and it
+		# grows with `_s` - which is also why the opening frame stays centered: at `_s_min` the
 		# whole coil is smaller than the view and there is nowhere to go.
 		# The coil is scaled to fit, so there is nowhere for the camera to go - and saying so
 		# here rather than trusting it keeps the bound true if the fit is ever floored.
 		var r := _coil * sqrt(2.0 * maxf(_s, _s_min) / maxf(0.000001, _coil)) * _coil_fit
 		return c.limit_length(maxf(0.0, r - minf(h.x, h.y)))
 	# A page narrower or shorter than the view (a column, mostly) has no pan to do on that axis,
-	# so it centres instead of clamping to an inverted range.
+	# so it centers instead of clamping to an inverted range.
 	var x1 := _right - h.x
 	var y1 := _bottom - h.y
 	return Vector2(
@@ -916,7 +916,7 @@ func _rules(u: float) -> void:
 
 
 # The whole page in one triangle array. Per character: one native transform of its
-# baked vertices, three append_arrays, one colour.
+# baked vertices, three append_arrays, one color.
 func _ink(u: float) -> void:
 	_pts.clear()
 	_cols.clear()
@@ -1029,7 +1029,7 @@ func _ensure_idx(quads: int) -> void:
 # Where one character sits this frame, into _pxf / _pfade. Returns false for a
 # character that has scrolled off the page.
 func _pose(e: Dictionary, u: float) -> bool:
-	# Deliberately audio-free: the sound presses the nib and moves the colour, it never
+	# Deliberately audio-free: the sound presses the nib and moves the color, it never
 	# scales the writing. A page that breathed with the amplitude would read as a gif.
 	var sc := _em * u
 	if _layout == "spiral":
@@ -1049,10 +1049,10 @@ func _pose(e: Dictionary, u: float) -> bool:
 	var y := p.y - _scroll
 	if y < _top - 2.0 * _line_step:
 		return false
-	# A centred layout recentres the LIVE line as it grows and freezes the shift once the
+	# A centered layout recenters the LIVE line as it grows and freezes the shift once the
 	# line is finished, so writing pushes the line left instead of everything jumping.
 	var sh := _shift_cur
-	if _centred:
+	if _centered:
 		var ln := int(e["line"])
 		if _shifts.has(ln):
 			sh = float(_shifts[ln])
@@ -1062,8 +1062,8 @@ func _pose(e: Dictionary, u: float) -> bool:
 
 
 # Ink dries. Fresh ink is wetter, darker (or brighter, on a dark ground) and pulled
-# toward the scheme's accent; over `_dry` seconds it settles to the page's own colour.
-# It is the scene's whole colour dynamic, and it is free - age is a subtraction.
+# toward the scheme's accent; over `_dry` seconds it settles to the page's own color.
+# It is the scene's whole color dynamic, and it is free - age is a subtraction.
 func _ink_color(age: float, fade: float) -> Color:
 	var wet := exp(-maxf(0.0, age) / _dry)
 	var h := _ink_hue

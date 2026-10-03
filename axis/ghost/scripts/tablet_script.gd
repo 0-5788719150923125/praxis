@@ -21,7 +21,7 @@ class_name TabletScript
 ##     <!-- filler: 3 -->                      three placeholder stories (squiggles) here
 ##
 ## HOW A PAGE IS REACHED IS INFERRED, never written. The first url opens the browser from the
-## home screen; a url linked from the page on screen (`[word](url)`) is scrolled to and tapped;
+## home screen on a blank tab and is typed into it; a url linked from the page on screen (`[word](url)`) is scrolled to and tapped;
 ## any other url is typed into the address bar. A page grows a search box when a search is made
 ## on it. A heading with no text under it gets squiggles for a body, and every page is padded
 ## with placeholder stories so there is something to scroll past.
@@ -70,6 +70,9 @@ const ARRIVE_LOOK := 3.0
 ## The pause before a new tab: deciding what to look for next.
 const THINK := 2.2
 const RETURN_LOOK := 1.5
+## Seconds a skim holds still on where it stopped before the reading there starts: the reader
+## finds the place first - landing on a headline and reading it at once was "too fast".
+const SKIM_LOOK := 2.0
 ## What a skim costs each picture it passes: a drag to it, then a real look at it - "we linger
 ## for about 1 second... 3 is more appropriate".
 const PICTURE_DRAG := 1.4
@@ -120,9 +123,10 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 	match kind:
 		"skim":
 			# past [param n] words nobody reads and [param m] pictures somebody looks at: still a
-			# moment, then a slow drag, a pause on each picture, and on to the next words read
+			# moment, then a slow drag, a pause on each picture, a look at where it stopped, and
+			# on to the next words read
 			var e := clampf(1.8 + 0.025 * float(n), 2.0, 4.5) + PICTURE_DWELL * float(m)
-			return {"rest": 0.8, "scroll0": 0.8, "scroll1": e - 0.35, "end": e}
+			return {"rest": 0.8, "scroll0": 0.8, "scroll1": e - 0.35, "end": e - 0.35 + SKIM_LOOK}
 		"wake":
 			# a moment dark, the screen comes up, a beat on the home screen - which the intro
 			# stretches: the medium starts the wake at once and spends any slack on the home screen
@@ -547,8 +551,13 @@ class _Walk:
 					(_hist[_tab] as Array).append(from)
 				_returned = false
 				if not _browser:
-					_act({"kind": "open", "page": p, "from": -1})
+					# THE BROWSER OPENS ON A BLANK TAB, and the first address is typed into it:
+					# opening straight onto the first page was too quick to follow ("give the
+					# user a few more seconds to get oriented"). The open ends on the arrival
+					# look, so the empty tab is seen before the typing starts.
+					_act({"kind": "open", "page": -1, "from": -1})
 					_browser = true
+					_act({"kind": "type", "text": arg, "page": p, "from": -1})
 				elif _fresh_tab or from < 0:
 					_act({"kind": "type", "text": arg, "page": p, "from": from})
 				else:

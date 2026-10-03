@@ -178,7 +178,7 @@ func panel_aspect(i: int) -> float:
 	return r.size.x / maxf(r.size.y, 1e-4)
 
 
-## The centre of panel [param i] in spread space - what the reading camera aims at.
+## The center of panel [param i] in spread space - what the reading camera aims at.
 func panel_center(i: int) -> Vector2:
 	var r: Rect2 = panels[i]["rect"]
 	return r.position + r.size * 0.5

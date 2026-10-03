@@ -8,7 +8,7 @@ extends Scene3D
 ## towers are a family, not clones. The live SPECTRUM drives the modes (each mode is pinned to a band),
 ## so the silhouettes - tapers, bulges, tiers - re-sculpt with the music: the point being proved.
 ##
-## Spires are lofted ring by ring from the GROUND UP and grow in over the intro (from the centre
+## Spires are lofted ring by ring from the GROUND UP and grow in over the intro (from the center
 ## outward), so the city assembles itself rather than starting fully formed. The key light gives each
 ## face directional + vertical-ambient shading, drops a contact shadow on the ground, and distance fog
 ## dissolves the far skyline into haze.
@@ -31,7 +31,7 @@ var _terrain: Terrain
 var _spires: Array = []
 # CITY PALETTES. The hue was a single hardcoded band (0.07-0.13), so every city
 # ever generated was brass. Each entry is a whole material mood: the stone hue,
-# how far individual towers drift from it, a saturation bias, and the colour of
+# how far individual towers drift from it, a saturation bias, and the color of
 # a lit window - which is what actually sells the material, since a window is
 # the only self-lit thing in the scene.
 const PALETTES := [
@@ -91,8 +91,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_mode_freq.append(float(k + 1) * rng.randf_range(1.1, 1.7))
 		_mode_amp.append(rng.randf_range(0.16, 0.40) / sqrt(float(k + 1)))
 		_mode_pos.append(clampf(0.12 + 0.72 * float(k) / float(MODES - 1) + rng.randf_range(-0.05, 0.05), 0.0, 1.0))
-	# Place a spire on every slot, pinned to a spectral position by its radius (centre = bass, rim =
-	# treble). Growth is staggered by that radius, so the city rises from the centre outward.
+	# Place a spire on every slot, pinned to a spectral position by its radius (center = bass, rim =
+	# treble). Growth is staggered by that radius, so the city rises from the center outward.
 	for gy in C:
 		for gx in C:
 			var wx := _slot(gx) + rng.randf_range(-0.06, 0.06)
@@ -118,7 +118,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			var bulk := rng.randf_range(0.4, 1.0)
 			var base_r := _terrain.half / float(C) * (0.40 + 0.7 * bulk)
 			# `core` bends the skyline: >0 puts the towers downtown, <0 rings them
-			# around a low middle, ~0 is an even sprawl. t is 0 at centre, 1 at rim.
+			# around a low middle, ~0 is an even sprawl. t is 0 at center, 1 at rim.
 			var law := 1.0 + core * (0.5 - t) * 1.6
 			var height := rng.randf_range(1.0, 2.1) * (1.2 - 0.3 * bulk) * clampf(law, 0.35, 2.0)
 			# Per-spire mode deviations + phases: a family resemblance to the global style, each unique.
@@ -162,7 +162,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	lens.orbit(Vector3(0.0, 1.15, 0.0), _dist, _yaw, _pitch + 0.03 * sin(_life * 0.11))
 	# The city assembles itself: maturity rises (BURST fast at the start, so a short scene still fills in,
 	# then easing to a crawl) and each spire eases toward its own maturity-gated completion (staggered by
-	# radius, so growth spreads from the centre out).
+	# radius, so growth spreads from the center out).
 	var burst: float = 1.0 + 3.5 * exp(-_life * 0.7)
 	_maturity = minf(1.0, _maturity + delta * 0.05 * burst)
 	var ease := 1.0 - exp(-3.0 * delta * burst)
@@ -272,7 +272,7 @@ class SpireJob:
 					# rectangular shadow with hard corners. See ShadowField.add_box.
 					shadow.add_box(base + up * (float(si) * seg_h), up, spire.bx, spire.bz,
 						br * (1.0 - 0.72 * f0), seg_h, true)
-				# Self-shadow bias = the spire's own light-depth reach, so a taller neighbour still shadows it.
+				# Self-shadow bias = the spire's own light-depth reach, so a taller neighbor still shadows it.
 				spire["ext"] = absf(shadow.light_depth(base + up * vis_h) - shadow.light_depth(base)) + br * 1.4
 
 		# ONE merged list: terrain quads (shadowed by the spires) + spire faces/windows, depth-sorted
@@ -285,7 +285,7 @@ class SpireJob:
 		faces = TriBatch.painter_sort(faces)
 		var tb := TriBatch.new()
 		for fc in faces:
-			if fc.has("flat"):                               # window / cornice detail poly (flat colour)
+			if fc.has("flat"):                               # window / cornice detail poly (flat color)
 				tb.mark_run(false, RID())
 				tb.poly(fc.poly, fc.flat)
 			elif fc.has("uvs"):                              # terrain land (textured run)
@@ -296,7 +296,7 @@ class SpireJob:
 				tb.quad_colored(fc.poly, fc.cols)
 		return tb.take_chunks()
 
-	# The drive at spectral position `tt`: the LIVE band, or - when quiet/absent - a slow travelling
+	# The drive at spectral position `tt`: the LIVE band, or - when quiet/absent - a slow traveling
 	# wave across the spectrum, so the city is always alive even in idle preview.
 	func _band(tt: float) -> float:
 		var live: float = f.sample(tt)
@@ -358,7 +358,7 @@ class SpireJob:
 				ring.append(c + bx * (cos(a) * r) + bz * (sin(a) * r))
 			rings.append(ring)
 			us.append(uu)
-		# Collapsed tip ring (all corners at the top-centre) so the loft closes to a point.
+		# Collapsed tip ring (all corners at the top-center) so the loft closes to a point.
 		var tip_u: float = float(us[us.size() - 1])
 		var tip := base + up * (tip_u * height + float(spire.base_r) * 0.05)
 		var tip_ring := PackedVector3Array()
@@ -437,7 +437,7 @@ class SpireJob:
 			var h := fposmod(sin((wseed + float(c_i) * 5.7) * 12.9898) * 43758.5453, 1.0)
 			var pane: Color
 			if h > 0.78:
-				# the palette's own lit-window colour, brightened by the band
+				# the palette's own lit-window color, brightened by the band
 				pane = Color(win_col.r, clampf(win_col.g + 0.2 * band, 0.0, 1.0),
 					win_col.b, reveal)                                     # a lit window (minority)
 			else:

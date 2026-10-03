@@ -42,8 +42,8 @@ class_name MaskEditor
 ## layer act" is meaningful for every effect. Each marker carries a box in frame
 ## UV (reg_x0/y0/x1/y1 + reg_soft) which multiplies into its layer's on-screen
 ## weight, so confining a layer is the same operation as fading it, resolved per
-## pixel; the default is the whole frame. It exists because a colour key cannot
-## separate two things that ARE the same colour - a yellow wall and a gold coin
+## pixel; the default is the whole frame. It exists because a color key cannot
+## separate two things that ARE the same color - a yellow wall and a gold coin
 ## in front of it - and their positions separate them trivially. The box is
 ## dragged on the video itself, not typed (see _build_region_overlay).
 ##
@@ -345,12 +345,12 @@ var _clown_smile_curve := 0.0  # fx_speed  - its corners swept up (-) or down (+
 ## for the clown (it could only slide a face-tracked mask OFF the face), so the
 ## field is free and this is the control that most wants a home.
 var _clown_feather := 0.012
-## How wide the CENTRED kernel is that smooths the landmark track, in samples
-## (see _ft_point). Because it is centred it costs no lag at any width - the only
+## How wide the CENTERED kernel is that smooths the landmark track, in samples
+## (see _ft_point). Because it is centered it costs no lag at any width - the only
 ## thing a wider one loses is genuinely fast motion, which it rounds off. On
 ## hue_b, the last field clown had free.
 var _ft_sigma := 2.5
-## The clown layer's region box, mirrored CPU-side so the face SEARCH honours it
+## The clown layer's region box, mirrored CPU-side so the face SEARCH honors it
 ## too (see _face_region_at). Whole frame until the author draws one.
 var _clown_region := Vector4(0.0, 0.0, 1.0, 1.0)
 ## The live audio layer (see _apply_audio_fx); empty when no audio marker governs.
@@ -472,7 +472,7 @@ var _pt_bytes := PackedByteArray()
 # person segmentation plus 33 body landmarks, fitted offline over the whole
 # clip. What it replaces was a chroma-direction detector that hunted the
 # footage's own cast shadow: it needed the room to have one big soft shadow on
-# a chromatically uniform wall, a colour hypothesis scored per surface, two
+# a chromatically uniform wall, a color hypothesis scored per surface, two
 # flood fills, and a confidence gate that drew nothing when they disagreed. A
 # person mask is the same answer with none of the conditions - and it also
 # gives the ghost a SKELETON, which is what lets its head and its eyes be
@@ -497,7 +497,7 @@ var _umb_inv0 := Vector2(1.0, 0.0)   # inverse basis, column 0 (aspect-corrected
 var _umb_inv1 := Vector2(0.0, 1.0)   # ...column 1
 var _umb_anchor := Vector2(0.5, 0.5) # where her shoulder line lands, aspect-corrected
 var _umb_src := Vector2(0.5, 0.5)    # her own shoulder line, aspect-corrected
-var _umb_eye_src := Vector2(0.5, 0.3)# her own eye line, aspect-corrected (the bust's centre)
+var _umb_eye_src := Vector2(0.5, 0.3)# her own eye line, aspect-corrected (the bust's center)
 var _umb_unit := 0.3                 # her eye-to-shoulder distance - the unit for everything
 var _umb_bust0 := 1.2                # bust falloff, in her own units, from her eye line
 var _umb_bust1 := 2.6
@@ -574,9 +574,9 @@ var _umbra_lead: HSlider  # umbra's Lead   - its view onto feather
 var _umbra_gaze: HSlider  # umbra's Gaze   - its view onto sat_floor
 var _umbra_lean: HSlider  # umbra's Lean   - its view onto swap
 var _umbra_narrow: HSlider# umbra's Narrow - its view onto intensity_b
-var _color_eye: ColorPickerButton   # umbra's eye colour - hue_b, pushed as u_l_accent
-## repaint's replacement colour. Unlike every other picker here this one is a
-## WHOLE colour, not a hue: it writes hue_b/fx_stick/fx_tint (h/s/v), so black
+var _color_eye: ColorPickerButton   # umbra's eye color - hue_b, pushed as u_l_accent
+## repaint's replacement color. Unlike every other picker here this one is a
+## WHOLE color, not a hue: it writes hue_b/fx_stick/fx_tint (h/s/v), so black
 ## and white are reachable and "replace the yellow wall with black" is one pick.
 var _color_paint: ColorPickerButton
 var _paint_reach: HSlider           # repaint's Reach - fx_contrast
@@ -716,7 +716,7 @@ var _avi := ""
 # reloads without a save button and without writing once per slider-drag pixel.
 var _dirty := false
 var _syncing := false   # true while _refresh_panel repaints controls - _edit must ignore echoes
-var _modal_depth := 0   # open popups (colour pickers, dropdowns) - suspends the cursor auto-hide
+var _modal_depth := 0   # open popups (color pickers, dropdowns) - suspends the cursor auto-hide
 var _autosave_cooldown := 0.0
 const _AUTOSAVE_DELAY := 0.4
 
@@ -1483,9 +1483,9 @@ func _ready_with_session() -> void:
 	# Nothing did this before: _selected stayed null until you clicked a marker
 	# or playback happened to cross one, and _refresh_panel falls back to
 	# MaskSession.DEFAULTS when nothing is selected. So every control - the wall
-	# colour swatch included - came up displaying a default while the marker sat
+	# color swatch included - came up displaying a default while the marker sat
 	# there holding the values you had set. Nothing was ever lost on disk; the
-	# panel simply was not reading it. Re-picking the colour from that state
+	# panel simply was not reading it. Re-picking the color from that state
 	# then wrote a fresh near-identical hue, which is why the stored value
 	# drifted a little on every restart instead of staying put.
 	if not render_mode and not session.markers.is_empty():
@@ -1997,7 +1997,7 @@ func _region_overlay_input(event: InputEvent) -> void:
 ## mean "all the way to the edge". Through gui_input that gesture stopped at
 ## whatever pixel the cursor last crossed on its way out, leaving the box a
 ## fraction of a percent short of the border: a thin unpainted band of the very
-## colour being removed, hugging the top of the picture. Reading the mouse from
+## color being removed, hugging the top of the picture. Reading the mouse from
 ## _input instead lets the drag continue past the edge and clamp cleanly at it.
 func _region_drag_motion(event: InputEvent) -> void:
 	if _region_drag == "" or _region_overlay == null:
@@ -2042,7 +2042,7 @@ func _region_apply_drag(pos: Vector2) -> void:
 	# SNAP TO THE FRAME. An edge released within a few pixels of the picture's own
 	# border means the border - nobody drags a box to 0.4% off the top on purpose,
 	# and the difference is not visible in the editor but IS visible in the result
-	# as a hairline of the colour being removed. Exact 0/1 also lets the shader
+	# as a hairline of the color being removed. Exact 0/1 also lets the shader
 	# skip that side's falloff entirely (see region_mask), so a flush edge paints
 	# the very first row instead of fading into it.
 	_edit("reg_x0", _snap_edge(x0 / sz.x))
@@ -2770,7 +2770,7 @@ func _build_editor_ui() -> void:
 	_video_area.offset_left = PANEL_W
 	# THE CLIP'S OWN SHAPE, not a 16:9 assumption: a portrait clip gets a tall
 	# narrow slot with black bars left and right (pillarbox), a wide one keeps the
-	# bars above and below. AspectRatioContainer centres its single child in
+	# bars above and below. AspectRatioContainer centers its single child in
 	# whatever is left after PANEL_W and the lane strip (see _apply_lane_reserved),
 	# so the picture always fits the viewport whole and is never stretched.
 	# _sync_source_size re-fits this once the decoder confirms the real size.
@@ -3075,7 +3075,7 @@ func _build_panel() -> void:
 	_color_a.edit_alpha = false
 	_color_a.tooltip_text = "The color this channel targets - what it keys or paints. " + \
 		"The HUE is what gets matched; the swatch keeps the rest of your pick so you " + \
-		"can see which colour off the footage you chose"
+		"can see which color off the footage you chose"
 	# Three fields, one pick - the same shape as the repaint picker below. Only the
 	# HUE is keyed on; the other two exist so the swatch you get back is the swatch
 	# you set (see MaskSession's key_sat/key_val).
@@ -3263,7 +3263,7 @@ func _build_panel() -> void:
 	_register_option(_clown_smile_sl)
 	_clown_steady_sl = _slider(_grp_options, "Steadiness", 0.0, 1.0,
 		func(v): _edit("hue_b", v),
-		"How hard the landmark track is smoothed. The smoothing is CENTRED - it " +
+		"How hard the landmark track is smoothed. The smoothing is CENTERED - it " +
 		"weighs frames on both sides of now - so it costs no lag at any setting; " +
 		"raising it only rounds off genuinely fast movement. 0 is already smoothed")
 	_register_option(_clown_steady_sl)
@@ -3293,7 +3293,7 @@ func _build_panel() -> void:
 		"drops scatter off each other. 0 is a still, straight downpour")
 	_register_option(_rain_squall)
 
-	# THE AUDIO GROUP. Six knobs, no colour, no pattern - this effect resolves to
+	# THE AUDIO GROUP. Six knobs, no color, no pattern - this effect resolves to
 	# bus parameters instead of pixels (see _apply_audio_fx).
 	_au_echo = _slider(_grp_options, "Echo", 0.0, 1.0, func(v): _edit("fx_smooth", v),
 		"How much of the sound comes back as repeats. Two taps at unrelated " +
@@ -3362,11 +3362,11 @@ func _build_panel() -> void:
 		"through the same throw as the rest of it, so they are always on its " +
 		"head - 0 is a faceless shadow")
 	_register_option(_umbra_gaze)
-	# The eye colour needed a control of its own. hue_b was wired through to the
+	# The eye color needed a control of its own. hue_b was wired through to the
 	# shader but nothing could edit it, so the eyes were stuck on whatever the
 	# session happened to have stored - 0.58, cyan, for anything saved before
 	# the default changed. "Cannot change their color" was literally true.
-	var eye_lbl := _label("Eye color", "The colour the ghost's eyes burn - red by default")
+	var eye_lbl := _label("Eye color", "The color the ghost's eyes burn - red by default")
 	_grp_options.add_child(eye_lbl)
 	_color_eye = ColorPickerButton.new()
 	_color_eye.focus_mode = Control.FOCUS_NONE
@@ -3378,13 +3378,13 @@ func _build_panel() -> void:
 	_grp_options.add_child(_color_eye)
 	_register_option(_color_eye)
 
-	# Repaint's two. The paint colour is stored as three fields because a hue
+	# Repaint's two. The paint color is stored as three fields because a hue
 	# alone cannot say "black" - and black is the whole point of the effect's
 	# first use (a yellow wall painted out). Same field-reuse idiom as umbra's
 	# six above: fx_stick/fx_tint mean something else under other effects, and
 	# the groups never show together.
 	var paint_lbl := _label("Paint color",
-		"The colour the keyed colour BECOMES - a whole colour, so black and white " +
+		"The color the keyed color BECOMES - a whole color, so black and white " +
 		"are both reachable. Black by default")
 	_grp_options.add_child(paint_lbl)
 	_color_paint = ColorPickerButton.new()
@@ -3402,12 +3402,12 @@ func _build_panel() -> void:
 	_grp_options.add_child(_color_paint)
 	_register_option(_color_paint)
 	_paint_reach = _slider(_grp_options, "Reach", 0.0, 1.0, func(v): _edit("fx_contrast", v),
-		"How far into weakly coloured pixels the paint carries - low keeps it to " +
-		"the vivid core of the colour, high takes the washed-out and shadowed parts " +
+		"How far into weakly colored pixels the paint carries - low keeps it to " +
+		"the vivid core of the color, high takes the washed-out and shadowed parts " +
 		"of the same wall with it")
 	_register_option(_paint_reach)
 	_paint_smooth = _slider(_grp_options, "Smoothing", 0.0, 1.0, func(v): _edit("fx_smooth", v),
-		"How wide the edge of the paint is averaged. Compressed video stores colour " +
+		"How wide the edge of the paint is averaged. Compressed video stores color " +
 		"at quarter resolution in blocks, so a boundary keyed pixel-by-pixel comes out " +
 		"blocky and crawls frame to frame - raise this until it stops. Some averaging " +
 		"always happens; this is how much")
@@ -3415,17 +3415,17 @@ func _build_panel() -> void:
 
 	# THE REGION - universal, not one effect's group: any layer can be confined
 	# to a box. Two panel controls (the box itself is dragged on the video, see
-	# _build_region_overlay), because a colour key cannot separate two things
-	# that are the same colour and position can.
+	# _build_region_overlay), because a color key cannot separate two things
+	# that are the same color and position can.
 	# A label of its own even though the checkbox carries text: every row here is
 	# a (label, control) pair and _apply_sort re-orders them two children at a
-	# time, so a control without one desynchronises the whole list.
+	# time, so a control without one desynchronizes the whole list.
 	var region_lbl := _label("Region",
-		"Confine this layer to a box you drag on the video - for when the colour " +
-		"you want gone and the colour you want kept are the SAME colour, and only " +
+		"Confine this layer to a box you drag on the video - for when the color " +
+		"you want gone and the color you want kept are the SAME color, and only " +
 		"their position tells them apart. For the clown it also tells the face " +
 		"detector WHERE TO LOOK, which is the fastest cure for a mask that has " +
-		"latched onto a wall the colour of skin")
+		"latched onto a wall the color of skin")
 	_grp_options.add_child(region_lbl)
 	_region_on = CheckBox.new()
 	_region_on.text = "Limit to a box"
@@ -3747,7 +3747,7 @@ func _edit(field: String, value: float) -> void:
 	# THE HOLE THIS USED TO HAVE, and it swallowed a whole session: the bump fired
 	# only on effect_a/intensity_a, but a marker's DEFAULT effect is already erase
 	# and its default strength is already 1.0 - so anyone whose first move is the
-	# colour picker (the natural first move: "erase THIS colour") never touches
+	# color picker (the natural first move: "erase THIS color") never touches
 	# either field, and the marker they just minted was born at view_mode raw,
 	# which renders no shader pass at all. The effect was configured, saved and
 	# completely invisible, and looked exactly like the effect being broken.
@@ -3755,7 +3755,7 @@ func _edit(field: String, value: float) -> void:
 	# it cannot have a deliberate view choice yet, it only has the inherited one.
 	# Deliberately NOT widened to hue_a on an EXISTING marker: view_mode 2 on one
 	# of those may be a raw checkpoint (the rebase - see MaskSession's class doc),
-	# and quietly un-raw-ing a checkpoint because its colour was adjusted would
+	# and quietly un-raw-ing a checkpoint because its color was adjusted would
 	# break the layer window it exists to close.
 	if created or field == "effect_a" or field == "intensity_a":
 		var vm := int(m.get("view_mode", 2.0))
@@ -3840,9 +3840,9 @@ func _maybe_capture_echo() -> void:
 	# _maybe_capture_face never pays a second readback on the same frame.
 	if _clown_active:
 		_face_slot = int(pos / _FACE_INTERVAL)
-		# The blob fitter still runs for the face's COLOUR statistics - mean tint,
+		# The blob fitter still runs for the face's COLOR statistics - mean tint,
 		# luminance, redness - which the coat needs and which landmarks cannot
-		# supply (they say where the face is, not what colour it is). Its
+		# supply (they say where the face is, not what color it is). Its
 		# GEOMETRY is then overwritten by the track, which is measured rather
 		# than fitted. When there is no track the fitter's geometry stands, as
 		# the fallback it now is.
@@ -3956,7 +3956,7 @@ func _update_whisp_anchor(img: Image) -> void:
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
 		# Fur joins whisp/chimera in driving the anchor: its Stickiness cue wants the
-		# key colour's centroid (with the motion-centroid fallback for flat footage) to
+		# key color's centroid (with the motion-centroid fallback for flat footage) to
 		# track the surface the strands root on. Fur ignores u_anchor at Stickiness 0,
 		# so this has no effect on the existing look. Clown rides the same frame -
 		# its whole makeup layout lives in the canonical space u_anchor defines.
@@ -4032,10 +4032,10 @@ func _update_whisp_anchor(img: Image) -> void:
 
 
 ## Model a face as a landmark FRAME - centroid + isotropic size (RMS radius) - from
-## the key-colour mass in an already-48x27 frame, with the motion centroid+spread
+## the key-color mass in an already-48x27 frame, with the motion centroid+spread
 ## as the flat-lighting fallback (the same thresholds _update_whisp_anchor uses).
 ## This is the "simple EMA over key thresholds" model chimera phase-locks to; it
-## runs on the imported TRACK frame so the graft is normalised by the OTHER head's
+## runs on the imported TRACK frame so the graft is normalized by the OTHER head's
 ## own frame before being re-fitted onto the main head. Returns
 ## {c, s, cur_lum, ok}; cur_lum is the caller's next previous-luminance grid.
 func _face_frame(img: Image, tdir: Vector3, prev_lum: PackedFloat32Array) -> Dictionary:
@@ -4083,8 +4083,8 @@ func _face_frame(img: Image, tdir: Vector3, prev_lum: PackedFloat32Array) -> Dic
 
 
 ## Model the imported track face (chimera's graft source) each capture tick, so its
-## frame - centroid + size - can normalise the graft before it's re-fitted onto the
-## main head. Keyed by the chimera marker's own colour; nothing to do without one.
+## frame - centroid + size - can normalize the graft before it's re-fitted onto the
+## main head. Keyed by the chimera marker's own color; nothing to do without one.
 func _update_track_frame() -> void:
 	if _track_runtime.is_empty():
 		return
@@ -4149,7 +4149,7 @@ func _update_wave_impulses(motion: float) -> void:
 ## (split left/right) and the MOUTH as the red/dark centroid below. Pure
 ## heuristics, the crystal school - no landmark model, no ML - built for the
 ## ASMR framing this effect targets: one person, near center, facing camera,
-## small head movement. Face mass prefers the marker's KEY colour (the picker
+## small head movement. Face mass prefers the marker's KEY color (the picker
 ## says what the face's material is - on natural footage, pick the skin tone);
 ## a broad natural-skin rule backs it up, and a centered prior downweights
 ## background and hands at the frame's edges. Results are EMA'd with prev/ema
@@ -4217,7 +4217,7 @@ func _update_face_model(src: Image) -> void:
 		fasp = float(src.get_width()) / float(src.get_height())
 	var img: Image = src.duplicate()
 	# HALVE REPEATEDLY BEFORE THE FINAL RESIZE. Image.resize's bilinear filter
-	# samples a 2x2 neighbourhood whatever the reduction factor, so taking a
+	# samples a 2x2 neighborhood whatever the reduction factor, so taking a
 	# 1080x1920 frame straight to 96x54 - a 35x reduction vertically - is very
 	# nearly point sampling: which source rows happen to land under the sample
 	# points changes with sub-pixel movement of the subject, so the whole weight
@@ -4266,7 +4266,7 @@ func _update_face_model(src: Image) -> void:
 			var cr := r - l
 			var cg := g - l
 			var cb := b - l
-			# KEY-COLOUR MASS, as a hue CONE rather than a raw projection - the
+			# KEY-COLOR MASS, as a hue CONE rather than a raw projection - the
 			# same correction repaint's selection needed, for the same reason and
 			# with worse consequences here. A raw projection measures absolute
 			# chroma along the key direction, so it rewards SATURATION as much as
@@ -4286,7 +4286,7 @@ func _update_face_model(src: Image) -> void:
 			if cr > 0.01 and l > 0.15 and cr > cb:
 				skin = clampf(cr * 6.0, 0.0, 1.0) * clampf((cr - cb) * 4.0, 0.0, 1.0)
 			# LUMINANCE fallback, for the many faces that carry no usable
-			# chroma at all: near-monochrome grades, blue/grey night looks,
+			# chroma at all: near-monochrome grades, blue/gray night looks,
 			# a lit face against a dark room. Both cues above read ~0 there
 			# and the model simply stopped updating. Brightness relative to
 			# THIS frame's own mean (computed on the fly below via
@@ -4294,7 +4294,7 @@ func _update_face_model(src: Image) -> void:
 			var bright := smoothstep(_face_bg_lum + 0.06, _face_bg_lum + 0.30, l)
 			var prior := exp(-pos.distance_squared_to(Vector2(0.5, 0.45)) / 0.18)
 			# THE REGION BOX IS A "LOOK FOR THE FACE HERE" HINT, not just a bound
-			# on where paint may land. Colour alone cannot always separate a face
+			# on where paint may land. Color alone cannot always separate a face
 			# from its background - a warm lit wall reads as skin to every cue
 			# this has (warm chroma, bright against the frame's mean, and close
 			# enough in hue to key on), and on the clip this was written for it
@@ -4318,7 +4318,7 @@ func _update_face_model(src: Image) -> void:
 	# THE FACE'S SIZE COMES FROM ITS CORE, NOT FROM EVERY PIXEL THAT LEANS WARM.
 	# The weight field is deliberately generous - key-hue projection OR skin
 	# chroma OR brightness-over-the-frame's-mean - so on real footage a lit wall
-	# the colour of skin contributes a wide, low plateau of weight, and a plain
+	# the color of skin contributes a wide, low plateau of weight, and a plain
 	# weighted variance over all of it reports the ROOM's spread as the face's.
 	# Measured on a phone clip against a warm wall: rx climbed steadily to 0.42
 	# where the head is really about 0.28, and because the eye separation is then
@@ -4460,11 +4460,11 @@ func _update_face_model(src: Image) -> void:
 			# the nose and the mouth search in.
 			var mrel := ((pos - eye_mid) * Vector2(fasp, 1.0)) / eye_unit
 			# NOSE: the NOSTRIL PAIR - two small dark spots between the eye
-			# line and the mouth, close to the centre. It is the only
+			# line and the mouth, close to the center. It is the only
 			# dependable 2D signature a nose has: the tip's highlight walks
 			# around with the lighting, and deriving the nose from
 			# mid-eyes-to-mouth (what this did before) inherits the error of
-			# BOTH estimates, which is why the ball kept sitting off-centre
+			# BOTH estimates, which is why the ball kept sitting off-center
 			# while the evidence-detected lips tracked fine.
 			if mrel.y > 0.45 and mrel.y < 1.0 and absf(mrel.x) < 0.45:
 				var nprior := exp(-pow((mrel.y - 0.85) / 0.28, 2.0))
@@ -4603,7 +4603,7 @@ func _update_face_model(src: Image) -> void:
 	if no_w > 0.0001:
 		nose_target = (no_acc / no_w) - Vector2(0.0, 0.14 * eye_unit)
 		nose_alpha = a_pos * 0.86
-	# A wide sanity box around the face's own centre line - detection may be
+	# A wide sanity box around the face's own center line - detection may be
 	# imperfect, but a nose never lands out on a cheek.
 	var nose_cx := (eye_mid.x + _face_mouth_ema.x) * 0.5
 	nose_target.x = clampf(nose_target.x, nose_cx - eye_unit * 0.30 / fasp,
@@ -4715,7 +4715,7 @@ func _apply_audio_fx(l: Dictionary) -> void:
 	_fx_delay.tap2_level_db = linear_to_db(maxf(echo * 0.45, 0.0001))
 	_fx_delay.feedback_active = echo > 0.001
 	_fx_delay.feedback_level_db = linear_to_db(maxf(echo * 0.35, 0.0001))
-	# RESONANCE, as the delay's own feedback colour: a tuned, ringing repeat
+	# RESONANCE, as the delay's own feedback color: a tuned, ringing repeat
 	# rather than a flat one. Low-passing the feedback path is what makes a tail
 	# sound like a space rather than like a copy.
 	var reso := clampf(float(l.get("fx_contrast", 0.5)), 0.0, 1.0)
@@ -4784,7 +4784,7 @@ const FT_FACE_RIGHT := 454
 
 
 # --- THE FEATURE STENCIL: the contours, rasterized ------------------------------
-# An analytic ellipse deposit - `win(p, centre, radius)` - can only make a nose a
+# An analytic ellipse deposit - `win(p, center, radius)` - can only make a nose a
 # circle and a mouth an ellipse, however well placed: no cheekbone, no eye corner,
 # no cupid's bow. The landmarks describe the actual outlines, so the deposit goes
 # through a RASTERIZED STENCIL of them: four polygons drawn once per tick into a
@@ -4793,10 +4793,10 @@ const FT_FACE_RIGHT := 454
 #   R  the two eyes      G  the lips      B  the nose      A  the face oval
 #
 # Drawn on the GPU into a SubViewport (additively, so each polygon writes its own
-# channel and nothing clobbers a neighbour) rather than scanline-filled on the CPU,
+# channel and nothing clobbers a neighbor) rather than scanline-filled on the CPU,
 # because it is four convex polygons a frame and the GPU antialiases them for free.
 # The paint sim then reads a shape instead of evaluating an ellipse, and every
-# downstream behaviour it already has - advection, bleed, settle, the drip - works
+# downstream behavior it already has - advection, bleed, settle, the drip - works
 # on the real silhouette without knowing anything changed.
 const _STENCIL_H := 384      # tall enough for a face, small enough to be free
 
@@ -4823,11 +4823,11 @@ func _ensure_stencil() -> void:
 	_stencil_draw = Node2D.new()
 	var cm := CanvasItemMaterial.new()
 	# PREMULTIPLIED, not ADD. Godot's additive blend multiplies the source by its
-	# own alpha before adding, so a colour written to isolate one channel -
+	# own alpha before adding, so a color written to isolate one channel -
 	# (1,0,0,0) for the eyes - contributes exactly nothing, and the first cut of
-	# this drew only the oval (the one shape whose colour had any alpha in it).
-	# In premultiplied mode the colour is taken as written: dst = src + dst*(1-a),
-	# so an a=0 colour adds into RGB and leaves the alpha channel alone.
+	# this drew only the oval (the one shape whose color had any alpha in it).
+	# In premultiplied mode the color is taken as written: dst = src + dst*(1-a),
+	# so an a=0 color adds into RGB and leaves the alpha channel alone.
 	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_PREMULT_ALPHA
 	_stencil_draw.material = cm
 	_stencil_draw.draw.connect(_draw_stencil)
@@ -4835,16 +4835,16 @@ func _ensure_stencil() -> void:
 	# THE EYE OPENINGS ARE CUT OUT OF THE COAT, in a second pass, because
 	# premultiplied blending cannot REMOVE alpha - `dst = src + dst * (1 - src.a)`
 	# leaves the alpha channel alone at src.a = 0 and REPLACES it at src.a = 1, and
-	# there is no colour in between that subtracts. A negative colour clamps (that
+	# there is no color in between that subtracts. A negative color clamps (that
 	# was tried). So the openings are drawn by a child with a SUBTRACTIVE material,
 	# which children being drawn after their parent puts in exactly the right
 	# order: dst.a - 1 = 0 inside each opening, and rgb untouched because the
-	# colour's rgb is zero.
+	# color's rgb is zero.
 	#
 	# What it is FOR: the eye patch is an annulus so a clown paints AROUND the eye,
 	# and that worked - but the white coat underneath went on covering the opening,
 	# so the hole in the black revealed white instead of an eyeball. Same fault as
-	# the black over the eyeball, with the colour inverted. A hole has to be a hole
+	# the black over the eyeball, with the color inverted. A hole has to be a hole
 	# in the whole mask.
 	_stencil_cut = Node2D.new()
 	var cut_m := CanvasItemMaterial.new()
@@ -4858,7 +4858,7 @@ func _ensure_stencil() -> void:
 ## The eye openings, subtracted from the coat's silhouette. See _ensure_stencil
 ## for why this is a separate pass and not another entry in _stencil_shapes.
 ## The Follow switch, out of and into user://ghost.cfg. Defaults to ON, which is
-## the behaviour every session had before the switch existed.
+## the behavior every session had before the switch existed.
 func _load_follow() -> bool:
 	var cfg := ConfigFile.new()
 	if cfg.load(PREFS_CFG) != OK:
@@ -4889,7 +4889,7 @@ func _draw_stencil() -> void:
 		# DEGENERATE POLYGONS ARE SKIPPED, not handed to the renderer. A ring is
 		# decomposed into triangles between two hulls, and wherever those hulls
 		# touch - a collapsed corner, a vertex flattened onto the bridge line beside
-		# its neighbour - the triangle has no area, and Godot answers that with
+		# its neighbor - the triangle has no area, and Godot answers that with
 		# "Invalid polygon data, triangulation failed" once per frame in the log.
 		# The shape is invisible either way; the difference is a clean console.
 		if pts.size() >= 3 and absf(_poly_area(pts)) > 1e-9:
@@ -4921,7 +4921,7 @@ func _ft_hull(ring: Array, t: float) -> PackedVector2Array:
 ## point counts and correspondence, and the ring is one quad per edge.
 ##
 ## Built geometrically because it cannot be drawn. Punching a hole by drawing the
-## inner shape in a negative colour reads as the obvious trick and does not work:
+## inner shape in a negative color reads as the obvious trick and does not work:
 ## on a normal target the value clamps and the hole stays solid, and on an HDR one
 ## it comes back at 0.92 rather than 0. Godot's polygon drawing has no hole
 ## support either. Quads between corresponding points have neither problem and are
@@ -5085,7 +5085,7 @@ static func _open_band(outer: PackedVector2Array, inner: PackedVector2Array,
 		if v.length() >= min_d:
 			out.append(inner[i])
 			continue
-		# Toward the hull's own centre if the two points coincide, which is what
+		# Toward the hull's own center if the two points coincide, which is what
 		# happens at a corner where the scaling has collapsed the gap entirely.
 		var dir := v.normalized() if v.length() > 1e-6 else (c - qo).normalized()
 		out.append((qo + dir * min_d) / a)
@@ -5158,11 +5158,11 @@ static func _grow_hull(pts: PackedVector2Array, k: float) -> PackedVector2Array:
 
 ## THE SMILE. A clown's mouth is not the wearer's mouth - the Joker's runs most of
 ## the way to his ears and curves up past where any face bends. So the lip hull is
-## stretched horizontally about its own centre and its outer ends are swept along a
+## stretched horizontally about its own center and its outer ends are swept along a
 ## curve, before rasterizing. Width 1 and curve 0 leave the real mouth exactly as
 ## measured; both push far past anatomy on purpose, because that is the look.
 ## The curve is applied proportionally to the SQUARE of the horizontal distance
-## from centre, so the middle of the lips stays put and the corners travel - which
+## from center, so the middle of the lips stays put and the corners travel - which
 ## is how a smile actually deforms, and what keeps it a mouth rather than a banana.
 static func _smile_hull(pts: PackedVector2Array, width: float, curve: float) -> PackedVector2Array:
 	if pts.is_empty():
@@ -5247,7 +5247,7 @@ func _update_stencil(t: float) -> void:
 	# on the coat field through another - and each costs a pixel or two at the
 	# boundary. Growing the hull moves BOTH of those outside the visible jaw, so
 	# the jaw itself is interior and fully painted. It cannot spill onto the
-	# background: the layer is separately gated on matching the face's own colour
+	# background: the layer is separately gated on matching the face's own color
 	# (match16 in the clown branch), so paint that exists past the jaw in the
 	# FIELD simply has nothing to draw on.
 	var oval := _grow_hull(_ft_hull(FT_OVAL, t), 1.015)
@@ -5262,7 +5262,7 @@ func _update_stencil(t: float) -> void:
 	else:
 		eye_shapes.append([_to_px(eye_l, sz), EYE])
 		eye_shapes.append([_to_px(eye_r, sz), EYE])
-	# THE OVAL GOES FIRST. Its colour is the only one carrying alpha, and in
+	# THE OVAL GOES FIRST. Its color is the only one carrying alpha, and in
 	# premultiplied blending an a=1 source REPLACES what is under it - drawn last
 	# it would wipe the three channels drawn before it.
 	_stencil_shapes = [[_to_px(oval, sz), Color(0, 0, 0, 1)]]
@@ -5288,7 +5288,7 @@ static func _to_px(pts: PackedVector2Array, sz: Vector2) -> PackedVector2Array:
 
 
 ## The centroid of a landmark ring at `t`.
-func _ft_ring_centre(ring: Array, t: float) -> Vector2:
+func _ft_ring_center(ring: Array, t: float) -> Vector2:
 	var acc := Vector2.ZERO
 	for i in ring:
 		acc += _ft_point(int(i), t)
@@ -5298,7 +5298,7 @@ func _ft_ring_centre(ring: Array, t: float) -> Vector2:
 ## A ring's half-extent, aspect-corrected so a radius means the same thing on
 ## either axis. Returned in RAW UV (the shaders' contract for these fields).
 func _ft_ring_radius(ring: Array, t: float, asp: float) -> float:
-	var c := _ft_ring_centre(ring, t)
+	var c := _ft_ring_center(ring, t)
 	var m := 0.0
 	for i in ring:
 		m = maxf(m, ((_ft_point(int(i), t) - c) * Vector2(asp, 1.0)).length())
@@ -5313,9 +5313,9 @@ func _ft_ring_radius(ring: Array, t: float, asp: float) -> float:
 ## different landmark positions, which is the whole point.
 func _ft_apply_model(t: float) -> void:
 	var asp := _source_aspect()
-	var eye_l := _ft_ring_centre(FT_EYE_L, t)
-	var eye_r := _ft_ring_centre(FT_EYE_R, t)
-	var lips := _ft_ring_centre(FT_LIPS, t)
+	var eye_l := _ft_ring_center(FT_EYE_L, t)
+	var eye_r := _ft_ring_center(FT_EYE_R, t)
+	var lips := _ft_ring_center(FT_LIPS, t)
 	var top := _ft_point(FT_FACE_TOP, t)
 	var chin := _ft_point(FT_FACE_CHIN, t)
 	var left := _ft_point(FT_FACE_LEFT, t)
@@ -5343,7 +5343,7 @@ func _ft_apply_model(t: float) -> void:
 		mh = maxf(mh, absf(d.y))
 	_face_mouth_r_ema = Vector2(mw, mh)
 	# The face's mean tint/luminance still come from the picture (the coat is a
-	# per-pixel colour match, not a fitted oval) - see _update_face_model, which
+	# per-pixel color match, not a fitted oval) - see _update_face_model, which
 	# still runs for those when no track is available.
 	_face_prev_lum = PackedFloat32Array()
 
@@ -5537,7 +5537,7 @@ func _ft_point(idx: int, t: float) -> Vector2:
 	if _ft_state != "ready" or _ft_count <= 0:
 		return Vector2.ZERO
 	var s := clampf(t * _ft_rate, 0.0, float(_ft_count - 1))
-	# A CENTRED GAUSSIAN OVER THE SAMPLES, which smooths and interpolates in one
+	# A CENTERED GAUSSIAN OVER THE SAMPLES, which smooths and interpolates in one
 	# pass. This replaced a plain lerp between the two nearest samples, and the
 	# reasoning behind that lerp was wrong in a way worth writing down: the track
 	# is fitted offline, so it needs no LAG COMPENSATION - but that is not the same
@@ -5545,8 +5545,8 @@ func _ft_point(idx: int, t: float) -> Vector2:
 	# sample, and a lerp between noisy samples is a piecewise-linear path with a
 	# CORNER at every one of them, so the whole mask twitched at the sample rate.
 	#
-	# Weighting neighbours on BOTH sides is what the offline track exists for. A
-	# live tracker only has the past, so its only smoothing is a lag; a centred
+	# Weighting neighbors on BOTH sides is what the offline track exists for. A
+	# live tracker only has the past, so its only smoothing is a lag; a centered
 	# kernel has ZERO phase - it removes the jitter and moves the mask not one
 	# frame later than the face. And because the weight is a smooth function of
 	# the continuous position, the result is smooth in time by construction:
@@ -5560,7 +5560,7 @@ func _ft_point(idx: int, t: float) -> Vector2:
 	var base := idx * 2
 	for i in range(lo, hi + 1):
 		# LOST SAMPLES ARE SKIPPED, not averaged in - their coordinates are a held
-		# copy of a neighbour, so including them would drag the feature toward
+		# copy of a neighbor, so including them would drag the feature toward
 		# wherever the hold happened to be.
 		if _ft_found[i] == 0:
 			continue
@@ -5598,13 +5598,13 @@ func _clown_model_now() -> Dictionary:
 	# it doubles the noise and the mask visibly shakes at the capture cadence.
 	# Which of those dominates is a property of the footage, so it is the
 	# author's call: 0 turns the prediction off entirely (calmest, laggiest), 1
-	# is the behaviour this always had, 2 over-predicts for fast motion.
+	# is the behavior this always had, 2 over-predicts for fast motion.
 	var ff := clampf(fposmod(_player.stream_position, _FACE_INTERVAL) / _FACE_INTERVAL, 0.0, 1.0)
 	# WITH A TRACK, DO NOT PREDICT. The prediction exists to cancel a live
 	# detector's delay, and it does that by ramping a fraction from 0 to 1 across
 	# each capture tick and then snapping back to 0 - a sawtooth. On a laggy
 	# detector that sawtooth is smaller than the lag it cancels and worth paying.
-	# On the offline track there is NO lag to cancel (the smoothing is centred),
+	# On the offline track there is NO lag to cancel (the smoothing is centered),
 	# so all that is left is the sawtooth itself: the whole mask lurching forward
 	# and resetting several times a second, which is exactly the twitch reported.
 	if _ft_state == "ready":
@@ -6046,16 +6046,16 @@ func _pt_upload_mask(i: int, guard_i: int) -> void:
 		_pt_bytes.resize(cells * 4)
 	var src: PackedByteArray = c["mask"]
 	var gsrc: PackedByteArray = gc["mask"]
-	# A CENTRED THREE-TAP OVER TIME, and centred is the point. The segmentation
+	# A CENTERED THREE-TAP OVER TIME, and centered is the point. The segmentation
 	# wobbles a cell or two per sample and the track runs at 12 Hz, so the raw
 	# outline both shimmers and STEPS - which is most of "the edges are very
 	# jittery and unstable". An EMA would fix the shimmer and buy it with lag,
 	# which on this effect is the one thing that must not be spent: the Lead is
 	# the whole point. Because the track is fitted OFFLINE the future is already
-	# on disk, so the neighbour on each side can be weighted equally - zero phase,
+	# on disk, so the neighbor on each side can be weighted equally - zero phase,
 	# the mask arrives no later than it did, and the wobble is gone. Same argument
 	# as the face track's `_ft_point` smoothing, one dimension up.
-	# Offsets of the two neighbours INSIDE THIS WINDOW's own array. A neighbour on
+	# Offsets of the two neighbors INSIDE THIS WINDOW's own array. A neighbor on
 	# the far side of a window boundary is simply absent (-1) rather than reached
 	# for: the next window may not be resident, and a half-loaded blend is worse
 	# than none.
@@ -6087,7 +6087,7 @@ func _pt_upload_mask(i: int, guard_i: int) -> void:
 			if y < _pt_mh - 1:
 				g = maxi(g, gsrc[gbase + k + _pt_mw])
 			var b4 := k * 4
-			# 0.25 / 0.50 / 0.25. A missing neighbour (the window's own ends) falls
+			# 0.25 / 0.50 / 0.25. A missing neighbor (the window's own ends) falls
 			# back to this sample rather than to zero, which would pull the whole
 			# outline inward for two samples either side of every window boundary.
 			var sm := int(v)
@@ -6247,7 +6247,7 @@ func _umb_cast_from(i: int, asp: float) -> bool:
 	var narrow := clampf(_umb_narrow, 0.0, 0.75)
 	# The throw, biased upward: a shadow thrown level reads as a stain on the wall,
 	# and the thing being built is a presence that RISES. This is the only place the
-	# measured direction is editorialised, and it is deliberate.
+	# measured direction is editorialized, and it is deliberate.
 	var throw := (_pt_dir + Vector2(0.0, -0.35)).normalized()
 	var ghost_hw := half_w * scale * (1.0 - narrow)
 	var gap := (half_w + ghost_hw) * clampf(_umb_stand, 0.4, 2.4)
@@ -6380,7 +6380,7 @@ func _push_undo(key: String = "", desc: String = "") -> void:
 	# returns to where things stood before the drag began.
 	#
 	# Keyed on the BUTTON rather than on Slider.drag_started/drag_ended so one rule
-	# covers the colour wheel and the region box too; neither has those signals and
+	# covers the color wheel and the region box too; neither has those signals and
 	# both had the same fault.
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if key != "" and key == _undo_press_key:
@@ -6661,7 +6661,7 @@ func _select_marker(m: Dictionary) -> void:
 
 ## Wire every popup under `n` into the modal counter, once, at build time.
 ## Walks rather than naming them so a control added later is covered for free -
-## the cursor bug this exists for was reported on the colour picker, but every
+## the cursor bug this exists for was reported on the color picker, but every
 ## dropdown in the panel had exactly the same hole.
 func _guard_popups(n: Node) -> void:
 	var p: Popup = null
@@ -6720,13 +6720,13 @@ func _refresh_panel_inner() -> void:
 			float(m.get("sat_floor", -1)), float(m.get("fx_scale", -1))])
 	_kind.select(int(m.get("kind", 0.0)))
 	# The stored pick, all three components. It used to rebuild the swatch as
-	# from_hsv(hue_a, 0.85, 0.9), which round-trips a colour into a different one.
+	# from_hsv(hue_a, 0.85, 0.9), which round-trips a color into a different one.
 	_color_a.color = Color.from_hsv(float(m.get("hue_a", 0.02)),
 		float(m.get("key_sat", 0.85)), float(m.get("key_val", 0.9)))
 	if _color_eye != null:
 		_color_eye.color = Color.from_hsv(float(m.get("hue_b", 0.0)), 0.88, 1.0)
 	if _color_paint != null:
-		# The stored colour itself, all three components - this picker IS the
+		# The stored color itself, all three components - this picker IS the
 		# value, not a hue preview of it.
 		_color_paint.color = Color.from_hsv(float(m.get("hue_b", 0.0)),
 			float(m.get("fx_stick", 0.0)), float(m.get("fx_tint", 0.0)))
@@ -6800,7 +6800,7 @@ func _update_effect_controls(effect_id: int) -> void:
 	# clear fades out EVERYTHING earlier - it has no target color at all. snow
 	# picks its foreground/background split automatically - it has no target
 	# color either. arealight lights the whole frame, not a keyed color.
-	# meta mirrors the whole workspace - it keys on nothing, so no colour picker.
+	# meta mirrors the whole workspace - it keys on nothing, so no color picker.
 	# umbra joins them: it used to name the WALL its detector matched against, and
 	# there is no wall hypothesis any more - the ghost is her own silhouette, so
 	# the picker had nothing left to say. Its own Eye color picker stays.
@@ -6816,10 +6816,10 @@ func _update_effect_controls(effect_id: int) -> void:
 		MaskSession.EFFECT_CLOWN, MaskSession.EFFECT_UMBRA]
 	if _key_color_label != null:
 		if effect_id == MaskSession.EFFECT_REPAINT:
-			# Repaint has two colour pickers and they are easy to confuse - name
+			# Repaint has two color pickers and they are easy to confuse - name
 			# both ends of the swap rather than leaving one called "Key color".
 			_key_color_label.text = "Color to replace"
-			_key_color_label.tooltip_text = "The colour being painted over - " + \
+			_key_color_label.tooltip_text = "The color being painted over - " + \
 				"pick it off the thing you want gone (the wall, a shirt)"
 		else:
 			_key_color_label.text = "Key color"
@@ -7547,7 +7547,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var lagf := PackedFloat32Array()   # raw fx_lag - fur's Coil knob (echo's use is baked into echo_w/echo_lag)
 	var sticks := PackedFloat32Array()   # raw fx_stick - fur's Stickiness (0 = today's free coat)
 	var tints := PackedFloat32Array()    # fx_tint - Morph, palette hue rotation (0 = natural)
-	var accents := PackedFloat32Array()  # hue_b - umbra's ghost-eye colour (0 = red)
+	var accents := PackedFloat32Array()  # hue_b - umbra's ghost-eye color (0 = red)
 	var regions := PackedVector4Array()  # the layer's box in frame UV (x0,y0,x1,y1)
 	var regsofts := PackedFloat32Array() # how gradually it fades out at that border
 	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
@@ -7608,7 +7608,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			# near the frame's border onto it (see _snap_edge), but a value stored
 			# before that existed - or set any other way - keeps whatever it has,
 			# and an edge sitting 0.002 off the top is a four-pixel band of exactly
-			# the colour the layer was added to remove, hugging the top of the
+			# the color the layer was added to remove, hugging the top of the
 			# picture. Snapping at the point of USE means every session gets the
 			# same treatment, and the shader can then skip that side's falloff
 			# entirely because the edge is genuinely flush.
@@ -8002,7 +8002,7 @@ func _process(_dt: float) -> void:
 	# _input() above resets the timer and un-hides on any motion, and pausing
 	# (or a mouse click, which also fires motion-adjacent hover) restores it
 	# immediately rather than leaving an editor with a phantom-hidden pointer.
-	# ... and NEVER while a popup is up. A colour picker or a dropdown is an
+	# ... and NEVER while a popup is up. A color picker or a dropdown is an
 	# embedded SUBWINDOW: mouse motion inside it never reaches this node's
 	# _input(), so the idle timer keeps running, the auto-hide fires, and the
 	# pointer vanishes inside the one place it most needs to be visible - with
@@ -8058,7 +8058,7 @@ func _build_status_label() -> void:
 ## the gates run without it). BY GROUP, not by walking the tree: the first cut
 ## walked two levels down from the root and the exporter is three - root, main,
 ## chrome, exporter - so it silently found nothing and the suppression below never
-## happened. The button stayed on top, greyed, swallowing every click.
+## happened. The button stayed on top, grayed, swallowing every click.
 func _chrome() -> Node:
 	if get_tree() == null:
 		return null
@@ -8083,7 +8083,7 @@ func _build_export_ui() -> void:
 	# The SHARED export button steps aside - see Exporter.suppressed. Masking has
 	# its own export (a headless relaunch against the session json rather than the
 	# bake pipeline), and the shared one is on a higher CanvasLayer, so left alone
-	# it covers this one and swallows the click while greyed out.
+	# it covers this one and swallows the click while grayed out.
 	var ch := _chrome()
 	if ch != null:
 		ch.suppress_export(&"mask")
@@ -8184,7 +8184,7 @@ func _poll_render() -> void:
 #
 # Capped on the long side because the fixed 1920x1080 window used to cap it there
 # anyway: a 4K source should not silently turn into a 4K render (minutes per frame,
-# tens of GB of scratch AVI) just because this now honours the source.
+# tens of GB of scratch AVI) just because this now honors the source.
 const _RENDER_MAX_SIDE := 1920
 
 

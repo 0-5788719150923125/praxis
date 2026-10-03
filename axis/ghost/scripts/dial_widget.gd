@@ -6,7 +6,7 @@ class_name DialWidget
 ## A drawn instrument, not a themed knob: an outer ring with this revolution's wedge
 ## ticks, a needle at the current phase, a hub that glows with the total deposited
 ## energy, and the turn counter. Drag anywhere on it to rotate (the needle follows
-## your angle around the centre); the mouse wheel steps it finely. The widget reads
+## your angle around the center); the mouse wheel steps it finely. The widget reads
 ## the Director's primary dial every frame, so it survives session changes.
 
 const WHEEL_STEP := 0.11          # radians per wheel notch

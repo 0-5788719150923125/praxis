@@ -7,7 +7,7 @@ Layer - the registry of reusable visual components.
 
 The visual sibling of `Primitives` (the force registry). Where Primitives lets a scene compose *physics* by key, Layer lets a scene compose *appearance* by key: a drift of snow, a bank of rolling fog, a swarm of fireflies, a field of stars - each a small self-contained class that seeds itself, advances on the audio, and draws itself onto the scene's canvas. The point is **integration**: the same snow that is a scene on its own also falls over a city or a hillside, because it is a component, not bespoke per-scene code.
 
-A scene composes layers through `GhostScene` helpers (add_layer / update_layers / draw_layers); see snowfall.gd, fog_bank.gd, etc. Layers draw in ghost's centred unit-fraction space (multiply by the scene's unit() at draw time) and are handed the visible half-extents each frame, so they fill any aspect ratio / fullscreen / 4K without showing an edge.
+A scene composes layers through `GhostScene` helpers (add_layer / update_layers / draw_layers); see snowfall.gd, fog_bank.gd, etc. Layers draw in ghost's centered unit-fraction space (multiply by the scene's unit() at draw time) and are handed the visible half-extents each frame, so they fill any aspect ratio / fullscreen / 4K without showing an edge.
 
 Two methods to override: update(f, dt, half) - advance state; `half` is the visible half-size in unit fractions (Vector2), so a layer knows where the frame ends. draw(ci, u)         - draw onto CanvasItem `ci` at unit `u` (pixels per unit).
 
@@ -15,7 +15,7 @@ Registry: `Layer.REGISTRY` in [scripts/layer.gd](../scripts/layer.gd) (22 entrie
 
 ## `bed` - Bed
 
-Bed - a full-frame colour wash: a soft vertical gradient plus a few slow colour pools that breathe with the spectrum. The "colours underneath / inside" that fog, snow, or stars sit on; on its own it is a calm aurora-of-colour ground.
+Bed - a full-frame color wash: a soft vertical gradient plus a few slow color pools that breathe with the spectrum. The "colors underneath / inside" that fog, snow, or stars sit on; on its own it is a calm aurora-of-color ground.
 
 Source: [scripts/layer.gd:233](../scripts/layer.gd#L233)
 
@@ -93,7 +93,7 @@ Source: [scripts/layer.gd:1111](../scripts/layer.gd#L1111)
 
 ## `cosmos` - Cosmos
 
-Cosmos - large, distant background bodies that give a star field DEPTH instead of just dots: a shaded PLANET (a lit crescent over a dark globe, sometimes ringed), a soft coloured NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the stars (z = back). Seeded; a scene adds it sometimes so the void isn't barren.
+Cosmos - large, distant background bodies that give a star field DEPTH instead of just dots: a shaded PLANET (a lit crescent over a dark globe, sometimes ringed), a soft colored NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the stars (z = back). Seeded; a scene adds it sometimes so the void isn't barren.
 
 Source: [scripts/layer.gd:1163](../scripts/layer.gd#L1163)
 
@@ -105,17 +105,17 @@ Source: [scripts/layer.gd:1259](../scripts/layer.gd#L1259)
 
 ## `fire` - Fire
 
-Fire - a living flame. The BODY is one shared GPU temperature field (see shaders/flame.gdshader) on a quad child item: heat SOURCES along the bed - each fed by its own harmonic band - raise columns that rising domain-warped noise carves into licks; tongues pinch free, climb and dissolve. On top, CPU SPARKS ride a curl-noise wind out of the hottest regions and crackle up on beats. The dynamic range is the point: a quiet passage sits as a seam of embers, a swell sends columns up the frame - and WHERE it roars is the spectrum (bass at the centre, treble at the rim).
+Fire - a living flame. The BODY is one shared GPU temperature field (see shaders/flame.gdshader) on a quad child item: heat SOURCES along the bed - each fed by its own harmonic band - raise columns that rising domain-warped noise carves into licks; tongues pinch free, climb and dissolve. On top, CPU SPARKS ride a curl-noise wind out of the hottest regions and crackle up on beats. The dynamic range is the point: a quiet passage sits as a seam of embers, a swell sends columns up the frame - and WHERE it roars is the spectrum (bass at the center, treble at the rim).
 
 Source: [scripts/layer.gd:1311](../scripts/layer.gd#L1311)
 
 ## `vapor` - Vapor
 
-Vapor - coloured ink-in-water: heavy twisting masses with fibrous strands drawn out of them, lit from inside. The GPU field lives in shaders/vapor_field.gdshader (read its header for the twist / fibre / hardness construction and why blobs cannot do it); this half is the part that has to be a simulation rather than arithmetic - WHERE the masses are, WHAT COLOUR each one is, and HOW LOUD it is right now.
+Vapor - colored ink-in-water: heavy twisting masses with fibrous strands drawn out of them, lit from inside. The GPU field lives in shaders/vapor_field.gdshader (read its header for the twist / fiber / hardness construction and why blobs cannot do it); this half is the part that has to be a simulation rather than arithmetic - WHERE the masses are, WHAT COLOR each one is, and HOW LOUD it is right now.
 
-A PLUME is one mass: an elliptical gaussian that listens to its own harmonic band (fast attack, slow release, expanded through a per-plume gamma), drifts on a slow lissajous about its home, and carries its own hue. The field mixes their colours by contribution, so a violet mass and a teal one blend where they overlap and stay themselves where they do not - that two-sided colour is the whole point, and it is the reason plumes are separate objects instead of one density.
+A PLUME is one mass: an elliptical gaussian that listens to its own harmonic band (fast attack, slow release, expanded through a per-plume gamma), drifts on a slow lissajous about its home, and carries its own hue. The field mixes their colors by contribution, so a violet mass and a teal one blend where they overlap and stay themselves where they do not - that two-sided color is the whole point, and it is the reason plumes are separate objects instead of one density.
 
-THE LAMP is a real position in the same space, travelling on its own slow orbit. The shader tapping the plume envelope toward it is what makes the masses read as volume; moving it is what keeps them from looking like a still.
+THE LAMP is a real position in the same space, traveling on its own slow orbit. The shader tapping the plume envelope toward it is what makes the masses read as volume; moving it is what keeps them from looking like a still.
 
 Tint it with hue / accent / sat / val, shape it with swirl / churn / crease / stretch / hard / thresh / haze / scale, and choose where the masses sit with `layout`. Additive, so it composes over anything - a bed, a landscape, a city - without occluding it.
 
@@ -147,6 +147,6 @@ Source: [scripts/layer.gd:2112](../scripts/layer.gd#L2112)
 
 ## `flare` - Flare
 
-Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic streak, plus a chain of translucent "ghost" discs and rings marching along the line from the source through the optical centre to the far side (where real lens flares sit). Its brightness pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so any scene can wear a flare over the top. Add it LAST (front).
+Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic streak, plus a chain of translucent "ghost" discs and rings marching along the line from the source through the optical center to the far side (where real lens flares sit). Its brightness pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so any scene can wear a flare over the top. Add it LAST (front).
 
 Source: [scripts/layer.gd:2044](../scripts/layer.gd#L2044)

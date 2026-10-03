@@ -130,7 +130,7 @@ class Actor extends RefCounted:
 
 ## A human eye ([EyeBody]) on a slot. Gaze is driven by a look verb feeding
 ## `state.focus` (shared focus = real vergence); when no verb has fed it for a
-## moment it falls back to the body's own centre-biased self-saccades.
+## moment it falls back to the body's own center-biased self-saccades.
 class EyeActor extends Actor:
 	func setup(seed_value: int, cfg: Dictionary, rng: RandomNumberGenerator) -> void:
 		scale = float(cfg.get("radius", cfg.get("scale", rng.randf_range(0.24, 0.34))))
@@ -490,7 +490,7 @@ class EyeActor extends Actor:
 
 
 ## A living wireframe prism ([PrismBody]) on a slot, drawn through the projected-slot
-## bridge (world slot -> screen centre + perspective scale) so it lines up exactly
+## bridge (world slot -> screen center + perspective scale) so it lines up exactly
 ## with 3D bodies sharing the lens.
 class PrismActor extends Actor:
 	var _spin := 1.0                  # eases toward 0 while state.still holds the body

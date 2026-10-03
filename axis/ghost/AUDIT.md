@@ -69,7 +69,7 @@ Electron, load average 3.9. That inflates everything further and is discussed at
 
 ## What a frame is actually made of
 
-### The whole catalogue, one scene at a time, full frame, 1920x1080
+### The whole catalog, one scene at a time, full frame, 1920x1080
 
 71 registered `{scene, behavior}` pairs, 40 frames each. Means:
 
@@ -118,7 +118,7 @@ is the medium's own drawing, not the panels' contents.
 
 ### The comic with real scenes
 
-Ten cuts, mixed catalogue, 1-3 live panels:
+Ten cuts, mixed catalog, 1-3 live panels:
 
 | scene | live panels | sim | draw | gpu |
 |---|---|---|---|---|
@@ -184,7 +184,7 @@ counts: `starfield`, `voxel_blocks`, `aurora`, `underwater`, `bubbles`, `harmoni
 `eye_prism`, `two_eyes`, `cityscape`.
 
 Expected recovery, from the table above: the draw term falls by roughly 5x to 8x wherever it is
-call-bound. On the catalogue mean that is 11.4 ms down to roughly 2 to 3 ms.
+call-bound. On the catalog mean that is 11.4 ms down to roughly 2 to 3 ms.
 
 ---
 
@@ -303,7 +303,7 @@ the shading.
 materializing a Dictionary per quad. `TriBatch.painter_sort` already takes a native key; give it
 indices instead of Dictionaries. Also: `terrain` is one of the 47 scenes that has **not** adopted
 `FrameForge`, while the three scenes built on the same `Terrain` foundation have. It is the single
-best candidate for adoption in the catalogue.
+best candidate for adoption in the catalog.
 
 ---
 

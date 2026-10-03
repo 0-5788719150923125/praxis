@@ -48,7 +48,7 @@ ARPA_TO_IPA: dict[str, str] = {
     "AH": "ʌ",  # hut  (unstressed AH0 is schwa - see to_ipa)
     "AO": "ɔː",  # ought, story
     "EH": "ɛ",  # Ed, bed
-    "ER": "ɜː",  # hurt  (r-coloured; some corpora use "ɜː" + "ɹ")
+    "ER": "ɜː",  # hurt  (r-colored; some corpora use "ɜː" + "ɹ")
     "IH": "ɪ",  # it, bit
     "IY": "iː",  # eat, bee
     "UH": "ʊ",  # hood
@@ -93,10 +93,10 @@ ARPA_TO_IPA: dict[str, str] = {
 # Unstressed AH is schwa in every American corpus, and conflating the two is
 # audible: "the" would come out as "thuh" with a full vowel.
 SCHWA = "ə"
-# ...and unstressed ER is the r-coloured schwa, not the stressed "ɜː" of "hurt".
+# ...and unstressed ER is the r-colored schwa, not the stressed "ɜː" of "hurt".
 # eSpeak writes "seizure" as siːʒɚ. Same stress-conditioned split as AH/schwa.
 SCHWA_R = "ɚ"
-# ARPAbet folds the r-coloured vowel and a following /r/ into one symbol; eSpeak
+# ARPAbet folds the r-colored vowel and a following /r/ into one symbol; eSpeak
 # does not. "surrendered" is CMUdict S ER0 EH1 N D ER0 D but eSpeak sɚɹˈɛndɚd -
 # the ɹ is spelled out when another vowel follows. Without it the word came back
 # as "suh-endered", which is the mispronunciation that was reported.

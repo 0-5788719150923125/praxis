@@ -10,11 +10,11 @@ extends Scene3D
 ## music. Some plots **detach**, their blocks floating a little off the ground. Camera
 ## orbits under a wide lens; the city grows over time from a few seeds.
 ##
-## Land, layout and colour are all sampled per session rather than fixed. The terrain is any
+## Land, layout and color are all sampled per session rather than fixed. The terrain is any
 ## of four landforms under any climate that suits it; the LAYOUT decides whether the city
 ## reads as sparse dendritic arms, a broad sprawl, thin ribbons along the ridges or several
 ## separate towns; the SKYLINE law decides whether heights are even or a rare few spires
-## tower over everything; and a [Scheme] mood colours the blocks, developed districts
+## tower over everything; and a [Scheme] mood colors the blocks, developed districts
 ## walking toward its accent.
 
 ## Which climates suit which landform - a mesa is not verdant, a canyon is not tundra.
@@ -25,7 +25,7 @@ const TERRAINS := {
 	"canyon":  ["arid", "temperate"],
 }
 ## City layouts. The ridged "arm" field's frequency and how hard off-ridge plots are
-## penalised decide the whole plan together, so they are sampled as a set: high frequency
+## penalized decide the whole plan together, so they are sampled as a set: high frequency
 ## plus a hard penalty gives thin ribbons, low frequency plus a soft one gives sprawl.
 const LAYOUTS := {
 	"dendritic": {"arm": [1.6, 2.4], "penalty": 0.90, "band": [0.46, 0.64], "cores": [1, 2], "detach": 0.12},
@@ -61,7 +61,7 @@ var _phase := PackedFloat32Array()    # per-plot phase for the slow rearrange wo
 ## THAT LEAN WAS A MISTAKE and it is worth writing down why, because it looked reasonable in the
 ## code. It was small - eight percent of the surface normal, five degrees at the very steepest -
 ## but the normal is a nearest-cell finite difference of a fractal heightfield, so it points a
-## different way for every plot, and neighbouring towers leaned INDEPENDENTLY. A vertical edge is
+## different way for every plot, and neighboring towers leaned INDEPENDENTLY. A vertical edge is
 ## the most sensitive thing the eye has for reading tilt (it has the frame's own edges to judge
 ## against), and a hundred of them disagreeing by a few degrees does not read as "not a rigid
 ## grid" - it reads as a city that is falling over. Reported exactly that way.
@@ -98,7 +98,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	C = rng.randi_range(26, 34)
 	_terrain = Terrain.new()
 	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.35, 0.55), null, climate)
-	# Buildings take a [Scheme] mood - concrete-grey, brass, bone, or a lit-up violet or teal
+	# Buildings take a [Scheme] mood - concrete-gray, brass, bone, or a lit-up violet or teal
 	# night - rather than one arbitrary hue rotated off the terrain's.
 	var sch := Scheme.among(["ash", "bone", "brass", "sodium", "dawn", "glacier",
 		"abyss", "violet", "teal", "ember", "rose"], rng)
@@ -106,7 +106,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_sat = sch.sat * 0.65
 	_vmul = sch.val * 1.15
 	# Development walks the blocks toward the accent (the short way round), so the built-up
-	# core reads as a different, related colour from the frontier instead of a fixed swing.
+	# core reads as a different, related color from the frontier instead of a fixed swing.
 	var to_accent := fposmod(sch.accent - sch.hue + 0.5, 1.0) - 0.5
 	_hue_dev = to_accent * rng.randf_range(0.35, 0.9)
 	_hue_elev = to_accent * rng.randf_range(0.1, 0.4)
@@ -183,7 +183,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			_grown[i] = 0.0
 			# Footprint + MAX-height potential, distributed by the SKYLINE law: a steep exponent
 			# leaves most plots modest with a rare big anchor, a shallow one gives an even mid-rise
-			# mass. Either way the height is only REALISED once the district hits critical mass (see
+			# mass. Either way the height is only REALIZED once the district hits critical mass (see
 			# the draw): blocks start SMALL and grow taller as their surroundings develop.
 			var big := pow(rng.randf(), hexp)
 			_foot[i] = 0.5 + float(sky_law.foot) * big
@@ -385,7 +385,7 @@ class CityJob:
 					"hue": bhue, "lit": blit, "ext": ext})
 
 		# ONE merged list: terrain quads + building faces, depth-sorted together so the land occludes
-		# the buried building bases and neighbours' shadows layer correctly.
+		# the buried building bases and neighbors' shadows layer correctly.
 		var faces: Array = terrain.collect_surface(lens, u, lit, life, shadow)
 		for b in blds:
 			_block_faces(faces, shadow, b.base, b.up, b.bx, b.bz, b.w, b.h, b.hue, b.lit, float(b.ext))
@@ -437,7 +437,7 @@ class CityJob:
 			var cols := PackedColorArray()
 			for idx in [i0, i1, i2, i3]:
 				var sf: float = shadow.factor(corners[idx], ext + 0.06)
-				# Saturation and brightness carry the mood, so an ash city is grey concrete
+				# Saturation and brightness carry the mood, so an ash city is gray concrete
 				# and a violet one glows - the lighting maths is untouched either way.
 				var cc := Color.from_hsv(bhue, sat, clampf(lit * shade * sf * vmul, 0.0, 1.0))
 				# A plot below the waterline is IN the lake, not on it (see Terrain.submerged).

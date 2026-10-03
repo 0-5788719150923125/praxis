@@ -499,7 +499,7 @@ static func build_prompt(description: String, placement: String, style_text: Str
 			("the last %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]) if both
 				else ("the %d attached image%s" % [chain_count, "" if chain_count == 1 else "s"]),
 			chain_text.strip_edges()])
-	# A sketch may be labelled - a ledger entry, an arrow marked "leak" - when its description
+	# A sketch may be labeled - a ledger entry, an arrow marked "leak" - when its description
 	# says so; a picture never is.
 	if sketch:
 		lines.append("ALWAYS: no borders, no frames, no watermark, no signature; write words only "
@@ -515,7 +515,7 @@ static func build_prompt(description: String, placement: String, style_text: Str
 static func placement_guide(placement: String) -> String:
 	if placement == "sketch":
 		return ("a quick pen sketch as drawn in a research notebook: PURE BLACK INK LINES ONLY "
-			+ "on a PURE WHITE background - no grey wash, no shading fills, no paper texture, no "
+			+ "on a PURE WHITE background - no gray wash, no shading fills, no paper texture, no "
 			+ "ruled lines, nothing behind the drawing. Hatching is fine. The white is removed "
 			+ "afterwards so the lines can lie on a page, so anything that is not black line "
 			+ "will be lost. LANDSCAPE, 3:2 (1536x1024), with white space around the drawing.")

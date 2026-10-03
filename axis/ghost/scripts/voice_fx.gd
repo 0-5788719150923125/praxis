@@ -71,7 +71,7 @@ const RES_Q := 0.9985          # decay per sample: seconds-long ring
 # Excitation per sample into each resonator. 0.004 measured a 5% peak lift -
 # inaudible, which is what "the resonance slider does nothing" meant. The ring
 # integrates over its whole decay, so this is a rate, not a level; 0.05 with the
-# output normalised by tone count lands it clearly under the voice but present.
+# output normalized by tone count lands it clearly under the voice but present.
 const RES_DRIVE := 0.05
 const TRACK_HZ := 12.0         # pitch re-estimates per second
 const PITCH_MIN := 70.0

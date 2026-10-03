@@ -63,7 +63,7 @@ const COOLDOWN := 4.0      # silence after a correction (s)
 const NEAR := 6.0
 
 var _times := PackedFloat32Array()   # schedule time of each map cell (monotonic)
-var _cells: Array = []               # unit-normalised signature per cell
+var _cells: Array = []               # unit-normalized signature per cell
 var _frontier := -1e9                # schedule time of the newest cell (write-once gate)
 var _acc := 0.0                      # time since the last match tick
 var _votes := {}                     # lag bin (int) -> accumulated vote weight (confidence)

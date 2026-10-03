@@ -5,15 +5,15 @@ extends GhostScene
 ## A metal plate seen square-on, dusted with fine sand and lit from a low raking angle so
 ## every grain throws its own speck of shadow. The plate rings and the sand crawls: a grain
 ## is thrown about where the surface is heaving and lies still where it is not, so within a
-## few seconds a chaotic dust field organises itself into a sharp figure of curved nodal
+## few seconds a chaotic dust field organizes itself into a sharp figure of curved nodal
 ## lines - crosses, stars, rosettes, honeycombs. When the music changes key the figure boils
 ## apart into haze and a different one assembles out of the same grains.
 ##
 ## THE POINT, AND WHY IT IS DIFFERENT FROM EVERY OTHER SCENE HERE. Elsewhere the audio
 ## MODULATES something that was drawn anyway - a hue, a light, a growth rate. Here the audio
 ## is the physical input: the plate's mode is CHOSEN by the music, so the same seed draws a
-## genuinely different picture for a different chord, and nothing else in the catalogue can
-## do that. It is also the strictest possible reading of "sound drives colour, not scale" -
+## genuinely different picture for a different chord, and nothing else in the catalog can
+## do that. It is also the strictest possible reading of "sound drives color, not scale" -
 ## the figure's SIZE never changes at all; only its shape, and only when the harmony does.
 ##
 ## HOW THE MUSIC PICKS THE MODE. [method Spectrum.harmonic_signature]'s first twelve
@@ -22,7 +22,7 @@ extends GhostScene
 ## off by argmax and pushed through a seeded permutation into a seeded mode table, giving
 ## (m, n); the second and third give the superposed second harmonic. Argmax, deliberately,
 ## and not a weighted sum over all twelve: summing twelve eigenfunctions produces an even
-## grey mush with no legible nodal lines at all, which is the whole thing worth looking at.
+## gray mush with no legible nodal lines at all, which is the whole thing worth looking at.
 ## One or two modes, sharply chosen, or nothing.
 ##
 ## THE SNAP-VERSUS-MELT KNOB. One sampled time constant, `mode_tau` in 0.4 .. 2.0 s, decides
@@ -71,7 +71,7 @@ const RANGES := {
 }
 
 ## The plate's surface. Absolute ranges rather than multipliers on the mood, because a
-## finish IS a brightness: "matte black" that came out mid-grey would not be matte black.
+## finish IS a brightness: "matte black" that came out mid-gray would not be matte black.
 ## `chalk` is the inverted one - a pale board with dark iron filings on it - and it is the
 ## only member that wants [method GhostScene.paint_ground] behind it.
 const FINISHES := {
@@ -185,7 +185,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var fname := String(FINISHES.keys()[rng.randi() % FINISHES.size()])
 	var fin: Dictionary = FINISHES[fname]
 	_high_key = bool(fin["high"])
-	# One colour identity for the plate, the room and the sand. Cool metals and bone, plus
+	# One color identity for the plate, the room and the sand. Cool metals and bone, plus
 	# the darker moods for the room - nothing that would read as a hot glow, since the only
 	# light in this scene is a lamp at the side of a table.
 	var sch := Scheme.among(["ash", "bone", "glacier", "brass", "abyss", "violet", "teal", "dawn"], rng)
@@ -522,7 +522,7 @@ func _walk(dt: float) -> void:
 		var trem := tremor * (shake_fl + a * drive)
 		# Symmetry-breaking jitter from an integer hash of (grain, generation) rather than an
 		# rng draw: a SimClock's tick count is wall-clock derived, so drawing from the seeded
-		# stream here would desynchronise the export from the preview.
+		# stream here would desynchronize the export from the preview.
 		var h := _hash2(i, gen)
 		var jx := float(h & 2047) * 0.00097704 - 1.0
 		var jy := float((h >> 11) & 2047) * 0.00097704 - 1.0
@@ -543,7 +543,7 @@ static func _hash2(a: int, b: int) -> int:
 func _snapshot() -> Dictionary:
 	var u := unit()
 	var glow := _light.glow()
-	# Sound drives COLOUR: the sand's hue leans toward the music's tonal centre by however
+	# Sound drives COLOR: the sand's hue leans toward the music's tonal center by however
 	# tonal the moment is, and the whole dusting lifts a little on the beat glow.
 	var dh: float = _ch.x - _grain_hue
 	dh = dh - round(dh)
@@ -663,7 +663,7 @@ func _draw_plate() -> void:
 			_face_col(pc, pb.normalized().dot(lit)))
 	_tb.flush(self)
 	# A brushed finish is scratches, and a scratch on a dark plate catches the lamp while a
-	# scratch on a pale board is a dark line - so the stroke colour follows the finish.
+	# scratch on a pale board is a dark line - so the stroke color follows the finish.
 	var mark := 0.0 if _high_key else 1.0
 	if _streaks > 0:
 		var bd := Vector2(cos(_brush), sin(_brush))

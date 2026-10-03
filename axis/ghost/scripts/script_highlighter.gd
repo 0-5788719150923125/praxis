@@ -1,17 +1,17 @@
 extends SyntaxHighlighter
 class_name ScriptHighlighter
 
-## ScriptHighlighter - colours a script by the marks the panel reading it understands.
+## ScriptHighlighter - colors a script by the marks the panel reading it understands.
 ##
-## Driven by [ScriptMarks] patterns rather than rules of its own, so what is coloured and
-## what the palette offers are the same list. Only the marks of one MODE are coloured: in
+## Driven by [ScriptMarks] patterns rather than rules of its own, so what is colored and
+## what the palette offers are the same list. Only the marks of one MODE are colored: in
 ## the Synthesis panel a `<!-- hesitation -->` is just a note, and is shown as one.
 ##
 ## THE WHOLE TEXT IS SCANNED, NOT EACH LINE. Picture descriptions run over several lines and
 ## a speaker cue is only a cue on a line of its own, neither of which a line can see from
 ## inside itself. The scan is redone when the text's version moves, and every line's cached
-## colours are thrown away with it - [SyntaxHighlighter] only forgets the lines that were
-## edited, which leaves the rest of an opened or closed comment showing its old colour.
+## colors are thrown away with it - [SyntaxHighlighter] only forgets the lines that were
+## edited, which leaves the rest of an opened or closed comment showing its old color.
 
 var mode := "generative"
 
@@ -30,7 +30,7 @@ func _init(for_mode := "generative") -> void:
 		_rules.append({"re": re, "color": ScriptMarks.color_of(k)})
 
 
-## Forget every line's colours. Wired to the text edit's own change signals in
+## Forget every line's colors. Wired to the text edit's own change signals in
 ## [method _update_cache], so nothing outside has to remember to call it.
 func invalidate() -> void:
 	_version = -1
@@ -59,9 +59,9 @@ func _get_line_syntax_highlighting(line: int) -> Dictionary:
 	return _lines.get(line, {})
 
 
-## Colour every character, then cut the result into the per-line column maps TextEdit asks
+## Color every character, then cut the result into the per-line column maps TextEdit asks
 ## for. A line that starts inside a span gets an entry at column 0, or it would draw the
-## continuation of a multi-line comment in the default colour.
+## continuation of a multi-line comment in the default color.
 func _scan(te: TextEdit) -> void:
 	_version = te.get_version()
 	_lines = {}

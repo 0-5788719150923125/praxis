@@ -9,8 +9,8 @@ class_name ScriptWriter
 ## only place any of that was written down - so an author who had not read the source had no
 ## way to find out what ghost understands. The panel now holds a CARD (where the words come
 ## from, how many there are, how many voices and pictures they ask for) and the writing
-## happens in a centred window: the text on the left, highlighted by what the panel will make
-## of it ([ScriptHighlighter]), and on the right a palette of every mark this panel honours
+## happens in a centered window: the text on the left, highlighted by what the panel will make
+## of it ([ScriptHighlighter]), and on the right a palette of every mark this panel honors
 ## ([ScriptMarks]), each one a click away from being inserted at the caret.
 ##
 ## THE FRONTMATTER IS NOT IN THE EDITOR. It is metadata the panel owns - the voice, the look -
@@ -56,7 +56,7 @@ var _field_edits := {}          # key -> LineEdit
 
 ## Build the card, the window and the [DocSource] inside it. [param section] and [param block]
 ## are DocSource's (the Settings section, the frontmatter sub-key); [param mode] picks which
-## marks the palette offers and the highlighter colours ("generative", "synthesis").
+## marks the palette offers and the highlighter colors ("generative", "synthesis").
 func setup(section: String, block: String, mode: String) -> void:
 	_mode = mode
 	add_theme_constant_override("separation", 4)
@@ -165,7 +165,7 @@ func _recount_soon() -> void:
 		_refresh()
 
 
-## Show the editor, centred and sized to the window it opens over.
+## Show the editor, centered and sized to the window it opens over.
 func open_editor() -> void:
 	_refresh()
 	var host := get_tree().root.get_visible_rect().size if is_inside_tree() \
@@ -174,7 +174,7 @@ func open_editor() -> void:
 	want = want.max(_window.min_size)
 	# THE SIZE IS SET AGAIN AFTER THE POPUP: measured, popup() and popup_centered() both
 	# came back 1280 wide whatever was asked for (1574 on a 1080p window), which also left
-	# popup_centered's window left of centre.
+	# popup_centered's window left of center.
 	_window.popup(Rect2i((Vector2i(host) - want) / 2, want))
 	_window.size = want
 	text_edit.grab_focus()
@@ -247,8 +247,8 @@ func _build_window(section: String, block: String) -> void:
 	foot.add_child(close)
 
 
-## THE PALETTE: one button per mark this panel honours, grouped and coloured as the
-## highlighter colours them, with what each does shown below when it is pointed at.
+## THE PALETTE: one button per mark this panel honors, grouped and colored as the
+## highlighter colors them, with what each does shown below when it is pointed at.
 func _build_palette() -> Control:
 	var side := VBoxContainer.new()
 	side.custom_minimum_size = Vector2(270, 0)

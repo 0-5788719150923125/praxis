@@ -7,12 +7,12 @@ extends Node
 ##
 ## HEIGHT AGAINST RELIEF. `_terrain.relief` is the landscape's whole vertical range, so a tree
 ## whose height approaches it is as tall as the hill. Real proportion is a couple of tens of
-## metres of tree against a few hundred of hillside.
+## meters of tree against a few hundred of hillside.
 ##
-## NEAREST-NEIGHBOUR SPREAD. The headline is the coefficient of variation of nearest-neighbour
+## NEAREST-NEIGHBOR SPREAD. The headline is the coefficient of variation of nearest-neighbor
 ## distances, which needs no estimate of the usable area and so cannot be argued with:
 ##   ~0.52  a random (Poisson) scatter
-##   <0.30  a LATTICE - every tree the same distance from its neighbour, which is what a
+##   <0.30  a LATTICE - every tree the same distance from its neighbor, which is what a
 ##          Poisson-disc rejection test produces and what "too uniform" was
 ##   >0.60  clustered: tight stands with real gaps between them
 ## The Clark-Evans ratio R is printed alongside for orientation (R > 1 dispersed, R < 1
@@ -26,7 +26,7 @@ const SEEDS := 10
 const MAX_H_FRAC := 0.30
 ## ... and the wood's MEAN tree should be well under that, or every tree is a giant.
 const MAX_MEAN_H_FRAC := 0.18
-## Nearest-neighbour CV below this is a lattice, not a wood.
+## Nearest-neighbor CV below this is a lattice, not a wood.
 const MIN_CV := 0.55
 ## A wood is not a dozen trees on a hill.
 const MIN_TREES := 150
@@ -61,7 +61,7 @@ func _ready() -> void:
 			hmean += th
 		hmean /= float(n)
 
-		# Nearest-neighbour distances, all pairs (n is small enough that a grid is not worth it).
+		# Nearest-neighbor distances, all pairs (n is small enough that a grid is not worth it).
 		var nn := PackedFloat32Array()
 		nn.resize(n)
 		for i in n:
@@ -110,7 +110,7 @@ func _ready() -> void:
 			_fails.append("seed %d: the AVERAGE tree is %.0f%% of the relief (max %.0f%%)"
 				% [1000 + s, 100.0 * hmean / maxf(0.0001, relief), 100.0 * MAX_MEAN_H_FRAC])
 		if cv < MIN_CV:
-			_fails.append("seed %d: nearest-neighbour CV %.2f (want >= %.2f) - the wood is on a lattice, not in stands"
+			_fails.append("seed %d: nearest-neighbor CV %.2f (want >= %.2f) - the wood is on a lattice, not in stands"
 				% [1000 + s, cv, MIN_CV])
 		if n < MIN_TREES:
 			_fails.append("seed %d: %d trees is not a wood (want >= %d)" % [1000 + s, n, MIN_TREES])

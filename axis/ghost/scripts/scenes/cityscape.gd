@@ -7,9 +7,9 @@ extends GhostScene
 ## grid, flickering with the beat. Back layers are dimmer and shorter for depth.
 ## All axis-aligned rectangles - drawn static and upright, no triangulation.
 ##
-## Which city it is varies per session: a [Scheme] mood colours the blocks and its accent
+## Which city it is varies per session: a [Scheme] mood colors the blocks and its accent
 ## lights the windows (so the lit grid contrasts the mass by construction, the way sodium
-## windows sit against a blue-grey tower), and a sampled PROFILE decides the silhouette -
+## windows sit against a blue-gray tower), and a sampled PROFILE decides the silhouette -
 ## a crowded low downtown, a handful of wide towers, or a broad flat sprawl.
 
 ## Skyline profiles. Building count, width and height are one decision, not three: many
@@ -48,7 +48,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				"wrows": rng.randi_range(int(pf.wrows[0]), int(pf.wrows[1])),
 				"phase": rng.randf() * TAU,
 				# Each block sits a little off the scheme's base hue, so a row of towers is
-				# a family of related greys/blues rather than one flat repeated colour.
+				# a family of related grays/blues rather than one flat repeated color.
 				"hue": _sch.vary(rng, 0.6),
 			})
 		var depth := float(l) / float(maxi(1, layer_count - 1))
@@ -110,7 +110,7 @@ func _draw() -> void:
 			var top := ground - h
 			var shade := 0.10 + 0.16 * depth + 0.12 * loud
 			var hh := fposmod(float(bd.hue) + 0.05 * depth, 1.0)
-			# Saturation/value SCALE the mood, so an ash city stays grey concrete and a
+			# Saturation/value SCALE the mood, so an ash city stays gray concrete and a
 			# violet one stays violet without either restating absolute numbers.
 			draw_rect(Rect2(x, top, w, ground - top), _sch.color(hh, 0.6, shade * 1.15))
 			_windows(x, top, w, ground, bd, loud, depth)

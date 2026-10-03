@@ -4,24 +4,24 @@ class_name TabletPage
 ## TabletPage - one web page of a [TabletScript], set into a column of a given width.
 ##
 ## Pages are typeset, not rendered from HTML: the blocks the chapter wrote (headings, paragraphs,
-## pictures, links) in a site's own face and colour, and PLACEHOLDERS for everything it did not
+## pictures, links) in a site's own face and color, and PLACEHOLDERS for everything it did not
 ## write. A placeholder is drawn as squiggles - lines of wavy strokes in the shape of text - so
 ## it reads at a glance as "there is something here" and never as words someone forgot to
 ## write. A heading with nothing under it gets a squiggled body; `<!-- filler: N -->` puts N
 ## placeholder stories in; and every page is padded with them to [member min_height], because a
 ## page with nothing past the fold has nothing to scroll.
 ##
-## THE SITE'S LOOK IS ITS HOST: face, accent colour and masthead are hashed off the address, so
+## THE SITE'S LOOK IS ITS HOST: face, accent color and masthead are hashed off the address, so
 ## the same site looks the same wherever the chapter visits it, and two sites never match by
-## accident. Two kinds are recognised from what the chapter does with them, not declared: a
-## page searched FROM that has little else on it is a search engine's home (a centred logo and
+## accident. Two kinds are recognized from what the chapter does with them, not declared: a
+## page searched FROM that has little else on it is a search engine's home (a centered logo and
 ## a box), and a page reached BY a search is its results.
 
 const BODY := 30
 const SIZES := {1: 52, 2: 40, 3: 34}
 const LEAD := 1.48            # line height over font size
 const MARGIN := 56.0
-const MAX_COLUMN := 1060.0    # sites have a max width; landscape centres the column
+const MAX_COLUMN := 1060.0    # sites have a max width; landscape centers the column
 
 const SANS := ["Inter", "Roboto", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans",
 	"DejaVu Sans"]
@@ -173,9 +173,9 @@ func _plain(b: Dictionary) -> String:
 
 ## Set block [param b]'s words: [param level] picks the size (0 body), [param emph] is added
 ## to every word's own emphasis (2 = bold, for headings).
-func _text(b: Dictionary, level: int, emph: int, col := Color(0, 0, 0, 0), centred := false) -> void:
+func _text(b: Dictionary, level: int, emph: int, col := Color(0, 0, 0, 0), centered := false) -> void:
 	var fs: int = SIZES.get(level, BODY)
-	_center = centred
+	_center = centered
 	_y += fs * 0.25 if level > 0 else 0.0
 	_line_x = 0.0
 	_line = []
@@ -250,7 +250,7 @@ func _site_name() -> String:
 	return ""
 
 
-## The site's name, remembered from an earlier page, in a thinner band of its colour - not
+## The site's name, remembered from an earlier page, in a thinner band of its color - not
 ## words of this page, so nothing to read or highlight.
 func _band(name: String) -> void:
 	var top := _y - 34.0
@@ -262,7 +262,7 @@ func _band(name: String) -> void:
 	_y += 58.0 + 30.0
 
 
-## A news site's name, in a band of its colour.
+## A news site's name, in a band of its color.
 func _masthead(b: Dictionary) -> void:
 	var top := _y - 34.0
 	var n0 := items.size()
@@ -282,7 +282,7 @@ func _masthead(b: Dictionary) -> void:
 	_y += 58.0 + 30.0
 
 
-## A search engine's front page: its name as a logo, centred, and the box under it.
+## A search engine's front page: its name as a logo, centered, and the box under it.
 func _engine_home(blocks: Array) -> void:
 	_y = 230.0
 	for i in blocks.size():
@@ -294,7 +294,7 @@ func _engine_home(blocks: Array) -> void:
 				var d: Dictionary = items[k]
 				d["fs"] = 76
 				d["logo"] = true
-			# re-set at logo size, centred
+			# re-set at logo size, centered
 			_relayout_logo(n0)
 			_y += 50.0
 			title = _plain(b)
@@ -349,7 +349,8 @@ func _image(b: Dictionary, bi: int) -> void:
 		if img != null and not img.is_empty():
 			aspect = float(img.get_height()) / float(img.get_width())
 	var r := Rect2(_x0, _y + 8.0, _col, _col * clampf(aspect, 0.4, 1.3))
-	items.append({"kind": "image", "rect": r, "key": String(b["key"]), "prompt": String(b["prompt"])})
+	items.append({"kind": "image", "rect": r, "key": String(b["key"]), "prompt": String(b["prompt"]),
+		"seed": _h("img" + String(b["key"]))})
 	block_rect[bi] = r
 	_y = r.end.y + 34.0
 
@@ -363,13 +364,13 @@ func _squiggles(n: int, fs: int, col: Color, salt: String, thick := 0.34) -> voi
 		_y += fs * LEAD
 
 
-## A story nobody wrote: a squiggled headline, sometimes a grey picture, a squiggled stub.
+## A story nobody wrote: a squiggled headline, sometimes a placeholder picture, a squiggled stub.
 func _filler(salt: String) -> void:
 	_y += 10.0
 	_squiggles(1, 40, ink.lerp(bg, 0.45), salt + "h", 0.42)
 	if _f(salt + "img") < 0.3:
 		var r := Rect2(_x0, _y + 6.0, _col, _col * 0.42)
-		items.append({"kind": "image", "rect": r, "key": "", "prompt": ""})
+		items.append({"kind": "image", "rect": r, "key": "", "prompt": "", "seed": _h(salt + "pic")})
 		_y = r.end.y + 22.0
 	_squiggles(2 + (_h(salt + "n") & 3), BODY, ink.lerp(bg, 0.72), salt + "b")
 	items.append({"kind": "rule", "rect": Rect2(_x0, _y + 14.0, _col, 1.5)})
@@ -449,7 +450,7 @@ func _draw_word(ci: CanvasItem, d: Dictionary, dy: float, hl: Dictionary) -> voi
 	var col: Color = d["col"]
 	var text := String(script_doc["words"][wi]["text"])
 	if d.has("logo"):
-		# the engine's name in a run of colours, a letter at a time
+		# the engine's name in a run of colors, a letter at a time
 		var x := p.x
 		for c in text.length():
 			var lc := Color.from_hsv(fposmod(_f("logo") + float(c) * 0.11, 1.0), 0.7, 0.85)
@@ -457,8 +458,8 @@ func _draw_word(ci: CanvasItem, d: Dictionary, dy: float, hl: Dictionary) -> voi
 			x += f.get_string_size(text[c], HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		return
 	# EVERY WORD IS DRAWN GLYPH BY GLYPH, lit or not, exactly as the book does it: two drawing
-	# paths snap glyphs to the pixel grid differently, and the letters would jump as the colour
-	# reached them. The colour is the book's: each letter its own hue by its place in the text,
+	# paths snap glyphs to the pixel grid differently, and the letters would jump as the color
+	# reached them. The color is the book's: each letter its own hue by its place in the text,
 	# lit as the voice reaches it and cooling back to ink behind it.
 	var times: Dictionary = hl.get("times", {})
 	var lit := times.has(wi)
@@ -523,20 +524,9 @@ static func glyphs(font: Font, text: String, fs: int) -> Array:
 func _draw_image(ci: CanvasItem, r: Rect2, d: Dictionary, textures: Callable) -> void:
 	var tex: Texture2D = textures.call(String(d["key"])) if not String(d["key"]).is_empty() else null
 	if tex == null:
-		# NOT YET PAINTED: a grey plate with a picture glyph, and what it will be, faintly
-		ci.draw_rect(r, ink.lerp(bg, 0.9))
-		var c := r.get_center() - Vector2(0.0, 18.0 if not String(d["prompt"]).is_empty() else 0.0)
-		var g := ink.lerp(bg, 0.7)
-		var s := minf(r.size.x, r.size.y) * 0.16
-		ci.draw_rect(Rect2(c - Vector2(s, s * 0.75), Vector2(s * 2.0, s * 1.5)), g, false, 3.0)
-		ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.85, s * 0.6),
-			c + Vector2(-s * 0.2, -s * 0.15), c + Vector2(s * 0.25, s * 0.3),
-			c + Vector2(s * 0.5, s * 0.05), c + Vector2(s * 0.85, s * 0.6)]), g)
-		ci.draw_circle(c + Vector2(s * 0.45, -s * 0.38), s * 0.14, g)
-		if not String(d["prompt"]).is_empty():
-			ci.draw_multiline_string(face(false, 1), Vector2(r.position.x + 40.0, c.y + s + 46.0),
-				String(d["prompt"]), HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 80.0, 20, 3,
-				ink.lerp(bg, 0.55))
+		# NOT YET PAINTED: soft blobs of color - the picture's placeholder, as the squiggles are
+		# the writing's
+		blobs(ci, r, int(d.get("seed", 0)))
 		return
 	var ts := Vector2(tex.get_size())
 	var want := r.size.x / r.size.y
@@ -568,6 +558,57 @@ func _draw_search(ci: CanvasItem, r: Rect2, query: String) -> void:
 	if not query.is_empty():
 		ci.draw_string(face(false, 0), Vector2(r.position.x + 74.0, r.get_center().y + 11.0), query,
 			HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 100.0, 30, ink)
+
+
+## A picture nobody painted: a pale wash with a few soft, overlapping blobs of related colors -
+## the shape of a photograph's color and none of its content, the way a page shows an image
+## still loading. Painted small and stretched, so the blobs blur smoothly into each other.
+## Deterministic in [param seed].
+static func blobs(ci: CanvasItem, r: Rect2, seed: int) -> void:
+	var key := "%d|%d" % [seed, int(r.size.x / r.size.y * 100.0)]
+	if not _blob_cache.has(key):
+		if _blob_cache.size() > 64:
+			_blob_cache = {}
+		_blob_cache[key] = ImageTexture.create_from_image(_blob_image(r.size, seed))
+	ci.draw_texture_rect(_blob_cache[key], r, false)
+
+
+static var _blob_cache := {}
+const BLOB_W := 96
+
+static func _blob_image(size: Vector2, seed: int) -> Image:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	var w := BLOB_W
+	var h := maxi(8, int(BLOB_W * size.y / size.x))
+	var hue := rng.randf()
+	var wash := Color.from_hsv(hue, 0.12, 0.95)
+	var span := float(mini(w, h))
+	var blobs: Array = []
+	for b in rng.randi_range(4, 6):
+		# neighboring hues, so the blobs belong together (a complement muddies where they meet)
+		var hh := fposmod(hue + rng.randf_range(-0.16, 0.16), 1.0)
+		blobs.append({"col": Color.from_hsv(hh, rng.randf_range(0.4, 0.65), rng.randf_range(0.72, 0.92)),
+			"c": Vector2(rng.randf_range(-0.1, 1.1) * w, rng.randf_range(-0.1, 1.1) * h),
+			"r": span * rng.randf_range(0.35, 0.7),
+			"s": Vector2(rng.randf_range(0.8, 1.5), rng.randf_range(0.7, 1.2)),
+			"p": [rng.randf() * TAU, rng.randf() * TAU, rng.randf() * TAU],
+			"a": rng.randf_range(0.7, 0.9)})
+	var img := Image.create(w, h, false, Image.FORMAT_RGB8)
+	for y in h:
+		for x in w:
+			var col := wash
+			for bl in blobs:
+				var v: Vector2 = (Vector2(x, y) - bl["c"]) / bl["s"]
+				var ang := v.angle()
+				var ph: Array = bl["p"]
+				var rr: float = bl["r"] * (1.0 + 0.16 * sin(ang + ph[0]) + 0.09 * sin(2.0 * ang + ph[1])
+					+ 0.05 * sin(3.0 * ang + ph[2]))
+				var k := 1.0 - smoothstep(0.15, 1.0, v.length() / rr)
+				if k > 0.0:
+					col = col.lerp(bl["col"], k * float(bl["a"]))
+			img.set_pixel(x, y, col)
+	return img
 
 
 ## A line of placeholder writing: wavy strokes in runs the length of words, so it has the

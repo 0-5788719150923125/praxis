@@ -110,7 +110,7 @@ func matrix(size: Vector2) -> Transform2D:
 	return Transform2D(_rot + pulse_rot, Vector2(z, z), _skew + pulse_skew, origin)
 
 
-## THE HALF-EXTENT A SCENE MUST FILL TO COVER THE SCREEN, in the scene's own centred
+## THE HALF-EXTENT A SCENE MUST FILL TO COVER THE SCREEN, in the scene's own centered
 ## coordinates. This is the answer to "where is the camera looking", and it is exact.
 ##
 ## WHY IT EXISTS. Scenes draw around (0,0) and the view transform then zooms, pans, rolls and

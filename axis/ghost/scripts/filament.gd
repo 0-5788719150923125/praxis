@@ -12,8 +12,8 @@ class_name Filament
 ## the character: roots that spread and droop, tendrils that coil, lightning that
 ## kinks and forks, threads that flow. Built once from a seed; drawn growing.
 ##
-## All coordinates are ghost's centred unit-fraction space; widths are pixels.
-## Compose it: a scene grows a handful of filaments and draws them, colour and
+## All coordinates are ghost's centered unit-fraction space; widths are pixels.
+## Compose it: a scene grows a handful of filaments and draws them, color and
 ## growth driven by audio. See `rooted_growth` and `filaments`.
 
 ## variant -> shaping config. flow_follow: how hard it turns toward the flow.
@@ -44,11 +44,11 @@ const MAX_SEGS := 3000        # safety cap against a pathological branch explosi
 ## Each segment: a, b (unit-fraction endpoints), w0, w1 (px widths), born0, born1
 ## (0..1 birth times along the longest root-to-tip path), depth.
 var segs: Array = []
-var _total := 0.0             # max arclength to any tip (normaliser for born times)
+var _total := 0.0             # max arclength to any tip (normalizer for born times)
 var _max_depth := 0           # deepest branch level (so trunk vs tip can be told apart)
 
 
-## The deepest branch level reached (0 = an unbranched trunk). Lets a scene fade or colour
+## The deepest branch level reached (0 = an unbranched trunk). Lets a scene fade or color
 ## a filament by depth - tips (high depth) versus the main channel (depth 0).
 func max_depth() -> int:
 	return _max_depth
@@ -176,7 +176,7 @@ func draw_growing(ci: CanvasItem, u: float, grown: float, color_for: Callable,
 		var b: Vector2 = ((s.a as Vector2).lerp(s.b, frac) + jo) * u
 		var w: float = maxf(0.6, lerpf(s.w0, s.w1, frac))
 		# Pass the segment's position along the path (born0, 0 base .. 1 tip) so the scene can
-		# shade a gradient / texture along the strand, not just a flat colour per depth.
+		# shade a gradient / texture along the strand, not just a flat color per depth.
 		ci.draw_line(a, b, color_for.call(int(s.depth), float(s.born0)), w, true)
 		if frac > 0.0 and frac < 1.0:                 # the live, advancing tip
 			ci.draw_circle(b, w * 1.3, tip)

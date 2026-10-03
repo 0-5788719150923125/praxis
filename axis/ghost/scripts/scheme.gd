@@ -1,29 +1,29 @@
 extends RefCounted
 class_name Scheme
 
-## Scheme - a scene's colour identity, drawn from a named mood.
+## Scheme - a scene's color identity, drawn from a named mood.
 ##
 ## The companion to [Palette], and the distinction matters: a Palette is a RAMP
-## sampled by a scalar (elevation to colour), while a Scheme is a small set of
+## sampled by a scalar (elevation to color), while a Scheme is a small set of
 ## RELATED HUES a scene builds its whole look from. Terrain needed the first;
 ## everything else needed the second and did not have it.
 ##
 ## WHY. 42 of ghost's 45 scenes hardcoded their own hue, usually as a range a
 ## few hundredths wide - `rng.randf_range(0.04, 0.10)` and the like - so a scene
-## was locked to one colour forever however many times it was seeded. The
+## was locked to one color forever however many times it was seeded. The
 ## clouds were always the same dawn orange, the embers always the same red, the
 ## metropolis always brass. Each was a reasonable choice made once and then
 ## frozen, and there was no shared thing to choose differently WITH.
 ##
 ## HOW. A mood carries a base hue, a related accent, how far individual elements
 ## may drift from the base, and the saturation/value character that makes the
-## mood read as itself - "ash" is not just grey, it is desaturated AND dark AND
-## narrow. Scenes ask for a mood and then ask it for colours, so adding a mood
+## mood read as itself - "ash" is not just gray, it is desaturated AND dark AND
+## narrow. Scenes ask for a mood and then ask it for colors, so adding a mood
 ## here varies every scene that uses one, and a new scene inherits the whole set
 ## for free. That is the point: the flexibility lives in the primitive.
 ##
 ## Relationships are named rather than random, because random hue pairs clash.
-## `accent` is chosen per mood as a complement, a near-neighbour or a triad
+## `accent` is chosen per mood as a complement, a near-neighbor or a triad
 ## partner, so a scene using base + accent is harmonious by construction.
 
 # hue, accent, spread, sat, val
@@ -103,7 +103,7 @@ func hue_at(i: int, n := 2) -> float:
 	return fposmod(hue + d * float(i) / float(n - 1), 1.0)
 
 
-## A colour on this scheme. `s_mul`/`v_mul` scale the mood's own character, so a
+## A color on this scheme. `s_mul`/`v_mul` scale the mood's own character, so a
 ## caller asks for "a bit darker" rather than restating absolute numbers - which
 ## is what kept the moods from reading as themselves before.
 func color(h: float, s_mul := 1.0, v_mul := 1.0, a := 1.0) -> Color:
@@ -111,7 +111,7 @@ func color(h: float, s_mul := 1.0, v_mul := 1.0, a := 1.0) -> Color:
 		clampf(val * v_mul, 0.0, 1.0), a)
 
 
-## The base colour, and the accent colour. The two calls a scene makes most.
+## The base color, and the accent color. The two calls a scene makes most.
 func base(s_mul := 1.0, v_mul := 1.0, a := 1.0) -> Color:
 	return color(hue, s_mul, v_mul, a)
 
@@ -122,11 +122,11 @@ func accent_color(s_mul := 1.0, v_mul := 1.0, a := 1.0) -> Color:
 
 ## A second hue guaranteed to READ as different from `lead`.
 ##
-## The accent alone is not enough for a scene that puts two colours side by side.
+## The accent alone is not enough for a scene that puts two colors side by side.
 ## Several moods keep their accent within a few hundredths of the base (sodium's
 ## sits 0.04 away), and `lead` is usually a DRIFTED base rather than the nominal
 ## one, so the gap can close further. Two prisms measured 0.104 turns apart -
-## near enough to read as one colour and lose the whole point of the pair.
+## near enough to read as one color and lose the whole point of the pair.
 ##
 ## So: prefer the mood's own accent, because it was chosen to be harmonious, and
 ## only push out to `min_sep` when it is too close - and push it along the

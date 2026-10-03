@@ -86,7 +86,7 @@ func _check_detector() -> void:
 	# THREE wedges, sized and scattered like the fault they stand in for - the broken renderer
 	# put several in a frame, not one. A single one scores 1.03% on this detector, which is
 	# barely over the threshold it is meant to prove the detector can clear: only the RIM of a
-	# wedge is flagged, because the middle of a large one has dark neighbours too.
+	# wedge is flagged, because the middle of a large one has dark neighbors too.
 	for tri in [
 			[Vector2(120.0, 60.0), Vector2(215.0, 78.0), Vector2(145.0, 165.0)],
 			[Vector2(380.0, 40.0), Vector2(470.0, 96.0), Vector2(392.0, 132.0)],

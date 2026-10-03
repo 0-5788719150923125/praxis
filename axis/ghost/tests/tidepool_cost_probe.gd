@@ -86,7 +86,7 @@ func _ready() -> void:
 			var cols := PackedColorArray()
 			cols.resize(nn + (gw - 1) * (gh - 1))
 			job._shade(snap, float(job.wet_nodes) / maxf(0.0001, total), cols)
-			job._centres(cols)
+			job._centers(cols)
 			var a4 := Time.get_ticks_usec()
 			t_sweep += float(a1 - a0)
 			t_cast += float(a2 - a1)
@@ -95,7 +95,7 @@ func _ready() -> void:
 		var d := 1000.0 * float(REPS)
 		print("tidepool_cost: seed=%d comps=%2d grid=%dx%d (%d nodes) cell=%.1fpx  build=%.1f ms  periods %.2f-%.2f s  bed=%d"
 			% [3000 + s, n, gw, gh, nn, cell, ms, fast, slow, sc._job.bw])
-		print("               sweep=%.1f  cast=%.1f  blur=%.1f (x%d)  shade+centres=%.1f  ms"
+		print("               sweep=%.1f  cast=%.1f  blur=%.1f (x%d)  shade+centers=%.1f  ms"
 			% [t_sweep / d, t_cast / d, t_blur / d, job.blur_n, t_shade / d])
 		sc.free()
 	get_tree().quit()

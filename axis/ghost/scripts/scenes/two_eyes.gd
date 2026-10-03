@@ -9,9 +9,9 @@ extends Scene3D
 ## `morph_in = "eye"`: arriving from the single eye it plays the split (the same eye
 ## dividing). Occasionally one eye diverges - the nonlinear deviation, not the default.
 ##
-## Colour comes from a [Scheme] mood (the same iris moods the single eye draws from),
+## Color comes from a [Scheme] mood (the same iris moods the single eye draws from),
 ## and the pair's PLACEMENT from a named spacing - crowded, human, or wide-set - so
-## the composition itself changes with the seed and not only the eyes' colour.
+## the composition itself changes with the seed and not only the eyes' color.
 
 ## Iris moods, matching `eye.gd` so a split keeps the family (see its note on why
 ## magenta/rose are out).
@@ -34,7 +34,7 @@ var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
 var _left: EyeBody
 var _right: EyeBody
-var _split := 1.0       # 0 = one centred eye, 1 = two apart (1 unless morphed in)
+var _split := 1.0       # 0 = one centered eye, 1 = two apart (1 unless morphed in)
 var _start_radius := 0.34  # world radius the split begins at (the source eye's)
 var _focus := Vector3(0, 0, 6.0)        # the shared point both eyes look at
 var _focus_target := Vector3(0, 0, 6.0)
@@ -51,11 +51,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	morph_out = "eyes"
 	_rng.seed = rng.randi()
 	var sch := Scheme.among(IRIS_MOODS, rng)
-	var h := sch.vary(rng)                     # two eyes of ONE face: normally same colour
+	var h := sch.vary(rng)                     # two eyes of ONE face: normally same color
 	# Heterochromia, rarely: the second eye takes the mood's accent instead. A real
 	# thing real faces do, kept rare so the pair still reads as a pair. A morph-in
 	# from the single eye overrides both hues below - one eye dividing cannot land
-	# two colours.
+	# two colors.
 	var hetero := rng.randf() < 0.14
 	var h2 := sch.accent if hetero else h
 	_left = EyeBody.new(rng.randi(), h)
@@ -75,7 +75,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"heterochromia": hetero, "hue": h}
 
 
-# Arrived from the single eye: become that exact eye (colour, gaze, size) at centre,
+# Arrived from the single eye: become that exact eye (color, gaze, size) at center,
 # then split apart - the SAME eye dividing, not two new ones.
 func begin_morph(from: GhostScene) -> void:
 	_split = 0.0

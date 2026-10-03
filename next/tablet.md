@@ -24,15 +24,17 @@ Nothing is read off the screen: no title, and text before the first `url` is nei
 
 ## What is inferred, never written
 
-- **How a page is reached.** First url: wake, open the browser on it. A url linked from the page on
+- **How a page is reached.** First url: wake, open the browser on a blank tab, look at it, then type the address. A url linked from the page on
   screen: scroll to the link, tap it. Anything else (or after a new tab): type it in the address bar.
 - **Skimming.** Wherever the reading passes over something it does not read (12+ skipped words, a
   picture, placeholder stories), the hand SKIMS: a still beat, a slow drag, a stop on each picture,
-  then the next read line. The voice rests for it. Reading scrolls are drags, not flicks.
+  a 2 s look where it stopped (SKIM_LOOK), then the next read line. The voice rests for it. Reading scrolls are drags, not flicks.
 - **A search box** appears on any page a search is made from; a page that is mostly a search box
-  is drawn as an engine's front page (centred logo); a page reached by a search is its results.
+  is drawn as an engine's front page (centered logo); a page reached by a search is its results.
 - **Placeholders.** A heading with nothing under it gets a squiggled body; every page is padded with
-  squiggle stories to ~2.4 screens so there is always something to scroll past.
+  squiggle stories to ~2.4 screens so there is always something to scroll past. A picture not yet
+  painted (or a filler story's picture) is soft blobs of related colors, seeded per picture - the
+  picture's squiggle, like an image still loading - never a gray broken-image plate.
 - **A site's look** (face, accent, masthead) is hashed off its host.
 - **Pace.** The hand is lazy: about 0.21 s a letter, uneven, with a pause between words and a
   look at what was typed before going; tabs and the keyboard are unhurried too.

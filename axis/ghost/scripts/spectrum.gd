@@ -56,7 +56,7 @@ var virtual_clock: float = -1.0
 ## Reported as a finished video freezing for up to twenty seconds at a time while the audio
 ## played on. The picture - every scene and the karaoke line - is driven by `current.time`, and
 ## Movie Maker writes exactly one video frame per engine iteration; so if that clock stops
-## while iterations continue, the OUTPUT holds a still. Measured on the artefact: a subtitle
+## while iterations continue, the OUTPUT holds a still. Measured on the artifact: a subtitle
 ## card sitting nineteen seconds past the end of its own sentence with the karaoke fill frozen
 ## mid-word, then snapping back into sync - a clock that STOPPED and RESUMED, not one that
 ## lagged. The same session played back live, with the clock watched, never stalls; only the
@@ -164,7 +164,7 @@ var scrub_seek := Callable()     # (float) -> void
 var _hold := 0.0                # counts up through the lead-in
 var _held := false              # lead-in running: the player has NOT been started yet
 var _tail_t := 0.0              # counts up through the tail
-var _tailing := false           # audio has ended; running out the tail before signalling
+var _tailing := false           # audio has ended; running out the tail before signaling
 var _bus_db := 0.0              # master trim we applied, so it can be put back exactly
 var _last_time := 0.0           # last published clock, held when the player stops mid-session
 
@@ -227,7 +227,7 @@ func begin(path := "") -> void:
 		var bake_file := _arg_value("--bake-file")
 		if not bake_file.is_empty():
 			# Pre-built cache (the export render's normal path): load it and start -
-			# NO in-process baking, so the render never blocks on a grey frame.
+			# NO in-process baking, so the render never blocks on a gray frame.
 			_baked_frames = Bake.load_cache(bake_file, BAND_COUNT)
 			_baked = not _baked_frames.is_empty()
 			if _baked:
@@ -585,7 +585,7 @@ func song_length() -> float:
 	return lead_in + content + tail
 
 
-## The current perceptual harmonic descriptor (12 chroma + coarse shape, normalised). For
+## The current perceptual harmonic descriptor (12 chroma + coarse shape, normalized). For
 ## SMOOTH content-driven modulation of a scene's dynamics. Empty until the analyzer is up.
 func harmonic_signature() -> PackedFloat32Array:
 	return _sig.vector() if _sig != null else PackedFloat32Array()
@@ -680,14 +680,14 @@ func _precompute_bands() -> void:
 	_band_lo.resize(BAND_COUNT)
 	_band_hi.resize(BAND_COUNT)
 	var ratio := FREQ_MAX / FREQ_MIN
-	var centres := PackedFloat32Array()
-	centres.resize(BAND_COUNT)
+	var centers := PackedFloat32Array()
+	centers.resize(BAND_COUNT)
 	for i in BAND_COUNT:
 		_band_lo[i] = FREQ_MIN * pow(ratio, float(i) / float(BAND_COUNT))
 		_band_hi[i] = FREQ_MIN * pow(ratio, float(i + 1) / float(BAND_COUNT))
-		centres[i] = sqrt(_band_lo[i] * _band_hi[i])     # geometric centre (log-spaced)
-	_sig = HarmonicSignature.new(centres)
-	_sig_fast = HarmonicSignature.new(centres, 0.7)
+		centers[i] = sqrt(_band_lo[i] * _band_hi[i])     # geometric center (log-spaced)
+	_sig = HarmonicSignature.new(centers)
+	_sig_fast = HarmonicSignature.new(centers, 0.7)
 
 
 func _process(delta: float) -> void:

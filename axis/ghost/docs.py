@@ -11,7 +11,7 @@ table is `MASK_EFFECTS` / `EFFECT_CONTROLS`. This script parses all of
 that statically (no Godot boot required) and writes:
 
   docs/index.md       - the map: design, directory layout, every script.
-  docs/scenes.md      - the scene catalogue, from each scene's own doc.
+  docs/scenes.md      - the scene catalog, from each scene's own doc.
   docs/layers.md      - the Layer registry (visual components).
   docs/forces.md      - the Primitives registry (physics forces).
   docs/stage.md       - the storyboard stage: Cast actors + Actions verbs.
@@ -477,7 +477,7 @@ TOP_LEVEL: List[Tuple[str, str]] = [
     ),
     (
         "scripts/scenes/",
-        "The visualizer scene catalogue - one class per scene. See "
+        "The visualizer scene catalog - one class per scene. See "
         "[docs/scenes.md](docs/scenes.md).",
     ),
     (
@@ -657,7 +657,7 @@ def _source_link(rel: str, line: Optional[int] = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Scene catalogue
+# Scene catalog
 # ---------------------------------------------------------------------------
 
 
@@ -725,7 +725,7 @@ def _split_group(group: str) -> Tuple[str, str]:
     The comment's lead (before ' - ' or a parenthetical) is the header; the
     full comment becomes the intro when it says more than the header."""
     if not group:
-        return "Core catalogue", ""
+        return "Core catalog", ""
     head = re.split(r" - |\(", group, maxsplit=1)[0]
     head = head.replace('"', "").strip().rstrip(".")
     head = head[0].upper() + head[1:]
@@ -745,7 +745,7 @@ def _scene_flags(info: SceneInfo) -> str:
 def _render_scenes_doc(scenes: Dict[str, SceneInfo], groups: List[str]) -> str:
     lines = [
         AUTOGEN_HEADER,
-        "# Scene catalogue",
+        "# Scene catalog",
         "",
         f"{len(scenes)} scenes under `scripts/scenes/`, one class per file, "
         "each documented by its own leading doc comment (reproduced here). "
@@ -823,7 +823,7 @@ def _render_readme_scenes_block(scenes: Dict[str, SceneInfo], groups: List[str])
     lines = [
         f"{sum(1 for s in scenes.values() if s.behaviors)} scenes in the auto "
         f"rotation ({len(scenes)} on disk). One line each - the full "
-        "catalogue, with every scene's own documentation, is "
+        "catalog, with every scene's own documentation, is "
         "[docs/scenes.md](docs/scenes.md).",
         "",
     ]
@@ -1208,10 +1208,10 @@ def _render_masklab_doc(session: Script, editor: Script) -> str:
         "each marker becomes a shader layer, and `apply_layer()` dispatches "
         "per effect. Control groups: `keying` (threshold / feather / "
         "colorfulness steer the volumetric mask), `reach` (how wide around "
-        "the key colour a restore acts), `pattern` (field placement / "
+        "the key color a restore acts), `pattern` (field placement / "
         "coverage / contrast / resonance), plus per-effect groups (`echo`, "
         "`snow`, `fur`). An effect with no groups exposes only the universal "
-        "colour + intensity controls.",
+        "color + intensity controls.",
         "",
         "| # | Effect | Control groups | Notes |",
         "| --- | --- | --- | --- |",
@@ -1402,7 +1402,7 @@ core. The commitments:
    Adding to a registry is the extension mechanism - not new control flow.
 3. **Sampled, not baked ("cattle, not pets").** Every tunable constant is a
    candidate for sampling from a per-instance range, so two things of a
-   kind always differ and the catalogue gains expression for free.
+   kind always differ and the catalog gains expression for free.
 4. **Convergence over lockstep.** Presentation state never snaps to its
    target: cameras, activations, glows, and the Echo cursor all move by
    exponential smoothing toward targets that may jump discontinuously.
@@ -1466,7 +1466,7 @@ def _render_index(
             lines.append(f"- [`{fname}`](../scripts/{fname}) - {one}")
         lines.append("")
     lines.append(
-        f"Scene scripts ({len(scenes)}) are catalogued separately in "
+        f"Scene scripts ({len(scenes)}) are cataloged separately in "
         "[scenes.md](scenes.md)."
     )
     return "\n".join(lines).rstrip() + "\n"
@@ -1531,7 +1531,7 @@ def main() -> int:
     pages = [
         (
             "scenes",
-            "Scene catalogue",
+            "Scene catalog",
             "every visualizer scene, from its own doc comment.",
         ),
         (

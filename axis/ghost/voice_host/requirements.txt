@@ -53,7 +53,7 @@ phonemizer>=3.2
 # Apache-2.0. Pure Python; its dependencies (click, joblib, regex, tqdm) are all
 # permissive. The tagger MODEL and the corpus are data and are not in the wheel -
 # both are fetched once on first use into <venv>/nltk_data, and everything degrades
-# to the old behaviour if that never happens.
+# to the old behavior if that never happens.
 nltk>=3.8
 
 # Build/patch time only, and optional: used once per voice to expose the VITS

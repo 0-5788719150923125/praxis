@@ -5,7 +5,7 @@ The presentation axis - what the show is drawn ON, as opposed to what drives it.
 
 Medium - what the show is carried ON. The presentation axis.
 
-ghost has always had exactly one presentation and never had to name it: the `Director` paints ONE scene, full-bleed, edge to edge, and cuts to the next. A medium is that choice made addressable. `FullMedium` is that behaviour, unchanged and default; `ComicMedium` renders the same scenes into the panels of an open comic book - two facing pages across a spine - and flies a real perspective camera over it.
+ghost has always had exactly one presentation and never had to name it: the `Director` paints ONE scene, full-bleed, edge to edge, and cuts to the next. A medium is that choice made addressable. `FullMedium` is that behavior, unchanged and default; `ComicMedium` renders the same scenes into the panels of an open comic book - two facing pages across a spine - and flies a real perspective camera over it.
 
 NOT A MODE, and the distinction is the whole point. A mode decides what DRIVES the show - a song (Auto), a storyboard (Manual), a written script (Synthesis / Generative). A medium decides what the show is PRESENTED AS. They are independent axes, so every mode gets every medium for free, exactly as every scene gets every behavior and every render kind. Putting the comic in as a fifth mode would have meant a comic that only works over a song, and a second copy of the Director's scheduling to drive it.
 

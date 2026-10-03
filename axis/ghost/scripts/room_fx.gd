@@ -11,7 +11,7 @@ class_name RoomFX
 ## of once.
 ##
 ## So everything ABOVE the engine lives here: the dial's range, its taper, what
-## Resonance does to the tail's colour, what "no room" means, and how a single
+## Resonance does to the tail's color, what "no room" means, and how a single
 ## dial collapses into size-plus-wet when a panel only has room for one. Both
 ## modes ask this class and get the same answer.
 ##
@@ -55,7 +55,7 @@ const FB_SPAN := 0.28
 ## Damping is what makes a tail sound like a room instead of a metal box, and it
 ## is RESONANCE that moves it: a resonant space is bright and rings on, a dead one
 ## swallows the top of every repeat immediately. Same mapping both sides, so the
-## Resonance slider colours the room the same way in either mode.
+## Resonance slider colors the room the same way in either mode.
 const DAMP_DEAD := 0.9
 const DAMP_RING := 0.2
 const DAMP_SCALE := 0.4          # Freeverb's scaledamp
@@ -85,7 +85,7 @@ var size := 1.0
 ## How much of that space reaches the listener, 0..1. Masking drives this from its
 ## own Ambience slider; a panel with one dial gets it from [method from_dial].
 var wet := 0.0
-## The tail's colour, 0..1, from whatever the mode calls Resonance. 0 is a dead
+## The tail's color, 0..1, from whatever the mode calls Resonance. 0 is a dead
 ## room, 1 a ringing one.
 var resonance := 0.5
 

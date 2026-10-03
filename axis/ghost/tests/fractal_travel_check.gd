@@ -140,7 +140,7 @@ func _run() -> void:
 				% [hold, energy, control, SEEDS])
 			# ...and the other half of the trap: a scene that never moves never reverses.
 			_ok(travel[travel.size() / 10] > 0.10 * (float(hold) / 30.0),
-				"hold %.0fs energy %.2f: the slowest tenth travelled only %.2f e-folds - the zoom is not moving"
+				"hold %.0fs energy %.2f: the slowest tenth traveled only %.2f e-folds - the zoom is not moving"
 				% [hold, energy, travel[travel.size() / 10]])
 
 	print("  directions over %d seeds: %s" % [SEEDS, dirs])

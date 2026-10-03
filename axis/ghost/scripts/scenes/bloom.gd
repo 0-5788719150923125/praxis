@@ -36,7 +36,7 @@ var _sharp := 0.0
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "plane"
-	# Nothing about a rosette says what colour it is, so any mood is fair - it was a bare
+	# Nothing about a rosette says what color it is, so any mood is fair - it was a bare
 	# random hue before, which varied but never related to itself.
 	_sch = Scheme.pick(rng)
 	var keys := FORMS.keys()
@@ -60,7 +60,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		n2 = rng.randf_range(float(n2_r[0]), float(n2_r[1]))
 		n3 = rng.randf_range(float(n3_r[0]), float(n3_r[1]))
 	var layers := rng.randi_range(1, 5)
-	# Either the stack sweeps base -> accent (a two-tone rosette) or it stays one colour
+	# Either the stack sweeps base -> accent (a two-tone rosette) or it stays one color
 	# with each ring drifted slightly off it. Two quite different objects.
 	var gradient := rng.randf() < 0.55
 	var hues: Array = []
@@ -80,7 +80,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"radius": rng.randf_range(0.18, 0.40),
 		"width": rng.randf_range(1.0, 4.0),
 		"spin_rate": rng.randf_range(-0.10, 0.10),
-		"m_step": rng.randf() < 0.5,                 # neighbouring layers shift symmetry
+		"m_step": rng.randf() < 0.5,                 # neighboring layers shift symmetry
 		# Enough samples to keep a high-lobe contour smooth - a 26-fold ripple traced at a
 		# fixed 260 points showed its faceting.
 		"samples": clampi(int(m) * 26, 240, 600),
@@ -141,7 +141,7 @@ func _superform(m: float, n1: float, n2: float, n3: float, samples: int, scale: 
 		rmax = 1.0
 	for i in samples:
 		var th := TAU * float(i) / float(samples)
-		var r: float = float(raw[i]) / rmax * scale       # normalise so the shape fits `scale`
+		var r: float = float(raw[i]) / rmax * scale       # normalize so the shape fits `scale`
 		pts[i] = Vector2(cos(th + rot), sin(th + rot)) * r
 	pts[samples] = pts[0]                                  # close the loop
 	return pts

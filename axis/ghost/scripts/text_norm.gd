@@ -50,7 +50,7 @@ const FOLD := {
 # Markdown's emphasis markers are TYPOGRAPHY: the mouth must not speak them and
 # the page must not lose them. Dropping them outright satisfied only the first
 # half - the subtitle under `*I will never hurt you*` read as flat prose, with
-# nothing anywhere to say the line had been emphasised at all.
+# nothing anywhere to say the line had been emphasized at all.
 #
 # So a matched pair does not vanish, it becomes a SENTINEL: a private-use
 # character that survives every pass below (it is in no fold table, it is not
@@ -278,7 +278,7 @@ static func normalize_marked(text: String) -> Dictionary:
 ##   "*I will never hurt you*"  ->  "ASTERISK I will never hurt you ASTERISK"
 ##   "**bold** word"            ->  "asteriskasterisk bold asteriskasterisk word"
 ## which is not a mispronunciation but a whole extra spoken word at each end of every
-## emphasised phrase, and there were three chapters full of them. Nothing anywhere
+## emphasized phrase, and there were three chapters full of them. Nothing anywhere
 ## warned about it; it would simply have been read aloud that way.
 ##
 ## UNDERSCORE EMPHASIS IS A NARROWER CASE and used to be left alone entirely, on the
@@ -290,7 +290,7 @@ static func normalize_marked(text: String) -> Dictionary:
 ## text and there is no earlier copy of it to fall back to.
 ##
 ## AND THEN THE OPPOSITE DEFECT, which is what the sentinels are for. Deleting the pair
-## fixed the reading and broke the page a second way: the subtitle under an emphasised
+## fixed the reading and broke the page a second way: the subtitle under an emphasized
 ## line read as flat prose, with no trace that the writing had leaned on those words at
 ## all. A marker is not noise to be removed, it is a spelling of something the reader is
 ## meant to see - the same argument `display` already makes about `2009`. So a MATCHED
@@ -853,7 +853,7 @@ static func _expand_abbrev(text: String, marks: Array = []) -> String:
 		var raw := words[i]
 		var tok := String(raw)
 		# A WRAPPER MUST NOT HIDE THE ABBREVIATION. The match was against the whole token, so
-		# `"Mr.` never equalled `mr.`: the period survived as a period and the sentence broke
+		# `"Mr.` never equaled `mr.`: the period survived as a period and the sentence broke
 		# inside the name. That was invisible while punctuation only shaped intonation, but it
 		# is a real silence now that a full stop carries a measured pause - a rest dropped in
 		# the middle of `"Mr. Smith,"`. Strip the wrappers, match, put them back.
@@ -935,6 +935,6 @@ static func _abbrev_fits(key: String, words: PackedStringArray, at: int) -> bool
 		return false
 	if needs_number:
 		return nxt[0] >= "0" and nxt[0] <= "9"
-	# a title needs a capitalised word after it, which is what a name looks like
+	# a title needs a capitalized word after it, which is what a name looks like
 	return nxt[0] >= "A" and nxt[0] <= "Z"
 

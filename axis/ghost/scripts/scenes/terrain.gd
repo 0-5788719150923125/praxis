@@ -4,7 +4,7 @@ extends Scene3D
 ##
 ## By seed a different world: rolling hills, ridged mountains, river valleys, a fissured
 ## canyon, ocean islands, or a banded mesa - each a recipe of [Field]s sampled into a
-## heightfield, coloured by a [Palette] plus a fine surface-texture field and slope
+## heightfield, colored by a [Palette] plus a fine surface-texture field and slope
 ## shading, with water pooling below its level. The camera orbits under a wide lens for
 ## forced perspective; audio drives the light, not the land (the terrain holds its form).
 
@@ -30,7 +30,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
 	var ttype: String = TYPES[rng.randi() % TYPES.size()]
 	var relief := rng.randf_range(1.1, 1.9)
-	# Mostly a natural biome (green lowland, brown/grey rock, snow peaks, blue water),
+	# Mostly a natural biome (green lowland, brown/gray rock, snow peaks, blue water),
 	# biased by terrain type; sometimes a surreal palette (volcanic / alien) for variety.
 	var climate := ""
 	var pal: Palette = null

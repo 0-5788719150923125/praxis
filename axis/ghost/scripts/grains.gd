@@ -35,8 +35,8 @@ class_name Grains
 ##           "float"; the pass table (see [method finalize]) is a single byte lookup per
 ##           test and buoyancy falls out of it.
 ##   REACTIVE materials transmute: a decay probability turns a cell into something else
-##           (an ember cooling into ash), and an igniter converts flammable NEIGHBOURS into
-##           whatever they burn to, while a liquid neighbour that boils quenches it.
+##           (an ember cooling into ash), and an igniter converts flammable NEIGHBORS into
+##           whatever they burn to, while a liquid neighbor that boils quenches it.
 ##   DRAFT   an exposed grain may hop one cell downwind, unless it is sheltered - the LEE
 ##           SHADOW rule: a cell immediately downwind of an obstruction neither erodes nor
 ##           accepts a hop. That one rule is the whole difference between a pile that looks
@@ -47,8 +47,8 @@ class_name Grains
 ## an [RandomNumberGenerator] cannot supply it: drawing conditionally (only when a grain is
 ## actually blocked) makes the number of draws depend on the state, and the state depends
 ## on the audio - and the live analyzer and the offline export bake do NOT produce
-## frame-identical features (spectrum.gd:406-411), so the exported video would desynchronise
-## from the preview and never resynchronise. Instead a NOISE TABLE is filled once from the
+## frame-identical features (spectrum.gd:406-411), so the exported video would desynchronize
+## from the preview and never resynchronize. Instead a NOISE TABLE is filled once from the
 ## seeded rng and indexed by a pure hash of (cell, generation, seed). No draws are consumed
 ## at all, every cell's randomness is a pure function of where and when it is, and an
 ## audio-conditioned decision (an ignition chance riding on flux) can therefore only change
@@ -63,7 +63,7 @@ class_name Grains
 ## a tick, that call overhead was the dominant cost.
 
 ## Movement classes. AIR is the empty cell itself - deliberately not SOLID, so the checks
-## that ask "is my neighbour a wall" answer no for open space.
+## that ask "is my neighbor a wall" answer no for open space.
 const AIR := -1
 const SOLID := 0
 const POWDER := 1
@@ -77,7 +77,7 @@ const NOISE := 4096
 const NMASK := 4095
 
 ## A full sweep is forced this often, whatever the activity mask says. The mask can only
-## be woken by a neighbour that moved, so a cell whose only future is a slow transmutation
+## be woken by a neighbor that moved, so a cell whose only future is a slow transmutation
 ## (an ember buried in a settled pile) would otherwise sleep forever. Sixteen ticks is
 ## about half a second - short enough that nothing visibly freezes, long enough that the
 ## saving on a settled chamber is still most of the sweep.
@@ -85,9 +85,9 @@ const FULL_EVERY := 16
 
 ## The matter table. Every entry is a RANGE, sampled per instance - two songs that both
 ## roll sand do not get the same sand, they get sand of a different repose, density and
-## colour. `hue` is a RELATIVE offset in turns from whatever base hue the scene hands the
+## color. `hue` is a RELATIVE offset in turns from whatever base hue the scene hands the
 ## renderer, so a chamber stays inside its [Scheme] while its materials still read apart
-## from each other (water is always most of a half-turn from sand, whatever colour sand is).
+## from each other (water is always most of a half-turn from sand, whatever color sand is).
 ##
 ##   dens   - who displaces whom. The only thing buoyancy is made of.
 ##   repose - probability a blocked grain tries a diagonal slide. Low = steep, high = flat.
@@ -135,14 +135,14 @@ var h := 96
 var tilt := 0.0          # gravity shear, -1..1: probability the "down" cell is offset sideways
 var wind := 0.0          # ambient draft strength, 0..1
 var wind_dir := 1        # +1 downwind to the right, -1 to the left
-var ignite := 0.0        # global scale on every igniter's per-neighbour chance
+var ignite := 0.0        # global scale on every igniter's per-neighbor chance
 var spill := false       # open-sided chamber: whatever reaches the edge columns leaves
 var wall_id := 0         # the material the chamber is built from (restored when a hatch shuts)
 ## How many rows deep the floor is, so an open hatch cuts through ALL of it. A hatch that
 ## only clears the bottom row of a four-row floor opens onto more floor and drains nothing.
 var floor_h := 1
-## Optional per-row colours for [member wall_id] - the chamber drawn as strata rather than
-## as one flat grey. Empty = the wall paints like any other material.
+## Optional per-row colors for [member wall_id] - the chamber drawn as strata rather than
+## as one flat gray. Empty = the wall paints like any other material.
 var wall_band := PackedColorArray()
 
 var gen := 0
@@ -642,7 +642,7 @@ func step() -> void:
 			# water-only pool had 40 cells changing occupancy 40 times in 40 ticks, every one a
 			# clean two-tick oscillation, while a powder-only chamber had exactly zero - powders
 			# have no `spread` and never enter this branch. Each of those swaps empties the cell
-			# it leaves, so what the eye gets is grains blinking between their colour and the
+			# it leaves, so what the eye gets is grains blinking between their color and the
 			# background: "almost every single grain is flickering between black and color, as if
 			# the pixels were vibrating".
 			#
@@ -757,7 +757,7 @@ func _swap(i: int, j: int, m: int, tm: int) -> void:
 	_touch(j / w)
 
 
-# One neighbour of an igniter. Returns true if the igniter is quenched by it.
+# One neighbor of an igniter. Returns true if the igniter is quenched by it.
 func _burn(n: int, p: float, r: float) -> bool:
 	var nm := int(_cells[n])
 	if nm == 0:
@@ -773,7 +773,7 @@ func _burn(n: int, p: float, r: float) -> bool:
 	return false
 
 
-# Wake a row and its two neighbours, for this tick AND the next. Writing both arrays is
+# Wake a row and its two neighbors, for this tick AND the next. Writing both arrays is
 # what lets emissions and hatch changes made BETWEEN steps take effect immediately.
 func _touch(y: int) -> void:
 	_hot[y] = 1
@@ -790,7 +790,7 @@ func _touch(y: int) -> void:
 ## identical material, capped at [param run_cap] cells.
 ##
 ## The cap is not a performance limit, it is the texture: an uncapped run paints a whole
-## settled layer in one flat colour, and a pile of sand that is one flat colour does not
+## settled layer in one flat color, and a pile of sand that is one flat color does not
 ## read as sand. Capping the run gives every few cells their own value jitter while still
 ## collapsing a full chamber from ~25000 cells to a few thousand quads - one draw call
 ## either way, but the picture has grain in it.
@@ -823,7 +823,7 @@ func paint(tb: TriBatch, org: Vector2, cell: float, run_cap: int, hue_rot: float
 			# shimmering, and why the sim's two-tick oscillation (see step's fluid note) looked
 			# like "almost every single grain" rather than the few dozen cells it actually was.
 			# Anchoring to `cap`-wide blocks costs nothing - a solid stretch still collapses to
-			# one quad per block, the same count as before - and makes a settled pile's colours
+			# one quad per block, the same count as before - and makes a settled pile's colors
 			# genuinely static.
 			var stop := mini(w, (x / cap + 1) * cap)
 			var run := 1

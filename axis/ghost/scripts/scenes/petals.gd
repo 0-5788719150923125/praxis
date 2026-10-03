@@ -71,7 +71,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"fall": rng.randf_range(float(fl["fall"][0]), float(fl["fall"][1])),
 	})
 	# A second shedding on the accent hue: two trees over one another, and the air visibly
-	# fuller for it - the difference is in the count, not only the colour.
+	# fuller for it - the difference is in the count, not only the color.
 	if rng.randf() < float(fl["mix"]):
 		var extra := rng.randi_range(int(count * 0.3), int(count * 0.7))
 		add_layer("petals", rng, {

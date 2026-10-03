@@ -3,7 +3,7 @@ extends GhostScene
 ## Motes - dust adrift in a shaft of light.
 ##
 ## The quietest scene: light cuts the frame and countless fine motes hang and turn in
-## it on a slow curl-noise current, brightening as they cross the beam. The colour of
+## it on a slow curl-noise current, brightening as they cross the beam. The color of
 ## the light is a [Scheme] - late sun, a cold north window, green light under leaves -
 ## and the room's shadow is that scheme's accent, so the two agree. `bed` + `fog` +
 ## a `dust` layer.
@@ -24,12 +24,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
 	# Whatever light gets in: late sun, sodium street-glare, a cold north window,
-	# green light under leaves, or the colourless grey of an overcast one.
+	# green light under leaves, or the colorless gray of an overcast one.
 	var sch := Scheme.among(["sodium", "dawn", "brass", "bone", "glacier", "ash", "verdant",
 		"teal", "rose"], rng)
 	var air: Dictionary = AIRS[rng.randi() % AIRS.size()]
 	# The room behind the beam sits in the scheme's accent, kept dark - shadow that
-	# belongs to this light rather than an unrelated second colour.
+	# belongs to this light rather than an unrelated second color.
 	add_layer("bed", rng, {"hue": sch.accent, "sat": sch.sat * 0.5,
 		"val": sch.val * rng.randf_range(0.12, 0.22), "pools": rng.randi_range(2, 4)})
 	add_layer("fog", rng, {"hue": sch.hue, "sat": sch.sat * 0.3,

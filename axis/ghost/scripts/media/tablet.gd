@@ -276,17 +276,17 @@ func _build_world() -> void:
 	_root3.add_child(_glow)
 
 
-## A slab with rounded corners: [param size] across x and z, [param t] thick, centred on 0.
+## A slab with rounded corners: [param size] across x and z, [param t] thick, centered on 0.
 static func _rounded_slab(size: Vector2, t: float, r: float) -> ArrayMesh:
 	var outline := PackedVector2Array()
 	var seg := 8
 	var hw := size.x * 0.5 - r
 	var hd := size.y * 0.5 - r
-	var centres := [Vector2(hw, hd), Vector2(-hw, hd), Vector2(-hw, -hd), Vector2(hw, -hd)]
+	var centers := [Vector2(hw, hd), Vector2(-hw, hd), Vector2(-hw, -hd), Vector2(hw, -hd)]
 	for c in 4:
 		for i in seg + 1:
 			var a := (float(c) + float(i) / float(seg)) * PI * 0.5
-			outline.append(centres[c] + Vector2(cos(a), sin(a)) * r)
+			outline.append(centers[c] + Vector2(cos(a), sin(a)) * r)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var n := outline.size()
@@ -711,7 +711,7 @@ func _build_flings() -> void:
 						list.append({"t": t, "from": from, "to": cur, "dur": dur, "drag": true, "o": o})
 						busy_until = t + dur
 				"skim":
-					# stops: each picture centred, then the next words a little below the top
+					# stops: each picture centered, then the next words a little below the top
 					var stops: Array = []
 					for bi in x["pics"]:
 						var pr: Rect2 = lp.block_rect.get(int(bi), Rect2())
@@ -1193,7 +1193,7 @@ func draw_screen(ci: CanvasItem, layer := 0) -> void:
 
 
 ## THE TAP, made to read on a white page: a dark press that grows as the finger comes down, and
-## on the press a ring of the system blue that spreads and fades - the first cut was a pale grey
+## on the press a ring of the system blue that spreads and fades - the first cut was a pale gray
 ## dot that vanished against every page it was used on.
 func _draw_touch(ci: CanvasItem, at: Vector2, dt: float) -> void:
 	var blue := Color(0.16, 0.42, 1.0)
@@ -1208,7 +1208,7 @@ func _draw_touch(ci: CanvasItem, at: Vector2, dt: float) -> void:
 	ci.draw_arc(at, lerpf(40.0, 150.0, sqrt(f)), 0.0, TAU, 64, Color(blue, 1.0 - f * f), lerpf(11.0, 5.0, f), true)
 
 
-## Shade the link under a pressing finger: every word of it, in its own colour, softly.
+## Shade the link under a pressing finger: every word of it, in its own color, softly.
 func _draw_press(ci: CanvasItem, page: int, o: int) -> void:
 	var wi := int(_st.get("press_word", -1))
 	if wi < 0:
@@ -1450,7 +1450,7 @@ func _draw_start(ci: CanvasItem, o: int) -> void:
 	var L := logical(o)
 	ci.draw_rect(Rect2(0.0, TOP, L.x, L.y - TOP), Color(0.97, 0.97, 0.98))
 	var f := TabletPage.face(false, 2)
-	ci.draw_string(f, Vector2(70.0, TOP + 90.0), "Favourites", HORIZONTAL_ALIGNMENT_LEFT, -1, 34,
+	ci.draw_string(f, Vector2(70.0, TOP + 90.0), "Favorites", HORIZONTAL_ALIGNMENT_LEFT, -1, 34,
 		Color(0.12, 0.12, 0.14))
 	var cols := 6 if o == 0 else 8
 	var s := 110.0
@@ -1462,9 +1462,9 @@ func _draw_start(ci: CanvasItem, o: int) -> void:
 			Color(0.5, 0.5, 0.55), hash([_seed, "fv", i]))
 
 
-## THE BOOK'S HIGHLIGHT, letter by letter: what [method TabletPage.draw] needs to colour the
+## THE BOOK'S HIGHLIGHT, letter by letter: what [method TabletPage.draw] needs to color the
 ## words of [param page] as the voice reaches them - the word being said and how far through
-## it, and when each word on the page already said was spoken, so its colour can cool.
+## it, and when each word on the page already said was spoken, so its color can cool.
 ## Words long cooled are left out; they are ink again.
 func _lit(page: int) -> Dictionary:
 	var r := _reading()

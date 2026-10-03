@@ -16,7 +16,7 @@ func _initialize() -> void:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
-	# Layer 0 = clown, layer 1 = crystal (regression: the neighbour branch still
+	# Layer 0 = clown, layer 1 = crystal (regression: the neighbor branch still
 	# compiles beside it). Arrays at FULL declared length - a short uniform array
 	# is silently dropped.
 	mat.set_shader_parameter("u_l_count", 2)

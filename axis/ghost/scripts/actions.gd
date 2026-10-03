@@ -153,7 +153,7 @@ class Sprout extends Action:
 	var _grow_k := 0.42               # phase boundaries + character, sampled per instance
 	var _fruit_k := 0.62
 	var _drop_k := 0.74
-	var _hang := Vector3.ZERO         # where the eye's centre hangs (a touch above the slot)
+	var _hang := Vector3.ZERO         # where the eye's center hangs (a touch above the slot)
 	var _sag := 0.05                  # how far the fruit's weight bends the tip down
 	var _sway_f := 1.6
 	var _whip_f := 15.0
@@ -597,7 +597,7 @@ class Counterflow extends Action:
 			else:
 				# The exit loop: a circular arc off the lane, curling up (blue) or down
 				# (red) - and as it turns, the same current draws it into a SPIRAL that
-				# sinks toward the centre-depth, so the cut into the ouroboros catches
+				# sinks toward the center-depth, so the cut into the ouroboros catches
 				# both converging on the point the swarm then blossoms out of.
 				var kl := smoothstep(0.0, 1.0, (k - _loop_k) / maxf(0.05, 1.0 - _loop_k))
 				var c := (_loop_at[i] as Vector3) + Vector3(0, up * _loop_r, 0)

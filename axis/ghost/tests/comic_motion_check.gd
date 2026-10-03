@@ -73,7 +73,7 @@ const LEVELS := [0.0, 1.0, 2.0]
 ## camera.
 ##
 ## 0.04 of the frame in one frame is 1.2 frame widths per second, which no move in the
-## vocabulary travels at. The quiet-neighbour test is what distinguishes a cut from a fast
+## vocabulary travels at. The quiet-neighbor test is what distinguishes a cut from a fast
 ## move: a fast move is many consecutive large frames, a cut is exactly one.
 const TELEPORT := 0.04
 const TELEPORT_QUIET := 0.01
@@ -165,7 +165,7 @@ func _check_pinned(comic: ComicMedium) -> void:
 			# pinned with the hold creep and the camera chases a point that flips between the
 			# two every frame. That is the probe fighting the medium, and it showed up as a
 			# residual that was identical with the sheet's attitude frozen - which should have
-			# been the clue, since a drift artefact would have to change when the drift stops.
+			# been the clue, since a drift artifact would have to change when the drift stops.
 			comic._shot["arrived"] = false
 			comic.advance(Spectrum.current, dt, 0.0)
 			if pass_i == 1:
@@ -198,7 +198,7 @@ func _check_pinned(comic: ComicMedium) -> void:
 ##
 ## The Director runs FREE here - it must, because the whole question is what happens across
 ## cuts and in the tail of a hold, and a probe that pins the hold (as comic_look_probe does)
-## makes every deadline infinite and every one of those behaviours unreachable.
+## makes every deadline infinite and every one of those behaviors unreachable.
 func _drive(comic: ComicMedium, sev: float) -> void:
 	comic._turn_spread(0)
 	var dt := 1.0 / FPS
@@ -357,7 +357,7 @@ func _report(sev: float, moves: Array, areas: Array, panels: Array) -> void:
 			run = 0
 	# REVERSALS of the rendered scale, and whether a hold separated them.
 	# REVERSALS, with a DEADBAND. A direction is only in force once the scale has actually
-	# travelled ZOOM_DEADBAND that way, and a reversal only counts once it has travelled that
+	# traveled ZOOM_DEADBAND that way, and a reversal only counts once it has traveled that
 	# far back - so a shot creeping in, holding, and creeping out is one reversal, and a static
 	# shot whose projected size wobbles in the last decimal place is none.
 	var dir := 0

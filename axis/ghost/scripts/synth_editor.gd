@@ -15,11 +15,11 @@ class_name SynthEditor
 ## and every effect it carries is kept forever, and will strike again.
 ##
 ## A successful catch is not yet a keep: it presents a **card** - the seed
-## drawn as a constellation (lines seeded random, colour attuned to the cosine
-## similarity between the candidate and the party's centre). **Accept** folds
-## it into the belt - and every member's colour re-attunes to the new party,
+## drawn as a constellation (lines seeded random, color attuned to the cosine
+## similarity between the candidate and the party's center). **Accept** folds
+## it into the belt - and every member's color re-attunes to the new party,
 ## in ways you only learn by doing it. **Release** changes nothing. The game
-## is integration: reading the colour shifts, knowing when to hold, when to
+## is integration: reading the color shifts, knowing when to hold, when to
 ## fold. Throwing again folds a pending card.
 ##
 ## Reward profiles (Drift / Snap / Hunt) shape how throws range and how
@@ -81,18 +81,18 @@ const FRAY_KEYS := ["grit", "air", "breath"]
 const PACE_MIN := 0.55
 const PACE_MAX := 2.2
 # The trust region: a fresh draw is normalized RELATIVE to the pool being
-# harmonized with (the party's centre; the curated default when the belt is
+# harmonized with (the party's center; the curated default when the belt is
 # empty). A candidate landing beyond the radius is pulled back onto it -
 # extremes stay reachable by DRIFTING (the cage widens the region), they just
 # stop being a routine dice roll onto a broken voice (grit x air x pitch all
 # at the far edge at once synthesized as clicks and static, not character).
 const TEMPER_RADIUS := 0.85
 # How hard the interference field pushes a candidate, and the hard ceiling on
-# any one axis. The field colours a voice; it must never relocate one, or it
+# any one axis. The field colors a voice; it must never relocate one, or it
 # becomes a fourth attractor and every catch near the belt converges.
 const FIELD_LIFT := 0.55
 const FIELD_MAX := 0.25
-# How many belt members beyond the dominant parent may colour a throw, and how
+# How many belt members beyond the dominant parent may color a throw, and how
 # far each may pull it. Bounded so a combination is always a perturbation of one
 # recognizable parent rather than a march toward the belt's mean.
 const ENSEMBLE_MAX := 2
@@ -107,7 +107,7 @@ var _ensemble_last: Array = []
 # The three MODES of fishing - what the line is doing, not just how reward is
 # scored (each still earns differently):
 # DRIFT - the crab cage: the cast is left behind while you keep moving, so the
-#   line's scale grows with time - metres become miles become lightyears. The
+#   line's scale grows with time - meters become miles become lightyears. The
 #   cosmos opens (more planets visible at distance), and the longer the drift,
 #   the more foreign the next throw pulls in. Time sitting with it earns.
 # ANCHOR - freeze in place and search THIS area: throws stay tight around the
@@ -425,7 +425,7 @@ func _build_panel() -> void:
 	card_col.add_child(card_btns)
 	_accept_btn = Button.new()
 	_accept_btn.text = "Hold"
-	_accept_btn.tooltip_text = "Hold on to it - fold it into your Collection; every seed's colour re-attunes"
+	_accept_btn.tooltip_text = "Hold on to it - fold it into your Collection; every seed's color re-attunes"
 	_accept_btn.pressed.connect(_accept_catch)
 	card_btns.add_child(_accept_btn)
 	_release_btn = Button.new()
@@ -473,7 +473,7 @@ func _build_panel() -> void:
 ## running - it renders from the seeds. A belt with seeds can always speak (the
 ## voice is the party's blend even before a cast); a voice already cast can
 ## speak as itself. An empty belt with nothing cast has no voice to render, and
-## the button greys out.
+## the button grays out.
 func can_export_take() -> bool:
 	return not _text.text.strip_edges().is_empty() and (_cast or not _belt.is_empty())
 
@@ -501,7 +501,7 @@ func export_take() -> String:
 	DirAccess.make_dir_recursive_absolute("user://synth")
 	# capture the reception WE ARE HEARING (the resolver: the spot while
 	# exploring, the hook's frozen spot mid-fight, the seed's own carried
-	# colour when landed) - the export bakes exactly that
+	# color when landed) - the export bakes exactly that
 	var rc := _reception()
 	var loc_prox := float(rc.prox)
 	var loc_freq := float(rc.freq)
@@ -569,8 +569,8 @@ func _sync_line_button() -> void:
 	_update_slot_highlights()
 
 
-## Colour the cast line's lineage as a GRADIENT by generation: the most recent
-## seed on the line burns full colour, and each older ancestor fades toward white,
+## Color the cast line's lineage as a GRADIENT by generation: the most recent
+## seed on the line burns full color, and each older ancestor fades toward white,
 ## so the family chain reads as a depth ramp instead of a flat block of green.
 func _update_slot_highlights() -> void:
 	# first pass: the span of lineage depths that are lit right now
@@ -588,7 +588,7 @@ func _update_slot_highlights() -> void:
 		var lin: Array = _belt[i].lineage
 		var active: bool = _cast and (lin == _lineage or _is_prefix(lin, _lineage))
 		if active:
-			# recent (deeper) = full colour; distant ancestor (shallower) = near white
+			# recent (deeper) = full color; distant ancestor (shallower) = near white
 			var t: float = 1.0 if mx == mn else float(lin.size() - mn) / float(mx - mn)
 			var col := Color(1, 1, 1).lerp(Color(0.4, 1.0, 0.72), lerpf(0.12, 1.0, t))
 			b.add_theme_color_override("font_color", col)
@@ -757,19 +757,19 @@ func _ensure_collection() -> void:
 
 
 ## Normalize a candidate's trait vector against the pool it must harmonize
-## with: the party's acceptance-weighted centre ({} = the curated default when
+## with: the party's acceptance-weighted center ({} = the curated default when
 ## the belt is empty) anchors a trust region of TEMPER_RADIUS (RMS over the
 ## trait axes); a draw beyond it is pulled back onto the boundary, direction
 ## intact. Drifting widens the region - foreignness is EARNED by the cage,
 ## not rolled.
 func _temper_traits(t: Dictionary, drift: float) -> Dictionary:
-	# The cage's CENTRE moves with the field, it does not just widen. Previously
-	# distance only inflated a trust region still bolted to the belt's centre of
+	# The cage's CENTER moves with the field, it does not just widen. Previously
+	# distance only inflated a trust region still bolted to the belt's center of
 	# mass, so a candidate thirty lightyears out was still normalized toward the
 	# same point as one sitting on top of the belt - which is most of why
-	# drifting stopped changing anything. Now the field displaces the centre, so
+	# drifting stopped changing anything. Now the field displaces the center, so
 	# where you stand decides what "ordinary" even means; far out the field dies,
-	# the centre returns to the plain centroid, and the old behaviour is the
+	# the center returns to the plain centroid, and the old behavior is the
 	# limit case rather than the only case.
 	var center := _background_traits()
 	var bias := _field_bias(_field_at_candidate().vec)
@@ -1064,7 +1064,7 @@ func _drift_caption() -> String:
 	return "≈ %.1fe%d ly" % [ly / pow(10.0, float(e10)), e10]
 
 
-## THE RECEPTION RESOLVER - one rule for what colour the voice carries, and
+## THE RECEPTION RESOLVER - one rule for what color the voice carries, and
 ## the fix for "what I heard is not what I caught":
 ##   hooked          -> the spot's acoustics FROZEN at hook-set (the reel keeps
 ##                      sounding like the place as the line comes home)
@@ -1086,7 +1086,7 @@ func _reception() -> Dictionary:
 ## its strength set by how accepted it is - plus the water's own beacon (the
 ## prior, so an empty belt still has structure). Amplitudes decay with
 ## distance; the line hears the SUPERPOSITION: the nearest source dominates,
-## the centre frequency is the amplitude-weighted blend, and where two
+## the center frequency is the amplitude-weighted blend, and where two
 ## comparable sources overlap their detune BEATS - a slow shimmer in the
 ## band's strength and pitch. Regions between seeds sound genuinely
 ## different from regions on top of one; deep seeds need the warp to reach.
@@ -1153,7 +1153,7 @@ func _field_reception_legacy() -> Dictionary:
 
 ## The source's frequency (Hz): a resonant band that SWEEPS UP with distance (so
 ## different places sound different) plus a per-cast offset from the lineage (so
-## each line's source has its own colour). This is the band the reception filter
+## each line's source has its own color). This is the band the reception filter
 ## tunes to - the diverse patterns the player fishes for and blends.
 func _location_freq() -> float:
 	var h := float(hash(str(_lineage)) % 1000) / 1000.0
@@ -1489,7 +1489,7 @@ func _accept_catch() -> void:
 		_belt.pop_front()
 	_pending = {}
 	_card.visible = false
-	_rebuild_belt()                  # every member's colour re-attunes here
+	_rebuild_belt()                  # every member's color re-attunes here
 	_persist()
 	_status.text = "held +%.1f - hear what you caught (Collection %d/%d)" % [
 		reward, _belt.size(), BELT_MAX]
@@ -1511,7 +1511,7 @@ func _release_catch() -> void:
 ## contract (ProsodyWalk backfills unmeasured genes from the PRIOR).
 ## Deliberately NOT tempered: the trust region cages rolled strangers, but
 ## this voice was earned by being read aloud - it lands exactly where it
-## was measured. Difficulty is how foreign it sits from the party's centre,
+## was measured. Difficulty is how foreign it sits from the party's center,
 ## so fishing FROM it later fights like the outsider it is.
 ## A seed OWNS a scene (Director.jump derives it from the lineage hash - the
 ## same identity the catch stamped into entry.scene). Clicking or casting a
@@ -1628,11 +1628,11 @@ func _difficulty_word(d: float) -> String:
 	return "wild"
 
 
-# ---- similarity: the party, the vectors, the colours -----------------------
+# ---- similarity: the party, the vectors, the colors -----------------------
 
 
 ## A seed as a vector: its traits plus its genome (as deltas off the PRIOR),
-## the space the constellation colours attune in. An explicit genome (frozen
+## the space the constellation colors attune in. An explicit genome (frozen
 ## or mid-anneal adrenochrome) takes precedence over lineage derivation.
 func _seed_vector(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -> PackedFloat32Array:
 	var v := PackedFloat32Array()
@@ -1648,7 +1648,7 @@ func _seed_vector(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -
 		# 0.25) counted 38x more per unit than `breath_span` (prior 9.5), and
 		# measured 31% of all variance on its own, with effective dimensionality
 		# ~7.6 of 25. Every distance, every bearing, every acceptance-weighted
-		# centre and the catch card's kinship colour were all mostly reading one
+		# center and the catch card's kinship color were all mostly reading one
 		# arbitrary gene. G_BOUNDS is the range the gene is actually sampled and
 		# clamped over, so it is the honest unit.
 		var b: Array = Voice.ProsodyWalk.G_BOUNDS.get(key, [])
@@ -1715,7 +1715,7 @@ func _field_at_candidate() -> Dictionary:
 
 
 ## Lift a field vector back into trait deltas - the frame's transpose. Bounded
-## hard: the field COLOURS a candidate, it never relocates one.
+## hard: the field COLORS a candidate, it never relocates one.
 func _field_bias(vec: Vector3) -> Dictionary:
 	var b := {}
 	var put := func(key: String, v: float) -> void:
@@ -1732,7 +1732,7 @@ func _field_bias(vec: Vector3) -> Dictionary:
 	return b
 
 
-## The party's centre: acceptance-weighted mean of the belt's vectors.
+## The party's center: acceptance-weighted mean of the belt's vectors.
 func _party_vector() -> PackedFloat32Array:
 	var dims := Voice.TRAIT_KEYS.size() + Voice.ProsodyWalk.PRIOR.size()
 	var v := PackedFloat32Array()
@@ -1776,7 +1776,7 @@ func _bearing3() -> Vector3:
 
 
 ## A belt member's bearing in the SHARED party frame - the same frame for every
-## member, so the planets' colours and their shadow directions are mutually
+## member, so the planets' colors and their shadow directions are mutually
 ## consistent and do NOT depend on which candidate is currently being fished
 ## (that is why the shadows "point in directions, consistently, no matter which
 ## one we're anchored to"). Only an Accept, which moves the party, re-orients
@@ -1789,7 +1789,7 @@ func _member_bearing(e: Dictionary, party: PackedFloat32Array) -> Vector3:
 ## its own heading as the drift grows. This is the frame the belt's shadows are
 ## read against, so the pattern of moons IS the map of the region relative to
 ## where you are fishing - and it keeps shifting the further out you drift. With
-## nothing cast, the frame falls back to the party centre (home).
+## nothing cast, the frame falls back to the party center (home).
 func _cast_vector() -> PackedFloat32Array:
 	var party := _party_vector()
 	if not _cast:
@@ -1903,10 +1903,10 @@ func _rebuild_belt() -> void:
 		_coll_title.text = "Collection  %d/%d" % [_belt.size(), BELT_MAX]
 
 
-## The bag keeps reflecting fit: each member's colour is its RELATIVE standing
-## in the current party - similarity to the centre blended with its own
+## The bag keeps reflecting fit: each member's color is its RELATIVE standing
+## in the current party - similarity to the center blended with its own
 ## acceptance record (the receptance) - restretched every refresh, so an
-## Accept genuinely shifts every colour.
+## Accept genuinely shifts every color.
 func _refresh_inventory() -> void:
 	var party := _party_vector()
 	var sims: Array = []
@@ -1926,7 +1926,7 @@ func _refresh_inventory() -> void:
 		if i < _inv_glyphs.size() and is_instance_valid(_inv_glyphs[i]):
 			var glyph: SeedGlyph = _inv_glyphs[i]
 			glyph.fit = 0.55 * float(sim_n[i]) + 0.45 * float(acc_n[i])
-			# COLOUR is the seed's behaviour in the PARTY frame - an identity that
+			# COLOR is the seed's behavior in the PARTY frame - an identity that
 			# stays put as you fish, so a seed keeps its hue and can be tracked. Its
 			# SHADOW is set separately, in the CAST frame, and re-orients live as
 			# you cast and drift (see _update_belt_shadows). Frazzle still = fit.
@@ -2013,7 +2013,7 @@ func _process(delta: float) -> void:
 		_stream.set_presence(presence)
 		# the reception (see _reception): the spot's acoustics while exploring,
 		# the HOOK's frozen spot through the fight, the seed's own carried
-		# colour once landed - what you hear is what you catch, and it stays
+		# color once landed - what you hear is what you catch, and it stays
 		var rc := _reception()
 		_stream.set_location(float(rc.prox), float(rc.freq))
 		_metrics_t += delta
@@ -2195,7 +2195,7 @@ func _load_persisted() -> void:
 		_lineage = Settings.read("synth", "lineage", [1])
 		_belt = Settings.read("synth", "belt", [])
 		_profile = str(Settings.read("synth", "profile", "anchor"))
-		# older saves used the reward-flavour names; map them onto the modes
+		# older saves used the reward-flavor names; map them onto the modes
 		if _profile == "snap":
 			_profile = "anchor"
 		elif _profile == "hunt":
@@ -2353,35 +2353,35 @@ class CatchOrb:
 			finished.emit()
 
 	func _draw() -> void:
-		var centre := anchor if anchor != Vector2.ZERO \
+		var center := anchor if anchor != Vector2.ZERO \
 			else get_viewport_rect().size * 0.5
 		var body := Color.from_hsv(hue, 0.6, 0.95)
 		var rim := Color(1, 1, 1, 0.9)
 		if _t < CLOSE:
 			var u := _t / CLOSE
 			var r := lerpf(56.0, 18.0, u * u)
-			draw_arc(centre, r, 0.0, TAU, 40, Color(body, u * 0.9), 3.0)
-			draw_circle(centre, 18.0 * u, Color(body, u * 0.55))
+			draw_arc(center, r, 0.0, TAU, 40, Color(body, u * 0.9), 3.0)
+			draw_circle(center, 18.0 * u, Color(body, u * 0.55))
 			return
 		var tw := _t - CLOSE
 		if tw < wobbles * WOBBLE:
 			var k := int(tw / WOBBLE)
 			var u := fmod(tw, WOBBLE) / WOBBLE
 			var rock: float = sin(u * TAU * 1.5) * (1.0 - u) * 8.0 * (1.0 + 0.3 * k)
-			var pos := centre + Vector2(rock, -absf(rock) * 0.3)
+			var pos := center + Vector2(rock, -absf(rock) * 0.3)
 			draw_circle(pos, 18.0, Color(body, 0.85))
 			draw_arc(pos, 18.0, 0.0, TAU, 32, rim, 2.0)
 			draw_circle(pos + Vector2(-5, -6), 3.5, Color(1, 1, 1, 0.5))
 			return
 		var u := (_t - CLOSE - wobbles * WOBBLE) / RESULT
 		if success:
-			draw_circle(centre, 18.0, Color(body, 0.85 * (1.0 - u * 0.4)))
-			draw_arc(centre, 18.0 + u * 34.0, 0.0, TAU, 40,
+			draw_circle(center, 18.0, Color(body, 0.85 * (1.0 - u * 0.4)))
+			draw_arc(center, 18.0 + u * 34.0, 0.0, TAU, 40,
 				Color(1, 1, 1, 0.7 * (1.0 - u)), 2.5)
 		else:
 			for i in 7:
 				var a := TAU * float(i) / 7.0 + hue * TAU
-				var p := centre + Vector2(cos(a), sin(a)) * (9.0 + u * 52.0)
+				var p := center + Vector2(cos(a), sin(a)) * (9.0 + u * 52.0)
 				draw_circle(p, 3.5 * (1.0 - u), Color(body, 0.8 * (1.0 - u)))
 
 
@@ -2449,7 +2449,7 @@ class Hud:
 		var d: float = editor._candidate_difficulty() if pull > 0.05 else 0.0
 		var belly: float = pull * (s.y * 0.3) * (1.0 + 0.15 * sin(t * 2.2))
 		# the WIRE bows into an arc by DISTANCE (in any mode - the position holds
-		# now), the path we travelled out toward the thing at its far end
+		# now), the path we traveled out toward the thing at its far end
 		var drift_arc: float = lerpf(0.0, s.y * 0.24, editor._drift_norm())
 		var swell := belly + drift_arc
 		var pts := PackedVector2Array()
@@ -2463,7 +2463,7 @@ class Hud:
 				0.5 + 0.4 * minf(pull, 1.0))
 		draw_polyline(pts, c, 1.5)
 		# out at a distance (drifting there, anchored there, or reeling back) the
-		# beacon + travelling position show; the field freezes when anchored and
+		# beacon + traveling position show; the field freezes when anchored and
 		# reverses when reeling (both fall out of the odometer holding/shrinking).
 		# Only truly at home in anchor/reel do we fall back to a still cast dot.
 		var out_there: bool = editor._profile == "drift" or editor._drift_norm() > 0.003
@@ -2523,8 +2523,8 @@ class Hud:
 				lerpf(74.0, s.x * 0.8, u),
 				s.y * 0.5 + rng.randf_range(-0.3, 0.3) * s.y)
 			var r: float = 2.0 + 2.0 * clampf((closeness - 0.72) / 0.28, 0.0, 1.0)
-			# JUST DOTS here - too tiny to read a phase. Colour still carries the
-			# seed's behaviour so they can be told apart; the MOONS (the phase, the
+			# JUST DOTS here - too tiny to read a phase. Color still carries the
+			# seed's behavior so they can be told apart; the MOONS (the phase, the
 			# cast-relative shadow) live on the belt and the big candidate planet.
 			var col := SeedGlyph.behavior_color(editor._member_bearing(e, party))
 			draw_circle(pos, r, Color(col, 0.85))
@@ -2538,7 +2538,7 @@ class Hud:
 	func _draw_drift_field(s: Vector2, y0: float, belly: float) -> void:
 		var warp: bool = editor._warping
 		# the whole field slides toward the caster as the odometer climbs; the
-		# multiplier just sets how many motes pass per unit of distance travelled
+		# multiplier just sets how many motes pass per unit of distance traveled
 		var scroll: float = fposmod(editor._drift_dist * 42.0, 4096.0)   # wrap keeps fractional precision at deep-warp distances
 		var n := 18
 		for i in n:
@@ -2577,7 +2577,7 @@ class Hud:
 		var bcol := Color(1.0, 0.82, 0.4, lerpf(0.45, 1.0, prox) * (0.5 if passed else 1.0))
 		draw_arc(bp, br + 2.5 + sin(t * 3.0) * 1.0, 0.0, TAU, 20, bcol, 1.5)
 		draw_circle(bp, br, bcol)
-		# us: travelling toward and past it; a streak trails behind while warping
+		# us: traveling toward and past it; a streak trails behind while warping
 		var pp := Vector2(xat.call(pos_u), yat.call(pos_u))
 		if editor._warping:
 			var tu: float = maxf(pos_u - 0.1, 0.0)
@@ -2613,19 +2613,19 @@ class Hud:
 
 
 ## A seed drawn as a constellation: the LINES are seeded random (the seed's
-## own fingerprint); the COLOUR is the fit wheel - a relative scalar projected
-## red (a poor fit) through amber to green (kin), loud on purpose: a colour
+## own fingerprint); the COLOR is the fit wheel - a relative scalar projected
+## red (a poor fit) through amber to green (kin), loud on purpose: a color
 ## ring frames the glyph, and a poor fit FRAZZLES the constellation itself
 ## (scattered points, jagged lines) while kin draws calm and tight. When the
-## party changes, every colour shifts; how, you learn by doing it.
+## party changes, every color shifts; how, you learn by doing it.
 class SeedGlyph:
 	extends Control
 	var seed_hash := 0
 	var fit := 0.6                   # 0 poor .. 1 kin, RELATIVE within the bag
-	# When set (alpha > 0), the glyph's COLOUR is this behaviour tint instead of
+	# When set (alpha > 0), the glyph's COLOR is this behavior tint instead of
 	# the fit wheel - so a big belt is told apart by what each seed sounds like,
 	# not only how well it fits. The frazzle still reads fit (scatter = poor fit),
-	# so both signals survive: colour = behaviour, tightness = belonging.
+	# so both signals survive: color = behavior, tightness = belonging.
 	var tint := Color(1, 1, 1, 0.0)
 	# When is_planet, the glyph's body is drawn as a MOON PHASE (see draw_planet)
 	# instead of just a ring - a second visible axis for telling seeds apart. The
@@ -2637,7 +2637,7 @@ class SeedGlyph:
 	static func fit_color(f: float) -> Color:
 		return Color.from_hsv(lerpf(0.0, 0.42, clampf(f, 0.0, 1.0)), 0.9, 1.0)
 
-	## A seed's behaviour as a full-spectrum colour, from its 3D bearing (see
+	## A seed's behavior as a full-spectrum color, from its 3D bearing (see
 	## SynthEditor._bearing_of): HUE is the direction in the brightness/damage
 	## plane (the whole wheel, so distinct voices land on distinct hues), SAT is
 	## how far it sits from the party (kin wash out, foreigners burn), and VALUE
@@ -2700,8 +2700,8 @@ class SeedGlyph:
 			# a poor fit scatters its stars off their seats
 			p += Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * frazzle
 			pts.append(p)
-		# over a coloured moon the fingerprint needs contrast; on its own it keeps
-		# the fit colour it always had
+		# over a colored moon the fingerprint needs contrast; on its own it keeps
+		# the fit color it always had
 		var star := Color(col.lightened(0.55), 0.9) if is_planet else Color(col, 1.0)
 		var link := Color(col.lightened(0.4), 0.5) if is_planet else Color(col, 0.55)
 		for i in range(1, n):
@@ -2710,5 +2710,5 @@ class SeedGlyph:
 		for p in pts:
 			draw_circle(p, 2.0, star)
 		if not is_planet:
-			# the ring: the fit colour, unmissable even at 24 px
+			# the ring: the fit color, unmissable even at 24 px
 			draw_arc(s * 0.5, minf(s.x, s.y) * 0.5 - 1.5, 0.0, TAU, 32, Color(col, 0.9), 2.0)

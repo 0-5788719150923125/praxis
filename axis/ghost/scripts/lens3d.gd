@@ -3,14 +3,14 @@ class_name Lens3D
 
 ## Lens3D - a positionable perspective camera for the unified 3D path.
 ##
-## The old [Mesh3D] projector was a fixed, centred lens (focal 3.2, eye on the +z
+## The old [Mesh3D] projector was a fixed, centered lens (focal 3.2, eye on the +z
 ## axis); it could spin a solid in place but never *move the camera*. Lens3D is a
 ## real camera: an eye position looking at a target with a field of view, so a scene
 ## can push in, orbit, and frame in depth. Wide fov + a near eye is **forced
 ## perspective** - near geometry looms over far geometry, the dimensional read that
 ## a sheared 2D plane can only fake.
 ##
-## It projects a world [Vector3] into centred *unit-fraction* screen space (the same
+## It projects a world [Vector3] into centered *unit-fraction* screen space (the same
 ## space the rest of ghost draws in: origin = screen middle, y down); the caller
 ## multiplies by the pixel unit. Call [method prepare] once per frame before
 ## projecting (it caches the view basis), then [method project] / [method depth].
@@ -51,7 +51,7 @@ func depth(p: Vector3) -> float:
 	return (p - eye).dot(_f)
 
 
-## Project a world point to centred unit-fraction screen coords. Returns a
+## Project a world point to centered unit-fraction screen coords. Returns a
 ## [Vector3]: (x, y, depth) where x/y are the screen offset (multiply by the pixel
 ## unit) and z is the camera-space depth. z <= near means the point is behind the
 ## camera and the caller should clip it.

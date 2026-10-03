@@ -183,7 +183,7 @@ static func start_with_pipe(path: String, args: PackedStringArray, tag := "") ->
 
 
 ## Start a program that is SUPPOSED to outlive the app. Not tracked, not bound; the call
-## site must justify itself in a comment, because this is the behaviour every reported
+## site must justify itself in a comment, because this is the behavior every reported
 ## orphan came from.
 static func start_detached(path: String, args: PackedStringArray) -> int:
 	var prog := _program(path)
@@ -329,7 +329,7 @@ static func alive(pid: int) -> bool:
 	return false
 
 
-## Kill one child now and forget it. Returns whether it actually signalled anything, so a
+## Kill one child now and forget it. Returns whether it actually signaled anything, so a
 ## second stop - after a reap, or on a pid a mode's shutdown list still holds from last time -
 ## is visibly a no-op rather than an error in the log.
 static func stop(pid: int) -> bool:

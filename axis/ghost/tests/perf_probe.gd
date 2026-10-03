@@ -13,7 +13,7 @@ extends Node
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/perf_probe.gd 600 \
 ##       -- --medium comic --cuts 8 --frames 90 --seed 404
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/perf_probe.gd 900 \
-##       -- --catalogue --frames 60
+##       -- --catalog --frames 60
 ##
 ## GHOST_PROBE_GPU=1 matters: under --headless the dummy renderer records the canvas
 ## commands but rasterizes nothing, so the REST column loses the GPU submit and the
@@ -31,8 +31,8 @@ var _h := 1080
 var _medium_key := "full"
 var _cuts := 8
 var _frames := 90
-var _catalogue := false
-var _only := ""                   # --scene NAME: catalogue only this script
+var _catalog := false
+var _only := ""                   # --scene NAME: catalog only this script
 ## --governed: measure with the stage in the state main.gd's governor puts it in on a
 ## SKIPPED frame (process_mode DISABLED, render target UPDATE_DISABLED). The Director is an
 ## autoload and keeps calling update()/queue_redraw() on the scene regardless, so this
@@ -56,8 +56,8 @@ func _run() -> void:
 		RenderingServer.get_current_rendering_method(), DisplayServer.get_name(),
 		DisplayServer.window_get_vsync_mode(), _w, _h, _frames, DT])
 	print("perf_probe: cpu %s x%d" % [OS.get_processor_name(), OS.get_processor_count()])
-	if _catalogue:
-		await _catalogue_run()
+	if _catalog:
+		await _catalog_run()
 	else:
 		await _session_run()
 	_summary()
@@ -70,7 +70,7 @@ func _parse_args() -> void:
 	var args := OS.get_cmdline_user_args()
 	for i in args.size():
 		match args[i]:
-			"--catalogue": _catalogue = true
+			"--catalog": _catalog = true
 			"--governed": _governed = true
 		if i + 1 >= args.size():
 			break
@@ -144,9 +144,9 @@ func _cut() -> void:
 		prev.queue_free()
 
 
-# --- the catalogue: every registered {scene, behavior}, alone on a full frame -------------
+# --- the catalog: every registered {scene, behavior}, alone on a full frame -------------
 
-func _catalogue_run() -> void:
+func _catalog_run() -> void:
 	var stage := _stage()
 	_medium = Medium.make("full")
 	_medium.mount(stage)

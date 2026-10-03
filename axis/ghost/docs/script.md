@@ -5,7 +5,7 @@ Every mark a Generative or Synthesis script may carry - the list the script edit
 
 ScriptMarks - every authoring mark a script may carry, registered with what it does.
 
-A script is plain Markdown, and ghost reads more out of it than the words: speaker cues, hesitations, picture markers, inline pronunciations, template macros, emphasis. Each of those used to be documented only where it was implemented, so a new author had no way to find out what ghost understands short of reading the source. This is the one list: the `ScriptWriter` palette is built from it, `ScriptHighlighter` colours a script with its patterns, and docs.py writes docs/script.md from it.
+A script is plain Markdown, and ghost reads more out of it than the words: speaker cues, hesitations, picture markers, inline pronunciations, template macros, emphasis. Each of those used to be documented only where it was implemented, so a new author had no way to find out what ghost understands short of reading the source. This is the one list: the `ScriptWriter` palette is built from it, `ScriptHighlighter` colors a script with its patterns, and docs.py writes docs/script.md from it.
 
 AN ENTRY DOES NOT IMPLEMENT ITS MARK. The parsers of record stay where they are (`Manuscript` for cues, rests and pictures; `TextNorm` and `Phonemes` for the rest), and `tests/script_marks_check.gd` inserts every entry's example and asks THOSE parsers what they make of it - so an entry that drifts from what the reader actually does fails there, and a new entry without a check fails too.
 
@@ -54,7 +54,7 @@ Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_
 |---|---|---|---|
 | Heading | `# Heading` | Generative, Synthesis | Spoken like any line, set as a heading on the page. The frontmatter's title is read first on its own. |
 | Scene line | `*Nine-thirty. Orientation.*` | Generative | A short paragraph entirely in italics announces a change of time or place; a picture just before it gets a full page. |
-| Italic | `*emphasised*` | Generative, Synthesis | Never spoken as a mark; shown slanted in the subtitles and on the page. |
+| Italic | `*emphasized*` | Generative, Synthesis | Never spoken as a mark; shown slanted in the subtitles and on the page. |
 | Bold | `**strong**` | Generative, Synthesis | Never spoken as a mark; shown emboldened in the subtitles and on the page. |
 | Scene break | `* * *` | Generative | A rule across the page between two scenes. Silent. |
 

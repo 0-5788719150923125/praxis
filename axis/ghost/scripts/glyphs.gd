@@ -47,7 +47,7 @@ class_name GlyphSet
 ## edge is a gradient the rasterizer can interpolate rather than a hard step. This
 ## replaces [TriBatch]'s three-quads-per-line feather with ONE quad per segment,
 ## which matters at four thousand quads a frame, and it lets the whole page share a
-## single colour per glyph - a plain `fill()` on a packed array rather than a
+## single color per glyph - a plain `fill()` on a packed array rather than a
 ## per-vertex loop.
 
 ## Pixels of screen height the sampled [member weight] is quoted at, matching the
@@ -83,7 +83,7 @@ class Glyph:
 	var verts := PackedVector2Array()
 	## Parallel to [member verts]: the cross-width ramp coordinate for each vertex.
 	var uvs := PackedVector2Array()
-	## Cumulative centreline ink length at the END of each segment (em units).
+	## Cumulative centerline ink length at the END of each segment (em units).
 	var seg_end := PackedFloat32Array()
 	## Total ink length - the denominator of the pen's reveal parameter.
 	var total := 0.0
@@ -323,7 +323,7 @@ func spec() -> Dictionary:
 # The shared alpha-ramp texture: white, opaque across the middle [constant CORE] of
 # its width, falling to nothing at both ends. Stretched across a stroke quad it IS
 # the antialiasing. The outermost texels are exactly zero and the caller samples at
-# texel centres ([method uv_lo] / [method uv_hi]), so nothing depends on the canvas
+# texel centers ([method uv_lo] / [method uv_hi]), so nothing depends on the canvas
 # item's repeat mode.
 # ---------------------------------------------------------------------------------
 static var _ramp_tex: Texture2D = null

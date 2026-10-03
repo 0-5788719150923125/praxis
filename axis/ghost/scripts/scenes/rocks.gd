@@ -18,8 +18,8 @@ extends GhostScene
 ## beat), `crumble` (faces push apart once, then the scene ends).
 ##
 ## Nothing here is one fixed constant per style: the material, responsiveness, and reveal
-## are all *sampled per rock* around the style's centre, so two rocks of a kind still
-## differ - every computation perturbed by sampling. Colour is a [Scheme] mood chosen to
+## are all *sampled per rock* around the style's center, so two rocks of a kind still
+## differ - every computation perturbed by sampling. Color is a [Scheme] mood chosen to
 ## suit the style (matte stone gets the earthy moods, the gem gets the jewel ones), and the
 ## stones either share a tight hue FAMILY or spread base-to-accent across the set. The
 ## composition is sampled too - a couple of colossal boulders, a resting cluster, or a wide
@@ -48,7 +48,7 @@ const STYLE_MOODS := {
 	"rough":   ["ash", "bone", "brass", "ember", "dawn", "sodium", "verdant", "abyss"],
 	"crystal": ["violet", "magenta", "teal", "glacier", "rose", "toxic", "abyss", "ember"],
 }
-# Per-style material CENTRES (each rock samples around these, below): [edge, sat, gloss, roughness].
+# Per-style material CENTERS (each rock samples around these, below): [edge, sat, gloss, roughness].
 const MATERIAL := {
 	"plain":   {"edge": 0, "sat": 0.30, "gloss": 0.18, "rough": 0.6},
 	"rough":   {"edge": 1, "sat": 0.42, "gloss": 0.05, "rough": 0.95},
@@ -83,8 +83,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# others mostly wireframe-revealed - the masking is a spectrum, not a flag.
 	var reveal_chance := 0.0 if rng.randf() < 0.3 else rng.randf_range(0.3, 0.9)
 
-	# Colour comes from a shared [Scheme] mood suited to the style, so a session of rocks is
-	# ash-grey or bone or lurid gem rather than one arbitrary hue every time.
+	# Color comes from a shared [Scheme] mood suited to the style, so a session of rocks is
+	# ash-gray or bone or lurid gem rather than one arbitrary hue every time.
 	var sch := Scheme.pick(rng) if _style == "hybrid" else Scheme.among(STYLE_MOODS[_style], rng)
 	# Two ways a set of stones can relate: a tight FAMILY (all near the base hue, one stone
 	# type) or a SPREAD from base to accent (a mixed deposit, each stone its own mineral).
@@ -114,8 +114,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"spin": spin.normalized() * rng.randf_range(0.07, 0.16),   # gentle
 			"e": 0.0,
 			"glow": 0.0,
-			# Material sampled around the style centre, then SCALED by the mood's own
-			# saturation - ash stones come out grey, toxic ones lurid, from the same style.
+			# Material sampled around the style center, then SCALED by the mood's own
+			# saturation - ash stones come out gray, toxic ones lurid, from the same style.
 			"sat": clampf(float(mat.sat) * (0.35 + 1.3 * sch.sat)
 				+ rng.randf_range(-0.10, 0.10), 0.0, 1.0),
 			"gloss": clampf(float(mat.gloss) * rng.randf_range(0.7, 1.3), 0.0, 1.0),
@@ -156,9 +156,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"count": count, "hues": "family" if family else "spread"}
 
 
-# Push overlapping rock centres apart over a few relaxation passes until they only lightly
+# Push overlapping rock centers apart over a few relaxation passes until they only lightly
 # overlap - a believable touching pile rather than a heap of interpenetrating shapes. The
-# pushes are symmetric so the cluster stays centred (the biggest stones still overflow the
+# pushes are symmetric so the cluster stays centered (the biggest stones still overflow the
 # frame). Positions are static after this, so one settle at build time is enough.
 func _relax_positions(rng: RandomNumberGenerator) -> void:
 	for _iter in 32:
@@ -243,7 +243,7 @@ func _deform_collisions() -> void:
 			var overlap: float = (ri + float(other.radius)) - dist
 			if overlap <= 0.0 or dist < 1e-4:
 				continue
-			# Contact direction (toward the neighbour), mapped from world/screen into this
+			# Contact direction (toward the neighbor), mapped from world/screen into this
 			# rock's object space; dent depth grows with the overlap.
 			var ldir := (basinv * Vector3(d.x / dist, d.y / dist, 0.0)).normalized()
 			var dent := clampf(overlap / ri, 0.0, 0.7) * 0.45

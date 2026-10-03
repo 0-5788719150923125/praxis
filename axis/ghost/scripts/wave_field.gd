@@ -7,7 +7,7 @@ class_name WaveField
 ## The thing this exists to avoid is a grid solver. A water surface can be integrated
 ## on a lattice - a height field with a wave equation stepped every tick - but then the
 ## surface has a resolution, a stability limit, a CFL condition tying its timestep to
-## its cell size, and a warm-up before it looks like anything. A sum of travelling
+## its cell size, and a warm-up before it looks like anything. A sum of traveling
 ## sinusoids has none of that: it is a closed-form function of position and time, exact
 ## at any point, at any scale, with no state to carry between frames and nothing to
 ## pre-warm. You can ask it for the surface at t = 900 seconds without having simulated
@@ -77,7 +77,7 @@ var _n := 0
 var steep := 1.0
 
 
-## Add one travelling component. [param tempo] scales the dispersion-derived frequency:
+## Add one traveling component. [param tempo] scales the dispersion-derived frequency:
 ## real ripples on a hand-sized pool cross it in well under a second, which is true and
 ## unwatchable, so a caller slows the whole field with one number rather than lying about
 ## the dispersion relation per component. Returns the component's index.
@@ -191,7 +191,7 @@ func sweep(t: float, org: Vector2, step: float, gw: int, gh: int,
 
 ## Add transient ring packets (drips) onto the same four buffers.
 ##
-## Each entry is a Dictionary with world centre [code]x, y[/code], front radius
+## Each entry is a Dictionary with world center [code]x, y[/code], front radius
 ## [code]r[/code], packet half width [code]w[/code], amplitude [code]a[/code], wavenumber
 ## [code]k[/code], accumulated carrier phase [code]phi[/code], phase offset [code]ph[/code],
 ## and steepness [code]q[/code]. The caller advances r, phi and a; this only evaluates.
@@ -204,13 +204,13 @@ func sweep(t: float, org: Vector2, step: float, gw: int, gh: int,
 ## packet and die at its leading edge - the actual look of a drip ring.
 ##
 ## THE RINGS RIDE THE SWELL. Call this AFTER [method sweep] and the four buffers already hold
-## the travelling field, so a ring can read the water it is spreading across instead of ignoring
+## the traveling field, so a ring can read the water it is spreading across instead of ignoring
 ## it. Two couplings, both from data already in the buffers and costing a handful of flops per
 ## point:
 ##
 ##   WARP (`warp` on the ring) displaces the packet's front and its carrier by the local swell
 ##   height, so a ring crossing a crest runs ahead there and lags in the trough. It stops being
-##   a circle stamped over the water and becomes a front travelling THROUGH it - which is what
+##   a circle stamped over the water and becomes a front traveling THROUGH it - which is what
 ##   "droplets create a circular ripple effect which does not interact with the other waves at
 ##   all" was asking for. Physically it is the leading-order term of a shallow-water celerity
 ##   c = sqrt(g(d + h)) accumulating differently over crest and trough; the second-order piece
@@ -281,7 +281,7 @@ static func sweep_rings(rings: Array, org: Vector2, step: float, gw: int, gh: in
 						i += 1
 						continue
 					# The swell as it stands at this node - sweep() has already run, so these are
-					# the travelling field's own height and gradient, not the ring's.
+					# the traveling field's own height and gradient, not the ring's.
 					var swell := hh[i]
 					var rw := rr - wrp * swell            # the front, carried by the water
 					var u := (rw - rad) / wdt

@@ -24,8 +24,8 @@ extends Node
 ##   change of pitch moves every line by its own multiple of the change and the whole band
 ##   slides. Spacing is the seed's now and no audio feature may reach it.
 ##
-##   THE INK. The highlighted contour's colour is baked into the packet, so the tonal
-##   centre it comes from has to be eased or it arrives as a step every re-print.
+##   THE INK. The highlighted contour's color is baked into the packet, so the tonal
+##   center it comes from has to be eased or it arrives as a step every re-print.
 ##
 ## AND THEN THE OPPOSITE REPORT, twice, which is the other half of the same subject.
 ##
@@ -48,7 +48,7 @@ extends Node
 ##   IT MOVES. Eight seconds visibly redraws the sheet, and over a minute and a half every part
 ##   of it has had a turn - nothing is permanently masked out.
 ##
-##   IT IS NOT UNIFORM. At any moment some of the sheet is clearly reorganising and some of it is
+##   IT IS NOT UNIFORM. At any moment some of the sheet is clearly reorganizing and some of it is
 ##   clearly holding still. Measured per CELL of a coarse grid over the paper, because that is
 ##   the difference between "the land is evolving" and "the whole frame shifted": a window warp,
 ##   which is the control here, leaves no cell still at all.
@@ -222,7 +222,7 @@ func _evolution_test(sc, sv: int, ref) -> void:
 	var quiet := _pct(blk8, 0.10)
 	var busy := _pct(blk8, 0.90)
 	# NOTHING IS PERMANENTLY MASKED. Sampled at checkpoints and UNIONED rather than compared once
-	# at the end, because the land oscillates: a region can be mid-reorganisation at forty
+	# at the end, because the land oscillates: a region can be mid-reorganization at forty
 	# seconds and back where it started at ninety, and a single late comparison would score that
 	# as a region that never moved.
 	var reach := _blocks(d8, ref.nx, ref.ny)
@@ -323,7 +323,7 @@ func _disp(a: PackedFloat32Array, b: PackedFloat32Array, grad: PackedFloat32Arra
 
 
 ## The same, averaged over a coarse grid of REGIONS of the paper - which is the unit "some of the
-## sheet is reorganising and some of it is holding still" is a claim about.
+## sheet is reorganizing and some of it is holding still" is a claim about.
 const BLK := 10
 
 func _blocks(d: PackedFloat32Array, nx: int, ny: int) -> PackedFloat32Array:
@@ -371,9 +371,9 @@ func _pct(v: PackedFloat32Array, q: float) -> float:
 
 
 ## The ink of the highlighted contour is baked into a packet rebuilt at most every 0.3 s, so
-## what matters is how far its colour can move ACROSS ONE RE-PRINT under the most hostile
-## input there is: a tonal centre sweeping continuously through the hue wrap, which has no
-## settled answer at all. Unsmoothed this is a full-saturation colour arriving in one step.
+## what matters is how far its color can move ACROSS ONE RE-PRINT under the most hostile
+## input there is: a tonal center sweeping continuously through the hue wrap, which has no
+## settled answer at all. Unsmoothed this is a full-saturation color arriving in one step.
 func _ease_test(sc, sv: int) -> void:
 	var dt := 1.0 / 60.0
 	var hist: Array = []
@@ -386,9 +386,9 @@ func _ease_test(sc, sv: int) -> void:
 			var then: Color = hist[hist.size() - 19]
 			var now: Color = hist[hist.size() - 1]
 			worst = maxf(worst, Vector3(now.r - then.r, now.g - then.g, now.b - then.b).length())
-	print("  inked contour: worst colour step across one re-print %.3f" % worst)
+	print("  inked contour: worst color step across one re-print %.3f" % worst)
 	_ok(worst < 0.06,
-		"seed %d: the inked contour's colour can move %.3f in one re-print - that is a "
+		"seed %d: the inked contour's color can move %.3f in one re-print - that is a "
 		% [sv, worst] + "flash on every loop at that elevation, all over the sheet at once")
 
 

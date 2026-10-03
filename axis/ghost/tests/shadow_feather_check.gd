@@ -63,7 +63,7 @@ func _terrain_edges() -> void:
 		lo = minf(lo, v)
 		hi = maxf(hi, v)
 	var span := hi - lo
-	# The biggest jump between neighbouring vertices, as a fraction of the whole range. This is
+	# The biggest jump between neighboring vertices, as a fraction of the whole range. This is
 	# exactly "how much of the edge lands in one quad".
 	var worst := 0.0
 	var steep := 0
@@ -80,7 +80,7 @@ func _terrain_edges() -> void:
 			if d > 0.25 * span:
 				steep += 1
 	var frac := worst / maxf(1e-6, span)
-	print("   range %.3f .. %.3f (span %.3f); worst neighbour step %.3f = %.0f%% of the span; "
+	print("   range %.3f .. %.3f (span %.3f); worst neighbor step %.3f = %.0f%% of the span; "
 		% [lo, hi, span, worst, frac * 100.0] + "%d steps over 25%% of it" % steep)
 	_check(frac < 0.42, "no single lattice step carries most of the edge (%.0f%% < 42%%)" % (frac * 100.0))
 	_check(steep < 60, "few near-vertical steps across the whole map (%d < 60)" % steep)
@@ -155,9 +155,9 @@ func _round_silhouette() -> void:
 		var mid := sf.factor(Vector3(0.0, 0.0, 0.0))
 		var corner := sf.factor(Vector3(r * 0.80, 0.0, r * 0.80))     # inside the square, outside the disc
 		res.append([mid, corner])
-		print("   round=%s   centre %.3f   corner %.3f" % [round_, mid, corner])
+		print("   round=%s   center %.3f   corner %.3f" % [round_, mid, corner])
 	var sq: Array = res[0]
 	var rd: Array = res[1]
 	_check(sq[1] < ShadowField.SHADOW_MIN + 0.08, "a SQUARE silhouette does shadow its corner (%.3f)" % sq[1])
-	_check(rd[0] < ShadowField.SHADOW_MIN + 0.08, "a ROUND silhouette still shadows its centre (%.3f)" % rd[0])
+	_check(rd[0] < ShadowField.SHADOW_MIN + 0.08, "a ROUND silhouette still shadows its center (%.3f)" % rd[0])
 	_check(rd[1] > sq[1] + 0.15, "a ROUND silhouette leaves the corner lit (%.3f > %.3f)" % [rd[1], sq[1]])

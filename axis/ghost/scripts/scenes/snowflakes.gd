@@ -10,7 +10,7 @@ extends GhostScene
 ## every flake turns on its *own* signed angular velocity, varied in direction and
 ## speed, so the field is organic rather than locked in lockstep. Mode (by seed) sets
 ## only the translation - a stationary field (`drift`) or one carried on a curl-noise
-## breeze (`wind`). Colour, not size, carries the audio: the crystals brighten with energy.
+## breeze (`wind`). Color, not size, carries the audio: the crystals brighten with energy.
 
 const FlowField := preload("res://scripts/flow.gd")
 

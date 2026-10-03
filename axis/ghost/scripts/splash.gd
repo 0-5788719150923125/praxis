@@ -63,7 +63,7 @@ func _ready() -> void:
 	_build_ui()
 	# THE ⤓ EXPORT BUTTON HAS NO BUSINESS HERE. It is session furniture - it renders the
 	# running show to video - and the home screen is not a session: there is nothing on
-	# screen to render, so the button could only ever be the greyed "nothing to render
+	# screen to render, so the button could only ever be the grayed "nothing to render
 	# yet" stub, sitting on top of the Environment panel and eating its clicks.
 	#
 	# This does NOT reopen the "never hide the export button" rule in exporter.gd. That

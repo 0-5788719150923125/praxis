@@ -2,7 +2,7 @@ extends GhostScene
 
 ## Prism split - one prism strains, then breaks into two (from "the-point").
 ##
-## It begins as a SINGLE blue [PrismBody] at centre. Energy builds a TENSION: a red clone is pulled
+## It begins as a SINGLE blue [PrismBody] at center. Energy builds a TENSION: a red clone is pulled
 ## out of it as a faint SHADE, stretching toward its anchor but held back by an attractor BOND
 ## between them (a taut filament). When the tension crosses its breaking point, the bond SNAPS - a
 ## flash - and the freed clone SPRINGS to its anchor with an overshoot, both prisms settling to the
@@ -10,14 +10,14 @@ extends GhostScene
 ## [PrismBody]), so the pair keeps straining and springing with the music. The whole split is driven
 ## by energy: a quiet passage barely stretches it; a surge breaks it.
 ##
-## Colour and geometry both come off one roll. The pair takes a [Scheme] mood - the
+## Color and geometry both come off one roll. The pair takes a [Scheme] mood - the
 ## original on its base hue, the clone on the mood's counter hue (see [method
 ## Scheme.opposed]) - so "blue splits into red" is now one outcome of many rather than
 ## the only one. The structural liberty is the SPLIT ITSELF: which way the thing comes
 ## apart, which is this scene's whole composition.
 
 ## How the prism comes apart. `angle` is the axis the two halves separate along (0 =
-## sideways), `throw` how far each ends up from centre, `size` the body scale that
+## sideways), `throw` how far each ends up from center, `size` the body scale that
 ## still reads at that separation - a tight vertical cleave wants smaller prisms than
 ## a wide lateral break, so the three travel together rather than being rolled apart.
 const SPLIT := {
@@ -31,14 +31,14 @@ var _blue: PrismBody
 var _red: PrismBody
 var _tension := 0.0        # attractor strain: builds with energy, breaks the bond at >= 1
 var _broke := false
-var _bx := 0.0             # blue centre, in anchor fractions (-1 = left anchor)
-var _rx := 0.0             # red centre, in anchor fractions (+1 = right anchor)
+var _bx := 0.0             # blue center, in anchor fractions (-1 = left anchor)
+var _rx := 0.0             # red center, in anchor fractions (+1 = right anchor)
 var _bxv := 0.0
 var _rxv := 0.0
 var _rop := 0.0            # red opacity (a faint shade before the break, full after)
 var _snap := 0.0           # break-flash envelope
 var _axis := Vector2.RIGHT # the direction the two halves separate along
-var _throw := 0.32         # how far each settles from centre, in unit-fractions
+var _throw := 0.32         # how far each settles from center, in unit-fractions
 var _lead := 0.6           # the original's hue ..
 var _counter := 0.0        # .. and the clone's
 var _bond_col := Color(0.7, 0.85, 1.0)   # the taut filament, tinted by the mood
@@ -52,7 +52,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var sch := Scheme.pick(rng)
 	_lead = sch.vary(rng)
 	_counter = sch.opposed(_lead)
-	_bond_col = Color.from_hsv(_lead, 0.25, 1.0)      # a pale filament of the original's colour
+	_bond_col = Color.from_hsv(_lead, 0.25, 1.0)      # a pale filament of the original's color
 	var split := String(SPLIT.keys()[rng.randi() % SPLIT.size()])
 	var s: Dictionary = SPLIT[split]
 	var ang := _band(s["angle"], rng) * (1.0 if rng.randf() < 0.5 else -1.0)   # mirrored half the time
@@ -126,7 +126,7 @@ func _draw() -> void:
 	_red.draw(self, rc, sc, _counter, clampf(_rop, 0.0, 1.0))
 
 
-# The stretching attractor bond between the two centres: a slightly bowed, glowing filament whose
+# The stretching attractor bond between the two centers: a slightly bowed, glowing filament whose
 # brightness `k` tracks the tension (and spikes on the snap).
 func _draw_bond(a: Vector2, b: Vector2, k: float) -> void:
 	if k <= 0.001:

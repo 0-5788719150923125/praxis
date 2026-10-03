@@ -1,6 +1,6 @@
 extends Node
 
-## Is it VAPOUR? The gate for `vapors` and shaders/vapor_field.gdshader.
+## Is it VAPOR? The gate for `vapors` and shaders/vapor_field.gdshader.
 ##
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/vapor_check.gd 480
 ##
@@ -10,19 +10,19 @@ extends Node
 ## This scene is a LOOK, and a look is exactly what gets shipped broken on a careful read: the
 ## first three cuts of the field all compiled, all ran, all reported plausible coverage, and all
 ## three drew engraved satin - long parallel contour lines over the whole frame - instead of
-## vapour. Then the fourth moved beautifully and pulsed like a bellows. So each claim here is one
+## vapor. Then the fourth moved beautifully and pulsed like a bellows. So each claim here is one
 ## of the properties that separates the look from the ways it has ACTUALLY failed, and each is
 ## measured against a control that breaks that property, because a threshold nothing can fail is
 ## not a gate.
 ##
-##   PRESENCE   Masses AND darkness. A field that fills the frame is a colour wash and one that
+##   PRESENCE   Masses AND darkness. A field that fills the frame is a color wash and one that
 ##              fills none of it is a bug; the negative space is half of what makes masses read.
 ##   FRONT      A visible boundary. The SHARE of lit edges that jump more than STEEP in one
 ##              pixel, against the same field with `hard` at 0 - the soft-edged haze this look
 ##              must not be, and which every existing fog/cloud layer here already is.
 ##   FILAMENT   Elongated structure. Structure-tensor COHERENCE per block (how aligned the
 ##              gradients inside it are), against the same field sampled isotropically
-##              (`stretch` 1). Cloud is incoherent; drawn-out vapour is not.
+##              (`stretch` 1). Cloud is incoherent; drawn-out vapor is not.
 ##   STEADINESS The masses do not INFLATE. Reported from the field and the worst thing this
 ##              scene did: "it expands and contracts rapidly with the harmonics... it should be
 ##              continuous movement forward, not an expand and contract". A plume's amplitude IS
@@ -30,12 +30,12 @@ extends Node
 ##              Measured as the largest change in lit AREA over a quarter second across a
 ##              passage with beats, against a control that drives the amplitudes the way the
 ##              first version's beat kick did.
-##   COLOUR     More than one hue in the frame, area-weighted, against a control with every
-##              plume on the SAME colour. Two masses of different colours blending where they
+##   COLOR     More than one hue in the frame, area-weighted, against a control with every
+##              plume on the SAME color. Two masses of different colors blending where they
 ##              meet is the reference image's whole subject.
 ##   MOTION     The field moves on its own, under the STATIC behavior (no camera drift at all),
 ##              against the same frames with the phase rolled back - so what is measured is the
-##              vapour flowing and not the camera.
+##              vapor flowing and not the camera.
 ##
 ## FRONT and FILAMENT are averaged over SEVERAL MOMENTS, each against its control at the same
 ## instant. Single-moment readings of both swing by a third depending on what happens to be in
@@ -150,7 +150,7 @@ func _run() -> void:
 		"steadiness: the control only moved %.1f%% - this measure cannot see an inflating mass"
 			% (100.0 * jump_pulsed))
 
-	# --- COLOUR, against a one-colour control ---
+	# --- COLOR, against a one-color control ---
 	var here_img := await _grab(vp)
 	var spread_multi := _hue_spread(here_img)
 	var cols: PackedVector3Array = mat.get_shader_parameter("u_col")
@@ -160,11 +160,11 @@ func _run() -> void:
 	mat.set_shader_parameter("u_col", flat)
 	var spread_mono := _hue_spread(await _grab(vp))
 	mat.set_shader_parameter("u_col", cols)
-	print("  colour: hue spread %.3f of a turn, one-colour control %.3f" % [spread_multi, spread_mono])
+	print("  color: hue spread %.3f of a turn, one-color control %.3f" % [spread_multi, spread_mono])
 	_want(spread_multi > 0.06,
-		"colour: %.3f of a turn between the frame's hues - it is one colour" % spread_multi)
+		"color: %.3f of a turn between the frame's hues - it is one color" % spread_multi)
 	_want(spread_multi > spread_mono + 0.02,
-		"colour: %.3f multi against %.3f mono - the plume colours are not reaching the frame"
+		"color: %.3f multi against %.3f mono - the plume colors are not reaching the frame"
 			% [spread_multi, spread_mono])
 
 	# --- MOTION, against a rolled-back phase ---
@@ -186,7 +186,7 @@ func _run() -> void:
 	vp.queue_free()
 	print("")
 	if _fails.is_empty():
-		print("vapor_check: ALL OK - it is vapour.")
+		print("vapor_check: ALL OK - it is vapor.")
 	else:
 		print("vapor_check: %d FAILURE(S)" % _fails.size())
 		for f in _fails:
@@ -325,8 +325,8 @@ func _highpass(l: PackedFloat32Array, r: int) -> PackedFloat32Array:
 	return out
 
 
-# How far apart the frame's hues are, over the area that actually carries colour: the widest
-# circular gap between hue bins holding at least 2% of the coloured pixels.
+# How far apart the frame's hues are, over the area that actually carries color: the widest
+# circular gap between hue bins holding at least 2% of the colored pixels.
 func _hue_spread(img: Image) -> float:
 	var bins := PackedFloat32Array()
 	bins.resize(36)
@@ -359,7 +359,7 @@ func _mean_abs_diff(la: PackedFloat32Array, lb: PackedFloat32Array) -> float:
 	return acc / float(la.size())
 
 
-# Synthetic audio: a settled, moderately loud passage with a travelling spectral peak and beats
+# Synthetic audio: a settled, moderately loud passage with a traveling spectral peak and beats
 # on a half-second grid - the state the look is judged in.
 func _features(t: float) -> AudioFeatures:
 	var f := AudioFeatures.new()

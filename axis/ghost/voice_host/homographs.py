@@ -270,7 +270,7 @@ class _Corpus:
     pass is off, and off means the reading is exactly what it was before.
 
     They are fetched together and fail together on purpose. The stopword list is not
-    an optimisation - without it the participle rule rewrites `a`, `to`, `in` and
+    an optimization - without it the participle rule rewrites `a`, `to`, `in` and
     `I` wherever one of them follows a `was` - so a half-loaded state would be worse
     than none at all.
     """
@@ -480,7 +480,7 @@ class Homographs:
         # noun frame, and the capital carries no information here because the
         # position or the shouting explains it. Left alone rather than guessed at.
         if penn in ("NNP", "NNPS") and (wi == 0 or word.isupper()):
-            return None, "capitalised by position, not a proper noun"
+            return None, "capitalized by position, not a proper noun"
 
         # 1. A PARTICIPLE THE TAGGER CALLED SOMETHING ELSE. "were read aloud" comes
         #    back JJ and "was wound tight" comes back NN; the auxiliary in front says
@@ -491,7 +491,7 @@ class Homographs:
         #    verb-ish tag would drop the one case this rule exists for; what keeps
         #    "it was a refund" and "I was in the room" out is the closed-class check
         #    a few lines up, which is nltk's stopword corpus and not a guess.
-        #    ADVERBS DO NOT BREAK THE AUXILIARY'S GRIP, and the immediate-neighbour test used to
+        #    ADVERBS DO NOT BREAK THE AUXILIARY'S GRIP, and the immediate-neighbor test used to
         #    let them: "is not read", "have never read", "had already read" are all participles
         #    and all three missed this rule, which is how a whole-book measurement caught them
         #    (the veto in 3b then flipped them to the present reading, which is how they became

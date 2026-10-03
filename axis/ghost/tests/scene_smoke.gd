@@ -1,9 +1,9 @@
 extends Node
 
-## Smoke gate for the WHOLE scene catalogue - build, update, draw, free, every entry.
+## Smoke gate for the WHOLE scene catalog - build, update, draw, free, every entry.
 ##
 ## Nothing in tests/ referenced [constant Director.SCENES] before this, which meant the
-## catalogue's only real check was somebody watching the show for long enough to see the
+## catalog's only real check was somebody watching the show for long enough to see the
 ## broken one come up. With 45 entries and a novelty-weighted scheduler, "long enough"
 ## can be a very long time, and the failure surfaces as a crash mid-render.
 ##
@@ -13,7 +13,7 @@ extends Node
 ##                   sweep silence, a steady middle, and a loud transient, because scenes
 ##                   branch on all three (an activation threshold, a beat gate, a lull)
 ##   _draw         - forced, because most of the interesting arithmetic (projection,
-##                   polygon winding, colour construction) only runs there
+##                   polygon winding, color construction) only runs there
 ##   free          - a scene that leaks a thread or a job shows up as a hang, not an error
 ##
 ## Run inside a REAL boot, because scenes touch the Spectrum and Director autoloads:

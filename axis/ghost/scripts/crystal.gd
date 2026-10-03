@@ -8,7 +8,7 @@ class_name Crystal
 ## how long they were, and the size of the terminal fork. Those three are affine
 ## functions of the same number, and the third is anti-correlated with the other two, so
 ## the whole morphology space was a ONE-DIMENSIONAL CURVE: there is no flake with
-## branches near the centre and also long, and none with long branches and a large tip.
+## branches near the center and also long, and none with long branches and a large tip.
 ## All six arms were bitwise identical by construction, the fold count was a parameter
 ## that every call site in the project passed the literal 6, and there was no plate, no
 ## column, no needle, no riming and no per-arm variation of any kind. One number.
@@ -30,7 +30,7 @@ class_name Crystal
 ## weight the habits it actually produces.
 ##
 ## THE BANK. Crystals are generated ONCE at build, as flat line lists in local unit space
-## (radius 1, centred on the origin), and every falling flake references one by index.
+## (radius 1, centered on the origin), and every falling flake references one by index.
 ## That is the cheap way to get variety: a few dozen genuinely different crystals shared
 ## across hundreds of flakes reads as "no two alike" at any density a viewer can audit,
 ## while costing one array lookup and a transform per flake instead of a generator. It
@@ -185,7 +185,7 @@ static func _needle(s: Shape, rng: RandomNumberGenerator) -> void:
 
 ## A hexagonal prism seen from the side: two end caps joined by its long faces. `capped`
 ## puts a full plate on each end - the capped column, which is one of the most
-## recognisable real habits and was completely absent.
+## recognizable real habits and was completely absent.
 static func _column(s: Shape, rng: RandomNumberGenerator, capped: bool) -> void:
 	var ang := rng.randf() * TAU
 	var d := Vector2(cos(ang), sin(ang))
@@ -290,7 +290,7 @@ static func _plate_at(s: Shape, rng: RandomNumberGenerator, r: float, folds: int
 		s.seg(pts[i], pts[(i + 1) % n], 0.8)
 
 
-## Riming: frozen droplets stuck to the structure. Modelled as short stubs normal to
+## Riming: frozen droplets stuck to the structure. Modeled as short stubs normal to
 ## existing segments, so a heavily rimed crystal reads as lumpy and blurred at its
 ## edges - which is exactly what riming does to a real one, and what a blizzard's
 ## crystals should look like.

@@ -1,6 +1,6 @@
 shader_type canvas_item;
 // blend_disabled: like clown_paint, this WRITES A FIELD, not a picture - every
-// channel is raw state, and the default blend_mix would multiply the colour
+// channel is raw state, and the default blend_mix would multiply the color
 // channels by the guard alpha on write and mix in garbage from the
 // never-cleared buffer.
 render_mode blend_disabled;
@@ -59,7 +59,7 @@ uniform vec2 u_inv0 = vec2(1.0, 0.0);        // inverse basis, column 0
 uniform vec2 u_inv1 = vec2(0.0, 1.0);        // ...column 1
 uniform vec2 u_anchor = vec2(0.9, 0.6);      // where her shoulder line lands
 uniform vec2 u_src = vec2(0.9, 0.6);         // her own shoulder line
-uniform vec2 u_eye_src = vec2(0.9, 0.2);     // her own eye line - the bust's centre
+uniform vec2 u_eye_src = vec2(0.9, 0.2);     // her own eye line - the bust's center
 uniform float u_unit = 0.3;                  // her eye-to-shoulder distance
 // THE BUST. Her silhouette is ~45% of a close-up frame; thrown whole at any
 // magnification it is a wall of black with nothing in it to read (measured: 63%
@@ -251,7 +251,7 @@ void fragment() {
 	// wants to be gone at once. One rate cannot serve both: at the Cling the
 	// author works at, the ghost's own fast movements (a head-shift, a hand a
 	// step ahead of hers) opened a lagging void along their leading edge. Rate by
-	// SIZE OF DEFICIT, so the two behaviours blend rather than trade.
+	// SIZE OF DEFICIT, so the two behaviors blend rather than trade.
 	float gap = max(0.0, tgt - m);
 	float urgency = smoothstep(0.12, 0.50, gap);
 	m += gap * (1.0 - exp(-dt / mix(tau_up, 0.035, urgency)));

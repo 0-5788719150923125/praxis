@@ -6,7 +6,7 @@ class_name Particle
 ## Geometry-agnostic: it carries a rest position and a current rigid transform
 ## (offset / angle / scale), plus either a local polygon (drawn as a shard/facet)
 ## or a radius (drawn as a point). Forces from [Primitives] read and write these
-## fields; scenes own the drawing and colour. All positions are in unit-fraction
+## fields; scenes own the drawing and color. All positions are in unit-fraction
 ## space (multiply by [method GhostScene.unit] at draw time) so the physics is
 ## resolution independent.
 

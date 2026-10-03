@@ -257,8 +257,8 @@ func begin_session() -> void:
 	_drawn_hand = String(keys[r.randi() % keys.size()])
 	_follow_hand()
 	# Paper is white with the faintest warmth. The pen is BLACK unless a voice names its own
-	# ink (see [method _ink_for]) - a colour per speaker is how a page tells voices apart
-	# without labels, so the default must be the one colour no voice is likely to choose.
+	# ink (see [method _ink_for]) - a color per speaker is how a page tells voices apart
+	# without labels, so the default must be the one color no voice is likely to choose.
 	_paper = Color.from_hsv(r.randf_range(0.10, 0.14), r.randf_range(0.02, 0.06),
 		r.randf_range(0.955, 0.985))
 	_ink = NotebookLayout.INKS["black"]
@@ -354,8 +354,8 @@ func _ink_for(w: Dictionary) -> Color:
 	return _ink if v.strip_edges().is_empty() else NotebookLayout.ink_color(v)
 
 
-## A hand has no italic: an emphasised word is underlined, and the line runs on under the next
-## word when that one is emphasised too, so a phrase gets one stroke rather than a dashed one.
+## A hand has no italic: an emphasized word is underlined, and the line runs on under the next
+## word when that one is emphasized too, so a phrase gets one stroke rather than a dashed one.
 func _decorate_word(ci: CanvasItem, i: int, w: Dictionary, ink_col: Color) -> void:
 	if not _underlined(w):
 		return
@@ -390,7 +390,7 @@ func _underline(ci: CanvasItem, at: Vector2, width: float, col: Color, salt: int
 
 ## HOW THE WRITING WANDERS OFF THE LINE, as a smooth field over the page rather than a jitter
 ## per word: along a line the letters rise gradually toward its end (a hand drifts up as it goes
-## right), by a slope that changes only slowly from line to line, so neighbouring lines lean
+## right), by a slope that changes only slowly from line to line, so neighboring lines lean
 ## together in clusters; a very slow wave rides along each line; the slant wanders slowly down
 ## the page; and each letter differs by a hair in size and slant and sits a fraction off, which
 ## is the tremor of a pen. Every term is a function of place and the session seed, so a page
@@ -400,7 +400,7 @@ const DRIFT_SLOPE_VARY := 0.0045   # ...and how far a cluster of lines strays fr
 const DRIFT_CLUSTER := 5.0         # lines over which the slope changes
 const DRIFT_WAVE := 1.1            # px of the slow wave along a line
 ## The slant, as skew in radians: POSITIVE leans the letters RIGHT, the way most hands lean.
-## Wanders from nearly upright to a clear right lean. It was centred on a small LEFT lean, so
+## Wanders from nearly upright to a clear right lean. It was centered on a small LEFT lean, so
 ## it was never seen to lean right at all.
 const SLANT := 0.08
 const SLANT_VARY := 0.06
@@ -918,15 +918,15 @@ func _place_stack_clips() -> void:
 		var pos: Vector2 = clip["pos"]
 		var ax := Vector2(cos(ang), sin(ang))            # the clip's x in page space
 		var ay := Vector2(-sin(ang), cos(ang))           # ...and its length
-		var centre := pos + ay * NotebookLayout.CLIP_LEN * 0.5
+		var center := pos + ay * NotebookLayout.CLIP_LEN * 0.5
 		if back:
-			centre.x = BookLayout.PAGE.x - centre.x
+			center.x = BookLayout.PAGE.x - center.x
 			ax.x = -ax.x
 			ay.x = -ay.x
 		# page px -> world: one page width is 1 world unit, x from the spine outward
 		var k := 1.0 / BookLayout.PAGE.x
-		var wx := -(1.0 - centre.x * k) if left else centre.x * k
-		var wz := (centre.y / BookLayout.PAGE.y - 0.5) * PAGE_H
+		var wx := -(1.0 - center.x * k) if left else center.x * k
+		var wz := (center.y / BookLayout.PAGE.y - 0.5) * PAGE_H
 		var n := maxi(1, _spread - 1) if left else maxi(1, _layout.spreads() - _spread - 1)
 		var depth := (float(_spread - 1 - sheet) if left else float(sheet - _spread)) / float(n)
 		var top := d.x if left else d.z

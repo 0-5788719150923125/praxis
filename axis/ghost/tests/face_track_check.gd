@@ -38,7 +38,7 @@ func _initialize() -> void:
 	f.store_32(POINTS)
 	for i in COUNT:
 		# Sample 7 is a LOST frame - the one case the reader must not interpolate
-		# across, and the one a naive reader silently blends into its neighbours.
+		# across, and the one a naive reader silently blends into its neighbors.
 		f.store_8(0 if i == 7 else 1)
 		for k in POINTS:
 			f.store_float(_expect_x(i, k))
@@ -61,7 +61,7 @@ func _initialize() -> void:
 	# the synthetic track is linear in the sample index; see _expect_x.
 	# Away from BOTH ends: at an edge the kernel is truncated, so it is no longer
 	# symmetric and the exact-value argument above stops applying. That is correct
-	# behaviour, not a bug - there are no samples past the end to average in.
+	# behavior, not a bug - there are no samples past the end to average in.
 	# Also clear of the LOST sample at 7: its window would be missing a member and
 	# so no longer symmetric either, for exactly the same reason.
 	for probe in [[16, 0], [16, 33], [20, 263], [27, 1], [30, 477]]:
@@ -91,7 +91,7 @@ func _initialize() -> void:
 	_expect(not ed._ft_has(7.0 / RATE), "sample 7 was written lost but reads as found")
 	_expect(ed._ft_has(6.0 / RATE), "sample 6 was written found but reads as lost")
 	# A lost sample must be SKIPPED by the smoothing, not averaged in - its stored
-	# coordinates are a held copy of a neighbour, so including them would drag the
+	# coordinates are a held copy of a neighbor, so including them would drag the
 	# feature toward wherever the hold happened to be. On a linear track a
 	# correctly-skipped gap still reads very close to the line (the remaining
 	# weights stay near-symmetric); an averaged-in hold pulls visibly off it.
@@ -106,7 +106,7 @@ func _initialize() -> void:
 
 	# THE SMOOTHING ITSELF has to be reachable and has to do something. A wider
 	# kernel over a linear track returns the same line (that is the point of a
-	# centred kernel - no lag, no bias), so what is checked here is that the
+	# centered kernel - no lag, no bias), so what is checked here is that the
 	# reader accepts the setting and stays on the line rather than drifting.
 	ed._ft_sigma = 6.0
 	var wide: Vector2 = ed._ft_point(0, 20.0 / RATE)
@@ -114,7 +114,7 @@ func _initialize() -> void:
 	print("  sigma 6.0 at sample 20 -> (%.4f, %.4f)  line (%.4f, %.4f)"
 		% [wide.x, wide.y, line20.x, line20.y])
 	_expect(wide.distance_to(line20) < 0.004,
-		"heavy smoothing pulled the value off the line (%.4f vs %.4f) - a centred "
+		"heavy smoothing pulled the value off the line (%.4f vs %.4f) - a centered "
 		% [wide.x, line20.x] + "kernel must not bias, only smooth")
 	ed._ft_sigma = 2.5
 
@@ -155,10 +155,10 @@ func _initialize() -> void:
 ## Distinct per (sample, landmark) so a misread is identifiable, LINEAR in the
 ## sample index, and small enough never to wrap.
 ##
-## Linearity is the load-bearing property. The reader smooths with a CENTRED
+## Linearity is the load-bearing property. The reader smooths with a CENTERED
 ## kernel, so it does not return the sample you asked for - it returns a weighted
-## average of that sample and its neighbours. Over a linear function a symmetric
-## kernel returns the value at its centre EXACTLY, so the round-trip stays an
+## average of that sample and its neighbors. Over a linear function a symmetric
+## kernel returns the value at its center EXACTLY, so the round-trip stays an
 ## exact assertion instead of becoming a tolerance nobody can reason about. (An
 ## earlier version wrapped with fposmod and broke linearity at the wrap, which is
 ## the sort of thing that makes a test fail for a reason unrelated to the code.)

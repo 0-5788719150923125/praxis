@@ -5,7 +5,7 @@ class_name Medium
 ##
 ## ghost has always had exactly one presentation and never had to name it: the
 ## [Director] paints ONE scene, full-bleed, edge to edge, and cuts to the next. A
-## medium is that choice made addressable. [FullMedium] is that behaviour,
+## medium is that choice made addressable. [FullMedium] is that behavior,
 ## unchanged and default; [ComicMedium] renders the same scenes into the panels of
 ## an open comic book - two facing pages across a spine - and flies a real perspective
 ## camera over it.
@@ -185,7 +185,7 @@ func owns_cast() -> bool:
 ## [param outgoing] alone - it is still on the page and must not be freed. [param outgoing]
 ## is null on the first call of a session.
 ##
-## Returning null keeps the Director's own behaviour, so a medium can decline a
+## Returning null keeps the Director's own behavior, so a medium can decline a
 ## particular change without giving up ownership.
 func take_over(_outgoing: GhostScene) -> GhostScene:
 	return null

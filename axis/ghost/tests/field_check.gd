@@ -4,7 +4,7 @@ extends SceneTree
 ## this is the first guard on it.
 ##
 ## The two failure modes are opposite and both silent:
-##   COLLAPSE   - the field becomes a fourth attractor toward the belt's centre,
+##   COLLAPSE   - the field becomes a fourth attractor toward the belt's center,
 ##                every candidate near the belt converges on the same voice, and
 ##                the game stops producing novelty. Caught-trait spread from a
 ##                fixed belt was already measured falling 0.152 -> 0.012 per axis
@@ -88,7 +88,7 @@ func _check_determinism(belt: Array) -> int:
 func _check_falloff(belt: Array) -> int:
 	# measured from OUTSIDE the belt's own extent. Inside it the energy rightly
 	# rises and falls as you pass near individual sources - the field is not
-	# centred on the origin, and a monotonic-from-zero assumption was wrong
+	# centered on the origin, and a monotonic-from-zero assumption was wrong
 	# about the model rather than finding a bug in it.
 	var extent := 0.0
 	for s in belt:

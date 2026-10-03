@@ -1,6 +1,6 @@
 extends Node
 
-## NOT a gate - it asserts nothing. It renders ANY scene in the catalogue by name and writes
+## NOT a gate - it asserts nothing. It renders ANY scene in the catalog by name and writes
 ## PNGs, so a look can be judged by looking at it. (clown_look_probe.gd, vapor_look_probe.gd
 ## and city_look_probe.gd are the same idea aimed at one scene each; this is the general one,
 ## for building a new scene where the whole question is "what does it actually draw".)

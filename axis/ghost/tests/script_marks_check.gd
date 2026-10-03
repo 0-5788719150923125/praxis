@@ -10,9 +10,9 @@ extends SceneTree
 ## what it makes of it, and an entry with no check here fails too - a new mark has to come
 ## with its proof.
 ##
-## Also held: each entry's highlight pattern recognises its own example (the colour on screen
+## Also held: each entry's highlight pattern recognizes its own example (the color on screen
 ## is the same claim), the insertion rules (a selection becomes the fill, the fill is left
-## selected, an own-line mark gets its own line, one undo step), and the highlighter colouring
+## selected, an own-line mark gets its own line, one undo step), and the highlighter coloring
 ## a multi-line picture description and leaving prose plain.
 ##
 ## Run: godot --headless --path axis/ghost --script tests/script_marks_check.gd
@@ -58,7 +58,7 @@ func _registry_shape() -> void:
 		"the per-mode palettes are not what they should be")
 
 
-## THE COLOUR IS A CLAIM TOO: the highlight pattern must find the whole example, on a line
+## THE COLOR IS A CLAIM TOO: the highlight pattern must find the whole example, on a line
 ## of its own inside prose (the own-line marks are anchored to a line).
 func _patterns_match_examples() -> void:
 	for k in ScriptMarks.REGISTRY:
@@ -271,27 +271,27 @@ func _highlighter() -> void:
 	var pic := ScriptMarks.color_of("image")
 	var voice := ScriptMarks.color_of("speaker")
 	var l0 := hl.get_line_syntax_highlighting(0)
-	_ok(l0.has(0) and (l0[0]["color"] as Color).is_equal_approx(plain), "prose is coloured")
+	_ok(l0.has(0) and (l0[0]["color"] as Color).is_equal_approx(plain), "prose is colored")
 	var l2 := hl.get_line_syntax_highlighting(2)
 	_ok(l2.has(0) and (l2[0]["color"] as Color).is_equal_approx(pic),
-		"the second line of a picture description lost its colour: %s" % l2)
+		"the second line of a picture description lost its color: %s" % l2)
 	var l3 := hl.get_line_syntax_highlighting(3)
 	_ok(l3.has(0) and (l3[0]["color"] as Color).is_equal_approx(voice),
-		"a speaker cue is not coloured as one: %s" % l3)
+		"a speaker cue is not colored as one: %s" % l3)
 	# A CUE THAT DOES NOT OWN ITS LINE IS ONLY A NOTE, and is shown as one.
 	te.text = "She said <!-- speaker: Emily --> hello."
 	var l := hl.get_line_syntax_highlighting(0)
 	var note := ScriptMarks.color_of("note")
 	var at := te.text.find("<!--")
 	_ok(l.has(at) and (l[at]["color"] as Color).is_equal_approx(note),
-		"an inline speaker cue is coloured as a working cue: %s" % l)
-	# THE SYNTHESIS PANEL honours no cues: the same line there is a note.
+		"an inline speaker cue is colored as a working cue: %s" % l)
+	# THE SYNTHESIS PANEL honors no cues: the same line there is a note.
 	var te2 := TextEdit.new()
 	var hl2 := ScriptHighlighter.new("synthesis")
 	te2.syntax_highlighter = hl2
 	te2.text = "<!-- speaker: Emily -->"
 	var s0 := hl2.get_line_syntax_highlighting(0)
 	_ok(s0.has(0) and (s0[0]["color"] as Color).is_equal_approx(note),
-		"the synthesis highlighter colours a cue it does not honour")
+		"the synthesis highlighter colors a cue it does not honor")
 	te.free()
 	te2.free()

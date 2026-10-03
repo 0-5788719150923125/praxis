@@ -1,6 +1,6 @@
 extends GhostScene
 
-## Snowfall - a quiet field of falling snow over a soft colour bed.
+## Snowfall - a quiet field of falling snow over a soft color bed.
 ##
 ## The atmospheric weather scene (distinct from `snowflakes`, the hero crystal field):
 ## flakes drift down and gust sideways with the treble over a gradient that breathes with
@@ -10,7 +10,7 @@ extends GhostScene
 ## silhouette changes with the weather and not just the tint. Pure component composition -
 ## `bed` + `snow` (+ `volumetric` fog, + `veil`) from the [Layer] registry.
 
-# Snow is a WEATHER before it is a colour. Flake size, count and fall speed are one choice,
+# Snow is a WEATHER before it is a color. Flake size, count and fall speed are one choice,
 # not three: powder is many tiny fast-settling specks, a flurry is a handful of fat slow
 # ones, a blizzard is a wall, and a hoar frost is sparse but genuinely crystalline.
 #   count/size/fall/crystal go straight to the snow layer; fog/veil are chances; val is the bed
@@ -27,7 +27,7 @@ extends GhostScene
 # small; a hoar frost barely moves at all, which is the point of a still frost.
 const SNOWS := {
 	"powder": {
-		# Dry fine snow. Cool by default, but snow takes the colour of whatever lights it -
+		# Dry fine snow. Cool by default, but snow takes the color of whatever lights it -
 		# dawn on a field, or a lamp - so the warm moods are in here too.
 		# Cold and dry: columns and needles, almost no branching. The old table gave
 		# powder full dendrites, which is meteorologically backwards.

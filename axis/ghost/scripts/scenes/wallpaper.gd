@@ -3,11 +3,11 @@ extends GhostScene
 ## wallpaper - one motif, one symmetry group, and the whole plane follows.
 ##
 ## A flat printed pattern, edge to edge: three to five solid inks, thin keylines, and no
-## glow, no gradient and no soft edge anywhere. This is the catalogue's first flat-vector
+## glow, no gradient and no soft edge anywhere. This is the catalog's first flat-vector
 ## poster surface, and it is deliberately set against a project whose whole vocabulary is
 ## soft blobs, glow fringes and vignetted beds - the drama here has to come from drawing,
 ## not from light. One small motif - a couple of bars, a wedge, a disc, an arc - is repeated
-## by an ACTUAL plane symmetry group, so the mirrors, glides and rotation centres in the
+## by an ACTUAL plane symmetry group, so the mirrors, glides and rotation centers in the
 ## picture are real rather than suggested: under p6m the frame maps onto itself exactly at
 ## sixty degrees. The group table, its closure and the lattice walk live in [WallpaperGroup].
 ##
@@ -17,7 +17,7 @@ extends GhostScene
 ## bins of [method Spectrum.harmonic_signature] are ranked, and each element takes the ink
 ## its own pitch class's RANK points at. Because every copy of the motif is the same motif,
 ## one chord change repaints six hundred of them on the same tick and the whole surface
-## flips character in a beat. That is "sound drives colour, not scale" taken to its limit -
+## flips character in a beat. That is "sound drives color, not scale" taken to its limit -
 ## a large, perfectly synchronized change with zero motion, which is a kind of drama nothing
 ## else here does.
 ##
@@ -54,7 +54,7 @@ extends GhostScene
 
 const OVER := 1.35            # draw this far beyond the frame, for view drift headroom
 
-## How far past its own cell origin the motif can reach, in cell lengths - element centres sit
+## How far past its own cell origin the motif can reach, in cell lengths - element centers sit
 ## inside roughly the first half of the cell and their radii top out near 0.2, and the glide
 ## adds a whole lattice vector on top. Cells are enumerated with this as their margin.
 const MOTIF_REACH := 2.0
@@ -85,7 +85,7 @@ const GROUP_POOL := [
 ## for the group's true asymmetric unit, which differs per group and would be a second table
 ## for very little gain: keeping the anchor inside the first quadrant-ish corner of the cell
 ## puts it near enough to the fundamental domain that the copies interleave instead of piling
-## on top of the rotation centre. The hexagonal region is squatter because a hex cell's
+## on top of the rotation center. The hexagonal region is squatter because a hex cell's
 ## fundamental wedge lies close to the a1 edge.
 const SEED_REGION := {
 	"oblique": {"u": [0.08, 0.44], "v": [0.08, 0.44]},
@@ -107,7 +107,7 @@ var _inks: Array = []                # Color per ink
 var _ink_of := PackedInt32Array()    # element index -> ink index, re-ranked on the beat clock
 var _key_col := Color.BLACK
 var _dirs: Array = []                # glide directions, as lattice coefficient pairs
-var _ch := Vector2.ZERO              # live tonal colour (hue, strength)
+var _ch := Vector2.ZERO              # live tonal color (hue, strength)
 var _prev_beat := 0.0
 var _beat_n := 0
 var _dir_i := 0
@@ -240,8 +240,8 @@ func _build_inks(rng: RandomNumberGenerator, sch: Scheme, n_hue: int, high_key: 
 # are stored in CELL LENGTHS, not pixels, so the same motif survives a resize by scaling.
 #
 # Two vertex sets are built per element with matched counts, and the second is the first with a
-# per-vertex RADIAL scale about the element's own centre. Radial rather than free displacement
-# for a concrete reason: the fills are fanned from that centre, and a radially perturbed polygon
+# per-vertex RADIAL scale about the element's own center. Radial rather than free displacement
+# for a concrete reason: the fills are fanned from that center, and a radially perturbed polygon
 # is still star-shaped about it however hard the jitter is pushed, so the fan stays exact. Free
 # jitter at the sampled 0.5 would turn an 8-gon concave and the fan would fold over itself.
 func _build_motif(rng: RandomNumberGenerator, probe: WallpaperGroup, n_el: int, n_inks: int) -> Array:
@@ -271,7 +271,7 @@ func _build_motif(rng: RandomNumberGenerator, probe: WallpaperGroup, n_el: int, 
 					var ab := TAU * (float(k) + 0.5) / float(n)
 					pts.append(ctr + Vector2(cos(ab) * hl, sin(ab) * hw).rotated(rot))
 			"wedge":
-				# Apex at the element centre, so the fill fan and the shape agree exactly.
+				# Apex at the element center, so the fill fan and the shape agree exactly.
 				var span_w := rng.randf_range(0.5, 1.8)
 				pts.append(ctr)
 				for k in n - 1:
@@ -457,7 +457,7 @@ func _draw() -> void:
 
 
 # One cell: every coset x every element, fills first and keylines second, so a keyline is never
-# buried under a neighbour's fill - that stacking is the whole flat-vector look.
+# buried under a neighbor's fill - that stacking is the whole flat-vector look.
 func _build_cell(key: Color, key_w: float, soft: bool) -> void:
 	var n_el := _els.size()
 	var placed: Array = []

@@ -16,12 +16,12 @@ extends SceneTree
 ##             clip, [director]'s pacing and [synth]'s state. That is the half of
 ##             this a human would not notice for weeks, so it is asserted here.
 ##
-##   KEY SWATCH  the key colour "is not persisted... the UI never reads that color
+##   KEY SWATCH  the key color "is not persisted... the UI never reads that color
 ##             from state, so you never actually know what color is being keyed
 ##             to". The keying itself was fine: the key IS a hue and hue_a carried
 ##             it. The picker stored only `.h` and rebuilt the swatch as
-##             from_hsv(hue_a, 0.85, 0.9), so a colour picked off the footage came
-##             back a DIFFERENT colour - pick a pale yellow off a wall, reopen, get
+##             from_hsv(hue_a, 0.85, 0.9), so a color picked off the footage came
+##             back a DIFFERENT color - pick a pale yellow off a wall, reopen, get
 ##             a saturated one. key_sat/key_val carry the rest of the pick.
 ##
 ##   ONE DRAG, ONE UNDO  "if I click on an option and hold, and drag back and forth
@@ -67,7 +67,7 @@ func _expect(ok: bool, msg: String) -> void:
 
 func _check_follow() -> void:
 	var ed = load("res://scripts/mask_editor.gd").new()
-	# A neighbouring section, planted first: the read-modify-write is what has to
+	# A neighboring section, planted first: the read-modify-write is what has to
 	# preserve it, and a fresh ConfigFile.save() is the mistake being guarded
 	# against. splash's remembered clip lives exactly like this.
 	var seed_cfg := ConfigFile.new()
@@ -83,7 +83,7 @@ func _check_follow() -> void:
 	seed_cfg.save(CFG)
 
 	_expect(ed._load_follow(), "Follow does not default to ON with nothing stored - "
-		+ "that is the behaviour every session had before the switch existed")
+		+ "that is the behavior every session had before the switch existed")
 	ed._save_follow(false)
 	var back: bool = bool(ed._load_follow())
 	print("Follow: stored false -> reads back %s" % back)
@@ -95,7 +95,7 @@ func _check_follow() -> void:
 	var after := ConfigFile.new()
 	after.load(CFG)
 	var witness := String(after.get_value("splash", "_state_check_witness", ""))
-	print("the neighbouring [splash] section after two writes: %s"
+	print("the neighboring [splash] section after two writes: %s"
 		% ("intact" if witness == "keep me" else "LOST"))
 	_expect(witness == "keep me",
 		"writing the Follow preference wiped the [splash] section - the write must "
@@ -105,7 +105,7 @@ func _check_follow() -> void:
 
 
 func _check_key_swatch() -> void:
-	# A colour a person would actually pick off footage: a pale, unsaturated
+	# A color a person would actually pick off footage: a pale, unsaturated
 	# yellow wall. The old round trip returned it at s=0.85, v=0.9 whatever it was.
 	var picked := Color(0.90, 0.86, 0.42)
 	var m := {}
@@ -127,9 +127,9 @@ func _check_key_swatch() -> void:
 		% [picked.r, picked.g, picked.b, shown.r, shown.g, shown.b])
 	var off := Vector3(picked.r - shown.r, picked.g - shown.g, picked.b - shown.b).length()
 	_expect(off < 0.05,
-		"the key swatch comes back %.3f away from the colour that was picked - the "
+		"the key swatch comes back %.3f away from the color that was picked - the "
 		% off + "hue survives (that is what keys) but the swatch is rebuilt at a "
-		+ "fixed saturation and value, so it shows a colour nobody chose")
+		+ "fixed saturation and value, so it shows a color nobody chose")
 	# A session written before these fields existed must open unchanged.
 	var old := {"hue_a": 0.13}
 	var legacy := Color.from_hsv(float(old.get("hue_a", 0.02)),
@@ -210,7 +210,7 @@ func _check_drag_undo() -> void:
 
 ## Hold or release the left mouse button, as the editor sees it. _push_undo reads
 ## the button rather than a per-widget drag signal so that one rule covers sliders,
-## the colour wheel and the region box.
+## the color wheel and the region box.
 func _hold(down: bool) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT

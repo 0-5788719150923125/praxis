@@ -34,7 +34,7 @@ var _hue_t := 0.0     # flowing-hue clock: advances with the audio so the palett
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
 var _light: Lighting
-var _ch := Vector2.ZERO            # live tonal colour (hue, strength) from the harmonic signature
+var _ch := Vector2.ZERO            # live tonal color (hue, strength) from the harmonic signature
 var _sig := PackedFloat32Array()   # the 12 chroma channels + coarse shape (continuous)
 
 
@@ -66,7 +66,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"hue": sch.hue,
 		"hue_flow": to_accent * rng.randf_range(0.6, 1.6),    # horizontal hue gradient
 		"hue_flow_y": to_accent * rng.randf_range(0.10, 0.60),  # vertical hue gradient
-		"hue_wave": sch.spread * rng.randf_range(0.8, 2.2),   # amplitude of the travelling hue wave
+		"hue_wave": sch.spread * rng.randf_range(0.8, 2.2),   # amplitude of the traveling hue wave
 		"hue_drift": rng.randf_range(0.10, 0.40),    # how fast the whole palette flows
 		"sat": sch.sat,
 		"sat_var": sch.sat * rng.randf_range(0.08, 0.28),   # saturation variance across the field
@@ -137,13 +137,13 @@ func _draw() -> void:
 				e = clampf(e + 0.85 * _sig[pc], 0.0, 1.0)
 			# Rooted cells hold a small base size; activated cells swell and decay.
 			e *= 0.2 + 0.8 * _act.level(idx)
-			# Size stays mostly stable; colour and brightness carry the audio - a
+			# Size stays mostly stable; color and brightness carry the audio - a
 			# moving hotspot lights the cells it sweeps, and the beat glow lifts all.
 			var s := max_size * (0.55 + 0.30 * e)
 			var lit := _light.at(pos / u)
 			# A flowing hue *map*: a diagonal gradient across the field (hue_flow x +
-			# hue_flow_y y) plus a travelling wave that the audio drives forward (_hue_t),
-			# so colour is never static - it gradients across the grid and drifts over time.
+			# hue_flow_y y) plus a traveling wave that the audio drives forward (_hue_t),
+			# so color is never static - it gradients across the grid and drifts over time.
 			var h := fposmod(hue + hue_flow * t + hue_flow_y * rt
 				+ hue_wave * sin((t + rt) * TAU - _hue_t * TAU) + 0.06 * _hue_t
 				+ 0.12 * lit + _light.hue_shift(), 1.0)
@@ -158,7 +158,7 @@ func _draw() -> void:
 func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, sides: int, turn: float, aspect: float) -> void:
 	# Size every form by its INRADIUS, so a cell spans the same width across its flats
 	# whatever it has for corners (a 4-gon comes out exactly the old square). Capped,
-	# because a triangle's true circumradius would spill into its neighbours.
+	# because a triangle's true circumradius would spill into its neighbors.
 	var r := s * 0.5 * minf(1.3, 1.0 / cos(PI / float(sides)))
 	var base_rot := rot * PI + turn * TAU
 	var out := PackedVector2Array()

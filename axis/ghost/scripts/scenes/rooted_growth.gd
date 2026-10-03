@@ -16,12 +16,12 @@ extends GhostScene
 ## gracefully - either FADING out (alpha to zero) or REWINDING (the front retracts back
 ## toward its attachment point, collapsing inward) - before regrowing from a fresh site.
 ## It never clears and pops back in. Audio surges the growth front (a nonlinear `spike`,
-## so beats lunge it and quiet barely moves) and carries colour and glow.
+## so beats lunge it and quiet barely moves) and carries color and glow.
 ##
-## Neither the colour nor the silhouette is fixed. A SEASON is the first thing the seed
+## Neither the color nor the silhouette is fixed. A SEASON is the first thing the seed
 ## chooses, and it bundles everything a season actually changes - the [Scheme] moods on
 ## offer, how dense the growth is, how thick and how long and how branched, how hard the
-## colour turns from base to tip, and what is in the air. Spring is pale and dense and fine,
+## color turns from base to tip, and what is in the air. Spring is pale and dense and fine,
 ## summer lush and deep, autumn sparse and bare and hard-turning, winter a few thick
 ## structural limbs with the saturation drained out. Within the season a growth HABIT sets
 ## the form, from a few long thick taproots through a dense fine mat to sparse long creepers.
@@ -32,27 +32,27 @@ extends GhostScene
 ## mostly lateral), so they are sampled as a set rather than as independent ranges.
 const HABITS := {
 	"taproot": {"roots": [7, 12],  "len": [0.55, 0.82], "width": [8.0, 13.0],
-		"steps": [16, 24], "centre": 0.62, "emit": [0.6, 1.2], "tendril": 0.15},
+		"steps": [16, 24], "center": 0.62, "emit": [0.6, 1.2], "tendril": 0.15},
 	"mat":     {"roots": [24, 34], "len": [0.24, 0.38], "width": [3.0, 5.5],
-		"steps": [9, 14],  "centre": 0.20, "emit": [0.2, 0.5], "tendril": 0.55},
+		"steps": [9, 14],  "center": 0.20, "emit": [0.2, 0.5], "tendril": 0.55},
 	"creeper": {"roots": [11, 18], "len": [0.62, 0.95], "width": [3.5, 6.5],
-		"steps": [18, 28], "centre": 0.35, "emit": [0.4, 0.9], "tendril": 0.80},
+		"steps": [18, 28], "center": 0.35, "emit": [0.4, 0.9], "tendril": 0.80},
 	"thicket": {"roots": [14, 22], "len": [0.42, 0.60], "width": [5.0, 9.0],
-		"steps": [12, 20], "centre": 0.42, "emit": [0.4, 0.9], "tendril": 0.40},
+		"steps": [12, 20], "center": 0.42, "emit": [0.4, 0.9], "tendril": 0.40},
 }
 
 ## SEASONS - the top-level choice, made before mood or habit.
 ##
-## Colour alone could already reach autumn: the mood list has ember, dawn, brass and sodium
-## in it. What it could not do was BE an autumn wood, because colour and density and form
+## Color alone could already reach autumn: the mood list has ember, dawn, brass and sodium
+## in it. What it could not do was BE an autumn wood, because color and density and form
 ## were rolled independently, so a seed was free to produce dense fresh young growth painted
 ## rust - a spring plant with an orange filter over it. An autumn wood is oranger AND sparser
-## AND barer AND reaching further on thicker limbs, and its colour turns hard from trunk to
+## AND barer AND reaching further on thicker limbs, and its color turns hard from trunk to
 ## tip; a spring one is pale AND dense AND small AND fine; a winter one is the same wood
 ## drained of saturation, down to a few thick structural limbs. Those belong together, so
 ## they are one entry rather than five independent ranges.
 ##
-## - `moods`   the [Scheme] moods on offer. Deliberately WIDE - a season biases colour, it
+## - `moods`   the [Scheme] moods on offer. Deliberately WIDE - a season biases color, it
 ##             does not own it (a rain-soaked November wood is ash; a bare winter branch
 ##             against a low sun is ember), so each season keeps 8-9 of the 14 moods.
 ## - `habits`  which HABITS are plausible - a winter wood is not a dense fine mat.
@@ -70,11 +70,11 @@ const HABITS := {
 ##             shoots. Branchiness lives in the [Filament] variant, so the season picks the
 ##             variant - reusing that registry rather than adding a fork-rate of its own.
 ## - `turn`    how far hue walks toward the mood's accent, per branch depth AND along each
-##             strand. Autumn is the season where one plant carries three colours at once, so
+##             strand. Autumn is the season where one plant carries three colors at once, so
 ##             it turns hardest; the along-strand half is what keeps that true of the bare
 ##             threads, which have almost no branch depth to walk over.
 ## - `sat`/`val` scale the mood's own character rather than replacing it, so winter is
-##             recognisably the SAME mood with the colour drained out of it.
+##             recognizably the SAME mood with the color drained out of it.
 ## - `air`     what drifts through the frame, taken from the shared [Layer] registry so the
 ##             season inherits components other scenes already use instead of growing its own.
 const SEASONS := {
@@ -124,7 +124,7 @@ var _habit := "thicket"
 var _season := "summer"
 var _sch: Scheme
 var _hue_depth := 0.0
-var _hue_along := 0.0        # the season's colour turn ALONG a strand, base to tip
+var _hue_along := 0.0        # the season's color turn ALONG a strand, base to tip
 var _sat_mul := 1.0          # the season scaling the mood's saturation - winter is drained
 var _val_mul := 1.0
 var _air := "dust"           # the season's airborne [Layer] - blossom, pollen, leaves, snow
@@ -132,7 +132,7 @@ var _glow := 0.0
 var _base_len := 0.5
 var _width := 7.0
 var _steps := Vector2i(12, 20)   # path resolution/length in segments, per habit
-var _centre := 0.42              # chance a new shoot is a fresh taproot rather than a lateral
+var _center := 0.42              # chance a new shoot is a fresh taproot rather than a lateral
 var _draw_life := 1.0        # current root's alpha, set before its draw, read by _color_for
 var _draw_hue := 0.0         # current root's own hue, likewise - a family, not clones
 var _max_roots := 20         # the bloom grows the pool up to this, then sustains
@@ -143,7 +143,7 @@ var _emit_interval := 0.6    # sampled seconds between new sprouts
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_rng.seed = rng.randi()
 	# The season comes first, and everything below is drawn through it - that is the whole
-	# point of the table: colour, density and form cannot disagree about what time of year
+	# point of the table: color, density and form cannot disagree about what time of year
 	# this is, because they are all read off the same entry.
 	_season = String(SEASONS.keys()[rng.randi() % SEASONS.size()])
 	var sea: Dictionary = SEASONS[_season]
@@ -153,7 +153,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Depth walks the strand toward the scheme's ACCENT instead of an arbitrary literal drift,
 	# so trunk and limb are related by the mood rather than by chance. How FAR it walks is the
 	# season's call - an autumn plant carries green, gold and rust at once; a winter one is
-	# all one colour from trunk to twig.
+	# all one color from trunk to twig.
 	var to_accent := fposmod(_sch.accent - _sch.hue + 0.5, 1.0) - 0.5
 	var turn := rng.randf_range(float(sea.turn[0]), float(sea.turn[1]))
 	_hue_depth = to_accent * turn
@@ -176,7 +176,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var lim := float(sea.limbs)
 	var s0 := maxi(4, int(round(float(hab.steps[0]) * lim)))
 	_steps = Vector2i(s0, maxi(s0 + 2, int(round(float(hab.steps[1]) * lim))))
-	_centre = clampf(float(hab.centre) * float(sea.crown), 0.05, 0.9)
+	_center = clampf(float(hab.center) * float(sea.crown), 0.05, 0.9)
 	_max_roots = maxi(3, int(round(float(rng.randi_range(int(hab.roots[0]), int(hab.roots[1])))
 		* float(sea.density))))
 	_emit_interval = rng.randf_range(float(hab.emit[0]), float(hab.emit[1])) * float(sea.eager)
@@ -187,7 +187,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_air = String(pick.kind)
 	add_layer(_air, rng, _air_cfg(_air, rng.randi_range(int(pick.n[0]), int(pick.n[1]))))
 	# Start SPARSE - a few barely-sprouted shoots from the seed - and bloom outward over time
-	# (new shoots keep emitting from the centre in update), rather than filling the frame at
+	# (new shoots keep emitting from the center in update), rather than filling the frame at
 	# once and then holding a static shape.
 	var start := rng.randi_range(2, 4)
 	for i in start:
@@ -201,7 +201,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 
 
 # Tint the season's airborne layer to the plant it falls from: blossom and dry leaves take the
-# mood's ACCENT (the colour the branch tips are already turning toward), pollen and snow the
+# mood's ACCENT (the color the branch tips are already turning toward), pollen and snow the
 # base hue, and everything inherits the season's own saturation scaling so winter snow is not
 # more vivid than the wood it settles on.
 func _air_cfg(kind: String, n: int) -> Dictionary:
@@ -225,7 +225,7 @@ func _new_root() -> Dictionary:
 		"trate": _rng.randf_range(4.0, 9.0), "tphase": _rng.randf_range(0.0, TAU)}
 
 
-# The seed keeps sprouting: a new shoot emerges from the centre heading outward in any
+# The seed keeps sprouting: a new shoot emerges from the center heading outward in any
 # direction, so the root system continuously blooms over time instead of pausing once full.
 func _emit_root() -> void:
 	var r := _new_root()
@@ -239,9 +239,9 @@ func _emit_root() -> void:
 # the central seed), on a heading set by that site, and re-roll its lifecycle constants
 # (rate / hold / retire mode) so each life differs from the last. Laterals start shorter
 # and finer than taproots, so the network reads as trunks feeding ever-thinner roots.
-func _regrow(r: Dictionary, force_centre := false) -> void:
+func _regrow(r: Dictionary, force_center := false) -> void:
 	var steps := _rng.randi_range(_steps.x, _steps.y)
-	var site := _spawn_site(force_centre)
+	var site := _spawn_site(force_center)
 	r.origin = site.pos
 	r.heading = float(site.ang) + _rng.randf_range(-0.3, 0.3)
 	var length := _base_len * _rng.randf_range(0.8, 1.25)
@@ -260,22 +260,22 @@ func _regrow(r: Dictionary, force_centre := false) -> void:
 
 # Where a new root sprouts: mostly a point partway along an existing, revealed root
 # (a LATERAL, emerging at an angle to its parent), occasionally the central seed (a fresh
-# TAPROOT). Returns {pos, ang (heading suggestion), lateral}. Falls back to the centre
+# TAPROOT). Returns {pos, ang (heading suggestion), lateral}. Falls back to the center
 # when nothing has grown enough to branch from yet (e.g. the very first roots).
-func _spawn_site(force_centre := false) -> Dictionary:
-	var centre := {"pos": Vector2.ZERO, "ang": _rng.randf_range(-PI, PI), "lateral": false}
+func _spawn_site(force_center := false) -> Dictionary:
+	var center := {"pos": Vector2.ZERO, "ang": _rng.randf_range(-PI, PI), "lateral": false}
 	# How many shoots come straight from the seed is the HABIT's call (a mat spreads almost
 	# entirely by laterals; a taproot system keeps sending fresh roots down from the crown),
 	# and emitted shoots force it.
-	if force_centre or _rng.randf() < _centre:
-		return centre
+	if force_center or _rng.randf() < _center:
+		return center
 	# Roots with something revealed to branch from.
 	var live := []
 	for o in _roots:
 		if o.fil != null and o.fil.segs.size() > 0 and float(o.grown) > 0.12:
 			live.append(o)
 	if live.is_empty():
-		return centre
+		return center
 	var o = live[_rng.randi() % live.size()]
 	var segs: Array = o.fil.segs
 	# Find a revealed, fairly basal segment (basal points survive the parent's diebacks and
@@ -289,7 +289,7 @@ func _spawn_site(force_centre := false) -> Dictionary:
 			var tang := ((s.b as Vector2) - (s.a as Vector2)).angle()
 			var side := 1.0 if _rng.randf() < 0.5 else -1.0
 			return {"pos": pos, "ang": tang + side * _rng.randf_range(0.5, 1.1), "lateral": true}
-	return centre
+	return center
 
 
 # A stuttery, timelapse advance multiplier: cubed sine spends most of its time low (the front
@@ -314,7 +314,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	update_layers(f, delta)
 	_glow = Nonlinear.flare(_glow, clampf(0.30 * f.energy + 0.70 * f.beat, 0.0, 1.0), delta, 8.0, 1.5)
 
-	# The seed keeps blooming: emit new shoots from the centre over time until the pool fills,
+	# The seed keeps blooming: emit new shoots from the center over time until the pool fills,
 	# so the system is always sprouting rather than settling into one finished shape.
 	_emit_t -= delta
 	if _emit_t <= 0.0:
@@ -392,7 +392,7 @@ func _draw() -> void:
 	draw_layers()
 
 
-# Colour with TEXTURE along the strand, not one flat tone: the hue drifts and the strand
+# Color with TEXTURE along the strand, not one flat tone: the hue drifts and the strand
 # desaturates from base to tip (a woody-to-fresh gradient), brightness ramps toward the tip,
 # and a fine sinusoidal band rides along the length so the line reads as grain / pattern
 # rather than a uniform stroke. `along` is 0 at the base, 1 at the growing tip. Brightness is
@@ -406,7 +406,7 @@ func _color_for(depth: int, along := 0.0) -> Color:
 	var band := 0.11 * sin(along * 38.0 + float(depth) * 1.9)        # fine grain along the length
 	var v := clampf(0.28 + 0.40 * along + 0.42 * _f.bass + 0.38 * _glow + band, 0.10, 1.0)
 	# Saturation/value SCALE the mood rather than restating absolutes, so ash roots stay
-	# grey-dry and toxic ones stay lurid; still fresher / paler toward the tip. The SEASON
-	# scales them again, which is what makes a winter wood the same mood with the colour
+	# gray-dry and toxic ones stay lurid; still fresher / paler toward the tip. The SEASON
+	# scales them again, which is what makes a winter wood the same mood with the color
 	# drained out of it rather than a different mood entirely.
 	return _sch.color(h, _sat_mul * (1.0 - 0.42 * along), v * 1.2 * _val_mul, 0.92 * _draw_life)

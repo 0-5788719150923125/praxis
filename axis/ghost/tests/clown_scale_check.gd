@@ -9,7 +9,7 @@ extends SceneTree
 ## red lips become one, huge red blob" and "the two black eyes smear all the way
 ## across the face and forehead". Both are the same omission - Scale multiplied
 ## each feature's radius independently and no feature knew the others existed, so
-## nothing stopped a window growing past the gap to its neighbour. That is not a
+## nothing stopped a window growing past the gap to its neighbor. That is not a
 ## setting being too high; it is Scale having no model of the face it is painting.
 ##
 ## So the radii are now bounded by the anatomy's own spacing (see clown_paint's

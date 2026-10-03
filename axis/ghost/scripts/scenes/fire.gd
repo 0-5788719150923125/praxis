@@ -3,12 +3,12 @@ extends GhostScene
 ## Fire - a living flame attuned to the harmonics.
 ##
 ## One GPU temperature field (see [Layer.Fire] / shaders/flame.gdshader): heat sources
-## along the bed, each listening to its own harmonic band (bass at the centre, treble
+## along the bed, each listening to its own harmonic band (bass at the center, treble
 ## at the rim), raise columns that rising turbulence carves into licks. CPU sparks
 ## crackle out of whichever region is roaring, and smoke sometimes hazes the top.
 ## Quiet passages sit as embers; powerful ones send columns up the frame.
 ##
-## The flame's own colours are the shader's (a real fire is the temperature of its
+## The flame's own colors are the shader's (a real fire is the temperature of its
 ## fuel), so what the seed varies here is the HEARTH around it: the ambient the fire
 ## burns in, how wide it is laid, and how much smoke it throws.
 

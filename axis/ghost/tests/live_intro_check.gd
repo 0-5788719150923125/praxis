@@ -49,7 +49,7 @@ func _ok(cond: bool, msg: String) -> void:
 
 
 ## The silence must be BEFORE the first word, never between the first sentence and the
-## second. Modelled on the real queue arithmetic: `_plan` seeds `_pending` with the
+## second. Modeled on the real queue arithmetic: `_plan` seeds `_pending` with the
 ## intro and starts `_elapsed` at it; each drained chunk then appends after that.
 func _check_order() -> void:
 	var intro := 5.0

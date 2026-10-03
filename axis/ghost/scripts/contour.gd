@@ -28,7 +28,7 @@ class_name Contour
 ## an edge agree on it exactly. The alternative - quantizing floats to a hash - fails at
 ## exactly the shallow gradients where a crossing sits arbitrarily close to a corner, and
 ## a contour that silently breaks into two polylines there is a contour that cannot be
-## dashed, labelled or drawn with a consistent pen. Every segment is also emitted with
+## dashed, labeled or drawn with a consistent pen. Every segment is also emitted with
 ## the high ground on the same side, so each interior crossing is the END of exactly one
 ## segment and the START of exactly one other, and the walk is a lookup rather than a
 ## search.
@@ -48,11 +48,11 @@ class_name Contour
 ## one segment and the start of exactly one other.
 ##
 ## The single-corner cases are the whole table and everything else follows from them: two
-## adjacent corners are the union of two of them with the shared edge cancelled, three
+## adjacent corners are the union of two of them with the shared edge canceled, three
 ## corners are the complement of one reversed, and the two DIAGONAL cases are ambiguous -
 ## the contour either wraps the two high corners separately or joins them through the
 ## middle. Rows 16 and 17 are those saddles resolved the other way, chosen at runtime on
-## the cell's own centre value; a table with only one reading of a saddle produces
+## the cell's own center value; a table with only one reading of a saddle produces
 ## isolines that cross each other, which no amount of smoothing will hide.
 const CASES := [
 	-1, -1, -1, -1,     # 0  nothing above
@@ -60,19 +60,19 @@ const CASES := [
 	0, 1, -1, -1,       # 2  corner 1
 	3, 1, -1, -1,       # 3  corners 0,1
 	1, 2, -1, -1,       # 4  corner 2
-	3, 0, 1, 2,         # 5  saddle 0+2, centre low
+	3, 0, 1, 2,         # 5  saddle 0+2, center low
 	0, 2, -1, -1,       # 6  corners 1,2
 	3, 2, -1, -1,       # 7  corners 0,1,2
 	2, 3, -1, -1,       # 8  corner 3
 	2, 0, -1, -1,       # 9  corners 0,3
-	0, 1, 2, 3,         # 10 saddle 1+3, centre low
+	0, 1, 2, 3,         # 10 saddle 1+3, center low
 	2, 1, -1, -1,       # 11 corners 0,1,3
 	1, 3, -1, -1,       # 12 corners 2,3
 	1, 0, -1, -1,       # 13 corners 0,2,3
 	0, 3, -1, -1,       # 14 corners 1,2,3
 	-1, -1, -1, -1,     # 15 all above
-	1, 0, 3, 2,         # 16 saddle 0+2, centre high
-	0, 3, 2, 1,         # 17 saddle 1+3, centre high
+	1, 0, 3, 2,         # 16 saddle 0+2, center high
+	0, 3, 2, 1,         # 17 saddle 1+3, center high
 ]
 
 ## Working buffers for one extraction, one segment per slot: the two edge ids it joins,
@@ -170,7 +170,7 @@ func extract(h: PackedFloat32Array, nx: int, ny: int,
 				ex[3] = fx
 				ey[3] = fy + (0.5 if absf(d) < 1e-9 else clampf((lv - v0) / d, 0.0, 1.0))
 				# A saddle takes its alternative reading (rows 16/17) when the cell's own
-				# centre stands above the level.
+				# center stands above the level.
 				var ci := c
 				if c == 5 or c == 10:
 					if (v0 + v1 + v2 + v3) * 0.25 >= lv:
@@ -297,7 +297,7 @@ static func smooth(lines: Array, iters: int) -> Array:
 	return cur
 
 
-## Drop points that lie within [param eps] of the chord their neighbours span. Run after
+## Drop points that lie within [param eps] of the chord their neighbors span. Run after
 ## [method smooth]: cutting corners leaves long straight runs finely subdivided, and this
 ## hands those points back before anything has to draw them.
 static func simplify(lines: Array, eps: float) -> Array:
@@ -550,7 +550,7 @@ static func _samp(h: PackedFloat32Array, nx: int, ny: int, p: Vector2) -> float:
 
 # ---------------------------------------------------------------------------------
 # The annotation vocabulary. Everything below is strokes on a [TriBatch] in screen
-# space, and every one of them is a mark a draughtsman would recognise by name.
+# space, and every one of them is a mark a draughtsman would recognize by name.
 # ---------------------------------------------------------------------------------
 
 ## A run of graticule ticks along the neatline from [param a] to [param b], each growing
@@ -566,7 +566,7 @@ static func graticule(tb: TriBatch, a: Vector2, b: Vector2, inward: Vector2, div
 		tb.line(p, p + inward * (major if (i % ev) == 0 else minor), col, w, true)
 
 
-## A survey cross: four strokes leaving a clean gap at the centre. The gap is the whole
+## A survey cross: four strokes leaving a clean gap at the center. The gap is the whole
 ## mark - a plus sign points at a place, a cross with a void in it points at a POINT, and
 ## that is the difference between a decoration and a station.
 static func cross(tb: TriBatch, p: Vector2, r: float, gap: float,
@@ -591,7 +591,7 @@ static func leader(tb: TriBatch, p: Vector2, dir: Vector2, run: float, shelf: fl
 
 
 ## A scale bar: alternating filled and open cells on a baseline, with a tick at every
-## division. [param paper] is the ground colour, painted into the open cells so the bar
+## division. [param paper] is the ground color, painted into the open cells so the bar
 ## stays legible over hatching or water.
 static func scale_bar(tb: TriBatch, org: Vector2, length: float, cells: int, h: float,
 		ink: Color, paper: Color, w: float) -> void:

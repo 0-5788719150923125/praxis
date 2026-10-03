@@ -19,10 +19,10 @@ extends Scene3D
 ##       spans:
 ##         - {at: 0.5, action: blink, target: left}
 ##
-## A stage is deliberately WITHOUT a look of its own, and that is why it has no colour
+## A stage is deliberately WITHOUT a look of its own, and that is why it has no color
 ## scheme or shape table like the other scenes: everything visible belongs to the actors
 ## the board names, so variety here means giving [Cast] and [Actions] more to offer, and
-## adding a palette roll in this file would only fight the entry that asked for a colour.
+## adding a palette roll in this file would only fight the entry that asked for a color.
 ##
 ## Continuity: a stage declares `morph_out = morph_in = "stage"`, so when two stage
 ## entries run back to back the Director plays a morph and [method begin_morph]

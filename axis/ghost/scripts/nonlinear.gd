@@ -23,10 +23,10 @@ const CURVES := ["linear", "sigmoid", "tanh", "softplus", "gauss",
 static func apply(kind: String, x: float, k := 1.0) -> float:
 	match kind:
 		"sigmoid":
-			# Centred at 0, 0..1 - smooth threshold. Shift x to move the knee.
+			# Centered at 0, 0..1 - smooth threshold. Shift x to move the knee.
 			return 1.0 / (1.0 + exp(-k * x))
 		"tanh":
-			# Centred at 0, -1..1 - signed saturation.
+			# Centered at 0, -1..1 - signed saturation.
 			return tanh(k * x)
 		"softplus":
 			# Soft, one-sided ramp (a smooth ReLU) - growth that eases off the floor.
@@ -55,7 +55,7 @@ static func apply(kind: String, x: float, k := 1.0) -> float:
 
 ## Asymmetric envelope follower: ease `level` toward `target` fast when rising and
 ## slow when falling. The temporal nonlinearity behind anything that "flares and
-## fades" - beat glow, growth surges, activation. Generalises the fast-attack /
+## fades" - beat glow, growth surges, activation. Generalizes the fast-attack /
 ## slow-decay EMA that was hand-rolled in Lighting, Activation, and the rock scenes.
 static func flare(level: float, target: float, dt: float, attack := 8.0, release := 1.5) -> float:
 	var rate := attack if target > level else release

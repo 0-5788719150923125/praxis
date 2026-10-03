@@ -9,7 +9,7 @@ class_name Flow2D
 ## (a filament growing, a particle drifting) wanders and curls the way something
 ## alive moves through space, never just sliding to a stop.
 ##
-## Coordinates are in ghost's centred unit-fraction space (roughly -0.7..0.7). The
+## Coordinates are in ghost's centered unit-fraction space (roughly -0.7..0.7). The
 ## field slowly evolves over time so the flow itself breathes. Filaments follow it
 ## ([Filament]); it is equally usable as a wind/drift field for particles.
 

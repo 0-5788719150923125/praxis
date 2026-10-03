@@ -109,7 +109,7 @@ def main() -> int:
             pts = res.face_landmarks[0]
             row = [1] + [c for p in pts[:POINTS] for c in (p.x, p.y)]
             # A model revision with fewer points would silently write short rows
-            # and desynchronise every sample after it - refuse instead.
+            # and desynchronize every sample after it - refuse instead.
             if len(row) != 1 + POINTS * 2:
                 print(
                     "face_track: model returned %d points, expected %d"

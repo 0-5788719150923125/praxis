@@ -258,15 +258,15 @@ func _check_markers() -> void:
 
 func _check_keying() -> void:
 	var img := Image.create(64, 32, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.95, 0.95, 0.95))               # paper, a touch grey
+	img.fill(Color(0.95, 0.95, 0.95))               # paper, a touch gray
 	img.fill_rect(Rect2i(8, 8, 16, 16), Color.BLACK)  # a stroke
-	img.fill_rect(Rect2i(40, 8, 16, 16), Color(0.55, 0.55, 0.55))  # hatching grey
+	img.fill_rect(Rect2i(40, 8, 16, 16), Color(0.55, 0.55, 0.55))  # hatching gray
 	var ink := Color(0.1, 0.16, 0.46)
 	var out := BookMedium.ink_texture(img, ink).get_image()
 	_ok(out.get_pixel(2, 2).a < 0.02, "paper survived keying (alpha %.2f)" % out.get_pixel(2, 2).a)
 	_ok(out.get_pixel(14, 14).a > 0.98, "a black stroke keyed away (alpha %.2f)" % out.get_pixel(14, 14).a)
 	var mid := out.get_pixel(48, 14).a
-	_ok(mid > 0.3 and mid < 0.9, "a grey stroke is not a lighter stroke (alpha %.2f)" % mid)
+	_ok(mid > 0.3 and mid < 0.9, "a gray stroke is not a lighter stroke (alpha %.2f)" % mid)
 	_ok(out.get_pixel(14, 14).b > 0.4, "the stroke is not in the pen's ink")
 
 
@@ -307,7 +307,7 @@ func _check_headings_are_read() -> void:
 
 
 ## EACH VOICE WRITES IN ITS OWN INK, black by default: words carry their speaker (headings and
-## margin times included), a named ink is an ink colour, and the medium resolves a speaker to
+## margin times included), a named ink is an ink color, and the medium resolves a speaker to
 ## the ink the document names for it.
 func _check_inks() -> void:
 	var doc := "Opening.\n\n<!-- speaker: Angel -->\n## Monday\n\n09:40 Blue words here.\n\n<!-- speaker: Ryan -->\nRed words."
@@ -440,7 +440,7 @@ func _check_clip_sides() -> void:
 
 
 ## THE HAND DRIFTS, IT DOES NOT JITTER: words sit exactly on the line (no per-word offset), and
-## the drift is SMOOTH - a letter a little further along sits almost where its neighbour does,
+## the drift is SMOOTH - a letter a little further along sits almost where its neighbor does,
 ## and lines next to each other lean alike. A per-word random offset was reported as unnatural.
 func _check_hand_drift() -> void:
 	var l := NotebookLayout.new()
@@ -462,7 +462,7 @@ func _check_hand_drift() -> void:
 	_ok(worst < 0.2, "the drift jumps %.2f px between letters 4 px apart" % worst)
 	var a := m._drift(3, 900.0, y) - m._drift(3, 250.0, y)
 	var b := m._drift(3, 900.0, y + NotebookLayout.RULE) - m._drift(3, 250.0, y + NotebookLayout.RULE)
-	_ok(absf(a - b) < 2.0, "neighbouring lines do not lean alike (%.1f vs %.1f px)" % [a, b])
+	_ok(absf(a - b) < 2.0, "neighboring lines do not lean alike (%.1f vs %.1f px)" % [a, b])
 	# THE HAND LEANS RIGHT (positive skew in Godot leans a glyph's top right - measured): every
 	# line's slant, per-letter wobble included, stays right of upright or at it, never left.
 	var lefts := 0

@@ -218,7 +218,7 @@ func _shoot() -> void:
 ## cast when the page turned, and they all stay on the paper.
 ##
 ## Getting this wrong is not cosmetic. An earlier version of this function kept the
-## full-frame behaviour - mint a scene, parent it, free the outgoing one - and under a
+## full-frame behavior - mint a scene, parent it, free the outgoing one - and under a
 ## cast-owning medium "the outgoing one" is a panel of the live page, so every cut deleted
 ## a panel out of the comic and the reading never moved. The probe reported a stuck,
 ## half-dead page for a mechanism that was working correctly.
@@ -231,9 +231,9 @@ func _cut(medium: Medium) -> void:
 	var entry: Dictionary = Director.SCENES[randi() % Director.SCENES.size()]
 	var sc: GhostScene = (entry["script"] as Resource).new()
 	# THE DIRECTOR'S ORDER, exactly: init_with_seed FIRST, add_child second (see
-	# Director._make_scene). Reversed, the node enters the tree uninitialised and Node2D
+	# Director._make_scene). Reversed, the node enters the tree uninitialized and Node2D
 	# draws it once immediately, so a scene that indexes its own built arrays in _draw
-	# reads an empty one - a probe artefact that never happens on the real path.
+	# reads an empty one - a probe artifact that never happens on the real path.
 	sc.init_with_seed(randi(), String(entry["behavior"]))
 	var prev: GhostScene = _live
 	medium.host_for(sc).add_child(sc)
@@ -335,7 +335,7 @@ func _luma(img: Image) -> float:
 
 
 ## Standard deviation of luma. A page that drew has paper, ink and pictures on it; a page
-## that did not is one flat colour, and that is what this separates.
+## that did not is one flat color, and that is what this separates.
 func _spread(img: Image) -> float:
 	var mean := _luma(img)
 	var acc := 0.0

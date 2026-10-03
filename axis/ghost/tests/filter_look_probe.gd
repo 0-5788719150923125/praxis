@@ -97,7 +97,7 @@ func _shot(amounts: Dictionary, name: String) -> String:
 
 
 ## A photographic picture rather than a chart: a sky-to-ground tonal ramp with a bright source
-## in it, a mid-grey card to judge grain on, and soft shapes so an edge effect has something to
+## in it, a mid-gray card to judge grain on, and soft shapes so an edge effect has something to
 ## fall across.
 func _make_picture() -> ImageTexture:
 	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
@@ -119,7 +119,7 @@ func _make_picture() -> ImageTexture:
 			var d2 := Vector2(u - 0.76, v - 0.74).length()
 			base = base.lerp(Color(0.04, 0.05, 0.07), clampf(1.0 - d2 * 4.2, 0.0, 1.0))
 			img.set_pixel(x, y, base)
-	# A mid-grey card. Grain is judged here: it is flat in the source, so everything visible on
+	# A mid-gray card. Grain is judged here: it is flat in the source, so everything visible on
 	# it is the filter's.
 	for y in range(H / 2 - 26, H / 2 + 26):
 		for x in range(W / 2 - 60, W / 2 + 60):

@@ -28,7 +28,7 @@ const MARGIN_X := 172.0
 ## How close writing comes to the outer edge, and to the spine.
 const PAD_OUTER := 64.0
 const PAD_SPINE := 100.0
-## A SKETCH IS CENTRED IN THE COLUMN and drawn as large as its shape allows: [constant
+## A SKETCH IS CENTERED IN THE COLUMN and drawn as large as its shape allows: [constant
 ## SKETCH_WIDTH] of the column's width, with as many rows as that takes at its own aspect (the
 ## drawing's ink, cropped - see [method BookMedium.ink_texture]), between [constant SKETCH_ROWS]
 ## and [constant SKETCH_ROWS_MAX]. It used to sit at a random place along a fixed 8 rows and
@@ -49,7 +49,7 @@ const PRINT_LONG := 0.5
 const CLIP_LEN := 150.0
 const CLIP_OVERHANG := 6.0
 
-## THE HANDS, all OFL, bundled under fonts/hands/ (licences beside them). One is chosen per
+## THE HANDS, all OFL, bundled under fonts/hands/ (licenses beside them). One is chosen per
 ## session. `size` is the body size that fills a rule in that hand - they differ a lot (Caveat's
 ## letters are small for their em). Sized for a phone: about a fifth larger than the sizes that
 ## first looked right on a monitor, which left a third of each rule empty. Keep each under
@@ -62,7 +62,7 @@ const HANDS := {
 }
 
 ## THE PENS a voice may write in, by name - what `ink:` on a voice in the frontmatter takes
-## (a hex colour works too). Ink colours, not pure ones: "blue" is a ballpoint's, not #0000FF.
+## (a hex color works too). Ink colors, not pure ones: "blue" is a ballpoint's, not #0000FF.
 ## Black is the default for every voice that names none.
 const INKS := {
 	"black": Color(0.08, 0.08, 0.10),
@@ -74,7 +74,7 @@ const INKS := {
 }
 
 
-## A voice's `ink:` as a colour: a name from [constant INKS], a hex colour, or black.
+## A voice's `ink:` as a color: a name from [constant INKS], a hex color, or black.
 static func ink_color(v: String) -> Color:
 	var k := v.strip_edges().to_lower()
 	if INKS.has(k):
@@ -265,7 +265,7 @@ func _set_margin(toks: Array, _widths: Array, n: int, base_y: float, fs: int, lh
 
 ## WHICH WORDS EACH CLIPPED PHOTO HIDES, as `cover: [first, last]` on every photo of its stack
 ## (or [-1, -1]), so the medium can lift it while they are read. A word is hidden when its
-## centre or either end lies inside the photo's turned rectangle.
+## center or either end lies inside the photo's turned rectangle.
 func _finish() -> void:
 	var lo := {}
 	var hi := {}
@@ -306,9 +306,9 @@ func _image_page(b: Dictionary) -> void:
 	var w := PAGE.x * 0.8
 	var sz := _photo_size(b, w)
 	var ang := deg_to_rad(((r & 0xFF) / 255.0 - 0.5) * 6.0)
-	var centre := Vector2(PAGE.x * 0.5 + (((r >> 8) & 0xFF) / 255.0 - 0.5) * 60.0, 70.0 + sz.y * 0.5)
-	pg["images"].append(_photo(b, centre, sz, ang, true,
-		{"pos": Vector2(centre.x + (((r >> 16) & 0xFF) / 255.0 - 0.5) * w * 0.3, -CLIP_OVERHANG),
+	var center := Vector2(PAGE.x * 0.5 + (((r >> 8) & 0xFF) / 255.0 - 0.5) * 60.0, 70.0 + sz.y * 0.5)
+	pg["images"].append(_photo(b, center, sz, ang, true,
+		{"pos": Vector2(center.x + (((r >> 16) & 0xFF) / 255.0 - 0.5) * w * 0.3, -CLIP_OVERHANG),
 		"angle": (((r >> 24) & 0xFF) / 255.0 - 0.5) * 0.14}))
 	_last_photo = {}
 
@@ -357,8 +357,8 @@ func _aspect_of(b: Dictionary) -> float:
 	return DEFAULT_ASPECT
 
 
-func _photo(b: Dictionary, centre: Vector2, sz: Vector2, ang: float, full: bool, clip: Dictionary) -> Dictionary:
-	return {"rect": Rect2(centre - sz * 0.5, sz), "angle": ang, "key": String(b.get("key", "")),
+func _photo(b: Dictionary, center: Vector2, sz: Vector2, ang: float, full: bool, clip: Dictionary) -> Dictionary:
+	return {"rect": Rect2(center - sz * 0.5, sz), "angle": ang, "key": String(b.get("key", "")),
 		"prompt": String(b.get("prompt", "")), "full": full, "photo": true, "clip": clip}
 
 
@@ -378,9 +378,9 @@ func _clip_photo(b: Dictionary) -> void:
 		# FANNED: the same clip, the photo underneath slid a little and turned the other way
 		var prev: Dictionary = _last_photo
 		var sz := _print_size(b)
-		var centre := (prev["rect"] as Rect2).get_center() + Vector2((u.call(24) - 0.5) * 70.0,
+		var center := (prev["rect"] as Rect2).get_center() + Vector2((u.call(24) - 0.5) * 70.0,
 			lerpf(24.0, 60.0, u.call(4)))
-		var ph := _photo(b, centre, sz, -signf(float(prev["angle"])) * absf(ang), false, {})
+		var ph := _photo(b, center, sz, -signf(float(prev["angle"])) * absf(ang), false, {})
 		ph["stack"] = prev["stack"]
 		ph["hinge"] = prev["hinge"]
 		# under the one already there: the clip was put on over the stack
@@ -389,22 +389,22 @@ func _clip_photo(b: Dictionary) -> void:
 	var sz := _print_size(b)
 	var side := _side(_p)
 	var near_top := _y < _top() + RULE * 3.0
-	var centre: Vector2
+	var center: Vector2
 	var clip := {}
 	if near_top and u.call(24) < 0.5:
-		centre = Vector2(lerpf(sz.x * 0.5 + 60.0, PAGE.x - sz.x * 0.5 - 60.0, u.call(4)), 34.0 + sz.y * 0.5)
-		clip = {"pos": Vector2(centre.x + (u.call(12) - 0.5) * sz.x * 0.4, -CLIP_OVERHANG),
+		center = Vector2(lerpf(sz.x * 0.5 + 60.0, PAGE.x - sz.x * 0.5 - 60.0, u.call(4)), 34.0 + sz.y * 0.5)
+		clip = {"pos": Vector2(center.x + (u.call(12) - 0.5) * sz.x * 0.4, -CLIP_OVERHANG),
 			"angle": (u.call(20) - 0.5) * 0.14}
 	else:
 		var edge := 34.0 + sz.x * 0.5
 		var cx := PAGE.x - edge if side == 1 else edge
 		var cy := clampf(_y + sz.y * 0.3, sz.y * 0.5 + 40.0, PAGE.y - sz.y * 0.5 - 40.0)
-		centre = Vector2(cx, cy)
+		center = Vector2(cx, cy)
 		var gy := cy - sz.y * lerpf(0.1, 0.35, u.call(12))
 		# the clip's long axis points in from the edge it grips
 		clip = {"pos": Vector2(PAGE.x + CLIP_OVERHANG if side == 1 else -CLIP_OVERHANG, gy),
 			"angle": (PI * 0.5 if side == 1 else -PI * 0.5) + (u.call(20) - 0.5) * 0.14}
-	var ph := _photo(b, centre, sz, ang, false, clip)
+	var ph := _photo(b, center, sz, ang, false, clip)
 	# THE HINGE is the edge the clip holds; the photo lifts from the other one
 	ph["hinge"] = "top" if clip["pos"].y < 0.0 else ("right" if side == 1 else "left")
 	ph["stack"] = _stacks

@@ -131,7 +131,7 @@ func _stencil() -> Texture2D:
 
 
 ## A plain lit surface: the coat's deposit is gated on nothing but the stencil, so
-## the frame only has to be present and face-coloured.
+## the frame only has to be present and face-colored.
 func _frame() -> Texture2D:
 	var img := Image.create_empty(W, H, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0.78, 0.60, 0.50))

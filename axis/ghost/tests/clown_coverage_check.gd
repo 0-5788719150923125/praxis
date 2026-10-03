@@ -29,7 +29,7 @@ extends SceneTree
 ## what each guard vetoes, and measures the coat's RECOVERED OPACITY over each
 ## blotch against the clean coat immediately around it. Comparing against the
 ## surrounding ring rather than against a fixed number is the point: "patchy"
-## means a hole relative to its neighbours, and the coat legitimately dims with
+## means a hole relative to its neighbors, and the coat legitimately dims with
 ## the scene's own light (see white16), so an absolute threshold would fail an
 ## evenly-lit-but-darker face for no reason.
 ##
@@ -45,7 +45,7 @@ const H := 512
 const T := 1.0
 const POINTS := 478
 
-## Well inside the fitted oval (centre 0.5, 0.42, radii 0.30) and clear of every
+## Well inside the fitted oval (center 0.5, 0.42, radii 0.30) and clear of every
 ## feature window, including the eye patch at its default 2.2x growth.
 const DARK_AT := Vector2(0.34, 0.53)
 const HUE_AT := Vector2(0.66, 0.53)
@@ -128,11 +128,11 @@ func _initialize() -> void:
 	# correctly so). The eye
 	# patch is an annulus so a clown paints AROUND the eye - but the coat underneath
 	# went on covering the opening, so the hole in the black revealed WHITE. Same
-	# fault as black over an eyeball, with the colour inverted, and reported as
+	# fault as black over an eyeball, with the color inverted, and reported as
 	# such. The openings are cut out of the coat's silhouette now (a subtractive
 	# second pass - premultiplied blending cannot remove alpha), and the coat is its
 	# deposit exactly, or advection reads from the solid coat just outside a hole
-	# and puts a grey blob back over the eye within a few steps.
+	# and puts a gray blob back over the eye within a few steps.
 	_ed._clown_smudge = 1.0
 	_ed._update_stencil(T)
 	for i in 3:
@@ -279,7 +279,7 @@ func _redness(out: Image, c: Vector2, r: float) -> float:
 	return acc / maxf(float(n), 1.0)
 
 
-## Mean luminance over an elliptical annulus `r_lo..r_hi` in units of `r`, centred
+## Mean luminance over an elliptical annulus `r_lo..r_hi` in units of `r`, centered
 ## on `c`. The eye patch is an ellipse grown from the measured eye, so its own
 ## radius is the only sensible unit to sample it in.
 func _ring_lum(out: Image, c: Vector2, r: Vector2, r_lo: float, r_hi: float,
@@ -295,7 +295,7 @@ func _ring_lum(out: Image, c: Vector2, r: Vector2, r_lo: float, r_hi: float,
 			var d := Vector2((u - c.x) / r.x, (v - c.y) / r.y).length()
 			if d < r_lo or d > r_hi:
 				continue
-			# `side` restricts to one half: -1 keeps x below the centre, +1 above.
+			# `side` restricts to one half: -1 keeps x below the center, +1 above.
 			if side != 0.0 and (u - c.x) * side <= 0.0:
 				continue
 			var p := out.get_pixel(x, y)

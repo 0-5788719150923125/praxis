@@ -132,7 +132,7 @@ const FLOOR_MIN := 0.0015             # the permanent faint grain (~-56 dB)
 # 4-6 kHz, injected PRE-cascade so the formants shape them onto the voice. That
 # is exactly the band the consonant cues live in, and phonemes.gd:80-82 states
 # the design principle it destroys ("the cue is spectral CONTRAST against the
-# neighbour, not level"). Fricative-vs-vowel contrast at 2.5-5 kHz: -4.05 dB
+# neighbor, not level"). Fricative-vs-vowel contrast at 2.5-5 kHz: -4.05 dB
 # with this noise, +5.96 dB without. The "top-octave life" it was restored for
 # is real but it costs 10 dB of consonant contrast to buy. The principled end
 # state is aspiration tied to the glottal open quotient and seated ~10-12 dB
@@ -222,7 +222,7 @@ const RAW_TRIM := 4.0                 # raw (RAW_MODE) output trim, staged by
 #                        /th/'s and 85 dB at /s/'s. Measured consequence: the
 #                        S/SH/F/TH log-spectra correlated at 0.99-1.00, three
 #                        of the four peaked in the SAME FFT bin (1367 Hz), and
-#                        6-10 kHz contrast against the neighbouring vowel was
+#                        6-10 kHz contrast against the neighboring vowel was
 #                        -0.2 dB. One sound wearing four labels; "the
 #                        enunciation simply isn't there" was literal.
 # The answer is the one Klatt 1980 shipped and that this file only ever had
@@ -264,7 +264,7 @@ const LOCUS_TIME := 0.050             # seconds
 # still reaches its own target before it starts leaving it.
 const LOCUS_SHARE := 0.35
 # VIBRATO - the cue that separates a held SUNG note from a held robotic tone.
-# 5.5 Hz is the centre of the measured human range (5-7 Hz); depth is in
+# 5.5 Hz is the center of the measured human range (5-7 Hz); depth is in
 # semitones and is scaled by `Spec.song`, so a speaking voice has none. It
 # ramps in over VIB_ONSET so short notes do not wobble - vibrato on a 90 ms
 # syllable reads as a fault, not as singing.
@@ -302,7 +302,7 @@ const F6 := 6000.0
 
 
 ## The speaker's trait axes, each in [-1, 1]. THE TRAIT VECTOR IS THE VOICE:
-## the zero vector is the hand-curated default speaker (its concrete centres
+## the zero vector is the hand-curated default speaker (its concrete centers
 ## live in Spec.from_traits - tune them there), a seed only *initializes* the
 ## vector, and any UI modulation edits it directly - so a speaker is replicated
 ## by replaying the vector, never by replaying the gesture that found it.
@@ -342,7 +342,7 @@ class Spec:
 	var pause_stop := 0.42
 	var final_lengthen := 1.25        # phrase-final syllable stretch
 	# SONG in [0, 1]: how much this voice SINGS rather than speaks. Not a style
-	# layer on top of speech - it swaps four behaviours at once, because that is
+	# layer on top of speech - it swaps four behaviors at once, because that is
 	# what the difference actually is:
 	#   notes    - vowels stretch onto a BEAT GRID instead of taking their
 	#              natural length, and prominent syllables take more beats than
@@ -370,7 +370,7 @@ class Spec:
 	# that makes a stronger signal and a belt that makes a different one. Signed
 	# weights, so a contributor can suppress a position another one holds rather
 	# than only ever adding notes. Empty = the voice's own single cycle, which
-	# is exactly the behaviour before the bank existed.
+	# is exactly the behavior before the bank existed.
 	var sustain_bank: Array = []
 	var air_gain := 0.07              # static-band strength (noise above the air line)
 	var air_cut := 3000.0             # the air line: above it the voice goes to static
@@ -415,7 +415,7 @@ class Spec:
 		s.final_lengthen = 1.25 * pow(1.25, drawl)
 		# the air trait: how much of the upper spectrum tunes to static, and
 		# where that line sits (high air = the line drops, more of the voice
-		# is breath-noise - the multi-band harmonic/noise mix). Centre dropped
+		# is breath-noise - the multi-band harmonic/noise mix). Center dropped
 		# 0.07 -> 0.02 in the 2026-08-04 rebuild: the air band existed to give
 		# a five-pole cascade some top, and was measured supplying 96-99% of
 		# the vowel's brightness - i.e. the "bright" was hiss, not voice. With
@@ -473,7 +473,7 @@ class Spec:
 
 	## A seeded roll of the trait vector - BIMODAL by register: the roll first
 	## picks a speaker register (male / female), which sets correlated pitch
-	## and vocal-tract centres far apart, then scatters the remaining traits
+	## and vocal-tract centers far apart, then scatters the remaining traits
 	## widely. Rolls are meant to sound like DIFFERENT PEOPLE, not takes of one.
 	static func sample(rng: RandomNumberGenerator) -> Spec:
 		var seed_value_ := int(rng.seed)
@@ -485,7 +485,7 @@ class Spec:
 		# SONG is a MODE, not a shade, so it is not drawn like the timbre axes.
 		# As a plain N(0, 0.55) it put half of all wild rolls above zero, and the
 		# belt then compounds that: acceptance-weighted parents plus a trust
-		# region centred on the party mean means one kept singer pulls its whole
+		# region centered on the party mean means one kept singer pulls its whole
 		# line toward singing, which is how ~90% of found seeds ended up sung.
 		# An explicit incidence keeps singing something you FIND rather than the
 		# default, and the negative draw is pushed well clear of zero so a
@@ -611,7 +611,7 @@ class ProsodyWalk:
 
 	# ELABORATION - the one tunable scalar, 0..1, along the spectrum the user asked
 	# for: at 0 a longer lineage REFINES (each generation a smaller nudge, 0.6^gen,
-	# the voice settling toward its parent - the original behaviour); toward 1 a
+	# the voice settling toward its parent - the original behavior); toward 1 a
 	# longer lineage ELABORATES (perturbation decays far slower, the melodic shelf
 	# grows, activations fire more - the voice getting more creative the deeper it
 	# goes). It multiplies each seed's own `verve` gene, so the population still
@@ -686,7 +686,7 @@ class ProsodyWalk:
 			p.act_gain = float(p.act_gain) * (1.0 + 0.5 * elab)           # ...and harder
 			p.ring = float(p.ring) * (1.0 + 0.5 * elab)                   # ...ringing longer
 		# THE MODULATOR BLEND: pool every lineage's spawned oscillators (the prior
-		# brings none - it is the still centre), then finalize the pile into one
+		# brings none - it is the still center), then finalize the pile into one
 		# budgeted, pruned set. Elaboration eases the dampening, so a deep, high-verve
 		# reading keeps more of its jaggedness while a shallow one stays smooth. A
 		# frozen override carries no live modulators - it was already integrated.
@@ -938,7 +938,7 @@ class ProsodyWalk:
 		# leans on it. Previously this was a coin flip that both invented the
 		# accent and placed it, so the same sentence stressed different words
 		# on different seeds and no seed stressed them where English does. The
-		# walk should colour prosody, never generate it.
+		# walk should color prosody, never generate it.
 		var emph := 0.0
 		var pre_pause := 0.0
 		if stressed:
@@ -991,7 +991,7 @@ class Reso:
 	var y2 := 0.0
 
 	## CASCADE normalization: unity gain at DC. Correct for a chain of poles
-	## modelling one tube, where the product must not drift with tuning.
+	## modeling one tube, where the product must not drift with tuning.
 	func tune(f: float, bw: float) -> void:
 		var r := exp(-PI * bw / SR)
 		c = -r * r
@@ -1373,7 +1373,7 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 	# semitones were only ever computed on vowels, so every consonant and
 	# silence targeted 0 st and the f0 EMA dived toward the base mid-word - a
 	# picket-fence melody (measured: 4-5 st swings INSIDE words). Consonants
-	# now sit on the line between their neighbouring vowels, and silences
+	# now sit on the line between their neighboring vowels, and silences
 	# pre-position toward the NEXT vowel (inaudible - the amplitude is zero -
 	# but the EMA arrives on pitch instead of gliding in from neutral).
 	var next_v := 0.0
@@ -1765,7 +1765,7 @@ static func _retarget(state: Dictionary, f: Array, _spec: Spec) -> void:
 
 
 ## Point the PARALLEL branch at this obstruent's front-cavity resonances (the
-## `par` triples in Phonemes.TABLE). Centres scale with vocal tract length;
+## `par` triples in Phonemes.TABLE). Centers scale with vocal tract length;
 ## bandwidths do NOT - a shorter tube raises a resonance, it does not sharpen
 ## it, and scaling both was silently giving short tracts a higher-Q /s/ than
 ## long ones. Resonators are PEAK-normalized, so the table's third column is
@@ -1890,13 +1890,13 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		state.anti_f = float(entry.get("zero", 950.0))
 	# THE LOCUS GLIDE: hold this segment's own posture, then bend toward the
 	# next one over the final LOCUS_TIME. Consonant PLACE lives in the F2
-	# transition on the neighbouring vowel, not in the consonant's own steady
+	# transition on the neighboring vowel, not in the consonant's own steady
 	# state - so the movement has to happen while the vowel is still sounding.
 	var base_f: Array = (state.ftg as Array).duplicate()
 	var glide_n := 0.0
 	if not to_f.is_empty():
 		# never spend more than LOCUS_SHARE of a segment leaving its own
-		# target. At half, a 97 ms /r/ spent 48 ms travelling away from the
+		# target. At half, a 97 ms /r/ spent 48 ms traveling away from the
 		# low F3 that IS an /r/, and with the glide EMA lagging on top it
 		# never arrived - reported as the "rs" in "yours" being inaudible.
 		glide_n = minf(LOCUS_TIME * SR, float(n) * LOCUS_SHARE)
@@ -1984,7 +1984,7 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		# concentration around 3 to 3.5 kHz and a rapid falloff above about 4
 		# kHz, which is a pattern typical of many talkers." Ghost had them 1300
 		# Hz apart instead of 450, which is two shallow humps instead of one
-		# concentration: modelled 2.5-5 kHz peak-to-valley 36.4 dB for /AA/
+		# concentration: modeled 2.5-5 kHz peak-to-valley 36.4 dB for /AA/
 		# against 51.9 for the clustered placement, and 3.3 dB less energy in
 		# 2-4 kHz. Measured vowel spectra matched the analytic prediction of
 		# ghost's own equations within 1.5 dB, so nothing downstream was

@@ -5,7 +5,7 @@ extends SceneTree
 ##
 ## Separate from `g2p_check.gd`, which grades `word_to_phones` one word at a time
 ## against `data/reference.yml`. These entries cannot be tested that way: the whole
-## point of a homograph is that the reading depends on the NEIGHBOURS, so a case is
+## point of a homograph is that the reading depends on the NEIGHBORS, so a case is
 ## a sentence, not a word.
 ##
 ## Two halves, and the second is the one that matters:
@@ -24,7 +24,7 @@ extends SceneTree
 
 # sentence, the word to inspect, the ARPAbet expected (stress digits optional)
 const SWITCHES := [
-	# A capital "A" mid-sentence is the LETTER (the article is only capitalised at a sentence
+	# A capital "A" mid-sentence is the LETTER (the article is only capitalized at a sentence
 	# start); read as the article it was a clipped, near-silent schwa. North-star ch40.
 	["Two groups, A and B, forty or so.", "a", "EY"],
 	["Plan A failed.", "a", "EY"],
@@ -79,7 +79,7 @@ const NAMES := [
 ]
 
 # Markdown is typography and must never be spoken. eSpeak turns a bare asterisk into the
-# WORD "asterisk", so an emphasised line came out with an extra spoken word at each end.
+# WORD "asterisk", so an emphasized line came out with an extra spoken word at each end.
 const MARKUP := [
 	["*I will never hurt you*", ["i", "will", "never", "hurt", "you"]],
 	["**bold** word", ["bold", "word"]],
@@ -155,7 +155,7 @@ const GROUPING := [
 	# ... and a real boundary must still break, which is the whole risk of the heuristic
 	["\"I know.\" Then he left.", ["\"I know.\"", "Then he left."]],
 	["The answer was no. It stayed no.", ["The answer was no.", "It stayed no."]],
-	# A numeral opening a sentence is capitalised on expansion, both because that is
+	# A numeral opening a sentence is capitalized on expansion, both because that is
 	# correct and because otherwise it reads as a lower-case continuation and merges.
 	["He counted. 5 was missing.", ["He counted.", "Five was missing."]],
 ]

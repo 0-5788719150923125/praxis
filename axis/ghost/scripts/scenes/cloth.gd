@@ -8,7 +8,7 @@ extends GhostScene
 ## and a strip peels off and streams away still rippling. By the end the sheet is a set of
 ## ragged ribbons on the same line, still moving.
 ##
-## THIS IS THE FIRST DEFORMABLE SUBJECT IN THE CATALOGUE. Everything else is rigid, a
+## THIS IS THE FIRST DEFORMABLE SUBJECT IN THE CATALOG. Everything else is rigid, a
 ## particle, or a field. Cloth is a real solver - positions and previous positions in packed
 ## arrays, distance constraints relaxed Gauss-Seidel for N iterations, pins as
 ## zero-inverse-mass nodes - and it is the only subject that DESTROYS ITSELF, so a long
@@ -20,9 +20,9 @@ extends GhostScene
 ## comes through the back, and a specular sheen on a fold's crest are all real rather than
 ## faked from projected area - and a gust can push the cloth TOWARD the viewer and be seen
 ## as a bulge instead of a sideways smear. The projection is deliberately weak (a linear
-## `1 + z * persp` scale about frame centre, not a perspective divide) because a hanging
+## `1 + z * persp` scale about frame center, not a perspective divide) because a hanging
 ## sheet is square-on: it wants dimension, not a tumbling-card read. Framing is `plane`,
-## which puts the camera in `PLANE_BAG`: centred, occasionally a slow push.
+## which puts the camera in `PLANE_BAG`: centered, occasionally a slow push.
 ##
 ## THE TEAR IS CONSTRAINT REMOVAL, AND IT PROPAGATES ALONG THE WEAVE. Every structural
 ## constraint carries a yield strain sampled at build - the weave irregularity, so a given
@@ -33,7 +33,7 @@ extends GhostScene
 ## it - otherwise a diagonal would bridge the rip and it would never open.
 ##
 ## The propagation is the part worth explaining. A break raises a WEAKENING field on the
-## neighbouring edges: strongly on the two edges continuing the run (the same warp/weft
+## neighboring edges: strongly on the two edges continuing the run (the same warp/weft
 ## line, one step along), weakly on the edges to either side, weaker still on the crossing
 ## edges at the tip - stress concentration at a crack tip, written as data. An edge's
 ## effective yield is its sampled strength times `1 - weak`. Because the boost along the run
@@ -52,7 +52,7 @@ extends GhostScene
 ## frame); GATHER, how far the pins are pulled in from the fabric's natural width, which
 ## makes a curtain buckle into standing folds rather than hanging flat; the initial fold
 ## ripple that gives the buckling a direction; the pin pattern (a line of pegs, two corners,
-## a diagonal, or a single point at centre); mass per node, which sets drape by dividing the
+## a diagonal, or a single point at center); mass per node, which sets drape by dividing the
 ## wind but not gravity; damping; gravity; the base wind and how much movement adds to it;
 ## the wind's direction and turbulence gain; the gust vocabulary; how far the threads give
 ## before they cannot lengthen (`max_stretch`); tearing on or off and its yield,
@@ -68,12 +68,12 @@ extends GhostScene
 ## amplitude: the fabric's RESPONSE to the wind is the amplitude, which is why a loud smooth
 ## passage and a quiet busy one look different here. A `f.beat` rising edge releases a GUST,
 ## a localized pressure blob crossing the sheet at its own speed, so the beat is seen as a
-## wave travelling through the fabric and arriving LATE at the far edge - a physical delay,
+## wave traveling through the fabric and arriving LATE at the far edge - a physical delay,
 ## not a scheduled one. Gusts come from a vocabulary pre-rolled at build and cycled by a
 ## counter, never a live draw, because the live analyzer and the offline bake do not produce
 ## identical beat streams. `f.treble` lifts the specular sheen on folds facing the light,
-## [Lighting] sweeps hotspots across the sheet, and `chroma_hue()` pulls the fabric's colour
-## toward the music's tonal centre.
+## [Lighting] sweeps hotspots across the sheet, and `chroma_hue()` pulls the fabric's color
+## toward the music's tonal center.
 ##
 ## COST. A Gauss-Seidel relaxation is `constraints x iterations` inner steps per tick and
 ## that product is the entire frame cost. [constant SOLVE_BUDGET] caps it, and iterations
@@ -124,7 +124,7 @@ const MAX_CAND := 48
 const MAX_GUSTS := 3
 
 ## The [Lighting] hotspot field is evaluated on a lattice this size and interpolated per node,
-## for the same reason the wind is: `Lighting.at` re-derives each hotspot's drifting centre
+## for the same reason the wind is: `Lighting.at` re-derives each hotspot's drifting center
 ## through [ModBank], which is five sines and a dictionary lookup per channel, so calling it
 ## once per node would be tens of thousands of sines a frame. Hotspots are half-screen-wide
 ## gaussians - there is nothing at mesh resolution for a finer lattice to resolve.
@@ -133,7 +133,7 @@ const HOT_H := 5
 
 ## Pin patterns. `line` is a row of pegs along the top (a washing line), `corners` hangs it
 ## from its two top corners so it swags, `diagonal` pins a run down one side so it hangs like
-## a flag half-struck, `point` hangs the whole sheet from a single peg at the centre of the top
+## a flag half-struck, `point` hangs the whole sheet from a single peg at the center of the top
 ## edge - which drapes into a cone and tears from the pin outward.
 const PIN_PATTERNS := ["line", "line", "corners", "diagonal", "point"]
 
@@ -286,7 +286,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_rows = rng.randi_range(12, 20)
 	_n = _cols * _rows
 
-	# The sheet's extent in ghost's centred unit-fraction space. Wide enough to fill a
+	# The sheet's extent in ghost's centered unit-fraction space. Wide enough to fill a
 	# 16:9 frame edge to edge at the top of the range, tall enough that the free lower
 	# edge is well inside frame so its snap is visible.
 	var wide := rng.randf_range(1.00, 1.55)
@@ -376,7 +376,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_max_stretch = rng.randf_range(1.25, 1.5)
 	_tear_delay = rng.randf_range(1.2, 3.6)
 	# Damage rate, and why it is this large. A seam sitting a little past yield should creep
-	# for many seconds; a crack TIP, which both carries the load its dead neighbour dropped and
+	# for many seconds; a crack TIP, which both carries the load its dead neighbor dropped and
 	# has had its own yield cut by the weakening field, sits several times further past and so
 	# gives in well under a second. One rate produces both because the excess strain, not the
 	# rate, is what differs between them - which is the whole reason the run reads as a run.
@@ -533,7 +533,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 func _add_pin(node: int, gather: float, wide: float) -> void:
 	if node < 0 or node >= _n:
 		return
-	# Pull the anchor in toward the centre. The fabric is then wider than the span it
+	# Pull the anchor in toward the center. The fabric is then wider than the span it
 	# hangs across, which is the whole reason a curtain has standing folds.
 	var ax: float = _px[node] * (1.0 - gather)
 	_pin.append(node)
@@ -565,7 +565,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	# A hanging sheet is square-on; the camera stays gentle so the plane never reads as
-	# a tumbling card (and PLANE_BAG already keeps the shot centred).
+	# a tumbling card (and PLANE_BAG already keeps the shot centered).
 	drift_view(f, 0.02, 0.03)
 	_light.update(f, delta)
 	update_layers(f, delta)
@@ -707,7 +707,7 @@ func _integrate(dt: float) -> void:
 		var ax := (_wxa[k00] * m00 + _wxa[k10] * m10 + _wxa[k01] * m01 + _wxa[k11] * m11) * wind
 		var ay := (_wya[k00] * m00 + _wya[k10] * m10 + _wya[k01] * m01 + _wya[k11] * m11) * wind + gy
 		var az := (_wza[k00] * m00 + _wza[k10] * m10 + _wza[k01] * m01 + _wza[k11] * m11) * wind
-		# Gusts: a travelling pressure blob, mostly pushing out of the plane so the beat
+		# Gusts: a traveling pressure blob, mostly pushing out of the plane so the beat
 		# is SEEN as a bulge crossing the fabric rather than as a sideways shove.
 		for gi in ng:
 			var ddx := x - gx_a[gi]
@@ -774,7 +774,7 @@ func _relax(dt: float, measure: bool) -> void:
 
 ## The over-stretch projection, run once after the relaxation passes. A few Gauss-Seidel
 ## iterations cannot equilibrate a whole hanging sheet, so without this a corner or a single
-## peg carrying several hundred nodes stretches its neighbourhood like taffy and the fabric
+## peg carrying several hundred nodes stretches its neighborhood like taffy and the fabric
 ## reads as rubber. This is the standard cloth answer: leave the soft constraint soft, but hard
 ## project anything past `max_stretch` back to that limit.
 ##
@@ -843,7 +843,7 @@ func _break_seams() -> void:
 
 
 ## Remove one structural edge, everything that crossed it, and raise the crack-tip weakening
-## on its neighbours in the weave. This is the whole propagation rule.
+## on its neighbors in the weave. This is the whole propagation rule.
 func _tear_slot(slot: int) -> void:
 	_remove_slot(slot)
 	_cells_dirty = true
@@ -978,7 +978,7 @@ func _draw() -> void:
 	var hinv_w := float(HOT_W - 1) / maxf(0.0001, _gx1 - _gx0)
 	var hinv_h := float(HOT_H - 1) / maxf(0.0001, _gy1 - _gy0)
 
-	# Per-NODE normals and colours: shading a fold flat-faceted per cell shows the mesh,
+	# Per-NODE normals and colors: shading a fold flat-faceted per cell shows the mesh,
 	# and the mesh is not the subject. One cross product per node buys smooth folds.
 	for r in _rows:
 		var rm := maxi(r - 1, 0) * _cols
@@ -1005,7 +1005,7 @@ func _draw() -> void:
 			else:
 				nx /= nl; ny /= nl; nz /= nl
 			# Face the normal toward the viewer: a thin sheet has no meaningful outside,
-			# but WHICH side we are looking at still changes its colour.
+			# but WHICH side we are looking at still changes its color.
 			var back := nz < 0.0
 			if back:
 				nx = -nx; ny = -ny; nz = -nz
@@ -1113,7 +1113,7 @@ func _draw() -> void:
 ## time. It costs triangles, which are batched into one call anyway, and no simulation at
 ## all. Catmull-Rom rather than bilinear because bilinear subdivision of a flat quad is
 ## still that flat quad - it adds vertices without adding curvature. The spline reads the
-## neighbouring row and column, so a fold genuinely rounds.
+## neighboring row and column, so a fold genuinely rounds.
 func _emit_smooth(tb: TriBatch, r: int, c: int) -> void:
 	var n := SUBDIV
 	for sj in n:
@@ -1145,8 +1145,8 @@ func _surf(r: int, c: int, u: float, v: float) -> Vector2:
 	return _cr(rows[0], rows[1], rows[2], rows[3], v)
 
 
-## Colour is only bilinear. The nodes already carry smoothly-varying normals, so the
-## shading has no facets to remove - and a spline through colours can overshoot outside
+## Color is only bilinear. The nodes already carry smoothly-varying normals, so the
+## shading has no facets to remove - and a spline through colors can overshoot outside
 ## [0,1] and produce a bright rim on a fold, which is worse than the faceting it fixes.
 func _shade(r: int, c: int, u: float, v: float) -> Color:
 	var i0 := r * _cols + c

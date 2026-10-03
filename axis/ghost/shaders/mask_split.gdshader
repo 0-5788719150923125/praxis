@@ -105,18 +105,18 @@ uniform float u_l_stick[6];
 
 // Morph (fx_tint): rotates the EFFECT'S OWN palette hue. 0 = identity - every
 // existing session renders unchanged. Deliberately decoupled from the key
-// colour (hue_a): the picker says what to MASK, this says what colour the
+// color (hue_a): the picker says what to MASK, this says what color the
 // drawn effect becomes.
 uniform float u_l_tint[6];
-// Per-layer ACCENT hue (hue_b). Umbra's ghost-eye colour; 0 = red.
+// Per-layer ACCENT hue (hue_b). Umbra's ghost-eye color; 0 = red.
 uniform float u_l_accent[6];
 
 // THE REGION: each layer's box in frame UV as (x0, y0, x1, y1), and how softly
 // it fades out at its border. Default (0,0,1,1) is the whole frame, so a layer
 // that was never given a region behaves exactly as it always did. This is the
 // one control here that is SPATIAL rather than chromatic, and it exists because
-// a colour key fundamentally cannot separate two things that are the same
-// colour - a yellow wall and a gold coin in front of it - while their positions
+// a color key fundamentally cannot separate two things that are the same
+// color - a yellow wall and a gold coin in front of it - while their positions
 // separate them trivially. Applied to the layer's WEIGHT (see apply_layer), so
 // it confines every effect uniformly instead of each branch reimplementing it.
 uniform vec4 u_l_region[6];
@@ -222,7 +222,7 @@ vec3 hsv2rgb(vec3 c) {
 	return c.z * mix(K.xxx, clamp(p - K.xxx, vec3(0.0), vec3(1.0)), c.y);
 }
 
-// Morph: rotate a palette colour's hue by t (0 or 1 = untouched). Saturation
+// Morph: rotate a palette color's hue by t (0 or 1 = untouched). Saturation
 // and value survive, so a morphed flame is still a flame - just a green one.
 vec3 hue_shift(vec3 c, float t) {
 	if (t <= 0.002 || t >= 0.998) {
@@ -442,7 +442,7 @@ float tap_mask(float target_hue, vec3 hsv) {
 	// Where a pixel carries no real color, its membership is UNKNOWN - and
 	// unknown leans PERMISSIVE (0.6), not zero. These masks only steer the
 	// volumetrics now (erase is projection-based and gate-free), and the whole
-	// philosophy of that path is that the wisp field makes the judgement calls
+	// philosophy of that path is that the wisp field makes the judgment calls
 	// in uncertain places. Zeroing dark pixels silently confined the patterns
 	// to brightly-keyed regions - on dark footage, fire configured to sweep the
 	// whole scene shrank to a few faint patches.
@@ -453,7 +453,7 @@ float tap_mask(float target_hue, vec3 hsv) {
 // fragment: [0..8] = center + fine ring, [9..16] = mid ring, [17..24] = wide
 // ring). Averaging the MASK across the neighborhood - never the color (averaging
 // RGB across a red/blue seam invents purple) - turns the blocky steps of
-// compressed chroma into coverage gradients. The mask is GREY AND CONTINUOUS end
+// compressed chroma into coverage gradients. The mask is GRAY AND CONTINUOUS end
 // to end; nothing downstream may treat it as on/off.
 float mask_over(float target_hue, vec3 taps[25], int start, int count) {
 	float acc = 0.0;
@@ -548,8 +548,8 @@ float shade_amount(float x, vec2 uv) {
 	return s * 0.93;
 }
 
-// REPAINT'S SELECTION, for one sample: how completely this colour IS the target
-// colour, 0..1. Split out of the effect branch because the branch evaluates it
+// REPAINT'S SELECTION, for one sample: how completely this color IS the target
+// color, 0..1. Split out of the effect branch because the branch evaluates it
 // over a disc rather than at one pixel (see there for why).
 //
 // SELECTION IS AN ANGLE WITH A FLAT TOP, not the raw alignment and not a power
@@ -562,11 +562,11 @@ float shade_amount(float x, vec2 uv) {
 // paints the face. Raising the cosine to a power separates them, but then
 // penalizes the wall's own hue drift, which mottles it.
 //
-// So: the actual angle from the target colour, accepted as a CONE - everything
+// So: the actual angle from the target color, accepted as a CONE - everything
 // within `tol` fully selected (a flat top, so one wall paints uniformly however
 // its lighting varies across it), fading out over a shoulder past it (soft, so
 // no boundary ring). `reach` sets the half-angle, squared for feel: ~2 degrees
-// at 0 (this exact colour only), ~17 at the default 0.5 (a real wall, its
+// at 0 (this exact color only), ~17 at the default 0.5 (a real wall, its
 // shadows and washed-out patches included, but not the face beside it), ~57 at
 // 1 (the whole warm or cool family).
 float repaint_select(vec3 c, vec3 tdir, float reach) {
@@ -727,11 +727,11 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			float rate19 = (1.6 + 6.0 * clamp(u_l_speed[i], 0.0, 4.0))
 				* bspeed19 * (0.7 + 0.6 * hl19.y);
 			// EVERY DROP IS ITS OWN DROP. This is the correction that matters. A
-			// lane hashed once gives each lane a fixed offset, a fixed calibre and
+			// lane hashed once gives each lane a fixed offset, a fixed caliber and
 			// a fixed angle FOREVER, so drop after drop runs down the identical
 			// path - thirty tracks with trains on them, which is exactly what it
 			// looked like and nothing like rain. Hashing on the CELL INDEX as well
-			// as the lane gives every pass down a lane its own position, calibre,
+			// as the lane gives every pass down a lane its own position, caliber,
 			// length, brightness and tilt, so a lane is only a scheduling device
 			// and no two drops share a path.
 			float ph19 = p19.y / slen19 - u_time * rate19;
@@ -800,7 +800,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// The literal "swap this color for that one", which erase is not: erase
 		// SUBTRACTS the target's chroma and the light it carried, so its result
 		// is always a darkened neutral scaled by how saturated the pixel was -
-		// a lit yellow wall lands on grey-mauve and a pale one hardly moves.
+		// a lit yellow wall lands on gray-mauve and a pale one hardly moves.
 		// Here the pixel is mixed toward an ABSOLUTE color instead, so "yellow
 		// wall -> black" is exactly what it says.
 		//
@@ -815,7 +815,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// REPLACEMENT makes every artifact in the selection visible at full
 		// contrast, and the source is compressed video: theora stores chroma at
 		// quarter resolution in quantized blocks, so hue steps in 8-pixel squares
-		// along any colour boundary. Keyed per pixel, whole blocks flip in and out
+		// along any color boundary. Keyed per pixel, whole blocks flip in and out
 		// - which is exactly the reported "blocky, aliased, and it flickers",
 		// because those blocks are also re-quantized frame to frame. (This is the
 		// same problem the 25-tap ring in fragment() was added for; those taps are
@@ -864,7 +864,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		}
 		// The paint is a whole COLOR, not a hue: accent carries its hue, stick
 		// its saturation and tint its value, so value 0 is true black (the
-		// default - both fields start at 0) and saturation 0 gives greys and
+		// default - both fields start at 0) and saturation 0 gives grays and
 		// white. Flat by construction: what survives of the wall's own shading
 		// is the amount itself, which already falls off wherever the surface is
 		// less that color, so shadowed and grazed areas keep their form.
@@ -942,7 +942,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		//             - see clown_paint.gdshader) x a per-pixel face-tint
 		//             match: paint exists where the face material is;
 		//   CRACKS  - SCREEN-space lattice, translated (never rotated) by a
-		//             local pull toward the face centre and bent along the
+		//             local pull toward the face center and bent along the
 		//             picture's own structure by the tap-ring gradient - the
 		//             exact anchoring crystal is loved for;
 		//   EYES / LIPS / NOSE - sampled from their own liquid channels, each
@@ -972,7 +972,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		vec2 wob16 = vec2(fbm(uv * asp16 * 5.5 + vec2(salt16, t16 * 0.11)),
 			fbm(uv * asp16 * 5.5 + vec2(salt16 + 9.7, -t16 * 0.09))) - 0.5;
 		// Smear's wobble had a range of 0.006..0.024, which over the whole pipeline
-		// moved the output by 0.010 - present, but far less than any neighbouring
+		// moved the output by 0.010 - present, but far less than any neighboring
 		// control, so it read as inert beside them. Widened to something you can
 		// actually see at the top of the slider.
 		vec2 puv16 = uv + wob16 * (0.004 + 0.050 * smear16);
@@ -985,7 +985,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// needs. The coat's silhouette is a rasterized landmark polygon carried in
 		// the liquid's alpha: 1 across the whole interior, ramping to 0 over the
 		// feather at the jaw. Being inside that polygon and being surrounded by
-		// coat are the same statement, so no neighbourhood search is needed for it.
+		// coat are the same statement, so no neighborhood search is needed for it.
 		float solid16 = smoothstep(0.55, 0.92, paint16.a);
 		if (win16 * w16 <= 0.004) {
 			return col;
@@ -998,7 +998,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// Where a pixel carries NO chroma the match is UNKNOWN, and unknown
 		// must not penalize: monochrome/desaturated grades (a huge share of
 		// real footage) have nothing to align, and a 0.55 neutral held the
-		// whole mask at ~70% opacity - grey patches instead of black paint.
+		// whole mask at ~70% opacity - gray patches instead of black paint.
 		// The coat window already confines the paint spatially.
 		float match16 = mix(0.92, fr16, smoothstep(0.015, 0.06, chl16));
 		float dark16 = 0.15 + 0.85 * smoothstep(0.18, 0.55,
@@ -1006,7 +1006,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		vec3 white16 = vec3(0.93, 0.94, 0.96) * (0.55 + 0.65 * lum16);
 		// CRACKS: crystal's anchoring, verbatim in spirit - screen-space
 		// coordinates pulled (translated only, never rotated) toward the face
-		// centre so the lattice rides the head locally, then bent along the
+		// center so the lattice rides the head locally, then bent along the
 		// picture's own structure by the mid/wide gradient probe. Wear opens
 		// veins, drops voronoi chips, and mottles the coat between them.
 		float near16 = exp(-3.0 * length(uv - u_clown_face_c));
@@ -1024,11 +1024,11 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		vec2 conform16 = struct16 * 0.12;
 		// THE CRACKS LIVE IN THE FACE'S OWN FRAME, not the screen's. They used to
 		// be evaluated in screen space with only a soft pull toward the face
-		// centre, so as the head moved and turned the lattice slid across the
+		// center, so as the head moved and turned the lattice slid across the
 		// skin underneath it - which is exactly the "squiggly smears" reading:
 		// a crack that travels over a cheek is a smear, and a crack that stays
 		// put on that cheek is a crack. u_clown_frame is the face's measured
-		// axes (origin at its centre, x along the EYE LINE, scaled by the eye
+		// axes (origin at its center, x along the EYE LINE, scaled by the eye
 		// separation), so the same lattice coordinate lands on the same piece of
 		// skin however the head has moved, rolled or come nearer.
 		vec2 rel16 = (uv - u_clown_face_c) * asp16;
@@ -1068,7 +1068,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// over the nose and mouth), and they were sized in absolute screen
 		// units (thick bars). Now each one is GATED ON THE PAINT ITSELF at
 		// its root - no black there, no streak, so they are always attached -
-		// tilts strictly OUTWARD from the face's centre line, and is sized
+		// tilts strictly OUTWARD from the face's center line, and is sized
 		// from its own eye's radius so it stays a run of makeup rather than
 		// a stripe.
 		float streakM16 = 0.0;
@@ -1094,7 +1094,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 					continue;
 				}
 				vec2 hq16 = hash22(vec2(salt16 + float(e16) * 31.0, 71.0 + float(j16) * 9.0));
-				// Down and OUT - never across the centre line. Gravity still
+				// Down and OUT - never across the center line. Gravity still
 				// dominates (cos of a small angle), so these read as runs,
 				// not as rays.
 				float sang16 = outward16 * (0.10 + 0.34 * hs16.y);
@@ -1132,7 +1132,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// a FEATURE lands (they paint at full strength on the dark anatomy
 		// they were detected on).
 		float feat16 = max(max(eyeM16, streakM16), max(lipM16, noseM16));
-		// THE COLOUR AND DARKNESS GUARDS ONLY APPLY AT THE RIM. Both exist for one
+		// THE COLOR AND DARKNESS GUARDS ONLY APPLY AT THE RIM. Both exist for one
 		// job - stopping paint that the liquid has carried past the jawline from
 		// finding anything to draw on - and back when the coat was a screen-space
 		// blob with no fitted geometry they were the ONLY thing doing it. The coat
@@ -1140,8 +1140,8 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// a question that has already been answered, and answering it per pixel: a
 		// shadow under a cheekbone, a lens, stubble, the shaded side of a nose each
 		// drop the coat to 15% (dark16's floor) or 35% (match16's), which is the
-		// reported patchiness - grey holes in the white that MOVE when the key
-		// colour changes, because match16 follows the key.
+		// reported patchiness - gray holes in the white that MOVE when the key
+		// color changes, because match16 follows the key.
 		//
 		// So they are faded out across the same ramp that defines the silhouette.
 		// At the rim they are exactly as strict as they ever were, which is where
@@ -1172,7 +1172,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// That is the other half of the patchiness, and it is why it appeared
 		// without any control having been touched.
 		//
-		// Interior chips are now a SCUFF - the white goes grey where paint has worn
+		// Interior chips are now a SCUFF - the white goes gray where paint has worn
 		// thin - and only at the rim do they still bite through, which is where a
 		// chip eating into the outline reads as a chip rather than as a hole.
 		float bite16 = clamp(chip16 * 0.9 + erode16, 0.0, 1.0);
@@ -1275,7 +1275,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// the socket, and where the ghost's head sits that wall is already
 		// near-black - measured, the sockets came back at luminance 33 against
 		// a body at 31, real structure that was simply invisible. So the
-		// socket is lit in its own accent colour (hue_b, red by default),
+		// socket is lit in its own accent color (hue_b, red by default),
 		// which reads on any background.
 		// Still scaled BY Depth: the deeper the mass, the less the hollow can
 		// reveal on its own, so Gaze keeps meaning the same thing across the
@@ -1867,8 +1867,8 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// 1.0), so the existing look is preserved bit-for-bit.
 		float stick10 = clamp(u_l_stick[i], 0.0, 1.0);
 		if (stick10 > 0.001) {
-			// Colour concentration: how strongly the footage here IS the key
-			// colour - the wide, smooth key envelope, i.e. the surface the
+			// Color concentration: how strongly the footage here IS the key
+			// color - the wide, smooth key envelope, i.e. the surface the
 			// strands grow from.
 			float a_conc = clamp(regional, 0.0, 1.0);
 			// Landmark + movement: proximity to u_anchor, the EMA-tracked key /
@@ -2055,7 +2055,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	} else if (effect == 2) {
 		emiss = vec3(0.62, 0.82, 1.0) * (rim * 1.1 + pow(heat, 2.0) * 0.3);
 	} else if (effect == 5) {
-		// whisp: soft pearl streamers - a spectral, moon-grey light distinct
+		// whisp: soft pearl streamers - a spectral, moon-gray light distinct
 		// from fire's amber and freeze's ice blue.
 		emiss = vec3(0.72, 0.82, 0.92) * (heat * 0.45 + rim * 0.5);
 	} else if (effect == 10) {

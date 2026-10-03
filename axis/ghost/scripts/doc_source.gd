@@ -667,7 +667,7 @@ func _import(raw: String, quiet := false) -> void:
 	# THE SNAPSHOT IS SEEDED HERE, after the panel has taken the document's voice. Without it
 	# the autosave sees "the panel does not match what we last wrote" the instant a document is
 	# opened and writes it straight back - touching a file the author has only just opened, and
-	# doing it every time, which is exactly the behaviour a careful writer is built to avoid.
+	# doing it every time, which is exactly the behavior a careful writer is built to avoid.
 	_seen = _snapshot()
 	_saved = _seen
 	_settled_ms = Time.get_ticks_msec()

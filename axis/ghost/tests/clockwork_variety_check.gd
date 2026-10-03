@@ -18,7 +18,7 @@ extends Node
 ##   shorter, and wider spokes - and I just think our current implementation doesn't allow for
 ##   that", which was exactly right.
 ##
-##   THE WEAR. The mark colour was `Color.from_hsv(0.05 + hue * 0.1, 0.6, 0.30)`: a hue pinned
+##   THE WEAR. The mark color was `Color.from_hsv(0.05 + hue * 0.1, 0.6, 0.30)`: a hue pinned
 ##   to the orange-brown eighth of the wheel, and a saturation and value that were literal
 ##   constants across every mark, every wheel and every machine. One shape too - a soft round
 ##   blob. Reported as "rust is always brown, and blotchy; it always looks exactly the same".
@@ -32,7 +32,7 @@ const MACHINES := 60
 ## A quantity is not "varied" if its extremes are this close together. Ratio rather than
 ## difference so it reads the same whatever the units.
 const MIN_SPREAD := 2.0
-## Wear hue has to cover more than one family of colour - brown AND green AND near-neutral.
+## Wear hue has to cover more than one family of color - brown AND green AND near-neutral.
 ## In turns of the wheel: the retired formula spanned 0.075 of it.
 const MIN_HUE_SPAN := 0.25
 ## Arms this few, and this many, both have to be reachable.
@@ -100,7 +100,7 @@ func _run() -> void:
 				w_h.append(float(spd["h"]))
 				w_s.append(float(spd["s"]))
 				w_v.append(float(spd["v"]))
-				# the retired colour: hue keyed to the metal, saturation and value fixed
+				# the retired color: hue keyed to the metal, saturation and value fixed
 				old_h.append(fposmod(0.05 + float(sc._hue) * 0.1, 1.0))
 				old_s.append(0.6)
 				old_v.append(0.30)
@@ -136,7 +136,7 @@ func _run() -> void:
 	_ok(counts.has(FEW_ARMS), "no wheel came out with %d arms" % FEW_ARMS)
 	_ok(counts.has(MANY_ARMS), "no wheel came out with %d arms" % MANY_ARMS)
 	_ok(hs[1] - hs[0] >= MIN_HUE_SPAN,
-		"wear hue spans only %.3f of the wheel - it is all one colour of corrosion" % (hs[1] - hs[0]))
+		"wear hue spans only %.3f of the wheel - it is all one color of corrosion" % (hs[1] - hs[0]))
 	_ok(ss[1] / maxf(ss[0], 1e-6) >= MIN_SPREAD, "wear saturation barely varies (%.2f to %.2f)" % [ss[0], ss[1]])
 	_ok(vs[1] / maxf(vs[0], 1e-6) >= MIN_SPREAD, "wear value barely varies (%.2f to %.2f)" % [vs[0], vs[1]])
 	_ok(marks.size() >= 3, "only %d wear shape(s) ever appeared - %s" % [marks.size(), marks])

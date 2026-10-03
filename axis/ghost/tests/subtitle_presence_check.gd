@@ -9,7 +9,7 @@ extends Node
 ## brought it off at the other end either.
 ##
 ## What is asserted here is the SHAPE of the presence envelope, because that is what was
-## wrong - not the text, not the colour, not the layout, all of which were fine:
+## wrong - not the text, not the color, not the layout, all of which were fine:
 ##   nothing on screen during a long silence before the first word;
 ##   the line arriving shortly before it is spoken, not minutes early;
 ##   the line leaving shortly after the last word rather than hanging through the outro;

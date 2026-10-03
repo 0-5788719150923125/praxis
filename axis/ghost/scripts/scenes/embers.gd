@@ -7,9 +7,9 @@ extends GhostScene
 ## escaping. The life is in the *light*, and it is async by construction: each spark
 ## twinkles on its own phase, and a beat lights only the sparks whose own threshold
 ## it crosses (through a nonlinear `spike`), so a hit ripples a *subset* alight - not
-## the whole cloud throbbing in unison. Size barely moves; colour and brightness
+## the whole cloud throbbing in unison. Size barely moves; color and brightness
 ## carry the audio. (The old version pulsed every spark's size with the global beat
-## and burst them all from centre together - one synchronized throb. Fixed.)
+## and burst them all from center together - one synchronized throb. Fixed.)
 
 ## The cloud's FORM at rest - where the sparks live before the wind and the beats move
 ## them. A drift of embers hangs as a loose cloud, rises off a fire as a plume, or rides
@@ -21,14 +21,14 @@ var _f: AudioFeatures = AudioFeatures.new()
 var _sys: ParticleSystem
 var _t := 0.0
 var _beat_prev := 0.0
-var _ch := Vector2.ZERO       # live tonal colour (hue, strength) from the harmonic signature
+var _ch := Vector2.ZERO       # live tonal color (hue, strength) from the harmonic signature
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "particles"
 	_sys = ParticleSystem.new()
 	# Sparks are not only orange: magnesium burns green, a welding arc violet, a street
-	# flare rose. The set stays LIGHT-coloured - nothing that would read as cold water.
+	# flare rose. The set stays LIGHT-colored - nothing that would read as cold water.
 	var sch := Scheme.among(
 		["ember", "sodium", "dawn", "brass", "rose", "magenta", "violet", "toxic", "bone"], rng)
 	var form := String(FORMS[rng.randi() % FORMS.size()])
@@ -70,7 +70,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_sys.add(p)
 
 	# Per-particle wind drift + a *gentle* pull home (weak spring, so they wander wide
-	# instead of clumping back to centre) + drag for decay. No synchronized burst.
+	# instead of clumping back to center) + drag for decay. No synchronized burst.
 	_sys.add_force("wind", {"amp": 0.24, "freq": 0.3, "lift": -0.14})   # negative y = rise
 	_sys.add_force("spring", {"k": 0.5})
 	_sys.add_force("drag", {"k": 1.1})
@@ -133,7 +133,7 @@ func _draw() -> void:
 		var c := p.pos() * u
 		var r := p.radius * u * (0.85 + 0.3 * twinkle)        # gentle, async - not beat-synced
 		# Tint each ember toward the live tonal hue (circular nudge, scaled by tonal strength), so
-		# the warm cloud drifts in colour with the music's key.
+		# the warm cloud drifts in color with the music's key.
 		var dh: float = _ch.x - p.hue
 		dh = dh - round(dh)
 		var col := Color.from_hsv(fposmod(p.hue + dh * 0.4 * _ch.y, 1.0), float(params.sat), v)
