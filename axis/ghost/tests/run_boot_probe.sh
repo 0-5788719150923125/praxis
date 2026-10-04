@@ -79,6 +79,13 @@ if [[ "${GHOST_PROBE_GPU:-0}" != "0" ]]; then
   fi
 fi
 
+# A probe logs to a file of its own: every Godot process opens user://logs/godot.log, and a new
+# one truncates it under a session that is running - the author's live log lost its lines to
+# the probes run beside it. Its output still comes here, on stdout.
+PROBE_LOG=$(mktemp)
+trap 'cleanup; rm -f "$PROBE_LOG"' EXIT INT TERM
+RUNNER+=(--log-file "$PROBE_LOG")
+
 # Anything after the timeout is handed to the PROBE as user args (read them with
 # OS.get_cmdline_user_args), so a probe can take options the way clown_look_probe does.
 timeout "$TIMEOUT" "${RUNNER[@]}" --path . res://tests/boot_probe.tscn -- "${@:3}" 2>&1

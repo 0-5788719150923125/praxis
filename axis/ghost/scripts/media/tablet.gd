@@ -192,10 +192,14 @@ var _spans := {}                 # "page|orient|block" -> Vector2(top, bottom), 
 var _block_words := {}           # "page|block" -> Array of the words in it
 var _start_si := -1              # a mid-way start: the spoken index the reading begins at
 var _intro := 0.0                # the intro this reading started with (see _reset_reading)
-## The chapter's time before this reading began: 0, or for a mid-way start, about how long the
-## part skipped over takes (the intro and the past as it is replayed) - so the status bar's clock
-## and battery carry on through a scrub instead of starting over.
-var _t_before := 0.0
+## THE CHAPTER'S OWN CLOCK: when each spoken word falls, estimated as a voice reads it (the
+## intro, EST_WORD a word, each run of actions its own rest) - the same with or without a scrub.
+## The past of a mid-way start is replayed on it, and the status bar's time and battery are read
+## off it at the word being read, so they say where the reading IS, not how it got there: run on
+## the session's clock, both started over at every scrub ("the battery calculations make no
+## sense").
+var _est_t := PackedFloat32Array()
+const EST_WORD := 0.4
 ## The battery runs down a percent every this many seconds of chapter: 10% an hour, a tablet
 ## left on reading.
 const BATTERY_PCT_S := 360.0
@@ -361,7 +365,6 @@ func _reset_reading() -> void:
 	# the intro this reading was started with: the voice's lead-in is fixed at Speak, so a slider
 	# moved during the reading must not move the opening run away from it
 	_intro = maxf(0.0, Director.intro_hold)
-	_t_before = 0.0
 	_map = []
 	_map_j = 0
 	_map_rem = ""
@@ -378,20 +381,23 @@ func _reset_reading() -> void:
 	# screen opens where the reading is - the voice's words then match on from that point. The
 	# past is spaced as a voice would have read it, each run of actions given its own rest, so it
 	# replays as it was rather than squeezed together.
+	var rests := {}
+	for a in _doc.get("actions", []):
+		var k := int((a as Dictionary)["after"])
+		rests[k] = float(rests.get(k, 0.0)) + float((a as Dictionary)["dur"])
+	_est_t = PackedFloat32Array()
+	_est_t.resize(n)
+	var tp := _intro
+	for j in n:
+		if rests.has(j):
+			tp += float(rests[j]) + LEAD + TAIL
+		_est_t[j] = tp
+		tp += EST_WORD
 	if _start_si > 0:
 		_map_j = _start_si
-		var rests := {}
-		for a in _doc.get("actions", []):
-			var k := int((a as Dictionary)["after"])
-			rests[k] = float(rests.get(k, 0.0)) + float((a as Dictionary)["dur"])
-		var tp := START_PAST
 		for j in mini(_start_si, n):
-			if rests.has(j):
-				tp += float(rests[j]) + LEAD + TAIL
-			_st0[j] = tp
-			_st1[j] = tp + 0.3
-			tp += 0.4
-		_t_before = _intro + (tp - START_PAST)
+			_st0[j] = START_PAST + _est_t[j]
+			_st1[j] = _st0[j] + 0.3
 
 
 
@@ -707,7 +713,7 @@ func _arrived_at(p: int, t: float) -> float:
 
 static func _ph(a: Dictionary) -> Dictionary:
 	return TabletScript.phases(String(a["kind"]), String(a.get("text", "")), int(a.get("n", 0)),
-		int(a.get("m", 0)))
+		int(a.get("m", 0)), (a.get("hops", []) as Array).size())
 
 
 static func _vh(o: int) -> float:
@@ -987,7 +993,13 @@ func _state_at(t: float) -> Dictionary:
 				var tap_t := t0 + float(ph["tap"]) * float(e["s"])
 				_touch(st, u, float(ph["tap"]), Vector2(r.get_center().x,
 					r.get_center().y - scroll_of(from, tap_t, o) + TOP))
+				# a link that redirects opens a tab of its own, a beat after the tap, blank and loading
+				if bool(a.get("new_tab", false)) and u >= float(ph["tap"]) + 0.15:
+					var tabs: Array = st["tabs"]
+					tabs.append(-2)
+					st["tab"] = tabs.size() - 1
 				_load(st, u, ph, int(a["page"]))
+				_hop(st, u, ph, a)
 			"type", "search":
 				var was_editing := not String(st["editing"]).is_empty()
 				var in_box := kind == "search" and not bool(a.get("bar", false))
@@ -1019,6 +1031,7 @@ func _state_at(t: float) -> Dictionary:
 					st["typed"] = ""
 					st["kb"] = 1.0 - smoothstep(float(ph["go"]), float(ph["kb0"]), u)
 				_load(st, u, ph, int(a["page"]))
+				_hop(st, u, ph, a)
 			"back":
 				_touch(st, u, float(ph["tap"]), _back_at())
 				if u >= float(ph["show"]):
@@ -1036,6 +1049,7 @@ func _state_at(t: float) -> Dictionary:
 					st["editing"] = "bar"
 					st["typed"] = ""
 					st["kb"] = smoothstep(float(ph["add"]), float(ph["add"]) + 0.5, u)
+	_note_at(st, t)
 	return st
 
 
@@ -1046,6 +1060,40 @@ func _touch(st: Dictionary, u: float, tap: float, at: Vector2) -> void:
 		st["touch"] = at
 		st["touch_dt"] = u - tap
 		st["touch_k"] = 1.0
+
+
+## The notification banner up at [param t], if any: `st.note` and how long it has been up.
+func _note_at(st: Dictionary, t: float) -> void:
+	var span := TabletScript.NOTE_HOLD + TabletScript.NOTE_SLIDE * 2.0
+	for n in _doc.get("notes", []):
+		var si := int((n as Dictionary)["after"])
+		if si >= _st0.size() or _st0[si] == NO_TIME:
+			continue
+		var u := t - (_st0[si] + TabletScript.NOTE_IN)
+		if u >= 0.0 and u < span:
+			st["note"] = n
+			st["note_u"] = u
+
+
+## A REDIRECT under way: from `hops0` to `show`, the hop the page is being sent through, in the
+## address bar, with the load bar starting over for each one. THE PAGE IS MOSTLY WHITE: a hop
+## shows anything at all only now and then (`TabletScript.hop_shows`), and only between going
+## white and being left - so a chain is whiteness with the addresses changing over it, broken
+## now and then by a glimpse of a page.
+func _hop(st: Dictionary, u: float, ph: Dictionary, a: Dictionary) -> void:
+	var hops: Array = a.get("hops", [])
+	if hops.is_empty() or u < float(ph["hops0"]) or u >= float(ph["show"]):
+		return
+	var spans := TabletScript.hop_spans(hops)
+	var x := u - float(ph["hops0"])
+	var k := 0
+	while k < spans.size() - 1 and x >= spans[k]:
+		x -= spans[k]
+		k += 1
+	var f := clampf(x / maxf(0.001, spans[k]), 0.0, 1.0)
+	st["hop"] = String(hops[k])
+	st["hop_page"] = TabletScript.hop_shows(String(hops[k])) and f >= 0.3 and f < 0.8
+	st["load"] = minf(f * 1.3, 0.92)
 
 
 ## The load bar, and the page arriving at `show`.
@@ -1309,6 +1357,8 @@ func draw_screen(ci: CanvasItem, layer := 0) -> void:
 	_draw_keyboard(ci, o)
 	if float(_st["touch_k"]) > 0.0:
 		_draw_touch(ci, _st["touch"], float(_st.get("touch_dt", 0.0)))
+	if _st.has("note"):
+		_draw_note(ci, o, _st["note"], float(_st["note_u"]))
 	ci.draw_set_transform_matrix(Transform2D.IDENTITY)
 	if on < 1.0:
 		ci.draw_rect(Rect2(0.0, 0.0, SW, SH), Color(0, 0, 0, 1.0 - on))
@@ -1346,6 +1396,23 @@ func _draw_press(ci: CanvasItem, page: int, o: int) -> void:
 		var r: Rect2 = lp.word_rect[i]
 		ci.draw_style_box(_box(Color(lp.accent, 0.34 * k), 10), Rect2(r.position + Vector2(-4.0, dy), r.size + Vector2(8.0, 0.0)))
 		i += 1
+
+
+## Where the reading is on the chapter's own clock ([member _est_t]): the estimate at the word
+## being read and how far through it; before any word, the time since the start.
+func _chapter_t() -> float:
+	var r := _reading()
+	if r.is_empty() or _est_t.is_empty():
+		return _now
+	return _est_t[int(r["si"])] + EST_WORD * float(r["frac"])
+
+
+## A 0..1 the CHAPTER fixes, not the session: the session seed of a live reading is a hash of
+## its text, so every edit re-rolled the status bar's battery and time.
+func _stable01(salt: String) -> float:
+	var first := String((_doc["pages"][0] as Dictionary).get("url", "")) if not _doc.is_empty() \
+		and not (_doc["pages"] as Array).is_empty() else ""
+	return float(hash([_title, first, salt]) & 0xFFFF) / 65535.0
 
 
 func _hash01(salt) -> float:
@@ -1440,11 +1507,11 @@ func _draw_status(ci: CanvasItem, o: int, light: bool) -> void:
 	var L := logical(o)
 	var col := Color(0.1, 0.1, 0.12) if light else Color.WHITE
 	var f := TabletPage.face(false, 2)
-	var ct := _now + _t_before
-	var mins := 21 * 60 + int(_hash01("clock") * 300.0) + int(ct / 60.0)
+	var ct := _chapter_t()
+	var mins := 21 * 60 + int(_stable01("clock") * 300.0) + int(ct / 60.0)
 	ci.draw_string(f, Vector2(34.0, 30.0), "%d:%02d" % [(mins / 60) % 24, mins % 60],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 24, col)
-	var level := clampf(lerpf(34.0, 88.0, _hash01("batt")) - ct / BATTERY_PCT_S, 5.0, 100.0)
+	var level := clampf(lerpf(34.0, 88.0, _stable01("batt")) - ct / BATTERY_PCT_S, 5.0, 100.0)
 	var pct := int(ceil(level))
 	var bx := Rect2(L.x - 74.0, 12.0, 44.0, 20.0)
 	ci.draw_rect(bx, Color(col, 0.9), false, 2.0)
@@ -1464,8 +1531,11 @@ func _draw_browser(ci: CanvasItem, o: int) -> void:
 	var chrome := Color(0.95, 0.95, 0.96)
 	var ink := Color(0.12, 0.12, 0.14)
 	ci.draw_rect(Rect2(Vector2.ZERO, L), Color.WHITE)
-	# the page
-	if page >= 0:
+	# the page - or, mid-redirect, the hop being passed through
+	var hop := String(_st.get("hop", ""))
+	if not hop.is_empty():
+		_draw_hop(ci, o, hop, bool(_st.get("hop_page", false)))
+	elif page >= 0:
 		var lp := layout(page, o)
 		lp.draw(ci, TOP, scroll_of(page, _now, o), TOP, L.y, _lit(page), _now, _texture_for)
 		if int(_st.get("press_page", -9)) == page:
@@ -1483,7 +1553,8 @@ func _draw_browser(ci: CanvasItem, o: int) -> void:
 		var r := Rect2(24.0 + i * (tw + 8.0), STATUS + 8.0, tw, TABS - 10.0)
 		var active := i == int(_st["tab"])
 		ci.draw_style_box(_box(Color.WHITE if active else Color(0.88, 0.88, 0.9), 14), r)
-		ci.draw_string(f, r.position + Vector2(20.0, 33.0), _fit(f, _tab_title(int(tabs[i])), 20, r.size.x - 40.0),
+		var title := TabletScript.host_of(hop) if active and not hop.is_empty() else _tab_title(int(tabs[i]))
+		ci.draw_string(f, r.position + Vector2(20.0, 33.0), _fit(f, title, 20, r.size.x - 40.0),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(ink, 0.9 if active else 0.55))
 	var pr := _plus_rect(o)
 	ci.draw_line(pr.get_center() - Vector2(13, 0), pr.get_center() + Vector2(13, 0), ink, 3.0, true)
@@ -1508,6 +1579,11 @@ func _draw_browser(ci: CanvasItem, o: int) -> void:
 		if fmod(_now, 1.0) < 0.6:
 			var cx := tx.x + f.get_string_size(typed, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x + 3.0
 			ci.draw_line(Vector2(cx, br.position.y + 16.0), Vector2(cx, br.end.y - 16.0), Color(0.25, 0.5, 1.0), 3.0)
+	elif not hop.is_empty():
+		# the whole address, and no padlock: these are not places anyone chose to go
+		var hu := _fit(f, hop, 26, br.size.x - 60.0)
+		ci.draw_string(f, Vector2(br.position.x, by + 10.0), hu, HORIZONTAL_ALIGNMENT_CENTER, br.size.x, 26,
+			Color(ink, 0.75))
 	else:
 		var url := _shown_url(page)
 		if not url.is_empty():
@@ -1569,6 +1645,67 @@ func _shown_url(p: int) -> String:
 	if bool(pg.get("results", false)) and not String(pg.get("query", "")).is_empty():
 		return String(pg["query"])
 	return TabletScript.host_of(String((_doc["pages"][p] as Dictionary)["url"]))
+
+
+## A NOTIFICATION BANNER, over everything: it slides down from above the screen, holds, and
+## slides back up - the app's icon, its name and "now", the sender, the subject, a line of the
+## message.
+func _draw_note(ci: CanvasItem, o: int, n: Dictionary, u: float) -> void:
+	var L := logical(o)
+	var sl := TabletScript.NOTE_SLIDE
+	var k := minf(smoothstep(0.0, sl, u), 1.0 - smoothstep(TabletScript.NOTE_HOLD + sl,
+		TabletScript.NOTE_HOLD + sl * 2.0, u))
+	var w := minf(880.0, L.x - 120.0)
+	var h := 172.0
+	var r := Rect2((L.x - w) * 0.5, lerpf(-h - 30.0, 16.0, k), w, h)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.97, 0.97, 0.98, 0.97)
+	sb.set_corner_radius_all(30)
+	sb.shadow_color = Color(0, 0, 0, 0.22)
+	sb.shadow_size = 22
+	sb.shadow_offset = Vector2(0, 6)
+	sb.anti_aliasing = true
+	ci.draw_style_box(sb, r)
+	# the mail app's icon: a blue tile and an envelope
+	var ic := Rect2(r.position + Vector2(26.0, 26.0), Vector2(70.0, 70.0))
+	ci.draw_style_box(_box(Color(0.16, 0.48, 1.0), 16), ic)
+	var env := ic.grow(-16.0)
+	env.position.y += 6.0
+	env.size.y -= 12.0
+	ci.draw_rect(env, Color.WHITE, false, 3.0)
+	ci.draw_polyline(PackedVector2Array([env.position, Vector2(env.get_center().x, env.get_center().y + 2.0),
+		Vector2(env.end.x, env.position.y)]), Color.WHITE, 3.0, true)
+	var f := TabletPage.face(false, 0)
+	var fb := TabletPage.face(false, 2)
+	var gray := Color(0.42, 0.43, 0.47)
+	var ink := Color(0.08, 0.08, 0.1)
+	var x := ic.end.x + 22.0
+	var tw := r.end.x - 30.0 - x
+	ci.draw_string(f, Vector2(x, r.position.y + 42.0), "MAIL", HORIZONTAL_ALIGNMENT_LEFT, -1, 19, gray)
+	ci.draw_string(f, Vector2(x, r.position.y + 42.0), "now", HORIZONTAL_ALIGNMENT_RIGHT, tw, 19, gray)
+	ci.draw_string(fb, Vector2(x, r.position.y + 78.0), _fit(fb, String(n["sender"]), 26, tw),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 26, ink)
+	ci.draw_string(fb, Vector2(x, r.position.y + 112.0), _fit(fb, String(n["title"]), 24, tw),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 24, ink)
+	ci.draw_string(f, Vector2(x, r.position.y + 144.0), _fit(f, String(n["body"]), 22, tw),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 22, gray)
+
+
+## A page passed through on a redirect: white - and, when it [param shows] anything, a spinner
+## and where it is being sent.
+func _draw_hop(ci: CanvasItem, o: int, url: String, shows: bool) -> void:
+	var L := logical(o)
+	ci.draw_rect(Rect2(0.0, TOP, L.x, L.y - TOP), Color.WHITE)
+	if not shows:
+		return
+	var c := Vector2(L.x * 0.5, TOP + (L.y - TOP) * 0.4)
+	var a0 := fmod(_now * 5.0, TAU)
+	ci.draw_arc(c, 34.0, a0, a0 + TAU * 0.72, 40, Color(0.55, 0.57, 0.62), 6.0, true)
+	var f := TabletPage.face(false, 0)
+	ci.draw_string(f, Vector2(0.0, c.y + 96.0), "Redirecting…", HORIZONTAL_ALIGNMENT_CENTER, L.x, 30,
+		Color(0.3, 0.31, 0.35))
+	ci.draw_string(f, Vector2(0.0, c.y + 140.0), _fit(f, url, 22, L.x - 160.0), HORIZONTAL_ALIGNMENT_CENTER,
+		L.x, 22, Color(0.55, 0.56, 0.6))
 
 
 func _draw_start(ci: CanvasItem, o: int) -> void:
@@ -1667,7 +1804,10 @@ func debug_line() -> String:
 		_c_wan, _c_roll, _c_tilt, _c_aim.x, _c_aim.z] + "app %s tab %s page %d orient %d turn %.2f scroll %.0f kb %.2f typed '%s' reading %s" % [
 		_st.get("app", "?"), str(_st.get("tabs", [])), _current_page(), int(_st.get("orient", 0)),
 		float(_st.get("turn", 0.0)), scroll_of(_current_page(), _now, int(_st.get("orient", 0))), float(_st.get("kb", 0.0)),
-		String(_st.get("typed", "")), str(_reading())]
+		String(_st.get("typed", "")), str(_reading())] + " battery %.1f%% (chapter t %.0f)" % [
+		clampf(lerpf(34.0, 88.0, _stable01("batt")) - _chapter_t() / BATTERY_PCT_S, 5.0, 100.0),
+		_chapter_t()] + (" hop %s (%s)" % [_st["hop"],
+		"page" if bool(_st.get("hop_page", false)) else "white"] if _st.has("hop") else "")
 
 
 ## The screen's drawing surface: holds nothing, the medium draws.

@@ -129,6 +129,20 @@ func _parsers_agree() -> void:
 			"back":
 				var d := TabletScript.parse("<!-- url: a.test -->\n\nOne.\n\n<!-- url: b.test -->\n\nTwo.\n\n%s\n" % ex)
 				_ok(_kinds(d).has("back"), "a back mark goes nowhere")
+			"redirect":
+				var d := TabletScript.parse("<!-- url: a.test -->\n\n[Go](b.test)\n\n%s\n<!-- url: b.test -->\n\nThere.\n" % ex)
+				var hops := []
+				for a in d["actions"]:
+					if a["kind"] == "link":
+						hops = a.get("hops", [])
+				_ok(hops.size() == TabletScript.REDIRECT_HOPS, "a redirect mark sends the tap through no hops")
+			"notify":
+				var d := TabletScript.parse("<!-- url: a.test -->\n\nOne. %s Two.\n" % ex)
+				var notes: Array = d["notes"]
+				_ok(notes.size() == 1 and String(notes[0]["sender"]) == "Sender" and String(notes[0]["title"]) == "Subject"
+					and String(notes[0]["body"]) == "A line of the message", "a notify mark makes no banner")
+				_ok(notes.size() == 1 and int(notes[0]["after"]) == 1, "a banner is not timed from the word after it")
+				_ok(not String(d["speakable"]).contains("Subject"), "a notification is read aloud")
 			"landscape", "portrait":
 				var pre := "<!-- landscape -->\n" if k == "portrait" else ""
 				var d := TabletScript.parse("<!-- url: a.test -->\n%s%s\n\nText.\n" % [pre, ex])

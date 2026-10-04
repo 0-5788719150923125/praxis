@@ -26,6 +26,27 @@ const MAX_COLUMN := 1060.0    # sites have a max width; landscape centers the co
 
 const SANS := ["Inter", "Roboto", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans",
 	"DejaVu Sans"]
+## EACH SITE IS SET IN ITS OWN TYPE: one serif and one sans family, chosen by its host from the
+## plain text faces most desks have some version of - never a display face, a script or an
+## italic. Each entry is a family and its look-alikes, best first, so a machine without the
+## first still sets the same KIND of page (on Linux: Noto Serif, Liberation Serif / Nimbus
+## Roman, P052, C059, DejaVu Serif; Liberation Sans / Nimbus Sans, Roboto, Adwaita Sans, DejaVu
+## Sans, Noto Sans). Every family needs a real bold - headings are set in it. The browser's own
+## chrome keeps [constant SANS].
+const SERIF_FAMILIES := [
+	["Georgia", "Gelasio", "Noto Serif"],
+	["Times New Roman", "Liberation Serif", "Nimbus Roman", "Tinos"],
+	["Palatino Linotype", "Palatino", "P052", "TeX Gyre Pagella"],
+	["Century Schoolbook", "C059", "TeX Gyre Schola"],
+	["DejaVu Serif", "Bitstream Vera Serif"],
+]
+const SANS_FAMILIES := [
+	["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "Nimbus Sans", "Arimo"],
+	["Roboto"],
+	["Inter", "Adwaita Sans"],
+	["Verdana", "DejaVu Sans"],
+	["Segoe UI", "Noto Sans", "Open Sans"],
+]
 
 var script_doc: Dictionary
 var index := -1
@@ -43,6 +64,8 @@ var bg := Color.WHITE
 var ink := Color(0.1, 0.1, 0.12)
 var accent := Color(0.15, 0.35, 0.8)
 var serif := false
+var _serif_fam := 0                  # this site's families, see SERIF_FAMILIES / SANS_FAMILIES
+var _sans_fam := 0
 var title := ""               # what the tab says
 
 var _x0 := 0.0
@@ -70,6 +93,26 @@ static func face(serif_face: bool, level: int) -> Font:
 	return f
 
 
+## A face in one of the site families: [param family] indexes SERIF_FAMILIES or SANS_FAMILIES.
+static func face_of(serif_face: bool, family: int, level: int) -> Font:
+	var k := "%s|%d|%d" % [serif_face, family, level]
+	if _faces.has(k):
+		return _faces[k]
+	var names: Array = (SERIF_FAMILIES if serif_face else SANS_FAMILIES)[family]
+	var f := SystemFont.new()
+	f.font_names = PackedStringArray(names + (BookLayout.SERIFS if serif_face else SANS))
+	f.font_italic = (level & 1) != 0
+	f.font_weight = 700 if (level & 2) != 0 else 400
+	f.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+	_faces[k] = f
+	return f
+
+
+## This site's face: its serif or its sans.
+func _face(serif_face: bool, level: int) -> Font:
+	return face_of(serif_face, _serif_fam if serif_face else _sans_fam, level)
+
+
 func _h(salt: String) -> int:
 	return hash([String((script_doc["pages"][index] as Dictionary)["host"]), salt])
 
@@ -89,6 +132,8 @@ func build(doc: Dictionary, pi: int, w: float, min_h: float) -> void:
 	block_rect = {}
 	var page: Dictionary = doc["pages"][pi]
 	serif = _f("serif") < 0.35 and not bool(page["results"])
+	_serif_fam = absi(_h("serif face")) % SERIF_FAMILIES.size()
+	_sans_fam = absi(_h("sans face")) % SANS_FAMILIES.size()
 	accent = Color.from_hsv(_f("hue"), lerpf(0.55, 0.85, _f("sat")), lerpf(0.45, 0.7, _f("val")))
 	bg = Color.from_hsv(_f("hue") + 0.08, 0.04, 0.99) if _f("paper") < 0.4 else Color.WHITE
 	_col = minf(w - MARGIN * 2.0, MAX_COLUMN)
@@ -197,7 +242,7 @@ func _text(b: Dictionary, level: int, emph: int, col := Color(0, 0, 0, 0), cente
 	for wi in (b.get("words", PackedInt32Array()) as PackedInt32Array):
 		var w: Dictionary = script_doc["words"][wi]
 		var lvl := int(w["emph"]) | emph
-		var f := face(serif, lvl)
+		var f := _face(serif, lvl)
 		var ww := f.get_string_size(String(w["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		var sp := f.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		if bool(w.get("glue", false)) and _line_x > 0.0:
@@ -528,7 +573,7 @@ func draw(ci: CanvasItem, top: float, scroll: float, clip_y0: float, clip_y1: fl
 			"rule":
 				ci.draw_rect(rr, ink.lerp(bg, 0.86))
 			"label":
-				ci.draw_string(face(serif, 2) if d.has("bold") else face(false, 0), d["pos"] + Vector2(0.0, dy), String(d["text"]),
+				ci.draw_string(_face(serif, 2) if d.has("bold") else _face(false, 0), d["pos"] + Vector2(0.0, dy), String(d["text"]),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, int(d["fs"]), d["col"])
 			"image":
 				_draw_image(ci, rr, d, textures)
@@ -561,7 +606,7 @@ func draw(ci: CanvasItem, top: float, scroll: float, clip_y0: float, clip_y1: fl
 func _draw_word(ci: CanvasItem, d: Dictionary, dy: float, hl: Dictionary) -> void:
 	var wi := int(d["wi"])
 	var fs := int(d["fs"])
-	var f := face(serif, int(d["lvl"])) if not d.has("logo") else face(false, 2)
+	var f := _face(serif, int(d["lvl"])) if not d.has("logo") else face(false, 2)
 	var p: Vector2 = d["pos"] + Vector2(0.0, dy)
 	var col: Color = d["col"]
 	var text := String(script_doc["words"][wi]["text"])
@@ -662,8 +707,8 @@ var _pill_box: StyleBoxFlat
 func _draw_pager(ci: CanvasItem, r: Rect2, pages: int) -> void:
 	const FS := 24
 	const BW := 150.0
-	var f := face(false, 0)
-	var fb := face(false, 2)
+	var f := _face(false, 0)
+	var fb := _face(false, 2)
 	var cy := r.get_center().y
 	var base := cy + FS * 0.36
 	_pill(ci, Rect2(r.position.x, cy - 25.0, BW, 50.0), Color(0, 0, 0, 0), ink.lerp(bg, 0.86))
@@ -709,7 +754,7 @@ func _draw_search(ci: CanvasItem, r: Rect2, query: String) -> void:
 	ci.draw_arc(c - Vector2(2, 2), 11.0, 0.0, TAU, 24, ink.lerp(bg, 0.45), 3.0, true)
 	ci.draw_line(c + Vector2(6, 6), c + Vector2(14, 14), ink.lerp(bg, 0.45), 3.5, true)
 	if not query.is_empty():
-		ci.draw_string(face(false, 0), Vector2(r.position.x + 74.0, r.get_center().y + 11.0), query,
+		ci.draw_string(_face(false, 0), Vector2(r.position.x + 74.0, r.get_center().y + 11.0), query,
 			HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 100.0, 30, ink)
 
 

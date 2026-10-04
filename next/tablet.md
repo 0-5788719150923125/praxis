@@ -13,6 +13,8 @@ Ordinary markdown is what is ON the screen. A few own-line marks say what the ha
 | `<!-- url: www.duckduckduck.mom -->` | the page below lives at this address; with NOTHING written under it, it is the REAL page there, shown as a capture |
 | `<!-- search: What is the 7th Realm? -->` | type this into the page's search box; the results page follows |
 | `<!-- new tab -->` | open a blank tab |
+| `<!-- redirect -->` | before a `url`: the tap (or typed address) that reaches it is sent through redirects - a tapped link opens a NEW TAB for them, the page it was tapped on staying in its own - the reader never asked for - the address bar jumps through them on its own, a blank "Redirecting…" page between - then the page. Bare: six hops made up from the page's own site, a scam's funnel (its tracker, an ad click, a partner's redirect and "deal", a payment gateway, the partner's `checkout?auto=1`); `<!-- redirect: a.example/x, b.example/y -->` names them. Hops share HOP_S (1.1 s) each, unevenly, and are mostly plain white with the address changing over them - now and then one shows a "Redirecting…" page mid-hop; the voice waits |
+| `<!-- notify: Sender \| Subject \| Preview -->` | anywhere - mid-paragraph or on its own line: a notification banner (an email arriving) drops from the top of the screen a second after the next word read begins, holds 6 s, slides away; not read, and the voice does not wait for it |
 | `<!-- back -->` | back to the page before, scrolled where it was left (an unread page is glanced down first); follow it with a mark, not text |
 | `<!-- landscape -->` / `<!-- portrait -->` | turn the picture |
 | `<!-- skip -->` | shown, not read: inline = the rest of the paragraph from the end of its sentence; on its own line = the whole block below |
@@ -59,6 +61,9 @@ Nothing is read off the screen: no title, and text before the first `url` is nei
   full-screen ON the glass through the turn, then the landscape layout dissolves in over it (a
   first cut counter-rotated and shrank it - "the screen detached from the tablet").
 - The highlight is the book's per-letter rainbow trail, drawn glyph by glyph.
+- Each site is set in its own type: a serif and a sans family picked by its address from plain,
+  readable text faces (Palatino, Century Schoolbook, Times, Georgia-like, DejaVu; Helvetica-like,
+  Roboto, Inter-like, Verdana-like, Noto Sans), whichever versions the machine has.
 - **The camera is the journal's**: a per-page arc (wide on arrival and held wide ~14 s (ARRIVE_WIDE) before easing in, close as the page is read, wide
   again over its last words), slow springs (framing ~4 s, angles ~3x slower), quick only on a
   context switch. Each page sets a tiny twist and tilt; tilt is compensated in distance.

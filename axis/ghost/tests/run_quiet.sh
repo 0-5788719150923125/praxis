@@ -31,6 +31,9 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 
 RUNNER=(godot)
+# its own log, never the live session's user://logs/godot.log (see run_boot_probe.sh)
+PROBE_LOG=$(mktemp)
+trap 'rm -f "$PROBE_LOG"' EXIT INT TERM
 if command -v xvfb-run >/dev/null 2>&1; then
 	# -a picks a free display number; -s sets a screen big enough that a gate
 	# requesting a window never has it clamped.
@@ -40,6 +43,7 @@ else
 	echo "run_quiet: xvfb-run not found - falling back to a VISIBLE window."
 	echo "           install it with: sudo pacman -S xorg-server-xvfb"
 fi
+RUNNER+=(--log-file "$PROBE_LOG")
 
 # Every gate that needs a real renderer. Keep in step with CLAUDE.md's gate list.
 ALL=(clown_drip_check clown_anchor_check clown_controls_check clown_scale_check

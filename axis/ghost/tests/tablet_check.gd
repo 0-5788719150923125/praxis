@@ -78,6 +78,7 @@ func _initialize() -> void:
 	_check_omnibox()
 	_check_list()
 	_check_table()
+	_check_notify()
 	print("tablet_check: %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail > 0 else 0)
 
@@ -299,6 +300,37 @@ func _check_arrivals() -> void:
 		var ph := TabletScript.phases(kind, "what is it?")
 		_ok(float(ph["end"]) - float(ph["show"]) >= TabletScript.ARRIVE_LOOK - 0.001,
 			"%s ends on a look at the new page (%.1f s)" % [kind, float(ph["end"]) - float(ph["show"])])
+	var rd := TabletScript.parse("<!-- url: a.test -->\n\n[Book](a.test/book)\n\n<!-- redirect: x.test/r, y.test/pay -->\n<!-- url: a.test/book -->\n\nThanks.\n")
+	var hops := []
+	var dur := 0.0
+	for a in rd["actions"]:
+		if a["kind"] == "link":
+			hops = a.get("hops", [])
+			dur = float(a["dur"])
+	_ok(hops == ["x.test/r", "y.test/pay"], "a redirect sends the tap through the hops named: %s" % str(hops))
+	var own := false
+	for a in rd["actions"]:
+		if a["kind"] == "link":
+			own = bool(a.get("new_tab", false))
+	_ok(own, "a link that redirects opens a tab of its own")
+	var rt := TabletScript.parse("<!-- url: a.test -->\n\n[Book](a.test/book)\n\n<!-- redirect -->\n<!-- url: a.test/book -->\n\nThanks. [More](a.test/more)\n\n<!-- url: a.test/more -->\n\nMore.\n\n<!-- back -->\n")
+	var kinds := []
+	for a in rt["actions"]:
+		kinds.append(String(a["kind"]))
+	_ok(kinds.has("back") and int(rt["actions"].back()["page"]) == 1,
+		"in the new tab, back goes to the page the redirect landed on: %s" % str(kinds))
+	var plain := float(TabletScript.phases("link")["end"])
+	_ok(is_equal_approx(dur - plain, TabletScript.HOP_S * 2.0),
+		"each hop holds the page back HOP_S, and the voice waits for it (%.2f s more)" % (dur - plain))
+	var spans := TabletScript.hop_spans(["a.test/1", "b.test/2", "c.test/3"])
+	var sum := 0.0
+	for x in spans:
+		sum += x
+	_ok(is_equal_approx(sum, TabletScript.HOP_S * 3.0) and absf(spans[0] - spans[1]) + absf(spans[1] - spans[2]) > 0.05,
+		"a chain's hops share its time unevenly, and add up to it: %s" % str(spans))
+	var auto: Array = TabletScript.auto_hops("gazebra.ride/book")
+	_ok(auto.size() == TabletScript.REDIRECT_HOPS and String(auto[0]).begins_with("gazebra.ride/"),
+		"a bare redirect makes its hops up from the page's own site: %s" % str(auto))
 	var lk := TabletScript.phases("link")
 	_ok(float(lk["tap"]) - float(lk["scroll1"]) >= TabletScript.LINK_LOOK - 0.001,
 		"a link is looked at, still, before it is tapped (%.1f s)" % (float(lk["tap"]) - float(lk["scroll1"])))
@@ -361,6 +393,24 @@ func _check_table() -> void:
 	_ok(said == voice, "the voice reads exactly the table's words marked spoken\n    voice %s\n    page  %s" % [str(voice), str(said)])
 
 
+func _check_notify() -> void:
+	var src := "<!-- url: a.test -->\n\nOne two. It will be very good company. <!-- notify: Bank | Was this you? | A charge. --> Refunds are not available.\n\n<!-- notify: Own | Line | Mark -->\n\nLast words.\n"
+	var d := TabletScript.parse(src)
+	var notes: Array = d["notes"]
+	_ok(notes.size() == 2, "a notification is found mid-paragraph and on a line of its own (%d)" % notes.size())
+	if notes.size() == 2:
+		var w0 := String(d["words"][(d["spoken"] as PackedInt32Array)[int(notes[0]["after"])]]["text"])
+		var w1 := String(d["words"][(d["spoken"] as PackedInt32Array)[int(notes[1]["after"])]]["text"])
+		_ok(w0 == "Refunds" and w1 == "Last", "each banner is timed from the word read after its mark (%s, %s)" % [w0, w1])
+		_ok(String(notes[0]["sender"]) == "Bank" and String(notes[0]["title"]) == "Was this you?", "its fields are read")
+	var say := String(d["speakable"])
+	_ok(not say.contains("Bank") and not say.contains("charge") and say.contains("company. Refunds"),
+		"a notification is not read, and the sentence around it is whole")
+	for w in d["words"]:
+		_ok(not String((w as Dictionary)["text"]).contains("notify"), "the mark leaves no word on the page")
+		break
+
+
 func _check_untouched() -> void:
 	var plain := "---\ntitle: X\n---\n\nA [link](x.y) and <!-- skip --> words.\n"
 	_ok(TabletScript.speakable(plain) == plain, "a chapter without url/search marks is returned untouched")
@@ -379,5 +429,8 @@ func _check_untouched() -> void:
 	var near := TabletScript.find_run(PackedStringArray(["sentence", "one", "five", "of", "the", "long",
 		"sentence", "two", "five", "of", "the", "long"]), PackedStringArray(["sentence", "two", "five", "of", "the", "long"]))
 	_ok(near == 6, "a mid-way start lands on the run that matches best, not an earlier near miss (%d)" % near)
+	var comma := TabletScript.find_run(PackedStringArray(["x", "our", "host", "is", "dionysus", "", "the", "god"]),
+		PackedStringArray(["our", "host", "is", "dionysus", "the", "god"]))
+	_ok(comma == 1, "a mid-way start is found across the comma after a link, a word with no letters (%d)" % comma)
 	var om := TabletScript.speakable("<!-- url: a.test -->\n\nOne. <!-- outro --> Two.\n\n<!-- outro -->\n\nThree.\n")
 	_ok(om.count("<!-- outro -->") == 2, "the outro mark reaches the voice, inline or on its own line")

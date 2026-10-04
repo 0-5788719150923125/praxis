@@ -204,6 +204,25 @@ func _check_scrub() -> void:
 	_ok(_ed.book_document(text)["start_words"] == sw, "...through the document they read")
 	_ed._plan(text)
 	_ok(_ed._start_words().is_empty(), "Speak from the top hands them nothing")
+	# EVERY SENTENCE A SCRUB CAN LAND ON IS FOUND BY THE TABLET, from the words the panel hands
+	# it - links with a comma or period after them included, which the page sets as words of
+	# their own with no letters. One unfound start restarts the screen from the chapter's top.
+	var tab := "<!-- url: a.test -->\n\n# Site\n\nOur host is [Dionysus](a.test/d), the god of wine. " \
+		+ "He asks one thing.\n\nFrom the [wiki](a.test/w). This is about a cat.\n\n" \
+		+ "She's a [cat](a.test/c). Not every stack is a cat.\n\n| Plan | What |\n|---|---|\n" \
+		+ "| Free | Dreams as usual. |\n| Premium | No [falling](a.test/f). |\n\nAfter the table, more words.\n"
+	_ed._plan(tab)
+	var doc := TabletScript.parse(tab)
+	var norms := PackedStringArray()
+	for wi in (doc["spoken"] as PackedInt32Array):
+		norms.append(String((doc["words"][wi] as Dictionary)["norm"]))
+	var lost := []
+	for c in range(1, _ed._chunks.size()):
+		_ed._start_at(c)
+		if TabletScript.find_run(norms, _ed._start_words()) < 0:
+			lost.append(c)
+	_ok(_ed._chunks.size() >= 6 and lost.is_empty(),
+		"every restart point of a tablet chapter is found by the tablet (lost: %s of %d)" % [str(lost), _ed._chunks.size()])
 	_ed._reset_playback()
 	_ok(not Spectrum.seekable(), "a stopped reading is no longer scrubbable")
 

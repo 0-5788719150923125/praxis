@@ -44,7 +44,28 @@ class_name TabletScript
 ## long as the hand is busy.
 
 ## Own-line actions. Group 1 is the verb, 2 its argument.
-const MARKER := "^\\s*<!--\\s*(url|search|new tab|back|landscape|portrait|rotate|filler)\\s*(?::\\s*(.*?))?\\s*-->\\s*$"
+const MARKER := "^\\s*<!--\\s*(url|search|new tab|back|landscape|portrait|rotate|filler|redirect|notify)\\s*(?::\\s*(.*?))?\\s*-->\\s*$"
+## A REDIRECT: `<!-- redirect -->` before a page's url sends the tap (or the typed address) that
+## reaches it through a chain of addresses the reader never asked for - each in the address bar
+## for HOP_S, the page between them a blank "Redirecting…" - so the page that arrives is
+## something that HAPPENED to the reader ("nobody clicks on a link and immediately buys
+## something"). Bare, REDIRECT_HOPS hops made up from the page's own site (`auto_hops`); or
+## `<!-- redirect: a.example/x, b.example/y -->` names them.
+const HOP_S := 1.1
+## Six: a scam's chain bounces through a good many - three was "too quick for my taste".
+const REDIRECT_HOPS := 6
+## A NOTIFICATION: `<!-- notify: Sender | Subject | Preview -->` drops a banner from the top of
+## the screen NOTE_IN after the next word read begins, holds it NOTE_HOLD and slides it away in
+## NOTE_SLIDE - an email arriving while the page is read. Not read aloud, and the voice does not
+## wait for it: a notification interrupts nobody's sentence.
+const NOTE_IN := 1.0
+## Six seconds: at 3.6 a banner was "barely long enough to even read it".
+const NOTE_HOLD := 6.0
+const NOTE_SLIDE := 0.35
+## The notification mark anywhere in a paragraph - mid-sentence included - and the token it
+## leaves in its place, so its banner is timed from the word read after it.
+const NOTIFY := "<!--\\s*notify\\s*:\\s*([\\s\\S]*?)\\s*-->"
+const NOTE_MARK := "\uE0F5"
 ## Inline or own-line: stop reading here.
 const SKIP := "<!--\\s*skip\\s*-->"
 ## The rest the voice takes for a run of actions. Written by [method speakable] only.
@@ -132,7 +153,11 @@ static func hold_of(comment: String) -> float:
 ## on for [constant ARRIVE_LOOK] after the page shows, so the new page sits still - unread,
 ## unscrolled - while the viewer takes in the context switch. Back, to a page already seen,
 ## looks for [constant RETURN_LOOK].
-static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
+##
+## A link or a typed address sent through [param hops] redirects shows its page HOP_S later per
+## hop: the hops run from `hops0`.
+static func phases(kind: String, text := "", n := 0, m := 0, hops := 0) -> Dictionary:
+	var hop := HOP_S * float(hops)
 	match kind:
 		"skim":
 			# past [param n] words nobody reads and [param m] pictures somebody looks at: still a
@@ -150,16 +175,16 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 		"link":
 			# scroll to it if it is off screen, look at it, tap
 			var tap := 1.5 + LINK_LOOK
-			return {"scroll0": 0.0, "scroll1": 1.5, "tap": tap, "load0": tap + 0.15, "show": tap + 0.75,
-				"load1": tap + 1.05, "end": tap + 0.75 + ARRIVE_LOOK}
+			return {"scroll0": 0.0, "scroll1": 1.5, "tap": tap, "load0": tap + 0.15, "hops0": tap + 0.35,
+				"show": tap + 0.75 + hop, "load1": tap + 1.05 + hop, "end": tap + 0.75 + hop + ARRIVE_LOOK}
 		"type", "search":
 			# reach for the field, the keyboard rises, type, look at it, go, wait for the page
 			var c0 := 1.6
 			var c1 := c0 + float(char_times(text)[text.length()])
 			var go := c1 + 0.8
 			return {"tap": 0.5, "edit": 0.85, "kb1": 1.3, "chars0": c0, "chars1": c1,
-				"go": go, "kb0": go + 0.45, "load0": go + 0.1, "show": go + 1.0,
-				"load1": go + 1.4, "end": go + 1.0 + ARRIVE_LOOK}
+				"go": go, "kb0": go + 0.45, "load0": go + 0.1, "hops0": go + 0.5, "show": go + 1.0 + hop,
+				"load1": go + 1.4 + hop, "end": go + 1.0 + hop + ARRIVE_LOOK}
 		"tab":
 			# A NEW TAB IS A DECISION: the hand rests on the page it is leaving while the reader
 			# thinks about where to go next, then reaches for the + - "the jump to a new tab and a
@@ -202,23 +227,74 @@ static func norm(s: String) -> String:
 ## The best, not the first: with a mismatch allowed, an earlier run that differs in one word
 ## ("sentence one five" for "sentence two five") would otherwise win, and the screen would
 ## restart somewhere other than the voice.
+##
+## WORDS WITH NO LETTERS ARE STEPPED OVER: the comma after a link is a word of its own on the
+## page, with an empty norm, and the voice's start words never have one - lined up position by
+## position, "Dionysus, the god" missed by one, the start was never found, and the screen
+## restarted from the top of the chapter and raced through it ("permanently stuck... resetting
+## to the beginning... at extremely fast speed").
 static func find_run(norms: PackedStringArray, start: PackedStringArray) -> int:
+	var at := PackedInt32Array()
+	for i in norms.size():
+		if not norms[i].is_empty():
+			at.append(i)
 	var m := mini(6, start.size())
 	if m == 0:
 		return -1
 	var best := -1
 	var best_hits := m - 2
-	for i in norms.size() - m + 1:
-		if norms[i] != start[0]:
+	for i in at.size() - m + 1:
+		if norms[at[i]] != start[0]:
 			continue
 		var hits := 0
 		for k in m:
-			if norms[i + k] == start[k]:
+			if norms[at[i + k]] == start[k]:
 				hits += 1
 		if hits > best_hits:
 			best_hits = hits
-			best = i
+			best = at[i]
 	return best
+
+
+## The hops a bare `<!-- redirect -->` sends a page through, made up from its own site, the
+## way a scam's funnel runs: the site's own tracker, an ad network's click, a partner's
+## redirect, the partner's "deal", a payment gateway, and the partner's checkout - automatic,
+## as its query says.
+static func auto_hops(url: String) -> Array:
+	var host := host_of(url)
+	var name := host.get_slice(".", 0)
+	var h := "%06x" % (hash(url_key(url)) & 0xFFFFFF)
+	return ["%s/out?ref=%s" % [host, h.substr(0, 4)],
+		"adserve.trk%s.net/click?c=%s" % [h.substr(4, 2), h],
+		"%s-partners.click/r/%s" % [name, h],
+		"offers.%s-partners.click/deal/%s" % [name, h.substr(2, 4)],
+		"pay.gateway-%s.io/session/%s" % [h.substr(0, 4), h],
+		"secure.%s-partners.click/checkout?auto=1" % name]
+
+
+## How a redirect chain's time is split between its hops: unevenly, as real redirects are - one
+## near instant, the next hanging - and summing to HOP_S a hop. Fixed by the addresses.
+static func hop_spans(hops: Array) -> PackedFloat32Array:
+	var w := PackedFloat32Array()
+	var total := 0.0
+	for h in hops:
+		var x := 0.5 + _unit(String(h))
+		w.append(x)
+		total += x
+	for i in w.size():
+		w[i] = w[i] / total * HOP_S * float(hops.size())
+	return w
+
+
+## Whether the page of hop [param url] shows anything at all. Most show nothing - the page goes
+## white and stays white while the addresses change over it: "real-world redirects... often
+## display nothing at all".
+static func hop_shows(url: String) -> bool:
+	return _unit(url + "|shows") < 0.4
+
+
+static func _unit(s: String) -> float:
+	return float(hash(s) & 0xFFFF) / 65535.0
 
 
 ## An address as a key: no scheme, no `www.`, no trailing slash, lower case.
@@ -249,7 +325,7 @@ static func parse(source: String) -> Dictionary:
 	var w := _Walk.new()
 	w.run(_collapse_comments(Manuscript.strip_frontmatter(source)))
 	return {"pages": w.pages, "words": w.words, "spoken": w.spoken, "actions": w.actions,
-		"speakable": "\n".join(w.say)}
+		"notes": w.notes, "speakable": "\n".join(w.say)}
 
 
 ## The REAL pages of [param body], as picture rows for the Illustrations panel:
@@ -289,6 +365,7 @@ class _Walk:
 	var words: Array = []
 	var spoken := PackedInt32Array()
 	var actions: Array = []
+	var notes: Array = []            # notification banners: {sender, title, body, after}
 	var say := PackedStringArray()
 
 	var _cur := -1               # the page being written, -1 before the first url
@@ -298,6 +375,7 @@ class _Walk:
 	var _list_id := 0
 	var _last_kind := ""            # the kind of the last block put on the page
 	var _skip_next := false
+	var _redirect: Variant = null   # hops for the next page reached: null none, [] made up
 	var _browser := false
 	var _fresh_tab := false
 	var _landscape := false
@@ -521,6 +599,11 @@ class _Walk:
 		var out := PackedInt32Array()
 		var text := TabletScript._rx(Manuscript.HESITATION).sub(raw, "", true)
 		text = TabletScript._rx(TabletScript.SKIP).sub(text, " " + TabletScript.SKIP_MARK + " ", true)
+		# a notification in the paragraph becomes a token of its own, timed from the word after it
+		var inline_notes: Array = []
+		for m in TabletScript._rx(TabletScript.NOTIFY).search_all(text):
+			inline_notes.append(_note_of(m.get_string(1)))
+		text = TabletScript._rx(TabletScript.NOTIFY).sub(text, " " + TabletScript.NOTE_MARK + " ", true)
 		text = _strip_other_notes(text)
 		var segs: Array = []
 		var at := 0
@@ -543,6 +626,12 @@ class _Walk:
 				var t := String(tok).strip_edges()
 				if t == TabletScript.SKIP_MARK:
 					skipping = true
+					continue
+				if t == TabletScript.NOTE_MARK:
+					if not inline_notes.is_empty():
+						var n: Dictionary = inline_notes.pop_front()
+						n["after"] = spoken.size()
+						notes.append(n)
 					continue
 				if t.is_empty():
 					continue
@@ -639,14 +728,15 @@ class _Walk:
 					or TabletScript._rx(Manuscript.OUTRO).search(c.get_string()) != null:
 				res += c.get_string()
 			at = c.get_end()
-		return (res + t.substr(at)).strip_edges()
+		# a note taken out mid-sentence leaves its two spaces behind
+		return TabletScript._rx(" {2,}").sub(res + t.substr(at), " ", true).strip_edges()
 
 	func _act(a: Dictionary) -> void:
 		if actions.is_empty() and String(a["kind"]) != "wake":
 			_act({"kind": "wake"})
 		a["after"] = spoken.size()
 		a["dur"] = float(TabletScript.phases(String(a["kind"]), String(a.get("text", "")),
-			int(a.get("n", 0)), int(a.get("m", 0)))["end"])
+			int(a.get("n", 0)), int(a.get("m", 0)), (a.get("hops", []) as Array).size())["end"])
 		actions.append(a)
 		_hold += float(a["dur"])
 
@@ -673,15 +763,50 @@ class _Walk:
 			"search_box": false, "query": "", "results": false})
 		return pages.size() - 1
 
+	## A notification's fields from `Sender | Subject | Preview`.
+	static func _note_of(arg: String) -> Dictionary:
+		var f := arg.split("|")
+		return {"sender": String(f[0]).strip_edges(),
+			"title": String(f[1]).strip_edges() if f.size() > 1 else "",
+			"body": String(f[2]).strip_edges() if f.size() > 2 else ""}
+
+	## The redirect hops waiting for the next page, made concrete for [param dest] - and gone.
+	func _take_redirect(dest: String) -> Array:
+		if _redirect == null:
+			return []
+		var hops: Array = _redirect
+		_redirect = null
+		return hops if not hops.is_empty() else TabletScript.auto_hops(dest)
+
 	func _marker(verb: String, arg: String) -> void:
 		match verb:
+			"notify":
+				var n := _note_of(arg)
+				n["after"] = spoken.size()
+				notes.append(n)
+			"redirect":
+				var named: Array = []
+				for h in arg.split(",", false):
+					if not String(h).strip_edges().is_empty():
+						named.append(String(h).strip_edges())
+				_redirect = named
 			"url":
 				if arg.is_empty():
 					return
 				_leave()
 				var from := _cur
 				var p := _new_page(arg)
-				if from >= 0 and not _fresh_tab:
+				var hops := _take_redirect(arg)
+				# A LINK THAT REDIRECTS OPENS A TAB OF ITS OWN, as such links mostly do: the page it
+				# was tapped on stays in its tab, and the new tab has no history to go back to
+				var links: Dictionary = (pages[from] as Dictionary)["links"] if from >= 0 else {}
+				var k := TabletScript.url_key(arg)
+				var by_link := _browser and not _fresh_tab and from >= 0 and links.has(k)
+				var own_tab := by_link and not hops.is_empty()
+				if own_tab:
+					_hist.append([])
+					_tab = _hist.size() - 1
+				elif from >= 0 and not _fresh_tab:
 					(_hist[_tab] as Array).append(from)
 				_returned = false
 				if not _browser:
@@ -691,16 +816,12 @@ class _Walk:
 					# look, so the empty tab is seen before the typing starts.
 					_act({"kind": "open", "page": -1, "from": -1})
 					_browser = true
-					_act({"kind": "type", "text": arg, "page": p, "from": -1})
-				elif _fresh_tab or from < 0:
-					_act({"kind": "type", "text": arg, "page": p, "from": from})
+					_act({"kind": "type", "text": arg, "page": p, "from": -1, "hops": hops})
+				elif by_link:
+					_act({"kind": "link", "page": p, "from": from, "word": int(links[k]), "hops": hops,
+						"new_tab": own_tab})
 				else:
-					var links: Dictionary = (pages[from] as Dictionary)["links"]
-					var k := TabletScript.url_key(arg)
-					if links.has(k):
-						_act({"kind": "link", "page": p, "from": from, "word": int(links[k])})
-					else:
-						_act({"kind": "type", "text": arg, "page": p, "from": from})
+					_act({"kind": "type", "text": arg, "page": p, "from": from, "hops": hops})
 				_fresh_tab = false
 				_cur = p
 				_skim_words = 0

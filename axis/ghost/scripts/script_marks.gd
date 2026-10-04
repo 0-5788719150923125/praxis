@@ -197,6 +197,22 @@ const REGISTRY := {
 		"modes": ["generative"],
 		"pattern": "<!--\\s*back\\s*-->",
 	},
+	"redirect": {
+		"label": "Redirect",
+		"group": "tablet",
+		"blurb": "Tablet: put it before a url - the tap (or typed address) that reaches that page is sent through a chain of redirects the reader never asked for, the address bar jumping through them on its own. Bare: six hops made up from the page's own site, a scam's funnel. Or name them, comma-separated.",
+		"before": "<!-- redirect", "fill": "", "after": " -->", "line": "own",
+		"modes": ["generative"],
+		"pattern": "<!--\\s*redirect\\s*(?::[^>]*)?-->",
+	},
+	"notify": {
+		"label": "Notification",
+		"group": "tablet",
+		"blurb": "Tablet: a notification banner drops from the top of the screen a moment after the reading reaches this point - mid-paragraph or on a line of its own - holds a few seconds and slides away: an email arriving. Sender | subject | preview. Not read aloud; the voice does not wait for it.",
+		"before": "<!-- notify: ", "fill": "Sender | Subject | A line of the message", "after": " -->", "line": "",
+		"modes": ["generative"],
+		"pattern": "<!--\\s*notify\\s*:[^>]*-->",
+	},
 	"landscape": {
 		"label": "Landscape",
 		"group": "tablet",

@@ -99,7 +99,14 @@ static func scrub_to(body: String, phrase: String) -> Dictionary:
 	for w in phrase.split(" ", false):
 		want.append(TabletScript.norm(w))
 	var si := TabletScript.find_run(norms, want)
-	return {"si": si, "words": norms.slice(si, si + 6) if si >= 0 else PackedStringArray()}
+	# as the panel hands them over: words with no letters left out
+	var words := PackedStringArray()
+	for k in range(maxi(si, 0), norms.size()):
+		if si < 0 or words.size() >= 6:
+			break
+		if not norms[k].is_empty():
+			words.append(norms[k])
+	return {"si": si, "words": words}
 
 
 ## Measure one frame of [param tab]. The row `{wi, vp_y, fy, aim_y, scroll, busy}`, or `{}` when
