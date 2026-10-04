@@ -10,9 +10,17 @@ extends Node
 ## `--screen 1` also writes the flat screen texture beside each frame. `--every S` photographs
 ## every S seconds to the end of the reading instead of `--times`. It asserts only that a
 ## frame is not uniform.
+##
+## `--audit 1` writes no pictures: it replays the whole reading and checks, every frame, where
+## the word being spoken is - on the browser's viewport, and in the camera's frame - and how
+## fast the camera's aim moves, printing each lapse and a summary. `--focus "<phrase>"` adds a
+## trace of the seconds around the first place the phrase is read, and `--until S`
+## stops at show second S. `--from "<phrase>"` starts the reading there, the way a scrub does:
+## the voice from that sentence, no intro, the medium handed its start words.
 
 const W := 1280
 const H := 720
+const Audit := preload("res://tests/tablet_audit.gd")
 const DT := 1.0 / 30.0
 
 var _out := "user://tablet"
@@ -24,6 +32,10 @@ var _every := 0.0
 var _image := ""
 var _flat := 0
 var _intro := -1.0      # --intro: the Director reloads its own at attach, so this is applied after
+var _audit := false
+var _focus := ""
+var _until := INF
+var _from := ""
 
 
 func _ready() -> void:
@@ -44,6 +56,10 @@ func _run() -> void:
 			"--image": _image = args[i + 1]
 			"--camera": Director.camera = float(args[i + 1])
 			"--intro": _intro = float(args[i + 1])
+			"--audit": _audit = args[i + 1] == "1"
+			"--focus": _focus = args[i + 1]
+			"--until": _until = float(args[i + 1])
+			"--from": _from = args[i + 1]
 			"--times":
 				_times = []
 				for s in String(args[i + 1]).split(","):
@@ -81,8 +97,16 @@ func _run() -> void:
 	if _intro >= 0.0:
 		Director.intro_hold = _intro
 	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
-	subs.words = _timeline(body, title)
+	var scrub: Dictionary = Audit.scrub_to(body, _from) if not _from.is_empty() else {"si": 0}
+	if int(scrub["si"]) < 0:
+		print("tablet_look_probe: '%s' is not read in this chapter" % _from)
+		get_tree().quit(2)
+		return
+	subs.words = Audit.timeline(body, _word, Director.intro_hold, int(scrub["si"]))
 	subs.document = {"source": body, "title": title}
+	if int(scrub["si"]) > 0:
+		subs.document["start_words"] = scrub["words"]
+		print("tablet_look_probe: a scrub to spoken word %d, '%s'" % [int(scrub["si"]), " ".join(scrub["words"])])
 	add_child(subs)
 	if medium.bind_captions(subs):
 		subs.overlay_hidden = true
@@ -97,6 +121,9 @@ func _run() -> void:
 	var tab := medium as TabletMedium
 	var t := 0.0
 	Spectrum.virtual_clock = 0.0
+	if _audit:
+		await _run_audit(tab, medium, end, subs)
+		_times = []
 	_times.sort()
 	for want in _times:
 		while t < float(want):
@@ -125,32 +152,58 @@ func _run() -> void:
 	get_tree().quit(1 if _flat > 0 else 0)
 
 
-## Every spoken word at a steady pace, a rest at each sentence end, and each run of actions'
-## rest after the word before it - the shape a real take's sidecar has.
-func _timeline(body: String, title: String) -> Array:
-	var d := TabletScript.parse(body)
-	var holds := {}
-	for a in d["actions"]:
-		var n := int(a["after"])
-		holds[n] = float(holds.get(n, 0.0)) + float(a["dur"])
-	# as the panel does it: the intro's silence first, and the opening run's rest shortened by it
-	var intro := maxf(0.0, Director.intro_hold)
-	if holds.has(0):
-		holds[0] = maxf(0.0, float(holds[0]) - maxf(0.0, intro - 0.8))
-	var out: Array = []
-	var t := intro
-	var si := 0
-	var spoken: PackedInt32Array = d["spoken"]
-	for k in spoken.size():
-		t += float(holds.get(k, 0.0))
-		var text := String((d["words"][spoken[k]] as Dictionary)["text"])
-		out.append({"text": text, "t0": t, "t1": t + _word * 0.85, "sentence": si, "emph": 0})
-		t += _word
-		var tail := text.rstrip("\"')*_")
-		if tail.ends_with(".") or tail.ends_with("?") or tail.ends_with("!"):
-			si += 1
-			t += 0.45
-	return out
+# --- the audit ---------------------------------------------------------------------------
+
+func _run_audit(tab: TabletMedium, medium: Medium, end: float, subs: Subtitles) -> void:
+	var audit = Audit.new(Vector2(W, H))
+	# stepped by hand, awaiting a real frame only now and then: a whole chapter otherwise takes
+	# most of an hour
+	subs.process_mode = Node.PROCESS_MODE_DISABLED
+	var step := 0
+	var t := 0.0
+	var focus_t := -1.0
+	var focus_wi := -1
+	if not _focus.is_empty():
+		var fs := int(Audit.scrub_to(subs.document["source"], _focus)["si"])
+		focus_wi = int((tab._doc.get("spoken", PackedInt32Array()) as PackedInt32Array)[fs]) if fs >= 0 \
+			and not tab._doc.is_empty() else -1
+	var recent: Array = []          # the last seconds of trace, printed when the focus arrives
+	var n := 0
+	while t < minf(end, _until):
+		t += DT
+		Spectrum.virtual_clock = t
+		Spectrum.current.time = t
+		subs._process(DT)
+		medium.advance(Spectrum.current, DT, 1.0)
+		step += 1
+		if step % 30 == 0:
+			await get_tree().process_frame
+		var row: Dictionary = audit.frame(tab)
+		audit.count(row, tab, DT)
+		if row.is_empty() or _focus.is_empty():
+			continue
+		n += 1
+		var word := String((tab._doc["words"][int(row["wi"])] as Dictionary)["text"])
+		var line := "  t=%7.2f %-14s vp_y %.2f frame_y %.2f aim_y %4.0f scroll %5.0f d %.2f%s" % [t,
+			word.left(14), float(row["vp_y"]), float(row["fy"]), float(row["aim_y"]),
+			float(row["scroll"]), tab._c_dist, "  busy" if bool(row["busy"]) else ""]
+		if focus_t < 0.0:
+			if n % 3 == 0:
+				recent.append(line)
+				if recent.size() > 100:
+					recent.pop_front()
+			if focus_wi < 0 and not tab._doc.is_empty():
+				var fs := int(Audit.scrub_to(subs.document["source"], _focus)["si"])
+				focus_wi = int((tab._doc["spoken"] as PackedInt32Array)[fs]) if fs >= 0 else -2
+			if int(row["wi"]) == focus_wi:
+				focus_t = t
+				print("tablet_look_probe: focus '%s' first spoken at t=%.2f" % [_focus, t])
+				for l in recent:
+					print(l)
+		elif t - focus_t < 8.0 and n % 3 == 0:
+			print(line)
+	audit.finish()
+	print("tablet_look_probe: audit - " + audit.summary())
 
 
 func _spread(img: Image) -> float:

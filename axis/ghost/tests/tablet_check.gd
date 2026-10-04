@@ -76,6 +76,8 @@ func _initialize() -> void:
 	_check_real()
 	_check_arrivals()
 	_check_omnibox()
+	_check_list()
+	_check_table()
 	print("tablet_check: %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail > 0 else 0)
 
@@ -297,8 +299,66 @@ func _check_arrivals() -> void:
 		var ph := TabletScript.phases(kind, "what is it?")
 		_ok(float(ph["end"]) - float(ph["show"]) >= TabletScript.ARRIVE_LOOK - 0.001,
 			"%s ends on a look at the new page (%.1f s)" % [kind, float(ph["end"]) - float(ph["show"])])
+	var lk := TabletScript.phases("link")
+	_ok(float(lk["tap"]) - float(lk["scroll1"]) >= TabletScript.LINK_LOOK - 0.001,
+		"a link is looked at, still, before it is tapped (%.1f s)" % (float(lk["tap"]) - float(lk["scroll1"])))
 	var bk := TabletScript.phases("back")
 	_ok(float(bk["end"]) - float(bk["show"]) >= TabletScript.RETURN_LOOK - 0.001, "back ends on a shorter look")
+
+
+func _check_list() -> void:
+	var src := "<!-- url: a.test -->\n\n## Reports\n\n- One thing.\n- Two things.\n\n- Three.\n\nAfter.\n\n1. First\n2) Second\n"
+	var blocks: Array = (TabletScript.parse(src)["pages"][0] as Dictionary)["blocks"]
+	var kinds := []
+	for b in blocks:
+		kinds.append(String((b as Dictionary)["kind"]))
+	_ok(kinds == ["heading", "item", "item", "item", "para", "item", "item"], "a list's lines are items: %s" % str(kinds))
+	if kinds.size() == 7:
+		_ok(int(blocks[1]["list"]) == int(blocks[3]["list"]) and int(blocks[5]["list"]) != int(blocks[1]["list"]),
+			"items in a row are one list, a blank line between them included; a paragraph ends it")
+		_ok(String(blocks[1]["mark"]) == "" and String(blocks[5]["mark"]) == "1." and String(blocks[6]["mark"]) == "2)",
+			"a bullet list has no marks; a numbered one keeps its numbers")
+	var say := TabletScript.speakable(src)
+	_ok(not say.contains("- One") and not say.contains("1. First") and say.contains("One thing.\n\nTwo things."),
+		"each item is read as its own short paragraph, without its dash")
+
+
+func _check_table() -> void:
+	var src := "<!-- url: a.test -->\n\n## Plans\n\n| Plan | What you get | Rate |\n|---|:---:|---|\n" \
+		+ "| Free | Dreams as usual | <!-- skip -->Nothing |\n| Premium | No [falling](a.test/fall). | <!-- skip -->Some |\n" \
+		+ "After the table.\n"
+	var d := TabletScript.parse(src)
+	var blocks: Array = (d["pages"][0] as Dictionary)["blocks"]
+	var kinds := []
+	for b in blocks:
+		kinds.append(String((b as Dictionary)["kind"]))
+	_ok(kinds == ["heading", "table", "para"], "a table is one block, and a line without a pipe ends it: %s" % str(kinds))
+	if kinds.size() == 3:
+		var t: Dictionary = blocks[1]
+		_ok((t["head"] as Array).size() == 3 and (t["rows"] as Array).size() == 2 and (t["row_cells"] as Array).size() == 2,
+			"the rule makes the first row its header; two rows of three cells")
+	var say := String(d["speakable"])
+	_ok(say.contains("Free. Dreams as usual. Premium. No falling."),
+		"the body is read row by row, each cell a sentence: %s" % say.get_slice("\n\n", 2))
+	_ok(not say.contains("What you get") and not say.contains("Rate") and not say.contains("Nothing") and not say.contains("Some"),
+		"the header is shown, not read, and a skipped cell is not read")
+	_ok((d["pages"][0]["links"] as Dictionary).has("a.test/fall"), "a link in a cell can be tapped")
+	var glued := false
+	for w in d["words"]:
+		if String((w as Dictionary)["text"]) == "." and bool((w as Dictionary).get("glue", false)):
+			glued = true
+	_ok(glued, "the period written against a link is set against it, with no space")
+	var said := []
+	for wi in (d["spoken"] as PackedInt32Array):
+		var sn := String(d["words"][wi]["norm"])
+		if not sn.is_empty():
+			said.append(sn)
+	var voice := []
+	for w in TabletScript._rx("<!--[\\s\\S]*?-->|#|\\s+").sub(say, " ", true).split(" ", false):
+		var n := TabletScript.norm(String(w))
+		if not n.is_empty():
+			voice.append(n)
+	_ok(said == voice, "the voice reads exactly the table's words marked spoken\n    voice %s\n    page  %s" % [str(voice), str(said)])
 
 
 func _check_untouched() -> void:
@@ -316,5 +376,8 @@ func _check_untouched() -> void:
 	var run := TabletScript.find_run(PackedStringArray(["a", "b", "it", "was", "2009", "then"]),
 		PackedStringArray(["it", "was", "twothousandnine", "then"]))
 	_ok(run == 2, "a mid-way start finds its words, one spelled differently (%d)" % run)
+	var near := TabletScript.find_run(PackedStringArray(["sentence", "one", "five", "of", "the", "long",
+		"sentence", "two", "five", "of", "the", "long"]), PackedStringArray(["sentence", "two", "five", "of", "the", "long"]))
+	_ok(near == 6, "a mid-way start lands on the run that matches best, not an earlier near miss (%d)" % near)
 	var om := TabletScript.speakable("<!-- url: a.test -->\n\nOne. <!-- outro --> Two.\n\n<!-- outro -->\n\nThree.\n")
 	_ok(om.count("<!-- outro -->") == 2, "the outro mark reaches the voice, inline or on its own line")

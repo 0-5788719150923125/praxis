@@ -28,16 +28,13 @@ class_name Scrubber
 ## check - the render process returns out of main before Chrome is built, so none of this
 ## furniture exists there at all.
 ##
-## A FILE ONLY, and that is the honest scope. Seeking a live synthesis generator was built
-## and withdrawn (the reasoning is recorded in generative_editor.gd, above _repace): a
-## generator's ring cannot be cleared while it plays, so every seek had to restart the
-## stream, and repeated restarts left the audio audibly wrong. It could not have served its
-## purpose in any case - see below.
+## WHAT A SEEK IS depends on what is playing. A file seeks exactly. A live generative reading
+## seeks by SENTENCE, through the scrub hooks the Generative panel registers on [Spectrum]: the
+## reading restarts from the sentence there (a generator's ring cannot be seeked in place - see
+## generative_editor.gd, above _repace).
 ##
-## SO THE REVIEW WORKFLOW IS: render the take, then open the rendered file. That is a real
-## seek, one operation, and a file boot replays the same deterministic show from the same
-## seed - so scrubbing it shows what the export will actually contain, which scrubbing a
-## live generator never could.
+## HOVERING SHOWS THE TIME under the pointer - a pill over a hairline on the rail - so a click
+## can be aimed: "it's hard to gauge our cursor position without one".
 const BAR_H := 4.0                  # the resting rail, px
 const BAR_H_ACTIVE := 8.0           # while the pointer is over it
 const PAD := 26.0                   # distance from the bottom edge
@@ -46,6 +43,8 @@ const FADE := 7.0                   # per-second ease on the reveal
 var _root: Control
 var _shown := 0.0                   # 0..1 eased visibility
 var _dragging := false
+var _hover_x := -1.0                # the pointer's x over the rail, or -1
+var _mouse_in := true               # the pointer is inside the window
 var _label: Label
 
 
@@ -71,6 +70,11 @@ func _ready() -> void:
 	painter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(painter)
 	_painter = painter
+	# a pointer that leaves the window from the rail sends no motion off it
+	get_window().mouse_entered.connect(func() -> void: _mouse_in = true)
+	get_window().mouse_exited.connect(func() -> void:
+		_mouse_in = false
+		_hover_x = -1.0)
 
 
 var _painter: Control
@@ -109,9 +113,12 @@ func _input(event: InputEvent) -> void:
 		elif not event.pressed and _dragging:
 			_dragging = false
 			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseMotion and _dragging:
-		_seek_to(event.position.x)
-		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion:
+		var over: bool = _mouse_in and _rail().grow(10.0).has_point(event.position)
+		_hover_x = event.position.x if over or _dragging else -1.0
+		if _dragging:
+			_seek_to(event.position.x)
+			get_viewport().set_input_as_handled()
 	elif event is InputEventKey and event.pressed and not event.echo and not _typing():
 		# Arrow keys are the control that actually gets used while watching, because they
 		# need no aim: a fixed step, repeatable, without taking the eye off the frame.
@@ -172,6 +179,8 @@ func _rail() -> Rect2:
 
 static func _clock(t: float) -> String:
 	var s := int(maxf(0.0, t))
+	if s >= 3600:
+		return "%d:%02d:%02d" % [s / 3600, (s / 60) % 60, s % 60]
 	return "%d:%02d" % [s / 60, s % 60]
 
 
@@ -186,8 +195,9 @@ class Painter:
 		if a <= 0.0:
 			return
 		var r: Rect2 = owner_node._rail()
+		var hx: float = owner_node._hover_x
 		var h := lerpf(Scrubber.BAR_H, Scrubber.BAR_H_ACTIVE,
-			1.0 if owner_node._dragging else 0.0)
+			1.0 if owner_node._dragging or hx >= 0.0 else 0.0)
 		r.position.y -= (h - Scrubber.BAR_H) * 0.5
 		r.size.y = h
 		var total: float = maxf(0.001, Spectrum.scrub_length())
@@ -202,3 +212,23 @@ class Painter:
 		var px: float = r.position.x + r.size.x * f
 		draw_rect(Rect2(Vector2(px - 1.5, r.position.y - 4.0), Vector2(3.0, r.size.y + 8.0)),
 			Color(1, 1, 1, 0.95 * a), true)
+		if hx >= 0.0:
+			_draw_hover(r, hx, total, a)
+
+	## The time under the pointer: a hairline on the rail and a pill above it, kept inside the
+	## window and clear of the position label at the rail's left end.
+	func _draw_hover(r: Rect2, hx: float, total: float, a: float) -> void:
+		var hf := clampf((hx - r.position.x) / maxf(1.0, r.size.x), 0.0, 1.0)
+		var x := r.position.x + r.size.x * hf
+		draw_rect(Rect2(Vector2(x - 0.5, r.position.y - 3.0), Vector2(1.0, r.size.y + 6.0)),
+			Color(1, 1, 1, 0.7 * a), true)
+		var font := get_theme_default_font()
+		const FS := 13
+		var text := Scrubber._clock(hf * total)
+		var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FS).x
+		var hgt := font.get_height(FS) + 4.0
+		var box := Rect2(Vector2(x - tw * 0.5 - 7.0, r.position.y - 24.0 - hgt), Vector2(tw + 14.0, hgt))
+		box.position.x = clampf(box.position.x, 4.0, size.x - box.size.x - 4.0)
+		draw_rect(box, Color(0.02, 0.02, 0.03, 0.8 * a), true)
+		draw_string(font, Vector2(box.position.x + 7.0, box.position.y + 2.0 + font.get_ascent(FS)), text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, FS, Color(0.95, 0.96, 0.99, a))

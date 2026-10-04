@@ -40,7 +40,11 @@ const TOP := STATUS + TABS + BAR
 ## and a beat before the next.
 const LEAD := 0.35
 const TAIL := 0.3
-## When the tablet starts to wake, in show seconds: at once, under the intro.
+## The earliest the tablet starts to wake, in show seconds. THE INTRO IS A WAIT: the tablet lies
+## dark on the desk through it, and the hand's opening run starts when it ends - "I would
+## expect it to delay all of the startup motions: screen-on and browser-click". The first cut
+## ran the wake under the intro, which a run longer than the intro swallowed whole, so the
+## setting did nothing anyone could see.
 const WAKE_AT := 0.4
 ## A tap: the finger coming down, then the press and its ripple; and how long a pressed link
 ## stays shaded.
@@ -66,9 +70,30 @@ const LINE_TAU := 3.0
 const ARC_IN := 0.15
 const ARC_OUT := 0.15
 const ARC_WORDS := 40.0
-const CAM_LEAD := 4.0
-## While reading, the share of the screen's height the camera's aim stays within.
-const AIM_BAND := Vector2(0.4, 0.6)
+## THE WIDE VIEW OUTLASTS AN ARRIVAL. The camera is wide while the hand works, so every new
+## page comes up wide; closing in at once undid that the moment it was made - "we pull the
+## camera all the way out, click the link, and immediately begin zooming in again". A page
+## that has just come up keeps the wide view for ARRIVE_WIDE seconds, then the arc eases in
+## over ARRIVE_EASE.
+const ARRIVE_WIDE := 14.0
+const ARRIVE_EASE := 5.0
+## THE READING BAND, as shares of the page's viewport: the line being read is kept between
+## these, and when it passes the foot a drag brings it to the head - so a drag spans the band.
+## The camera looks at the band's middle and NEVER follows the line: at its closest, at every
+## Camera setting, it sees the whole band (gated in tablet_check), so the page moves and the
+## camera holds. A camera that leaned toward the line swung back up after every drag, when the
+## line jumped from the foot to the head - "the zoomed-in camera has to pan much higher to
+## compensate".
+const READ_BAND := Vector2(0.25, 0.7)
+## A READER SWIPES BEFORE THEY GET THERE: a paragraph is checked before its first word, in the
+## rest after the one before (PARA_LEAD seconds ahead, when the rest is that long), and one that
+## would run past the band's foot is swiped up to its head first - so the reading never runs on
+## toward the bottom edge ("a normal person will not read text right to the edge of the tablet").
+## A swipe that would move the page less than MIN_SWIPE of the viewport is not made at all: text
+## already in a good place stays where it is ("the first paragraph was ALREADY in a good place...
+## the swiping was pointless and weird, because it hides the header").
+const PARA_LEAD := 1.8
+const MIN_SWIPE := 0.15
 ## A link this close to the top or bottom of the screen (share of its height) is scrolled into
 ## view before it is tapped; anywhere else on screen it is tapped where it is.
 const LINK_MARGIN := 0.06
@@ -163,10 +188,23 @@ var _quick := 0.0
 var _snap := true
 var _last_now := 0.0
 var _page_span := {}
+var _spans := {}                 # "page|orient|block" -> Vector2(top, bottom), see _block_span
+var _block_words := {}           # "page|block" -> Array of the words in it
 var _start_si := -1              # a mid-way start: the spoken index the reading begins at
+var _intro := 0.0                # the intro this reading started with (see _reset_reading)
+## The chapter's time before this reading began: 0, or for a mid-way start, about how long the
+## part skipped over takes (the intro and the past as it is replayed) - so the status bar's clock
+## and battery carry on through a scrub instead of starting over.
+var _t_before := 0.0
+## The battery runs down a percent every this many seconds of chapter: 10% an hour, a tablet
+## left on reading.
+const BATTERY_PCT_S := 360.0
 ## Where the words before a mid-way start are placed in time: long past, so all of it has
 ## happened before the first frame.
 const START_PAST := -100000.0
+## A spoken word whose time is not known yet. NOT "any negative time": the words before a mid-way
+## start are known, and long past.
+const NO_TIME := -1.0
              # page -> Vector2i(first, last) spoken index on it
 
 
@@ -320,25 +358,40 @@ func release() -> void:
 
 
 func _reset_reading() -> void:
+	# the intro this reading was started with: the voice's lead-in is fixed at Speak, so a slider
+	# moved during the reading must not move the opening run away from it
+	_intro = maxf(0.0, Director.intro_hold)
+	_t_before = 0.0
 	_map = []
 	_map_j = 0
 	_map_rem = ""
 	var n := (_doc.get("spoken", PackedInt32Array()) as PackedInt32Array).size()
 	_st0 = PackedFloat32Array()
 	_st0.resize(n)
-	_st0.fill(-1.0)
+	_st0.fill(NO_TIME)
 	_st1 = _st0.duplicate()
 	_built_n = -1
 	_sched = []
 	_flings = {}
 	# A READING STARTED MID-WAY (a scrub): everything before its first word was "read" long ago,
 	# so every tap, page, scroll and turn up to there has happened before the first frame and the
-	# screen opens where the reading is - the voice's words then match on from that point
+	# screen opens where the reading is - the voice's words then match on from that point. The
+	# past is spaced as a voice would have read it, each run of actions given its own rest, so it
+	# replays as it was rather than squeezed together.
 	if _start_si > 0:
 		_map_j = _start_si
+		var rests := {}
+		for a in _doc.get("actions", []):
+			var k := int((a as Dictionary)["after"])
+			rests[k] = float(rests.get(k, 0.0)) + float((a as Dictionary)["dur"])
+		var tp := START_PAST
 		for j in mini(_start_si, n):
-			_st0[j] = START_PAST + float(j) * 0.5
-			_st1[j] = _st0[j] + 0.3
+			if rests.has(j):
+				tp += float(rests[j]) + LEAD + TAIL
+			_st0[j] = tp
+			_st1[j] = tp + 0.3
+			tp += 0.4
+		_t_before = _intro + (tp - START_PAST)
 
 
 
@@ -364,6 +417,8 @@ func bind_captions(subs) -> bool:
 	# otherwise draw a page of a chapter that is no longer loaded
 	_st = {}
 	_lays = {}
+	_spans = {}
+	_block_words = {}
 	_reset_reading()
 	return true
 
@@ -439,6 +494,8 @@ func _ensure_doc() -> void:
 		_char0.append(c)
 		c += String((w as Dictionary)["text"]).length() + 1
 	_lays = {}
+	_spans = {}
+	_block_words = {}
 	_reset_reading()
 	print("ghost: tablet - %d pages, %d actions, %d spoken words" % [(_doc["pages"] as Array).size(),
 		(_doc["actions"] as Array).size(), (_doc["spoken"] as PackedInt32Array).size()])
@@ -507,7 +564,7 @@ func _extend_map() -> void:
 		_map.append(got)
 		if got >= 0:
 			_st1[got] = float(w.get("t1", 0.0))
-			if _st0[got] < 0.0:
+			if _st0[got] == NO_TIME:
 				_st0[got] = float(w.get("t0", 0.0))
 
 
@@ -540,7 +597,7 @@ func _build_schedule() -> void:
 	var nS := _st0.size()
 	var known := -1
 	for i in nS:
-		if _st1[i] >= 0.0:
+		if _st1[i] != NO_TIME:
 			known = i
 	var i := 0
 	while i < actions.size():
@@ -551,14 +608,16 @@ func _build_schedule() -> void:
 			i += 1
 		if n > 0 and known < 0 or n - 1 > known:
 			break
-		var prev := 0.0
+		# before the first word: the end of the intro - or, for a mid-way start, the long past the
+		# opening run happened in too (left at 0, it held back everything placed before it)
+		var prev := START_PAST if _start_si > 0 else maxf(_intro, WAKE_AT) - LEAD
 		for k in range(mini(n - 1, nS - 1), -1, -1):
-			if _st1[k] >= 0.0:
+			if _st1[k] != NO_TIME:
 				prev = _st1[k]
 				break
 		var next := INF
 		for k in range(n, nS):
-			if _st0[k] >= 0.0:
+			if _st0[k] != NO_TIME:
 				next = _st0[k]
 				break
 		var total := 0.0
@@ -573,15 +632,6 @@ func _build_schedule() -> void:
 			else:
 				s = maxf(room, total * 0.25) / total
 		var t := start
-		# THE OPENING RUN WAKES AT ONCE: the intro is the tablet waking, so the wake starts with
-		# the show, and the slack the intro leaves is spent on the home screen - the rest of
-		# the run still ends a beat before the first word
-		if n == 0 and not group.is_empty() and String((group[0] as Dictionary)["kind"]) == "wake" \
-				and start > WAKE_AT:
-			var wake: Dictionary = group[0]
-			_sched.append({"a": wake, "t0": WAKE_AT, "s": 1.0})
-			t = maxf(start + float(wake["dur"]) * s, WAKE_AT + float(wake["dur"]))
-			group = group.slice(1)
 		for a in group:
 			_sched.append({"a": a, "t0": t, "s": s})
 			t += float((a as Dictionary)["dur"]) * s
@@ -642,6 +692,19 @@ func _shown_at(p: int) -> float:
 	return INF
 
 
+## When page [param p] last came on screen at or before [param t] - a page come back to by
+## Back arrives again. -INF when it has not.
+func _arrived_at(p: int, t: float) -> float:
+	var out := -INF
+	for e in _sched:
+		var a: Dictionary = e["a"]
+		if int(a.get("page", -9)) == p:
+			var show := float(e["t0"]) + float(_ph(a)["show"]) * float(e["s"])
+			if show <= t:
+				out = maxf(out, show)
+	return out
+
+
 static func _ph(a: Dictionary) -> Dictionary:
 	return TabletScript.phases(String(a["kind"]), String(a.get("text", "")), int(a.get("n", 0)),
 		int(a.get("m", 0)))
@@ -666,9 +729,20 @@ func _build_flings() -> void:
 		if t_show == INF:
 			continue
 		var ev: Array = []
+		var last_block := -1
 		for si in spoken.size():
-			if int((dw[spoken[si]] as Dictionary)["page"]) == p and _st0[si] >= 0.0:
-				ev.append({"t": _st0[si] - 0.9, "kind": "read", "wi": spoken[si]})
+			var w: Dictionary = dw[spoken[si]]
+			if int(w["page"]) != p or _st0[si] == NO_TIME:
+				continue
+			# a paragraph's first word is checked early, in the rest before it
+			var lead := int(w["block"]) != last_block
+			last_block = int(w["block"])
+			var te := _st0[si] - 0.9
+			if lead:
+				te = _st0[si] - PARA_LEAD
+				if si > 0 and _st1[si - 1] != NO_TIME:
+					te = maxf(te, _st1[si - 1] + 0.1)
+			ev.append({"t": te, "kind": "read", "wi": spoken[si], "lead": lead, "block": int(w["block"])})
 		for e in _sched:
 			var a: Dictionary = e["a"]
 			var ph := _ph(a)
@@ -704,21 +778,32 @@ func _build_flings() -> void:
 				"read":
 					if t < busy_until:
 						continue
-					if r.end.y > cur + vh * 0.8 or r.position.y < cur + vh * 0.02:
-						cur = clampf(r.position.y - vh * 0.22, 0.0, mx)
+					var to := cur
+					if bool(x["lead"]):
+						to = _place(_block_span(p, o, int(x["block"])), cur, vh, mx)
+					elif r.end.y > cur + vh * READ_BAND.y or r.position.y < cur + vh * 0.02:
+						to = clampf(r.position.y - vh * READ_BAND.x, 0.0, mx)
+					if to != cur:
+						cur = to
 						var from := _eval(list, t)
 						var dur := _drag_time(absf(cur - from))
 						list.append({"t": t, "from": from, "to": cur, "dur": dur, "drag": true, "o": o})
 						busy_until = t + dur
 				"skim":
-					# stops: each picture centered, then the next words a little below the top
+					# stops: each picture centered where the camera looks, then the next words placed
+					# as a paragraph is - and a stop already as good as made is not made
 					var stops: Array = []
+					var at := cur
+					var mid := (READ_BAND.x + READ_BAND.y) * 0.5
 					for bi in x["pics"]:
 						var pr: Rect2 = lp.block_rect.get(int(bi), Rect2())
 						if pr.size.y > 0.0:
-							stops.append(clampf(pr.get_center().y - vh * 0.5, 0.0, mx))
+							var c := clampf(pr.get_center().y - vh * mid, 0.0, mx)
+							at = at if absf(c - at) < vh * 0.06 else c
+							stops.append(at)
 					if int(x["wi"]) >= 0:
-						stops.append(clampf(r.position.y - vh * 0.22, 0.0, mx))
+						var w0: Dictionary = dw[int(x["wi"])]
+						stops.append(_place(_block_span(p, o, int(w0["block"])), at, vh, mx))
 					else:
 						# a glance before leaving: some way further down, wherever that is - a
 						# screen for an unread page, a third of one on a real page, whose top is
@@ -756,6 +841,53 @@ func _build_flings() -> void:
 					cur = want
 					busy_until = t + win
 		_flings[p] = list
+
+
+## Where to scroll for a paragraph spanning [param span] (top, bottom on its page) about to be
+## read, from scroll [param at]: where it is, if it fits inside the reading band; else its top
+## to the band's head - unless that moves the page by less than MIN_SWIPE and the paragraph is
+## on screen, which is not worth a swipe (the line rule takes it later if it must).
+static func _place(span: Vector2, at: float, vh: float, mx: float) -> float:
+	if span.y <= span.x:
+		return at
+	var on_screen := span.x >= at + vh * 0.02 and span.x < at + vh * 0.9
+	if on_screen and span.y <= at + vh * READ_BAND.y:
+		return at
+	var to := clampf(span.x - vh * READ_BAND.x, 0.0, mx)
+	if on_screen and absf(to - at) < vh * MIN_SWIPE:
+		return at
+	return to
+
+
+## The extent of block [param bi] of page [param p] in the layout for [param o], top to bottom,
+## from its words' rects - a heading together with what follows it, so the two come up together.
+func _block_span(p: int, o: int, bi: int) -> Vector2:
+	var key := "%d|%d|%d" % [p, o, bi]
+	if _spans.has(key):
+		return _spans[key]
+	if _block_words.is_empty():
+		var dw: Array = _doc["words"]
+		for wi in dw.size():
+			var w: Dictionary = dw[wi]
+			var bk := "%d|%d" % [int(w["page"]), int(w["block"])]
+			if not _block_words.has(bk):
+				_block_words[bk] = []          # an Array: a packed array taken out of a dictionary is a copy
+			(_block_words[bk] as Array).append(wi)
+	var lp := layout(p, o)
+	var out := Vector2(INF, -INF)
+	var blocks: Array = (_doc["pages"][p] as Dictionary)["blocks"]
+	var take := [bi]
+	if bi < blocks.size() and String((blocks[bi] as Dictionary)["kind"]) == "heading" and bi + 1 < blocks.size():
+		take.append(bi + 1)
+	for b in take:
+		for wi in _block_words.get("%d|%d" % [p, int(b)], []):
+			var wr: Rect2 = lp.word_rect.get(wi, Rect2())
+			if wr.size.y > 0.0:
+				out = Vector2(minf(out.x, wr.position.y), maxf(out.y, wr.end.y))
+	if out.x == INF:
+		out = Vector2.ZERO
+	_spans[key] = out
+	return out
 
 
 static func _fling_time(d: float) -> float:
@@ -1027,28 +1159,21 @@ func _tick_camera(delta: float) -> void:
 	var real := page >= 0 and bool((_doc["pages"][page] as Dictionary).get("real", false))
 	if real and not busy:
 		k = REAL_LOOK
-	# where on the screen the reading is: the line the voice will reach a little ahead,
-	# low-passed so line-by-line steps become a drift
+	if page >= 0:
+		var since := t - _arrived_at(page, t)
+		k *= smoothstep(ARRIVE_WIDE, ARRIVE_WIDE + ARRIVE_EASE, since)
+	# THE EYES STAY PUT, THE PAGE MOVES: the camera looks at the middle of the reading band
+	# (READ_BAND), never at the line - the drags keep the line in the band, under the camera.
+	# Low-passed, for the changes of layout (a turn, a real page) that move the band itself.
 	var L := logical(o)
-	var line := TOP + _vh(o) * 0.45
+	var line := TOP + _vh(o) * (READ_BAND.x + READ_BAND.y) * 0.5
 	if real:
 		line = TOP + _vh(o) * 0.35
-	elif page >= 0 and not busy and not bool(_st.get("skim", false)):
-		var wi := _camera_word(page)
-		var lp := layout(page, o)
-		if wi >= 0 and lp.word_rect.has(wi):
-			# THE EYES STAY PUT, THE PAGE MOVES. The aim is held in the middle band of the screen
-			# and only leans toward the line within it: the reading drags keep the line in that
-			# band, so a scroll brings the next lines to where the camera already looks. Chasing
-			# the line itself sent the camera up the slab after every scroll - "floaty".
-			line = clampf((lp.word_rect[wi] as Rect2).get_center().y - scroll_of(page, t, o) + TOP,
-				TOP + _vh(o) * AIM_BAND.x, TOP + _vh(o) * AIM_BAND.y)
 	if _snap or _quick > 0.98:
 		_line_y = line
 	_line_y = lerpf(_line_y, line, 1.0 - exp(-maxf(delta, 0.0) / LINE_TAU))
 	var aim := Vector3(0.0, 0.0, 0.02).lerp(_world_of(Vector2(L.x * 0.5, _line_y)), k)
-	var near := lerpf(wide_of(turn), lerpf(NEAR.x, NEAR.y, turn), clampf(0.55 + 0.3 * sev, 0.0, 1.0))
-	var dist := lerpf(wide_of(turn), near, k) * (1.0 + 0.012 * sin(t * 0.033 + 2.1) * sev)
+	var dist := lerpf(wide_of(turn), near_of(turn, sev), k) * (1.0 + 0.012 * sin(t * 0.033 + 2.1) * sev)
 	var pitch := lerpf(PITCH_WIDE, PITCH_NEAR, k)
 	# this page's own small set-up, and a wander of minutes on top
 	var pk := page + 7
@@ -1101,6 +1226,23 @@ static func wide_of(turn: float) -> float:
 	return lerpf(WIDE.x, WIDE.y, turn)
 
 
+## How far the camera stands at its closest, for a turn and a Camera setting [param sev].
+static func near_of(turn: float, sev: float) -> float:
+	return lerpf(wide_of(turn), lerpf(NEAR.x, NEAR.y, turn), clampf(0.55 + 0.3 * sev, 0.0, 1.0))
+
+
+## What the camera sees of the screen at its closest, in logical pixels above and below where
+## it looks: `Vector2(above, below)`. The screen lies oblique to the view, so the far side (the
+## top of the page) shows more than the near side; tilt does not change it, since tilt is paid
+## for in distance.
+static func close_view(o: int, sev: float) -> Vector2:
+	var d := near_of(float(o), sev) * (1.0 - 0.012 * sev)
+	var h := deg_to_rad(VFOV * 0.5)
+	var p := deg_to_rad(PITCH_NEAR)
+	var px := SH / SCREEN.y                 # logical pixels per world unit, either way round
+	return Vector2(d * sin(h) / sin(p - h), d * sin(h) / sin(p + h)) * px
+
+
 ## How far into page [param page]'s arc the reading is: 0 wide, 1 close. A pure function of how
 ## much of the page's text has been read, like the book's spread arc, scaled down for a page
 ## with little to read - a results page is glanced at, not settled into.
@@ -1116,26 +1258,6 @@ func _arc(page: int) -> float:
 	var p := clampf((float(si - span.x) + float(r["frac"])) / n, 0.0, 1.0)
 	return smoothstep(0.0, ARC_IN, p) * (1.0 - smoothstep(1.0 - ARC_OUT, 1.0, p)) \
 		* clampf(n / ARC_WORDS, 0.25, 1.0)
-
-
-## The word the voice will reach [constant CAM_LEAD] seconds from now, on this page - the
-## springs make the camera late, and the lead pays for it, as in the book.
-func _camera_word(page: int) -> int:
-	var r := _reading()
-	if r.is_empty():
-		return -1
-	var spoken: PackedInt32Array = _doc["spoken"]
-	var dw: Array = _doc["words"]
-	var wi := int(r["wi"])
-	if int((dw[wi] as Dictionary)["page"]) != page:
-		return -1
-	for k in range(int(r["si"]) + 1, spoken.size()):
-		if _st0[k] < 0.0 or _st0[k] > _now + CAM_LEAD:
-			break
-		if int((dw[spoken[k]] as Dictionary)["page"]) != page:
-			break
-		wi = spoken[k]
-	return wi
 
 
 static func _spring(x: float, v: float, target: float, tau: float, h: float) -> Vector2:
@@ -1318,14 +1440,17 @@ func _draw_status(ci: CanvasItem, o: int, light: bool) -> void:
 	var L := logical(o)
 	var col := Color(0.1, 0.1, 0.12) if light else Color.WHITE
 	var f := TabletPage.face(false, 2)
-	var mins := 21 * 60 + int(_hash01("clock") * 300.0) + int(_now / 60.0)
+	var ct := _now + _t_before
+	var mins := 21 * 60 + int(_hash01("clock") * 300.0) + int(ct / 60.0)
 	ci.draw_string(f, Vector2(34.0, 30.0), "%d:%02d" % [(mins / 60) % 24, mins % 60],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 24, col)
-	var pct := clampi(int(lerpf(34.0, 88.0, _hash01("batt")) - _now / 240.0), 5, 100)
+	var level := clampf(lerpf(34.0, 88.0, _hash01("batt")) - ct / BATTERY_PCT_S, 5.0, 100.0)
+	var pct := int(ceil(level))
 	var bx := Rect2(L.x - 74.0, 12.0, 44.0, 20.0)
 	ci.draw_rect(bx, Color(col, 0.9), false, 2.0)
 	ci.draw_rect(Rect2(bx.end.x + 1.0, 18.0, 3.0, 8.0), col)
-	ci.draw_rect(Rect2(bx.position + Vector2(3, 3), Vector2((bx.size.x - 6.0) * pct / 100.0, bx.size.y - 6.0)), col)
+	# the fill drains smoothly; the number steps a percent at a time, as a phone's does
+	ci.draw_rect(Rect2(bx.position + Vector2(3, 3), Vector2((bx.size.x - 6.0) * level / 100.0, bx.size.y - 6.0)), col)
 	ci.draw_string(f, Vector2(L.x - 210.0, 30.0), "%d%%" % pct, HORIZONTAL_ALIGNMENT_RIGHT, 120, 22, col)
 	# wifi
 	var wc := Vector2(L.x - 290.0, 30.0)
@@ -1474,10 +1599,10 @@ func _lit(page: int) -> Dictionary:
 	var si := int(r["si"])
 	var times := {}
 	for k in range(si, -1, -1):
-		if _st1[k] >= 0.0 and _now - _st1[k] > BookMedium.TRAIL_TAU * 4.0:
+		if _st1[k] != NO_TIME and _now - _st1[k] > BookMedium.TRAIL_TAU * 4.0:
 			break
 		var wi := spoken[k]
-		if int((_doc["words"][wi] as Dictionary)["page"]) != page or _st0[k] < 0.0:
+		if int((_doc["words"][wi] as Dictionary)["page"]) != page or _st0[k] == NO_TIME:
 			continue
 		times[wi] = Vector2(_st0[k], _st1[k])
 	return {"cur": int(r["wi"]), "frac": float(r["frac"]), "now": _now, "times": times,

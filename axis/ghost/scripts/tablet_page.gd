@@ -9,7 +9,8 @@ class_name TabletPage
 ## it reads at a glance as "there is something here" and never as words someone forgot to
 ## write. A heading with nothing under it gets a squiggled body; `<!-- filler: N -->` puts N
 ## placeholder stories in; and every page is padded with them to [member min_height], because a
-## page with nothing past the fold has nothing to scroll.
+## page with nothing past the fold has nothing to scroll - and past its last written block by
+## TAIL_SHARE at least, so the last lines are never read at the screen's foot.
 ##
 ## THE SITE'S LOOK IS ITS HOST: face, accent color and masthead are hashed off the address, so
 ## the same site looks the same wherever the chapter visits it, and two sites never match by
@@ -31,6 +32,9 @@ var index := -1
 var width := 1200.0
 var height := 0.0
 var min_height := 0.0
+## Placeholder stories after the last written block, at least, as a share of [member
+## min_height]: about half a screen.
+const TAIL_SHARE := 0.2
 var items: Array = []         # in page coordinates, in drawing order
 var word_rect := {}           # global word index -> Rect2
 var search_rect := Rect2()
@@ -129,6 +133,13 @@ func build(doc: Dictionary, pi: int, w: float, min_h: float) -> void:
 			"para":
 				_text(b, 0, 0)
 				_y += BODY * 0.7
+			"table":
+				_table(b)
+			"item":
+				_item(b)
+				var nb: Dictionary = blocks[i + 1] if i + 1 < blocks.size() else {}
+				if String(nb.get("kind", "")) != "item" or int(nb.get("list", -1)) != int(b["list"]):
+					_pager("pager%d" % i)
 			"image":
 				_image(b, i)
 			"filler":
@@ -139,8 +150,11 @@ func build(doc: Dictionary, pi: int, w: float, min_h: float) -> void:
 				_y += 24.0
 	if not boxed:
 		_search_box("")
+	# A PAGE GOES ON PAST ITS ARTICLE - related stories, comments - so its last written lines can
+	# be scrolled up to where the rest were read, instead of being read at the screen's foot
+	var want := maxf(min_h, _y + min_h * TAIL_SHARE)
 	var k := 0
-	while _y < min_h:
+	while _y < want:
 		_filler("pad%d" % k)
 		k += 1
 	_y += 40.0
@@ -186,6 +200,8 @@ func _text(b: Dictionary, level: int, emph: int, col := Color(0, 0, 0, 0), cente
 		var f := face(serif, lvl)
 		var ww := f.get_string_size(String(w["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		var sp := f.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		if bool(w.get("glue", false)) and _line_x > 0.0:
+			_line_x -= sp                  # no space before it, as written
 		if _line_x > 0.0 and _line_x + ww > _col:
 			_end_line()
 		# A LINK LOOKS LIKE ONE ONLY INLINE. A heading that links is set as a heading - a site's
@@ -219,6 +235,102 @@ func _end_line() -> void:
 
 
 # --- the furniture ---------------------------------------------------------------------
+
+## A list item: a bullet (or the item's own number) in the margin, the text hung beside it.
+func _item(b: Dictionary) -> void:
+	var indent := BODY * 1.4
+	var y0 := _y
+	_x0 += indent
+	_col -= indent
+	_text(b, 0, 0)
+	_x0 -= indent
+	_col += indent
+	var mark := String(b.get("mark", ""))
+	if mark.is_empty():
+		var d := BODY * 0.28
+		items.append({"kind": "dot", "rect": Rect2(_x0 + BODY * 0.4, y0 + BODY * 0.62, d, d),
+			"col": ink.lerp(bg, 0.3)})
+	else:
+		items.append({"kind": "label", "pos": Vector2(_x0, y0 + BODY * 1.08), "text": mark, "fs": BODY,
+			"col": ink.lerp(bg, 0.35)})
+	_y += BODY * 0.35
+
+
+## A TABLE: the header on a tinted band, the rows ruled apart, each cell's words set in its own
+## column. Columns are as wide as what they hold asks - by their longest cell, within reason.
+func _table(b: Dictionary) -> void:
+	var head: Array = b.get("head_cells", [])
+	var rows: Array = b.get("row_cells", [])
+	var n := head.size()
+	for r in rows:
+		n = maxi(n, (r as Array).size())
+	if n == 0:
+		return
+	var weights: Array = []
+	var total := 0.0
+	for k in n:
+		var longest := 0
+		for r in [head] + rows:
+			if k < (r as Array).size():
+				longest = maxi(longest, _chars(r[k]))
+		var wt := clampf(float(longest), 6.0, 60.0)
+		weights.append(wt)
+		total += wt
+	var xs: Array = []
+	var ws: Array = []
+	var x := _x0
+	for k in n:
+		var w := _col * float(weights[k]) / total
+		xs.append(x)
+		ws.append(w)
+		x += w
+	_y += BODY * 0.4
+	if not head.is_empty():
+		_row(head, xs, ws, 2, true)
+	for r in rows:
+		_row(r, xs, ws, 0, false)
+	_y += BODY * 0.7
+
+
+## One row of a table: every cell from the same top, the row as tall as its tallest cell.
+func _row(cells: Array, xs: Array, ws: Array, emph: int, header: bool) -> void:
+	const PAD := 16.0
+	var top := _y
+	var bottom := top
+	var at := items.size()
+	var x0 := _x0
+	var col := _col
+	for k in cells.size():
+		_x0 = float(xs[k]) + PAD
+		_col = float(ws[k]) - PAD * 2.0
+		_y = top + PAD * 0.7
+		_text({"words": cells[k]}, 0, emph)
+		bottom = maxf(bottom, _y)
+	_x0 = x0
+	_col = col
+	_y = bottom + PAD * 0.7
+	var span := Rect2(_x0, top, _col, _y - top)
+	if header:
+		items.insert(at, {"kind": "band", "rect": span, "col": accent.lerp(bg, 0.86)})
+	items.append({"kind": "rule", "rect": Rect2(_x0, _y - 1.0, _col, 1.5)})
+
+
+## How many characters a cell's words come to, with their spaces.
+func _chars(cell: Variant) -> int:
+	var n := 0
+	for wi in (cell as PackedInt32Array):
+		n += String(script_doc["words"][wi]["text"]).length() + 1
+	return n
+
+
+## THE FOOT OF A LIST: Back and Next, Back grayed out - the first page of many, a sample of a
+## longer listing.
+func _pager(salt: String) -> void:
+	_y += BODY * 0.3
+	var r := Rect2(_x0, _y, _col, 60.0)
+	items.append({"kind": "pager", "rect": r, "pages": 6 + absi(_h(salt)) % 19})
+	_y = r.end.y + BODY * 0.7
+
 
 ## A REAL page: its capture, edge to edge at the tablet's width, as long as the capture is. Not
 ## captured yet, a plain page saying so - with the address, so the panel row is easy to find.
@@ -422,6 +534,10 @@ func draw(ci: CanvasItem, top: float, scroll: float, clip_y0: float, clip_y1: fl
 				_draw_image(ci, rr, d, textures)
 			"search":
 				_draw_search(ci, rr, String(d["query"]))
+			"dot":
+				ci.draw_circle(rr.get_center(), rr.size.x * 0.5, d["col"], true, -1.0, true)
+			"pager":
+				_draw_pager(ci, rr, int(d["pages"]))
 			"snap":
 				var tex: Texture2D = textures.call(String(d["key"]))
 				if tex != null:
@@ -539,6 +655,43 @@ func _draw_image(ci: CanvasItem, r: Rect2, d: Dictionary, textures: Callable) ->
 
 
 var _box: StyleBoxFlat
+var _pill_box: StyleBoxFlat
+
+
+## Back (nothing before this page: grayed), the page numbers with this one marked, and Next.
+func _draw_pager(ci: CanvasItem, r: Rect2, pages: int) -> void:
+	const FS := 24
+	const BW := 150.0
+	var f := face(false, 0)
+	var fb := face(false, 2)
+	var cy := r.get_center().y
+	var base := cy + FS * 0.36
+	_pill(ci, Rect2(r.position.x, cy - 25.0, BW, 50.0), Color(0, 0, 0, 0), ink.lerp(bg, 0.86))
+	ci.draw_string(f, Vector2(r.position.x, base), "‹  Back", HORIZONTAL_ALIGNMENT_CENTER, BW, FS,
+		ink.lerp(bg, 0.7))
+	_pill(ci, Rect2(r.end.x - BW, cy - 25.0, BW, 50.0), accent, accent)
+	ci.draw_string(fb, Vector2(r.end.x - BW, base), "Next  ›", HORIZONTAL_ALIGNMENT_CENTER, BW, FS,
+		Color.WHITE)
+	var labels := ["1", "2", "3", "…", str(pages)]
+	const STEP := 50.0
+	var x0 := r.get_center().x - STEP * float(labels.size() - 1) * 0.5
+	for k in labels.size():
+		var c := Vector2(x0 + STEP * k, cy)
+		if k == 0:
+			ci.draw_circle(c, 20.0, accent, true, -1.0, true)
+		ci.draw_string(fb if k == 0 else f, Vector2(c.x - STEP * 0.5, base), labels[k],
+			HORIZONTAL_ALIGNMENT_CENTER, STEP, FS - 2, Color.WHITE if k == 0 else ink.lerp(bg, 0.4))
+
+
+func _pill(ci: CanvasItem, r: Rect2, fill: Color, border: Color) -> void:
+	if _pill_box == null:
+		_pill_box = StyleBoxFlat.new()
+		_pill_box.anti_aliasing = true
+		_pill_box.set_border_width_all(2)
+	_pill_box.bg_color = fill
+	_pill_box.border_color = border
+	_pill_box.set_corner_radius_all(int(r.size.y * 0.5))
+	ci.draw_style_box(_pill_box, r)
 
 func _draw_search(ci: CanvasItem, r: Rect2, query: String) -> void:
 	if _box == null:

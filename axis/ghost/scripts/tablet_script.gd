@@ -50,6 +50,15 @@ const SKIP := "<!--\\s*skip\\s*-->"
 ## The rest the voice takes for a run of actions. Written by [method speakable] only.
 const HOLD := "<!--\\s*action-hold\\s*:\\s*([0-9]*\\.?[0-9]+)\\s*-->"
 const LINK := "\\[([^\\]]+)\\]\\(([^)\\s]+)\\)"
+## A list item: `- `, `* `, `+ ` or `1.` / `1)` at the start of a line. Each item is its own
+## block - set with a bullet, read as its own short paragraph - and a list ends on a pager.
+const LIST_ITEM := "^\\s*([-*+]|\\d+[.)])\\s+(.+)$"
+## A TABLE: lines that start with a pipe. With the `|---|---|` rule as its second line, the first
+## row is a HEADER - shown, not read, as a page's title is. The body is read row by row, cell by
+## cell, each cell a sentence of its own; a `<!-- skip -->` in a cell keeps the rest of that cell
+## (all of it, at its start) off the voice.
+const TABLE_ROW := "^\\s*\\|"
+const TABLE_RULE := "^\\s*\\|?\\s*:?-{2,}:?\\s*(\\|\\s*:?-{2,}:?\\s*)*\\|?\\s*$"
 ## What makes a chapter a tablet chapter: nothing is rewritten for any other.
 const TABLET := "<!--\\s*(?:url|search)\\s*:"
 const SKIP_MARK := ""
@@ -69,6 +78,10 @@ const REAL_LINGER_WORDS := 120
 const ARRIVE_LOOK := 3.0
 ## The pause before a new tab: deciding what to look for next.
 const THINK := 2.2
+## Seconds a link is looked at, still, between the scroll that brings it into view and the tap:
+## a tap the moment the page stops moving was "much too fast" - "it clicks that link IMMEDIATELY
+## after we see it". A link already on screen is looked at for as long.
+const LINK_LOOK := 1.2
 const RETURN_LOOK := 1.5
 ## Seconds a skim holds still on where it stopped before the reading there starts: the reader
 ## finds the place first - landing on a headline and reading it at once was "too fast".
@@ -135,8 +148,10 @@ static func phases(kind: String, text := "", n := 0, m := 0) -> Dictionary:
 			return {"tap": 0.3, "open0": 0.55, "open1": 1.05, "load0": 1.05, "show": 1.6,
 				"load1": 1.9, "end": 1.6 + ARRIVE_LOOK}
 		"link":
-			return {"scroll0": 0.0, "scroll1": 1.5, "tap": 1.75, "load0": 1.9, "show": 2.5,
-				"load1": 2.8, "end": 2.5 + ARRIVE_LOOK}
+			# scroll to it if it is off screen, look at it, tap
+			var tap := 1.5 + LINK_LOOK
+			return {"scroll0": 0.0, "scroll1": 1.5, "tap": tap, "load0": tap + 0.15, "show": tap + 0.75,
+				"load1": tap + 1.05, "end": tap + 0.75 + ARRIVE_LOOK}
 		"type", "search":
 			# reach for the field, the keyboard rises, type, look at it, go, wait for the page
 			var c0 := 1.6
@@ -182,20 +197,28 @@ static func norm(s: String) -> String:
 
 
 ## Where a reading that STARTS MID-WAY joins [param norms] (a medium's own words, normalized):
-## the first index at which [param start] (the first few words read, normalized) lines up, one
+## the index at which [param start] (the first few words read, normalized) lines up BEST, one
 ## mismatch allowed - the voice and the page spell a number or a dash differently. -1 for none.
+## The best, not the first: with a mismatch allowed, an earlier run that differs in one word
+## ("sentence one five" for "sentence two five") would otherwise win, and the screen would
+## restart somewhere other than the voice.
 static func find_run(norms: PackedStringArray, start: PackedStringArray) -> int:
-	var m := mini(4, start.size())
+	var m := mini(6, start.size())
 	if m == 0:
 		return -1
+	var best := -1
+	var best_hits := m - 2
 	for i in norms.size() - m + 1:
+		if norms[i] != start[0]:
+			continue
 		var hits := 0
 		for k in m:
 			if norms[i + k] == start[k]:
 				hits += 1
-		if hits >= m - 1 and norms[i] == start[0]:
-			return i
-	return -1
+		if hits > best_hits:
+			best_hits = hits
+			best = i
+	return best
 
 
 ## An address as a key: no scheme, no `www.`, no trailing slash, lower case.
@@ -270,6 +293,10 @@ class _Walk:
 
 	var _cur := -1               # the page being written, -1 before the first url
 	var _para := PackedStringArray()
+	var _table := PackedStringArray()   # the lines of a table being read
+	var _item := {}                 # the list item _para holds, or {} for a paragraph
+	var _list_id := 0
+	var _last_kind := ""            # the kind of the last block put on the page
 	var _skip_next := false
 	var _browser := false
 	var _fresh_tab := false
@@ -295,6 +322,12 @@ class _Walk:
 
 	func _line(line: String) -> void:
 		var s := line.strip_edges()
+		if TabletScript._rx(TabletScript.TABLE_ROW).search(s) != null:
+			if _table.is_empty():
+				_flush()
+			_table.append(s)
+			return
+		_flush_table()
 		if not Manuscript.speaker_of_line(line).is_empty():
 			_flush()
 			say.append(s)
@@ -337,18 +370,66 @@ class _Walk:
 				level += 1
 			_block({"kind": "heading", "level": level, "raw": s.substr(level).strip_edges()})
 			return
+		var li := TabletScript._rx(TabletScript.LIST_ITEM).search(line)
+		if li != null:
+			_flush()
+			# items one after another are one list, a blank line between them included
+			if _last_kind != "item":
+				_list_id += 1
+			var mark := li.get_string(1)
+			_item = {"list": _list_id, "mark": mark if mark.is_valid_int() or mark.ends_with(".") \
+				or mark.ends_with(")") else ""}
+			_para.append(li.get_string(2).strip_edges())
+			return
 		_para.append(s)
 
 	func _flush() -> void:
+		_flush_table()
 		if _para.is_empty():
 			return
 		var raw := " ".join(_para)
+		var item := _item
 		_para = PackedStringArray()
+		_item = {}
 		# a line of nothing but notes neither prints nor reads
 		if TabletScript._rx(Manuscript.COMMENT).sub(raw, "", true).strip_edges().is_empty() \
 				and TabletScript._rx(TabletScript.SKIP).search(raw) == null:
 			return
-		_block({"kind": "para", "raw": raw})
+		if item.is_empty():
+			_block({"kind": "para", "raw": raw})
+		else:
+			_block({"kind": "item", "raw": raw, "list": int(item["list"]), "mark": String(item["mark"])})
+
+	## A table's lines as a block: the header (when the rule follows it) and the rows, every row
+	## padded to the widest.
+	func _flush_table() -> void:
+		if _table.is_empty():
+			return
+		var lines := _table
+		_table = PackedStringArray()
+		var head: Array = []
+		var rows: Array = []
+		for k in lines.size():
+			if k == 1 and TabletScript._rx(TabletScript.TABLE_RULE).search(lines[k]) != null:
+				head = rows.pop_back()
+				continue
+			rows.append(_cells(lines[k]))
+		var n := head.size()
+		for r in rows:
+			n = maxi(n, (r as Array).size())
+		for r in [head] + rows:
+			while not (r as Array).is_empty() and (r as Array).size() < n:
+				(r as Array).append("")
+		_block({"kind": "table", "head": head, "rows": rows})
+
+	static func _cells(line: String) -> Array:
+		var s := line.strip_edges().trim_prefix("|")
+		if s.ends_with("|"):
+			s = s.substr(0, s.length() - 1)
+		var out: Array = []
+		for c in s.split("|"):
+			out.append(String(c).strip_edges())
+		return out
 
 	## Close a block: tokenize it onto the page, and hand what of it is spoken to the voice,
 	## after any rest the hand is owed. Nothing before the first page exists.
@@ -373,17 +454,26 @@ class _Walk:
 				_skim_pics.append(bi)
 			"filler":
 				_skim_fill += int(b["n"])
-		if b.has("raw"):
-			var raw := _snap_skip(String(b["raw"]))
-			b["raw"] = raw
-			var text := _spoken_text(raw, lead_skip)
+		var table := String(b["kind"]) == "table"
+		if b.has("raw") or table:
+			var raw := ""
+			var text := ""
+			if table:
+				for row in [b["head"]] + b["rows"]:
+					for i in (row as Array).size():
+						row[i] = _snap_skip(String(row[i]))
+				text = _table_text(b, lead_skip)
+			else:
+				raw = _snap_skip(String(b["raw"]))
+				b["raw"] = raw
+				text = _spoken_text(raw, lead_skip)
 			var skim := {}
 			if not text.strip_edges().is_empty() and (_skim_words >= TabletScript.SKIM_WORDS
 					or _skim_fill > 0 or not _skim_pics.is_empty()):
 				skim = {"kind": "skim", "from": _cur, "n": _skim_words + 20 * _skim_fill,
 					"m": _skim_pics.size(), "pics": _skim_pics.duplicate()}
 				_act(skim)
-			b["words"] = _tokenize(raw, lead_skip, bi)
+			b["words"] = _table_words(b, lead_skip, bi) if table else _tokenize(raw, lead_skip, bi)
 			if not text.strip_edges().is_empty():
 				_skim_words = 0
 				_skim_fill = 0
@@ -406,6 +496,7 @@ class _Walk:
 						skim["word"] = wi
 						break
 		(page["blocks"] as Array).append(b)
+		_last_kind = String(b["kind"])
 
 	## A skip mark mid-sentence moves to the end of that sentence; one with no sentence end after
 	## it reads the paragraph to its end.
@@ -439,10 +530,16 @@ class _Walk:
 			at = m.get_end()
 		segs.append([text.substr(at), ""])
 		var emph := 0
+		# a word written hard against the one before - a period after a link - is GLUED to it:
+		# set with no space between, the way it was written
+		var tight := false
 		for sg in segs:
 			var link := String(sg[1])
 			var first := true
-			for tok in String(sg[0]).split(" ", false):
+			var seg := String(sg[0])
+			var glue := tight and not seg.is_empty() and seg[0] != " "
+			tight = not seg.is_empty() and seg[seg.length() - 1] != " "
+			for tok in seg.split(" ", false):
 				var t := String(tok).strip_edges()
 				if t == TabletScript.SKIP_MARK:
 					skipping = true
@@ -465,6 +562,9 @@ class _Walk:
 				var wi := words.size()
 				words.append({"text": t, "norm": TabletScript.norm(t), "link": link,
 					"emph": lvl, "spoken": not skipping, "page": _cur, "block": block})
+				if glue:
+					words[wi]["glue"] = true
+					glue = false
 				out.append(wi)
 				if not skipping:
 					spoken.append(wi)
@@ -475,6 +575,40 @@ class _Walk:
 						links[k] = wi
 				first = false
 		return out
+
+	## What the voice reads of a table: its body, row by row, each cell a sentence of its own.
+	func _table_text(b: Dictionary, lead_skip: bool) -> String:
+		var out := PackedStringArray()
+		for row in b["rows"]:
+			for c in row:
+				var t := _spoken_text(String(c), lead_skip)
+				if t.is_empty():
+					continue
+				if TabletScript._rx("[.!?:;][\"'\\)\\]”’*_]*$").search(t) == null:
+					t += "."
+				out.append(t)
+		return " ".join(out)
+
+	## A table's words onto the global list in reading order, the header's shown only, and each
+	## cell's words kept on the block (`head_cells`, `row_cells`) for the page to set in its grid.
+	func _table_words(b: Dictionary, lead_skip: bool, bi: int) -> PackedInt32Array:
+		var all := PackedInt32Array()
+		var hc: Array = []
+		for c in b["head"]:
+			var w := _tokenize(String(c), true, bi)
+			hc.append(w)
+			all.append_array(w)
+		var rc: Array = []
+		for row in b["rows"]:
+			var cells: Array = []
+			for c in row:
+				var w := _tokenize(String(c), lead_skip, bi)
+				cells.append(w)
+				all.append_array(w)
+			rc.append(cells)
+		b["head_cells"] = hc
+		b["row_cells"] = rc
+		return all
 
 	static func _run_len(t: String, lead: bool) -> int:
 		var n := 0

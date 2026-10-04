@@ -19,6 +19,8 @@ Ordinary markdown is what is ON the screen. A few own-line marks say what the ha
 | `<!-- filler: 3 -->` | three placeholder stories here |
 | `[word](url)` | a link (drawn as one, tappable, its target never spoken) |
 | `<!-- image: ... -->` | an inline picture, from the same Illustrations library as the book |
+| `\| Plan \| What you get \|` rows | a table: with the `\|---\|---\|` rule as its second line, the first row is a header, shown and not read; the body is read row by row, cell by cell, each cell a sentence; `<!-- skip -->` in a cell keeps the rest of that cell off the voice (all of it, at its start); columns are as wide as their longest cell asks |
+| `- item` / `1. item` | a list: each item set with a bullet (or its number) and read as its own short paragraph; every list ends on a pager - "‹ Back" grayed, page 1 of several, "Next ›" - a sample of a longer listing |
 
 Nothing is read off the screen: no title, and text before the first `url` is neither shown nor read.
 
@@ -57,15 +59,40 @@ Nothing is read off the screen: no title, and text before the first `url` is nei
   full-screen ON the glass through the turn, then the landscape layout dissolves in over it (a
   first cut counter-rotated and shrank it - "the screen detached from the tablet").
 - The highlight is the book's per-letter rainbow trail, drawn glyph by glyph.
-- **The camera is the journal's**: a per-page arc (wide on arrival, close as the page is read, wide
+- **The camera is the journal's**: a per-page arc (wide on arrival and held wide ~14 s (ARRIVE_WIDE) before easing in, close as the page is read, wide
   again over its last words), slow springs (framing ~4 s, angles ~3x slower), quick only on a
   context switch. Each page sets a tiny twist and tilt; tilt is compensated in distance.
+- **The camera never follows the line.** Reading keeps the line in a band of the viewport
+  (READ_BAND, 25%-70% down it). The camera looks at the band's middle, and at its closest - at every
+  Camera setting - it sees the whole band, so the page moves and the camera holds. Leaning toward
+  the line swung the camera back up after every drag ("has to pan much higher to compensate").
+- **Swipes are predictive.** A paragraph is checked before its first word, in the rest before it
+  (PARA_LEAD 1.8 s ahead): one that would run past the band's foot is swiped up to the head first,
+  so reading never runs on toward the screen's edge. A long paragraph still gets a line swipe when
+  a line passes the foot. A swipe of less than MIN_SWIPE (15% of the viewport) is not made, so an
+  article opens where it is, header in view. A picture a skim stops on is centered where the
+  camera looks. Every page has at least half a screen of placeholder stories after its last
+  written block (TabletPage.TAIL_SHARE), so its last lines can be scrolled up too.
+- **The intro is a wait.** The tablet lies dark on the desk for the Intro's seconds (the ambience
+  bed alone), then the screen wakes and the hand opens the browser; the first word comes after
+  both. A 9 s intro and a ~20 s opening run is ~29 s before the first word.
+- **A scrub starts where the reading is.** The words before the restart are "read long ago",
+  spaced as a voice would have read them, so every action and swipe before it has happened before
+  the first frame (a word's time is unknown only at `NO_TIME`, never "any negative time"); the
+  restart point is the BEST match of the voice's first words, not the first near miss.
 
 ## Gates and probes
 
 - `godot --headless --path . --script tests/tablet_check.gd` - inference, and that the voice's words
   equal the words the screen marks spoken (two-sided).
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/tablet_look_probe.gd 600 --out <dir>/t --every 3 --screen 1`
+- `tests/run_boot_probe.sh tests/tablet_camera_check.gd 120` - the camera holds through every reading
+  drag, the band fits the closest view at every Camera setting both ways round, the reading stays
+  off the screen's foot, an article opens unswiped, a skim centers its picture, and a scrub opens
+  in place with nothing replayed. Two-sided: the old scroll and the old scrub start each fail it.
+- `tests/run_boot_probe.sh tests/tablet_look_probe.gd 600 --audit 1 --until 700 [--focus word]` - no
+  pictures: where each spoken word is (viewport, frame) and how far the camera moves after each drag,
+  on any chapter. Stop it with `--until`; a whole chapter replays a long time.
 
 ## Not built yet (candidates, in rough order)
 
