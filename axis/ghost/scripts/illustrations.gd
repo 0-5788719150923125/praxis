@@ -468,6 +468,15 @@ static func build_prompt(description: String, placement: String, style_text: Str
 	lines.append("")
 	lines.append("THE PICTURE (the author's description - follow it exactly):")
 	lines.append(description.strip_edges())
+	# A REAL ANIMAL IS THAT ANIMAL. A style can ask for inventive creatures, and a reference can
+	# show one: "a giant zebra" came back as a sabretooth with zebra stripes, twice - the one
+	# black-and-white striped animal among the author's references (a white tiger) won over the
+	# word. The description decides what each thing IS; the style and references only how it
+	# is drawn.
+	lines.append("Every real animal the description names is drawn as that animal, with its "
+		+ "true anatomy, unmistakable at a glance: never replaced by, or mixed with, a creature from "
+		+ "the references or the earlier pictures, however alike they look. Inventive creatures are "
+		+ "only for what the description itself invents.")
 	lines.append("")
 	lines.append("FORMAT: " + placement_guide(placement))
 	# A SKETCH IS THE WRITER'S OWN HAND, not the book's illustrator: [param style_text] and the

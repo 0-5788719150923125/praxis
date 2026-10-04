@@ -51,6 +51,8 @@ func _ready() -> void:
 
 func _run() -> void:
 	_check_geometry()
+	_check_table_columns()
+	_check_site_name_once()
 	await _check_motion()
 	await _check_scrub()
 	await _check_intro()
@@ -64,6 +66,50 @@ func _ok(cond: bool, what: String) -> void:
 		print("  FAIL: ", what)
 	else:
 		print("  ok: ", what)
+
+
+## A table column is never narrower than its widest word: a short column ("Open", "Filled")
+## under a long header ("Status") ran the header into the next one.
+func _check_table_columns() -> void:
+	var src := "<!-- url: jobs.test -->\n\n## Open positions\n\n| Position | Status | Details |\n|---|---|---|\n" \
+		+ "| Architect | Filled | The successful candidate drew houses until they were no longer houses, and still does. |\n" \
+		+ "| Facilitator of meaning | Open | Must be comfortable signing papers without knowing what they say. |\n"
+	var doc := TabletScript.parse(src)
+	for o in [0, 1]:
+		var lp := TabletPage.new()
+		lp.build(doc, 0, TabletMedium.logical(o).x, 1000.0)
+		var t: Dictionary = {}
+		for b in (doc["pages"][0] as Dictionary)["blocks"]:
+			if String((b as Dictionary)["kind"]) == "table":
+				t = b
+		var head: Array = t.get("head_cells", [])
+		var clear := head.size() == 3
+		for k in range(head.size() - 1):
+			var right := -INF
+			for wi in (head[k] as PackedInt32Array):
+				right = maxf(right, (lp.word_rect[wi] as Rect2).end.x)
+			var left := INF
+			for wi in (head[k + 1] as PackedInt32Array):
+				left = minf(left, (lp.word_rect[wi] as Rect2).position.x)
+			clear = clear and right <= left
+		_ok(clear, "%s: no table header runs into the next column" % ("portrait" if o == 0 else "landscape"))
+
+
+## A later page on a site that opens on the site's own name: the band already says it, so the
+## title is not set again - "Omnipedia" sat twice at the top of every article after the first.
+func _check_site_name_once() -> void:
+	var src := "<!-- url: omni.test/a -->\n\n# Omnipedia\n\n# First article\n\nRead this. [Next](omni.test/b)\n\n" \
+		+ "<!-- url: omni.test/b -->\n\n# Omnipedia\n\n# Second article\n\nRead this too.\n"
+	var doc := TabletScript.parse(src)
+	var lp := TabletPage.new()
+	lp.build(doc, 1, 1200.0, 1000.0)
+	var b0: Dictionary = (doc["pages"][1] as Dictionary)["blocks"][0]
+	var set := 0
+	for wi in (b0["words"] as PackedInt32Array):
+		if lp.word_rect.has(wi):
+			set += 1
+	_ok(set == 0 and lp.title == "Second article",
+		"a later page's opening site name is the band, not a second title (%d words set, tab '%s')" % [set, lp.title])
 
 
 func _check_geometry() -> void:

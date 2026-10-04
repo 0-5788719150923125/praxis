@@ -164,6 +164,11 @@ func build(doc: Dictionary, pi: int, w: float, min_h: float) -> void:
 				else:
 					if i == 0 and not bool(page["results"]) and not _site_name().is_empty():
 						_band(_site_name())
+						# A LATER PAGE OPENING ON THE SITE'S OWN NAME: that title IS the band above
+						# it - set again, "Omnipedia" sat twice at the top of every article after the
+						# first. The article's own title follows it as the page's.
+						if lvl == 1 and _plain(b).strip_edges().to_lower() == _site_name().strip_edges().to_lower():
+							continue
 					if bool(page["results"]) and _is_link(b):
 						_result_url(b)
 					_text(b, mini(lvl, 3), 2)
@@ -311,24 +316,26 @@ func _table(b: Dictionary) -> void:
 		n = maxi(n, (r as Array).size())
 	if n == 0:
 		return
+	# NO COLUMN NARROWER THAN ITS WIDEST WORD: a word cannot wrap, and one wider than its cell
+	# ran into the next - "Status" over "Details", the column sized by its cells, "Open" and
+	# "Filled". The rest of the width is shared by how much each column holds.
 	var weights: Array = []
-	var total := 0.0
+	var mins: Array = []
 	for k in n:
 		var longest := 0
+		var widest := 0.0
 		for r in [head] + rows:
 			if k < (r as Array).size():
 				longest = maxi(longest, _chars(r[k]))
-		var wt := clampf(float(longest), 6.0, 60.0)
-		weights.append(wt)
-		total += wt
+				widest = maxf(widest, _widest(r[k], 2 if r == head else 0))
+		weights.append(clampf(float(longest), 6.0, 60.0))
+		mins.append(widest + TABLE_PAD * 2.0 + 4.0)
+	var ws := _share(_col, weights, mins)
 	var xs: Array = []
-	var ws: Array = []
 	var x := _x0
 	for k in n:
-		var w := _col * float(weights[k]) / total
 		xs.append(x)
-		ws.append(w)
-		x += w
+		x += float(ws[k])
 	_y += BODY * 0.4
 	if not head.is_empty():
 		_row(head, xs, ws, 2, true)
@@ -337,9 +344,50 @@ func _table(b: Dictionary) -> void:
 	_y += BODY * 0.7
 
 
+## [param total] shared by [param weights], no share under its floor in [param mins]: a column
+## held at its floor gives its share up, and the rest is shared again among the others.
+static func _share(total: float, weights: Array, mins: Array) -> Array:
+	var n := weights.size()
+	var fixed := {}
+	var ws: Array = []
+	ws.resize(n)
+	for _pass in n + 1:
+		var free := total
+		var wsum := 0.0
+		for k in n:
+			if fixed.has(k):
+				free -= float(mins[k])
+			else:
+				wsum += float(weights[k])
+		var settled := true
+		for k in n:
+			if fixed.has(k):
+				ws[k] = float(mins[k])
+				continue
+			ws[k] = maxf(0.0, free) * float(weights[k]) / maxf(wsum, 0.001)
+			if ws[k] < float(mins[k]):
+				fixed[k] = true
+				settled = false
+		if settled:
+			break
+	return ws
+
+
+## The widest single word of a cell, in the face it is set in.
+func _widest(cell: Variant, emph: int) -> float:
+	var w := 0.0
+	for wi in (cell as PackedInt32Array):
+		var word: Dictionary = script_doc["words"][wi]
+		var f := _face(serif, int(word["emph"]) | emph)
+		w = maxf(w, f.get_string_size(String(word["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, BODY).x)
+	return w
+
+
 ## One row of a table: every cell from the same top, the row as tall as its tallest cell.
+const TABLE_PAD := 16.0
+
 func _row(cells: Array, xs: Array, ws: Array, emph: int, header: bool) -> void:
-	const PAD := 16.0
+	const PAD := TABLE_PAD
 	var top := _y
 	var bottom := top
 	var at := items.size()

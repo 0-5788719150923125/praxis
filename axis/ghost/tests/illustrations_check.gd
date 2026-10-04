@@ -35,6 +35,8 @@ func _init() -> void:
 		"references are declared style-only")
 	_check(p.contains("PORTRAIT") and p.contains("2:3"), "a full page asks for a portrait plate")
 	_check(p.contains("no text") and p.contains("no watermark"), "the prohibitions are always there")
+	_check(p.contains("Every real animal the description names is drawn as that animal"),
+		"a named animal can still be swapped for a creature from the references")
 	var q: String = I.build_prompt(desc, "inline", "", 0, "/x/image.png")
 	_check(not q.contains("REFERENCES"), "no reference instruction without references")
 	_check(not q.contains("STYLE (") , "no style line without a style")
