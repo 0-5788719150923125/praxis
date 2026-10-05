@@ -514,12 +514,8 @@ func on_stage_resized(_size: Vector2) -> void:
 		_title.queue_redraw()
 
 
-func advance(_features, delta: float, bookend: float) -> void:
+func advance(_features, delta: float, _bookend: float) -> void:
 	var t := maxf(Spectrum.current.time, 0.0)
-	var slen := Spectrum.song_length()
-	var b := bookend if slen > 0.0 and t > slen * 0.5 else clampf(t / 1.2, 0.0, 1.0)
-	var dim := clampf(b * Director.live_fade, 0.0, 1.0)
-	_env.adjustment_brightness = dim
 	_now = _subs.now() if _subs != null and is_instance_valid(_subs) else t
 	_ensure_doc()
 	_poll_t -= delta
@@ -532,6 +528,9 @@ func advance(_features, delta: float, bookend: float) -> void:
 		if n != _built_n:
 			_built_n = n
 			_sched = _follow.place(_parse["actions"], maxf(Director.intro_hold, 0.6), LEAD, TAIL)
+	# up from black as the session starts, down to it after the last word - the table owns its
+	# bookend, so the Director's whole-take fade is not used; an outro mark's fade still is
+	_env.adjustment_brightness = clampf(clampf(t / 1.2, 0.0, 1.0) * _end_fade(_now) * Director.live_fade, 0.0, 1.0)
 	_pose(_now)
 	_tick_focus(_now)
 	_tick_camera(_now)
@@ -2108,28 +2107,30 @@ static func _ease(x: float) -> float:
 
 # --- the title -------------------------------------------------------------------------------------------
 
-## The channel's name and the episode's title over the table while the intro holds, gone as the
-## shuffle starts; the channel's name again as the reading closes.
+## The channel's name over the table while the intro holds, gone as the shuffle starts - and
+## only then: the reading ends on the table fading to black, not on the name again.
 func _title_alpha(t: float) -> float:
-	var tm := _times()
-	var ts := float(tm["shuffle"])
+	var ts := float(_times()["shuffle"])
 	var a := clampf((t - 0.3) / 1.1, 0.0, 1.0)
 	if ts < INF:
 		a *= 1.0 - clampf((t - (ts - 0.6)) / 0.9, 0.0, 1.0)
 	elif not _sched.is_empty():
 		a = 0.0
-	_title.ending = false
-	var sp := float(tm["spread"])
-	if sp < INF:
-		var last := _follow.known_last()
-		var total := (_parse.get("spoken", PackedStringArray()) as PackedStringArray).size()
-		if last >= total - 1 and last >= 0:
-			var end_t := _follow.st1[last]
-			var e := clampf((t - (end_t + 1.2)) / 1.4, 0.0, 1.0)
-			if e > 0.0:
-				_title.ending = true
-				return e
 	return a
+
+
+## THE OUTRO: once the voice has said its last word, the table fades to black - a beat after it,
+## and black exactly as the outro's silence runs out (the take's own tail in a render, the
+## Director's outro live). A function of show time like everything else, so a live reading, a
+## scrub and the export fade alike. 1 until then.
+func _end_fade(t: float) -> float:
+	var total := (_parse.get("spoken", PackedStringArray()) as PackedStringArray).size()
+	var last := _follow.known_last()
+	if total == 0 or last < total - 1:
+		return 1.0
+	var outro := maxf(Spectrum.tail if Spectrum.bookend_baked else Director.outro_hold, 0.0)
+	var beat := minf(0.8, outro * 0.15)
+	return 1.0 - _ease((t - (_follow.st1[last] + beat)) / maxf(outro - beat, 0.05))
 
 
 class TitleCard:
@@ -2140,7 +2141,6 @@ class TitleCard:
 	var face: Font = null
 	var italic: Font = null
 	var alpha := 0.0
-	var ending := false
 
 	func _draw() -> void:
 		if alpha <= 0.001 or face == null or channel.is_empty():
@@ -2148,8 +2148,7 @@ class TitleCard:
 		var vp := get_viewport_rect().size
 		var s := vp.y / 1080.0
 		var size := int(84.0 * s)
-		# the end card sits high, over the far edge, so the spread it closes on stays clear
-		var y := vp.y * (0.4 if not ending else 0.2)
+		var y := vp.y * 0.4
 		# A SHADE BEHIND THE TYPE: the cloth is whatever the episode painted, often pale
 		var band := 260.0 * s
 		for i in 12:
@@ -2162,7 +2161,7 @@ class TitleCard:
 		for o in [Vector2(2, 3), Vector2(0, 0)]:
 			draw_string(face, Vector2(0, y) + (o as Vector2) * s, channel, HORIZONTAL_ALIGNMENT_CENTER,
 				vp.x, size, shadow if o != Vector2(0, 0) else ink)
-		if ending or episode.is_empty() or italic == null:
+		if episode.is_empty() or italic == null:
 			return
 		var es := TarotCards._fit(italic, episode, int(40.0 * s), vp.x * 0.78)
 		var ey := y + 70.0 * s

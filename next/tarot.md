@@ -198,7 +198,11 @@ rectangles, `_cards_overlap`), just above the cloth - a distance test let overla
 a height and cut through each other. A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
 RIGHT (shown, never read); both turn a little on their axes, and the card is now and then turned
 to look at its back. A lay: page out, card down into the spread. Jumpers fly out of the shuffle.
-The channel's name and the episode's title open it; the channel's name closes it.
+The channel's name opens it, and nothing closes it but the light: THE OUTRO (the user,
+2026-10-05: "a simple fade to black, after the voice is done speaking... not display the title
+again at the end") - a beat after the last word the table fades to black, reaching it exactly as
+the outro's silence runs out (`_end_fade`: the take's own tail in a render, the Director's outro
+live), a function of show time like the rest.
 
 **Foil** (the user's idea, 2026-10-04): each painting's brightest, most colorful pixels - keyed
 per picture from its own luminance percentiles, plus anything near the frame's accent color -
@@ -207,6 +211,73 @@ lets it bleed. The look's `foil` (0-1) says how much.
 
 Everything is a function of show time (`ReadingFollower` + the schedule), so live and export
 draw the same frames.
+
+## Props as meshes (research, 2026-10-05)
+
+Asked again (the user: "generate images of the various props we want to use, then pass them to
+a local image-to-3D-model AI... most tarot readers are very intentional about how they setup
+their workspaces. Right now, our candle placement looks rather random"). Nothing built; open.
+
+THE MODELS, checked for the 16 GB RTX 5060 Ti:
+- **TRELLIS.2** (Microsoft, 4B, MIT): GLB with PBR (base color, roughness, metallic, opacity),
+  plus a mode that textures a given mesh. Officially 24 GB, tested on A100/H100; on an H100 it
+  takes 3 s at 512³, 17 s at 1024³ and 60 s at 1536³ (expect ~10x on the 5060 Ti, unmeasured).
+  The official install compiles CUDA extensions, nvdiffrast/nvdiffrec among them (non-commercial).
+- **Pixal3D** (Tsinghua + Tencent ARC, SIGGRAPH 2026, MIT): built on TRELLIS.2, PBR GLB,
+  PIXEL-ALIGNED to the input view, has `--low_vram`.
+- **ComfyUI runs both natively since 2026-08-31**: no custom nodes, no compiled CUDA extensions, no
+  non-commercial dependencies (post-processing rewritten in PyTorch + SciPy). That removes the
+  Blackwell build risk. It runs headless through its HTTP API.
+- Hunyuan3D 2.1: shape 10 GB + paint 21 GB; Tencent's community license excludes the EU, UK and
+  South Korea; 2.5 and 3.0 are API-only. SAM 3D Objects (Meta): shape AND layout per object from
+  one image, but needs 32 GB.
+- Poly Haven (CC0, 521 models) has about a dozen that fit (brass candleholders, goblets, vases,
+  lanterns, a cat statue, a shell, an ornate mirror) and no crystals, skulls, coins, bells or
+  feathers: too few for "new every time".
+
+WHY A MESH FIXES WHAT KILLED THE CUTOUTS: orientation, light, scale and shadows become the
+engine's. Style mostly follows once a prop stands in the scene's light. Paint each prop to be
+RECONSTRUCTED, not shown: alone, three-quarter view, flat even light, plain background,
+photographic (the deck's motifs and palette, never its illustration style). ghost keeps what the
+models do badly: flames, wicks, smoke. A lifted candle body's wick is found by a ray down its top.
+
+PLACEMENT IS ITS OWN FIX: `_find_spot` stands each candle by its distance to one aim plus jitter,
+one at a time, so they land wherever is free, with no grouping and no height order. Readers
+compose: a horseshoe round the spread, tall at the back and short toward the reader, odd clusters
+at staggered heights, one hero piece, the cards' cloth left bare. The genre has its own grammar.
+The Magician stands at a table with the four suits' tools (cup, sword, pentacle on it; the wand
+in hand), which are water, air, earth and fire. Candle colors and crystals follow the reading's
+topic. Proposed: ARRANGEMENTS as a `TarotTable` registry (named compositions of slots relative to
+the spread, sampled per seed); the producer gives each prop a slot and a reason; `_find_spot`
+only refines locally.
+
+THE OBJECTS ARE SETUPS: a `## The table` section in the brief (this reader sets the table the
+genre's way, each object with a stated purpose). A prop shown from the first frame is a plant the
+close can pay off; the brief already has citrine as baked amethyst and moon water as water.
+`reader_mood` forbids object bits today; that would change. The table is set at `plan`, before
+the draw, so nothing about it can cheat.
+
+THREE APPROACHES:
+1. **One prop, one painting, one mesh.** The plan lists props (real size, material, slot); the
+   painter paints each to be reconstructed; TRELLIS.2 makes a GLB; ghost loads it at runtime
+   (`GLTFDocument`), scales it to the plan, seats it and stands it in its slot. Each prop is a step
+   with its own ⟳. Optional NVIDIA-only install (a `deps.gd` row); roughly doubles generation
+   time; holds the GPU for minutes (never beside a training run).
+2. **Furnish the table in 2D, then lift it.** ghost renders the empty table from the episode's
+   camera; the painter sets the table on that render; the writer names each object with a box;
+   ghost casts a ray from each box's foot onto the table plane (camera and plane are known) for its
+   spot and size; each object is then lifted as in 1. The painter composes. Fragile where the edit
+   drifts the camera or hides objects. A later layout source built on 1, not a separate build.
+3. **Engine-made props.** Lathe, crystal and coin generators in GDScript, parameters from the
+   planner, materials painted. Cross-platform, instant, exact light; the vocabulary is only what
+   is built (no skulls, statues, flowers).
+
+Suggested order: the arrangement registry (it helps the candles alone); a one-afternoon spike
+(four painted props through TRELLIS.2 on the 5060 Ti, set under the key candle by hand); if they
+hold up, build 1. Make the candles procedural (a lathe covers taper, pillar, tealight and jar,
+and the flame's place stays exact). Try 2 once 1's lift exists. THE TABLE gains least from
+generation, being one flat surface: its "real table" cues are geometry at the edges (cloth draped
+over the far edge, the top's thickness) and real normal/roughness maps, not brightness as height.
 
 ## Probes and gates
 
@@ -223,3 +294,4 @@ draw the same frames.
 - Pick-a-pile episodes (three piles, "all four piles say the same thing").
 - Moving `Illustrations`' own job pump onto `AgentJobs`.
 - Porting the tablet's follower onto `ReadingFollower`.
+- Props as meshes and an arrangement registry (researched 2026-10-05, above; undecided).

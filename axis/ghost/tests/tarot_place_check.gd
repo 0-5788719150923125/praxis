@@ -18,7 +18,9 @@ extends Node
 ##     full light) must break the cap on this fixture, or the half-pale cloth tests nothing;
 ##   - no two flames keep time: each its own tempo, its drafts its own - against the retired
 ##     flicker (one tempo for all) as the control; and the room's out-of-shot candles are out of
-##     shot, throw no shadows, and flicker too.
+##     shot, throw no shadows, and flicker too;
+##   - the outro: lit while the voice speaks, fading to black after its last word and black as the
+##     outro runs out; the channel's name over the intro and never again (it came back at the end).
 ##
 ##   tests/run_boot_probe.sh tests/tarot_place_check.gd 180
 ##
@@ -107,6 +109,9 @@ func _run() -> void:
 
 	print("how they flicker")
 	_flicker()
+
+	print("the outro")
+	_outro()
 
 	Director.hold(false)
 	Director.detach()
@@ -285,6 +290,41 @@ func _mean_lum(at: Vector3, r: float) -> float:
 				sum += medium._lum[gy * g.x + gx]
 				n += 1
 	return sum / maxf(1.0, float(n))
+
+
+## THE OUTRO, on a reading whose word times are known: the table's brightness from the end fade,
+## and the title's from its own curve, sampled across the whole reading.
+func _outro() -> void:
+	var outro_was := Director.outro_hold
+	Director.outro_hold = 6.0
+	var cards: Array = []
+	for i in 3:
+		cards.append({"key": "c%d" % i, "name": "Card %d" % i, "numeral": str(i), "reversed": false,
+			"jumper": false, "position": {}, "booklet": {}, "art": ""})
+	var doc := {"show": "place-check", "seed": 7, "dir": DIR.path_join("dark"), "plan": {"look": {"candles": 2}}, "cards": cards}
+	subs.words = load("res://tests/tarot_look_probe.gd").timeline(TarotScript.parse(_script), 0.36, Director.intro_hold)
+	subs.document = {"source": _script, "title": "Place Check", "tarot": doc}
+	medium._ensure_doc()
+	medium._follow.extend(subs.words)
+	medium._sched = medium._follow.place(medium._parse["actions"], maxf(Director.intro_hold, 0.6), TarotMedium.LEAD, TarotMedium.TAIL)
+	var spoken: PackedStringArray = medium._parse["spoken"]
+	var last := medium._follow.known_last()
+	_ok(last == spoken.size() - 1, "the last word's time is known (%d of %d)" % [last + 1, spoken.size()])
+	var end_t: float = medium._follow.st1[last]
+	_ok(medium._end_fade(end_t - 1.0) == 1.0 and medium._end_fade(end_t + 0.1) == 1.0,
+		"lit while the voice speaks, and for a beat after its last word")
+	var mid := medium._end_fade(end_t + 3.0)
+	_ok(mid > 0.05 and mid < 0.95, "fading through the outro (%.2f halfway)" % mid)
+	_ok(medium._end_fade(end_t + 6.01) < 0.001, "black as the outro runs out (%.3f)" % medium._end_fade(end_t + 6.01))
+	var ts := float(medium._times()["shuffle"])
+	_ok(ts < INF and medium._title_alpha(ts - 1.0) > 0.5, "the channel's name is up over the intro (%.2f)" % medium._title_alpha(ts - 1.0))
+	var shown := 0
+	var t := ts + 1.0
+	while t < end_t + 9.0:
+		shown += 1 if medium._title_alpha(t) > 0.001 else 0
+		t += 0.25
+	_ok(shown == 0, "and never again, the end included (%d moments)" % shown)
+	Director.outro_hold = outro_was
 
 
 ## How often a series crosses its own mean, a second.
