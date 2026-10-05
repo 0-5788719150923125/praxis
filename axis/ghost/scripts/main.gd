@@ -104,6 +104,12 @@ func _ready() -> void:
 		print(Deps.format_report(rows))
 		get_tree().quit(0 if Deps.verdict(rows).is_empty() else 1)
 		return
+	# `--provision [all|update]`: install ghost's own dependencies now, printing each step -
+	# the same jobs an ordinary launch runs in the background, for a terminal, a setup script
+	# or a first run on a new machine. Exits non-zero if anything asked for could not be had.
+	if args.has("--provision"):
+		_provision(_arg_value(args, "--provision"))
+		return
 	# Mask mode is a standalone authoring tool (see mask_editor.gd) - tied to one
 	# specific external clip, not the audio-reactive show - so it does not touch
 	# Director/Spectrum at all and is checked before everything else.
@@ -544,6 +550,17 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## The value following `flag` in the cmdline args, or "" if the flag is bare/absent
 ## (mask mode's two entry points both take an optional path this way).
+func _provision(scope: String) -> void:
+	if not scope in ["all", "update"]:
+		scope = ""
+	print("ghost: provisioning %s" % ("everything" if scope == "all"
+		else "updates" if scope == "update" else "the core (uv, FFmpeg, Python)"))
+	var ok: bool = await Provisioner.run_cli(scope)
+	print("")
+	print(Deps.format_report())
+	get_tree().quit(0 if ok else 1)
+
+
 func _arg_value(args: PackedStringArray, flag: String) -> String:
 	var i := args.find(flag)
 	if i >= 0 and i + 1 < args.size():

@@ -260,6 +260,15 @@ def _same_reading(a: str, b: str) -> bool:
     return not pa or not pb or pa == pb
 
 
+def _report(name: str, finished: bool = False) -> None:
+    """Tell ghost a download is under way, when running inside the voice host."""
+    try:
+        from backends import report
+    except ImportError:  # the command-line audit, outside the host
+        return
+    report(name, finished=finished)
+
+
 class _Corpus:
     """nltk's tagger and stopword list, loaded on demand and never twice.
 
@@ -324,11 +333,13 @@ class _Corpus:
                     file=sys.stderr,
                 )
                 store.mkdir(parents=True, exist_ok=True)
+                _report("the part-of-speech tagger")
                 for name in cls.RESOURCES:
                     try:
                         nltk.download(name, download_dir=str(store), quiet=True)
                     except Exception:  # noqa: BLE001 - offline is not fatal here
                         pass
+                _report("the part-of-speech tagger", finished=True)
             except Exception as exc:  # noqa: BLE001
                 print(f"ghost/voice: nltk unavailable ({exc})", file=sys.stderr)
                 break

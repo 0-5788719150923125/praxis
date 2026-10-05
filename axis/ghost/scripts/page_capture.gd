@@ -9,31 +9,28 @@ class_name PageCapture
 ## versions/import/delete machinery applies to it, and a site that refuses a headless browser
 ## can be replaced by a screenshot imported from disk.
 ##
-## The capture is Playwright's Chromium, driven by `capture_host/capture.py` in ghost's OWN venv
-## (`user://capture_venv`, the yt-dlp discipline: nothing is installed system-wide or into the
-## author's environment). It is pinned to the Playwright the Praxis checkout uses, so the browser
-## is the one already in the shared `~/.cache/ms-playwright` and normally nothing is downloaded.
-## Set up the first time a page is captured; a session that never captures installs nothing.
+## The capture is Playwright's Chromium, driven by `capture_host/capture.py` in ghost's OWN
+## environment (`capture_venv`, see [Provision]: built by uv on ghost's own Python, with the browser
+## downloaded into Playwright's cache as its last step). Built the first time a page is captured;
+## a session that never captures installs nothing.
 ##
-## SUCCESS IS THE ARTIFACT, never an exit code: a step is judged by what it left behind (the
-## venv's python, then the PNG), and a capture that produced no PNG reports its log's last lines.
+## SUCCESS IS THE ARTIFACT, never an exit code: a capture is judged by the PNG it left behind, and
+## one that produced no PNG reports its log's last lines.
 
+const ENV := "capture_venv"
 const VENV := "user://capture_venv"
 const DIR := "user://captures"
 const SCRIPT := "res://capture_host/capture.py"
-const SETUP := "res://capture_host/setup.py"
 ## The tablet's portrait width, and a screenful; the capture runs to the page's own length.
 const WIDTH := 1200
 const HEIGHT := 1600
 const MAX_HEIGHT := 7000
 const USER_AGENT := "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 const STEP_TIMEOUT_S := 600
-## Written into the venv once a capture has worked, so setup is not repeated.
-const READY := ".ready"
 
 static var _queue: Array = []        # [{key, url}]
 static var _cur := {}                # the request being worked on
-static var _step := ""               # "" | "venv" | "install" | "capture"
+static var _step := ""               # "" | "provisioning" | "capture"
 static var _pid := -1
 static var _started := 0
 static var _errors := {}
@@ -43,8 +40,9 @@ static var _errors := {}
 static func request(key: String, url: String) -> String:
 	if busy(key):
 		return ""
-	if _python().is_empty() and not _ready():
-		return "Python 3 is not installed - %s" % Deps.hint("python")
+	var why := Provision.unsupported(ENV)
+	if not why.is_empty():
+		return "page capture is not available on this machine: " + why
 	_errors.erase(key)
 	_queue.append({"key": key, "url": url})
 	return ""
@@ -70,10 +68,8 @@ static func error_of(key: String) -> String:
 ## What the capture is doing, for the panel's status line.
 static func doing() -> String:
 	match _step:
-		"venv":
-			return "setting up ghost's capture environment (one-time)"
-		"install":
-			return "installing Playwright into it (one-time)"
+		"provisioning":
+			return "preparing page capture - " + Provision.describe(ENV)
 		"capture":
 			return "capturing %s" % String(_cur.get("url", ""))
 	return ""
@@ -91,85 +87,66 @@ static func pump() -> Array:
 			return landed
 		Subprocess.forget(_pid)
 		_pid = -1
-		match _step:
-			"venv":
-				if not FileAccess.file_exists(Deps.venv_bin(_abs(VENV), "python")):
-					_fail("could not create the capture environment - see %s" % _log("venv"))
-					return landed
-				_run("install")
-				return landed
-			"install":
-				_run("capture")
-				return landed
-			"capture":
-				var out := _abs(DIR.path_join("%s.png" % String(_cur["key"])))
-				if FileAccess.file_exists(out):
-					FileAccess.open(_abs(VENV).path_join(READY), FileAccess.WRITE)
-					landed.append({"key": _cur["key"], "url": _cur["url"], "file": out})
-					_cur = {}
-					_step = ""
-				else:
-					_fail(_tail(_log("capture")))
-				return landed
+		var out := _abs(DIR.path_join("%s.png" % String(_cur["key"])))
+		if FileAccess.file_exists(out):
+			landed.append({"key": _cur["key"], "url": _cur["url"], "file": out})
+			Provision.release(ENV, "page capture")
+			_cur = {}
+			_step = ""
+		else:
+			_fail(_tail(_log("capture")))
+		return landed
+	if _step == "provisioning":
+		_wait_for_env()
+		return landed
 	if _cur.is_empty() and not _queue.is_empty():
 		_cur = _queue.pop_front()
-		if _ready():
-			_run("capture")
-		elif FileAccess.file_exists(Deps.venv_bin(_abs(VENV), "python")):
-			_run("install")
-		else:
-			_run("venv")
+		_step = "provisioning"
+		_wait_for_env()
 	return landed
+
+
+## Capture once the environment is ready; fail with the install's own reason if it cannot be.
+static func _wait_for_env() -> void:
+	if Provision.ensure(ENV):
+		_run("capture")
+		return
+	var s := Provision.state(ENV)
+	if not bool(s.get("running", false)) and s.has("error"):
+		_fail("the capture environment could not be installed: %s" % s["error"])
+	elif not bool(s.get("running", false)) and not Provision.can_install():
+		_fail(Provision.hint(ENV))
 
 
 static func _run(step: String) -> void:
 	_step = step
 	_started = int(Time.get_unix_time_from_system())
 	DirAccess.make_dir_recursive_absolute(_abs(DIR))
-	var args := PackedStringArray()
-	var prog := ""
-	match step:
-		"venv":
-			prog = _python()
-			args = PackedStringArray(["-m", "venv", _abs(VENV)])
-		"install":
-			# the package, then its browser - a no-op when the shared cache already has it
-			prog = Deps.venv_bin(_abs(VENV), "python")
-			args = PackedStringArray([_abs(SETUP)])
-		"capture":
-			var key := String(_cur["key"])
-			var out := _abs(DIR.path_join("%s.png" % key))
-			DirAccess.remove_absolute(out)
-			var spec := _abs(DIR.path_join("%s.json" % key))
-			var f := FileAccess.open(spec, FileAccess.WRITE)
-			f.store_string(JSON.stringify({"url": String(_cur["url"]), "out": out, "width": WIDTH,
-				"height": HEIGHT, "max_height": MAX_HEIGHT, "user_agent": USER_AGENT}))
-			f.close()
-			prog = Deps.venv_bin(_abs(VENV), "python")
-			args = PackedStringArray([_abs(SCRIPT), spec])
+	var key := String(_cur["key"])
+	var out := _abs(DIR.path_join("%s.png" % key))
+	DirAccess.remove_absolute(out)
+	var spec := _abs(DIR.path_join("%s.json" % key))
+	var f := FileAccess.open(spec, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"url": String(_cur["url"]), "out": out, "width": WIDTH,
+		"height": HEIGHT, "max_height": MAX_HEIGHT, "user_agent": USER_AGENT}))
+	f.close()
+	var prog := Deps.venv_bin(_abs(VENV), "python")
+	Provision.hold(ENV, "page capture")
 	print("ghost capture: %s" % doing())
-	_pid = Subprocess.start_logged(prog, args, _log(step), "page capture")
+	_pid = Subprocess.start_logged(prog, PackedStringArray([_abs(SCRIPT), spec]), _log(step),
+		"page capture")
 	if _pid <= 0:
 		_fail("could not start %s" % prog.get_file())
 
 
 static func _fail(why: String) -> void:
+	Provision.release(ENV, "page capture")
 	if not _cur.is_empty():
 		_errors[String(_cur["key"])] = why
 		push_warning("ghost capture: %s failed - %s" % [String(_cur.get("url", "")), why])
 	_cur = {}
 	_step = ""
 	_pid = -1
-
-
-static func _ready() -> bool:
-	return FileAccess.file_exists(_abs(VENV).path_join(READY)) \
-		and FileAccess.file_exists(Deps.venv_bin(_abs(VENV), "python"))
-
-
-static func _python() -> String:
-	return Deps.resolve_any(["python", "python3", "py"] if OS.get_name() == "Windows"
-		else ["python3", "python"])
 
 
 static func _abs(p: String) -> String:

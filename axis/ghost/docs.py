@@ -85,6 +85,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "subprocess.gd",
             "deps.gd",
             "deps_panel.gd",
+            "provision.gd",
+            "provisioner.gd",
+            "provision_badge.gd",
             "chrome.gd",
             "side_panel.gd",
             "console.gd",
@@ -357,11 +360,22 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
     (
         "--deps",
         "",
-        "Print the environment report - every external program ghost uses, its "
-        "version and resolved path, and a per-platform install hint for anything "
-        "missing - then exit. Exits non-zero if a feature dependency is absent, so "
-        "it can gate a setup script. Pairs with `--headless`; the same report is "
-        "the home screen's bottom-right panel.",
+        "Print the environment report - what ghost has installed for itself (FFmpeg, "
+        "uv, Python, each feature's environment), what it uses from the machine, "
+        "versions and resolved paths, and an install hint for anything of the "
+        "machine's that is missing - then exit. Exits non-zero if something a feature "
+        "needs is absent. Pairs with `--headless`; the same report is the home "
+        "screen's bottom-right panel.",
+        False,
+    ),
+    (
+        "--provision",
+        "[all|update]",
+        "Install ghost's own dependencies now, printing each step, then exit: uv, "
+        "FFmpeg and Python by default, every feature's environment too with `all`, or "
+        "bring everything installed to its newest release with `update`. The same jobs "
+        "an ordinary launch runs in the background. Exits non-zero if anything asked "
+        "for could not be had. Pairs with `--headless`.",
         False,
     ),
     (
@@ -501,6 +515,17 @@ ENGINE_FLAGS = {
     # What deps.gd ASKS other programs, to read their versions out - every one of
     # these is an argument handed to somebody else's binary, not a ghost flag.
     "--version",
+    # uv's interface (provisioner.gd installs Python and builds every environment with it),
+    # arguments to a subprocess, not ghost flags.
+    "--cache-dir",
+    "--no-config",
+    "--install-dir",
+    "--no-bin",
+    "--no-registry",
+    "--python",
+    "--clear",
+    "--no-build",
+    "--no-python-downloads",
 }
 
 # Top-level entries for the README LAYOUT block and docs/index.md.
@@ -509,8 +534,8 @@ ENGINE_FLAGS = {
 TOP_LEVEL: List[Tuple[str, str]] = [
     (
         "project.godot",
-        "Godot 4.6 project; autoloads `Boot`, `Spectrum`, `Director`; "
-        "`scenes/main.tscn` is the entry scene.",
+        "Godot 4.7 project; autoloads `Settings`, `Boot`, `Spectrum`, `Director`, "
+        "`Provisioner`; `scenes/main.tscn` is the entry scene.",
     ),
     ("scenes/", "The Godot entry scene (`main.tscn`). Everything else is code-built."),
     (

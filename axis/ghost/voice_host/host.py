@@ -50,9 +50,43 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import backends  # noqa: E402
 from backends import REGISTRY, BackendError  # noqa: E402
 
 PROTOCOL_VERSION = 1
+
+
+def _trust_store() -> None:
+    """Point TLS at the system's CA bundle when this interpreter's own default is absent.
+
+    ghost runs the host on a standalone CPython whose OpenSSL looks for
+    /etc/ssl/cert.pem and /etc/ssl/certs. Most systems have one of them; the few
+    that keep their bundle elsewhere would fail every download with a certificate
+    error, so the usual locations are tried before anything is fetched.
+    """
+    if os.name == "nt" or os.environ.get("SSL_CERT_FILE"):
+        return
+    import ssl
+
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile and os.path.exists(paths.cafile):
+        return
+    if paths.capath and os.path.isdir(paths.capath):
+        if any(name.endswith(".0") for name in os.listdir(paths.capath)):
+            return
+    for candidate in (
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/ca-bundle.pem",
+        "/etc/pki/tls/cacert.pem",
+        "/etc/ssl/certs/ca-bundle.crt",
+    ):
+        if os.path.exists(candidate):
+            os.environ["SSL_CERT_FILE"] = candidate
+            return
+
+
+_trust_store()
 
 
 class Host:
@@ -67,12 +101,21 @@ class Host:
         # Godot speaks UTF-8; Windows would otherwise decode stdin as cp1252.
         sys.stdin.reconfigure(encoding="utf-8")
         self._backends: dict = {}
+        backends.progress = self._download_progress
 
     # -- transport ---------------------------------------------------------
 
     def send(self, payload: dict) -> None:
         self._out.write(json.dumps(payload) + "\n")
         self._out.flush()
+
+    def _download_progress(
+        self, name: str, done: int, total: int, finished: bool, error: str
+    ) -> None:
+        event = {"event": "download", "name": name, "done": done, "total": total}
+        if finished:
+            event.update({"finished": True, "ok": not error, "error": error})
+        self.send(event)
 
     def run(self) -> int:
         self.send(

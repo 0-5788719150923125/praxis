@@ -399,7 +399,8 @@ static func add(source: String) -> String:
 	if not FileAccess.file_exists(source):
 		return "there is no file at that path"
 	if not Deps.has("ffprobe") or not Deps.has("ffmpeg"):
-		return "ffmpeg is not installed - see the Dependencies panel"
+		Provision.ensure("ffmpeg")
+		return Deps.hint("ffmpeg")
 	var duration := _probe_duration(source)
 	if duration <= MIN_DURATION:
 		return "could not read a duration from that file (is it a video?)"

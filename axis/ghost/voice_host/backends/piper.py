@@ -38,7 +38,23 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from . import Backend, BackendError, register
+from . import Backend, BackendError, register, report
+
+
+def _reporter(name: str):
+    """A urlretrieve hook that reports progress a few times a second, not per block."""
+    last = [0.0]
+
+    def hook(blocks: int, block_size: int, total: int) -> None:
+        import time
+
+        now = time.monotonic()
+        if now - last[0] < 0.25:
+            return
+        last[0] = now
+        report(name, min(blocks * block_size, max(total, 0)), max(total, 0))
+
+    return hook
 
 HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
@@ -1486,12 +1502,16 @@ class PiperBackend(Backend):
         base = f"{HF_BASE}/{VOICES[voice]['path']}"
         for url, dest in ((f"{base}.onnx", onnx), (f"{base}.onnx.json", cfg)):
             tmp = dest.with_suffix(dest.suffix + ".part")
+            # Progress for the model only: its few-KB config would read as the bar starting over.
+            hook = _reporter(f"voice {voice}") if dest is onnx else None
             try:
-                urllib.request.urlretrieve(url, tmp)
+                urllib.request.urlretrieve(url, tmp, hook)
             except Exception as exc:  # noqa: BLE001
                 tmp.unlink(missing_ok=True)
+                report(f"voice {voice}", finished=True, error=f"could not fetch {url}: {exc}")
                 raise BackendError(f"could not fetch {url}: {exc}") from exc
             tmp.replace(dest)  # atomic: a reader sees whole file or none
+        report(f"voice {voice}", finished=True)
         return {
             "voice": voice,
             "installed": True,

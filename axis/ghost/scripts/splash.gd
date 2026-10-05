@@ -80,33 +80,20 @@ func _ready() -> void:
 
 ## Hand back everything this screen claimed of the shared furniture.
 ##
-## KEYED (see Chrome._bottom_claims), and here that is essential rather than careful:
+## KEYED (see Chrome._export_claims), and here that is essential rather than careful:
 ## the mode buttons call into main and only THEN queue_free this node, so by the time
-## this runs the incoming mode has already made its own claims. Releasing by writing 0 /
+## this runs the incoming mode has already made its own claims. Releasing by writing
 ## false would undo them.
 func _exit_tree() -> void:
 	var ch := _chrome()
 	if ch != null:
 		ch.release_export(&"splash")
-		ch.release_bottom(&"splash")
 
 
 func _chrome() -> Node:
 	if get_tree() == null:
 		return null
 	return get_tree().get_first_node_in_group("ghost_chrome")
-
-
-## Step the shared ⤓/💬/>_ toggle row up over the Environment panel. Called on every
-## resize of that panel, because its height is its own business and changes as rows open.
-func _claim_room() -> void:
-	var ch := _chrome()
-	if ch == null or _env == null or not is_instance_valid(_env):
-		return
-	# The panel is inset 18 px from the corner, so the room it needs is its height plus
-	# that inset plus a small gap - measured off the panel rather than written down, or
-	# the two drift apart the first time either number is touched.
-	ch.claim_bottom(&"splash", _env.size.y + 18.0 + 10.0)
 
 
 func _build_ui() -> void:
@@ -225,20 +212,13 @@ func _build_ui() -> void:
 	hint.add_theme_color_override("font_color", Color(0.4, 0.46, 0.56))
 	col.add_child(hint)
 
-	# THE ENVIRONMENT PANEL, bottom-right and out of the column's way. ghost's
-	# optional half is all subprocesses (ffmpeg, python, a JS runtime), and a
-	# missing one used to surface as a mode failing deep inside itself. Added
-	# LAST so it sits above the full-rect CenterContainer in pick order.
+	# THE ENVIRONMENT PANEL, bottom-right and out of the column's way: what ghost
+	# runs on, and what it is installing right now. Added LAST so it sits above the
+	# full-rect CenterContainer in pick order. It stands ON TOP of the shared 💬/>_
+	# toggle row rather than pushing the row up over itself, so those toggles are in
+	# the same corner here as in every mode (see DepsPanel._build_ui).
 	_env = preload("res://scripts/deps_panel.gd").new()
 	add_child(_env)
-	# ...and the shared toggle row steps up over it. The panel is anchored to the same
-	# bottom-right corner the ⤓/💬/>_ toggles are, so left alone they draw ON it - and
-	# because the toggles sit on a higher CanvasLayer they also ate the clicks meant for
-	# the Environment rows underneath. Its height is not a constant (a row's detail pane
-	# opens, a rescan finds more, and it remembers being collapsed), so the claim tracks
-	# the panel's actual size rather than a number written down here.
-	_env.resized.connect(_claim_room)
-	_claim_room()
 
 	# Native file picker (falls back to Godot's built-in if no native dialog).
 	_file_dialog = FileDialog.new()

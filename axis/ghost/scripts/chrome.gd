@@ -22,23 +22,32 @@ class_name Chrome
 ## - **scrubber**  - the seek bar, revealed by pointing near the bottom of the
 ##                   frame; arrow keys step it without aiming. Hidden entirely
 ##                   when the audio cannot be seeked (a synthesis generator).
+## - **provision** - the notice at the top of the frame while ghost installs or
+##                   updates its own dependencies (see provisioner.gd).
 
 var exporter: Node
 var assistant: Node
 var feedback: Node
 var console: Node
 var scrubber: Node
+var provision: Node
+
+## How much of the bottom-right corner the shared toggle row (⤓ export, 💬 assistant, >_
+## console) fills: 40 px buttons on a 28 px margin. Something that wants to sit in the
+## corner WITHOUT moving the row - the home screen's Environment panel - sits above this.
+const ROW_TOP := 68.0
 
 ## HOW MUCH ROOM SOMETHING HAS CLAIMED at the bottom of the frame, in pixels -
 ## the largest live claim (see [method claim_bottom]). READ-ONLY: write through the
 ## claim API, never here.
 ##
 ## Every piece of furniture here anchors bottom-right, which is empty in most modes -
-## but the Masking editor puts its marker strip and its trim/track lanes down there, and
-## the splash puts the Environment panel there, so all three toggles (⤓ export, 💬
-## assistant, >_ console) sat ON them. A surface claims its room once and the whole row
+## but the Masking editor puts its marker strip and its trim/track lanes down there, so
+## all three toggles sat ON them. A surface claims its room once and the whole row
 ## steps up together; patching one button's offsets would only have moved one of the
 ## three, and the next piece of furniture added here would have the same bug again.
+## Claim only for something that has to be AT the bottom edge: a row that moves from
+## screen to screen is harder to find, which is why the home screen does not claim.
 var bottom_inset := 0.0
 
 ## THE CLAIMS ARE KEYED, and that is not tidiness - a single scalar (or a single
@@ -116,6 +125,10 @@ func _ready() -> void:
 	# of them. It hides itself when the session cannot be seeked (see Spectrum.seekable).
 	scrubber = preload("res://scripts/scrubber.gd").new()
 	add_child(scrubber)
+	# An install can start from any mode (the voice's environment, FFmpeg for a first
+	# clip, an update at launch), so its progress is furniture too.
+	provision = preload("res://scripts/provision_badge.gd").new()
+	add_child(provision)
 	# Persistent like the rest of the furniture, and deliberately NOT gated on a
 	# live session: the value it edits is a saved preference the Director reads at
 	# startup, so setting it on the home screen already governs the first hold of

@@ -168,13 +168,13 @@ var _import_pid := -1
 var _import_pending := {}   # {source, video, index} - the lane is added up front, this tracks its transcode
 
 # --- YouTube / URL import runtime (see _start_url_import) ---
-var _yt_state := "idle"    # idle | venv | pip | downloading
+var _yt_state := "idle"    # idle | provisioning | downloading
 var _yt_pid := -1
 var _yt_url := ""
 var _yt_log := ""          # absolute path; the current step's combined stdout/stderr
 var _yt_started := 0.0     # unix time the download step began (newest-file fallback)
 var _yt_step_started := 0.0   # unix time the CURRENT step began - the elapsed readout
-var _yt_retried := false   # one automatic pip-upgrade retry per import (stale yt-dlp)
+var _yt_retried := false   # one automatic update-and-retry per import (stale yt-dlp)
 var _yt_echoed := {}       # WARNING/ERROR lines already print()-echoed live (a set)
 
 # --- The clown face model (see _update_face_model): eyes / mouth / oval /
@@ -234,9 +234,10 @@ var _face_slot := -1
 # before playback, smoothing can use frames on BOTH sides of now, which a live
 # tracker cannot - it only has the past, so it must choose between lag and jitter.
 #
-# The venv is ghost's OWN (the yt-dlp/voice discipline): one effect's dependency
-# must never become the project's, and it is bootstrapped on first use rather than
-# required up front, so a session that never touches the clown never installs it.
+# The environment is ghost's OWN (`face_venv`, see [Provision]): one effect's
+# dependency must never become the project's, and it is built on first use rather
+# than required up front, so a session that never touches the clown installs nothing.
+const FACE_ENV := "face_venv"
 const FACE_VENV_DIR := "user://face_venv"
 const FACE_TRACK_DIR := "user://face_tracks"
 ## Per-user editor preferences. ONE cfg serves the whole app (splash's remembered
@@ -244,13 +245,11 @@ const FACE_TRACK_DIR := "user://face_tracks"
 ## READ-MODIFY-WRITE of just the [mask] section - a fresh ConfigFile.save() would
 ## silently wipe all of those. Same discipline as Director._save_pacing.
 const PREFS_CFG := "user://ghost.cfg"
-## Google's published landmarker bundle. Fetched once into the venv dir; 3.7 MB.
-const FACE_MODEL_URL := "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 const FACE_TRACK_RATE := 15.0    # samples/sec - must match what face_track.py wrote
 const FACE_TRACK_POINTS := 478
 const FACE_TRACK_HEADER := 20    # 4 magic + u32 version + f32 rate + u32 count + u32 points
 
-var _ft_state := "none"   # none | venv | pip | model | tracking | ready | failed
+var _ft_state := "none"   # none | provisioning | tracking | ready | failed
 var _ft_pid := -1
 var _ft_path := ""        # the cached track for THIS clip
 var _ft_log := ""
@@ -383,10 +382,6 @@ var _clown_hollow := 0.0
 # placed, wherever in the clip that is, and scrubbing somewhere new costs the same
 # twenty seconds rather than a re-read of everything before it.
 const POSE_TRACK_DIR := "user://pose_tracks"
-## Google's published pose bundle - `full` rather than `heavy`: on the reference
-## footage `full` found a pose in 7451 of 7451 sampled frames, so the heavier model
-## has nothing left to win and would cost the window's latency.
-const POSE_MODEL_URL := "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
 const POSE_TRACK_RATE := 12.0    # samples/sec - must match what pose_track.py wrote
 const POSE_TRACK_POINTS := 33
 ## 4 magic + u32 version + f32 rate + u32 count + u32 points + u32 mask_w + u32 mask_h
@@ -418,11 +413,14 @@ const PT_EAR_R := 8
 const PT_SH_L := 11
 const PT_SH_R := 12
 
-## The bootstrap's state, which is about the VENV AND THE MODEL and not about any
-## one window: none | venv | pip | model | ready | failed. "ready" here means the
-## tracker can be run, not that any particular window has been read.
+## The bootstrap's state, which is about the ENVIRONMENT AND ITS MODELS and not about
+## any one window: none | provisioning | ready | failed. "ready" here means the
+## tracker can be run, not that any particular window has been read. The pose model
+## is `full` rather than `heavy`: on the reference footage `full` found a pose in
+## 7451 of 7451 sampled frames, so the heavier model has nothing left to win and
+## would cost the window's latency (see the face_venv row in deps.gd).
 var _pt_state := "none"
-var _pt_pid := -1          # the bootstrap's child (venv / pip / model download)
+var _pt_pid := -1          # unused by the bootstrap now; kept in the reap list
 var _pt_log := ""
 var _pt_rate := POSE_TRACK_RATE
 var _pt_points := POSE_TRACK_POINTS
@@ -764,19 +762,18 @@ func _ready() -> void:
 
 ## Masking is the mode that CANNOT work without ffmpeg: every clip is transcoded
 ## on import, every waveform and thumbnail is an ffmpeg pass, and ffprobe answers
-## the frame count. Say so at the door rather than letting the first import fail
-## with an unexplained "prep did not finish". Two resolves, no version probe, so
-## this costs nothing - the home screen's panel is where the full report lives, and
-## this mode can be launched straight from the CLI without ever seeing it.
+## the frame count. ghost downloads FFmpeg itself, so on a first run it may still be
+## on its way: say so at the door, and a clip opened meanwhile waits for it (see
+## "waiting_tools" in _process) rather than failing with "prep did not finish".
 func _warn_missing_tools() -> void:
-	var missing: PackedStringArray = []
-	for prog in ["ffmpeg", "ffprobe"]:
-		if not Deps.has(prog):
-			missing.append(prog)
-	if missing.is_empty():
+	if _have_ffmpeg():
 		return
-	_set_status("⚠  %s not found - clips cannot be imported or rendered.  %s"
-		% [" and ".join(missing), Deps.hint("ffmpeg")])
+	Provision.ensure("ffmpeg")
+	_set_status("⏳  " + Deps.hint("ffmpeg"))
+
+
+func _have_ffmpeg() -> bool:
+	return Deps.has("ffmpeg") and Deps.has("ffprobe")
 
 
 ## `path` is either a prepared session .json, a raw source video (transcoded once
@@ -822,6 +819,12 @@ func open_source(path: String) -> void:
 	var abs_audio := ProjectSettings.globalize_path(audio)
 	if FileAccess.file_exists(abs_video) and FileAccess.file_exists(abs_audio):
 		_finish_session(path, video, audio)   # validates duration itself; re-preps if bad
+		return
+	if not _have_ffmpeg():
+		# A first run: FFmpeg is still downloading. The clip waits for it in _process.
+		Provision.ensure("ffmpeg")
+		_prep_state = "waiting_tools"
+		_set_status("⏳  " + Deps.hint("ffmpeg"))
 		return
 	_prep(path, dir, video, audio)
 
@@ -1128,16 +1131,15 @@ static func _slugify(path: String) -> String:
 
 
 # --- YouTube / URL import: paste a URL where a file path is expected --------------
-# open_source() routes any http(s) source here. The pipeline is three polled
-# subprocesses (the same _process pattern as prep - never blocking):
-#   1. python3 -m venv user://ytdlp_venv        (once, on the first ever URL import)
-#   2. <venv>/bin/pip install --upgrade yt-dlp  (once; also the retry step)
-#   3. <venv>/bin/yt-dlp <url>  ->  masks/_downloads/<title>_<id>.<ext>
-# then the downloaded file re-enters open_source() and the normal ffmpeg->theora
-# prep takes over unchanged. The venv is DEDICATED so ghost owns its own yt-dlp
-# and can upgrade it without touching anything else - which matters because
-# YouTube breaking old yt-dlp versions is the norm, not the exception: a failed
-# download automatically re-runs step 2 once and retries.
+# open_source() routes any http(s) source here. yt-dlp lives in ghost's own
+# environment (`ytdlp_venv`, see [Provision]), with Deno beside it for YouTube's
+# download challenges; the first import waits while it is built, then
+#   <env python> -u -m yt_dlp <url>  ->  masks/_downloads/<title>_<id>.<ext>
+# is polled like prep (never blocking), and the downloaded file re-enters
+# open_source() so the normal ffmpeg->theora prep takes over unchanged. YouTube
+# breaking old yt-dlp versions is the norm, not the exception: the environment is
+# updated with the rest of ghost's dependencies, and a failed download updates it
+# once more and retries.
 
 static func _is_url(path: String) -> bool:
 	return path.begins_with("http://") or path.begins_with("https://")
@@ -1161,6 +1163,9 @@ static func _youtube_id(url: String) -> String:
 	return u
 
 
+const YT_ENV := "ytdlp_venv"
+
+
 func _yt_bin(tool_name: String) -> String:
 	return Deps.venv_bin(YT_VENV_DIR, tool_name)
 
@@ -1174,13 +1179,6 @@ func _yt_dl_dir() -> String:
 ## [Subprocess] and the home screen's Environment panel get.
 static func _which(prog: String) -> String:
 	return Deps.resolve(prog)
-
-
-## The system interpreter both venv bootstraps need, named the way each platform
-## names it ("python3" does not exist on Windows).
-static func _python() -> String:
-	return Deps.resolve_any(["python", "python3", "py"] if OS.get_name() == "Windows"
-		else ["python3", "python"])
 
 
 func _start_url_import(url: String) -> void:
@@ -1200,36 +1198,28 @@ func _start_url_import(url: String) -> void:
 		_set_status("✓  Already downloaded - opening the cached copy")
 		open_source(cached)
 		return
-	if FileAccess.file_exists(_yt_bin("yt-dlp")):
-		_yt_download()
-	else:
-		_yt_make_venv()
-
-
-func _yt_make_venv() -> void:
-	var py := _python()
-	if py.is_empty():
-		_set_status("⚠  Python 3 is not installed - can't bootstrap yt-dlp.  "
-			+ Deps.hint("python"))
+	var why := Provision.unsupported(YT_ENV)
+	if not why.is_empty():
+		_set_status("⚠  URL import is not available on this machine: " + why)
 		return
-	print("ghost yt: bootstrapping venv at ", ProjectSettings.globalize_path(YT_VENV_DIR),
-		" with ", py)
-	_yt_pid = _yt_spawn_logged(py, PackedStringArray(
-		["-m", "venv", ProjectSettings.globalize_path(YT_VENV_DIR)]))
-	_yt_state = "venv" if _yt_pid > 0 else "idle"
+	_yt_state = "provisioning"
 	_yt_step_started = Time.get_unix_time_from_system()
-	_set_status("⏳  Setting up ghost's download venv (one-time)…" if _yt_pid > 0
-		else "⚠  Could not start python3")
+	_yt_wait_for_env()
 
 
-func _yt_pip_install() -> void:
-	print("ghost yt: pip install --upgrade yt-dlp")
-	_yt_pid = _yt_spawn_logged(_yt_bin("pip"), PackedStringArray(
-		["install", "--upgrade", "yt-dlp"]))
-	_yt_state = "pip" if _yt_pid > 0 else "idle"
-	_yt_step_started = Time.get_unix_time_from_system()
-	_set_status("⏳  Installing yt-dlp into the venv…" if _yt_pid > 0
-		else "⚠  Could not start pip (venv incomplete?)")
+## Download once the environment is ready; until then show what its install is doing,
+## and stop with the install's own reason if it cannot be had. Polled from _process.
+func _yt_wait_for_env() -> void:
+	if Provision.ensure(YT_ENV):
+		_yt_state = "idle"
+		_yt_download()
+		return
+	var s := Provision.state(YT_ENV)
+	if not bool(s.get("running", false)) and (s.has("error") or not Provision.can_install()):
+		_yt_state = "idle"
+		_set_status("⚠  " + Deps.hint(YT_ENV))
+		return
+	_set_status("⏳  Preparing URL import - " + Provision.describe(YT_ENV, s))
 
 
 func _yt_download() -> void:
@@ -1250,17 +1240,21 @@ func _yt_download() -> void:
 		# Under 100K/s yt-dlp assumes YouTube's anti-bot throttle and re-extracts
 		# instead of crawling for an hour; fragmented formats also parallelize.
 		"--throttled-rate", "100K", "--concurrent-fragments", "4"])
-	# YouTube's nsig/PO-token challenges need a JavaScript runtime. yt-dlp's
-	# default is deno, which is rarely installed - and with NO runtime the
-	# download still "works", just at the punitive fallback throttle (~40KB/s:
-	# the "0% to 1% took three minutes" report). Hand it whichever runtime this
-	# machine actually has, by explicit path - a GUI-launched Godot's PATH is
-	# not a shell's, so auto-detection can't be trusted either.
-	for rt in ["deno", "node"]:
-		var rt_bin := _which(rt)
-		if not rt_bin.is_empty():
-			args.append("--js-runtimes")
-			args.append(rt + ":" + rt_bin)
+	# YouTube's nsig/PO-token challenges need a JavaScript runtime, and with NONE
+	# the download still "works", just at the punitive fallback throttle (~40KB/s:
+	# the "0% to 1% took three minutes" report). The environment carries Deno for
+	# exactly this; on a machine with no Deno build, whatever runtime the machine
+	# has stands in. By explicit path - a GUI-launched Godot's PATH is not a
+	# shell's, so auto-detection can't be trusted either.
+	var deno := _yt_bin("deno")
+	if FileAccess.file_exists(deno):
+		args.append_array(PackedStringArray(["--js-runtimes", "deno:" + deno]))
+	else:
+		for rt in ["deno", "node"]:
+			var rt_bin := _which(rt)
+			if not rt_bin.is_empty():
+				args.append("--js-runtimes")
+				args.append(rt + ":" + rt_bin)
 	args.append_array(PackedStringArray([
 		"-o", _yt_dl_dir().path_join("%(title).40s_%(id)s.%(ext)s"),
 		_yt_url]))
@@ -1268,6 +1262,7 @@ func _yt_download() -> void:
 	# first thing to check when a download crawls (no runtime = YouTube's
 	# ~40KB/s anti-bot throttle).
 	print("ghost yt: exec ", _yt_bin("python"), " ", " ".join(args))
+	Provision.hold(YT_ENV, "clip download")
 	_yt_pid = _yt_spawn_logged(_yt_bin("python"), args)
 	_yt_state = "downloading" if _yt_pid > 0 else "idle"
 	# Status lands IMMEDIATELY, success or not - the first cut only reported
@@ -1360,38 +1355,28 @@ func _yt_echo_log(label: String) -> void:
 		print("ghost yt [", label, "]:\n  ", "\n  ".join(kept))
 
 
-## One venv/pip/download step just exited (see _process) - advance the machine.
-## OS.create_process gives no exit code, so success is judged by what the step
-## was supposed to produce (the binary, the file) - the same evidence-over-
+## The download just exited (see _process) - advance the machine. Success is
+## judged by what it was supposed to produce (the file) - the same evidence-over-
 ## status-code stance as _finish_session's duration check.
 func _yt_step_done() -> void:
 	var state := _yt_state
 	_yt_state = "idle"
+	Provision.release(YT_ENV, "clip download")
 	_yt_echo_log(state)
-	match state:
-		"venv":
-			if FileAccess.file_exists(_yt_bin("pip")):
-				_yt_pip_install()
-			else:
-				_set_status("⚠  venv bootstrap failed: " + _yt_log_tail())
-		"pip":
-			if FileAccess.file_exists(_yt_bin("yt-dlp")):
-				_yt_download()
-			else:
-				_set_status("⚠  pip install yt-dlp failed: " + _yt_log_tail())
-		"downloading":
-			var file := _yt_find_download()
-			if not file.is_empty():
-				_set_status("✓  Downloaded " + file.get_file())
-				open_source(file)
-			elif not _yt_retried:
-				# The single most common failure mode is a stale yt-dlp
-				# (YouTube changed, old extractor broke) - upgrade once, retry.
-				_yt_retried = true
-				_set_status("⚠  Download failed - upgrading yt-dlp and retrying…")
-				_yt_pip_install()
-			else:
-				_set_status("⚠  Download failed: " + _yt_log_tail())
+	var file := _yt_find_download()
+	if not file.is_empty():
+		_set_status("✓  Downloaded " + file.get_file())
+		open_source(file)
+	elif not _yt_retried:
+		# The single most common failure mode is a stale yt-dlp (YouTube changed,
+		# old extractor broke) - update the environment once, then retry.
+		_yt_retried = true
+		_set_status("⚠  Download failed - updating yt-dlp and retrying…")
+		Provision.update(YT_ENV)
+		_yt_state = "provisioning"
+		_yt_step_started = Time.get_unix_time_from_system()
+	else:
+		_set_status("⚠  Download failed: " + _yt_log_tail())
 
 
 # --- session ready: build preview + (unless render_mode) the editing UI -----------
@@ -5353,14 +5338,17 @@ func _ft_bin(tool_name: String) -> String:
 
 
 func _ft_model_path() -> String:
-	return ProjectSettings.globalize_path(FACE_VENV_DIR).path_join("face_landmarker.task")
+	return Provision.file_path("face_model")
 
 
 ## Kick the pre-pass off (or discover it already cached). Called per frame while a
 ## clown layer is live; every branch is a cheap no-op once the track is ready.
 ## Deliberately lazy: a session that never uses the clown never installs anything.
 func _ft_ensure() -> void:
-	if _ft_state in ["ready", "failed", "venv", "pip", "model", "tracking"]:
+	if _ft_state == "provisioning":
+		_ft_wait_for_env()
+		return
+	if _ft_state in ["ready", "failed", "tracking"]:
 		_ft_poll()
 		return
 	if session == null or session.video_path.is_empty():
@@ -5375,53 +5363,26 @@ func _ft_ensure() -> void:
 	if FileAccess.file_exists(_ft_path):
 		_ft_load()
 		return
-	if not FileAccess.file_exists(_ft_bin("python")):
-		_ft_make_venv()
-	elif not FileAccess.file_exists(_ft_model_path()):
-		_ft_fetch_model()
-	else:
-		_ft_start_track()
+	_ft_state = "provisioning"
+	_ft_wait_for_env()
 
 
-func _ft_make_venv() -> void:
-	var py := _python()
-	if py.is_empty():
-		_ft_fail("Python 3 is not installed - the clown can't build its face tracker.  "
-			+ Deps.hint("python"))
+## Track once the environment (and its models) is ready; until then show what its
+## install is doing, and fail with the install's own reason if it cannot be had.
+func _ft_wait_for_env() -> void:
+	var why := Provision.unsupported(FACE_ENV)
+	if not why.is_empty():
+		_ft_fail("not available on this machine: " + why)
 		return
-	print("ghost face: bootstrapping venv at ", ProjectSettings.globalize_path(FACE_VENV_DIR))
-	_ft_pid = Subprocess.start(py, PackedStringArray(
-		["-m", "venv", ProjectSettings.globalize_path(FACE_VENV_DIR)]))
-	_ft_state = "venv" if _ft_pid > 0 else "failed"
-	_set_status("⏳  Setting up the face tracker (one-time)…" if _ft_pid > 0
-		else "⚠  Could not start python3")
-
-
-func _ft_pip_install() -> void:
-	# The requirements file ships beside the script it serves, so the versions
-	# that were actually verified travel with it (face_host/requirements.txt).
-	var req := ProjectSettings.globalize_path("res://face_host/requirements.txt")
-	var args := PackedStringArray(["install", "-q"])
-	if FileAccess.file_exists(req):
-		args.append_array(PackedStringArray(["-r", req]))
-	else:
-		args.append("mediapipe")
-	print("ghost face: pip ", " ".join(args))
-	_ft_pid = _ft_spawn_logged(_ft_bin("pip"), args)
-	_ft_state = "pip" if _ft_pid > 0 else "failed"
-	_set_status("⏳  Installing the face tracker (one-time, ~100 MB)…" if _ft_pid > 0
-		else "⚠  Could not start pip")
-
-
-## Fetch the landmarker bundle with python itself rather than shelling to curl -
-## the venv is already guaranteed at this point and curl is not.
-func _ft_fetch_model() -> void:
-	var code := "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])"
-	_ft_pid = _ft_spawn_logged(_ft_bin("python"),
-		PackedStringArray(["-c", code, FACE_MODEL_URL, _ft_model_path()]))
-	_ft_state = "model" if _ft_pid > 0 else "failed"
-	_set_status("⏳  Fetching the face model (one-time, 4 MB)…" if _ft_pid > 0
-		else "⚠  Could not fetch the face model")
+	if Provision.ensure(FACE_ENV):
+		Provision.hold(FACE_ENV, "mask editor")
+		_ft_start_track()
+		return
+	var s := Provision.state(FACE_ENV)
+	if not bool(s.get("running", false)) and (s.has("error") or not Provision.can_install()):
+		_ft_fail(String(s.get("error", Provision.hint(FACE_ENV))))
+		return
+	_set_status("⏳  Preparing the face tracker - " + Provision.describe(FACE_ENV, s))
 
 
 func _ft_start_track() -> void:
@@ -5457,18 +5418,6 @@ func _ft_poll() -> void:
 		return
 	_ft_pid = -1
 	match _ft_state:
-		"venv":
-			_ft_pip_install()
-		"pip":
-			if FileAccess.file_exists(_ft_bin("python")):
-				_ft_fetch_model()
-			else:
-				_ft_fail("the face tracker's venv did not install (see the log)")
-		"model":
-			if FileAccess.file_exists(_ft_model_path()):
-				_ft_start_track()
-			else:
-				_ft_fail("the face model did not download (see the log)")
 		"tracking":
 			if FileAccess.file_exists(_ft_path):
 				_ft_load()
@@ -5485,8 +5434,8 @@ func _ft_fail(why: String) -> void:
 	_set_status("⚠  Face tracking unavailable - " + why)
 
 
-## stdout+stderr to one file, so a failed pip or a mediapipe import error is
-## readable afterwards instead of vanishing into a GUI launch's missing console.
+## stdout+stderr to one file, so a mediapipe error is readable afterwards instead
+## of vanishing into a GUI launch's missing console.
 func _ft_spawn_logged(exe: String, args: PackedStringArray) -> int:
 	return Subprocess.start_logged(exe, args, _ft_log, "face track")
 
@@ -5629,7 +5578,7 @@ func _clown_model_now() -> Dictionary:
 
 
 func _pt_model_path() -> String:
-	return ProjectSettings.globalize_path(FACE_VENV_DIR).path_join("pose_landmarker_full.task")
+	return Provision.file_path("pose_model")
 
 
 func _pt_dir_path() -> String:
@@ -5648,81 +5597,30 @@ func _pt_chunk_path(k: int) -> String:
 ## the window the playhead needs. Every branch is a cheap no-op in the steady
 ## state.
 func _pt_ensure() -> void:
-	if _pt_state in ["venv", "pip", "model"]:
-		_pt_poll()
-		return
 	if _pt_state == "failed" or session == null or session.video_path.is_empty():
 		return
 	if _pt_state != "ready":
-		# Before ANY step, not just the windows: pip and the model fetch log here too, and
-		# an empty path used to make their redirect fail so the step never ran at all.
+		# Before ANY step, not just the windows: the tracker logs here, and an empty path
+		# makes its redirect fail so the step never runs at all.
 		DirAccess.make_dir_recursive_absolute(_pt_dir_path())
 		_pt_log = _pt_dir_path().path_join("last_run.log")
-		if not FileAccess.file_exists(_ft_bin("python")):
-			_pt_make_venv()
-		elif not FileAccess.file_exists(_pt_model_path()):
-			_pt_fetch_model()
-		else:
-			_pt_chunk_n = int(POSE_CHUNK_SECS * POSE_TRACK_RATE)
-			_pt_chunk_total = maxi(1, int(ceil(session.duration / POSE_CHUNK_SECS)))
-			_pt_state = "ready"
+		var why := Provision.unsupported(FACE_ENV)
+		if not why.is_empty():
+			_pt_fail("not available on this machine: " + why)
+			return
+		if not Provision.ensure(FACE_ENV):
+			_pt_state = "provisioning"
+			var s := Provision.state(FACE_ENV)
+			if not bool(s.get("running", false)) and (s.has("error") or not Provision.can_install()):
+				_pt_fail(String(s.get("error", Provision.hint(FACE_ENV))))
+			else:
+				_set_status("⏳  Preparing the pose tracker - " + Provision.describe(FACE_ENV, s))
+			return
+		Provision.hold(FACE_ENV, "mask editor")
+		_pt_chunk_n = int(POSE_CHUNK_SECS * POSE_TRACK_RATE)
+		_pt_chunk_total = maxi(1, int(ceil(session.duration / POSE_CHUNK_SECS)))
+		_pt_state = "ready"
 	_pt_pump()
-
-
-func _pt_make_venv() -> void:
-	var py := _python()
-	if py.is_empty():
-		_pt_fail("Python 3 is not installed - the umbra can't build its pose tracker.  "
-			+ Deps.hint("python"))
-		return
-	print("ghost pose: bootstrapping venv at ", ProjectSettings.globalize_path(FACE_VENV_DIR))
-	_pt_pid = Subprocess.start(py, PackedStringArray(
-		["-m", "venv", ProjectSettings.globalize_path(FACE_VENV_DIR)]))
-	_pt_state = "venv" if _pt_pid > 0 else "failed"
-	_set_status("⏳  Setting up the pose tracker (one-time)…" if _pt_pid > 0
-		else "⚠  Could not start python3")
-
-
-func _pt_pip_install() -> void:
-	var req := ProjectSettings.globalize_path("res://face_host/requirements.txt")
-	var args := PackedStringArray(["install", "-q"])
-	if FileAccess.file_exists(req):
-		args.append_array(PackedStringArray(["-r", req]))
-	else:
-		args.append("mediapipe")
-	print("ghost pose: pip ", " ".join(args))
-	_pt_pid = _pt_spawn_logged(_ft_bin("pip"), args)
-	_pt_state = "pip" if _pt_pid > 0 else "failed"
-	_set_status("⏳  Installing the pose tracker (one-time, ~100 MB)…" if _pt_pid > 0
-		else "⚠  Could not start pip")
-
-
-func _pt_fetch_model() -> void:
-	var code := "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])"
-	_pt_pid = _pt_spawn_logged(_ft_bin("python"),
-		PackedStringArray(["-c", code, POSE_MODEL_URL, _pt_model_path()]))
-	_pt_state = "model" if _pt_pid > 0 else "failed"
-	_set_status("⏳  Fetching the pose model (one-time, 9 MB)…" if _pt_pid > 0
-		else "⚠  Could not fetch the pose model")
-
-
-func _pt_poll() -> void:
-	if _pt_pid <= 0 or Subprocess.alive(_pt_pid):
-		return
-	_pt_pid = -1
-	match _pt_state:
-		"venv":
-			_pt_pip_install()
-		"pip":
-			if FileAccess.file_exists(_ft_bin("python")):
-				_pt_fetch_model()
-			else:
-				_pt_fail("the pose tracker's venv did not install (see the log)")
-		"model":
-			if FileAccess.file_exists(_pt_model_path()):
-				_pt_state = "none"   # re-enter _pt_ensure's ready branch next frame
-			else:
-				_pt_fail("the pose model did not download (see the log)")
 
 
 func _pt_fail(why: String) -> void:
@@ -6642,6 +6540,8 @@ func _exit_tree() -> void:
 			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid,
 			_ft_pid, _pt_pid]:
 		Subprocess.stop(int(pid))
+	Provision.release(FACE_ENV, "mask editor")
+	Provision.release(YT_ENV, "clip download")
 	for job in _track_audio_jobs:
 		Subprocess.stop(int(job.get("pid", -1)))
 	# Join the audio loader if it's still running, or Godot warns about an orphaned
@@ -7740,6 +7640,16 @@ func _process(_dt: float) -> void:
 	# rest of the session.
 	_syncing = false
 	match _prep_state:
+		"waiting_tools":
+			if _have_ffmpeg():
+				_prep_state = "idle"
+				_prep(_pending.source, _pending.dir, _pending.video, _pending.audio)
+				return
+			Provision.ensure("ffmpeg")   # retries by itself once a failed attempt has cooled off
+			var hint := Deps.hint("ffmpeg")
+			_set_status(("⏳  " + hint) if not Provision.state("ffmpeg").has("error")
+				else "⚠  " + hint)
+			return
 		"prepping_video":
 			if Subprocess.alive(_prep_video_pid):
 				_set_status("⏳  Preparing clip (video)…  %d%%" % _read_prep_pct())
@@ -7772,7 +7682,9 @@ func _process(_dt: float) -> void:
 			return
 		_:
 			pass
-	if _yt_state != "idle":
+	if _yt_state == "provisioning":
+		_yt_wait_for_env()
+	elif _yt_state != "idle":
 		if _yt_pid > 0 and not Subprocess.alive(_yt_pid):
 			_yt_pid = -1
 			_yt_step_done()
@@ -7782,10 +7694,6 @@ func _process(_dt: float) -> void:
 			# bootstrap or pip install never reads as a hang.
 			var el := int(Time.get_unix_time_from_system() - _yt_step_started)
 			match _yt_state:
-				"venv":
-					_set_status("⏳  Setting up ghost's download venv (one-time)…  %ds" % el)
-				"pip":
-					_set_status("⏳  Installing yt-dlp into the venv…  %ds" % el)
 				"downloading":
 					var pct := _yt_pct()
 					_set_status("⏳  Downloading…  " + (pct if not pct.is_empty()

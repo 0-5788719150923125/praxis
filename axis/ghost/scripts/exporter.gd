@@ -412,6 +412,13 @@ func _poll_pct() -> void:
 func _on_export() -> void:
 	if _prepping:
 		return
+	# Every export ends in an ffmpeg transcode. ghost downloads FFmpeg itself, so on a
+	# first run it may still be on its way - say so now rather than after the render.
+	if not Deps.has("ffmpeg"):
+		Provision.ensure("ffmpeg")
+		_note_t = 6.0
+		_set_status("⏳  " + Deps.hint("ffmpeg"), Color(1.0, 0.85, 0.6))
+		return
 	_song = Spectrum.audio_path()
 	if _song.is_empty() and not take_provider.is_valid():
 		_note_t = 4.0

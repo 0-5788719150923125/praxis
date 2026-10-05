@@ -96,6 +96,18 @@ def register(cls: type[Backend]) -> type[Backend]:
     return cls
 
 
+# Where a backend reports a download as it streams: the host installs a callable
+# taking (name, done_bytes, total_bytes, finished, error), and ghost shows it beside
+# its own installs. None when nothing is listening (tests, the command-line tools).
+progress = None
+
+
+def report(name: str, done: int = 0, total: int = 0, finished: bool = False,
+           error: str = "") -> None:
+    if progress is not None:
+        progress(name, done, total, finished, error)
+
+
 # Import for side effects. Each module registers itself and must not import its
 # heavy dependencies at module scope.
 from . import piper  # noqa: E402,F401

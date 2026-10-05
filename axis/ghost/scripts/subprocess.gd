@@ -196,7 +196,7 @@ static func start_detached(path: String, args: PackedStringArray) -> int:
 ## One reader thread per stream, because a single blocking reader deadlocks the moment the
 ## child fills the pipe it is not reading. Both append to the log under one lock and flush
 ## per chunk, so a caller tailing the file each frame (yt-dlp's progress line) sees it live.
-## The child's stdin is a pipe this process never writes: fine for pip, yt-dlp, python and a
+## The child's stdin is a pipe this process never writes: fine for uv, yt-dlp, python and a
 ## headless Godot, wrong for anything that reads stdin (use [method start_redirected]).
 static func start_logged(path: String, args: PackedStringArray, log_path: String, tag := "") -> int:
 	_join_finished_pumps()
@@ -281,15 +281,22 @@ static func terminate(pid: int) -> void:
 ## before the kernel sees it. That is not a convenience: a GUI-launched app does not
 ## inherit a shell's PATH, so on macOS a Homebrew ffmpeg is invisible to a bare name
 ## and the child simply never starts. Returns "" - and says why, once - when the
-## program is not installed at all, which used to present as an unexplained pid of -1
-## somewhere far from the cause.
+## program is not there at all, which would otherwise present as an unexplained pid of
+## -1 somewhere far from the cause. A program ghost downloads itself is asked for on the
+## way out, so the next attempt finds it.
 static func _program(path: String) -> String:
 	var bin := Deps.resolve(path)
-	if bin.is_empty() and not _warned.has(path):
+	if not bin.is_empty():
+		return bin
+	var key := Deps.fetched_key(path)
+	if not key.is_empty():
+		Provision.ensure(key)
+	if not _warned.has(path):
 		_warned[path] = true
-		push_warning("ghost: '%s' is not installed (or not on PATH) - "
-			% path + "see the Environment panel on the home screen")
-		printerr("ghost: cannot start '%s' - not found on this machine" % path)
+		var why := Deps.hint(key) if not key.is_empty() else \
+			"not installed (or not on PATH) - see the Environment panel on the home screen"
+		push_warning("ghost: cannot start '%s' - %s" % [path, why])
+		printerr("ghost: cannot start '%s' - %s" % [path, why])
 	return bin
 
 

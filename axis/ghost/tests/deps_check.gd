@@ -10,14 +10,16 @@ extends SceneTree
 ##   program and does not add a row for it, so the Environment panel reports "all
 ##   present" on a machine that is missing the thing that just broke. So this gate
 ##   READS THE SOURCE: every bare program name handed to [Subprocess] or
-##   [method Deps.execute] anywhere in `scripts/` must appear in [constant
-##   Deps.TOOLS]. That is the same drift discipline `docs.py` applies to scenes and
-##   CLI flags, for the same reason - a map nobody can forget to update.
+##   [method Deps.execute] anywhere in `scripts/` must be a [constant Deps.TOOLS]
+##   row's or provided by a [constant Deps.FETCHED] one. That is the same drift
+##   discipline `docs.py` applies to scenes and CLI flags, for the same reason - a
+##   map nobody can forget to update.
 ##
-##   THE HINTS GO WRONG. `install` is keyed by platform, and the author cannot run
-##   Windows or macOS, so a row that ships with only a Linux hint is a row that
-##   tells a Mac user nothing at the exact moment they need telling. Every row must
-##   carry a hint for every platform it claims to apply to.
+##   THE HINTS GO WRONG. What stays the machine's own is installed by the user, with
+##   the command `install` names per platform, and the author cannot run Windows or
+##   macOS - so a row that ships with only a Linux hint tells a Mac user nothing at
+##   the exact moment they need telling. Every such row must carry a hint for every
+##   platform it claims to apply to. (What ghost fetches is tests/provision_check.gd's.)
 ##
 ## Plus the resolver's own invariants, which are cheap and which nothing else
 ## covers: a miss stays a miss, an absolute path passes through, and `venv_bin`
@@ -60,26 +62,30 @@ func _check(ok: bool, msg: String) -> void:
 func _table_shape() -> void:
 	print("-- table shape")
 	var keys := {}
+	for table in [Deps.TOOLS, Deps.FETCHED, Deps.MANAGED]:
+		for t in table:
+			var key := String(t.get("key", ""))
+			_check(not key.is_empty(), "every row has a key")
+			_check(not keys.has(key), "key '%s' is unique across the tables" % key)
+			keys[key] = true
+			_check(not String(t.get("name", "")).is_empty(), "%s has a display name" % key)
+			# The description IS the panel's tooltip and the report's explanation. A row
+			# without one is a row that tells the reader a name and nothing else.
+			_check(String(t.get("used_for", "")).length() > 30,
+				"%s says what it is used for" % key)
+			_check(Deps.entry(key) == t, "Deps.entry finds %s" % key)
 	for t in Deps.TOOLS:
 		var key := String(t.get("key", ""))
-		_check(not key.is_empty(), "every tool row has a key")
-		_check(not keys.has(key), "key '%s' is unique" % key)
-		keys[key] = true
-		_check(not String(t.get("name", "")).is_empty(), "%s has a display name" % key)
-		# The description IS the panel's tooltip and the report's explanation. A row
-		# without one is a row that tells the reader a name and nothing else.
-		_check(String(t.get("used_for", "")).length() > 30,
-			"%s says what it is used for" % key)
-		var has_probe := not Array(t.get("bins", [])).is_empty() \
-			or not String(t.get("check", "")).is_empty()
-		_check(has_probe, "%s is actually probeable (bins or check)" % key)
+		_check(not Array(t.get("bins", [])).is_empty(), "%s is actually probeable (bins)" % key)
+	for t in Deps.FETCHED:
+		var key := String(t.get("key", ""))
+		_check(int(t.get("kind", -1)) == Deps.KIND_FETCHED, "%s is marked fetched" % key)
+		_check(not Array(t.get("provides", [])).is_empty(), "%s names the programs it provides" % key)
+		_check(not String(t.get("size", "")).is_empty(), "%s says what it costs to download" % key)
 	for m in Deps.MANAGED:
 		var key := String(m.get("key", ""))
-		_check(not keys.has(key), "managed key '%s' does not collide with a tool" % key)
-		keys[key] = true
-		_check(String(m.get("used_for", "")).length() > 30,
-			"%s says what it is used for" % key)
-		_check(not String(m.get("check", "")).is_empty()
+		_check(int(m.get("kind", -1)) == Deps.KIND_MANAGED, "%s is marked managed" % key)
+		_check(key == "python" or not String(m.get("check", "")).is_empty()
 			or not String(m.get("path", "")).is_empty(),
 			"%s knows where it lives" % key)
 
@@ -115,7 +121,8 @@ func _source_drift() -> void:
 	for t in Deps.TOOLS:
 		for b in t.get("bins", []):
 			declared[String(b)] = true
-		for b in t.get("bins_windows", []):
+	for t in Deps.FETCHED:
+		for b in t.get("provides", []):
 			declared[String(b)] = true
 	for a in ASSUMED:
 		declared[a] = true
@@ -137,7 +144,7 @@ func _source_drift() -> void:
 			seen[prog].append(path.get_file())
 	_check(not seen.is_empty(), "the scan found spawn sites at all (the regex still matches)")
 	for prog in seen.keys():
-		_check(declared.has(prog), "'%s' (spawned in %s) has a Deps.TOOLS row"
+		_check(declared.has(prog), "'%s' (spawned in %s) has a Deps row"
 			% [prog, ", ".join(PackedStringArray(seen[prog]))])
 
 	# NO POSIX-ONLY PROGRAM PATHS. `/bin/bash` was spawned from seven places, none of which
@@ -208,13 +215,13 @@ func _resolver() -> void:
 func _reporting() -> void:
 	print("-- reporting")
 	var rows := Deps.report()
-	_check(rows.size() >= Deps.MANAGED.size(), "the report has rows")
+	_check(rows.size() >= Deps.MANAGED.size() + Deps.FETCHED.size(), "the report has rows")
 	for r in rows:
 		_check(r.has("found") and r.has("name"), "%s row is shaped" % String(r.get("key", "?")))
 		# Nothing on a platform's exclusion list should be reported there at all -
 		# a red `setpriv` on a Mac is a bug report waiting to happen.
 		var only: Array = r.get("platforms", [])
-		_check(only.is_empty() or only.has(Deps._platform()),
+		_check(only.is_empty() or only.has(Deps.platform()),
 			"%s applies here" % String(r.get("key", "?")))
 
 	var text := Deps.format_report(rows)
@@ -222,14 +229,23 @@ func _reporting() -> void:
 		_check(text.contains(String(r.get("name", "?"))),
 			"the text report mentions %s" % String(r.get("name", "?")))
 
-	# verdict() is what the panel's header and `--deps`'s exit code both read, so
-	# it has to agree with the rows rather than be computed twice.
+	# verdict() is what `--deps`'s exit code reads, so it has to agree with the rows
+	# rather than be computed twice. An environment is not "missing" - it is built
+	# when its feature asks - but anything else a feature needs is.
 	var missing_feature := false
 	for r in rows:
-		if int(r.get("tier", Deps.TIER_EXTRA)) == Deps.TIER_FEATURE and not bool(r.get("found", false)):
+		var env := int(r.get("kind", Deps.KIND_TOOL)) == Deps.KIND_MANAGED \
+			and String(r.get("key", "")) != "python"
+		if int(r.get("tier", Deps.TIER_EXTRA)) == Deps.TIER_FEATURE and not env \
+				and not bool(r.get("found", false)):
 			missing_feature = true
 	_check(Deps.verdict(rows).is_empty() != missing_feature,
 		"the verdict agrees with the rows")
+	var fake := [{"key": "voice_venv", "kind": Deps.KIND_MANAGED, "tier": Deps.TIER_FEATURE,
+		"found": false, "name": "Voice environment"}]
+	_check(Deps.verdict(fake).is_empty(), "an environment not built yet is not a missing dependency")
+	fake[0]["kind"] = Deps.KIND_FETCHED
+	_check(not Deps.verdict(fake).is_empty(), "a program ghost has not fetched yet is")
 
 	var snap := Deps.snapshot()
 	_check(snap.has("host") and snap.has("tools"), "the feedback snapshot is shaped")

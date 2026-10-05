@@ -977,12 +977,13 @@ func _load_external(path: String) -> AudioStream:
 	return null
 
 
-# Godot 4.6 has no runtime FLAC loader (FLAC is editor-import only), so transcode
-# to a temp WAV with ffmpeg. Degrades gracefully if ffmpeg isn't on PATH.
+# Godot has no runtime FLAC loader (FLAC is editor-import only), so transcode to a
+# temp WAV with ffmpeg. Degrades gracefully while FFmpeg is not there yet.
 func _load_flac(path: String) -> AudioStream:
 	var tmp := ProjectSettings.globalize_path("user://ghost_flac.wav")
 	var code := Deps.execute("ffmpeg", ["-y", "-loglevel", "error", "-i", path, tmp])
 	if code == 0 and FileAccess.file_exists(tmp):
 		return AudioStreamWAV.load_from_file(tmp)
-	push_warning("ghost: FLAC playback needs ffmpeg on PATH to decode (%s)" % path)
+	Provision.ensure("ffmpeg")
+	push_warning("ghost: FLAC playback needs FFmpeg to decode %s - %s" % [path, Deps.hint("ffmpeg")])
 	return null

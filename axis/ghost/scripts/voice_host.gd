@@ -8,37 +8,34 @@ class_name VoiceHost
 ## `voice_host/backends/` and a registry entry; nothing here changes. That is the
 ## swappability requirement, and it is why this is a subprocess rather than a
 ## GDExtension wrapping ONNX Runtime - a native binding would mean per-platform
-## binaries and a rebuild per model, and ghost has no export presets for any
-## platform yet.
+## binaries and a rebuild per model.
 ##
-## The venv follows the pattern `mask_editor.gd` already uses for yt-dlp:
-##   1. python3 -m venv user://voice_venv          (once, first ever use)
-##   2. <venv>/bin/pip install -r requirements.txt (once; also the repair step)
-##   3. <venv>/bin/python voice_host/host.py       (stays warm for the session)
-## A dedicated venv means ghost owns its own onnxruntime and can upgrade it
-## without touching anything else on the machine.
+## The environment is ghost's own (`voice_venv`, see [Provision]): built by uv on
+## ghost's own Python the first time the voice is wanted, kept current with the rest,
+## and reported on the home screen. This waits for it, saying what the install is
+## doing, then starts `voice_host/host.py` with that environment's Python and keeps it
+## warm for the session.
 ##
-## Nothing here blocks the frame. Bootstrap is polled exactly like the yt-dlp
-## import; synthesis is a request whose reply arrives on a later frame. The
-## caller gets signals, not return values.
+## Nothing here blocks the frame. The wait is polled; synthesis is a request whose
+## reply arrives on a later frame. The caller gets signals, not return values.
 
 signal host_ready(backends: PackedStringArray)  # not `ready`: Node already has one
 signal failed(stage: String, message: String)
 signal progress(stage: String, message: String)
 signal synthesized(request_id: int, result: Dictionary)
 
+const ENV := "voice_venv"
 const VENV_DIR := "user://voice_venv"
 const HOST_REL := "voice_host/host.py"
 const POLL_SEC := 0.25
 
-var _state := "idle"                 # idle | venv | deps | starting | up | dead
+var _state := "idle"                 # idle | provisioning | starting | up | dead
 var _pid := -1
 var _stdio: FileAccess               # the host's stdin/stdout pair
 var _pending := {}                   # request id -> metadata
 var _next_id := 1
 var _poll := 0.0
-var _boot_pid := -1
-var _repaired := false               # deps reinstalled once before giving up
+var _said := ""                      # the last progress line, so each is emitted once
 var _rx := ""                        # partial line buffer
 var _stderr: FileAccess              # the host's diagnostics
 var _erx := ""
@@ -48,23 +45,19 @@ func _ready() -> void:
 	set_process(false)
 
 
-## Bring the host up, bootstrapping the venv if this is the first ever use.
-## Emits `ready` or `failed`; safe to call again after a failure.
+## Bring the host up, waiting for its environment if this is the first use.
+## Emits `host_ready` or `failed`; safe to call again after a failure.
 func start() -> void:
-	if _state in ["up", "starting"]:
+	if _state in ["up", "starting", "provisioning"]:
 		return
-	if not _python_available():
-		# Name the fix, not just the fact - this is the most common first-run failure
-		# and the message is all the user gets.
-		failed.emit("python", "Python 3 was not found on this machine. " + Deps.hint("python"))
+	var why := Provision.unsupported(ENV)
+	if not why.is_empty():
+		failed.emit("deps", "the neural voice is not available on this machine: " + why)
 		return
-	if _venv_python().is_empty():
-		_begin_venv()
-	elif not _deps_present():
-		_begin_deps()
-	else:
-		_spawn_host()
+	_state = "provisioning"
+	_said = ""
 	set_process(true)
+	_wait_for_env()
 
 
 func stop() -> void:
@@ -77,6 +70,7 @@ func stop() -> void:
 	if _pid > 0:
 		Subprocess.stop(_pid)
 		_pid = -1
+	Provision.release(ENV, "voice host")
 	_state = "idle"
 	set_process(false)
 
@@ -121,22 +115,10 @@ func is_up() -> bool:
 	return _state == "up"
 
 
-# --- bootstrap ---------------------------------------------------------------
+# --- the environment -----------------------------------------------------------
 
 
-## The system interpreter, by absolute path. [Deps] owns resolution for the whole
-## app - a GUI-launched Godot does not inherit a shell PATH, and on Windows the
-## interpreter is `python.exe`, not `python3` - so this is a lookup, not a search.
-static func _system_python() -> String:
-	return Deps.resolve_any(["python", "python3", "py"] if OS.get_name() == "Windows"
-		else ["python3", "python"])
-
-
-func _python_available() -> bool:
-	return not _system_python().is_empty()
-
-
-## The venv's OWN interpreter - `bin/python` on Unix, `Scripts\python.exe` on
+## The environment's OWN interpreter - `bin/python` on Unix, `Scripts\python.exe` on
 ## Windows, which is why this asks [Deps] rather than joining "bin" itself.
 func _venv_python() -> String:
 	var p := Deps.venv_bin(VENV_DIR, "python")
@@ -147,45 +129,29 @@ func _host_script() -> String:
 	return ProjectSettings.globalize_path("res://" + HOST_REL)
 
 
-## Import EVERY module the host actually needs, not just the first two.
-##
-## This checked only onnxruntime and numpy, so a venv created before the
-## phonemizer was added looked healthy forever and the deps step never re-ran -
-## reported as "eSpeak phonemizer unavailable". Any future requirements.txt
-## addition must be listed here too, or the same silent staleness returns.
-const REQUIRED_IMPORTS := "import onnxruntime, numpy, espeakng_loader, phonemizer, nltk"
-
-
-func _deps_present() -> bool:
-	var py := _venv_python()
-	if py.is_empty():
-		return false
-	var out := []
-	return OS.execute(py, ["-c", REQUIRED_IMPORTS], out) == 0
-
-
-func _begin_venv() -> void:
-	_state = "venv"
-	progress.emit("venv", "Creating the voice environment…")
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(VENV_DIR))
-	_boot_pid = Subprocess.start(_system_python(),
-		["-m", "venv", ProjectSettings.globalize_path(VENV_DIR)])
-	if _boot_pid <= 0:
-		_fail("venv", "could not start python3 -m venv")
-
-
-func _begin_deps() -> void:
-	_state = "deps"
-	progress.emit("deps", "Installing voice dependencies (a minute or so)…")
-	var req := ProjectSettings.globalize_path("res://voice_host/requirements.txt")
-	_boot_pid = Subprocess.start(_venv_python(),
-		["-m", "pip", "install", "--upgrade", "-r", req])
-	if _boot_pid <= 0:
-		_fail("deps", "could not start pip")
+## Start the host once the environment is ready; until then, say what its install is
+## doing (every change, once), and fail with the install's own reason if it stops.
+func _wait_for_env() -> void:
+	if Provision.ensure(ENV):
+		_spawn_host()
+		return
+	var s := Provision.state(ENV)
+	if not bool(s.get("running", false)):
+		if s.has("error"):
+			_fail("deps", "the voice environment could not be installed: %s" % s["error"])
+			return
+		if not Provision.can_install():
+			_fail("deps", Provision.hint(ENV))
+			return
+	var line := "Preparing the voice - " + Provision.describe(ENV, s)
+	if line != _said:
+		_said = line
+		progress.emit("deps", line)
 
 
 func _spawn_host() -> void:
 	_state = "starting"
+	Provision.hold(ENV, "voice host")
 	var py := _venv_python()
 	# blocking=false gives a FileAccess over the child's stdio pair. Through [Subprocess] so
 	# the host dies with ghost: it is a python process holding a voice model in memory, and a
@@ -209,6 +175,7 @@ func _spawn_host() -> void:
 
 func _fail(stage: String, msg: String) -> void:
 	print("ghost/voice: FAILED at %s - %s" % [stage, msg])
+	Provision.release(ENV, "voice host")
 	_state = "dead"
 	set_process(false)
 	failed.emit(stage, msg)
@@ -219,31 +186,13 @@ func _fail(stage: String, msg: String) -> void:
 
 func _process(delta: float) -> void:
 	_poll += delta
-	if _poll < POLL_SEC and _state in ["venv", "deps"]:
+	if _poll < POLL_SEC and _state == "provisioning":
 		return
 	_poll = 0.0
 
 	match _state:
-		"venv":
-			if _boot_pid > 0 and not Subprocess.alive(_boot_pid):
-				_boot_pid = -1
-				if _venv_python().is_empty():
-					_fail("venv", "the environment was not created")
-				else:
-					_begin_deps()
-		"deps":
-			if _boot_pid > 0 and not Subprocess.alive(_boot_pid):
-				_boot_pid = -1
-				if _deps_present():
-					_spawn_host()
-				elif not _repaired:
-					# one automatic repair pass, mirroring the yt-dlp retry:
-					# a half-installed venv is the common failure, not a rare one
-					_repaired = true
-					_begin_deps()
-				else:
-					_fail("deps", "voice dependencies could not be installed - "
-						+ "see the >_ log for pip's output")
+		"provisioning":
+			_wait_for_env()
 		"starting", "up":
 			_drain()
 			_drain_stderr()
@@ -305,6 +254,8 @@ func _handle(line: String) -> void:
 				# reportable, not fatal: the other backends still work
 				progress.emit("backend", "%s unavailable: %s"
 					% [msg.get("backend", "?"), msg.get("error", "")])
+			"download":
+				_on_download(msg)
 		return
 
 	var id := int(msg.get("id", -1))
@@ -316,6 +267,20 @@ func _handle(line: String) -> void:
 		failed.emit("synthesize", err)
 		return
 	synthesized.emit(id, msg)
+
+
+## The host fetching something it needs (a voice model, the tagger's data), shown beside
+## ghost's own installs so the wait on a first Speak is never a blank one.
+func _on_download(msg: Dictionary) -> void:
+	var what := String(msg.get("name", "a voice"))
+	if bool(msg.get("finished", false)):
+		Provision.report_done("voices", bool(msg.get("ok", true)),
+			String(msg.get("error", "downloaded " + what)))
+		return
+	var done := int(msg.get("done", 0))
+	var total := int(msg.get("total", 0))
+	Provision.report("voices", "downloading " + what,
+		float(done) / float(total) if total > 0 else -1.0, done, total)
 
 
 func _send(payload: Dictionary) -> void:

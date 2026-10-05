@@ -1,18 +1,24 @@
 extends Node
 
 ## splash_furniture_check - that the shared bottom-right furniture does not sit ON the
-## home screen's Environment panel, and that the ⤓ export button is not there at all.
+## home screen's Environment panel, that it sits where it sits in every mode, and that the
+## ⤓ export button is not there at all.
 ##
 ## Run: tests/run_boot_probe.sh tests/splash_furniture_check.gd 90
 ##
-## THE COMPLAINT: "The console and download buttons are currently rendered overtop of the
+## THE COMPLAINTS: "The console and download buttons are currently rendered overtop of the
 ## environment box, on the home screen. That should not be happening, and the download
-## button has no business even being on the home screen at all."
+## button has no business even being on the home screen at all." The first fix pushed the
+## toggle row up over the panel, and that drew the second: "the placement of the little
+## console icon on the homescreen being above the environment panel feels weird and wrong...
+## below it and to the right - where it is in every other scene." So the panel stands on top
+## of the row, and the row does not move.
 ##
-## Both halves are geometry, so both are measured rather than eyeballed: the toggles'
-## screen rects must not intersect the panel's, and the export button must be invisible.
-## The overlap half matters more than it looks - the toggles live on a HIGHER CanvasLayer
-## than the splash, so a toggle drawn over an Environment row also swallows its clicks.
+## All of it is geometry, so all of it is measured rather than eyeballed: the toggles'
+## screen rects must not intersect the panel's, their bottom edge must be the one every
+## mode uses, and the export button must be invisible. The overlap half matters more than
+## it looks - the toggles live on a HIGHER CanvasLayer than the splash, so a toggle drawn
+## over an Environment row also swallows its clicks.
 ##
 ## It drives the REAL main scene rather than assembling a Chrome and a splash by hand.
 ## Hand-assembly would test a construction the app never performs, and the bug being
@@ -47,9 +53,11 @@ func _run() -> void:
 		return _report()
 
 	var box := env.get_global_rect()
+	var floor_y := get_tree().root.get_visible_rect().size.y
 	print("splash_furniture: Environment panel %s, chrome claimed %.0f px" % [box, chrome.bottom_inset])
-	if chrome.bottom_inset <= 0.0:
-		_fail("the splash claimed no room, so nothing stepped over the panel")
+	if not is_equal_approx(chrome.bottom_inset, 0.0):
+		_fail("the home screen claimed %.0f px, so the toggle row moved off its usual corner"
+			% chrome.bottom_inset)
 
 	# --- the export button must not be on the home screen at all
 	var btn: Control = chrome.exporter._btn
@@ -72,17 +80,28 @@ func _run() -> void:
 		print("splash_furniture: %-14s %s%s" % [name, r, "  <-- ON THE PANEL" if hit else "  clear"])
 		if hit:
 			_fail("the %s toggle overlaps the Environment panel" % name)
+		# The same corner as in every mode: 28 px off the bottom edge.
+		if not is_equal_approx(r.end.y, floor_y - 28.0):
+			_fail("the %s toggle sits at %.0f, not on the row every mode uses (%.0f)"
+				% [name, r.end.y, floor_y - 28.0])
 
-	# --- the claim must TRACK the panel, not be a number written down once
-	var before: float = chrome.bottom_inset
-	env._toggle_collapsed()
-	for _i in 6:
-		await get_tree().process_frame
-	var after: float = chrome.bottom_inset
-	print("splash_furniture: collapse toggled the claim %.0f -> %.0f px" % [before, after])
-	if is_equal_approx(before, after):
-		_fail("collapsing the panel did not move the claim - it is not tracking the size")
-	env._toggle_collapsed()          # leave the user's remembered state alone
+	# --- at ANY height the panel stays clear of the row: collapsed, expanded, a detail open
+	for step in ["collapsed", "expanded", "detail open"]:
+		match step:
+			"collapsed", "expanded":
+				env._toggle_collapsed()
+			"detail open":
+				if not env._rows.is_empty():
+					env._toggle_detail(String(env._rows[0].get("key", "")))
+		for _i in 6:
+			await get_tree().process_frame
+		var b := env.get_global_rect()
+		print("splash_furniture: panel %-12s %s" % [step, b])
+		if b.end.y > floor_y - Chrome.ROW_TOP:
+			_fail("the panel (%s) reaches %.0f, into the toggle row at %.0f"
+				% [step, b.end.y, floor_y - Chrome.ROW_TOP])
+	if env._collapsed:
+		env._toggle_collapsed()          # leave the user's remembered state alone
 	for _i in 6:
 		await get_tree().process_frame
 

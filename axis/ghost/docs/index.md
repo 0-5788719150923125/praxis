@@ -48,7 +48,7 @@ core. The commitments:
 
 ## Directory layout
 
-- `project.godot` - Godot 4.6 project; autoloads `Boot`, `Spectrum`, `Director`; `scenes/main.tscn` is the entry scene.
+- `project.godot` - Godot 4.7 project; autoloads `Settings`, `Boot`, `Spectrum`, `Director`, `Provisioner`; `scenes/main.tscn` is the entry scene.
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](../docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalog - one class per scene. See [docs/scenes.md](../docs/scenes.md).
@@ -82,8 +82,11 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`main.gd`](../scripts/main.gd) **main** - ghost entry point.
 - [`boot.gd`](../scripts/boot.gd) **boot** - Boot - the earliest hook (first autoload), for things that must happen before the window is ever drawn into. In export-render mode (--export) it keeps the render window out of the way as early as GDScript can - off-screen, no focus - so it barely flickers into view before the render takes over. ...
 - [`subprocess.gd`](../scripts/subprocess.gd) **Subprocess** - every external program ghost starts, in one place, with one promise: A CHILD NEVER OUTLIVES THE APP THAT STARTED IT.
-- [`deps.gd`](../scripts/deps.gd) **Deps** - every external program ghost needs, in one place, with one promise: RESOLUTION AND REPORTING ARE THE SAME CODE.
+- [`deps.gd`](../scripts/deps.gd) **Deps** - every external program and environment ghost uses, in one place, with one promise: RESOLUTION AND REPORTING ARE THE SAME CODE.
 - [`deps_panel.gd`](../scripts/deps_panel.gd) **DepsPanel** - the environment readout in the home screen's bottom-right corner.
+- [`provision.gd`](../scripts/provision.gd) **Provision** - what ghost installs for itself, and the one door every feature asks through.
+- [`provisioner.gd`](../scripts/provisioner.gd) **provisioner** - Provisioner (autoload) - installs, updates and reports on everything ghost fetches for itself.
+- [`provision_badge.gd`](../scripts/provision_badge.gd) **provision_badge** - ProvisionBadge - a small notice at the top of the frame while ghost is installing or updating its own dependencies, in every mode. Chrome furniture, because an install can start from anywhere: the voice's environment from the Generative panel, FFmpeg from a clip opened on a first run, an update at ...
 - [`chrome.gd`](../scripts/chrome.gd) **Chrome** - the shared session furniture every mode of ghost carries.
 - [`side_panel.gd`](../scripts/side_panel.gd) **SidePanel** - a mode's control panel, which CANNOT outgrow the window.
 - [`console.gd`](../scripts/console.gd) **ConsoleView** - The in-app console - a live tail of Godot's own log file. print(), push_warning(), push_error() and engine SCRIPT ERRORs all land in user://logs/godot*.log via the engine's default file logging, but anyone launching ghost as a compiled app or from the Godot launcher never sees that stream - it used ...

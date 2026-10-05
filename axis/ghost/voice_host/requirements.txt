@@ -13,10 +13,12 @@
 #   torch,           not needed for inference; onnxruntime is the whole runtime.
 #   transformers
 #
-# onnxruntime is MIT, numpy is BSD-3-Clause.
+# onnxruntime is MIT, numpy is BSD-3-Clause. ghost builds this environment with uv on its own
+# Python (see the voice_venv row in scripts/deps.gd) and upgrades it with the rest of its
+# dependencies; the floors below are the versions it was last verified with.
 
-onnxruntime>=1,<2
-numpy>=1.24
+onnxruntime>=1.30,<2
+numpy>=2.5.3
 
 # eSpeak-NG, used ONLY as a phonemizer for the neural path.
 #
@@ -32,8 +34,8 @@ numpy>=1.24
 # a personal, non-distributed build, which is what ghost is; if that ever
 # changes, set phonemizer="ghost" and the ARPAbet path takes over with no other
 # code change. ghost's own [K AE T] overrides take precedence either way.
-espeakng-loader>=0.2
-phonemizer>=3.2
+espeakng-loader>=0.2.4
+phonemizer>=3.4
 
 # Part-of-speech tagging, used ONLY to choose between a homograph's readings.
 #
@@ -54,9 +56,9 @@ phonemizer>=3.2
 # permissive. The tagger MODEL and the corpus are data and are not in the wheel -
 # both are fetched once on first use into <venv>/nltk_data, and everything degrades
 # to the old behavior if that never happens.
-nltk>=3.8
+nltk>=3.10.3
 
 # Build/patch time only, and optional: used once per voice to expose the VITS
 # duration predictor as a graph output so we get exact per-phoneme timings.
 # Apache 2.0. Not required to synthesize.
-onnx>=1.15
+onnx>=1.23.1

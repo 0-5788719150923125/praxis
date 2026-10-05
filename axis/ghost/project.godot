@@ -28,6 +28,7 @@ Settings="*res://scripts/settings.gd"
 Boot="*res://scripts/boot.gd"
 Spectrum="*res://scripts/spectrum.gd"
 Director="*res://scripts/director.gd"
+Provisioner="*res://scripts/provisioner.gd"
 
 [display]
 

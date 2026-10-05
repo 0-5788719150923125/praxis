@@ -91,7 +91,7 @@ Design and falsifiable rungs: [next/voice.md](../../next/voice.md) at the repo r
 
 ## Masking: the video effects editor
 
-A second app surface alongside the visualizer (`--mask-edit <video-or-session>`), for keying effects over footage. The source can be a file or a **YouTube URL** - paste one into the splash's source field and the editor downloads it itself (yt-dlp in a venv ghost bootstraps under `user://ytdlp_venv`), then transcodes it like any local clip.
+A second app surface alongside the visualizer (`--mask-edit <video-or-session>`), for keying effects over footage. The source can be a file or a **YouTube URL** - paste one into the splash's source field and the editor downloads it itself (yt-dlp, in the environment ghost builds for it the first time a URL is pasted), then transcodes it like any local clip.
 
 A session is a stack of **markers** over a source video. A marker is not a free-form dictionary but a fixed-schema scalar **vector**, so a session's marker list is literally a small matrix - the same shape as the harmonic-signature vectors elsewhere in this project, inspectable the same way. **Every marker is one layer**, and layers stack chronologically with their own ramp/damp envelopes: keying a second color adds to the first instead of silently rewriting it, and the subtractive half is explicit (`restore` for one color, `clear` for all). Sessions autosave under `masks/`, carry undo/redo and multi-track lanes with per-track trim and shift, and render to video headlessly.
 
@@ -160,7 +160,7 @@ Distinct from the driving modes - this is how frames get produced.
 
 Top-level layout; the per-script map (every class, one line each) is [docs/index.md](docs/index.md).
 
-- `project.godot` - Godot 4.6 project; autoloads `Boot`, `Spectrum`, `Director`; `scenes/main.tscn` is the entry scene.
+- `project.godot` - Godot 4.7 project; autoloads `Settings`, `Boot`, `Spectrum`, `Director`, `Provisioner`; `scenes/main.tscn` is the entry scene.
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalog - one class per scene. See [docs/scenes.md](docs/scenes.md).
@@ -277,7 +277,7 @@ The `eye → two_eyes → eye_prism → two_prisms → prism_swarm` scenes come 
 
 ## Running it
 
-Open `project.godot` in Godot 4.6 and press play, or from the command line:
+Open `project.godot` in Godot 4.7 and press play, or from the command line:
 
 ```
 godot --path axis/ghost                            # the splash: import a song, pick a mode
@@ -289,47 +289,57 @@ godot --path axis/ghost -- --mask-edit clip.mp4    # masking: the video effects 
 godot --path axis/ghost -- --no-splash             # auto mode, bundled/no audio
 ```
 
-Any of `--audio` / `--scene` / `--storyboard` / `--synth` / `--mask-edit` / `--no-splash` boots straight past the splash. `--audio` accepts `.wav`, `.mp3`, `.ogg`, and `.flac` (FLAC has no runtime loader in Godot, so it is transcoded via `ffmpeg`, which must be on `PATH`). Every flag, including the internal ones the exporter and bake runner pass between processes: [docs/cli.md](docs/cli.md).
+Any of `--audio` / `--scene` / `--storyboard` / `--synth` / `--mask-edit` / `--no-splash` boots straight past the splash. `--audio` accepts `.wav`, `.mp3`, `.ogg`, and `.flac` (FLAC has no runtime loader in Godot, so it is transcoded via FFmpeg, which ghost installs itself). Every flag, including the internal ones the exporter and bake runner pass between processes: [docs/cli.md](docs/cli.md).
 
 Controls: `Space` next scene · `F11` full-screen · `` ` `` feedback · `>_` log console · `Esc` quit.
 
 ### What it needs installed
 
-Godot 4.6+ and nothing else, to watch the show. Everything past that is a program
-ghost shells out to, and the home screen lists all of them in the bottom-right with
-their versions and resolved paths - click a row for what it is used for and the
-install command for your platform, or run the same report from a terminal:
+Godot 4.7, and nothing else. Everything ghost runs beyond the engine, it installs and
+keeps current itself, under its own data directory - never system-wide and never into
+your own environments:
+
+- **FFmpeg** (with ffprobe) - Masking, video export, film panels, and decoding FLAC and
+  some MP3s. The newest release build, checked against its published SHA-256: Martin
+  Riedl's static builds on Linux and macOS, Gyan Doshi's on Windows, BtbN's on Windows
+  on ARM.
+- **uv**, from PyPI, which installs **Python** (the newest CPython 3.14) and builds one
+  environment per feature from it: the Generative voice, the clown and umbra trackers,
+  URL clip import (yt-dlp, with Deno for YouTube's download challenges), and the tablet's
+  page capture (Playwright and its Chromium).
+
+uv, FFmpeg and Python download in the background the first time ghost opens; a
+feature's environment is built the first time you use that feature. While anything is
+downloading or installing, a notice at the top of the screen says what and how far
+along, and the home screen's Environment panel (bottom-right) lists every piece with
+its version - click a row for what it is for, where it lives, and why it failed if it
+did. With **keep up to date** ticked there, ghost checks for newer releases once a day
+at launch. The same report, and an install from a terminal:
 
 ```
-godot --headless --path axis/ghost -- --deps
+godot --headless --path axis/ghost -- --deps             # what is installed, and where
+godot --headless --path axis/ghost -- --provision        # install uv, FFmpeg and Python now
+godot --headless --path axis/ghost -- --provision all    # ...and every feature's environment
+godot --headless --path axis/ghost -- --provision update # bring everything installed up to date
 ```
 
-- **FFmpeg** (with **ffprobe**) - Masking, video export, and decoding FLAC and some MP3s.
-- **Python 3**, with its `venv` and `pip` modules - the Generative voice, the clown
-  effect's face tracking, and URL clip import. Debian and Ubuntu split `python3-venv`
-  and `python3-pip` into separate packages; the panel checks for them separately
-  because that split is the usual reason a first run fails.
-- **Deno or Node** (optional) - YouTube's nsig challenge. Imports work without one,
-  at YouTube's punitive throttle.
-- **setpriv** (optional, Linux) - lets the kernel kill ghost's background programs
-  when ghost dies, rather than only on a clean quit.
+A few things stay the machine's own, and the panel shows the command for each: on Linux,
+`setpriv` and `fallocate` (part of util-linux, on every distribution) and, optionally,
+`xvfb-run`, which gives a video export a display of its own; and the **Claude Code** and
+**Codex** CLIs behind the Assistant, the tarot mode's writers and the book's
+illustrations, which keep their own logins.
 
 Linux, macOS and Windows are all meant to work, and nothing requires a Unix shell:
-background programs are launched directly, and where output has to be redirected,
-ghost does it itself (PowerShell on Windows for the AI-assistant features). ghost is
-developed on Linux, though, so Windows and macOS are the least exercised - if
-something fails there, the Environment panel is the first place to look.
+background programs are launched directly, and where output has to be redirected, ghost
+does it itself (PowerShell on Windows for the AI-assistant features). ghost is developed
+on Linux, though, so Windows and macOS are the least exercised - if something fails
+there, the Environment panel is the first place to look. On an Intel Mac the voice and
+the trackers are unavailable (their libraries publish no build for it), and on Windows
+on ARM the trackers and URL import are.
 
-Python packages are never installed system-wide or into your own environment: each
-feature gets a private virtualenv under the user data directory, built the first
-time that feature is used. The panel lists those too, with what they will cost to
-download. Nothing is fetched until you open the mode that needs it.
-
-Programs are resolved by [`scripts/deps.gd`](scripts/deps.gd), which searches `PATH`
-*and* the places each platform actually installs things - a GUI-launched app does
-not inherit a shell's `PATH`, so a Homebrew `ffmpeg` in `/opt/homebrew/bin` is
-invisible to a bare name on macOS. Same resolver for the panel and for every
-subprocess, so the panel cannot report green while a launch fails.
+What is installed is described in [`scripts/deps.gd`](scripts/deps.gd) and fetched by
+[`scripts/provisioner.gd`](scripts/provisioner.gd). The same resolver serves the panel
+and every subprocess, so the panel cannot report green while a launch fails.
 
 If no audio is found it still runs - scenes animate on an idle clock with zeroed features, so a scene can be developed with no song loaded.
 
