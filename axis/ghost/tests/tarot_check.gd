@@ -24,6 +24,16 @@ extends SceneTree
 ##   never the whole episode - that is Generate's.
 ## - THE READER SEES THE PAINTING: a card's passage waits for its picture and is sent it (upside
 ##   down when reversed), the close is sent them all, and nothing is sent a picture not yet drawn.
+## - THE TABLE is its own step, set from the plan while looking at the cloth: a new cloth keeps it,
+##   a new plan takes it, no card reaches the set dresser, and its prompt names every shape,
+##   material, ornament and zone the builder knows, with the headroom of each zone.
+## - WHAT IS BUILT is safe whatever was written: junk is dropped or clamped, flames are capped, a
+##   thing stands on y = 0 with a foot to go round, and a candle's flame is lit at its wax's top.
+## - STONES: scattered copies never touch, heaped ones pile up without passing through each other
+##   or the floor, a list of materials goes to the copies in turn, a geode keeps its crystals
+##   inside it, and a play of light is kept only when the shader knows it.
+## - THE CARD STOCK: a die from the seed sets its lightness, the producer is told it, and the
+##   card's name stays readable on whatever stock comes of it.
 
 var _fails := 0
 
@@ -32,7 +42,8 @@ func _init() -> void:
 	# EVERY CHECK MUST REACH ITS END: a script error inside one stops it part way and returns
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
-			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects]:
+			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects, _moves_after_words,
+			_table_step, _things_built, _stones, _card_stock]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -370,6 +381,7 @@ func _redo() -> bool:
 		ep.write_text("image:card:%d" % k, "png")
 	ep.write_text("say:close", "Bye.")
 	ep.write_text("script", "<!-- tarot: shuffle -->")
+	ep.write_json("table", {"things": []})
 	_ok(ep.complete(), "a fully written episode is not complete")
 	ep.invalidate("design:2")
 	for s in ["design:2", "image:card:2", "say:2", "say:3", "say:4", "say:close", "script"]:
@@ -404,7 +416,7 @@ func _helpers() -> bool:
 		"an older look's props did not become its candles: %s" % str(look))
 	_ok(int(objs["candles"]) == TarotTable.MAX_CANDLES, "the candles were not clamped: %d" % int(objs["candles"]))
 	_ok(not objs.has("objects"), "an older look's painted objects reached the table: %s" % str(objs))
-	_ok(TarotTable.on_the_table(objs) == "four lit candles",
+	_ok(TarotTable.on_the_table(objs) == "four lit candles and the reader's own things",
 		"what the reader is told is on the table: %s" % TarotTable.on_the_table(objs))
 	_ok(String((look["frame"] as Dictionary)["style"]) == "line", "an unknown frame was kept")
 	_ok(float(look["foil"]) == 1.0, "foil was not clamped")
@@ -653,8 +665,8 @@ func _pictures() -> bool:
 	return true
 
 
-## NO PAINTED OBJECTS (taken off the table, 2026-10-04): an older plan that names some makes no
-## step for them, and the planner is not asked for any.
+## NO PAINTED OBJECTS: an older plan that names some makes no step for them, and the planner is not
+## asked for any - the things on the table are the set dresser's, modeled (see _table_step).
 func _no_objects() -> bool:
 	var ep := _episode(3)
 	var plan: Dictionary = ep.read_json("plan")
@@ -665,6 +677,23 @@ func _no_objects() -> bool:
 	_ok(ep.steps().has("image:card:3") and ep.steps().has("image:surface"), "the plan's other steps went too: %s" % str(ep.steps()))
 	var p := TarotPrompts.producer("T", "B", 7, 3, true, TarotTable.FACES, TarotTable.FRAMES, [], TarotDeck.standard())
 	_ok(p.has("prompt") and not String(p["prompt"]).contains("\"objects\""), "the planner is still asked for objects")
+	return true
+
+
+## THE CARDS MOVE AFTER THE WORDS: every reader prompt says the table acts only between passages,
+## and none is told to end ON a move - "End on the moment you stop shuffling to pull the first
+## card" got "And there. That's the first one." spoken before the card was out (2026-10-05).
+func _moves_after_words() -> bool:
+	var n := 3
+	var ep := _episode(n)
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief."})
+	var plan: Dictionary = ep.read_json("plan")
+	for step in ["intro", "1", str(n), "close"]:
+		var upto := 0 if step == "intro" else (n if step == "close" else int(step))
+		var said: Array = [] if step == "intro" else prod._said(n if step == "close" else int(step) - 1)
+		var text := String(TarotPrompts.reader("Test Tarot", "A brief.", plan, step, said, prod._drawn(upto), n)["prompt"])
+		_ok(text.contains(TarotPrompts.MOVES), "the %s prompt does not say when the cards move" % step)
+		_ok(not text.contains("End on the moment"), "the %s prompt asks for a passage that ends ON a move" % step)
 	return true
 
 
@@ -692,3 +721,315 @@ func dict_with(d: Dictionary, k: String, v: Variant) -> Dictionary:
 	var o := d.duplicate()
 	o[k] = v
 	return o
+
+
+## THE TABLE STEP: where it sits in the episode, what it is made from and what it takes with it,
+## what the set dresser is told - and that it is told no card, two-sided like the reader's.
+func _table_step() -> bool:
+	var n := 3
+	var ep := _episode(n)
+	var steps := ep.steps()
+	_ok(steps.has("table") and steps.find("table") > steps.find("image:backdrop") and steps.find("table") < steps.find("say:intro"),
+		"the table is not a step between the room and the reading: %s" % str(steps))
+	_ok(ep.needs("table") == ["plan", "image:surface"], "the table is made from %s" % str(ep.needs("table")))
+	for s in ["image:back", "image:surface", "image:backdrop"]:
+		ep.write_text(s, "png")
+	ep.write_json("table", {"things": [{"name": "a cup", "parts": [{"shape": "lathe", "profile": [[0, 0], [3, 0], [3, 5], [0, 5]]}]}]})
+	ep.invalidate("image:surface")
+	_ok(ep.has("table"), "painting a new cloth took the table with it")
+	ep.write_text("image:surface", "png")
+	ep.invalidate("table")
+	_ok(not ep.has("table") and ep.has("say:intro") and ep.has("image:surface"), "setting the table again took more than the table")
+	ep.write_json("table", {"things": []})
+	ep.invalidate("plan")
+	_ok(not ep.has("table"), "a new plan kept the old plan's table")
+	# NO CARD REACHES THE SET DRESSER, through the producer itself
+	ep = _episode(n)
+	ep.write_text("image:surface", "png")
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief."})
+	var names: Array = []
+	for k in range(1, n + 1):
+		names.append(String(prod._card(k)["name"]))
+	var head := TarotTable.headroom(ep.seed)
+	var p := TarotPrompts.set_dresser("Test Tarot", "A brief.", ep.read_json("plan"), ep.seed, head, ["a brass bell"], true)
+	var text := String(p["system"]) + "\n" + String(p["prompt"])
+	var leaks := 0
+	for nm in names:
+		leaks += 1 if text.contains(String(nm)) else 0
+	_ok(leaks == 0, "%d drawn card(s) reached the set dresser" % leaks)
+	var cheat := TarotPrompts.set_dresser("Test Tarot", "A brief. " + " ".join(PackedStringArray(names)), ep.read_json("plan"), ep.seed, head, [], true)
+	var seen := 0
+	for nm in names:
+		seen += 1 if (String(cheat["system"]) + String(cheat["prompt"])).contains(String(nm)) else 0
+	_ok(seen == names.size(), "the set dresser's leak check is blind (%d of %d seen in a prompt that holds them)" % [seen, names.size()])
+	# ...and what it IS told: every word the builder knows, the zones with their headroom, the
+	# candles, what earlier tables held
+	for k in Props.SHAPES:
+		_ok(text.contains("- %s:" % k), "the set dresser is not told the shape %s" % k)
+	for k in Props.MATERIALS:
+		_ok(text.contains("- %s:" % k), "the set dresser is not told the material %s" % k)
+	for k in Props.ORNAMENTS:
+		_ok(text.contains("- %s:" % k), "the set dresser is not told the ornament %s" % k)
+	for k in Props.PLAYS:
+		_ok(text.contains("- %s:" % k), "the set dresser is not told the play of light %s" % k)
+	for z in TarotTable.ZONES:
+		_ok(text.contains("\"%s\": %s; up to %d cm" % [z, String((TarotTable.ZONES[z] as Dictionary)["about"]), int(head[z])]),
+			"the set dresser is not told the zone %s and its headroom" % z)
+	_ok(text.contains("Exactly 1 lit candle,"), "the set dresser is not told how many candles the look has")
+	_ok(text.contains("a brass bell"), "the set dresser is not told what earlier tables held")
+	_ok(int(head["back"]) < int(head["left"]) and int(head["back"]) > 3, "the back holds less height than the sides: %s" % str(head))
+	# THE EXAMPLE IS BUILDABLE, and the format it shows is the format read
+	var ex: Variant = TextGen.extract_json(TarotPrompts.SET_EXAMPLE)
+	_ok(ex is Dictionary and (TarotTable.sanitize_table(ex as Dictionary, {})["things"] as Array).size() == 1,
+		"the format the set dresser is shown does not read back as one thing")
+	# LANDING: junk is refused; a buildable reply is kept as it was written
+	_ok(prod._land_table("no table here") != "", "a reply with no JSON landed as a table")
+	_ok(prod._land_table("{\"things\": [{\"name\": \"a hat\", \"parts\": [{\"shape\": \"hat\"}]}]}") != "",
+		"a table with nothing buildable on it landed")
+	_ok(prod._land_table(TarotPrompts.SET_EXAMPLE) == "" and ep.has("table")
+		and String(((ep.read_json("table") as Dictionary)["things"][0] as Dictionary)["name"]) == "a boxwood chess pawn",
+		"a buildable table did not land as written")
+	return true
+
+
+## WHAT IS BUILT IS SAFE, whatever was written: shapes the builder does not know and junk numbers
+## are dropped or clamped, no more flames than the table allows, every thing on y = 0 with a foot,
+## a candle's flame at the top of its wax, an oversize thing scaled down whole. Built headless (no
+## renderer: meshes and materials only).
+func _things_built() -> bool:
+	var junk := {"materials": {"m": {"kind": "unobtainium", "color": "red", "polish": 9}},
+		"things": [
+			{"name": "nothing at all", "parts": [{"shape": "hat"}, "not a part", {"shape": "lathe", "profile": [[1]]}]},
+			{"name": "a giant", "place": "on the ceiling", "group": 3.0, "turn": "sideways",
+				"parts": [{"shape": "box", "size": [900, 2, "x"], "material": "m", "wick": "yes"},
+					{"shape": "ball", "smooth": "no", "facets": 1, "copies": {"ring": {"count": 2, "face": "no"}}}]},
+			{"name": "candles", "parts": [{"shape": "lathe", "profile": [[0, 0], [1, 0], [1, 8], [0, 8]], "wick": true,
+				"copies": {"ring": {"count": 3, "radius": 4}}}, {"shape": "lathe", "profile": [[0, 0], [1, 0], [1, 8], [0, 8]],
+				"wick": true, "copies": {"line": {"count": 3, "step": [3, 0, 0]}}}]},
+			{"name": "every shape", "parts": [
+				{"shape": "ball", "radius": 2, "lumpy": 0.7, "at": [10, 0, 0]},
+				{"shape": "ball", "size": [3, 2, 3], "facets": true, "at": [-10, 0, 0]},
+				{"shape": "point", "radius": 1, "length": 4, "at": [0, 0, 6]},
+				{"shape": "cluster", "count": 9, "radius": 3, "length": [1, 4], "base": "nowhere"},
+				{"shape": "ring", "radius": 3, "thickness": 0.3, "arc": 200},
+				{"shape": "tube", "path": [[0, 0, 0], [2, 3, 0], [4, 1, 1]], "radii": [0.4, 0.2]},
+				{"shape": "sheet", "outline": "feather", "size": [2, 9], "bend": 0.5, "fold": 0.4},
+				{"shape": "sheet", "points": [[0, 0], [4, 0], [5, 3], [1, 4]]},
+				{"shape": "bloom", "petals": 7, "layers": 3, "radius": 3, "cup": 0.6},
+				{"shape": "geode", "radius": 5, "at": [0, 0, -12]},
+				{"shape": "ball", "size": [2, 1.2, 1.6], "lumpy": 0.5, "material": ["crystal", "stone", {"kind": "metal", "play": "rainbow"}],
+					"copies": {"heap": {"count": 9, "radius": 1.5}, "jitter": 0.8}, "at": [0, 0, 12]},
+				{"shape": "lathe", "profile": [[0, 0], [3, 0], [3.5, 5], [0, 5]], "sides": 6, "lobes": 5, "twist": 90,
+					"ornament": {"kind": "stars", "count": 6, "color": "#ffcc00"}, "copies": {"scatter": {"count": 4, "radius": 5}, "jitter": 1}}]},
+		]}
+	var safe := TarotTable.sanitize_table(junk, {"palette": ["#112233", "#445566", "#778899"]})
+	var things: Array = safe["things"]
+	_ok(things.size() == 3, "junk did not lose exactly the thing with nothing buildable (%d things left)" % things.size())
+	var mats: Dictionary = safe["materials"]
+	_ok(String((mats["m"] as Dictionary)["kind"]) == "painted" and String((mats["m"] as Dictionary)["color"]).begins_with("#")
+		and float((mats["m"] as Dictionary)["polish"]) <= 1.0, "a junk material was kept as written: %s" % str(mats["m"]))
+	var giant: Dictionary = things[0]
+	_ok(String(giant["place"]) == "back" and String(giant["group"]) == "3" and float(giant["turn"]) == 0.0,
+		"a junk place, group or turn was kept: %s, %s, %s" % [giant["place"], giant["group"], giant["turn"]])
+	var flames := 0
+	for p in (things[1] as Dictionary)["parts"]:
+		if bool((p as Dictionary)["wick"]):
+			flames += int(((p as Dictionary)["copies"] as Dictionary).get("count", 1))
+	_ok(flames <= TarotTable.MAX_CANDLES and flames > 0, "%d flames survived (the table allows %d)" % [flames, TarotTable.MAX_CANDLES])
+	for i in things.size():
+		var b := Props.build(things[i], mats, 7 + i)
+		var box: AABB = b["size"]
+		_ok(absf(box.position.y) < 0.0005, "%s does not stand on the cloth (its lowest point at %.4f)" % [(things[i] as Dictionary)["name"], box.position.y])
+		_ok(maxf(box.size.x, maxf(box.size.y, box.size.z)) <= Props.MAX_SIZE * 0.01 + 0.0005,
+			"%s is bigger than anything may be (%s)" % [(things[i] as Dictionary)["name"], str(box.size)])
+		_ok((b["foot"] as PackedVector2Array).size() >= 3 and (b["outline"] as PackedVector2Array).size() >= 3,
+			"%s has no foot or outline" % (things[i] as Dictionary)["name"])
+		_ok(not (b["meshes"] as Array).is_empty(), "%s built no meshes" % (things[i] as Dictionary)["name"])
+		var verts := 0
+		for m in b["meshes"]:
+			var arr := ((m as MeshInstance3D).mesh as ArrayMesh).surface_get_arrays(0)
+			var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var nn: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+			verts += v.size()
+			var bad := 0
+			for j in v.size():
+				if not v[j].is_finite() or not nn[j].is_finite() or absf(nn[j].length() - 1.0) > 0.01:
+					bad += 1
+			_ok(bad == 0 and v.size() % 3 == 0, "%s has %d bad vertices or normals" % [(things[i] as Dictionary)["name"], bad])
+		(b["node"] as Node).free()
+	# A CANDLE'S FLAME at the top of its wax: a 9 cm candle on a 2 cm holder is lit at 11 cm, less its pool
+	var cand := TarotTable.sanitize_table({"things": [{"name": "a candle", "parts": [
+		{"shape": "lathe", "profile": [[0, 0], [3, 0], [3, 2], [0, 2]]},
+		{"shape": "lathe", "profile": [[0, 0], [1.2, 0], [1.2, 9], [0, 9]], "at": [0, 2, 0], "wick": true}]}]}, {})
+	var cb := Props.build(cand["things"][0], cand["materials"], 1)
+	var w: Array = cb["wicks"]
+	_ok(w.size() == 1 and absf((w[0] as Vector3).y - 0.11) < 0.005 and (w[0] as Vector3).y < 0.11
+		and Vector2((w[0] as Vector3).x, (w[0] as Vector3).z).length() < 0.001,
+		"the flame is not lit at the top of the wax: %s" % str(w))
+	(cb["node"] as Node).free()
+	# THE TABLE BEFORE THE SET DRESSER: the look's candles, lit
+	var dt := TarotTable.default_table({"candles": 3, "palette": ["#112233", "#445566", "#778899"]}, 5)
+	var lit := 0
+	for t in dt["things"]:
+		var b := Props.build(t, dt["materials"], 2)
+		lit += (b["wicks"] as Array).size()
+		(b["node"] as Node).free()
+	_ok(lit == 3, "the table before the set dresser lights %d candles, not the look's 3" % lit)
+	return true
+
+
+## STONES, as a handful is set out. Scattered copies never touch, however crowded the handful;
+## heaped ones pile up - some resting on others, none through another or the floor; a part's list
+## of materials goes to its copies in turn, a mesh for each; every vertex knows its copy's middle,
+## for a pattern to center on; a geode keeps its crystals inside it; a play of light is kept only
+## when it is one the shader knows.
+func _stones() -> bool:
+	var spec := Props.sanitize({"materials": {
+			"agate": {"kind": "crystal", "color": "#a0522d", "rings": true, "play": "Flash"},
+			"glass": {"kind": "stone", "color": "#336633", "play": "sparkle", "rings": "yes"}},
+		"things": [
+			{"name": "a crowded handful", "parts": [{"shape": "ball", "size": [2, 1.2, 1.6], "lumpy": 0.5, "material": "agate",
+				"copies": {"scatter": {"count": 16, "radius": 1}, "jitter": 1}}]},
+			{"name": "a heap", "parts": [{"shape": "ball", "size": [2, 1.2, 1.6], "lumpy": 0.5,
+				"material": ["agate", "glass", "crystal"], "copies": {"heap": {"count": 18, "radius": 1.5}, "jitter": 0.6}}]},
+			{"name": "a geode", "parts": [{"shape": "geode", "radius": 7, "rind": 1.2, "length": 2.5, "material": "agate"}]}]},
+		["#112233"])
+	# A REPEAT WRITTEN BESIDE THE PART is read as its copies (a skein's turns were built one of each,
+	# the top one floating) - and one under `copies` still wins
+	var beside := Props.sanitize({"things": [{"name": "a skein", "parts": [
+		{"shape": "ring", "radius": 3.5, "thickness": 0.8, "line": {"count": 4, "step": [0, 0.7, 0]}, "jitter": 0.3},
+		{"shape": "ring", "radius": 3.5, "thickness": 0.8, "line": {"count": 4, "step": [0, 0.7, 0]},
+			"copies": {"line": {"count": 2, "step": [0, 0.7, 0]}}}]}]}, ["#112233"])
+	var bp: Array = (beside["things"][0] as Dictionary)["parts"]
+	_ok(String(((bp[0] as Dictionary)["copies"] as Dictionary).get("kind", "")) == "line" and int(((bp[0] as Dictionary)["copies"] as Dictionary).get("count", 0)) == 4
+		and float(((bp[0] as Dictionary)["copies"] as Dictionary).get("jitter", 0.0)) == 0.3,
+		"a repeat written beside the part was not read as its copies: %s" % str((bp[0] as Dictionary)["copies"]))
+	_ok(int(((bp[1] as Dictionary)["copies"] as Dictionary).get("count", 0)) == 2, "a repeat beside the part overrode the one under `copies`")
+	var mats: Dictionary = spec["materials"]
+	_ok(String((mats["agate"] as Dictionary).get("play", "")) == "flash" and (mats["agate"] as Dictionary)["rings"] == true,
+		"a known play or rings was not kept: %s" % str(mats["agate"]))
+	_ok(not (mats["glass"] as Dictionary).has("play") and (mats["glass"] as Dictionary)["rings"] == false,
+		"an unknown play, or rings that are not true, was kept: %s" % str(mats["glass"]))
+	var things: Array = spec["things"]
+	_ok(things.size() == 3, "%d of 3 stone things survived sanitizing" % things.size())
+	if things.size() != 3:
+		return true
+	# SCATTERED, never touching; HEAPED, piled without passing through
+	for t in [things[0], things[1]]:
+		var part: Dictionary = (t as Dictionary)["parts"][0]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 4
+		var geos := Props._geometry(part, rng)
+		var xforms := Props._placements(part, rng, geos)
+		var bounds := Props._bounds(geos, Transform3D.IDENTITY)
+		var reach := float(bounds["reach"])
+		var tall := float(bounds["high"])
+		_ok(xforms.size() == int((part["copies"] as Dictionary)["count"]), "%s laid out %d copies, not %d" % [t["name"], xforms.size(), part["copies"]["count"]])
+		var touching := 0
+		var through := 0
+		var stacked := 0
+		var below := 0
+		for i in xforms.size():
+			var a: Transform3D = xforms[i]
+			var sa := a.basis.get_scale().x
+			if a.origin.y < -0.0005:
+				below += 1
+			if a.origin.y > tall * 0.4:
+				stacked += 1
+			for j in range(i + 1, xforms.size()):
+				var b: Transform3D = xforms[j]
+				var sb := b.basis.get_scale().x
+				var d := Vector2(a.origin.x - b.origin.x, a.origin.z - b.origin.z).length()
+				if d < (sa + sb) * reach - 0.0002:
+					touching += 1
+				# two in the same place: near in plan AND at the same height
+				if d < (sa + sb) * reach * 0.4 and absf(a.origin.y - b.origin.y) < tall * 0.4:
+					through += 1
+		if String((part["copies"] as Dictionary)["kind"]) == "scatter":
+			_ok(touching == 0, "%d pairs of scattered copies touch" % touching)
+		else:
+			_ok(stacked > 0, "a heap of %d in a 1.5 cm circle did not pile up (none above the floor)" % xforms.size())
+			_ok(through == 0, "%d pairs of heaped copies pass through each other" % through)
+		_ok(below == 0, "%d copies of %s sink below the floor" % [below, t["name"]])
+	# A LIST OF MATERIALS: one mesh for each, its copies in turn; every vertex knows its copy
+	var heap := Props.build(things[1], mats, 3)
+	var colors := {}
+	var counts: Array = []
+	var stray := 0
+	for m in heap["meshes"]:
+		var mi: MeshInstance3D = m
+		colors[str((mi.material_override as ShaderMaterial).get_shader_parameter("color"))] = true
+		var arr := (mi.mesh as ArrayMesh).surface_get_arrays(0)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var c: PackedFloat32Array = arr[Mesh.ARRAY_CUSTOM0] if arr[Mesh.ARRAY_CUSTOM0] is PackedFloat32Array else PackedFloat32Array()
+		counts.append(v.size())
+		if c.size() != v.size() * 4:
+			stray += v.size()
+			continue
+		for i in range(0, v.size(), 37):
+			# a vertex's copy middle is near it: within the reach of one stone
+			if Vector3(c[i * 4], c[i * 4 + 1], c[i * 4 + 2]).distance_to(v[i]) > 0.02:
+				stray += 1
+	_ok((heap["meshes"] as Array).size() == 3 and colors.size() == 3, "a heap in 3 materials built %d meshes in %d colors" % [(heap["meshes"] as Array).size(), colors.size()])
+	_ok(counts.size() == 3 and counts[0] == counts[1] and counts[1] == counts[2], "18 copies in 3 materials did not go 6 to each: %s vertices" % str(counts))
+	_ok(stray == 0, "%d vertices do not know their copy's middle" % stray)
+	(heap["node"] as Node).free()
+	# THE GEODE: its lining in the part's material, its rock in plain stone, the crystals inside
+	var geo := Props.build(things[2], mats, 5)
+	var meshes: Array = geo["meshes"]
+	_ok(meshes.size() == 2, "a geode built %d meshes, not its lining and its rock" % meshes.size())
+	if meshes.size() == 2:
+		var top := [-INF, -INF]
+		var wide := [0.0, 0.0]
+		for k in 2:
+			var v: PackedVector3Array = ((meshes[k] as MeshInstance3D).mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+			for q in v:
+				top[k] = maxf(top[k], q.y)
+				wide[k] = maxf(wide[k], Vector2(q.x, q.z).length())
+		var rock_kind := int(((meshes[1] as MeshInstance3D).material_override as ShaderMaterial).get_shader_parameter("kind"))
+		_ok(rock_kind == int((Props.MATERIALS["stone"] as Dictionary)["code"]), "a geode's rock is not plain stone (kind %d)" % rock_kind)
+		_ok(float(top[0]) <= float(top[1]) + 0.002 and float(wide[0]) < float(wide[1]),
+			"a geode's crystals stand out of it (lining to %.3f m high, %.3f wide; rock %.3f, %.3f)" % [top[0], wide[0], top[1], wide[1]])
+	_ok(absf((geo["size"] as AABB).position.y) < 0.0005, "a geode does not rest on the cloth")
+	(geo["node"] as Node).free()
+	return true
+
+
+## THE CARD STOCK: a die sets its lightness (asked only for "card stock", the producer printed every
+## deck on cream), the producer is told its own episode's, and the name reads on any stock.
+func _card_stock() -> bool:
+	# its own rng: the dice drawn before it keep the values they had for every existing seed
+	var d1 := TarotPrompts.dice(1)
+	var d2 := TarotPrompts.dice(895229)
+	_ok(String(d1["place"]) == "47.0°N 35.6°W" and int(d1["year"]) == 1272 and int(d1["hue"]) == 18
+		and int(d1["hour"]) == 16 and int(d1["direction"]) == 2, "the stock die moved the other dice: %s" % str(d1))
+	_ok(String(d2["place"]) == "45.0°S 177.8°W" and int(d2["year"]) == 510 and int(d2["hue"]) == 12
+		and int(d2["hour"]) == 4 and int(d2["direction"]) == 12, "the stock die moved the other dice: %s" % str(d2))
+	var dark := 0
+	var light := 0
+	for s in 200:
+		var v := int(TarotPrompts.dice(s)["stock"])
+		dark += 1 if v < 30 else 0
+		light += 1 if v > 70 else 0
+	_ok(dark >= 30 and light >= 30, "the stock die does not reach both ends: %d dark and %d light of 200" % [dark, light])
+	# the producer is told ITS episode's lightness - two-sided: another seed's is not in its prompt
+	var mine := int(TarotPrompts.dice(1)["stock"])
+	var other := 2
+	while int(TarotPrompts.dice(other)["stock"]) == mine:
+		other += 1
+	var said := "lightness of about %d out of 100"
+	var p := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, [])["prompt"])
+	_ok(p.contains(said % mine), "the producer is not told the stock's lightness")
+	_ok(not p.contains(said % int(TarotPrompts.dice(other)["stock"])), "the producer is told another episode's stock")
+	# THE NAME READS ON ANY STOCK: an ink that does not is moved until it does, either way round...
+	for pair in [["#14121a", "#1d1a2b"], ["#efe6d2", "#f2e4c4"], ["#7a7a7a", "#808080"]]:
+		_ok(TarotTable.contrast(Color.html(pair[1]), Color.html(pair[0])) < TarotTable.INK_CONTRAST,
+			"control: %s on %s already reads" % [pair[1], pair[0]])
+		var f: Dictionary = TarotTable.sanitize_look({"frame": {"stock": pair[0], "ink": pair[1]}})["frame"]
+		_ok(TarotTable.contrast(TarotTable.color(String(f["ink"])), TarotTable.color(String(f["stock"])))
+			>= TarotTable.INK_CONTRAST, "ink %s on stock %s was left unreadable (now %s)" % [pair[1], pair[0], f["ink"]])
+	# ...and one that already reads is the producer's own, untouched
+	var kept: Dictionary = TarotTable.sanitize_look({"frame": {"stock": "#e6d8bb", "ink": "#3A2A20"}})["frame"]
+	_ok(String(kept["ink"]) == "#3A2A20", "a readable ink was changed: %s" % kept["ink"])
+	print("tarot_check: card stock - lightness die %d dark / %d light of 200, ink kept readable" % [dark, light])
+	return true

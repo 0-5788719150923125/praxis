@@ -46,9 +46,9 @@ const DRAW := 3.4
 ## Before the FIRST card: the deck, shuffled in the middle of the table, is squared and pushed to
 ## the side it is drawn from, clearing the middle for the spread.
 const PUSH := 1.3
-## A jumper: it flies out of the shuffle and lands, the reader looks at it a moment, then it is
-## picked up and shown as a drawn card is.
-const JUMP := 4.2
+## A jumper: one more riffle, and the card flies out of it and lands; the reader looks at it a
+## moment, then it is picked up and shown as a drawn card is.
+const JUMP := 5.0
 ## The spread, once the last card is down: a moment to take it in before the close.
 const SETTLE := 1.8
 

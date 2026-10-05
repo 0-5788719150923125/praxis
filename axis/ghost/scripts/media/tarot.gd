@@ -55,10 +55,10 @@ const PRESENT_DIST := 0.23
 const PRESENT := Vector2(-0.087, 0.012)
 const PAGE := Vector2(0.088, 0.012)
 const PAGE_H := 0.126
-const VFOV := 42.0
+const VFOV := TarotTable.VFOV
 
 ## THE PHASES of each action, in its own seconds. They sum to [TarotScript]'s rests, which is
-## what the voice waits: DRAW = 3.4, LAY = 1.7, JUMP = 4.2.
+## what the voice waits: DRAW = 3.4, LAY = 1.7, JUMP = 5.0.
 const SQUARE := 0.45          # the deck squares before a card leaves it
 const SLIDE_END := 1.0        # the top card slides off toward the reader
 const FLIP_END := 1.9         # ...lifts and turns over
@@ -67,10 +67,15 @@ const PAGE_IN := Vector2(2.6, 3.4)
 const LAY_PAGE_OUT := 0.5
 const LAY_MOVE := Vector2(0.15, 1.45)
 const LAY_END := 1.7
-const JUMP_FLY := Vector2(0.1, 1.2)
-const JUMP_REST := 2.5
-const JUMP_RISE := 3.5
-const JUMP_PAGE := Vector2(3.4, 4.2)
+## A JUMPER FLIES OUT OF A SHUFFLE (2026-10-05: "that jump should probably happen during a shuffle -
+## not when the cards are just sitting there on the table, doing nothing"): its action opens with
+## one more riffle, and the card springs off the top of a half while the halves are falling. The
+## riffle, the flight, the card lying there, its rise, its page.
+const JUMP_RIFFLE := 2.4
+const JUMP_FLY := Vector2(1.15, 2.25)
+const JUMP_REST := 3.3
+const JUMP_RISE := 4.3
+const JUMP_PAGE := Vector2(4.2, 5.0)
 ## Lead and tail around each action group, as the tablet's: a beat after the last word before
 ## the cards move, and they are still a beat before the next word.
 ## HOW A READER SHUFFLES: in RUNS - several riffles, a string of cuts, a few overhand passes,
@@ -82,7 +87,7 @@ const RUNS := {
 	"riffle": {"weight": 3.0, "n": [2, 4], "dur": [2.2, 2.7], "gap": [0.2, 0.55]},
 	"overhand": {"weight": 2.0, "n": [2, 5], "dur": [2.1, 2.6], "gap": [0.05, 0.3]},
 	"cut": {"weight": 2.0, "n": [2, 5], "dur": [1.15, 1.5], "gap": [0.05, 0.25]},
-	"wash": {"weight": 0.9, "n": [1, 1], "dur": [13.0, 16.0], "gap": [0.0, 0.0]},
+	"wash": {"weight": 0.9, "n": [1, 1], "dur": [26.0, 32.0], "gap": [0.0, 0.0]},
 }
 ## The pause after a run: mostly a few seconds, now and then a long linger - median ~3 s.
 const IDLE_LOG := Vector2(1.1, 0.55)
@@ -91,6 +96,9 @@ const IDLE_RANGE := Vector2(1.6, 18.0)
 const LINGER_CHANCE := 0.15
 ## A wash is sampled at this rate once, when it is planned, and posed by lookup.
 const WASH_HZ := 20.0
+## The least time a wash needs to spread, mix a little and gather (seconds): with less before the
+## first card, the deck is not washed at all.
+const WASH_ROOM := 9.0
 ## A card lying on the cloth in a wash: its center this high - clear of the cloth (at 0.6 mm) by a
 ## hair, so the weave never shows through it.
 const WASH_FLOOR := 0.0006 + 0.00035 + 0.0002
@@ -101,9 +109,11 @@ const PUSH_SLIDE := 0.85
 const TURN_CHANCE := 0.6
 const TURN := 0.75
 const TURN_HOLD := Vector2(1.1, 1.8)
-## Where a candle wants to stand on the table: (distance out to the side, depth) - flanking the
-## cloth, toward its back.
-const CANDLE_AIM := Vector2(0.27, -0.17)
+## How far apart things stand on the table (meters): any two, and two of one group.
+const THING_GAP := 0.014
+const GROUP_GAP := 0.004
+## How far a card sliding across the cloth keeps from a thing's foot (meters).
+const FOOT_MARGIN := 0.004
 ## HOW HOT A CANDLE'S POOL MAY BURN: its light times the hottest spot of cloth round it - the
 ## cloth's linear luminance there over the flame's falloff (its height over the distance squared).
 ## The key's light on a felt of luminance 0.18 is the measure - it reads as a candle. On pale pine
@@ -123,6 +133,9 @@ const FILL_ENERGY := 0.35
 ## The render layer of the first candle's body (the next is the next bit), so each flame can leave
 ## its own candle out of its shadows - and only its own: a candle stands in the key's light.
 const CANDLE_LAYER := 1 << 12
+## The render layer of a thing with no flame: off the cloth's layer, so the shade a thing presses
+## into the cloth falls on the cloth alone.
+const THING_LAYER := 1 << 1
 ## The intro's focus pull: it starts this long before the shuffle and takes this long after it
 ## (seconds), from a lens this soft (CameraAttributesPractical.dof_blur_amount).
 const FOCUS_PULL := Vector2(1.4, 1.6)
@@ -214,14 +227,23 @@ var _cloth_mat: StandardMaterial3D
 var _backdrop: MeshInstance3D
 var _backdrop_mat: StandardMaterial3D
 var _props: Node3D
+var _probe: ReflectionProbe
+var _probe_nudge := 1.0
 var _flames: Array = []             # [{mesh, light, base, light_base, energy, flicker}]
 var _glows: Array = []              # [{light, base, energy, flicker}] - candles in the room, out of shot
 var _lamp_base := 1.6                 # the lamp's light before a candle takes the key from it
+var _key_flame := -1                  # the key: the flame that leads the light, or -1 for the lamp
 var _lum := PackedFloat32Array()      # the cloth's linear luminance, coarse (see _cloth_lum); empty: no picture
 var _heat_cells := {}                 # grid cell -> its heat at HEAT_H, for this build
 var _contact_tex: Texture2D = null
 var _lit_cloth: Texture2D = null      # the cloth the table was last lit for
-var _standing: Array = []             # what stands on the table: footprints (x by z), for a wash to go round
+var _shuffle_room := INF             # how long the shuffle has, from its start to the first card
+var _standing: Array = []             # what stands on the table: convex feet (x by z), for a wash to go round
+var _standing_c := PackedVector2Array()   # ...their middles
+var _standing_r := PackedFloat32Array()   # ...and how far they reach from them
+var _things: Array = []               # what stood: [{name, group, place, node, outline, bb, rect, foot, lit, flames, meshes}]
+var _collide := true                  # cards go round what stands (off only for a gate's control)
+var _table_mt := -2                   # the table file's time when it was last built (-1: none)
 var _stage_was := {}                  # the stage's own settings, given back on leaving it
 var _deck: Array = []               # DECK_N MeshInstance3D, bottom first
 var _cards: Array = []              # one MeshInstance3D per drawn card
@@ -262,8 +284,9 @@ var _textures := {}
 func mount(st: SubViewport) -> void:
 	super.mount(st)
 	# EDGES: the deck's stacked card edges and the shadow edges stair-stepped. 4x multisampling on
-	# the stage (a light scene - cheap), and the one shadow-casting light given a whole quadrant of
-	# a bigger atlas. Given back when the table leaves the stage.
+	# the stage (a light scene - cheap), and a bigger atlas whose first quadrant is one whole slot,
+	# for the light whose shadows cover the most; the other lights take the next quadrant's four
+	# (every candle and the lamp cast: four candles at most). Given back when the table leaves.
 	_stage_was = {"msaa": st.msaa_3d, "atlas": st.positional_shadow_atlas_size,
 		"quad": st.positional_shadow_atlas_quad_0}
 	st.msaa_3d = Viewport.MSAA_4X
@@ -332,6 +355,13 @@ func _build_world() -> void:
 	_lamp.spot_angle_attenuation = 2.2
 	_lamp.shadow_enabled = true
 	_lamp.shadow_blur = 1.6
+	# A TABLETOP'S BIASES, as the candles' are. At Godot's own (made for rooms) the depth and normal
+	# biases came to millimeters at the lamp's distance - more than a bowl's floor stands off the
+	# cloth - so anything low cast nothing, a bowl only its rim's ring (a crescent), and taller things
+	# a shadow standing off their feet. Softened by the blur alone: a spot's light_size threw a white
+	# glare off a geode's rim facing it.
+	_lamp.shadow_bias = 0.005
+	_lamp.shadow_normal_bias = 0.15
 	_root3.add_child(_lamp)
 	_fill = DirectionalLight3D.new()
 	_fill.light_energy = 0.12
@@ -375,6 +405,18 @@ func _build_world() -> void:
 
 	_props = Node3D.new()
 	_root3.add_child(_props)
+	# WHAT THE THINGS REFLECT: the table and the room, caught once when the table is set (see
+	# _reflect). Metal with nothing to reflect read as flat paint. The things alone take it: the
+	# cards and the cloth keep the light they were tuned under.
+	_probe = ReflectionProbe.new()
+	_probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	_probe.size = Vector3(1.9, 1.0, 1.4)
+	_probe.position = Vector3(0.0, 0.2, -0.05)
+	_probe.box_projection = true
+	_probe.max_distance = 5.0
+	_probe.enable_shadows = true
+	_probe.reflection_mask = THING_LAYER | (CANDLE_LAYER * 0xF)
+	_root3.add_child(_probe)
 
 	_card_mesh = _make_card_mesh(CARD, CARD_T, CARD_R)
 	_edge_mat = StandardMaterial3D.new()
@@ -570,9 +612,11 @@ func _ensure_doc() -> void:
 	_follow.reset(spoken, start_si, _estimated_times(spoken.size()))
 	_built_n = -1
 	_sched = []
+	var t0 := Time.get_ticks_msec()
 	_build_episode()
-	print("ghost: tarot table - %s #%d, %d cards, %d actions" % [String(pay.get("show", "?")), _seed,
-		(pay.get("cards", []) as Array).size(), (_parse.get("actions", []) as Array).size()])
+	print("ghost: tarot table - %s #%d, %d cards, %d actions, %d things (built in %d ms)" % [String(pay.get("show", "?")), _seed,
+		(pay.get("cards", []) as Array).size(), (_parse.get("actions", []) as Array).size(), _things.size(),
+		Time.get_ticks_msec() - t0])
 
 
 ## Each spoken word's time along the reading as a voice would say it - the past a mid-way start
@@ -603,28 +647,18 @@ func _build_episode() -> void:
 	# deck's lettering (an uncial deck turned "Truthful" into "Truchful")
 	_title.face = TarotTable.font("roman")
 	_title.italic = TarotTable.font(TarotTable.BOOK_ITALIC)
+	var lay := TarotTable.sample_layout(rng)
 	# THE CAMERA: the reader's eye, a little different every episode
-	# shallow enough that the room always shows past the table's far edge (at 48 it was a sliver)
-	_pitch = rng.randf_range(34.0, 42.0)
-	var dist := rng.randf_range(0.5, 0.56)
-	var yaw := deg_to_rad(rng.randf_range(-3.5, 3.5))
-	var target := Vector3(rng.randf_range(-0.01, 0.01), 0.0, -0.05)
-	var p := deg_to_rad(_pitch)
-	var eye := target + Vector3(sin(yaw) * cos(p), sin(p), cos(yaw) * cos(p)) * dist
-	_cam_base = Transform3D(Basis.looking_at(target - eye, Vector3.UP), eye)
+	_pitch = float(lay["pitch"])
+	_cam_base = lay["camera"]
 	_cam.transform = _cam_base
-	_cam.fov = VFOV + rng.randf_range(-1.5, 1.5)
-	# a draw kept where the far blur's distance was sampled, so every draw after it - the lamp,
-	# the deck, the spread - lands where it did for episodes already made
-	rng.randf_range(0.45, 0.75)
+	_cam.fov = float(lay["fov"])
 	# THE LIGHT: the look's own, from above and to one side
 	var lc := TarotTable.color(String((_look.get("light", {}) as Dictionary).get("color", "#ffb36b")))
 	_lamp.light_color = Color(1, 1, 1).lerp(lc, 0.55)
-	var side := -1.0 if rng.randf() < 0.6 else 1.0
-	# low enough, and far enough to one side, that what stands on the table throws a shadow you see
-	_lamp.position = Vector3(side * rng.randf_range(0.4, 0.6), rng.randf_range(0.75, 0.95), rng.randf_range(-0.35, -0.1))
+	_lamp.position = lay["lamp"]
 	_lamp.look_at(Vector3(0.0, 0.0, -0.1), Vector3.UP)
-	_lamp.light_energy = rng.randf_range(1.3, 1.9)
+	_lamp.light_energy = float(lay["lamp_energy"])
 	_lamp_base = _lamp.light_energy
 	var pal: Array = _look.get("palette", TarotTable.FALLBACK_PALETTE)
 	var dark := TarotTable.color(String(pal[0]))
@@ -632,17 +666,14 @@ func _build_episode() -> void:
 	_env.ambient_light_color = Color(0.5, 0.5, 0.5).lerp(dark.lightened(0.4), 0.35)
 	_fill.light_color = Color(0.75, 0.8, 1.0) if String((_look.get("light", {}) as Dictionary).get("warmth", "warm")) == "warm" else lc
 	# THE DECK, squared where the reader keeps it
-	_deck_base = Vector3(rng.randf_range(0.17, 0.23) * (1.0 if rng.randf() < 0.7 else -1.0), 0.0,
-		rng.randf_range(0.04, 0.07))
+	_deck_base = lay["deck"]
 	# SHUFFLED IN THE MIDDLE, in front of the reader, and pushed to its side before the first card
-	_mid = Vector3(rng.randf_range(-0.015, 0.015), 0.0, rng.randf_range(-0.05, -0.02))
+	_mid = lay["mid"]
 	_cur_base = _mid
 	_slot_jit = []
 	for i in DECK_N + 1:
 		_slot_jit.append(Vector3(rng.randf_range(-0.0007, 0.0007), rng.randf_range(-0.0007, 0.0007),
 			deg_to_rad(rng.randf_range(-1.3, 1.3))))
-	_move_rng.seed = hash([_seed, "tarot-moves"])
-	_moves = []
 	# THE CARDS
 	for c in _cards:
 		(c as Node).queue_free()
@@ -692,10 +723,8 @@ func _build_episode() -> void:
 	_jump_land = _mid + Vector3(-signf(_deck_base.x) * 0.16, 0.0, 0.035)
 	# the cloth's lightness before anything stands on it: a candle looks for dark cloth
 	_lum = _cloth_lum(String(_pay.get("dir", "")).path_join("surface.png"))
-	_build_props(rng)
-	# the chain made now, wash plans and all, rather than a frame at a time while it plays - and
-	# after the things on the table stand, so a wash's cards go round them, never under a candle
-	_move_at(120.0)
+	_build_table()
+	_plan_moves()
 	_place_backdrop()
 	_poll_pictures()
 	for vp in _faces:
@@ -757,9 +786,20 @@ func _poll_pictures(force := false) -> void:
 	# be playing) lights the table again
 	if _cloth_mat.albedo_texture != _lit_cloth:
 		_light_the_table()
+		_reflect()
+	# THE TABLE, set while a reading can already be playing (live, the set dresser works beside the
+	# painter): built again when it lands, and the shuffle's chain with it - a wash goes round
+	# whatever stands
+	var tpath := dir.path_join("table.json")
+	if (FileAccess.get_modified_time(tpath) if FileAccess.file_exists(tpath) else -1) != _table_mt:
+		_build_table()
+		_plan_moves()
 	var room := _picture(dir.path_join("backdrop.png"), force)
 	if room != null:
-		_backdrop_mat.albedo_texture = _soft(dir.path_join("backdrop.png"), room)
+		var soft := _soft(dir.path_join("backdrop.png"), room)
+		if _backdrop_mat.albedo_texture != soft:
+			_backdrop_mat.albedo_texture = soft
+			_reflect()
 		_backdrop_mat.albedo_color = Color(1, 1, 1)
 	elif _backdrop_mat.albedo_texture == null:
 		var pal2: Array = _look.get("palette", TarotTable.FALLBACK_PALETTE)
@@ -980,38 +1020,405 @@ static func _face_up() -> Basis:
 	return Basis(Vector3(0, 0, 1), PI)
 
 
-# --- the props ---------------------------------------------------------------------------------------
+# --- the things on the table --------------------------------------------------------------------------
 
-## THE CANDLES: each stood where [method _find_spot] finds room, flanking the cloth toward its
-## back, and a shorter one where a tall one will not fit.
-func _build_props(rng: RandomNumberGenerator) -> void:
+## THE TABLE'S THINGS: what the set dresser described for this episode (`table.json` in its folder,
+## made safe by [method TarotTable.sanitize_table]), or the look's candles alone until it has -
+## each built ([Props]), stood where [method _place_things] finds it room, its wicks lit.
+func _build_table() -> void:
 	for c in _props.get_children():
 		c.queue_free()
 	_flames = []
 	_standing = []
+	_standing_c = PackedVector2Array()
+	_standing_r = PackedFloat32Array()
+	_things = []
 	_heat_cells = {}
-	var taken: Array = []                 # screen rects already stood in
-	var pal: Array = _look.get("palette", TarotTable.FALLBACK_PALETTE)
-	for c in int(_look.get("candles", 1)):
-		var ch := rng.randf_range(0.07, 0.13)
-		var cr := rng.randf_range(0.017, 0.026)
-		var at := Vector3(INF, 0, 0)
-		for shrink in 3:
-			at = _find_spot(cr * 2.0, ch + 0.035, taken, rng)
-			if at.x != INF:
-				break
-			ch = maxf(0.06, ch * 0.8)
-		if at.x == INF:
-			continue
-		_candle(at, ch, cr, rng, pal)
-		_standing.append(Rect2(at.x - cr, at.z - cr, cr * 2.0, cr * 2.0))
+	var spec := _table_spec()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([_seed, "tarot-things"])
+	var things: Array = spec["things"]
+	var built: Array = []
+	for i in things.size():
+		built.append(Props.build(things[i], spec["materials"], hash([_seed, i, "thing"])))
+	_place_things(things, built, rng)
 	_build_glows()
 	_light_the_table()
+	_reflect()
+
+
+## Catch the table again for the things to reflect: a probe that updates once does so again when
+## it moves, so it is moved by a hair.
+func _reflect() -> void:
+	if _probe == null:
+		return
+	_probe_nudge = -_probe_nudge
+	_probe.position = Vector3(0.0, 0.2 + 0.0001 * _probe_nudge, -0.05)
+
+
+## The set dresser's table, made safe - or, before there is one, the look's candles. Read from the
+## FILE, as the pictures are, so a render (a second process) stands what the live table stood.
+func _table_spec() -> Dictionary:
+	var path := String(_pay.get("dir", "")).path_join("table.json")
+	_table_mt = FileAccess.get_modified_time(path) if FileAccess.file_exists(path) else -1
+	if _table_mt >= 0:
+		var j := JSON.new()
+		if j.parse(FileAccess.get_file_as_string(path)) == OK and j.data is Dictionary:
+			return TarotTable.sanitize_table(j.data as Dictionary, _look)
+	return TarotTable.default_table(_look, _seed)
+
+
+## WHERE EACH THING STANDS. A thing goes in the zone the set dresser named, and things that share
+## a group stand together: the group's tallest first, as near its zone's middle as there is room,
+## the rest round it - the shorter ones toward the reader - so a group reads as arranged, not
+## lined up. The biggest groups choose first. A thing with no room is tried smaller, then left
+## off the table.
+func _place_things(things: Array, built: Array, rng: RandomNumberGenerator) -> void:
+	var keep_out := _keep_out()
+	var groups := {}
+	for i in things.size():
+		var g := String((things[i] as Dictionary).get("group", ""))
+		var key := g if not g.is_empty() else "#%d" % i
+		if not groups.has(key):
+			groups[key] = []
+		(groups[key] as Array).append(i)
+	var area := func(members: Array) -> float:
+		var s := 0.0
+		for i in members:
+			var box: AABB = (built[i] as Dictionary)["size"]
+			s += box.size.x * box.size.z
+		return s
+	var order: Array = groups.keys()
+	order.sort_custom(func(a: Variant, b: Variant) -> bool: return float(area.call(groups[a])) > float(area.call(groups[b])))
+	for key in order:
+		var members: Array = groups[key]
+		members.sort_custom(func(a: int, b: int) -> bool:
+			return ((built[a] as Dictionary)["size"] as AABB).size.y > ((built[b] as Dictionary)["size"] as AABB).size.y)
+		var anchor := {}
+		for i in members:
+			var stood := _stand(things[i], built[i], String(key), anchor, keep_out, rng)
+			if stood.is_empty():
+				print("ghost: tarot table - no room for %s" % String((things[i] as Dictionary).get("name", "a thing")))
+				((built[i] as Dictionary)["node"] as Node).free()
+			elif anchor.is_empty():
+				anchor = stood
+
+
+## Where nothing may stand: everywhere the cards go - the spread, the deck, the middle where the
+## deck is shuffled, where a jumper lands - as rectangles on the table (x by z).
+func _keep_out() -> Array:
+	var out: Array = []
+	for sl in _slots:
+		out.append(TarotTable.footprint((sl as Dictionary)["pos"], float((sl as Dictionary)["yaw"]), CARD).grow(0.03))
+	out.append(Rect2(_deck_base.x - 0.08, _deck_base.z - 0.1, 0.16, 0.2))
+	out.append(Rect2(_mid.x - 0.22, _mid.z - 0.14, 0.44, 0.28))
+	out.append(Rect2(_jump_land.x - 0.07, _jump_land.z - 0.09, 0.14, 0.18))
+	return out
+
+
+## ONE THING STOOD: the best free spot for [param t] (built as [param b]) on a grid over the table,
+## at full size or, failing that, a little smaller. Every spot is ON THE TABLE, off everywhere the
+## cards go, clear of what already stands (by [constant THING_GAP], or [constant GROUP_GAP] within
+## its own group), WHOLLY IN THE SHOT (its whole box, projected), and - between groups - not in
+## front of another in the picture. A lit thing stands only behind the middle (in front of the
+## cards its flame blew out the card held up to the lens) and looks for dark cloth. The spot
+## chosen ({at, k, group, height}), or empty when there is none.
+func _stand(t: Dictionary, b: Dictionary, group: String, anchor: Dictionary, keep_out: Array,
+		rng: RandomNumberGenerator) -> Dictionary:
+	var box: AABB = b["size"]
+	var lit := not (b["wicks"] as Array).is_empty()
+	var yaw := deg_to_rad(float(t.get("turn", 0.0)) + rng.randf_range(-8.0, 8.0))
+	var zone := String(t.get("place", "back"))
+	var aim := TarotTable.zone_aim(zone, _deck_base)
+	var front := (_deck_base.z + 0.03) if zone in ["by the deck", "left", "right"] else _mid.z + 0.03
+	# a LOW thing may lie nearer the reader, where it hides no card and nothing behind it
+	if box.size.y < 0.04:
+		front = 0.2
+	if lit:
+		front = minf(front, _mid.z)
+	var outline: PackedVector2Array = b["outline"]
+	for k in [1.0, 0.88, 0.76]:
+		var basis := Basis(Vector3.UP, yaw).scaled(Vector3(k, k, k))
+		var shape := PackedVector2Array()
+		for q in outline:
+			var w := basis * Vector3(q.x, 0.0, q.y)
+			shape.append(Vector2(w.x, w.z))
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		for q in shape:
+			lo = lo.min(q)
+			hi = hi.max(q)
+		var corners := PackedVector3Array()
+		for cx in [box.position.x, box.end.x]:
+			for cy in [box.position.y, box.end.y]:
+				for cz in [box.position.z, box.end.z]:
+					corners.append(basis * Vector3(cx, cy, cz))
+		var best := {}
+		var best_score := -INF
+		var cam_inv := _cam_base.affine_inverse()
+		var lens := Vector2(tan(deg_to_rad(_cam.fov * 0.5)) * (16.0 / 9.0), tan(deg_to_rad(_cam.fov * 0.5)))
+		var z := -0.4
+		while z <= front:
+			var x := -0.62
+			while x <= 0.62:
+				var at := Vector2(x + rng.randf_range(-0.004, 0.004), z + rng.randf_range(-0.004, 0.004))
+				x += 0.02
+				var bb := Rect2(lo + at, hi - lo)
+				# ON THE CLOTH: a thing past its edge, on the bare wood by the table's rim, read as about
+				# to fall off
+				if bb.position.x < -CLOTH.x * 0.49 or bb.end.x > CLOTH.x * 0.49 or bb.position.y < -0.02 - CLOTH.y * 0.48 \
+						or bb.end.y > -0.02 + CLOTH.y * 0.48:
+					continue
+				# the outline itself only where the boxes meet: most spots are judged by box alone
+				var placed := PackedVector2Array()
+				var clear := true
+				for r in keep_out:
+					if (r as Rect2).intersects(bb):
+						if placed.is_empty():
+							placed = _translated(shape, at)
+						if _convex_overlap(placed, _rect_poly(r as Rect2), 0.0):
+							clear = false
+							break
+				if not clear:
+					continue
+				for th in _things:
+					var gap := GROUP_GAP if String((th as Dictionary)["group"]) == group else THING_GAP
+					if ((th as Dictionary)["bb"] as Rect2).grow(gap).intersects(bb):
+						if placed.is_empty():
+							placed = _translated(shape, at)
+						if _convex_overlap(placed, (th as Dictionary)["outline"], gap):
+							clear = false
+							break
+				if not clear:
+					continue
+				var rect := _screen_rect_fast(corners, Vector3(at.x, 0.0, at.y), cam_inv, lens)
+				# wholly in the shot: a thing cut off by the frame's edge reads as one standing in the
+				# room, not on the table
+				if rect.position.x < 0.02 or rect.end.x > 0.98 or rect.position.y < 0.02 or rect.end.y > 0.97:
+					continue
+				# not in front of another in the picture: apart between groups, and within one only a
+				# little in front - a group seen one thing through another read as a stack
+				var hidden := 0.0
+				for th in _things:
+					var other: Rect2 = (th as Dictionary)["rect"]
+					if String((th as Dictionary)["group"]) != group:
+						if other.grow(0.008).intersects(rect):
+							clear = false
+							break
+					elif other.intersects(rect):
+						hidden = maxf(hidden, other.intersection(rect).get_area() / maxf(minf(other.get_area(), rect.get_area()), 1e-6))
+				if not clear or hidden > 0.3:
+					continue
+				var score := -hidden * 2.0
+				if anchor.is_empty():
+					score -= at.distance_to(aim) * 4.0
+				else:
+					var ap: Vector2 = anchor["at"]
+					score -= at.distance_to(ap) * 6.0
+					# a shorter thing in a group stands toward the reader, a taller one behind
+					if box.size.y * k < float(anchor["height"]):
+						score += clampf((at.y - ap.y) * 4.0, -0.2, 0.2)
+				if lit:
+					# by dark cloth, where it can burn as the key: by pale, its light is held down
+					score -= 0.8 * maxf(0.0, _heat_cell(Vector3(at.x, 0.0, at.y)) * KEY_ENERGY / HEAT - 1.0)
+				score += rng.randf() * 0.05
+				if score > best_score:
+					best_score = score
+					best = {"at": at, "rect": rect, "bb": bb, "outline": placed if not placed.is_empty() else _translated(shape, at)}
+			z += 0.02
+		if not best.is_empty():
+			_put(t, b, best, basis, group)
+			return {"at": best["at"], "height": box.size.y * k, "k": k}
+	return {}
+
+
+## Thing [param t] stood at the chosen spot: in the scene, its wicks lit, a soft shade where it meets
+## the cloth, its foot kept for the cards to go round (see [method _card_clear]).
+func _put(t: Dictionary, b: Dictionary, spot: Dictionary, basis: Basis, group: String) -> void:
+	var at: Vector2 = spot["at"]
+	var node: Node3D = b["node"]
+	node.transform = Transform3D(basis, Vector3(at.x, 0.0, at.y))
+	_props.add_child(node)
+	var wicks: Array = b["wicks"]
+	# A CANDLE CASTS IN EVERY FLAME'S LIGHT BUT ITS OWN: its own, just above it, printed a hard dark
+	# disc round its base. So it has a render layer of its own, which only its flames leave out. A
+	# thing with no flame is on its own layer too, so the cloth's shades fall on the cloth alone.
+	var own := (CANDLE_LAYER << _flames.size()) if not wicks.is_empty() else THING_LAYER
+	for m in b["meshes"]:
+		(m as MeshInstance3D).layers = own
+	var glows: Array = b.get("glows", [])
+	var first := _flames.size()
+	for i in wicks.size():
+		_light_wick(node.transform * (wicks[i] as Vector3), own, glows[i] if i < glows.size() else null)
+	var foot := _translated(_turned(b["foot"], basis), at)
+	if foot.size() >= 3:
+		_contact(foot)
+		var grown := _grown(foot, FOOT_MARGIN)
+		_standing.append(grown)
+		var c := Vector2.ZERO
+		for q in grown:
+			c += q
+		c /= float(grown.size())
+		var r := 0.0
+		for q in grown:
+			r = maxf(r, q.distance_to(c))
+		_standing_c.append(c)
+		_standing_r.append(r)
+	_things.append({"name": String(t.get("name", "")), "group": group, "place": String(t.get("place", "back")),
+		"node": node, "outline": spot["outline"], "bb": spot["bb"], "rect": spot["rect"], "foot": foot,
+		"lit": wicks.size(), "flames": range(first, _flames.size()), "meshes": b["meshes"]})
+
+
+## A FLAME at [param at], the top of a wick: a wick under it, the flame, and its light - which
+## lights everything but its own candle (render layer [param own]) and throws shadows from all of
+## it. A flame lighting its own holder blew it out: an oil lamp's flame sits a few centimeters above
+## its body. Its own wax glows instead, through [param glow] (its material's `flame`).
+func _light_wick(at: Vector3, own: int, glow: Variant = null) -> void:
+	var wick := MeshInstance3D.new()
+	var wm := CylinderMesh.new()
+	wm.top_radius = 0.0006
+	wm.bottom_radius = 0.0008
+	wm.height = 0.009
+	wm.radial_segments = 6
+	wm.rings = 1
+	wick.mesh = wm
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_color = Color(0.07, 0.05, 0.04)
+	wmat.roughness = 0.9
+	wick.material_override = wmat
+	wick.position = at + Vector3(0.0, 0.0035, 0.0)
+	wick.layers = own
+	_props.add_child(wick)
+	var flame := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(0.012, 0.03)
+	flame.mesh = q
+	var fm := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = FLAME_SHADER
+	fm.shader = sh
+	flame.material_override = fm
+	flame.position = at + Vector3(0, 0.016, 0)
+	_props.add_child(flame)
+	var light := OmniLight3D.new()
+	light.light_color = Color(1.0, 0.7, 0.4)
+	light.omni_range = 1.4
+	light.light_energy = 0.35
+	light.shadow_caster_mask = 0xFFFFFFFF & ~own
+	light.light_cull_mask = 0xFFFFFFFF & ~own
+	# a flame is a couple of centimeters across: the shadows it throws are soft at their ends. The
+	# biases are for a TABLETOP: at their defaults a deck's shadow began centimeters in front of it
+	light.light_size = 0.015
+	light.shadow_bias = 0.02
+	light.shadow_normal_bias = 0.4
+	light.omni_shadow_mode = OmniLight3D.SHADOW_CUBE
+	light.shadow_enabled = true
+	light.position = at + Vector3(0, 0.032, 0)
+	_props.add_child(light)
+	_flames.append({"mesh": flame, "light": light, "base": flame.position, "light_base": light.position,
+		"energy": 0.28, "flicker": _flicker_of(_flames.size()), "glow": glow})
+
+
+## A soft shade on the cloth under [param foot] (a thing's outline where it meets it): what
+## anything standing presses into the cloth.
+func _contact(foot: PackedVector2Array) -> void:
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for q in foot:
+		lo = lo.min(q)
+		hi = hi.max(q)
+	var size := (hi - lo).max(Vector2(0.01, 0.01))
+	var contact := Decal.new()
+	contact.texture_albedo = _contact_texture()
+	contact.modulate = Color(0, 0, 0, 1)
+	contact.albedo_mix = 0.6
+	contact.size = Vector3(size.x * 1.7, 0.03, size.y * 1.7)
+	contact.position = Vector3((lo.x + hi.x) * 0.5, 0.0, (lo.y + hi.y) * 0.5)
+	contact.cull_mask = 1
+	_props.add_child(contact)
+
+
+## The rectangle in the picture that [param corners] (a thing's box, turned and sized) cover
+## standing at [param at], for a camera whose inverse is [param cam_inv] and whose lens spreads
+## [param lens] (tangents across and up); one wider than the frame when any lies behind the lens.
+static func _screen_rect_fast(corners: PackedVector3Array, at: Vector3, cam_inv: Transform3D, lens: Vector2) -> Rect2:
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for c in corners:
+		var l: Vector3 = cam_inv * (c + at)
+		if l.z > -0.001:
+			return Rect2(-1.0, -1.0, 3.0, 3.0)
+		var sp := Vector2(0.5 + l.x / (-l.z * lens.x) * 0.5, 0.5 - l.y / (-l.z * lens.y) * 0.5)
+		lo = lo.min(sp)
+		hi = hi.max(sp)
+	return Rect2(lo, hi - lo)
+
+
+static func _translated(poly: PackedVector2Array, by: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for q in poly:
+		out.append(q + by)
+	return out
+
+
+static func _turned(poly: PackedVector2Array, basis: Basis) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for q in poly:
+		var w := basis * Vector3(q.x, 0.0, q.y)
+		out.append(Vector2(w.x, w.z))
+	return out
+
+
+## [param poly] (convex) pushed out by [param by] all round.
+static func _grown(poly: PackedVector2Array, by: float) -> PackedVector2Array:
+	var c := Vector2.ZERO
+	for q in poly:
+		c += q
+	c /= float(maxi(poly.size(), 1))
+	var out := PackedVector2Array()
+	for q in poly:
+		out.append(q + (q - c).normalized() * by)
+	return out
+
+
+static func _rect_poly(r: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
+
+
+## Whether convex [param a] and [param b] come within [param gap] of each other: no separating
+## axis among their edges' normals with that much room on it.
+static func _convex_overlap(a: PackedVector2Array, b: PackedVector2Array, gap: float) -> bool:
+	if a.size() < 2 or b.size() < 2:
+		return false
+	for poly in [a, b]:
+		var p: PackedVector2Array = poly
+		for i in p.size():
+			var e := p[(i + 1) % p.size()] - p[i]
+			if e.length_squared() < 1e-12:
+				continue
+			var ax := Vector2(-e.y, e.x).normalized()
+			var ra := _span(a, ax)
+			var rb := _span(b, ax)
+			if ra.x > rb.y + gap or rb.x > ra.y + gap:
+				return false
+	return true
+
+
+## [param poly]'s extent along [param ax]: (least, most).
+static func _span(poly: PackedVector2Array, ax: Vector2) -> Vector2:
+	var lo := INF
+	var hi := -INF
+	for q in poly:
+		var d := q.dot(ax)
+		lo = minf(lo, d)
+		hi = maxf(hi, d)
+	return Vector2(lo, hi)
 
 
 ## LIGHT FROM OUTSIDE THE SHOT: two or three more candles in the room - behind the camera and off
 ## to the sides - never seen, only felt: a warm, shifting fill on the cloth, and on a card held up
-## to the lens. Without shadows (one light throws the table's), each flickering in its own time.
+## to the lens. Without shadows - faint fills, whose shadows would be fainter still, at six shadow
+## passes each - each flickering in its own time.
 ## Their own dice, so the rest of the table lands where it did.
 func _build_glows() -> void:
 	_glows = []
@@ -1048,55 +1455,95 @@ func _in_shot(at: Vector3) -> bool:
 	return sp.x > -0.1 and sp.x < 1.1 and sp.y > -0.1 and sp.y < 1.1
 
 
-## ONE LIGHT THROWS THE SHADOWS. Every light casting its own gave the deck no shadow worth the name
-## and gave each half of a split deck two - "it's all very strange". So the candle nearest the
-## middle of the table is the KEY: bright enough to reach the cards, and the only one with shadows,
-## soft at their ends - the deck throws a long one toward the reader, as a candle behind it would.
-## The other candles light without shadows, and the lamp becomes a shadowless fill. With no candle
-## at all, the lamp is the key. NO CANDLE IS BRIGHTER THAN ITS CLOTH ALLOWS ([constant HEAT]): a
-## candle by pale cloth is dimmer, and one whose cloth cannot take [constant KEY_MIN] is never the
-## key - with none that can, the lamp is.
+## EVERY LIGHT THROWS ITS OWN SHADOW (the user, 2026-10-05: "most scenes have multiple light
+## sources, and thus should probably cast multiple shadows"): every candle and the lamp, so a thing
+## has a shadow for each light near it, each turned away from its own. One light had thrown them all
+## (every light casting its own then gave the deck no shadow worth the name and each half of a split
+## deck two - "it's all very strange"); now the KEY leads instead of casting alone: the candle
+## nearest the middle of the table, bright enough to reach the cards, so the deck's long shadow
+## toward the reader reads and the others are fainter. The other candles are fills, and the lamp is
+## dimmed to one; with no candle at all, the lamp is the key ([member _key_flame] -1). NO CLOTH IS LIT HOTTER THAN IT CAN TAKE ([constant HEAT]): a candle
+## by pale cloth is dimmer - and so are candles standing TOGETHER, whose pools add up on the cloth
+## between them (two tapers side by side, each at its own limit, burned a pale cloth white through
+## the bloom). A candle the cloth cannot let burn at [constant KEY_MIN] is never the key - with
+## none that can, the lamp is.
 func _light_the_table() -> void:
+	var fields: Array = []
 	var key := -1
 	var best := INF
-	var caps: Array = []
 	for i in _flames.size():
 		var base: Vector3 = (_flames[i] as Dictionary)["base"]
 		var lb: Vector3 = (_flames[i] as Dictionary)["light_base"]
-		var cap := HEAT / maxf(_heat(Vector3(base.x, 0.0, base.z), lb.y), 0.05)
-		caps.append(cap)
+		var field := _heat_field(Vector3(base.x, 0.0, base.z), lb.y)
+		fields.append(field)
 		var d := (base * Vector3(1, 0, 1)).length()
-		if cap >= KEY_MIN and d < best:
+		if HEAT / maxf(_field_max(field), 0.05) >= KEY_MIN and d < best:
 			best = d
 			key = i
+	var energy := PackedFloat32Array()
+	for i in _flames.size():
+		energy.append(minf(KEY_ENERGY if i == key else FILL_ENERGY, HEAT / maxf(_field_max(fields[i]), 0.05)))
+	# the cloth's hottest spot under all of them at once, brought down to what it can take by
+	# dimming every flame that reaches it - a few times, as the hottest spot moves
+	for pass_ in 6:
+		var total := {}
+		for i in _flames.size():
+			for c in fields[i]:
+				total[c] = float(total.get(c, 0.0)) + energy[i] * float((fields[i] as Dictionary)[c])
+		var hot := -1
+		var most := HEAT
+		for c in total:
+			if float(total[c]) > most:
+				most = float(total[c])
+				hot = int(c)
+		if hot < 0:
+			break
+		for i in _flames.size():
+			if (fields[i] as Dictionary).has(hot):
+				energy[i] *= HEAT / most * 0.999
+	if key >= 0 and energy[key] < KEY_MIN:
+		key = -1
+	_key_flame = key
 	for i in _flames.size():
 		var f: Dictionary = _flames[i]
-		var light: OmniLight3D = f["light"]
-		light.shadow_enabled = i == key
-		f["energy"] = minf(KEY_ENERGY if i == key else FILL_ENERGY, float(caps[i]))
-	_lamp.shadow_enabled = key < 0
+		f["energy"] = energy[i] if i == key else minf(energy[i], FILL_ENERGY)
 	# the candle has to carry much of the light at the cards, or its shadow is lost under the lamp's
 	_lamp.light_energy = _lamp_base * (1.0 if key < 0 else 0.4)
 	_lit_cloth = _cloth_mat.albedo_texture
 
 
-## The cloth's HOTTEST SPOT under a flame [param hf] above [param at]: its lightness over the
-## flame's falloff, height over distance squared, the most of it within [constant HEAT_R]. A cloth
-## with no picture yet is its color.
+## The cloth's HOTTEST SPOT under a flame [param hf] above [param at] (see [method _heat_field]).
 func _heat(at: Vector3, hf: float) -> float:
-	if _lum.is_empty():
-		var c := _cloth_fallback().srgb_to_linear()
-		return (c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722) / hf
+	return _field_max(_heat_field(at, hf))
+
+
+static func _field_max(field: Dictionary) -> float:
+	var m := 0.0
+	for c in field:
+		m = maxf(m, float(field[c]))
+	return m
+
+
+## HOW HOT A FLAME [param hf] above [param at] LIGHTS THE CLOTH, cell by cell within [constant
+## HEAT_R] ([constant LUM_GRID], keyed by cell): each cell's lightness over the flame's falloff -
+## height over distance squared, which is the slant of the light times an omni light's 1/d at
+## Godot's default attenuation. A cloth with no picture yet is its color.
+func _heat_field(at: Vector3, hf: float) -> Dictionary:
+	var out := {}
 	var cell := Vector2(CLOTH.x / LUM_GRID.x, CLOTH.y / LUM_GRID.y)
 	var g := Vector2((at.x - _cloth.position.x) / cell.x + LUM_GRID.x * 0.5, (at.z - _cloth.position.z) / cell.y + LUM_GRID.y * 0.5)
 	var reach := Vector2i(ceili(HEAT_R / cell.x), ceili(HEAT_R / cell.y))
-	var best := 0.0
+	var flat := 0.0
+	if _lum.is_empty():
+		var c := _cloth_fallback().srgb_to_linear()
+		flat = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722
 	for gy in range(maxi(0, floori(g.y) - reach.y), mini(LUM_GRID.y, floori(g.y) + reach.y + 1)):
 		for gx in range(maxi(0, floori(g.x) - reach.x), mini(LUM_GRID.x, floori(g.x) + reach.x + 1)):
 			var r2 := Vector2((gx + 0.5 - g.x) * cell.x, (gy + 0.5 - g.y) * cell.y).length_squared()
 			if r2 <= HEAT_R * HEAT_R:
-				best = maxf(best, _lum[gy * LUM_GRID.x + gx] * hf / (r2 + hf * hf))
-	return best
+				var lum := flat if _lum.is_empty() else _lum[gy * LUM_GRID.x + gx]
+				out[gy * LUM_GRID.x + gx] = lum * hf / (r2 + hf * hf)
+	return out
 
 
 ## [method _heat] at a grid cell's middle for a flame of [constant HEAT_H], kept for the build -
@@ -1110,144 +1557,6 @@ func _heat_cell(at: Vector3) -> float:
 		_heat_cells[k] = _heat(Vector3(_cloth.position.x + (gx + 0.5 - LUM_GRID.x * 0.5) * cell.x, 0.0,
 			_cloth.position.z + (gy + 0.5 - LUM_GRID.y * 0.5) * cell.y), HEAT_H)
 	return float(_heat_cells[k])
-
-
-## WHERE A CANDLE CAN STAND: on the table behind its middle, WHOLLY IN THE SHOT, clear of everywhere
-## the cards go (the spread, the deck, the middle where it is shuffled, where a jumper lands), and
-## not standing in front of another. A candle [param w] wide and [param h] tall (flame included),
-## as near as it can get to [constant CANDLE_AIM] - never as far out or back as the table goes,
-## which put candles on its very rim - and by dark cloth rather than pale. Its screen rectangle is
-## added to [param taken]. INF when nowhere is free.
-func _find_spot(w: float, h: float, taken: Array, rng: RandomNumberGenerator) -> Vector3:
-	var keep_out: Array = []
-	for sl in _slots:
-		keep_out.append(TarotTable.footprint((sl as Dictionary)["pos"], float((sl as Dictionary)["yaw"]), CARD).grow(0.03))
-	keep_out.append(Rect2(_deck_base.x - 0.08, _deck_base.z - 0.1, 0.16, 0.2))
-	keep_out.append(Rect2(_mid.x - 0.22, _mid.z - 0.14, 0.44, 0.28))
-	keep_out.append(Rect2(_jump_land.x - 0.07, _jump_land.z - 0.09, 0.14, 0.18))
-	var best := Vector3(INF, 0, 0)
-	var best_score := -INF
-	var best_rect := Rect2()
-	var z := -0.27                       # on the cloth (its far edge is -0.34), never astride the table's rim
-	# ...and never nearer the reader than the middle, where the deck is shuffled: in front of the
-	# cards a candle stands between the reader and the reading, and there - the key light, being
-	# nearest the middle - it blew out the card held up to the lens
-	while z <= _mid.z:
-		var x := -0.5
-		while x <= 0.5:
-			var at := Vector3(x + rng.randf_range(-0.01, 0.01), 0.0, z + rng.randf_range(-0.01, 0.01))
-			x += 0.025
-			var foot := Rect2(at.x - w * 0.5, at.z - w * 0.4, w, w * 0.8)
-			var clear := true
-			for r in keep_out:
-				if (r as Rect2).intersects(foot):
-					clear = false
-					break
-			if not clear:
-				continue
-			# the whole cylinder, top and near side, not its center
-			var rect := _screen_box(at, w * 0.5, h)
-			# wholly in the shot: a candle cut off by the edge of the frame read as one standing in
-			# the room, not on the table
-			if rect.position.x < 0.02 or rect.end.x > 0.98 or rect.end.y > 0.97 \
-					or rect.position.y < 0.02:
-				continue
-			for r in taken:
-				if (r as Rect2).grow(0.015).intersects(rect):
-					clear = false
-					break
-			if not clear:
-				continue
-			var score := -Vector2(absf(at.x), at.z).distance_to(CANDLE_AIM) * 4.0 + rng.randf() * 0.3
-			# by dark cloth, where it can burn as the key: by pale, its light is held down
-			score -= 0.8 * maxf(0.0, _heat_cell(at) * KEY_ENERGY / HEAT - 1.0)
-			if score > best_score:
-				best_score = score
-				best = at
-				best_rect = rect
-		z += 0.025
-	if best.x != INF:
-		taken.append(best_rect)
-	return best
-
-
-## The rectangle a solid [param r] in radius and [param h] tall standing at [param at] covers on
-## the screen: its bounding box's eight corners, projected.
-func _screen_box(at: Vector3, r: float, h: float) -> Rect2:
-	var lo := Vector2(INF, INF)
-	var hi := Vector2(-INF, -INF)
-	var k := tan(deg_to_rad(_cam.fov * 0.5))
-	for cx in [-r, r]:
-		for cz in [-r, r]:
-			for cy in [0.0, h]:
-				var l: Vector3 = _cam_base.affine_inverse() * (at + Vector3(cx, cy, cz))
-				var d := maxf(-l.z, 0.001)
-				var sp := Vector2(0.5 + l.x / (d * k * (16.0 / 9.0)) * 0.5, 0.5 - l.y / (d * k) * 0.5)
-				lo = lo.min(sp)
-				hi = hi.max(sp)
-	return Rect2(lo, hi - lo)
-
-
-func _candle(at: Vector3, h: float, r: float, rng: RandomNumberGenerator, pal: Array) -> void:
-	var body := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.top_radius = r
-	cm.bottom_radius = r * 1.02
-	cm.height = h
-	cm.radial_segments = 24
-	body.mesh = cm
-	var wax := StandardMaterial3D.new()
-	var tint := TarotTable.color(String(pal[rng.randi_range(0, pal.size() - 1)]))
-	wax.albedo_color = Color(0.8, 0.76, 0.68).lerp(tint, rng.randf_range(0.1, 0.5))
-	wax.roughness = 0.75
-	wax.rim_enabled = true
-	wax.rim = 0.3
-	wax.emission_enabled = true
-	wax.emission = Color(1.0, 0.6, 0.3)
-	wax.emission_energy_multiplier = 0.03
-	body.material_override = wax
-	body.position = at + Vector3(0, h * 0.5, 0)
-	# a candle throws a shadow from every light but its own flame, which, just above its top, printed
-	# a hard dark disc round its base: a layer of its own, which only its flame leaves out
-	var own := CANDLE_LAYER << _flames.size()
-	body.layers = own
-	_props.add_child(body)
-	# ...and it sits ON the cloth: a soft shade where it meets it, as anything standing has
-	var contact := Decal.new()
-	contact.texture_albedo = _contact_texture()
-	contact.modulate = Color(0, 0, 0, 1)
-	contact.albedo_mix = 0.6
-	contact.size = Vector3(r * 4.2, 0.03, r * 4.2)
-	contact.position = at
-	contact.cull_mask = 1
-	_props.add_child(contact)
-	var flame := MeshInstance3D.new()
-	var q := QuadMesh.new()
-	q.size = Vector2(0.012, 0.03)
-	flame.mesh = q
-	var fm := ShaderMaterial.new()
-	var sh := Shader.new()
-	sh.code = FLAME_SHADER
-	fm.shader = sh
-	flame.material_override = fm
-	flame.position = at + Vector3(0, h + 0.014, 0)
-	_props.add_child(flame)
-	var light := OmniLight3D.new()
-	light.light_color = Color(1.0, 0.7, 0.4)
-	light.omni_range = 1.4
-	light.light_energy = 0.35
-	light.shadow_caster_mask = 0xFFFFFFFF & ~own
-	# a flame is a couple of centimeters across: the shadows it throws are soft at their ends. The
-	# biases are for a TABLETOP: at their defaults a deck's shadow began centimeters in front of it
-	light.light_size = 0.015
-	light.shadow_bias = 0.02
-	light.shadow_normal_bias = 0.4
-	light.omni_shadow_mode = OmniLight3D.SHADOW_CUBE
-	light.position = at + Vector3(0, h + 0.03, 0)
-	_props.add_child(light)
-	rng.randf()                          # a draw kept where the flame's noise row was, so the next candle lands where it did
-	_flames.append({"mesh": flame, "light": light, "base": flame.position, "light_base": light.position,
-		"energy": 0.28, "flicker": _flicker_of(_flames.size())})
 
 
 ## HOW A FLAME FLICKERS - its own way, so no two keep time: a tempo, how steadily it burns, and
@@ -1318,6 +1627,8 @@ func _tick_props(t: float) -> void:
 		mesh.rotate_object_local(Vector3.UP, PI)
 		var light: OmniLight3D = f["light"]
 		light.light_energy = float(f["energy"]) * fl.x
+		if f.get("glow") is ShaderMaterial:
+			(f["glow"] as ShaderMaterial).set_shader_parameter("flame", fl.x)
 		# the light leans with its flame, so the shadows breathe with it
 		light.position = (f["light_base"] as Vector3) + lean
 	for g in _glows:
@@ -1354,6 +1665,15 @@ func _tick_focus(t: float) -> void:
 
 
 # --- the schedule ----------------------------------------------------------------------------------------
+
+## THE SHUFFLE'S CHAIN, made now, wash plans and all, rather than a frame at a time while it
+## plays - and after the things on the table stand, so a wash's cards go round them, never
+## through them. Again whenever the table changes.
+func _plan_moves() -> void:
+	_move_rng.seed = hash([_seed, "tarot-moves"])
+	_moves = []
+	_move_at(120.0)
+
 
 ## When each card is drawn and laid, and when the shuffle starts and stops, from the placed
 ## schedule: `{shuffle, end, draw: [t0, s, kind], lay: [t0, s]}` - a time of INF is one the voice
@@ -1399,13 +1719,13 @@ func _times() -> Dictionary:
 
 ## Where the deck is at [param t]: in the middle while it is shuffled, then pushed to its side
 ## as the first card comes - squared first (SQUARE), then slid (PUSH_SLIDE), a hair off the cloth.
-## A jumper flies out of the middle and the deck goes once it has landed.
+## A jumper flies out of a riffle in the middle, and the deck goes once that riffle is done.
 func _deck_at(t: float, tm: Dictionary) -> Vector3:
 	var first: Array = tm["first"]
 	if first.is_empty():
 		return _mid
 	var s := maxf(float(first[1]), 0.05)
-	var go := SQUARE if String(first[2]) == "draw" else JUMP_FLY.y
+	var go := SQUARE if String(first[2]) == "draw" else JUMP_RIFFLE
 	var u := clampf(((t - float(first[0])) / s - go) / PUSH_SLIDE, 0.0, 1.0)
 	return _mid.lerp(_deck_base, _ease(u)) + Vector3(0.0, sin(PI * u) * 0.004, 0.0)
 
@@ -1418,14 +1738,21 @@ func _pose(t: float) -> void:
 	# thousand seconds in (the chain of moves is only made so far)
 	var ts := maxf(float(tm["shuffle"]), minf(0.0, _now))
 	var te := float(tm["end"])
+	_shuffle_room = te - ts if te < INF else INF
 	_cur_base = _deck_at(t, tm)
-	# THE DECK: shuffling from the shuffle mark until the first card leaves it, squared after
+	# a jumper's own riffle, on the jumper's clock (its action's scale)
+	var first: Array = tm["first"]
+	var jump_s := maxf(float(first[1]), 0.05) if not first.is_empty() and String(first[2]) == "jumper" else 0.0
+	# THE DECK: shuffling from the shuffle mark until the first card leaves it, squared after - or,
+	# when the first card is a jumper, riffled once more first: the card flies out of that riffle
 	for i in DECK_N:
 		var xf := _rest_xf(i)
 		if t >= ts:
 			if t < te:
 				xf = _shuffle_xf(i, t - ts)
-			elif t < te + SQUARE and te < INF:
+			elif jump_s > 0.0 and te < INF and t < te + JUMP_RIFFLE * jump_s:
+				xf = _jump_riffle(i, (t - te) / jump_s, _shuffle_xf(i, te - ts))
+			elif t < te + SQUARE and te < INF and jump_s == 0.0:
 				xf = _shuffle_xf(i, te - ts).interpolate_with(_rest_xf(i), _ease((t - te) / SQUARE))
 		(_deck[i] as MeshInstance3D).transform = xf
 	# THE CARDS
@@ -1571,14 +1898,31 @@ func _draw_xf(k: int, u: float, pres: Transform3D) -> Transform3D:
 	return pres
 
 
-## A jumper at [param u] seconds into its leap.
+## Deck slot [param i] in a jumper's riffle at [param v] (its action's seconds) - eased in over the
+## first moments from [param was], wherever the shuffle left that slot.
+func _jump_riffle(i: int, v: float, was: Transform3D) -> Transform3D:
+	var xf := _riffle(i, v, JUMP_RIFFLE, hash([_seed, "jumper-riffle"]))
+	return was.interpolate_with(xf, _ease(v / 0.35)) if v < 0.35 else xf
+
+
+## Where a jumper rides before it springs: on top of the riffle's right half, one card above its
+## top card (so it moves with the half), from the top of the deck as the riffle begins.
+func _jump_ride(k: int, v: float) -> Transform3D:
+	var top := _riffle(DECK_N - 1, v, JUMP_RIFFLE, hash([_seed, "jumper-riffle"]))
+	top.origin += top.basis.y.normalized() * DECK_T
+	top.basis = top.basis * Basis(Vector3.UP, PI if _reversed(k) else 0.0)
+	return _deck_top_xf(k).interpolate_with(top, _ease(v / 0.35)) if v < 0.35 else top
+
+
+## A jumper at [param u] seconds into its action: riding a riffle's half, springing off it as the
+## halves fall, flying to land face up, lying there a moment, then picked up and shown.
 func _jump_xf(k: int, u: float, pres: Transform3D) -> Transform3D:
-	var top := _deck_top_xf(k)
 	var land := Transform3D(Basis(Vector3.UP, 0.6 + (PI if _reversed(k) else 0.0)) * _face_up(),
 		_jump_land + Vector3(0, CARD_T * 0.5, 0))
 	if u < JUMP_FLY.x:
-		return top
+		return _jump_ride(k, u)
 	if u < JUMP_FLY.y:
+		var top := _jump_ride(k, JUMP_FLY.x)
 		var e := clampf((u - JUMP_FLY.x) / (JUMP_FLY.y - JUMP_FLY.x), 0.0, 1.0)
 		var pos := top.origin.lerp(land.origin, e) + Vector3(0, sin(PI * e) * 0.13, 0)
 		var b := Basis(Vector3.UP, 0.6 * e + 1.3 * PI * e) * top.basis * Basis(Vector3(0, 0, 1), 3.0 * PI * e)
@@ -1797,7 +2141,9 @@ func _cut(i: int, v: float, dur: float, seed: int) -> Transform3D:
 
 ## A WASH, posed from its plan (see [method _wash_plan]): card [param i] at [param v] seconds in.
 func _wash(i: int, v: float, m: Dictionary) -> Transform3D:
-	var plan: Dictionary = m["plan"]
+	var plan := _wash_fit(m)
+	if plan.is_empty():
+		return _rest_xf(i)
 	var track: PackedVector4Array = (plan["tracks"] as Array)[i]
 	var f := clampf(v * WASH_HZ, 0.0, float(track.size() - 1))
 	var a := int(floor(f))
@@ -1810,6 +2156,24 @@ func _wash(i: int, v: float, m: Dictionary) -> Transform3D:
 	return Transform3D(basis, _cur_base + Vector3(q.x, q.y, q.z))
 
 
+## A wash's plan for the time it has: the whole of it, or - when the first card comes before it
+## would finish - one that mixes for less and gathers in time. The spreading and the hands are the
+## same up to there (their own dice), so it is the same wash, cut short; without it the spread
+## went back into the deck in [constant SQUARE]. With too little room to spread, mix and gather at
+## all, there is no wash: the deck waits, squared, for the first card (empty).
+func _wash_fit(m: Dictionary) -> Dictionary:
+	var room := _shuffle_room - float(m["t0"])
+	if room >= float(m["dur"]) - 0.05:
+		return m["plan"]
+	if room < WASH_ROOM:
+		return {}
+	var d := snappedf(room, 0.25)
+	if float(m.get("cut_dur", -1.0)) != d:
+		m["cut_dur"] = d
+		m["cut"] = _wash_plan(int(m["seed"]), d, m["plan"])
+	return m["cut"]
+
+
 ## How spread out card [param i] is at [param v] (0 squared in the deck, 1 lying on its own).
 func _wash_spread_at(plan: Dictionary, i: int, v: float) -> float:
 	var t_out := float((plan["out"] as PackedFloat32Array)[i])
@@ -1817,25 +2181,103 @@ func _wash_spread_at(plan: Dictionary, i: int, v: float) -> float:
 	return clampf((v - t_out) / 0.5, 0.0, 1.0) * (1.0 - clampf((v - t_in) / 0.6, 0.0, 1.0))
 
 
-## [param at] (a card's center, about the deck's middle place) moved out from under anything
-## standing on the table, by the least that clears a card's reach of it; unchanged when clear.
+## [param at] (a card's middle, about the deck's place) moved out from anything standing on the
+## table, by the least that keeps a card's whole reach clear of it; unchanged when clear.
 func _clear_of_standing(at: Vector2) -> Vector2:
 	var reach := Vector2(CARD.x, CARD.y).length() * 0.5 + 0.01
+	var off := Vector2(_mid.x, _mid.z)
 	var p := at
-	for r in _standing:
-		var near: Rect2 = (r as Rect2).grow(reach)
-		var local := p + Vector2(_mid.x, _mid.z)
-		if not near.has_point(local):
-			continue
-		# out through the nearest side
-		var outs := [Vector2(near.position.x - local.x, 0.0), Vector2(near.end.x - local.x, 0.0),
-			Vector2(0.0, near.position.y - local.y), Vector2(0.0, near.end.y - local.y)]
-		var best: Vector2 = outs[0]
-		for o in outs:
-			if (o as Vector2).length() < best.length():
-				best = o
-		p += best * 1.02
+	for i in _standing.size():
+		var c: Vector2 = _standing_c[i]
+		var d := (p + off).distance_to(c)
+		var need := _standing_r[i] + reach
+		if d < need:
+			var away := ((p + off) - c).normalized() if d > 1e-6 else Vector2(0.0, 1.0)
+			p += away * (need - d)
 	return p
+
+
+## Whether a card's reach swept from [param a] to [param b] (about the deck's place) keeps clear of
+## everything standing on the table.
+func _path_clear(a: Vector2, b: Vector2) -> bool:
+	var reach := Vector2(CARD.x, CARD.y).length() * 0.5
+	var off := Vector2(_mid.x, _mid.z)
+	for i in _standing.size():
+		var c: Vector2 = _standing_c[i]
+		var q := Geometry2D.get_closest_point_to_segment(c, a + off, b + off)
+		if q.distance_to(c) < _standing_r[i] + reach:
+			return false
+	return true
+
+
+## NOTHING PASSES THROUGH WHAT STANDS ON THE TABLE. A card going from [param from] to
+## [param want] (about the deck's place), turned [param yaw], is moved there a few millimeters at a
+## time, and each time it has run into something it is pushed back out - away from that thing's
+## middle, the way it came - so it slides along it, and never jumps through to its far side.
+func _card_clear(from: Vector2, want: Vector2, yaw: float) -> Vector2:
+	if _standing.is_empty() or not _collide:
+		return want
+	var off := Vector2(_mid.x, _mid.z)
+	var reach := Vector2(CARD.x, CARD.y).length() * 0.5
+	var travel := from.distance_to(want)
+	var near := false
+	for i in _standing.size():
+		if (want + off).distance_to(_standing_c[i]) < _standing_r[i] + reach + travel + 0.01:
+			near = true
+			break
+	if not near:
+		return want
+	var steps := maxi(1, ceili(travel / 0.006))
+	var p := from
+	for s in steps:
+		p += (want - from) / float(steps)
+		for i in _standing.size():
+			var c: Vector2 = _standing_c[i]
+			if (p + off).distance_to(c) > _standing_r[i] + reach:
+				continue
+			p += _push_out(_card_poly(p + off, yaw), _standing[i], (p + off) - c)
+	return p
+
+
+## A card lying at [param at] turned [param yaw]: its four corners (x by z).
+static func _card_poly(at: Vector2, yaw: float) -> PackedVector2Array:
+	var ax := Vector2(cos(yaw), -sin(yaw)) * CARD.x * 0.5
+	var az := Vector2(sin(yaw), cos(yaw)) * CARD.y * 0.5
+	return PackedVector2Array([at - ax - az, at + ax - az, at + ax + az, at - ax + az])
+
+
+## How far to move convex [param a] along [param dir] so it no longer overlaps convex [param b] -
+## the least such move, by separating axes; along the shortest way out when [param dir] is
+## nothing. Zero when they do not overlap.
+static func _push_out(a: PackedVector2Array, b: PackedVector2Array, dir: Vector2) -> Vector2:
+	var d := dir.normalized() if dir.length() > 1e-6 else Vector2.ZERO
+	var need := INF
+	var least := INF
+	var least_ax := Vector2.ZERO
+	for poly in [a, b]:
+		var p: PackedVector2Array = poly
+		for i in p.size():
+			var e := p[(i + 1) % p.size()] - p[i]
+			if e.length_squared() < 1e-12:
+				continue
+			var ax := Vector2(-e.y, e.x).normalized()
+			var ra := _span(a, ax)
+			var rb := _span(b, ax)
+			var o := minf(ra.y, rb.y) - maxf(ra.x, rb.x)
+			if o <= 0.0:
+				return Vector2.ZERO
+			if o < least:
+				least = o
+				least_ax = ax * (1.0 if ra.x + ra.y > rb.x + rb.y else -1.0)
+			var k := d.dot(ax)
+			if absf(k) > 1e-4:
+				# moving a along d by s shifts it by s * k on this axis: past b's far side, or its near one
+				var sep := (rb.y - ra.x) / k if k > 0.0 else (rb.x - ra.y) / k
+				if sep >= 0.0:
+					need = minf(need, sep)
+	if need < INF:
+		return d * (need + 0.0004)
+	return least_ax * (least + 0.0004)
 
 
 ## Whether two cards lying on the table overlap: their turned rectangles, by separating axes.
@@ -1858,34 +2300,38 @@ static func _cards_overlap(a: Vector2, ya: float, b: Vector2, yb: float) -> bool
 
 
 ## THE WASH, planned once and sampled at [constant WASH_HZ] - because it is a SIMULATION, not a
-## pose: two flat hands circle the cloth and drag the cards near them along, and a pose that is
-## a function of time alone cannot remember where a hand left a card. Planned from the move's
-## seed, so it is the same every time it is posed.
+## pose: two flat palms work the cloth and drag the cards under them along, and a pose that is a
+## function of time alone cannot remember where a palm left a card. Planned from the move's seed,
+## so it is the same every time it is posed.
 ##
 ##   out      the deck is pushed out across the cloth, top cards first (~2 s)
-##   wash     two hands swirl: a card near a hand moves with it and turns as it is dragged past
-##            its center; a card no hand reaches lies still
-##   gather   three or four sweeps, each from its own side. A sweep takes the cards on its side,
-##            outermost first, and pushes them in: most land on the pile, some only get pushed
-##            near it and wait for a later sweep, and some are missed altogether
+##   mix      most of the wash (2026-10-05: "BARELY shuffled at all... 3 or 4 cards might shift
+##            slightly... maybe 5 or 10 seconds long"): each palm works a patch of the spread in a
+##            circle or two, lifts, and comes down on the next ([method _wash_strokes]), dragging
+##            what is under it - the card on top more than one covered by another, so cards slide
+##            over and under each other
+##   gather   six to eight sweeps, each taking the next share of the cards by direction: most land
+##            on the pile, some are only pushed near it and wait, some are missed and fetched later
 ##   square   the pile is squared into the deck
 ##
-## Each track is per card, x / z about the deck's place, y above the cloth, w the card's turn. A
-## card's height is how many cards lie under it - cards stacked where they overlap, and flat on
-## the cloth where they do not.
-func _wash_plan(seed: int, dur: float) -> Dictionary:
+## THE ORDER CHANGES, NEVER THROUGH A CARD: two cards that come to overlap lie the way they met -
+## the one sliding in goes on top (never over a card already above it: no stacking loops) - and
+## keep that order while they touch; once apart, their next meeting decides again. A card's height
+## is how many cards it lies on. Each track is per card, x / z about the deck's place, y above the
+## cloth, w the card's turn.
+func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([seed, "wash"])
 	var n := DECK_N
 	var steps := int(ceil(dur * WASH_HZ)) + 1
 	var dt := 1.0 / WASH_HZ
-	var out_end := 2.4
+	var out_end := minf(2.4, dur * 0.2)
 	var square := 0.6
 	# MANY SMALL SWEEPS: the pile is a few cards at a time, gathered one after another - never the
 	# whole spread arriving at once
 	var swipes := rng.randi_range(6, 8)
-	var gather := clampf(dur * 0.45, 5.0, 7.0)
-	var wash_end := dur - square - gather
+	var gather := clampf(dur * 0.24, 4.0, 7.0)
+	var mix_end := maxf(out_end, dur - square - gather)
 	# WIDE: the cards go well out across the cloth, a few of them a long way
 	var rx := rng.randf_range(0.24, 0.29)
 	var rz := rng.randf_range(0.12, 0.15)
@@ -1897,27 +2343,27 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 	for i in n:
 		var jit: Vector3 = _slot_jit[i] if i < _slot_jit.size() else Vector3.ZERO
 		start.append(Vector2(jit.x, jit.y))
-		var r := sqrt(rng.randf()) * 0.85
-		if rng.randf() < 0.18:
-			r = rng.randf_range(0.95, 1.3)    # flung out further than the rest
-		var ang := rng.randf() * TAU
-		aim.append(_clear_of_standing(Vector2(cos(ang) * rx * r, sin(ang) * rz * r - 0.01)))
+		# out to somewhere a card can get to: by a way clear of everything standing on the table (a
+		# few tries, then the nearest spot clear of them)
+		var target := Vector2.ZERO
+		for attempt in 6:
+			var r := sqrt(rng.randf()) * 0.85
+			if rng.randf() < 0.18:
+				r = rng.randf_range(0.95, 1.3)    # flung out further than the rest
+			var ang := rng.randf() * TAU
+			target = Vector2(cos(ang) * rx * r, sin(ang) * rz * r - 0.01)
+			if _path_clear(Vector2(jit.x, jit.y), target):
+				break
+		aim.append(_clear_of_standing(target))
 		pos.append(Vector2(jit.x, jit.y))
 		yaw.append(jit.z)
 		t_out.append(float(n - 1 - i) / float(n) * 0.9)
 	var spin0 := PackedFloat32Array()
 	for i in n:
 		spin0.append(rng.randf_range(-1.1, 1.1))
-	# the hands: smooth loops over the spread, easing in and out
-	var hp: Array = []
-	for h in 2:
-		hp.append([rng.randf_range(0.6, 1.1), rng.randf_range(0.9, 1.5), rng.randf() * TAU, rng.randf() * TAU,
-			rng.randf_range(0.7, 1.0)])
-	var hand := func(h: int, tt: float) -> Vector2:
-		var q: Array = hp[h]
-		var side := -0.45 if h == 0 else 0.45
-		return Vector2(rx * (side + 0.5 * sin(float(q[0]) * tt + float(q[2]))) * float(q[4]),
-			rz * 0.8 * sin(float(q[1]) * tt + float(q[3])) - 0.01)
+	var was: Array = pos.duplicate()        # where each card was at the step before
+	var palms := _wash_strokes(seed, out_end, mix_end, rx, rz)
+	var at_stroke := PackedInt32Array([0, 0])
 	# the sweeps, one after another across the gather
 	var sweep_len := gather / float(swipes)
 	var caught := PackedInt32Array()       # the sweep that brings each card in for good
@@ -1946,31 +2392,67 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 	var planned_sweeps := false
 	var height := PackedFloat32Array()
 	height.resize(n)
-	for step in steps:
+	# who lies on whom: pair (i * 64 + j, i < j) -> +1 i on top, -1 j on top, for pairs that overlap
+	var rel := {}
+	var under: Array = []                  # card -> the cards it lies directly on
+	for i in n:
+		under.append([])
+	var covered := PackedByteArray()       # a card with another lying on it, at the step before
+	covered.resize(n)
+	var layer := PackedInt32Array()
+	layer.resize(n)
+	var moved := PackedFloat32Array()
+	moved.resize(n)
+	# THE SAME WASH, CUT SHORT ([param base], the whole of it): up to where this one gathers, the
+	# spreading and the palms are the same, so its tracks are copied rather than made again, and
+	# the cards - where they lay, and who on whom - are taken up from there
+	var s_from := 0
+	if not base.is_empty() and is_equal_approx(float((base["mix"] as Vector2).x), out_end) \
+			and mix_end <= float((base["mix"] as Vector2).y):
+		s_from = clampi(int(ceil(mix_end * WASH_HZ)), 1, ((base["tracks"] as Array)[0] as PackedVector4Array).size() - 1)
+		for i in n:
+			var tr: PackedVector4Array = (base["tracks"] as Array)[i]
+			var copied: Array = []
+			for st in s_from:
+				copied.append(tr[st])
+			tracks[i] = copied
+			var q: Vector4 = tr[s_from - 1]
+			pos[i] = Vector2(q.x, q.z)
+			was[i] = pos[i]
+			yaw[i] = q.w
+		for i in n:
+			for j in range(i + 1, n):
+				if _cards_overlap(pos[i], yaw[i], pos[j], yaw[j]):
+					var yi := ((base["tracks"] as Array)[i] as PackedVector4Array)[s_from - 1].y
+					var yj := ((base["tracks"] as Array)[j] as PackedVector4Array)[s_from - 1].y
+					rel[i * 64 + j] = 1 if yi > yj else -1
+					(under[i if yi > yj else j] as Array).append(j if yi > yj else i)
+	for step in range(s_from, steps):
 		var t := float(step) * dt
 		if t < out_end:
 			# OUT: each card slides from the deck to its place on the cloth, turning as it goes
 			for i in n:
-				var e := _ease(clampf((t - t_out[i]) / 1.1, 0.0, 1.0))
+				var e := _ease(clampf((t - t_out[i]) / minf(1.1, out_end * 0.45), 0.0, 1.0))
 				pos[i] = (start[i] as Vector2).lerp(aim[i], e)
 				yaw[i] = (_slot_jit[i] as Vector3).z + spin0[i] * e if i < _slot_jit.size() else spin0[i] * e
-		elif t < wash_end:
-			# WASH: the hands drag what they touch
-			var env := clampf((t - out_end) / 0.8, 0.0, 1.0) * clampf((wash_end - t) / 0.8, 0.0, 1.0)
+		elif t < mix_end:
+			# MIX: each palm drags what is under it - a covered card less than the one on top
 			for h in 2:
-				var p0: Vector2 = hand.call(h, t - out_end)
-				var p1: Vector2 = hand.call(h, t - out_end + dt)
-				var vel := (p1 - p0) * env
+				var p0 := _palm(palms[h], at_stroke, h, t)
+				var p1 := _palm(palms[h], at_stroke, h, t + dt)
+				var press := minf(p0.z, p1.z)
+				if press <= 0.0:
+					continue
+				var vel := Vector2(p1.x - p0.x, p1.y - p0.y) * press
+				var c := Vector2(p0.x, p0.y)
 				for i in n:
-					var off: Vector2 = (pos[i] as Vector2) - p0
-					var w := 1.0 - smoothstep(0.018, 0.075, off.length())
+					var off: Vector2 = (pos[i] as Vector2) - c
+					var w := 1.0 - smoothstep(0.04, 0.09, off.length())
 					if w <= 0.0:
 						continue
-					# dragged along - but not into a candle: it stops against it
-					var moved := (pos[i] as Vector2) + vel * w * 0.85
-					if _clear_of_standing(moved) == moved:
-						pos[i] = moved
-					yaw[i] += (off.x * vel.y - off.y * vel.x) / maxf(off.length_squared(), 0.0004) * w * 0.35
+					w *= 0.45 if covered[i] == 1 else 1.0
+					pos[i] = (pos[i] as Vector2) + vel * w * 0.9
+					yaw[i] += clampf((off.x * vel.y - off.y * vel.x) / maxf(off.length_squared(), 0.0016) * w * 0.5, -0.08, 0.08)
 					# kept on the cloth, softly
 					var q: Vector2 = pos[i]
 					var k := (q.x / rx) * (q.x / rx) + ((q.y + 0.01) / rz) * ((q.y + 0.01) / rz)
@@ -2012,7 +2494,7 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 					return float(x[1]) > float(y[1]))
 				for o in order:
 					land_order.append(int(o[2]))
-			var g := t - wash_end
+			var g := t - mix_end
 			for i in n:
 				for k in [nudged[i], caught[i]]:
 					if int(k) < 0:
@@ -2036,8 +2518,8 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 							# squared as it lands, near enough: the pile is built, not tidied at the end
 							to_p[i] = Vector2(jit2.x, jit2.y) + Vector2(rng.randf_range(-0.0025, 0.0025), rng.randf_range(-0.0025, 0.0025))
 							to_yaw[i] = jit2.z + rng.randf_range(-0.05, 0.05)
-							t_go[i] = wash_end + u0
-							t_in[i] = wash_end + u1
+							t_go[i] = mix_end + u0
+							t_in[i] = mix_end + u1
 						else:
 							# caught, but only pushed up against the pile: the next sweep brings it in
 							var away: Vector2 = (pos[i] as Vector2).normalized() if (pos[i] as Vector2).length() > 0.001 else Vector2.RIGHT
@@ -2049,17 +2531,53 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 					var e2 := _ease(clampf((g - b0) / maxf(u1 - b0, 0.05), 0.0, 1.0))
 					pos[i] = (from_p[i] as Vector2).lerp(to_p[i], e2)
 					yaw[i] = lerp_angle(from_yaw[i], to_yaw[i], e2)
-		# HEIGHTS: a card rests on the highest card under it that it really overlaps (their actual
-		# turned shapes, not their centers' distance - which let overlapping cards share a height and
-		# cut through each other), and flat on the cloth, just above it, alone. Lower slots lie under.
-		var layer := PackedInt32Array()
-		layer.resize(n)
+		# NOTHING PASSES THROUGH WHAT STANDS ON THE TABLE: every card goes from where it was to where
+		# this step put it, and whatever it runs into stops it - it slides along it instead
 		for i in n:
-			var top := -1
-			for j in range(0, i):
-				if layer[j] > top and _cards_overlap(pos[i], yaw[i], pos[j], yaw[j]):
-					top = layer[j]
-			layer[i] = top + 1
+			pos[i] = _card_clear(was[i], pos[i], yaw[i])
+			moved[i] = (pos[i] as Vector2).distance_to(was[i])
+			was[i] = pos[i]
+		# WHO LIES ON WHOM: pairs that came apart forget their order; a pair that has just met lies
+		# the way it met, the card sliding in on top (in the deck, the higher slot on top)
+		var far2 := Vector2(CARD.x, CARD.y).length_squared()
+		for i in n:
+			var pi_: Vector2 = pos[i]
+			for j in range(i + 1, n):
+				var key := i * 64 + j
+				var d2 := pi_.distance_squared_to(pos[j])
+				var apart := d2 > far2 or (d2 > CARD.x * CARD.x and not _cards_overlap(pi_, yaw[i], pos[j], yaw[j]))
+				if apart:
+					if rel.has(key):
+						var top := i if int(rel[key]) > 0 else j
+						(under[top] as Array).erase(j if top == i else i)
+						rel.erase(key)
+					continue
+				if rel.has(key):
+					continue
+				var i_top := moved[i] > moved[j] + 1e-6 if absf(moved[i] - moved[j]) > 1e-6 else false
+				# never over a card already above it, however far down the stack: no loops
+				if i_top and _lies_on(under, j, i):
+					i_top = false
+				elif not i_top and _lies_on(under, i, j):
+					i_top = true
+				rel[key] = 1 if i_top else -1
+				(under[i if i_top else j] as Array).append(j if i_top else i)
+		# HEIGHTS: a card one above the highest card it lies on; alone, flat on the cloth just above it
+		layer.fill(0)
+		for pass_ in n:
+			var changed := false
+			for i in n:
+				for j in under[i]:
+					if layer[i] < layer[int(j)] + 1:
+						layer[i] = layer[int(j)] + 1
+						changed = true
+			if not changed:
+				break
+		covered.fill(0)
+		for i in n:
+			for j in under[i]:
+				covered[int(j)] = 1
+		for i in n:
 			height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + 0.00015)
 		for i in n:
 			var q: Vector2 = pos[i]
@@ -2087,7 +2605,86 @@ func _wash_plan(seed: int, dur: float) -> Dictionary:
 			var e3 := _ease(float(st - sq0) / maxf(float(last - sq0), 1.0))
 			tr[st] = from.lerp(to, e3)
 		tracks[i] = tr
-	return {"tracks": tracks, "out": t_out, "in": t_in, "spread": 1.0, "order": land_order}
+	return {"tracks": tracks, "out": t_out, "in": t_in, "spread": 1.0, "order": land_order,
+		"mix": Vector2(out_end, mix_end)}
+
+
+## Whether card [param a] lies, however far down, on card [param b] - walking down what each lies on.
+static func _lies_on(under: Array, a: int, b: int) -> bool:
+	var seen := {}
+	var todo: Array = [a]
+	while not todo.is_empty():
+		var c := int(todo.pop_back())
+		for d in under[c]:
+			if int(d) == b:
+				return true
+			if not seen.has(d):
+				seen[d] = true
+				todo.append(d)
+	return false
+
+
+## THE PALMS' STROKES for a wash: each palm works one patch of the spread - a circle or two, the
+## two palms often turning opposite ways - lifts, and comes down on the next, mostly on its own
+## side of the cloth and now and then across. Their own dice, so a wash cut short ([method
+## _wash_fit]) has the same hands up to where it was cut. Per palm, in order:
+## {t0, t1, c (the patch's middle), v (how it travels), r (the circle), a0, om (where on it, and how
+## fast round)}.
+func _wash_strokes(seed: int, t0: float, t1: float, rx: float, rz: float) -> Array:
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([seed, "wash-palms"])
+	var palms: Array = []
+	for h in 2:
+		var side := -1.0 if h == 0 else 1.0
+		var list: Array = []
+		var t := t0 + r.randf_range(0.0, 0.5)
+		while t < t1:
+			var span := r.randf_range(1.3, 2.6)
+			var cx := side * r.randf_range(0.08, 0.9) * rx
+			if r.randf() < 0.2:
+				cx = r.randf_range(-0.55, 0.55) * rx       # across, into the middle or the other side
+			var c := Vector2(cx, r.randf_range(-0.75, 0.75) * rz - 0.01)
+			# circling while it travels: a loop drawn across the cloth, toward its middle more than out
+			var drift := Vector2.from_angle(r.randf() * TAU) * r.randf_range(0.02, 0.06) - c * 0.12
+			list.append({"t0": t, "t1": minf(t + span, t1), "c": c, "v": drift,
+				"r": r.randf_range(0.045, 0.085), "a0": r.randf() * TAU,
+				"om": r.randf_range(2.4, 4.0) * (1.0 if r.randf() < 0.5 else -1.0)})
+			t += span + r.randf_range(0.15, 0.35)      # lifted, moving to the next patch
+		palms.append(list)
+	return palms
+
+
+## Palm [param h] at [param t]: (x, z, how hard it presses - 0 lifted, 1 down). [param at] keeps
+## each palm's place in its strokes; times only go forward while a plan is made.
+func _palm(strokes: Array, at: PackedInt32Array, h: int, t: float) -> Vector3:
+	var k := at[h]
+	while k < strokes.size() and t > float((strokes[k] as Dictionary)["t1"]):
+		k += 1
+	at[h] = k
+	if k >= strokes.size():
+		var last: Dictionary = strokes[strokes.size() - 1] if not strokes.is_empty() else {}
+		return Vector3(_stroke_at(last, float(last.get("t1", t))).x, _stroke_at(last, float(last.get("t1", t))).y, 0.0) \
+			if not last.is_empty() else Vector3.ZERO
+	var s: Dictionary = strokes[k]
+	if t < float(s["t0"]):
+		# lifted: from where the last stroke ended to where this one begins
+		var p1 := _stroke_at(s, float(s["t0"]))
+		if k == 0:
+			return Vector3(p1.x, p1.y, 0.0)
+		var prev: Dictionary = strokes[k - 1]
+		var p0 := _stroke_at(prev, float(prev["t1"]))
+		var u := _ease((t - float(prev["t1"])) / maxf(float(s["t0"]) - float(prev["t1"]), 0.01))
+		var p := p0.lerp(p1, u)
+		return Vector3(p.x, p.y, 0.0)
+	var p := _stroke_at(s, t)
+	var press := clampf((t - float(s["t0"])) / 0.15, 0.0, 1.0) * clampf((float(s["t1"]) - t) / 0.15, 0.0, 1.0)
+	return Vector3(p.x, p.y, press)
+
+
+static func _stroke_at(s: Dictionary, t: float) -> Vector2:
+	var u := t - float(s["t0"])
+	var a := float(s["a0"]) + float(s["om"]) * u
+	return (s["c"] as Vector2) + (s["v"] as Vector2) * u + Vector2(cos(a), sin(a)) * float(s["r"])
 
 
 ## A card just landed on the deck, not yet squared.

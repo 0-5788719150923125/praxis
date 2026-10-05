@@ -229,11 +229,17 @@ def _dwell_for(mark: str, base: float | None = None) -> float:
 
 
 # Click avoidance for spliced silence - see _splice_pauses.
-SPLICE_SEARCH_MS = 3.0  # how far the cut may move to find a quieter sample
-SPLICE_FADE_MS = 2.0  # raised-cosine ramp into and out of the silence
-SPLICE_ENV_MS = 4.0  # moving-average window used to find the quiet PLACE
-SPLICE_REACH_MS = 70.0  # how far forward the cut may look for the real gap
-SPLICE_BACK_MS = 0.0  # ...and how far back: none, see _quiet_point
+SPLICE_SEARCH_MS = 3.0  # zero-crossing refinement around the chosen trough
+SPLICE_ENV_MS = 8.0  # envelope smoothing: finds the quiet PLACE, not a quiet sample
+SPLICE_FADE_MS = 2.0  # ramp at an edge that is already silent
+SPLICE_RELEASE_MS = 30.0  # ramp out of a voice still sounding at the cut
+SPLICE_ATTACK_MS = 12.0  # ramp back into one
+SPLICE_QUIET = 0.02  # share of the utterance's peak under which an edge is silence
+SPLICE_LOUD = 0.16  # share at which the ramps reach their full length
+SPLICE_REACH_MS = 70.0  # how far past a mark the cut may look when no plan bounds it
+
+# Symbols that are punctuation rather than a word's sound, as `_symbols` emits them.
+_MARK_SYMBOLS = frozenset(PAUSE_AFTER)
 
 
 def _split_sentences(phones: list) -> list[list]:
@@ -884,163 +890,157 @@ def _gap_for(mark: str, params: dict) -> float:
     return _rest_for(str(mark), params, base)
 
 
-def _quiet_point(
-    audio, want: int, search: int, lo: int, hi: int, env: int, reach: int, back: int
-) -> int:
-    """The best sample to cut at: the quietest PLACE near `want`, not merely the
-    quietest sample.
+def _trough(audio, lo: int, hi: int, sr: int, quiet: float) -> int:
+    """The sample in [lo, hi) to cut at: the quietest PLACE, refined to a zero crossing.
 
-    The first version searched a couple of milliseconds for the minimum of |x|,
-    which on voiced material is a zero crossing - that stops the cut clicking,
-    but every period of a vowel has a zero crossing, so it would happily cut
-    straight through the middle of one. "We, we, unbearably we." exposed it: the
-    model's token boundary for a short word ending in a vowel sits at 27% of that
-    word's own peak, so the silence went in mid-vowel and the vowel resumed after
-    it. Heard as the word being truncated and strange, which is exactly what it
-    was - a hole punched in a vowel.
-
-    So the search is two-stage. First find the quietest ENVELOPE (a short moving
-    average of |x|) over a much wider window - that lands in the real gap between
-    the words rather than on an arbitrary zero of the carrier. Then refine to the
-    nearest zero crossing inside it, which is what keeps the edges click-free.
-
-    `hi` bounds the forward reach at the next token's start, so a pause can never
-    migrate into the following word.
+    The envelope is a moving average of |x| (SPLICE_ENV_MS), so the search lands in the
+    dip between two sounds rather than on whichever zero crossing of a vowel happens to be
+    nearest. Where part of the window is silence (envelope under `quiet`) the cut goes in
+    the middle of its longest silent run, as far from both words as it can get. An empty
+    window returns `lo`.
     """
     import numpy as np
 
     n = int(audio.size)
-    want = min(max(int(want), 0), n)
-    lo = max(0, min(int(lo), n))
-    top = min(n, max(int(hi), 0)) if hi else n
-    # NEVER EARLIER THAN THE NOMINAL POINT. A cut before the mark's own token ends would put
-    # the silence inside that token's own word, and would shift the token by its own pause.
-    # The gap we are looking for is always at or after the boundary, so `back` is only ever a
-    # refinement allowance, never a license to precede it.
-    # THE CUT LIVES IN [token end, next token start], and nowhere else.
-    #   - never EARLIER than the nominal end, or the silence lands inside the mark's own word
-    #     and that word shifts by its own pause;
-    #   - never LATER than the next token's start, or the silence lands inside the FOLLOWING
-    #     word, and the shift rule (a span's start is inclusive, its end is not) stops lining up.
-    # With no bound from the caller there is no safe room to move at all, so the cut stays put -
-    # every production call site passes the bound.
-    if not hi:
-        return max(want, lo)
-    low = max(lo, want - max(0, back))
-    high = min(top, want + max(1, reach))
-    if low >= high:
-        return max(want, lo)
-    # Stage 1: envelope trough. Cumulative sum gives the moving average in one pass.
-    w = max(1, int(env))
-    mag = np.abs(audio[low:high]).astype(np.float64)
-    if mag.size > w:
-        c = np.concatenate(([0.0], np.cumsum(mag)))
-        smooth = (c[w:] - c[:-w]) / float(w)
-        center = low + w // 2 + int(np.argmin(smooth))
-    else:
-        center = low + int(np.argmin(mag))
-    # Stage 2: nearest zero crossing to that trough, so neither new edge steps.
-    zl = max(lo, want, center - search)
-    zh = min(top, center + search + 1)
-    if zl >= zh:
-        return max(center, lo)
-    win = np.abs(audio[zl:zh])
-    best = float(win.min())
-    cand = np.nonzero(win <= best + 1e-6)[0] + zl
+    lo = min(max(int(lo), 0), n)
+    hi = min(max(int(hi), lo), n)
+    if hi - lo <= 1:
+        return lo
+    w = max(1, int(round(SPLICE_ENV_MS * sr / 1000.0)))
+    a0, a1 = max(0, lo - w), min(n, hi + w)
+    c = np.concatenate(([0.0], np.cumsum(np.abs(audio[a0:a1]).astype(np.float64))))
+    pos = np.arange(lo, hi)
+    s0 = np.clip(pos - w // 2, a0, a1) - a0
+    s1 = np.clip(pos - w // 2 + w, a0, a1) - a0
+    smooth = (c[s1] - c[s0]) / np.maximum(s1 - s0, 1)
+    silent = smooth <= quiet
+    if silent.any():
+        edge = np.diff(np.concatenate(([0], silent.astype(np.int8), [0])))
+        starts, ends = np.flatnonzero(edge == 1), np.flatnonzero(edge == -1)
+        k = int(np.argmax(ends - starts))
+        return lo + int((starts[k] + ends[k]) // 2)
+    center = lo + int(np.argmin(smooth))
+    r = max(1, int(round(SPLICE_SEARCH_MS * sr / 1000.0)))
+    zl, zh = max(lo, center - r), min(hi, center + r + 1)
+    mag = np.abs(audio[zl:zh])
+    cand = np.flatnonzero(mag <= float(mag.min()) + 1e-6) + zl
     return int(cand[np.argmin(np.abs(cand - center))])
 
 
-def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
-    """Raised-cosine fade at the edges of `seg`, in place."""
+def _edge_level(audio, at: int, before: bool, sr: int) -> float:
+    """RMS of the 5 ms on one side of sample `at`."""
     import numpy as np
 
-    k = min(int(n), int(seg.size))
-    if k <= 0:
-        return
-    w = (0.5 - 0.5 * np.cos(np.pi * (np.arange(k) + 0.5) / k)).astype(seg.dtype)
-    if fade_in:
-        seg[:k] *= w
-    if fade_out:
-        seg[seg.size - k :] *= w[::-1]
+    n = max(1, int(round(0.005 * sr)))
+    seg = audio[max(0, at - n) : at] if before else audio[at : at + n]
+    return float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) if seg.size else 0.0
+
+
+def _edge_ramp(level: float, peak: float, longest_ms: float, sr: int) -> int:
+    """Samples of ramp at a splice edge, by how loud the audio still is there.
+
+    Silence takes SPLICE_FADE_MS. A voice still sounding at the cut gets up to
+    `longest_ms`: a ramp of a couple of milliseconds on a vowel is itself a click, and a
+    release of a few tens of milliseconds reads as the reader stopping. Interpolated on a
+    log scale between SPLICE_QUIET and SPLICE_LOUD, because loudness is.
+    """
+    quiet, loud = SPLICE_QUIET * peak, SPLICE_LOUD * peak
+    if peak <= 0.0 or level <= quiet:
+        ms = SPLICE_FADE_MS
+    else:
+        k = min(1.0, math.log(level / quiet) / math.log(loud / quiet))
+        ms = SPLICE_FADE_MS + k * (longest_ms - SPLICE_FADE_MS)
+    return max(1, int(round(ms * sr / 1000.0)))
+
+
+def _ramp(seg, n_in: int, n_out: int) -> None:
+    """Raised-cosine fade over the first `n_in` and last `n_out` samples of `seg`, in place."""
+    import numpy as np
+
+    def curve(k: int):
+        return (0.5 - 0.5 * np.cos(np.pi * (np.arange(k) + 0.5) / k)).astype(seg.dtype)
+
+    k = min(int(n_in), int(seg.size))
+    if k > 0:
+        seg[:k] *= curve(k)
+    k = min(int(n_out), int(seg.size))
+    if k > 0:
+        seg[seg.size - k :] *= curve(k)[::-1]
+
+
+def _gap_window(edges: dict, ti, frame: float):
+    """(lo, hi) seconds a pause after token `ti` may be cut in, or None.
+
+    From the end of the token's last phoneme - so the punctuation's own frames are in
+    reach, which is where the model rests when it does - to one frame into the next
+    token's first phoneme, where a stop's closure is silence. `edges` is
+    {token: (first phoneme start, last phoneme end)}; `frame` one duration frame in the
+    same seconds.
+    """
+    here, nxt = edges.get(ti), edges.get(ti + 1)
+    if here is None or nxt is None:
+        return None
+    lo = float(here[1])
+    hi = min(float(nxt[0]) + frame, float(nxt[1]))
+    return (lo, hi) if hi > lo else None
 
 
 def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     """Insert real silence INTO an utterance without re-synthesizing it.
 
-    `points` is [(time_seconds, pause_seconds)], ascending; each time is the
-    NOMINAL end of the token or phone carrying the mark. Returns
-    `(audio, inserted)` where `inserted` is [(nominal_time, actual_seconds)] and
-    the actual seconds are sample-exact, so a timing shifted by them can never
-    drift away from the waveform. With nothing to insert the input array is
-    returned untouched - byte-identical, not merely equal.
+    `points` is [(t, top_up, limit, dwell, lo, hi)], ascending: `t` the nominal end of
+    the token or phone carrying the mark, `top_up` the mark's own share of the rest,
+    `limit` the next token's start, `dwell` the mark's table rest (see `_rest_from`) and
+    [lo, hi) the seconds the cut may go in (`_gap_window`). Shorter tuples have no window:
+    the cut may only move forward of `t`, by SPLICE_REACH_MS, and never past `limit`.
+    Returns `(audio, inserted)` with `inserted` [(time, seconds)] in the form `_shift`
+    takes; with nothing to insert the input array itself comes back.
 
-    NOT a sentence split. Splitting at every comma would make each clause its own
-    utterance and hand it sentence-final intonation, which is a worse defect than
-    the one being fixed. The sentence is synthesized whole, prosody intact, and
-    the silence is spliced in afterwards.
+    A sentence is synthesized whole and the silence spliced in afterwards, so a comma
+    keeps its continuation contour instead of a sentence-final fall. The voice often runs
+    straight through a comma, lengthening the vowel rather than pausing, so the window may
+    hold no silence at all: the cut goes where the voice is quietest (`_trough`), and each
+    edge is ramped for the level found there (`_edge_ramp`) - a release out of the word,
+    an onset back into the next.
 
-    CLICKS. Cutting a waveform at an arbitrary sample and butting digital zero
-    against it is a step discontinuity, which is a click - this project has been
-    bitten by exactly that before. Two cheap defenses, both applied:
-      1. the cut moves up to SPLICE_SEARCH_MS to the quietest sample in reach,
-         i.e. the nearest zero crossing on voiced material, so the two new edges
-         are already near zero;
-      2. a SPLICE_FADE_MS raised-cosine ramp out of the speech and back into it,
-         which removes the residual slope discontinuity the zero crossing leaves.
-    The ramp is only ever applied to samples the search has already established
-    are near-silent, so it costs no audible speech; alone it would be enough, but
-    2 ms of ramp on a loud sample is itself faintly audible, hence both.
+    The silence measured around the cut says how much of the rest is already paid for;
+    the target itself comes from the table (see `_rest_from`).
     """
     import numpy as np
 
-    # A point is (nominal time, top-up, next token's start, the mark's own dwell). The
-    # third field bounds how far the cut may slide forward; the fourth is the mark's
-    # natural rest from DWELL, which is what the TARGET is built on - see `_rest_from`.
-    # Shorter points are the older form and the tests: no bound, and no table entry, in
-    # which case the measured dwell stands in for it and the rule is what it was before
-    # the target and the measurement were separated.
-    pts = [
-        (
-            float(p[0]),
-            float(p[1]),
-            (float(p[2]) if len(p) > 2 else 0.0),
-            (float(p[3]) if len(p) > 3 else None),
+    pts = []
+    for p in points:
+        if float(p[1]) <= 0.0:
+            continue
+        pts.append(
+            (
+                float(p[0]),
+                float(p[1]),
+                float(p[2]) if len(p) > 2 else 0.0,
+                float(p[3]) if len(p) > 3 and p[3] is not None else None,
+                (float(p[4]), float(p[5])) if len(p) > 5 else None,
+            )
         )
-        for p in points
-        if float(p[1]) > 0.0
-    ]
-    # ONE RULE AT EVERY SETTING OF THE DIAL, INCLUDING ITS DEFAULT. `mult` = 1.0 used to
-    # short-circuit to "insert exactly what you were asked for", which is what every caller
-    # did before the dial learned to scale a whole rest. That left a step at the dial's own
-    # default - a comma of 0.10 s at 1.0 and 0.29 s at 1.2 - so it is gone, and the rule
-    # below runs at 1.0 like everywhere else.
-    #
-    # WHY THE SILENCE IS MEASURED HERE. Because it is the only place that can see it, and
-    # because the table's guess at it is wrong: it said this voice dwells 0.15 s at a comma
-    # and the measured figures run from 0.000 to 0.401. What is measured is used for what
-    # it can answer - HOW MUCH OF THE TARGET IS ALREADY PAID FOR - and nothing else. It
-    # does not set the target: multiplying a per-instance draw by the dial is what made one
-    # reading's commas come out 0.36, 0.44, 1.52 and 1.81 seconds. See `_rest_from`.
     if not pts:
         return audio, []
     pts.sort(key=lambda p: p[0])
-    search = max(1, int(round(SPLICE_SEARCH_MS * sr / 1000.0)))
-    env = max(1, int(round(SPLICE_ENV_MS * sr / 1000.0)))
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    quiet = peak * SPLICE_QUIET
     reach = max(1, int(round(SPLICE_REACH_MS * sr / 1000.0)))
-    back = max(0, int(round(SPLICE_BACK_MS * sr / 1000.0)))
-    fade = max(1, int(round(SPLICE_FADE_MS * sr / 1000.0)))
 
     pieces: list = []
     inserted: list = []
     prev = 0
-    need_in = False
-    quiet = float(np.max(np.abs(audio))) * 0.02 if audio.size else 0.0
-    for t, secs, limit, dwell in pts:
-        hi = int(round(limit * sr)) if limit > 0.0 else 0
-        cut = max(
-            prev,
-            _quiet_point(audio, int(round(t * sr)), search, prev, hi, env, reach, back),
-        )
+    n_in = 0
+    for t, secs, limit, dwell, win in pts:
+        want = int(round(t * sr))
+        if win is not None:
+            lo, hi = int(round(win[0] * sr)), int(round(win[1] * sr))
+        else:
+            lo = want
+            hi = min(int(round(limit * sr)), want + reach) if limit > 0.0 else want
+        lo = max(lo, prev)
+        cut = _trough(audio, lo, max(hi, lo), sr, quiet)
         have = _silence_around(audio, cut, quiet, sr)
         pad = int(
             round(
@@ -1050,34 +1050,25 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
         if pad <= 0:
             continue
         seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
-        _ramp(seg, fade, need_in, True)
+        out = _edge_ramp(_edge_level(audio, cut, True, sr), peak, SPLICE_RELEASE_MS, sr)
+        _ramp(seg, n_in, out)
         pieces.append(seg)
         pieces.append(np.zeros(pad, dtype=audio.dtype))
-        # The shift is keyed to where the silence ACTUALLY went, not to the nominal
-        # mark: the cut may now slide tens of milliseconds to reach the gap between
-        # the words, and a timing shifted from the nominal point would drift off the
-        # waveform by that much. `hi` keeps the cut at or before the next token's
-        # start, so the mark's own token still ends before it and only what follows
-        # moves.
-        # max(): the cut is at or after the mark in SAMPLES, but a sample index divided by
-        # the rate can land a hair BELOW the nominal seconds (round(0.25*22050)/22050 =
-        # 0.24997), and that hair flips the end-exclusive comparison in _shift - the mark's
-        # own token would then be shifted by its own pause. Never report earlier than the
-        # mark; report the real position whenever the cut genuinely moved.
-        # Clamped into [mark, next token start] for the same rounding reason at BOTH ends:
-        # a sample index converted back to seconds can land a hair either side of the
-        # boundary it was derived from, and either hair flips a comparison in _shift -
-        # below the mark shifts the mark's own token, above the next token's start stops
-        # that token shifting at all.
+        # Reported at the mark, clamped into [t, limit]: the timings this shifts are token
+        # spans, and the pause belongs after the mark's token and before the next one
+        # wherever in the gap the samples went. Clamped at both ends because a sample index
+        # turned back into seconds can land a hair either side of the boundary it came
+        # from, and either hair flips a comparison in `_shift`.
         at = max(t, cut / float(sr))
         if limit > 0.0:
             at = min(at, limit)
         inserted.append((at, pad / float(sr)))
-        prev, need_in = cut, True
+        prev = cut
+        n_in = _edge_ramp(_edge_level(audio, cut, False, sr), peak, SPLICE_ATTACK_MS, sr)
     if not inserted:
         return audio, []
     tail = np.array(audio[prev:], dtype=audio.dtype, copy=True)
-    _ramp(tail, fade, need_in, False)
+    _ramp(tail, n_in, 0)
     pieces.append(tail)
     return np.concatenate(pieces), inserted
 
@@ -1168,14 +1159,14 @@ def _trim_rests(audio, rests, sr: int):
             continue
         at = lo + (hi - lo - n) // 2
         seg = np.array(audio[prev:at], dtype=audio.dtype, copy=True)
-        _ramp(seg, fade, need_in, True)
+        _ramp(seg, fade if need_in else 0, fade)
         pieces.append(seg)
         removed.append((at / float(sr), -n / float(sr)))
         prev, need_in = at + n, True
     if not removed:
         return audio, []
     tail = np.array(audio[prev:], dtype=audio.dtype, copy=True)
-    _ramp(tail, fade, need_in, False)
+    _ramp(tail, fade if need_in else 0, 0)
     pieces.append(tail)
     return np.concatenate(pieces), removed
 
@@ -1445,6 +1436,7 @@ class PiperBackend(Backend):
         # The frame plan of the most recent render - see `_render_symbols`.
         self._last_frames = None
         self._last_rests: list = []
+        self._last_edges: dict = {}
 
     # -- storage -----------------------------------------------------------
 
@@ -2034,17 +2026,23 @@ class PiperBackend(Backend):
             if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
                 continue  # . ! ? are the gap between sentences, above
             if i < len(phone_times):
-                nxt = phone_times[i + 1]["t0"] if i + 1 < len(phone_times) else 0.0
+                nxt = phone_times[i + 1] if i + 1 < len(phone_times) else None
                 # the top-up and the table dwell, like the token path - the splicer
-                # measures what is already there and tops it up to the target
-                points.append(
-                    (
-                        float(phone_times[i]["t1"]),
-                        _top_up(mark, params),
-                        float(nxt),
-                        _dwell_for(mark),
-                    )
+                # measures what is already there and tops it up to the target - and the
+                # window: the mark's own frames to one frame into the phone after it
+                point = (
+                    float(phone_times[i]["t1"]),
+                    _top_up(mark, params),
+                    float(nxt["t0"]) if nxt is not None else 0.0,
+                    _dwell_for(mark),
                 )
+                if nxt is not None:
+                    hi = min(
+                        float(nxt["t0"]) + HOP_LENGTH / float(sample_rate),
+                        float(nxt["t1"]),
+                    )
+                    point += (float(phone_times[i]["t0"]), hi)
+                points.append(point)
             else:
                 unplaceable.append(mark)
         _warn_unaligned(unplaceable)
@@ -2120,8 +2118,11 @@ class PiperBackend(Backend):
                 params.get("noise_w", cfg.get("inference", {}).get("noise_w", 0.333))
             ) * float(step["noise_w_mul"])
             audio, per_token = self._run(group, voice, gp, cfg, sess, phonemizer)
-            # The frame plan's word-boundary rests, before anything resamples them.
+            # The frame plan's word-boundary rests and each word's sounds, before anything
+            # resamples them.
             group_rests = list(self._last_rests)
+            edges = dict(self._last_edges)
+            frame = HOP_LENGTH / float(sr)
             # SAY WHICH WORDS CAME BACK WITHOUT A SPAN. ghost keeps them in the karaoke line
             # either way now (it interpolates their timing - see
             # GenerativeEditor._bridge_words), but a token the aligner cannot place is a real
@@ -2175,6 +2176,8 @@ class PiperBackend(Backend):
                 # the alignment was measured before the resample, so it moves with it
                 per_token = {k: (v[0] / pr, v[1] / pr) for k, v in per_token.items()}
                 group_rests = [(a / pr, b / pr, w) for a, b, w in group_rests]
+                edges = {k: (a / pr, b / pr) for k, (a, b) in edges.items()}
+                frame /= pr
             # A REST NOBODY ASKED FOR, shortened before the ones that were asked for are
             # put in. Unmarked boundaries only: a mark's rest belongs to `_splice_pauses`
             # and to the Pause dial, and this must never be caught arguing with either.
@@ -2196,6 +2199,10 @@ class PiperBackend(Backend):
                     for k, v in per_token.items()
                 }
                 per_token = {k: (a, max(a, b)) for k, (a, b) in per_token.items()}
+                edges = {
+                    k: (_shift(a, cut, True), _shift(b, cut, False))
+                    for k, (a, b) in edges.items()
+                }
             # mid-sentence marks: splice their silence into this group's audio
             points, unplaceable = [], []
             for ti, tok in enumerate(group):
@@ -2203,47 +2210,58 @@ class PiperBackend(Backend):
                 if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
                     continue  # . ! ? are the gap between groups, below
                 if ti in per_token:
-                    # The third field bounds how far the cut may slide forward: the next
-                    # token's start, so a pause can never end up inside the word after it.
                     nxt = per_token.get(ti + 1)
-                    points.append(
-                        (
-                            float(per_token[ti][1]),
-                            # the TOP-UP, not the finished figure: what to add here also
-                            # depends on what the model is already resting, and only the
-                            # splicer can see that (it has the audio). See _splice_pauses.
-                            _top_up(mark, params),
-                            float(nxt[0]) if nxt is not None else 0.0,
-                            # ...and the mark's own natural rest, which is what the
-                            # target is built on. The measured dwell says how much of
-                            # that target is already paid for; it does not get to say
-                            # how long the rest should be. See `_rest_from`.
-                            _dwell_for(mark),
-                        )
+                    # (mark's token end, top-up, next token start, the table's dwell): the
+                    # splicer measures what the model already rests there and tops it up to
+                    # the target - see `_rest_from`. The window is where the cut may go.
+                    point = (
+                        float(per_token[ti][1]),
+                        _top_up(mark, params),
+                        float(nxt[0]) if nxt is not None else 0.0,
+                        _dwell_for(mark),
                     )
+                    win = _gap_window(edges, ti, frame)
+                    points.append(point + win if win is not None else point)
                 else:
                     unplaceable.append(mark)
             _warn_unaligned(unplaceable)
             audio, inserted = _splice_pauses(
                 audio, points, sr, _pause_multiplier(params)
             )
+            # WHERE A REST AFTER EACH WORD GOES - the editor splices its hesitations and
+            # action holds there (GenerativeEditor._splice_holds). The same window as a
+            # mark's, searched in the finished audio, so after a mark it is the middle of
+            # the silence already spliced in.
+            rests = {}
+            quiet = SPLICE_QUIET * float(np.max(np.abs(audio))) if audio.size else 0.0
+            for ti in per_token:
+                win = _gap_window(edges, ti, frame)
+                if win is None:
+                    continue
+                lo = int(round(_shift(win[0], inserted, False) * sr))
+                hi = int(round(_shift(win[1], inserted, True) * sr))
+                rests[ti] = _trough(audio, lo, hi, sr, quiet) / float(sr)
+            gap = None
+            if gi < len(groups) - 1:
+                gap = _gap_for(str(group[-1].get("punct", "")) if group else "", params)
             for ti, span in per_token.items():
                 # float(): numpy scalars are not JSON-serializable and the
                 # protocol is JSON
-                times.append(
-                    {
-                        "index": base + ti,
-                        "t0": round(_shift(float(span[0]), inserted, True) + cursor, 4),
-                        "t1": round(
-                            _shift(float(span[1]), inserted, False) + cursor, 4
-                        ),
-                    }
-                )
+                row = {
+                    "index": base + ti,
+                    "t0": round(_shift(float(span[0]), inserted, True) + cursor, 4),
+                    "t1": round(_shift(float(span[1]), inserted, False) + cursor, 4),
+                }
+                if ti in rests:
+                    row["rest"] = round(rests[ti] + cursor, 4)
+                elif ti == len(group) - 1 and gap is not None:
+                    # the sentence's last word: the middle of the gap before the next
+                    row["rest"] = round(cursor + len(audio) / sr + gap * 0.5, 4)
+                times.append(row)
             chunks.append(audio)
             cursor += len(audio) / sr
             base += len(group)
-            if gi < len(groups) - 1:
-                gap = _gap_for(str(group[-1].get("punct", "")) if group else "", params)
+            if gap is not None:
                 pad = int(round(gap * sr))
                 if pad > 0:
                     chunks.append(np.zeros(pad, dtype=np.float32))
@@ -2339,6 +2357,11 @@ class PiperBackend(Backend):
         # spans and cannot be recovered from them afterwards. -1 = not a rest, else the
         # index of the token whose word-space this run carries.
         rest_of: list[int] = [-2]
+        # Which ids are a word's own SOUNDS, as opposed to blanks, word-spaces and
+        # punctuation: a pause is cut between the last of one word's and the first of the
+        # next's (`_gap_window`), because a token's span runs on through its mark and its
+        # space and the next span starts the moment it ends.
+        sound: list[bool] = [False]
         for sym, src in symbols:
             mapped = pmap.get(sym)
             if mapped is None:
@@ -2347,16 +2370,20 @@ class PiperBackend(Backend):
             ids.append(PAD)
             owner.append(src)
             rest_of.append(-1)
+            sound.append(False)
             for m in mapped:
                 ids.append(int(m))
                 owner.append(src)
                 rest_of.append(src if sym == " " else -2)
+                sound.append(sym != " " and sym not in _MARK_SYMBOLS)
         ids.append(PAD)
         owner.append(-1)
         rest_of.append(-1)
+        sound.append(False)
         ids.append(EOS)
         owner.append(-1)
         rest_of.append(-2)
+        sound.append(False)
         if folded and SYLLABIC not in self._warned_symbols:
             self._warned_symbols.add(SYLLABIC)
             print(
@@ -2413,6 +2440,8 @@ class PiperBackend(Backend):
         # same seconds `spans` is in. Stashed rather than returned for the reason
         # `_last_frames` is: the vowel probe renders through here and unpacks a pair.
         self._last_rests: list = []
+        # {token: (first sound start, last sound end)} in the same seconds - see `sound`.
+        self._last_edges: dict = {}
         if len(out) > 1:
             frames = np.asarray(out[1]).squeeze().astype(np.float64)
             if frames.ndim == 1 and frames.size == len(owner):
@@ -2421,11 +2450,15 @@ class PiperBackend(Backend):
                 run_at = 0.0
                 run_of = -1
                 spoke = False
-                for dur, who, rest in zip(
+                for dur, who, rest, heard in zip(
                     frames * HOP_LENGTH / float(cfg["audio"]["sample_rate"]),
                     owner,
                     rest_of,
+                    sound,
                 ):
+                    if heard and who >= 0:
+                        e = self._last_edges.get(who)
+                        self._last_edges[who] = (t if e is None else e[0], t + dur)
                     if rest == -2:
                         # A rest is only a rest when speech stands on BOTH sides of it.
                         # The lead-in (see LEAD_IN_SPACES) and the utterance's own tail

@@ -23,7 +23,7 @@ const KNOBS := {"show": "", "seed": 1, "cards": [3, 6], "reversals": true, "jump
 const ROWS := [
 	["Plan", ["plan"]],
 	["Shuffle", ["draw"]],
-	["Table", ["image:back", "image:surface", "image:backdrop"]],
+	["Table", ["image:back", "image:surface", "image:backdrop", "table"]],
 	["Intro", ["say:intro"]],
 	["Card", ["design:K", "image:card:K", "say:K"]],
 	["Close", ["say:close", "script"]],
@@ -35,7 +35,7 @@ const ROWS := [
 const REDO := {
 	"Plan": [["Make a new plan (clears the cards and the reading)", "plan"]],
 	"Table": [["Paint a new card back", "image:back"], ["Paint a new cloth", "image:surface"],
-		["Paint a new room", "image:backdrop"]],
+		["Paint a new room", "image:backdrop"], ["Set the table again", "table"]],
 	"Intro": [["Rewrite the intro (clears the readings after it)", "say:intro"]],
 	"Card": [["Paint this card again (clears its reading and the ones after)", "image:card:K"],
 		["Rewrite this card's reading (clears the ones after it)", "say:K"],
@@ -66,6 +66,7 @@ var _row_t := 0.0
 var _brief_changed := false
 var _deck_note: Label
 var _deck_seen := -1
+var _table_seen := {}
 ## THE EPISODE AN EXPORT IS OF, held from the moment it is asked for: synthesis takes minutes,
 ## and an episode picked meanwhile must not lend the take its cards or its upload notes.
 ## {episode, body, doc, title}, or empty.
@@ -834,6 +835,22 @@ func _add_row(title: String, kind: String, steps: Array, k: int) -> void:
 	_row_widgets.append({"steps": steps, "status": status, "text": text, "kind": kind, "k": k})
 
 
+## What the set dresser put on the picked episode's table, by name - read again only when the file
+## changes (the rows refresh four times a second).
+func _table_things() -> PackedStringArray:
+	var path := _episode.file_of("table") if _episode != null else ""
+	var mt := FileAccess.get_modified_time(path) if not path.is_empty() and FileAccess.file_exists(path) else -1
+	if mt != int(_table_seen.get("mt", -2)) or path != String(_table_seen.get("path", "")):
+		var names := PackedStringArray()
+		var t: Variant = _episode.read_json("table") if mt >= 0 else null
+		if t is Dictionary and (t as Dictionary).get("things") is Array:
+			for th in (t as Dictionary)["things"]:
+				if th is Dictionary:
+					names.append(String((th as Dictionary).get("name", "a thing")))
+		_table_seen = {"mt": mt, "path": path, "names": names}
+	return _table_seen["names"]
+
+
 func _refresh_rows() -> void:
 	if _episode == null or _rows_box == null:
 		return
@@ -870,6 +887,9 @@ func _refresh_rows() -> void:
 				for s in ["back", "surface", "backdrop"]:
 					if _episode.has("image:" + s):
 						have.append({"back": "back", "surface": "cloth", "backdrop": "room"}[s])
+				var things := _table_things()
+				if not things.is_empty():
+					have.append("%d thing%s" % [things.size(), "" if things.size() == 1 else "s"])
 				text = ", ".join(have)
 			"Card":
 				if doc.is_empty():
@@ -888,6 +908,8 @@ func _refresh_rows() -> void:
 			text = why
 		(w["text"] as Label).text = text
 		(w["text"] as Label).tooltip_text = text
+		if String(w["kind"]) == "Table" and why.is_empty() and not _table_things().is_empty():
+			(w["text"] as Label).tooltip_text = "On the table:\n" + "\n".join(_table_things())
 	# the deck, recounted whenever the brief changes
 	if _text != null and _text.get_version() != _deck_seen and _deck_note != null:
 		_deck_seen = _text.get_version()

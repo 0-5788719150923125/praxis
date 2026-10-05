@@ -12,6 +12,7 @@ class_name TarotProducer
 ##   draw       the deck is shuffled and cut (here, from the seed - no agent touches it)
 ##   design:K   the deck's creator draws up card K: its illustration and its booklet entry
 ##   image:*    the painter makes the back, the cloth, the room, then each card in turn
+##   table      the set dresser sets the reader's table, looking at the cloth
 ##   say:intro  the reader opens the video, shuffling, knowing no card
 ##   say:K      the reader turns over card K - knowing cards 1..K and what it said before, and
 ##              LOOKING AT card K's painting, so the words are about the picture on screen
@@ -157,6 +158,8 @@ func _make(step: String) -> void:
 			_make_say(String(parts[1]))
 		"script":
 			_finish(step, _make_script())
+		"table":
+			_make_table()
 
 
 func _submit_text(step: String, p: Dictionary, tier: String) -> void:
@@ -330,6 +333,29 @@ func _make_image(step: String) -> void:
 			_submit_image(step, TarotPrompts.backdrop_image(look, target), [])
 
 
+## THE SET DRESSER sets the table from the plan, looking at the cloth, told the things earlier
+## episodes' tables held so this one holds others.
+func _make_table() -> void:
+	var seen: Array = []
+	for h in TarotEpisode.history(episode.show):
+		var s := int((h as Dictionary)["seed"])
+		if s == episode.seed:
+			continue
+		var t: Variant = TarotEpisode.open(episode.show, s).read_json("table")
+		if t is Dictionary and (t as Dictionary).get("things") is Array:
+			for th in (t as Dictionary)["things"]:
+				if th is Dictionary and not _str((th as Dictionary).get("name", "")).is_empty():
+					seen.append(_str((th as Dictionary)["name"]))
+		if seen.size() >= 40:
+			break
+	var cloth := episode.has("image:surface")
+	var p := TarotPrompts.set_dresser(String(spec.get("title", "")), String(spec.get("brief", "")), _plan(),
+		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth)
+	if cloth:
+		p["images"] = [{"path": episode.file_of("image:surface"), "label": "The cloth, seen from above:", "flip": false}]
+	_submit_text("table", p, "best")
+
+
 func _make_say(who: String) -> void:
 	_submit_text("say:" + who, say_prompt(who), "best")
 
@@ -408,6 +434,8 @@ func _land(step: String, res: Dictionary) -> void:
 					else episode.write_text(step, t)
 			"image":
 				err = "" if episode.has(step) else "the picture did not arrive"
+			"table":
+				err = _land_table(String(res.get("text", "")))
 	if err.is_empty():
 		_errors.erase(step)
 		return
@@ -463,6 +491,18 @@ func _land_design(step: String, text: String) -> String:
 	if not _str((b as Dictionary).get("reversed", "")).is_empty():
 		booklet["reversed"] = _str((b as Dictionary)["reversed"])
 	return episode.write_json(step, {"art": _str((d as Dictionary)["art"]), "booklet": booklet})
+
+
+## THE TABLE, kept as the set dresser wrote it - it is made safe each time it is built
+## ([method TarotTable.sanitize_table]), so an edit by hand is read the same way - if anything in
+## it can be built.
+func _land_table(text: String) -> String:
+	var d: Variant = TextGen.extract_json(text)
+	if not (d is Dictionary):
+		return "the table was not JSON"
+	if (TarotTable.sanitize_table(d as Dictionary, _look())["things"] as Array).is_empty():
+		return "nothing on the table could be built"
+	return episode.write_json("table", d)
 
 
 ## A reply's field as text, whatever the writer made it (JSON numbers arrive as floats).

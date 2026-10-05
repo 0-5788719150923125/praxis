@@ -40,7 +40,8 @@ format and voice, told true).
 | `scripts/tarot_prompts.gd` | `TarotPrompts`: what each agent is told. Pure. |
 | `scripts/tarot_script.gd` | `TarotScript`: the reading's marks; one walk gives the voice its text and the table its actions. |
 | `scripts/tarot_deck.gd` | `TarotDeck`: the show's deck, parsed from its brief's `## Cards` section (or the standard 78, generated, meanings from `data/tarot/meanings.json`, CC0); the seeded shuffle; true-random seeds. |
-| `scripts/tarot_table.gd` | `TarotTable`: what a look may name - title faces (`fonts/tarot/`, OFL), frames, props - and `sanitize_look`. |
+| `scripts/tarot_table.gd` | `TarotTable`: what a look may name - title faces (`fonts/tarot/`, OFL), frames, the zones things stand in - `sanitize_look`, `sanitize_table`, and the layout a prompt can know ahead (`layout_of`, `headroom`). |
+| `scripts/props.gd` | `Props`: things built from a description - shapes, materials, ornaments (registries an agent reads), `sanitize`, `build`. Generic; the tarot table is its first user. Shaders `prop.gdshader`, `prop_glass.gdshader`, `prop_lens.gdshader`, `prop_common.gdshaderinc`. |
 | `scripts/tarot_cards.gd` | `TarotCards`: faces, backs and booklet pages, composed in 2D into stopped SubViewports. |
 | `scripts/media/tarot.gd` | `TarotMedium`: the table. Pinned by the mode (`Medium.OWNED`, `Director.medium_override`). |
 | `scripts/tarot_editor.gd` | `TarotEditor extends GenerativeEditor`: the panel. |
@@ -79,6 +80,7 @@ cards themselves into `draw.json`, so an episode keeps what it drew whatever the
 | `draw` | ghost | the show's deck and the seed (shuffle, spread size, jumper) |
 | `design:K` | deck designer (fast tier), one card per run | the look, card K, its traditional meaning |
 | `image:back/surface/backdrop` | painter | the look |
+| `table` | set dresser (best tier) | the plan, the cloth's painting, earlier episodes' tables - no card |
 | `image:card:K` | painter | design K; the back + first + previous card as references |
 | `say:intro` | reader (best tier) | the plan - no card |
 | `say:K` | reader | the plan, every passage before, cards 1..K, and card K's PAINTING |
@@ -93,6 +95,15 @@ may have gone its own way. The close is sent the whole spread. Painting a card a
 rewrites its passage and every one after it. The writer takes pictures as stream-json content
 blocks (`TextGen.Claude.compose`, at most 768 px on the long edge), and `prompt.txt` lists which
 pictures went with the words.
+
+**The cards move between passages, never inside one** (the user, 2026-10-05: "she's signaling the
+draw before it even happened"). A passage is spoken whole and the table acts in the silence after
+it, so the intro had been told to "end on the moment you stop shuffling to pull the first card" and
+wrote "And there. That's the first one." - with a hesitation, trying to time the draw itself - a
+beat before the card came out; a last card's "There. Beside the other two." came before it went
+down. Every reader prompt now says when the cards move (`TarotPrompts.MOVES`): lead into the next
+move, never report it - the acknowledgement belongs to the passage after it. Scripts written before
+this keep their words until those passages are rewritten. Gate: tarot_check `_moves_after_words`.
 
 The order is not written anywhere: a step starts when its inputs exist (`TarotEpisode.needs`).
 A card's picture waits for the back and the card before it, but is not MADE from them: redoing
@@ -115,30 +126,105 @@ brainstorm pick) - no word lists - and the producer is shown earlier episodes' t
 decks and settings and told not to repeat them. The table samples its own layout from the seed
 (camera, deck position, spread layout, shuffle moves, props, light).
 
+**The card stock** (2026-10-05, the user: "most if not all generated tarot cards have a light tan
+color"): asked only for "card stock", the producer printed all four decks on cream. The stock's
+LIGHTNESS is now a die (`TarotPrompts.dice`, 5-95, its own rng so the other dice keep their
+values) that the producer is held to - the one literal die; it picks the hue, ink and accent.
+`TarotTable.sanitize_look` keeps the ink readable on whatever stock lands (`legible_ink`, WCAG
+contrast >= `INK_CONTRAST` 3). Episodes planned before keep their cream until the plan is redone.
+Gate: tarot_check `_card_stock`.
+
 ## The table
 
 Static camera from the reader's chair (locked; the Tarot panel has no Camera dial), cloth from
-the episode's `surface`, its `backdrop` out of focus beyond the far edge. ON THE TABLE (the user, 2026-10-04:
-the 3D props were "half-baked... the novelty would wear off"): the look's candles, and nothing
-else. Their flames light the cards and throw flickering shadows; each candle casts in the other
-flames' light but is left out of its own (which printed a hard disc round its base), and a soft
-contact shade sits where it meets the cloth. Where each stands is FOUND (`_find_spot`): wholly in
-the shot (its whole projected box), clear of everywhere the cards go, not in front of another,
-only behind the middle of the table (one that ran out of room stood in FRONT of the cards, became
-the key light and blew out the card held up to the lens), toward an aim flanking the cloth
-rather than its rim, and by dark cloth rather than pale. The lamp is low and to one side, so
-things throw shadows you can see.
+the episode's `surface`, its `backdrop` out of focus beyond the far edge. The lamp is low and to
+one side, so things throw shadows you can see.
 
-PAINTED OBJECTS WERE TRIED AND TAKEN OFF (2026-10-04). Each was a photograph of one thing,
-painted alone and cut out of its background, stood square to the camera with decal shadows. After
-fixing what could be fixed (a tint that made them see-through, the painting angle, sizes, the rim),
-the user: "these 2D objects look awful. Their orientation is off, they have no lighting, their
-style doesn't fit the scene, the relative scaling between them is way off, they cast no
-shadows". A painting brings its own camera, light and grade, and a flat card can neither take the
-candlelight nor cast a shadow - so the fault is the approach, not its tuning. The one route that
-fixes it structurally is to turn each painting into a mesh with a local image-to-3D model
-(TRELLIS / Hunyuan3D class: real light, real shadows, any object the planner invents) at the cost
-of a heavy optional install, an NVIDIA GPU and blobby thin parts; offered, and declined for now.
+THE SET TABLE (2026-10-05; the user: "the lack of objects upon the table makes the whole scene
+rather boring... most tarot readers are very intentional about how they setup their
+workspaces"). A step of its own, `table` (`table.json`): the SET DRESSER (`TarotPrompts.set_dresser`,
+best tier) sets the reader's table from the plan, LOOKING AT the cloth (it waits for it; a new
+cloth keeps the table), knowing no card. It invents the things of the episode's world - a
+field station's hurricane candle, rain gauge and calabash of rainwater; a harbor's votive stone
+anchor, hematite weights and murex shell - each with its reason (the four elements the suits
+stand for, the reading's subject, light, devotion) and DESCRIBES EACH TO BE BUILT: parts of
+shapes (`Props.SHAPES`: lathe profiles, rounded boxes, balls, crystal points and clusters,
+rings, tubes along paths, sheets, blooms), in real centimeters, of named materials
+(`Props.MATERIALS`, procedural surfaces in `shaders/prop.gdshader`: metal with tarnish, wax,
+crystal, ceramic glaze, stone veins, wood grain...) with ornament worked in (`Props.ORNAMENTS`:
+bands, flutes, stars, moons, zigzag... as relief, paint or inlay). It names each thing's zone
+(`TarotTable.ZONES`), its group (things that stand together) and its turn, and is told each
+zone's HEADROOM (`TarotTable.headroom`: the frame's top passes low over the far cloth, so the back
+holds only short things). The reply is kept as written and made safe at every build
+(`TarotTable.sanitize_table` over `Props.sanitize`: unknown shapes dropped, numbers clamped,
+flames capped at `MAX_CANDLES`). Exactly the look's candle count is asked for; before a table is
+set (or for an older episode) the look's candles stand alone (`TarotTable.default_table`). The
+reader is told only that the reader's own things stand there - no passage depends on them, so
+setting the table again keeps the reading. NO IMAGE-TO-3D: the user ruled it out on 2026-10-05
+("way too slow, and my GPU is in constant use... I'm not going to expect users to load giant
+models") - no Piper-sized model exists (TripoSR and SF3D are 1.6+ GB and want a GPU). Claude
+writing the geometry was the user's idea.
+
+BUILT IN THE ENGINE (`scripts/props.gd`, `Props.build`): meshes in meters, base on y = 0, each
+part's surface laid out for its own girth and height so a motif keeps its shape. A candle's wax
+part carries a `wick`: the flame is lit at its top, melted into a pool, and `drips` run down it.
+SEEN-THROUGH material is glass for a vessel (`prop_glass`, a flame inside it shows) and a LENS
+for a solid thing (`prop_lens`, screen refraction - a crystal ball turns the cloth over); a
+clear crystal (clarity >= `Props.CLEAR`) is drawn as glass - opaque, a crystal ball was a pearl.
+A flame lights everything but its own thing (an oil lamp's flame blew its own body white), whose
+wax glows with the flicker instead (`flame` uniform). A reflection probe catches the table once
+it is set, and only the things reflect it (`reflection_mask`): metal with nothing to reflect
+read as paint. Look at a description alone with `tests/props_look_probe.gd`.
+
+STONES (2026-10-05; the user: "a lot of tarot readers often have stones of all sizes: sometimes
+large ones, though often a handful of small ones of various colors and properties", and "stones do
+not always need to be in a dish. A lot of people would just arrange them on a table"). A `geode`
+shape: a rough half rock, its hollow lined with points growing in (its rock plain stone unless
+`base`). STREWN COPIES: `scatter`ed ones never touch (a crowded handful spreads wider rather than
+pass through itself - three beach stones in a shell had crossed 94% of the time) and a `heap`
+settles each copy into the lowest of a few spots, on the floor or resting on the copies under it,
+so the floor fills before the heap rises; a `ring` can be an `arc`. A part's `material` can be a
+LIST its copies take in turn (a mesh per material). THE PLAY OF LIGHT (`Props.PLAYS`, a
+material's `play`), all of it lit by the engine, never emitted: silk (tiger's eye - Godot's own
+ANISOTROPY, its frame turned across the fibers and rough enough to be broad), flash (labradorite -
+streaky patches tipped as they lie, colored like metal), fire (opal), glitter (goldstone - tiny
+tipped flakes that only the flames light), rainbow (aura quartz, paua, bismuth - a thin film in
+what it reflects, its hues near the body's own: the whole rainbow read as tie-dye; a pale body
+keeps its own light, or a cream shell read nearly black), glow
+(moonstone); and `rings` bend a crystal's banding or a stone's veins round the middle of each copy
+(agate, malachite) - every vertex carries its copy's middle and number (`CUSTOM0`, `Tris.placed`).
+Lumpy balls have broad lumps (a fine second octave alone crimped a small stone like a dumpling).
+FOUND ON THE WAY: `bump()` normalized a zero vector where a pore was seen edge-on, and the NaN
+reached the reflection probe and blacked out everything that reflects it (a paua shell in bone);
+it is guarded now and called on every pixel - a derivative in a branch some pixels skip is
+undefined. A flag written "yes" crashed the sanitizer (`Props._flag`). The set dresser is told
+that many readers keep stones, set on the cloth or heaped in a dish. Gate: tarot_check `_stones`.
+
+WHERE A THING STANDS IS FOUND (`_place_things`, `_stand`): groups biggest first, a group's tallest
+nearest its zone's middle, the rest round it - the shorter toward the reader; on the CLOTH (on the
+wood by the rim it read as falling off), clear of everywhere the cards go (`_keep_out`), clear of
+what stands (`THING_GAP`, `GROUP_GAP` within a group), wholly in the shot, and no group in front
+of another in the picture - within a group a little in front at most (one seen through another
+read as a stack). A lit thing stands only behind the middle (a candle in front of the cards
+became the key and blew out the held card) and by dark cloth. A low thing may lie nearer the
+reader. A thing with no room is tried smaller, then left off (logged).
+
+NOTHING PASSES THROUGH WHAT STANDS (the user: "objects should probably have collision, and so
+should the cards"): each thing's FOOT - its outline up to `Props.FOOT_H` - is an obstacle in the
+planned wash. Every card moves from where it was to where the step puts it a few millimeters at a
+time and is pushed back out of any foot it runs into, away from its middle (`_card_clear`,
+`_push_out` by separating axes along that direction), so it slides along it and never jumps
+through; a card is flung out only by a way clear of everything (`_path_clear`). The wash is still
+planned once, a pure function of the seed - collision in the engine's physics would not be. Gate:
+`tarot_place_check` (no card crosses a foot over 40 seeds; the same washes let through must).
+
+CANDLES TOGETHER LIGHT THE CLOTH TOGETHER: the HEAT cap is on the cloth's hottest spot under ALL
+the flames at once (`_heat_field` per flame, summed; every flame reaching the hottest cell dimmed).
+Two tapers side by side, each at its own limit, burned a pale linen white through the bloom.
+
+PAINTED OBJECTS WERE TRIED AND TAKEN OFF (2026-10-04): a photograph of one thing cut out of its
+background brings its own camera, light and grade, and a flat card can neither take the
+candlelight nor cast a shadow ("these 2D objects look awful").
 
 FLAMES FLICKER APART (the user: "the candles flicker at exactly the same rate, which is wrong").
 Every flame had one tempo and one swing, so they pulsed together. Each now has its own tempo,
@@ -149,11 +235,20 @@ behind the camera, which also flickers"): two or three shadowless, flickering li
 camera and off to the sides - a warm fill on the cloth and on the card held up to the lens.
 Gate: `tests/tarot_place_check.gd`.
 
-ONE LIGHT THROWS THE SHADOWS (the user: "the stack of cards casts no shadow... two independent
-shadows for each side"): the candle nearest the middle is the KEY - bright, reaching the cards,
-the only light with shadows, soft at their ends (`light_size`), biased for a tabletop (at the
-defaults a deck's shadow began centimeters in front of it). The other candles light without
-shadows; the lamp is a shadowless fill (the key when there is no candle). NO CANDLE IS BRIGHTER
+EVERY LIGHT THROWS ITS OWN SHADOW (2026-10-05; the user, on a frame where "the rock casts a
+shadow that is crescent-moon shaped": "most scenes have multiple light sources, and thus should
+probably cast multiple shadows"). Every candle and the lamp cast, so a thing has a shadow for each
+light near it, each turned from its own; where two fall together the shadow is darker. The KEY -
+the candle nearest the middle that its cloth can take, else the lamp - is still the brightest, so
+the deck's long shadow toward the reader leads. (Before, one key light cast alone - the user had
+found every light casting strange: "the stack of cards casts no shadow... two independent shadows
+for each side".) THE CRESCENTS WERE THE LAMP'S BIASES: Godot's defaults are made for rooms, and at
+the lamp's distance they came to millimeters - more than a bowl's floor stands off the cloth - so
+a bowl cast only its rim's ring, stones nothing, a geode a shadow standing off its foot; now
+`shadow_bias` 0.005 / `shadow_normal_bias` 0.15 (the candles' were already 0.02 / 0.4). A
+`light_size` on the lamp threw a white glare off a geode's rim, so its shadows soften by blur
+alone. The room's out-of-shot candles stay shadowless (faint fills, six shadow passes each). Try a
+lamp setting in seconds with `props_look_probe --lamp 1 --key 0 --lamp-shadow B,N,S`. NO CANDLE IS BRIGHTER
 THAN ITS CLOTH ALLOWS: a key candle on the pale half of a "pine boards half covered by a felt
 runner" surface flooded half the frame through the bloom, where the same light on the felt reads
 as a candle (linear luminance 0.64 against 0.18); and on a near-black blanket a cream stripe just
@@ -190,14 +285,24 @@ activations"): several riffles, a string of cuts, a few overhand passes - one ki
 then nothing for a while (median ~3 s, now and then a long linger), in the MIDDLE of the table;
 before the first card the deck is squared and pushed to its side (`TarotScript.PUSH`, which the
 first draw's rest includes). A wash is rare, once at most, and a planned simulation: the deck
-spread WIDE (some cards flung well out), two flat hands dragging what they touch, then six to
-eight sweeps round the pile over ~6 s, each taking a few cards - some only pushed near, a few
+spread WIDE (some cards flung well out), two flat palms working it for most of half a minute, then
+six to eight sweeps round the pile over ~7 s, each taking a few cards - some only pushed near, a few
 missed and fetched by a later sweep - landing nearly squared, so the end is a light tidy, never
-the whole spread arriving at once. A card lies on the highest card it truly OVERLAPS (their turned
-rectangles, `_cards_overlap`), just above the cloth - a distance test let overlapping cards share
-a height and cut through each other. A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
+the whole spread arriving at once. THE MIXING IS MOST OF IT (the user, 2026-10-05: "BARELY
+shuffled at all. 3 or 4 cards might shift slightly... no changing of z-order... maybe 5 or 10
+seconds long"): it had been 5 s of two hands drifting through less than one slow loop. Each palm
+now works a patch in a loop or two while traveling, lifts and comes down on the next, mostly on its
+own side; a card under another drags less than the one on top, so cards slide over and under. The
+ORDER is decided when two cards meet - the one sliding in on top - and held while they touch, so
+it changes all through the wash and never through a card. A wash the first card would cut short is
+replanned to fit, the same wash up to its own gather. Gate: `tests/tarot_wash_check.gd`. A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
 RIGHT (shown, never read); both turn a little on their axes, and the card is now and then turned
-to look at its back. A lay: page out, card down into the spread. Jumpers fly out of the shuffle.
+to look at its back. A lay: page out, card down into the spread. A JUMPER FLIES OUT OF A SHUFFLE
+(the user, 2026-10-05: "that jump should probably happen during a shuffle - not when the cards are
+just sitting there on the table, doing nothing"): it had left the deck the moment the shuffle
+stopped, often after seconds of the deck lying still. Its action now opens with one more riffle,
+and the card rides the top of a half and springs off it while the halves fall (`JUMP_RIFFLE`,
+`_jump_ride`); the deck goes aside once that riffle is done. The voice's rest for it grew to 5.0 s.
 The channel's name opens it, and nothing closes it but the light: THE OUTRO (the user,
 2026-10-05: "a simple fade to black, after the voice is done speaking... not display the title
 again at the end") - a beat after the last word the table fades to black, reaching it exactly as
@@ -212,77 +317,13 @@ lets it bleed. The look's `foil` (0-1) says how much.
 Everything is a function of show time (`ReadingFollower` + the schedule), so live and export
 draw the same frames.
 
-## Props as meshes (research, 2026-10-05)
-
-Asked again (the user: "generate images of the various props we want to use, then pass them to
-a local image-to-3D-model AI... most tarot readers are very intentional about how they setup
-their workspaces. Right now, our candle placement looks rather random"). Nothing built; open.
-
-THE MODELS, checked for the 16 GB RTX 5060 Ti:
-- **TRELLIS.2** (Microsoft, 4B, MIT): GLB with PBR (base color, roughness, metallic, opacity),
-  plus a mode that textures a given mesh. Officially 24 GB, tested on A100/H100; on an H100 it
-  takes 3 s at 512³, 17 s at 1024³ and 60 s at 1536³ (expect ~10x on the 5060 Ti, unmeasured).
-  The official install compiles CUDA extensions, nvdiffrast/nvdiffrec among them (non-commercial).
-- **Pixal3D** (Tsinghua + Tencent ARC, SIGGRAPH 2026, MIT): built on TRELLIS.2, PBR GLB,
-  PIXEL-ALIGNED to the input view, has `--low_vram`.
-- **ComfyUI runs both natively since 2026-08-31**: no custom nodes, no compiled CUDA extensions, no
-  non-commercial dependencies (post-processing rewritten in PyTorch + SciPy). That removes the
-  Blackwell build risk. It runs headless through its HTTP API.
-- Hunyuan3D 2.1: shape 10 GB + paint 21 GB; Tencent's community license excludes the EU, UK and
-  South Korea; 2.5 and 3.0 are API-only. SAM 3D Objects (Meta): shape AND layout per object from
-  one image, but needs 32 GB.
-- Poly Haven (CC0, 521 models) has about a dozen that fit (brass candleholders, goblets, vases,
-  lanterns, a cat statue, a shell, an ornate mirror) and no crystals, skulls, coins, bells or
-  feathers: too few for "new every time".
-
-WHY A MESH FIXES WHAT KILLED THE CUTOUTS: orientation, light, scale and shadows become the
-engine's. Style mostly follows once a prop stands in the scene's light. Paint each prop to be
-RECONSTRUCTED, not shown: alone, three-quarter view, flat even light, plain background,
-photographic (the deck's motifs and palette, never its illustration style). ghost keeps what the
-models do badly: flames, wicks, smoke. A lifted candle body's wick is found by a ray down its top.
-
-PLACEMENT IS ITS OWN FIX: `_find_spot` stands each candle by its distance to one aim plus jitter,
-one at a time, so they land wherever is free, with no grouping and no height order. Readers
-compose: a horseshoe round the spread, tall at the back and short toward the reader, odd clusters
-at staggered heights, one hero piece, the cards' cloth left bare. The genre has its own grammar.
-The Magician stands at a table with the four suits' tools (cup, sword, pentacle on it; the wand
-in hand), which are water, air, earth and fire. Candle colors and crystals follow the reading's
-topic. Proposed: ARRANGEMENTS as a `TarotTable` registry (named compositions of slots relative to
-the spread, sampled per seed); the producer gives each prop a slot and a reason; `_find_spot`
-only refines locally.
-
-THE OBJECTS ARE SETUPS: a `## The table` section in the brief (this reader sets the table the
-genre's way, each object with a stated purpose). A prop shown from the first frame is a plant the
-close can pay off; the brief already has citrine as baked amethyst and moon water as water.
-`reader_mood` forbids object bits today; that would change. The table is set at `plan`, before
-the draw, so nothing about it can cheat.
-
-THREE APPROACHES:
-1. **One prop, one painting, one mesh.** The plan lists props (real size, material, slot); the
-   painter paints each to be reconstructed; TRELLIS.2 makes a GLB; ghost loads it at runtime
-   (`GLTFDocument`), scales it to the plan, seats it and stands it in its slot. Each prop is a step
-   with its own ⟳. Optional NVIDIA-only install (a `deps.gd` row); roughly doubles generation
-   time; holds the GPU for minutes (never beside a training run).
-2. **Furnish the table in 2D, then lift it.** ghost renders the empty table from the episode's
-   camera; the painter sets the table on that render; the writer names each object with a box;
-   ghost casts a ray from each box's foot onto the table plane (camera and plane are known) for its
-   spot and size; each object is then lifted as in 1. The painter composes. Fragile where the edit
-   drifts the camera or hides objects. A later layout source built on 1, not a separate build.
-3. **Engine-made props.** Lathe, crystal and coin generators in GDScript, parameters from the
-   planner, materials painted. Cross-platform, instant, exact light; the vocabulary is only what
-   is built (no skulls, statues, flowers).
-
-Suggested order: the arrangement registry (it helps the candles alone); a one-afternoon spike
-(four painted props through TRELLIS.2 on the 5060 Ti, set under the key candle by hand); if they
-hold up, build 1. Make the candles procedural (a lathe covers taper, pillar, tealight and jar,
-and the flame's place stays exact). Try 2 once 1's lift exists. THE TABLE gains least from
-generation, being one flat surface: its "real table" cues are geometry at the edges (cloth draped
-over the far edge, the top's thickness) and real normal/roughness maps, not brightness as height.
-
 ## Probes and gates
 
 - `godot --headless --path . --script res://tests/tarot_check.gd` - the gate.
-- `tests/tarot_episode_probe.gd` - make an episode headlessly (real quota).
+- `tests/tarot_episode_probe.gd` - make an episode headlessly (real quota); `--only table` sets
+  just the table.
+- `tests/run_quiet.sh -- res://tests/props_look_probe.gd --spec <table.json> --out x.png` - a
+  table description's things side by side under candlelight, no tarot table around them.
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/tarot_look_probe.gd 400 --show S --seed N --marks 1`
   - the table over an episode with a synthetic voice.
 - `GHOST_PROBE_GPU=1 GHOST_PROBE_MUTE=1 tests/run_boot_probe.sh tests/tarot_voice_probe.gd 900 --spec <md> --seed N --export 1`
@@ -294,4 +335,3 @@ over the far edge, the top's thickness) and real normal/roughness maps, not brig
 - Pick-a-pile episodes (three piles, "all four piles say the same thing").
 - Moving `Illustrations`' own job pump onto `AgentJobs`.
 - Porting the tablet's follower onto `ReadingFollower`.
-- Props as meshes and an arrangement registry (researched 2026-10-05, above; undecided).

@@ -212,7 +212,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 
 ### Tarot
 
-An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice. Design: next/tarot.md at the repo root.
+An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice, with the things on it modeled from a written description (Props). Design: next/tarot.md at the repo root.
 
 - [`tarot_editor.gd`](../scripts/tarot_editor.gd) **TarotEditor** - the tarot mode: a reading nobody writes by hand.
 - [`tarot_producer.gd`](../scripts/tarot_producer.gd) **TarotProducer** - makes whatever an episode is missing, in the order a reading happens.
@@ -222,6 +222,7 @@ An automatic tarot reading: a show's brief, its episodes - each planned, painted
 - [`tarot_deck.gd`](../scripts/tarot_deck.gd) **TarotDeck** - the cards a show reads with, and how an episode's deck is shuffled.
 - [`tarot_table.gd`](../scripts/tarot_table.gd) **TarotTable** - what an episode's look may name, and how a look is made safe to draw.
 - [`tarot_cards.gd`](../scripts/tarot_cards.gd) **TarotCards** - a card's face, its back and its booklet page, composed in 2D for the table.
+- [`props.gd`](../scripts/props.gd) **Props** - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one. An agent writes the description - centimeters, the thing's base on y = 0, its front toward +z - and `sanitize` ...
 
 ### Agents
 

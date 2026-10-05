@@ -70,6 +70,10 @@ class Backend:
 ##
 ## Reasoning effort is pinned LOW for these runs: the author's default is the maximum, which
 ## is right for code and pure latency for "call one tool and copy one file".
+##
+## `--ephemeral`: ghost keeps the picture, so Codex keeps no session. A session log holds every
+## reference and the result as base64 (5-20 MB a picture) and Codex never prunes them. Measured on
+## codex-cli 0.157.0: the thread id and `generated_images` are unaffected.
 class Codex:
 	extends Backend
 
@@ -95,7 +99,7 @@ class Codex:
 		pf.store_string(String(job["prompt"]))
 		pf.close()
 		var args := PackedStringArray([
-			"exec", "--skip-git-repo-check", "--json",
+			"exec", "--skip-git-repo-check", "--json", "--ephemeral",
 			"-s", "workspace-write", "-C", dir,
 			"-c", "model_reasoning_effort=low"])
 		# the model of the AGENT that calls the image tool - the picture is the tool's either way

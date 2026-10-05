@@ -90,6 +90,8 @@ func file_of(step: String) -> String:
 			return dir.path_join("say_%s.txt" % parts[1])
 		"script":
 			return dir.path_join("script.md")
+		"table":
+			return dir.path_join("table.json")
 		"meta":
 			return dir.path_join("meta.json")
 		"upload":
@@ -155,14 +157,14 @@ func card_count() -> int:
 
 
 ## EVERY STEP, in the order it is made: `plan`, `draw`, `design:K`, `image:back`,
-## `image:surface`, `image:backdrop`, `image:card:K`, `say:intro`, `say:K`,
+## `image:surface`, `image:backdrop`, `table`, `image:card:K`, `say:intro`, `say:K`,
 ## `say:close`, `script`. Card steps exist only once the plan says how many cards there are.
 func steps() -> Array:
 	var out := ["plan", "draw"]
 	var n := card_count()
 	for k in range(1, n + 1):
 		out.append("design:%d" % k)
-	out.append_array(["image:back", "image:surface", "image:backdrop"])
+	out.append_array(["image:back", "image:surface", "image:backdrop", "table"])
 	for k in range(1, n + 1):
 		out.append("image:card:%d" % k)
 	out.append("say:intro")
@@ -205,6 +207,9 @@ func needs(step: String) -> Array:
 			return ["design:%d" % k, "image:card:%d" % k, "say:intro" if k == 1 else "say:%d" % (k - 1)]
 		"script":
 			return ["say:close"]
+		"table":
+			# the table is set from the plan, LOOKING AT the cloth it stands on
+			return ["plan", "image:surface"]
 	return []
 
 
@@ -229,9 +234,11 @@ func dependents(step: String) -> Array:
 
 
 ## The edges [method needs] lists only for ORDER: a card's picture waits for the back and for
-## the card before it, because it is sent them as references, but it is not made from them.
+## the card before it, because it is sent them as references, but it is not made from them; and
+## the table waits for the cloth to look at, but a new cloth keeps the table.
 static func _soft(from: String, to: String) -> bool:
-	return to.begins_with("image:card:") and (from.begins_with("image:card:") or from == "image:back")
+	return (to.begins_with("image:card:") and (from.begins_with("image:card:") or from == "image:back")) \
+		or (to == "table" and from == "image:surface")
 
 
 ## REDO [param step]: delete it and everything made from it. Returns what went.

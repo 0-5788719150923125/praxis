@@ -713,6 +713,36 @@ func _check_hesitation_splice() -> void:
 	var r4: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 1.0, "before": false}], spans, 2.0)
 	_ok(is_equal_approx(GenerativeEditor._shifted(0.4, r4["cuts"], 2.0, true), 1.2),
 		"the splice ignored the resample ratio")
+	# THE HOST'S REST WINS over the midpoint of two spans: word spans touch, and the host knows
+	# where the quiet is between them
+	var placed: Array = spans.duplicate(true)
+	(placed[0] as Dictionary)["rest"] = 0.37
+	(placed[1] as Dictionary)["rest"] = 0.66
+	var r5: Dictionary = _ed._splice_holds(pcm, [{"tok": 0, "sec": 0.5, "before": false},
+		{"tok": 2, "sec": 0.5, "before": true}], placed, 1.0)
+	var c5: Array = r5["cuts"]
+	_ok(c5.size() == 2 and is_equal_approx(float(c5[0]["t"]), 0.37)
+			and is_equal_approx(float(c5[1]["t"]), 0.66),
+		"a rest ignored the host's rest point: %s" % [c5])
+	# THE EDGES RAMP FOR WHAT IS SOUNDING. Into a voice still at full level the release runs tens
+	# of milliseconds - 20 ms before the silence the word is still well up, 10 ms before it is
+	# falling, 3 ms before it is nearly gone (a 2 ms ramp would leave all three at full level) -
+	# where an edge already in silence keeps a 2 ms ramp that touches nothing else.
+	var at := int(0.35 * sr)
+	var at20 := absf(out[at - int(0.020 * sr)])
+	var at10 := absf(out[at - int(0.010 * sr)])
+	_ok(at20 > 0.3 and at20 < 0.45 and at10 > 0.05 and at10 < 0.2,
+		"no release into the silence: %.3f / %.3f 20 / 10 ms before it" % [at20, at10])
+	_ok(absf(out[at - int(0.003 * sr)]) < 0.05,
+		"the release did not reach silence: %.3f 3 ms before it" % absf(out[at - int(0.003 * sr)]))
+	var hushed := pcm.duplicate()
+	for i in range(int(0.31 * sr), int(0.39 * sr)):
+		hushed[i] = 0.0
+	var r6: Dictionary = _ed._splice_holds(hushed, [{"tok": 0, "sec": 0.5, "before": false}],
+		spans, 1.0)
+	var o6: PackedFloat32Array = r6["pcm"]
+	_ok(o6.slice(0, int(0.31 * sr)) == hushed.slice(0, int(0.31 * sr)),
+		"a cut in silence reached into the word before it")
 
 
 ## A HUM IS HELD. "Hmm." renders at ~0.2 s and reads as a clipped grunt; it is lengthened to

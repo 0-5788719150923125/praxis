@@ -379,33 +379,147 @@ def test_nothing_to_insert_is_a_no_op():
 # -- 3. clicks -------------------------------------------------------------
 
 
+def _splatter(out, at: int, sr: int = SR) -> float:
+    """Share of power above 1.5 kHz in the 80 ms around sample `at`, Hann-windowed.
+
+    The test signals are a 345 Hz sine, so everything up there is what an edit made.
+    """
+    import numpy as np
+
+    half = int(0.04 * sr)
+    seg = np.asarray(out[max(0, at - half) : at + half], dtype=np.float64)
+    spec = np.abs(np.fft.rfft(seg * np.hanning(seg.size))) ** 2
+    freqs = np.fft.rfftfreq(seg.size, 1.0 / sr)
+    return float(spec[freqs > 1500.0].sum() / max(spec.sum(), 1e-30))
+
+
+def _old_ramps():
+    """A context in which every edge gets the 2 ms ramp, whatever is sounding there."""
+    import contextlib
+    import backends.piper as P
+
+    @contextlib.contextmanager
+    def ctx():
+        keep = (P.SPLICE_RELEASE_MS, P.SPLICE_ATTACK_MS)
+        P.SPLICE_RELEASE_MS = P.SPLICE_ATTACK_MS = P.SPLICE_FADE_MS
+        try:
+            yield
+        finally:
+            P.SPLICE_RELEASE_MS, P.SPLICE_ATTACK_MS = keep
+
+    return ctx()
+
+
 @check
-def test_the_cut_does_not_click():
+def test_a_cut_in_silence_stays_short():
     import numpy as np
     from backends.piper import _splice_pauses
 
-    audio = _sine(0.5)
-    nominal = round(0.25 * SR)
-    ok(
-        abs(float(audio[nominal])) > 0.5,
-        f"the nominal cut sample is loud ({audio[nominal]:.3f}) - a hard cut "
-        "there would step straight to zero",
-    )
-    out, _ = _splice_pauses(audio, [(0.25, 0.12)], SR)
+    # speech, 120 ms of silence, speech: the window spans the silence and some speech
+    audio = _sine(0.6)
+    a, b = round(0.25 * SR), round(0.37 * SR)
+    audio[a:b] = 0.0
+    out, inserted = _splice_pauses(audio, [(0.25, 0.12, 0.40, None, 0.22, 0.40)], SR)
     start, length = _zero_runs(out)[0]
-    before, after = abs(float(out[start - 1])), abs(float(out[start + length]))
-    ok(before < 1e-3, f"sample entering the silence is {before:.2e}, not a step")
-    ok(after < 1e-3, f"sample leaving the silence is {after:.2e}, not a step")
+    ok(length > b - a, "silence was added (%d samples)" % (length - (b - a)))
     ok(
-        before < abs(float(audio[nominal])) / 100.0,
-        "zero-crossing search + ramp is >100x quieter at the seam than a naive cut",
+        abs(inserted[0][0] - 0.5 * (a + b) / SR) < 0.005,
+        "the cut is in the middle of the silence the voice left (%.4f)" % inserted[0][0],
     )
-    # the ramp only touches near-silent samples: everything more than the ramp
-    # away from the seam is bit-identical to the input
-    fade = round(2.0 * SR / 1000.0)
     ok(
-        np.array_equal(out[: start - fade], audio[: start - fade]),
-        "speech before the ramp is bit-identical",
+        np.array_equal(out[:a], audio[:a]),
+        "speech before the silence is bit-identical: the ramp only touched silence",
+    )
+    ok(np.array_equal(out[start + length :], audio[b:]), "speech after it is bit-identical")
+
+
+@check
+def test_a_cut_in_sound_is_released():
+    """The voice running straight through the mark: the edges ramp for what is sounding.
+
+    Two-sided on the same signal and the same cut: 2 ms ramps on every edge must splatter
+    (the click), and the level-sized release and onset must not.
+    """
+    from backends.piper import SPLICE_ATTACK_MS, SPLICE_RELEASE_MS, _splice_pauses
+
+    audio = _sine(0.6, amp=0.5)
+    point = [(0.30, 0.12, 0.30, None, 0.28, 0.32)]
+    new, _ = _splice_pauses(audio, point, SR)
+    with _old_ramps():
+        old, _ = _splice_pauses(audio, point, SR)
+    s_new, n_new = _zero_runs(new)[0]
+    s_old, n_old = _zero_runs(old)[0]
+    out_new, out_old = _splatter(new, s_new), _splatter(old, s_old)
+    in_new, in_old = _splatter(new, s_new + n_new), _splatter(old, s_old + n_old)
+    base = _splatter(audio, s_old)
+    print(
+        "      splatter out %.1e -> %.1e, in %.1e -> %.1e (unedited %.1e)"
+        % (out_old, out_new, in_old, in_new, base)
+    )
+    ok(min(out_old, in_old) > 100.0 * base, "the 2 ms ramps splatter (control)")
+    ok(out_new < out_old / 100.0, "the release splatters >20 dB less than a 2 ms ramp")
+    ok(in_new < in_old / 30.0, "the onset splatters >15 dB less than a 2 ms ramp")
+    # ...and the ramps are as long as the level asks for: this sine is past SPLICE_LOUD
+    import numpy as np
+
+    tail = np.abs(new[s_new - round(0.5 * SPLICE_RELEASE_MS * SR / 1000.0) : s_new])
+    ok(float(tail.max()) < 0.5 * 0.55, "the last half of the release is under half level")
+    head = np.abs(new[s_new + n_new : s_new + n_new + round(0.25 * SPLICE_ATTACK_MS * SR / 1000.0)])
+    ok(float(head.max()) < 0.5 * 0.2, "the first quarter of the onset stays low")
+
+
+@check
+def test_the_cut_finds_the_dip():
+    """Inside its window the cut goes where the voice is quietest, never outside it."""
+    import numpy as np
+    from backends.piper import _splice_pauses
+
+    audio = _sine(0.6, amp=0.5)
+    t = np.arange(audio.size) / SR
+    dip = 0.335  # between two words, 25 ms after the nominal mark
+    audio *= (1.0 - 0.9 * np.exp(-(((t - dip) / 0.006) ** 2))).astype(np.float32)
+    out, inserted = _splice_pauses(audio, [(0.31, 0.12, 0.31, None, 0.29, 0.36)], SR)
+    start, _ = _zero_runs(out)[0]
+    ok(abs(start / SR - dip) < 0.004, "cut at %.4f s, the dip is at %.4f" % (start / SR, dip))
+    eq([round(a, 4) for a, _ in inserted], [0.31], "reported at the mark, for the timings")
+    # a dip outside the window is not reachable
+    out2, _ = _splice_pauses(audio, [(0.31, 0.12, 0.31, None, 0.29, 0.32)], SR)
+    start2, _ = _zero_runs(out2)[0]
+    ok(0.29 <= start2 / SR <= 0.32, "cut stays in its window (%.4f)" % (start2 / SR))
+
+
+@check
+def test_rest_points_for_holds():
+    """Every word but a chunk's last says where a rest after it goes - in the gap.
+
+    GenerativeEditor._splice_holds puts hesitations and action holds there. After a mark
+    it is inside the silence already spliced in; after a sentence, in the gap before the
+    next; between two words, between them.
+    """
+    import numpy as np
+    from backends.piper import PiperBackend
+
+    be = PiperBackend()
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "take.wav")
+        res = be._synth_tokens(
+            list(TOKENS_MARKS),
+            "fake",
+            out,
+            {"phonemizer": "ghost", "pause_scale": 1.0},
+            _cfg(),
+            _FakeSession(),
+        )
+        raw = Path(out).read_bytes()
+    audio = np.frombuffer(raw[44:], "<i2").astype(np.float32) / 32768.0
+    rows = {t["index"]: t for t in res["tokens"]}
+    eq(sorted(i for i, t in rows.items() if "rest" in t), [0, 1, 2, 3], "who carries a rest")
+    for i, why in ((0, "after the comma"), (1, "after the colon"), (2, "between sentences")):
+        at = int(round(rows[i]["rest"] * SR))
+        ok(float(np.abs(audio[at - 5 : at + 5]).max()) == 0.0, "the rest %s is in silence" % why)
+    ok(
+        rows[3]["t0"] < rows[3]["rest"] <= rows[4]["t0"] + 0.02,
+        "an unmarked boundary's rest is between its words (%.4f)" % rows[3]["rest"],
     )
 
 
@@ -812,6 +926,70 @@ def check_the_punctuation_hierarchy_survives_the_slider():
         jump < 0.15,
         "5.0 -> 6.0 moves a full stop by %.0f%%, not a lurch" % (jump * 100.0),
     )
+
+
+@check
+def check_real_voice_comma():
+    """On the real checkpoint, a comma the voice runs straight through.
+
+    "Hello, my loves." - this voice lengthens the vowel into the comma rather than pausing,
+    so there is no silence to cut in. Old and new splice the SAME render: the old cut at
+    the token boundary with 2 ms ramps must leave a loud edge (the click), the new must
+    not. Skipped when the voice is not installed.
+    """
+    import numpy as np
+    import backends.piper as P
+    from backends.piper import PiperBackend
+
+    voice = "en_US-libritts-high"
+    be = PiperBackend()
+    try:
+        sess, cfg = be._load(voice)
+    except Exception as exc:  # noqa: BLE001
+        print("    -- %s is not installed here (%s); skipping" % (voice, exc))
+        return
+    sr = int(cfg["audio"]["sample_rate"])
+    params = {
+        "speaker": 13, "length_scale": 1.08, "noise_scale": 0.78, "noise_w": 0.52,
+        "pause_scale": 6.5,
+    }
+    toks = [_tok("Hello", ",", []), _tok("my", "", []), _tok("loves", ".", [])]
+    seen: list = []
+    real = P._splice_pauses
+
+    def spy(audio, points, sr_, mult=1.0):
+        seen.append((audio, list(points), mult))
+        return real(audio, points, sr_, mult)
+
+    def edges(a, peak):
+        n3 = int(0.003 * sr)
+        out = []
+        for start, length in _zero_runs(a, int(0.05 * sr)):
+            if start + length < a.size:
+                for seg in (a[start - n3 : start], a[start + length : start + length + n3]):
+                    out.append(float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) / peak)
+        return out
+
+    P._splice_pauses = spy
+    try:
+        for _ in range(5):
+            seen.clear()
+            with tempfile.TemporaryDirectory() as td:
+                be._synth_tokens(list(toks), voice, str(Path(td) / "a.wav"), params, cfg, sess)
+            audio, points, mult = seen[0]
+            peak = float(np.max(np.abs(audio)))
+            with _old_ramps():
+                old, _ = real(audio, [pt[:4] for pt in points], sr, mult)
+            if max(edges(old, peak), default=0.0) > 0.03:
+                break
+    finally:
+        P._splice_pauses = real
+    new, _ = real(audio, points, sr, mult)
+    e_old, e_new = edges(old, peak), edges(new, peak)
+    print("      edges (share of peak, 3 ms): old %s new %s"
+          % (" ".join("%.3f" % x for x in e_old), " ".join("%.3f" % x for x in e_new)))
+    ok(max(e_old) > 0.03, "the old cut leaves a loud edge (control)")
+    ok(max(e_new) < 0.02, "the new cut leaves none")
 
 
 def check_hyphen_is_a_word_boundary():

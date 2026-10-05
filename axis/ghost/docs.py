@@ -239,7 +239,8 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "An automatic tarot reading: a show's brief, its episodes - each "
         "planned, painted and written by agents one card at a time, kept on "
         "disk step by step - and the table they are read at, in the Generative "
-        "voice. Design: next/tarot.md at the repo root.",
+        "voice, with the things on it modeled from a written description "
+        "(Props). Design: next/tarot.md at the repo root.",
         [
             "tarot_editor.gd",
             "tarot_producer.gd",
@@ -249,6 +250,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "tarot_deck.gd",
             "tarot_table.gd",
             "tarot_cards.gd",
+            "props.gd",
         ],
     ),
     (

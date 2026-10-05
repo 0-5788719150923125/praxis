@@ -8,7 +8,9 @@ extends Node
 ##       --out /tmp/tarot/t --show truthful-tarot --seed 1 --times 2,9,30 [--every S] [--camera 1]
 ##
 ## `--marks 1` photographs each action instead: the moment it starts, a beat in, and the card
-## held up after it. Asserts only that a frame is not uniform.
+## held up after it. `--things 1` prints what stands on the table and every flame's light;
+## `--dark 0,2` puts out those flames' lights (-1 the lamp), to find which light does something.
+## Asserts only that a frame is not uniform.
 
 const W := 1280
 const H := 720
@@ -25,6 +27,8 @@ var _flat := 0
 var _glow := -1.0       # --glow T: the bloom's HDR threshold, to see whether it fires at all
 var _from := -1         # --from N: start the reading at spoken word N, as a scrub does
 var _foil := -1.0       # --foil F: force the deck's foil amount
+var _things := false    # --things 1: print what stands on the table and every flame's light
+var _dark: Array = []   # --dark 0,2: put out those flames' lights (the flames still burn), to find a light
 
 
 func _ready() -> void:
@@ -47,6 +51,10 @@ func _run() -> void:
 			"--glow": _glow = float(args[i + 1])
 			"--from": _from = int(args[i + 1])
 			"--foil": _foil = float(args[i + 1])
+			"--things": _things = args[i + 1] == "1"
+			"--dark":
+				for x in String(args[i + 1]).split(","):
+					_dark.append(int(x))
 			"--times":
 				_times = []
 				for s in String(args[i + 1]).split(","):
@@ -121,6 +129,11 @@ func _run() -> void:
 			Spectrum.current.time = t
 			subs._process(DT)
 			medium.advance(Spectrum.current, DT, 1.0)
+			for k in _dark:
+				if int(k) >= 0 and int(k) < (medium as TarotMedium)._flames.size():
+					(((medium as TarotMedium)._flames[int(k)] as Dictionary)["light"] as OmniLight3D).light_energy = 0.0
+				elif int(k) == -1:
+					(medium as TarotMedium)._lamp.light_energy = 0.0
 			# a real frame only now and then, and for the last few before a photograph - the
 			# cards' faces are drawn by viewports that need frames of their own to draw in
 			step += 1
@@ -129,6 +142,17 @@ func _run() -> void:
 		for _i in 3:
 			await get_tree().process_frame
 		var img := stage.get_texture().get_image()
+		if want == _times[0] and _things:
+			var tm := medium as TarotMedium
+			for th in tm._things:
+				var n3: Node3D = (th as Dictionary)["node"]
+				print("tarot_look_probe: thing %-44s group %-6s at (%.3f, %.3f) x%.2f, %d lit" % [String((th as Dictionary)["name"]).substr(0, 44),
+					String((th as Dictionary)["group"]), n3.position.x, n3.position.z, n3.scale.x, int((th as Dictionary)["lit"])])
+			for f in tm._flames:
+				var l: OmniLight3D = (f as Dictionary)["light"]
+				print("tarot_look_probe: flame at (%.3f, %.3f, %.3f) energy %.3f (base %.3f) shadows %s" % [l.position.x, l.position.y,
+					l.position.z, l.light_energy, float((f as Dictionary)["energy"]), str(l.shadow_enabled)])
+			print("tarot_look_probe: lamp energy %.2f shadows %s" % [tm._lamp.light_energy, str(tm._lamp.shadow_enabled)])
 		if want == _times[0]:
 			var tmed := medium as TarotMedium
 			var cur := stage.get_camera_3d()

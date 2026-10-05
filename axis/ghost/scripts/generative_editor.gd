@@ -127,7 +127,7 @@ const CHUNK_SENTENCES := 1
 # HESITATIONS. `<!-- hesitation -->` anywhere in the text - mid-sentence included - is a
 # longer rest at exactly that point, for effect; `<!-- hesitation: 2.5 -->` names its own
 # length in seconds. The Hesitate row sets the length of a bare one and switches them all.
-# The rest is spliced into the take at the word boundary the aligner reports, so it lands
+# The rest is spliced into the take where the host reports the gap after a word, so it lands
 # between two words and never inside one (see [method _splice_holds]).
 const HESITATE_DEFAULT := 1.5
 const HESITATE_MAX := 6.0
@@ -3870,16 +3870,23 @@ func _repace() -> void:
 ## `{pcm, cuts}`, where `cuts` is `[{t, add}]` in the MODEL's time (the clock the aligner's
 ## spans are on) - [method _shifted] moves a word timing by every cut before it.
 ##
-## WHERE, and why there: the aligner says where each word ends and the next begins, and the
-## cut goes at the MIDDLE of that gap - the one place that is silence whatever the voice did
-## either side (a cut at a word's own end lands on its decay). A rest before the chunk's first
-## word opens the chunk; one after its last closes it. Both still sit inside the chunk rather
-## than being folded into the seam, so the live window and the export - which join chunks
-## differently - cannot disagree about them.
+## WHERE: the host's `rest` for the word the rest follows - the quietest place between that
+## word's last sound and the next word's first, inside any pause already spliced there (piper
+## `_gap_window`). Word spans touch, so their midpoint is only the fallback for a host that
+## sends no `rest`. A rest before the chunk's first word opens the chunk; one after its last
+## closes it. Both sit inside the chunk rather than in the seam, so the live window and the
+## export - which join chunks differently - cannot disagree about them.
 ##
-## A short fade either side of every cut, because the gap between two words can be zero and
-## a hard edge inside a vowel is a click.
-const HOLD_FADE := 0.006
+## THE EDGES: a raised-cosine ramp either side, as long as the level there needs - the voice
+## often runs straight from one word into the next, and a ramp of a few milliseconds on a
+## sounding vowel is a click. Mirrors piper `_edge_ramp`: HOLD_FADE in silence, up to a
+## HOLD_RELEASE out of the word and a HOLD_ATTACK into the next, log-spaced between HOLD_QUIET
+## and HOLD_LOUD of the chunk's peak.
+const HOLD_FADE := 0.002
+const HOLD_RELEASE := 0.030
+const HOLD_ATTACK := 0.012
+const HOLD_QUIET := 0.02
+const HOLD_LOUD := 0.16
 
 func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: float) -> Dictionary:
 	var cuts: Array = []
@@ -3904,7 +3911,7 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 			if k == 0:
 				t = 0.0
 			elif prev != null and cur != null:
-				t = (float(prev["t1"]) + float(cur["t0"])) * 0.5
+				t = float(prev.get("rest", (float(prev["t1"]) + float(cur["t0"])) * 0.5))
 			elif cur != null:
 				t = float(cur["t0"])
 			elif prev != null:
@@ -3914,14 +3921,17 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 			if nxt == null:
 				t = end              # the chunk's last word: rest after all of it
 			elif cur != null:
-				t = (float(cur["t1"]) + float(nxt["t0"])) * 0.5
+				t = float(cur.get("rest", (float(cur["t1"]) + float(nxt["t0"])) * 0.5))
 			else:
 				t = float(nxt["t0"])
 		cuts.append({"t": t, "add": float((h as Dictionary)["sec"])})
 	cuts.sort_custom(func(a, b): return float(a["t"]) < float(b["t"]))
 	var out := PackedFloat32Array()
 	var from := 0
-	var fade := maxi(1, int(HOLD_FADE * float(_sr)))
+	var peak := 0.0
+	for v in pcm:
+		peak = maxf(peak, absf(v))
+	var n_in := 0                    # the ramp into the piece after the last cut
 	var after_fill := false          # the piece being cut follows a hum: no fade-in on it
 	for c in cuts:
 		var ct := float(c["t"])
@@ -3929,14 +3939,12 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 			int(round(ct / ratio * float(_sr))))), from, pcm.size())
 		var piece := pcm.slice(from, at)
 		var fill: Variant = c.get("fill")
-		# Fade either side of a SILENCE; a hum's continuation is phase-aligned to the cut, so
+		# Ramp either side of a SILENCE; a hum's continuation is phase-aligned to the cut, so
 		# fading it would put a dip in the middle of the hum it is lengthening.
+		var n_out := 0
 		if fill == null:
-			for i in mini(fade, piece.size()):
-				piece[piece.size() - 1 - i] *= float(i) / float(fade)
-		if from > 0 and not out.is_empty() and not after_fill:
-			for i in mini(fade, piece.size()):
-				piece[i] *= float(i) / float(fade)
+			n_out = _edge_ramp(_edge_level(pcm, at, true), peak, HOLD_RELEASE)
+		piece = _ramped(piece, 0 if after_fill else n_in, n_out)
 		out.append_array(piece)
 		if fill != null:
 			out.append_array(fill as PackedFloat32Array)
@@ -3948,12 +3956,45 @@ func _splice_holds(pcm: PackedFloat32Array, holds: Array, spans: Array, ratio: f
 		# after any rest; one that rejoins at `at` is phase-aligned and must not.
 		after_fill = fill != null and not c.has("resume")
 		from = clampi(int(c.get("resume", at)), at, pcm.size())
-	var rest := pcm.slice(from)
-	if not after_fill:
-		for i in mini(fade, rest.size()):
-			rest[i] *= float(i) / float(fade)
-	out.append_array(rest)
+		n_in = _edge_ramp(_edge_level(pcm, from, false), peak, HOLD_ATTACK)
+	out.append_array(_ramped(pcm.slice(from), 0 if after_fill else n_in, 0))
 	return {"pcm": out, "cuts": cuts}
+
+
+## RMS of the 5 ms on one side of sample [param at].
+func _edge_level(pcm: PackedFloat32Array, at: int, before: bool) -> float:
+	var n := maxi(1, int(0.005 * float(_sr)))
+	var a := maxi(0, at - n) if before else clampi(at, 0, pcm.size())
+	var b := clampi(at, 0, pcm.size()) if before else mini(pcm.size(), at + n)
+	if b <= a:
+		return 0.0
+	var e := 0.0
+	for i in range(a, b):
+		e += pcm[i] * pcm[i]
+	return sqrt(e / float(b - a))
+
+
+## Samples of ramp at a splice edge whose [param level] is that loud, up to [param longest]
+## seconds - see [constant HOLD_RELEASE].
+func _edge_ramp(level: float, peak: float, longest: float) -> int:
+	var sec := HOLD_FADE
+	var quiet := HOLD_QUIET * peak
+	if peak > 0.0 and level > quiet:
+		var k := minf(1.0, log(level / quiet) / log(HOLD_LOUD / HOLD_QUIET))
+		sec = HOLD_FADE + k * (longest - HOLD_FADE)
+	return maxi(1, int(round(sec * float(_sr))))
+
+
+## [param buf] with raised-cosine ramps over its first [param n_in] and last [param n_out]
+## samples.
+static func _ramped(buf: PackedFloat32Array, n_in: int, n_out: int) -> PackedFloat32Array:
+	var k := mini(n_in, buf.size())
+	for i in k:
+		buf[i] *= 0.5 - 0.5 * cos(PI * (float(i) + 0.5) / float(k))
+	k = mini(n_out, buf.size())
+	for i in k:
+		buf[buf.size() - 1 - i] *= 0.5 - 0.5 * cos(PI * (float(i) + 0.5) / float(k))
+	return buf
 
 
 ## HUMS ARE HELD. "Hmm." read as a thinking hum is most of a second; the voice renders it in
