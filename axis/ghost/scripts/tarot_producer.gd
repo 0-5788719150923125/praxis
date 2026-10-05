@@ -50,7 +50,6 @@ var running := false
 var only: Array = []
 
 var _jobs := {}        # step -> AgentJobs id
-var _cuts := {}        # step -> {task, box}: an object's picture being cut out, off the main thread
 var _errors := {}      # step -> why it failed, once it is out of tries
 var _tries := {}       # step -> runs started
 
@@ -88,7 +87,7 @@ func stop() -> void:
 
 
 func busy() -> bool:
-	return not _jobs.is_empty() or not _cuts.is_empty()
+	return not _jobs.is_empty()
 
 
 ## "ready", "running", "queued", "failed" or "missing".
@@ -98,8 +97,6 @@ func state_of(step: String) -> String:
 	if _jobs.has(step):
 		var st := AgentJobs.state(String(_jobs[step]))
 		return "running" if st == "running" else "queued"
-	if _cuts.has(step):
-		return "running"
 	if _errors.has(step):
 		return "failed"
 	return "missing"
@@ -122,24 +119,10 @@ func tick() -> void:
 		_jobs.erase(step)
 		_land(String(step), res)
 		moved = true
-	for step in _cuts.keys():
-		var c: Dictionary = _cuts[step]
-		if not WorkerThreadPool.is_task_completed(int(c["task"])):
-			continue
-		WorkerThreadPool.wait_for_task_completion(int(c["task"]))
-		_cuts.erase(step)
-		var err := String((c["box"] as Dictionary)["err"])
-		DirAccess.remove_absolute(_raw_of(String(step)))
-		if err.is_empty():
-			_errors.erase(step)
-		else:
-			push_warning("ghost: tarot %s - %s" % [step, err])
-			_errors[step] = err
-		moved = true
 	if running:
 		for step in episode.steps():
 			var s := String(step)
-			if episode.has(s) or _jobs.has(s) or _cuts.has(s) or _errors.has(s):
+			if episode.has(s) or _jobs.has(s) or _errors.has(s):
 				continue
 			var ready := true
 			for need in episode.needs(s):
@@ -150,7 +133,7 @@ func tick() -> void:
 				continue
 			_make(s)
 			moved = true
-		if _jobs.is_empty() and _cuts.is_empty():
+		if _jobs.is_empty():
 			running = false          # done, or stopped on a failure nothing else can get past
 			moved = true
 	if moved:
@@ -183,18 +166,20 @@ func _submit_text(step: String, p: Dictionary, tier: String) -> void:
 		return
 	var id := AgentJobs.submit({"kind": "text", "backend": String(spec.get("writer", "claude")),
 		"tier": tier, "dir": episode.job_dir(step), "system": String(p["system"]),
-		"prompt": String(p["prompt"]), "images": p.get("images", []), "label": "tarot %s" % step})
+		"prompt": String(p["prompt"]), "images": p.get("images", []), "label": "tarot %s" % step,
+		"model": String(spec.get("writer_model", ""))})
 	if id.is_empty():
 		_errors[step] = "this session cannot start agents (read-only)"
 		return
 	_jobs[step] = id
 
 
-func _submit_image(step: String, prompt: String, refs: Array, dest := "") -> void:
+func _submit_image(step: String, prompt: String, refs: Array) -> void:
 	_tries[step] = int(_tries.get(step, 0)) + 1
 	var id := AgentJobs.submit({"kind": "image", "backend": String(spec.get("painter", "codex")),
 		"dir": episode.job_dir(step), "prompt": prompt, "refs": refs,
-		"target": dest if not dest.is_empty() else episode.file_of(step), "label": "tarot %s" % step})
+		"target": episode.file_of(step), "label": "tarot %s" % step,
+		"model": String(spec.get("painter_model", ""))})
 	if id.is_empty():
 		_errors[step] = "this session cannot start agents (read-only)"
 		return
@@ -318,14 +303,6 @@ func _make_image(step: String) -> void:
 	# whole (see AgentJobs.paint_target)
 	var target := AgentJobs.paint_target(episode.job_dir(step))
 	var parts := step.split(":")
-	if parts.size() == 3 and String(parts[1]) == "object":
-		# AN OBJECT is painted as it comes, then cut out of its background: it lands beside its
-		# step's file and becomes the step only once it has been cut (see tick)
-		var objects: Array = look.get("objects", [])
-		var k := int(parts[2])
-		if k >= 1 and k <= objects.size():
-			_submit_image(step, TarotPrompts.object_image(look, objects[k - 1], target), [], _raw_of(step))
-		return
 	if parts.size() == 3:
 		var k := int(parts[2])
 		var design: Variant = episode.read_json("design:%d" % k)
@@ -430,29 +407,13 @@ func _land(step: String, res: Dictionary) -> void:
 				err = "the reader wrote nothing speakable" if t.split(" ", false).size() < 20 \
 					else episode.write_text(step, t)
 			"image":
-				if step.begins_with("image:object:"):
-					if not FileAccess.file_exists(_raw_of(step)):
-						err = "the picture did not arrive"
-					else:
-						var box := {"err": ""}
-						var src := _raw_of(step)
-						var dst := episode.file_of(step)
-						_cuts[step] = {"box": box, "task": WorkerThreadPool.add_task(func() -> void:
-							box["err"] = TarotCutout.cut(src, dst))}
-						return
-				else:
-					err = "" if episode.has(step) else "the picture did not arrive"
+				err = "" if episode.has(step) else "the picture did not arrive"
 	if err.is_empty():
 		_errors.erase(step)
 		return
 	push_warning("ghost: tarot %s - %s" % [step, err])
 	if int(_tries.get(step, 0)) > RETRIES:
 		_errors[step] = err
-
-
-## Where an object's painting lands before it is cut out.
-func _raw_of(step: String) -> String:
-	return episode.file_of(step).get_basename() + ".raw.png"
 
 
 func _land_plan(text: String) -> String:

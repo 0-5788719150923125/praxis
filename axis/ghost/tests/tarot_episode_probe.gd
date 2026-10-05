@@ -40,7 +40,8 @@ func _init() -> void:
 	var prod := TarotProducer.new(ep, {"title": title, "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
 		"cards": knobs.get("cards", [3, 6]), "reversals": bool(knobs.get("reversals", true)),
 		"jumpers": bool(knobs.get("jumpers", true)), "writer": String(knobs.get("writer", "claude")),
-		"painter": String(knobs.get("painter", "codex"))})
+		"writer_model": String(knobs.get("writer_model", "")), "painter": String(knobs.get("painter", "codex")),
+		"painter_model": String(knobs.get("painter_model", ""))})
 	print("tarot_episode_probe: %s #%d -> %s" % [show, seed, ep.dir])
 	var seen := {}
 	var t0 := Time.get_ticks_msec()

@@ -84,7 +84,7 @@ func file_of(step: String) -> String:
 			return dir.path_join("design_%s.json" % parts[1])
 		"image":
 			if parts.size() == 3:
-				return dir.path_join("%s_%s.png" % [parts[1], parts[2]])     # card_K, object_K
+				return dir.path_join("%s_%s.png" % [parts[1], parts[2]])     # card_K
 			return dir.path_join("%s.png" % parts[1])
 		"say":
 			return dir.path_join("say_%s.txt" % parts[1])
@@ -154,17 +154,8 @@ func card_count() -> int:
 	return 0
 
 
-## How many objects stand on the table: the plan's look names them (see [TarotTable]).
-func object_count() -> int:
-	var p: Variant = read_json("plan")
-	if not (p is Dictionary):
-		return 0
-	var look: Variant = (p as Dictionary).get("look", {})
-	return ((look as Dictionary).get("objects", []) as Array).size() if look is Dictionary else 0
-
-
 ## EVERY STEP, in the order it is made: `plan`, `draw`, `design:K`, `image:back`,
-## `image:surface`, `image:backdrop`, `image:object:K`, `image:card:K`, `say:intro`, `say:K`,
+## `image:surface`, `image:backdrop`, `image:card:K`, `say:intro`, `say:K`,
 ## `say:close`, `script`. Card steps exist only once the plan says how many cards there are.
 func steps() -> Array:
 	var out := ["plan", "draw"]
@@ -172,8 +163,6 @@ func steps() -> Array:
 	for k in range(1, n + 1):
 		out.append("design:%d" % k)
 	out.append_array(["image:back", "image:surface", "image:backdrop"])
-	for k in range(1, object_count() + 1):
-		out.append("image:object:%d" % k)
 	for k in range(1, n + 1):
 		out.append("image:card:%d" % k)
 	out.append("say:intro")
@@ -195,8 +184,6 @@ func needs(step: String) -> Array:
 		"design":
 			return ["draw"]
 		"image":
-			if parts.size() == 3 and String(parts[1]) == "object":
-				return ["plan"]
 			if parts.size() == 3:
 				# a card's picture is painted in the deck's hand: after the back, and after the
 				# card before it (they are sent to it as references - see TarotProducer)
@@ -256,8 +243,8 @@ func invalidate(step: String) -> Array:
 		for f in DirAccess.get_files_at(dir):
 			var fs := String(f)
 			if fs.begins_with("design_") or fs.begins_with("card_") or fs.begins_with("say_") \
-					or fs == "script.md" or (step == "plan" and (fs.begins_with("object_") or fs in ["draw.json",
-					"back.png", "surface.png", "backdrop.png"])):
+					or fs == "script.md" or (step == "plan" and fs in ["draw.json", "back.png", "surface.png",
+					"backdrop.png"]):
 				DirAccess.remove_absolute(dir.path_join(fs))
 	for s in gone:
 		var p := file_of(String(s))
@@ -357,18 +344,6 @@ func document() -> Dictionary:
 	for k in ["back", "surface", "backdrop"]:
 		if has("image:" + k):
 			out["images"][k] = file_of("image:" + k)
-	# the objects on the table: each one's picture (once it is painted), what it is, how big
-	var objects: Array = []
-	var look: Variant = (out["plan"] as Dictionary).get("look", {})
-	if look is Dictionary:
-		var i := 0
-		for o in (look as Dictionary).get("objects", []):
-			i += 1
-			if o is Dictionary:
-				objects.append({"what": String((o as Dictionary).get("what", "")),
-					"size": String((o as Dictionary).get("size", "medium")),
-					"path": file_of("image:object:%d" % i)})
-	out["objects"] = objects
 	if draw is Dictionary:
 		var spread: Array = (((out["plan"] as Dictionary).get("spread", {}) as Dictionary)
 			.get("positions", [])) as Array

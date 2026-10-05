@@ -197,6 +197,37 @@ const LIVE_PREROLL := 2.5
 # phase vocoder entirely and is artifact-free at these depths. It does shift the
 # formants with the pitch, so the speaker reads as a different SIZE - which is
 # exactly what "spooky" (larger, lower) and "excited" (smaller, higher) want.
+## THE DELIVERY A SCRIPT MARKS (`<!-- delivery: quicker, brighter -->`, [constant
+## Manuscript.DELIVERY]): each word a step on four axes - PACE, BRIGHTNESS (a touch higher, a
+## little livelier, a little more effort), PAUSES (+ is longer: a reader who lets a moment sit, or
+## one running on) and VOLUME (effort alone, no pitch: leaning in, or projecting) - and the
+## intents a reader has as small combinations of them. `steady` is the voice's own. Steps add,
+## at most two each way.
+const DELIVERY_WORDS := {
+	"quicker": Vector4(1, 0, 0, 0), "faster": Vector4(1, 0, 0, 0), "slower": Vector4(-1, 0, 0, 0),
+	"brighter": Vector4(0, 1, 0, 0), "graver": Vector4(0, -1, 0, 0),
+	"tighter": Vector4(0, 0, -1, 0), "looser": Vector4(0, 0, 1, 0),
+	"louder": Vector4(0, 0, 0, 1), "softer": Vector4(0, 0, 0, -1),
+	"excited": Vector4(1, 1, -1, 0), "urgent": Vector4(1, 0, -1, 1), "playful": Vector4(1, 1, 0, 0),
+	"serious": Vector4(-1, -1, 1, 0), "hushed": Vector4(-1, -1, 1, -1), "tender": Vector4(-1, 0, 1, -1),
+	"dry": Vector4(0, -1, 0, 0), "steady": Vector4.ZERO,
+}
+## What ONE step is, on each axis - small on purpose: pace 4%, pitch a third of a semitone (on the
+## formant-locked path, so the speaker keeps their size), effort and melody a little, pauses a
+## fifth. Two steps is as far as a mark goes.
+const LEAN_PACE := 0.04
+const LEAN_SEMIS := 0.33
+const LEAN_EFFORT := 0.08
+const LEAN_LIVELY := 0.07
+## A pause step is the widest: a reader lets a moment sit, or barely stops on a roll (x1.3 a step).
+const LEAN_PAUSE := 1.3
+## Volume is effort alone - the spectral tilt and the level, no pitch.
+const LEAN_LOUD := 0.12
+## How much of the way to a new delivery each sentence goes: a change eases in over two or three
+## sentences, and back out the same way after its paragraph.
+const LEAN_EASE := 0.5
+var _last_leans: Array = []     # the delivery marks of the passage being resolved: [at, lean]
+
 const TONE_PRESETS := {
 	"Neutral":  {"pace": 1.00, "semis":  0.0, "noise": 0.667, "noise_w": 0.333, "muffle": 0.0, "whisper": 0.0},
 	"Warm":     {"pace": 0.96, "semis": -0.5, "noise": 0.60,  "noise_w": 0.35, "muffle": 0.0, "whisper": 0.0},
@@ -771,6 +802,10 @@ func _build_voice(box: VBoxContainer) -> void:
 	box.add_child(vrow)
 	_voices = OptionButton.new()
 	_voices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# SIZED BY THE ROW, NOT BY ITS LONGEST VOICE: Speak becomes "Resume ●" beside it, and a picker
+	# as wide as "libritts high (downloads)" pushed the whole panel out (see SidePanel._check_width)
+	_voices.fit_to_longest_item = false
+	_voices.clip_text = true
 	_voices.tooltip_text = "Which Piper model reads. Each is a different person with its own accent, recording and license - the license appears under the panel when you pick one. Changing this regenerates whatever has not been played yet."
 	_voices.item_selected.connect(func(_i: int) -> void:
 		if _syncing:
@@ -1709,7 +1744,7 @@ func _split_speakers(body: String) -> Array:
 			var out := _resolve_marks(String(parts[k]), on, bare)
 			if not out.replace(TextNorm.HOLD_MARK, "").strip_edges().is_empty():
 				kept.append({"speaker": String((p as Dictionary)["speaker"]), "text": out,
-					"fade": fading})
+					"fade": fading, "leans": _last_leans})
 			else:
 				# A passage of nothing but hesitations: its rests would have no word to sit on.
 				for _i in out.count(TextNorm.HOLD_MARK):
@@ -1721,12 +1756,15 @@ func _split_speakers(body: String) -> Array:
 
 ## A passage's marks resolved: every hesitation (and the tablet's action rests) becomes a
 ## [constant TextNorm.HOLD_MARK] welded to the word before it - or leading the next, when
-## nothing precedes it - with its length queued on [member _holds]; every other comment goes.
+## nothing precedes it - with its length queued on [member _holds]; a DELIVERY mark is noted where
+## it falls ([member _last_leans], see [method _leans_of]); every other comment goes.
 func _resolve_marks(t: String, on: bool, bare: float) -> String:
 	var out := ""
 	var at := 0
 	var re := Manuscript._rx(Manuscript.COMMENT)
 	var hes := Manuscript._rx(Manuscript.HESITATION)
+	var lean_re := Manuscript._rx(Manuscript.DELIVERY)
+	_last_leans = []
 	for m in re.search_all(t):
 		out += t.substr(at, m.get_start() - at)
 		at = m.get_end()
@@ -1734,6 +1772,10 @@ func _resolve_marks(t: String, on: bool, bare: float) -> String:
 		# address takes, so it stays when the Hesitate box is off
 		var secs := TabletScript.hold_of(m.get_string())
 		if secs < 0.0:
+			var lm := lean_re.search(m.get_string())
+			if lm != null:
+				_last_leans.append([out.length(), lean_of(lm.get_string(1))])
+				continue
 			if not on:
 				continue
 			var hm := hes.search(m.get_string())
@@ -1749,6 +1791,7 @@ func _resolve_marks(t: String, on: bool, bare: float) -> String:
 		out = head + TextNorm.HOLD_MARK + out.substr(head.length())
 		_holds.append(secs)
 	out += t.substr(at)
+	_last_leans = _leans_of(out, _last_leans)
 	# Sentinels with nothing before them in the passage LEAD the next word instead:
 	# close the gap after them so they weld on to it.
 	var body_t := out.strip_edges()
@@ -3195,11 +3238,29 @@ func _build_chunks(body: String) -> Array:
 		# second voice the contour of a paragraph it is not in.
 		_place_chunks(chunks, text)
 		var fade := bool((seg as Dictionary).get("fade", false))
+		var leans: Array = (seg as Dictionary).get("leans", [])
+		var cursor := 0
 		for c in chunks:
 			(c as Dictionary)["speaker"] = who
 			if fade:
 				(c as Dictionary)["fade"] = true
+			# A CHUNK'S DELIVERY is the one marked where its first word is in the passage
+			var aim := Vector4.ZERO
+			if not leans.is_empty():
+				var first := ""
+				for w in (c as Dictionary)["words"]:
+					first = String((w as Dictionary).get("text", "")).strip_edges()
+					if not first.is_empty():
+						break
+				var found := text.find(first, cursor) if not first.is_empty() else -1
+				if found >= 0:
+					cursor = found + first.length()
+				for sp in leans:
+					if int((sp as Array)[0]) <= (found if found >= 0 else cursor):
+						aim = (sp as Array)[1]
+			(c as Dictionary)["lean_aim"] = aim
 		out.append_array(chunks)
+	_ease_leans(out)
 	out = _trim_to_outro(out)
 	# LAST, so it wins the status line. TextNorm has already warned into the log,
 	# but this is the surface someone is looking at with their hand on Speak, and
@@ -3528,16 +3589,18 @@ func _speaker_of(s: Dictionary) -> int:
 ## drift apart a parameter at a time.
 func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
 	var t := _preset_of(s)
+	var lean: Vector4 = ch.get("lean", Vector4.ZERO)
 	# length_scale = r / pace: the model speaks r times slower so that
 	# playing back r times faster restores the intended pace
 	var r := _pitch_ratio_of(s)
 	var d := _delivery_of(s)
 	return {
-		"length_scale": r / maxf(float(s["pace"]) * float(t["pace"]), 0.1),
-		"noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
+		"length_scale": r / maxf(float(s["pace"]) * float(t["pace"]), 0.1) * (1.0 - LEAN_PACE * lean.x),
+		"noise_scale": float(t["noise"]) * (1.0 + LEAN_LIVELY * lean.y), "noise_w": float(t["noise_w"]),
+		"lean_semis": LEAN_SEMIS * lean.y, "lean_effort": LEAN_EFFORT * lean.y + LEAN_LOUD * lean.w,
 		"whisper": float(t["whisper"]), "muffle": float(t["muffle"]),
 		"speaker": _speaker_of(s),
-		"sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale_of(s),
+		"sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale_of(s) * pow(LEAN_PAUSE, lean.z),
 		"dynamics": d["dynamics"],
 		"prosody_arc": d["prosody_arc"],
 		"effort": d["effort"],
@@ -3545,6 +3608,46 @@ func _request_args(s: Dictionary, ch: Dictionary) -> Dictionary:
 		"plan_v": float(ch.get("plan_v", 0.0)),
 		"tokens": ch["tokens"],
 	}
+
+
+## A delivery mark's words ([constant DELIVERY_WORDS]) as one lean: their steps added, at most two
+## each way. A word not on the list is nothing - a mark the voice cannot act on is ignored.
+static func lean_of(words: String) -> Vector4:
+	var v := Vector4.ZERO
+	for w in words.to_lower().replace(",", " ").split(" ", false):
+		v += DELIVERY_WORDS.get(String(w).strip_edges(), Vector4.ZERO)
+	return v.clamp(Vector4(-2, -2, -2, -2), Vector4(2, 2, 2, 2))
+
+
+## Delivery marks [param marks] (`[at, lean]` in [param text]) with the return each implies: a
+## delivery lasts to the end of its paragraph (a blank line), where the voice's own comes back.
+static func _leans_of(text: String, marks: Array) -> Array:
+	var out: Array = []
+	for i in marks.size():
+		var at := int((marks[i] as Array)[0])
+		out.append(marks[i])
+		var para := text.find("\n\n", at)
+		var next := int((marks[i + 1] as Array)[0]) if i + 1 < marks.size() else text.length() + 1
+		if para >= 0 and para < next:
+			out.append([para, Vector4.ZERO])
+	return out
+
+
+## EASED, NEVER SWITCHED: each sentence goes [constant LEAN_EASE] of the way from the delivery the
+## sentence before it had to the one marked for it, per voice - so a mark leans in over two or
+## three sentences and its paragraph's end lets go the same way. A hard change of delivery from
+## one sentence to the next is what made a marked stretch sound like somebody else.
+static func _ease_leans(chunks: Array) -> void:
+	var cur := {}
+	for c in chunks:
+		var d: Dictionary = c
+		var who := String(d.get("speaker", ""))
+		var was: Vector4 = cur.get(who, Vector4.ZERO)
+		var now := was + ((d.get("lean_aim", Vector4.ZERO) as Vector4) - was) * LEAN_EASE
+		if now.length() < 0.02:
+			now = Vector4.ZERO
+		cur[who] = now
+		d["lean"] = now
 
 
 func _pump() -> void:

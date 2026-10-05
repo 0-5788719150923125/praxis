@@ -25,23 +25,32 @@ signal closed
 ## Emitted right after a submission is written to disk (see _write) - the hook
 ## point for the splash's Assistant dropdown (see assistant.gd): index/query/
 ## stem are everything Assistant.enqueue needs to dispatch a fresh claude
-## session at this exact feedback record.
-signal submitted(index: int, query: String, stem: String)
+## session at this exact feedback record. [param ask] is the console's "Ask the
+## assistant" box: off, the note is only LOGGED - written and listed in the
+## browser, where its Send button can still dispatch it later.
+signal submitted(index: int, query: String, stem: String, ask: bool)
 
 const DIR := "res://feedback"
 const TOGGLE_KEY := KEY_QUOTELEFT   # the backtick / tilde key
+## Where the Ask box is remembered: one choice for every mode, kept between sessions.
+const ASK_SECTION := "feedback"
+const ASK_KEY := "ask_assistant"
 
 ## Injection points for modes that don't run through the Director (the mask
 ## editor): what to snapshot, how to freeze the scene while typing, and what to
 ## do after a submission. Invalid (unset) Callables fall back to the Director -
 ## the auto/manual show's behavior is unchanged.
 var describe: Callable = Callable()   # -> Dictionary: the state descriptor
+## Where records are written. A gate points it at a scratch folder, so it never writes into the
+## author's feedback.
+var dir := DIR
 var freeze: Callable = Callable()     # (bool): hold the scene while console is open
 var advance: Callable = Callable()    # (): after submit (Director cuts to next scene)
 
 var _ui: Control
 var _info: Label
 var _edit: LineEdit
+var _ask: CheckBox
 var _open := false
 var _shot_img: Image = null      # the frame snapshotted the instant the console opened
 var _shot_desc: Dictionary = {}  # the scene descriptor at that same instant
@@ -90,11 +99,25 @@ func _build_ui() -> void:
 	_info.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 0.8))
 	col.add_child(_info)
 
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	col.add_child(row)
+
 	_edit = LineEdit.new()
 	_edit.placeholder_text = "describe it, then Enter to save  (Esc or ` to cancel)"
 	_edit.custom_minimum_size = Vector2(640, 0)
+	_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_edit.text_submitted.connect(_on_submit)
-	col.add_child(_edit)
+	row.add_child(_edit)
+
+	# Off: the screenshot and the note are written and listed, and nothing is sent. Never takes
+	# focus, so ticking it mid-sentence leaves the cursor in the note.
+	_ask = CheckBox.new()
+	_ask.text = "Ask the assistant"
+	_ask.focus_mode = Control.FOCUS_NONE
+	_ask.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	Settings.bind(_ask, ASK_SECTION, ASK_KEY, true)
+	row.add_child(_ask)
 
 
 # --- Input ------------------------------------------------------------------
@@ -132,6 +155,7 @@ func _open_console() -> void:
 	_edit.text = ""
 	_edit.grab_focus()
 	_info.text = _summary()
+	_show_ask()
 	# Keep the scene from cutting/playing away while typing.
 	if freeze.is_valid():
 		freeze.call(true)
@@ -155,6 +179,22 @@ func _close() -> void:
 	closed.emit()
 
 
+## The Ask box as it stands right now: with no assistant chosen on the home screen there is
+## nothing to ask, so it is shown off and unclickable - the remembered choice is untouched and
+## comes back once one is chosen.
+func _show_ask() -> void:
+	var none := Splash.assistant_backend() == ""
+	_ask.disabled = none
+	_ask.set_pressed_no_signal(not none and bool(Settings.read(ASK_SECTION, ASK_KEY, true)))
+	_ask.tooltip_text = "No assistant is chosen on the home screen - the note is only logged" if none \
+		else "Off: the screenshot and note are only logged (send one later from the feedback list)"
+
+
+## Whether this note goes to the assistant.
+func asks() -> bool:
+	return _ask.button_pressed and not _ask.disabled
+
+
 func _summary() -> String:
 	var d := _shot_desc
 	if d.is_empty():
@@ -174,10 +214,11 @@ func _on_submit(text: String) -> void:
 	var query := text.strip_edges()
 	var img := _shot_img
 	var desc := _shot_desc.duplicate(true)
+	var ask := asks()
 	_close()
 	if query.is_empty() or img == null:
 		return
-	_write(query, img, desc)
+	_write(query, img, desc, ask)
 	# We have been staring at this exact scene for the minutes it took to write the
 	# critique, so don't wait out the next harmonic cue - cut to the next scene the
 	# moment the feedback lands. (Director.next() no-ops if the session is ending;
@@ -189,9 +230,9 @@ func _on_submit(text: String) -> void:
 
 
 # Write the snapshot taken at open time (no live capture - that races the Director).
-func _write(query: String, img: Image, desc: Dictionary) -> void:
+func _write(query: String, img: Image, desc: Dictionary, ask: bool) -> void:
 	var n := _next_index()
-	var stem := "%s/%04d" % [DIR, n]
+	var stem := "%s/%04d" % [dir, n]
 	var png_ok := img.save_png(stem + ".png")
 	desc["query"] = query
 	desc["index"] = n
@@ -207,23 +248,24 @@ func _write(query: String, img: Image, desc: Dictionary) -> void:
 	if fa != null:
 		fa.store_string(json)
 		fa.close()
-	print("ghost: feedback saved -> ", ProjectSettings.globalize_path(stem + ".json"))
-	submitted.emit(n, query, stem)
+	print("ghost: feedback saved -> ", ProjectSettings.globalize_path(stem + ".json"),
+		"" if ask else " (logged only)")
+	submitted.emit(n, query, stem, ask)
 
 
 func _ensure_dir() -> void:
-	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(DIR)):
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(DIR))
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir)):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 
 
 # Highest existing NNNN.json index in the feedback dir (0 if none), so records
 # accumulate across runs instead of clobbering each other.
 func _next_index() -> int:
-	var dir := DirAccess.open(DIR)
-	if dir == null:
+	var da := DirAccess.open(dir)
+	if da == null:
 		return 1
 	var best := 0
-	for fn in dir.get_files():
+	for fn in da.get_files():
 		if fn.ends_with(".json"):
 			var stem := fn.get_basename()
 			if stem.is_valid_int():

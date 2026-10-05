@@ -77,6 +77,11 @@ func _run() -> void:
 	_tarot.remove_child(_tarot._repace_timer)
 	add_child(_tarot._repace_timer)
 	_tarot_episodes()
+	# a voice list as the host fills it - its longest name is what a picker sized to its items
+	# would be as wide as
+	for e in [_ed, _tarot]:
+		(e as GenerativeEditor)._voices.add_item("libritts high  (downloads)")
+		(e as GenerativeEditor)._voices.add_item("en_GB southern english female medium  (downloads)")
 
 	await _check_fits("Generative", _ed._panel)
 	await _check_fits("Synthesis", _synth._panel)
@@ -259,9 +264,16 @@ func _tarot_episodes() -> void:
 	_tarot._open_episode()
 
 
-## AT ITS DECLARED WIDTH, whatever its rows hold; a failure names what is too wide.
+## AT ITS DECLARED WIDTH, whatever its rows hold - and whatever its buttons say: Speak is
+## "Resume ●" while a stale reading is paused, the widest it gets. A failure names what is too wide.
 func _check_width(name: String, panel: SidePanel_) -> void:
 	get_tree().root.size = Vector2i(1280, 1080)
+	var go: Button = null
+	for b in panel.find_children("*", "Button", true, false):
+		if (b as Button).text == "Speak":
+			go = b
+	if go != null:
+		go.text = "Resume ●"
 	await _settle()
 	var w := panel.get_combined_minimum_size().x
 	var names := PackedStringArray()
@@ -269,6 +281,8 @@ func _check_width(name: String, panel: SidePanel_) -> void:
 		names.append("%s (%d px)" % [SidePanel_.describe(c as Control), int((c as Control).get_combined_minimum_size().x)])
 	_ok(w <= panel.custom_minimum_size.x + 0.5, "%s: the panel is %.0f px wide, not %.0f - %s"
 		% [name, w, panel.custom_minimum_size.x, ", ".join(names)])
+	if go != null:
+		go.text = "Speak"
 
 
 ## THE CONTROL for the tarot panel: its episode list sized to its items again must push the

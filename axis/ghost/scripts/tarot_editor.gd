@@ -18,13 +18,12 @@ class_name TarotEditor
 ## The knobs a show keeps beside its voice. Also the schema: a stored value of the wrong shape
 ## falls back to these.
 const KNOBS := {"show": "", "seed": 1, "cards": [3, 6], "reversals": true, "jumpers": true,
-	"writer": "claude", "painter": "codex"}
+	"writer": "claude", "writer_model": "", "painter": "codex", "painter_model": ""}
 ## The rows of the episode list: a label and the steps it covers ("K" is each card).
 const ROWS := [
 	["Plan", ["plan"]],
 	["Shuffle", ["draw"]],
 	["Table", ["image:back", "image:surface", "image:backdrop"]],
-	["Objects", ["image:object:*"]],
 	["Intro", ["say:intro"]],
 	["Card", ["design:K", "image:card:K", "say:K"]],
 	["Close", ["say:close", "script"]],
@@ -37,7 +36,6 @@ const REDO := {
 	"Plan": [["Make a new plan (clears the cards and the reading)", "plan"]],
 	"Table": [["Paint a new card back", "image:back"], ["Paint a new cloth", "image:surface"],
 		["Paint a new room", "image:backdrop"]],
-	"Objects": [["Paint the objects again", "image:object:*"]],
 	"Intro": [["Rewrite the intro (clears the readings after it)", "say:intro"]],
 	"Card": [["Paint this card again (clears its reading and the ones after)", "image:card:K"],
 		["Rewrite this card's reading (clears the ones after it)", "say:K"],
@@ -56,6 +54,8 @@ var _halt_btn: Button
 var _del_btn: Button
 var _writer_pick: OptionButton
 var _painter_pick: OptionButton
+var _writer_model: OptionButton
+var _painter_model: OptionButton
 var _cards_lo: SpinBox
 var _cards_hi: SpinBox
 var _reversals: CheckBox
@@ -210,7 +210,8 @@ func _spec() -> Dictionary:
 	var body := Manuscript.strip_frontmatter(_doc.pull())
 	return {"title": _show_title(), "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
 		"cards": _knobs["cards"], "reversals": _knobs["reversals"], "jumpers": _knobs["jumpers"],
-		"writer": _knobs["writer"], "painter": _knobs["painter"]}
+		"writer": _knobs["writer"], "writer_model": _knobs["writer_model"],
+		"painter": _knobs["painter"], "painter_model": _knobs["painter_model"]}
 
 
 func _doc_capture() -> Dictionary:
@@ -218,7 +219,7 @@ func _doc_capture() -> Dictionary:
 	# the Generative block's picture library and the settings no table uses are not this show's
 	d.erase("illustrations")
 	var pic: Dictionary = d.get("picture", {})
-	for k in ["scene_hold", "flourishes", "hand", "film_frequency"]:
+	for k in ["scene_hold", "flourishes", "hand", "film_frequency", "camera"]:
 		pic.erase(k)
 	for k in KNOBS:
 		d[k] = _knobs[k]
@@ -331,15 +332,11 @@ func _build_cast(box: VBoxContainer) -> void:
 
 # --- the picture ---------------------------------------------------------------------------------
 
-## THE TABLE'S PICTURE SETTINGS: the camera's breath, the Look, the bookends. The Generative
-## panel's medium picker, films, pictures, handwriting, scene hold and flourishes are not built -
-## the table is the only medium here, and it cuts no scenes.
+## THE TABLE'S PICTURE SETTINGS: the Look and the bookends. The Generative panel's medium picker,
+## films, pictures, handwriting, scene hold, flourishes and camera are not built - the table is
+## the only medium here, it cuts no scenes, and it is filmed from a tripod (a dial that moved it by
+## a millimeter was a dial that did nothing).
 func _build_picture(box: VBoxContainer) -> void:
-	_camera = _director_slider(box, "Camera", Director.CAMERA_MIN, Director.CAMERA_MAX, 0.05,
-		Director.camera,
-		"How much the reader's eye breathes. 0 is a locked-off tripod; 1 a slow breath, as a camera "
-		+ "on a stand by a person still is; 2 a restless one. The table never moves.",
-		func(v: float) -> void: Director.set_camera(v), "camera")
 	_build_filters(box)
 	_sync_medium_rows()
 	_intro = _director_slider(box, "Intro", Director.INTRO_MIN, Director.INTRO_MAX, 0.5,
@@ -432,12 +429,20 @@ func _build_source(box: VBoxContainer) -> void:
 
 	# WHO WRITES AND WHO PAINTS: an agent CLI each, from the registries - the plan, the booklet and
 	# the reading are words, the deck and the table are pictures
-	_writer_pick = _agent_pick(box, "Writer", "writer", TextGen.REGISTRY, TextGen.LABELS, TextGen.BLURBS,
+	var w := _agent_pick(box, "Writer", "writer", TextGen.REGISTRY, TextGen.LABELS, TextGen.BLURBS,
 		func(k: String) -> bool: return TextGen.make(k).available(),
-		"Who writes the plan, the booklet and the reading.")
-	_painter_pick = _agent_pick(box, "Painter", "painter", ImageGen.REGISTRY, ImageGen.LABELS, ImageGen.BLURBS,
+		"Who writes the plan, the booklet and the reading.",
+		func(k: String) -> Array: return (TextGen.REGISTRY.get(k, TextGen.Claude) as GDScript).models(),
+		"The model that writes. Default is the CLI's own choice per job (for Claude: Opus for the plan and the reading, Sonnet for the card designs); a model chosen here writes all of it.")
+	_writer_pick = w[0]
+	_writer_model = w[1]
+	var p := _agent_pick(box, "Painter", "painter", ImageGen.REGISTRY, ImageGen.LABELS, ImageGen.BLURBS,
 		func(k: String) -> bool: return ImageGen.make(k).available(),
-		"Who paints the card back, the cloth, the room and every card.")
+		"Who paints the card back, the cloth, the room and every card.",
+		func(k: String) -> Array: return (ImageGen.REGISTRY.get(k, ImageGen.Codex) as GDScript).models(),
+		"The model of the agent that asks for each picture. The picture itself is made by the CLI's own image tool whichever model asks.")
+	_painter_pick = p[0]
+	_painter_model = p[1]
 
 	var grow := HBoxContainer.new()
 	grow.add_theme_constant_override("separation", 6)
@@ -493,11 +498,13 @@ func _build_source(box: VBoxContainer) -> void:
 	_show_knobs()
 
 
-## A row choosing one agent from [param registry] for knob [param knob]: each entry by its label,
-## one whose CLI is not installed shown as such and not choosable. Takes effect at the next
-## Generate - a step already running finishes with the agent it started with.
+## A row choosing one agent from [param registry] for knob [param knob], and beside it the MODEL
+## it runs (knob + "_model", from [param models_of] for the chosen agent - the list follows the
+## agent). An agent whose CLI is not installed is shown as such and not choosable. Takes effect at
+## the next Generate - a step already running finishes with what it started with. Returns
+## [agent picker, model picker].
 func _agent_pick(box: VBoxContainer, title: String, knob: String, registry: Dictionary, labels: Dictionary,
-		blurbs: Dictionary, available: Callable, what: String) -> OptionButton:
+		blurbs: Dictionary, available: Callable, what: String, models_of: Callable, model_tip: String) -> Array:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	box.add_child(row)
@@ -516,17 +523,57 @@ func _agent_pick(box: VBoxContainer, title: String, knob: String, registry: Dict
 	for i in keys.size():
 		var k := String(keys[i])
 		var here := bool(available.call(k))
-		pick.add_item(String(labels.get(k, k)) + ("" if here else "  (not installed)"))
+		# the CLI's own name in the row (its full label is in the tooltip): the row is shared with the model
+		pick.add_item(k.capitalize() + ("" if here else "  (not installed)"))
 		pick.set_item_disabled(i, not here)
 		tips.append("%s: %s" % [String(labels.get(k, k)), String(blurbs.get(k, ""))])
 	pick.tooltip_text = "\n\n".join(tips)
+	row.add_child(pick)
+	var model := OptionButton.new()
+	model.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	model.fit_to_longest_item = false
+	model.clip_text = true
+	model.focus_mode = Control.FOCUS_NONE
+	model.tooltip_text = model_tip
+	model.set_meta("models_of", models_of)
+	model.set_meta("knob", knob + "_model")
+	model.item_selected.connect(func(i: int) -> void:
+		if _syncing:
+			return
+		_knobs[knob + "_model"] = String(model.get_item_metadata(i))
+		_touch())
+	row.add_child(model)
 	pick.item_selected.connect(func(i: int) -> void:
 		if _syncing:
 			return
 		_knobs[knob] = String(keys[i])
+		# another agent, another list of models: its own default until one is chosen
+		_knobs[knob + "_model"] = ""
+		_fill_models(model, String(keys[i]))
 		_touch())
-	row.add_child(pick)
-	return pick
+	return [pick, model]
+
+
+## [param pick]'s list for [param agent]'s models, the knob's choice selected - kept on the list
+## (marked) even when this agent no longer offers it, so a show's choice is never silently lost.
+func _fill_models(pick: OptionButton, agent: String) -> void:
+	var models: Array = (pick.get_meta("models_of") as Callable).call(agent)
+	var want := String(_knobs.get(String(pick.get_meta("knob")), ""))
+	var was := _syncing
+	_syncing = true
+	pick.clear()
+	var at := 0
+	for m in models:
+		pick.add_item(String((m as Dictionary)["label"]))
+		pick.set_item_metadata(pick.item_count - 1, String((m as Dictionary)["key"]))
+		if String((m as Dictionary)["key"]) == want:
+			at = pick.item_count - 1
+	if not want.is_empty() and at == 0:
+		pick.add_item("%s  (not offered)" % want)
+		pick.set_item_metadata(pick.item_count - 1, want)
+		at = pick.item_count - 1
+	pick.select(at)
+	_syncing = was
 
 
 func _spin(row: HBoxContainer, tip: String) -> SpinBox:
@@ -555,6 +602,8 @@ func _show_knobs() -> void:
 	_jumpers.button_pressed = bool(_knobs["jumpers"])
 	_writer_pick.select(maxi(0, TextGen.REGISTRY.keys().find(String(_knobs["writer"]))))
 	_painter_pick.select(maxi(0, ImageGen.REGISTRY.keys().find(String(_knobs["painter"]))))
+	_fill_models(_writer_model, String(_knobs["writer"]))
+	_fill_models(_painter_model, String(_knobs["painter"]))
 	_syncing = false
 
 
@@ -708,29 +757,16 @@ func _live_episode_dir() -> String:
 	return String((t as Dictionary).get("dir", "")) if t is Dictionary else ""
 
 
-## The object steps of the open episode (one per object the plan put on the table).
-func _object_steps() -> Array:
-	var out: Array = []
-	if _episode != null:
-		for k in range(1, _episode.object_count() + 1):
-			out.append("image:object:%d" % k)
-	return out
-
-
 func _redo(step: String) -> void:
 	if _episode == null:
 		return
 	if _producer.running:
 		_producer.stop()
-	# "image:object:*" is every object on the table
-	var which: Array = _object_steps() if step == "image:object:*" else [step]
-	var gone: Array = []
-	for s in which:
-		gone.append_array(_episode.invalidate(String(s)))
+	var gone := _episode.invalidate(step)
 	print("ghost: tarot redo %s - removed %s" % [step, ", ".join(PackedStringArray(gone))])
 	_rebuild_rows()
 	_mark_stale()
-	_run(which)
+	_run([step])
 
 
 # --- the rows ------------------------------------------------------------------------------------
@@ -747,13 +783,8 @@ func _rebuild_rows() -> void:
 	_row_widgets = []
 	var n := _episode.card_count()
 	_rows_for = n
-	var objects := _object_steps()
 	for r in ROWS:
 		var label := String(r[0])
-		if label == "Objects":
-			if not objects.is_empty():
-				_add_row(label, label, objects, 0)
-			continue
 		if label == "Card":
 			for k in range(1, n + 1):
 				var steps: Array = []
@@ -840,12 +871,6 @@ func _refresh_rows() -> void:
 					if _episode.has("image:" + s):
 						have.append({"back": "back", "surface": "cloth", "backdrop": "room"}[s])
 				text = ", ".join(have)
-			"Objects":
-				var names := PackedStringArray()
-				var look: Variant = (plan as Dictionary).get("look", {}) if plan is Dictionary else {}
-				for o in ((look as Dictionary).get("objects", []) if look is Dictionary else []):
-					names.append(String((o as Dictionary).get("what", "")).get_slice(",", 0))
-				text = "; ".join(names)
 			"Card":
 				if doc.is_empty():
 					doc = _episode.document()

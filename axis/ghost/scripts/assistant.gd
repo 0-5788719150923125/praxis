@@ -130,12 +130,13 @@ func _ensure_dir() -> void:
 
 ## Called by whoever owns the FeedbackConsole (main.gd / mask_editor.gd) right
 ## after it writes feedback/NNNN.json - see feedback.gd's `submitted` signal.
-## Fires this instant ONLY if the splash's Assistant dropdown actually has a
-## backend selected; with it Off, the entry is still listed (this node exists
-## unconditionally now - see main.gd/mask_editor.gd - specifically so old
-## feedback stays browsable/deletable without opting into AI dispatch), it
-## just never gets sent anywhere on its own.
-func enqueue(index: int, query: String, stem: String) -> void:
+## Fires this instant ONLY if the console's Ask box was on ([param ask]) AND the
+## splash's Assistant dropdown actually has a backend selected; otherwise the
+## entry is still listed (this node exists unconditionally now - see
+## main.gd/mask_editor.gd - specifically so old feedback stays browsable/deletable
+## without opting into AI dispatch), it just never gets sent anywhere on its own.
+## That is the "orphaned" state, with its Send button.
+func enqueue(index: int, query: String, stem: String, ask: bool = true) -> void:
 	var entry := {
 		"index": index, "query": query, "stem": stem,
 		"status": "queued", "session_id": "", "response": "", "cost_usd": 0.0,
@@ -143,13 +144,19 @@ func enqueue(index: int, query: String, stem: String) -> void:
 		"pending_prompt": "", "backend": "", "usage": "",
 	}
 	_entries.push_front(entry)
-	if Splash.assistant_backend() == "":
+	if not sends(ask, Splash.assistant_backend()):
 		entry.status = "orphaned"
 		_refresh_list()
 		return
 	_save_entry(entry)
 	_refresh_list()
 	_pump_queue()
+
+
+## Whether a submission is dispatched the moment it lands: the console's Ask box was on and a
+## backend is chosen. Anything else is only listed.
+static func sends(ask: bool, backend: String) -> bool:
+	return ask and backend != ""
 
 
 # --- dispatch --------------------------------------------------------------------

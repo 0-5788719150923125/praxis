@@ -147,6 +147,10 @@ class Backend:
 	func available() -> bool:
 		return false
 
+	## The models a picker offers for this writer: `[{key, label}]`, the default (key "") first.
+	static func models() -> Array:
+		return [{"key": "", "label": "Default"}]
+
 	func start(_job: Dictionary) -> int:
 		return -1
 
@@ -183,6 +187,17 @@ class Claude:
 
 	const MODELS := {"best": "opus", "fast": "sonnet"}
 
+	## Claude Code's own aliases - each the newest model of its family, so the list never goes
+	## stale. "Default" is the tiers above: Opus for what is heard, Sonnet for the bookkeeping.
+	static func models() -> Array:
+		return [{"key": "", "label": "Default (Opus)"}, {"key": "fable", "label": "Fable"},
+			{"key": "opus", "label": "Opus"}, {"key": "sonnet", "label": "Sonnet"}]
+
+	## The model a job runs on: the one chosen for it, else its tier's.
+	static func model_of(job: Dictionary) -> String:
+		var chosen := String(job.get("model", ""))
+		return chosen if not chosen.is_empty() else String(MODELS.get(String(job.get("tier", "best")), MODELS["best"]))
+
 	func binary() -> String:
 		var p := Deps.resolve("claude")
 		return p if not p.is_empty() else "claude"
@@ -202,7 +217,7 @@ class Claude:
 				job["error"] = err
 				return -1
 		var args := PackedStringArray(["-p",
-			"--model", String(MODELS.get(String(job.get("tier", "best")), MODELS["best"])),
+			"--model", Claude.model_of(job),
 			"--safe-mode", "--tools", "",
 			"--system-prompt-file", String(p["system"]),
 			"--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -282,6 +297,11 @@ class Codex:
 	extends Backend
 
 	const EFFORT := {"best": "medium", "fast": "low"}
+
+	## The models Codex offers this installation (see [method ImageGen.Codex.models]).
+	static func models() -> Array:
+		return ImageGen.Codex.models()
+
 	## What an agent with tools is told before anything else.
 	const ONLY_THIS := ("You are writing, not working: everything you need is in this message and the "
 		+ "pictures attached to it. Do not run commands, and do not open, list or read any file - "
@@ -344,6 +364,8 @@ class Codex:
 			"-s", "read-only", "-C", String(job["dir"]),
 			"-c", "model_reasoning_effort=" + String(EFFORT.get(String(job.get("tier", "best")), "medium")),
 			"-o", String(Backend.paths(job)["last"])])
+		if not String(job.get("model", "")).is_empty():
+			args.append_array(["-m", String(job["model"])])
 		# `--image=` per file, then `--`: the flag takes many values (see ImageGen.Codex)
 		for pic in pictures:
 			args.append("--image=" + String((pic as Dictionary)["to"]))

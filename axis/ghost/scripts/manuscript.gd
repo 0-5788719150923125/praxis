@@ -48,6 +48,11 @@ const TIMESTAMP_LEAD := "(?m)^([ \\t]*[\\[(]?\\d{1,2}[:.h]\\d{2}(?::\\d{2})?(?:[
 const OUTRO := "<!--\\s*outro\\s*-->"
 ## Any other comment is an authoring note.
 const COMMENT := "<!--[\\s\\S]*?-->"
+## HOW A STRETCH IS SAID: `<!-- delivery: quicker, brighter -->` - a few words from a closed list
+## (GenerativeEditor.DELIVERY_WORDS), each a small step in pace, brightness or pauses - from here
+## to the end of its paragraph, eased in and out across sentences. A lean of the voice's own
+## delivery, never a different voice.
+const DELIVERY := "<!--\\s*delivery\\s*(?::\\s*([^>]*?))?\\s*-->"
 ## Text before the first cue belongs to this voice. A chapter that opens on a cue never has one.
 const NARRATOR := "Narrator"
 

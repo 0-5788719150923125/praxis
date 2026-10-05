@@ -57,6 +57,7 @@ func _ready() -> void:
 	_check_ink_travels()
 	_check_outro_mark()
 	_check_scrub()
+	_check_delivery_marks()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -898,3 +899,42 @@ func _check_ink_travels() -> void:
 		"the ink does not travel with the document: %s" % [doc.get("inks")])
 	_ed._slots[i] = was
 	_ed._apply_slot(i)
+
+
+## A DELIVERY MARK leans the voice, a step at a time, and EASES: the first marked sentence goes
+## part of the way, the next further, and after its paragraph the voice comes back the same way -
+## never a hard change from one sentence to the next, which is what made a marked stretch sound
+## like somebody else. Two-sided throughout: the leaned sentence is quicker, higher on the
+## formant-locked path and less paused than the plain one - by a LITTLE (a lean, not a voice);
+## an unknown word is nothing; and the voice's own pitch ratio, its size, is never touched.
+func _check_delivery_marks() -> void:
+	_slots(1)
+	_ed._slots[0]["pace"] = 1.0
+	_ed._slots[0]["tone"] = 1                      # Warm: the voice's own
+	_ed._slots[0]["pause"] = 1.0
+	var chunks: Array = _ed._build_chunks("Calm start here.\n\n<!-- delivery: excited -->\nOh wow. This is big. "
+		+ "Really big.\n\nBack to calm now. And calmer.\n\n<!-- delivery: nonsense -->\nStill the voice's own.")
+	var leans: Array = []
+	for c in chunks:
+		leans.append((c as Dictionary).get("lean", Vector4.ZERO))
+	var pace: Array = []
+	for v in leans:
+		pace.append(snappedf((v as Vector4).x, 0.01))
+	_ok(pace.size() == 7 and float(pace[0]) == 0.0 and 0.0 < float(pace[1]) and float(pace[1]) < float(pace[2])
+		and float(pace[2]) < float(pace[3]) and float(pace[3]) <= 1.0,
+		"a delivery did not ease in over its sentences: %s" % str(pace))
+	_ok(float(pace[4]) < float(pace[3]) and float(pace[4]) > 0.0 and float(pace[5]) < float(pace[4]),
+		"after its paragraph the delivery did not ease back out: %s" % str(pace))
+	var calm: Dictionary = _ed._request_args(_ed._cfg(0), chunks[0])
+	var lit: Dictionary = _ed._request_args(_ed._cfg(0), chunks[3])
+	_ok(float(lit["length_scale"]) < float(calm["length_scale"]) and float(lit["lean_semis"]) > 0.0
+		and float(lit["pause_scale"]) < float(calm["pause_scale"]) and float(calm["lean_semis"]) == 0.0,
+		"an excited stretch is not quicker, brighter and tighter than the voice's own")
+	_ok(float(lit["length_scale"]) > float(calm["length_scale"]) * 0.9 and float(lit["lean_semis"]) <= 0.7,
+		"a delivery moved the voice by more than a lean: %s against %s" % [str(lit), str(calm)])
+	_ok(_ed.lean_of("nonsense words") == Vector4.ZERO and _ed.lean_of("quicker quicker quicker") == Vector4(2, 0, 0, 0),
+		"an unknown word moved the voice, or three steps went past two")
+	# VOLUME is effort alone: louder asks for more effort and no pitch at all
+	var loud := {"tokens": [], "plan_u": 0.0, "plan_v": 0.0, "lean": _ed.lean_of("louder")}
+	var la: Dictionary = _ed._request_args(_ed._cfg(0), loud)
+	_ok(float(la["lean_effort"]) > 0.0 and float(la["lean_semis"]) == 0.0, "louder moved the pitch, or not the effort")

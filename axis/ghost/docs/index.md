@@ -212,7 +212,6 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice. Design: next/tarot.md at the repo root.
 
 - [`tarot_editor.gd`](../scripts/tarot_editor.gd) **TarotEditor** - the tarot mode: a reading nobody writes by hand.
-- [`tarot_cutout.gd`](../scripts/tarot_cutout.gd) **TarotCutout** - one painted object, cut out of its background so it can stand on the table.
 - [`tarot_producer.gd`](../scripts/tarot_producer.gd) **TarotProducer** - makes whatever an episode is missing, in the order a reading happens.
 - [`tarot_episode.gd`](../scripts/tarot_episode.gd) **TarotEpisode** - one episode of a tarot show, as it lies on disk.
 - [`tarot_prompts.gd`](../scripts/tarot_prompts.gd) **TarotPrompts** - what each agent behind a tarot episode is told. Pure: strings in, strings out, so a gate can hold every prompt to the rules (see tests/tarot_check.gd).

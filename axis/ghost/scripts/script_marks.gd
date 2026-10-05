@@ -45,6 +45,14 @@ const REGISTRY := {
 		"modes": ["generative"],
 		"pattern": Manuscript.HESITATION,
 	},
+	"delivery": {
+		"label": "Delivery",
+		"group": "timing",
+		"blurb": "Lean how the rest of this paragraph is said, a step at a time: quicker / slower, brighter / graver, tighter / looser (pauses), louder / softer, or excited, serious, hushed, urgent, playful, tender, dry; steady is the voice's own. Small, and eased in and out over a few sentences.",
+		"before": "<!-- delivery: ", "fill": "quicker, brighter", "after": " -->", "line": "own",
+		"modes": ["generative"],
+		"pattern": Manuscript.DELIVERY,
+	},
 	"hesitation_timed": {
 		"label": "Timed hesitation",
 		"group": "timing",

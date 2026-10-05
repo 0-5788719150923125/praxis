@@ -32,7 +32,7 @@ func _init() -> void:
 	# EVERY CHECK MUST REACH ITS END: a script error inside one stops it part way and returns
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
-			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _objects]:
+			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -201,6 +201,14 @@ func _script() -> bool:
 	# seven words of intro, five of the jumper's passage
 	_ok(int((actions[2] as Dictionary)["after"]) == 12, "the draw is anchored after word %d, not 12" % int((actions[2] as Dictionary)["after"]))
 	_ok(not speak.contains("tarot:"), "a tarot mark survives into what the voice reads")
+	# THE READER'S DELIVERY MARKS reach the voice, and no comment is ever a word the table follows
+	var marked := TarotScript.parse(TarotScript.compose([{"kind": "shuffle",
+		"text": "Hello.\n\n<!-- delivery: excited -->\nOh wow. <!-- hesitation: 1.5 --> Look. <!-- a note --> Done."}]))
+	var said := String(marked["speakable"])
+	_ok(said.contains("<!-- delivery: excited -->") and said.contains("<!-- hesitation: 1.5 -->") and not said.contains("a note"),
+		"the voice is not handed the reader's delivery and hesitation, or is handed a note: %s" % said)
+	_ok(not (marked["spoken"] as PackedStringArray).has("delivery") and not (marked["spoken"] as PackedStringArray).has("excited")
+		and not (marked["spoken"] as PackedStringArray).has("hesitation"), "a mark is counted as a word the table follows")
 	# THE FIRST CARD WAITS FOR THE DECK: shuffled in the middle, it is pushed to its side first
 	var plain := TarotScript.parse(TarotScript.compose([{"kind": "shuffle", "text": "one two"},
 		{"kind": "draw", "card": 1, "text": "three four"}, {"kind": "draw", "card": 2, "text": "five six"}]))
@@ -389,18 +397,14 @@ func _helpers() -> bool:
 	var look := TarotTable.sanitize_look({"palette": ["red", "#zzzzzz"], "title_face": "Comic Sans",
 		"props": ["candle", "laser", "candle"], "frame": {"style": "weird"}, "foil": 7})
 	var objs := TarotTable.sanitize_look({"candles": 9, "objects": ["a brass astrolabe",
-		{"what": "a cracked teacup", "size": "HUGE"}, {"what": ""}, {"what": "a", "size": "small"},
-		{"what": "b", "size": "large"}, {"what": "c"}]})
+		{"what": "a cracked teacup", "size": "small"}]})
 	_ok((look["palette"] as Array).size() >= 3, "a bad palette was kept")
 	_ok(String(look["title_face"]) == "roman", "an unknown face was kept")
-	_ok(int(look["candles"]) == 1 and (look["objects"] as Array).is_empty() and not look.has("props"),
+	_ok(int(look["candles"]) == 1 and not look.has("props"),
 		"an older look's props did not become its candles: %s" % str(look))
 	_ok(int(objs["candles"]) == TarotTable.MAX_CANDLES, "the candles were not clamped: %d" % int(objs["candles"]))
-	var ob: Array = objs["objects"]
-	_ok(ob.size() == TarotTable.MAX_OBJECTS and String((ob[0] as Dictionary)["what"]) == "a brass astrolabe"
-		and String((ob[1] as Dictionary)["size"]) == "medium" and String((ob[2] as Dictionary)["size"]) == "small",
-		"the objects were not sanitized (a bare name, a bad size, an empty one, the limit): %s" % str(ob))
-	_ok(TarotTable.on_the_table(objs).begins_with("four lit candles; a brass astrolabe"),
+	_ok(not objs.has("objects"), "an older look's painted objects reached the table: %s" % str(objs))
+	_ok(TarotTable.on_the_table(objs) == "four lit candles",
 		"what the reader is told is on the table: %s" % TarotTable.on_the_table(objs))
 	_ok(String((look["frame"] as Dictionary)["style"]) == "line", "an unknown frame was kept")
 	_ok(float(look["foil"]) == 1.0, "foil was not clamped")
@@ -635,42 +639,32 @@ func _pictures() -> bool:
 	_ok(bool((cm["pictures"][0] as Dictionary)["flip"]) and not bool((cm["pictures"][1] as Dictionary)["flip"]),
 		"a reversed card's picture is not turned over for Codex")
 	_ok(TextGen.has("codex") and TextGen.has("claude"), "the writers on offer are not Claude and Codex")
+	# THE MODEL: the one chosen for a job wins over its tier's; none chosen is the CLI's own
+	_ok(TextGen.Claude.model_of({"tier": "fast"}) == "sonnet" and TextGen.Claude.model_of({"tier": "best"}) == "opus"
+		and TextGen.Claude.model_of({"tier": "fast", "model": "fable"}) == "fable",
+		"a chosen model does not win over the tier's, or the tiers lost their defaults")
+	var chosen := TextGen.Codex.argv(dict_with(job, "model", "gpt-test"), [])
+	_ok(chosen.find("-m") >= 0 and chosen[chosen.find("-m") + 1] == "gpt-test" and chosen.find("--") > chosen.find("-m"),
+		"the Codex writer is not run on the model chosen for it")
+	_ok(TextGen.Codex.argv(job, []).find("-m") < 0, "the Codex writer names a model when none was chosen")
+	for list in [TextGen.Claude.models(), TextGen.Codex.models(), ImageGen.Codex.models()]:
+		_ok((list as Array).size() >= 1 and String(((list as Array)[0] as Dictionary)["key"]) == "",
+			"a model list does not open on the CLI's own default")
 	return true
 
 
-## THE OBJECTS ON THE TABLE: a step each, painted from the plan alone, cleared with the plan;
-## and the cutout - the background (read off the picture's own border) gone, a white cup's white
-## inside kept because it does not touch the edge, a speck dropped, cropped to the object.
-func _objects() -> bool:
+## NO PAINTED OBJECTS (taken off the table, 2026-10-04): an older plan that names some makes no
+## step for them, and the planner is not asked for any.
+func _no_objects() -> bool:
 	var ep := _episode(3)
 	var plan: Dictionary = ep.read_json("plan")
 	(plan["look"] as Dictionary)["objects"] = [{"what": "a cup", "size": "small"}, {"what": "a lamp", "size": "large"}]
 	ep.write_json("plan", plan)
-	_ok(ep.steps().has("image:object:1") and ep.steps().has("image:object:2") and not ep.steps().has("image:object:3"),
-		"the episode does not have a step per object: %s" % str(ep.steps()))
-	_ok(ep.needs("image:object:2") == ["plan"] and ep.file_of("image:object:2").ends_with("object_2.png"),
-		"an object is not painted from the plan alone, or kept in its own file")
-	ep.write_text("image:object:1", "png")
-	ep.invalidate("plan")
-	_ok(not ep.has("image:object:1"), "redoing the plan kept an object painted for the old one")
-	var img := Image.create(1024, 1024, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.97, 0.96, 0.93))
-	img.fill_rect(Rect2i(300, 380, 420, 520), Color(0.1, 0.15, 0.45))
-	img.fill_rect(Rect2i(380, 420, 260, 120), Color(0.98, 0.98, 0.97))
-	img.fill_rect(Rect2i(60, 60, 3, 3), Color(0.2, 0.2, 0.2))
-	var src := ProjectSettings.globalize_path("user://tarot_check/object.raw.png")
-	var dst := src.replace(".raw", "")
-	img.save_png(src)
-	var err := TarotCutout.cut(src, dst)
-	var out := Image.load_from_file(dst) if err.is_empty() else null
-	_ok(out != null, "the cutout failed: %s" % err)
-	if out != null:
-		_ok(out.get_pixel(0, 0).a < 0.05 and out.get_pixel(10, out.get_height() - 10).a > 0.95,
-			"the cutout did not take the background out and keep the object")
-		_ok(out.get_pixel(out.get_width() / 2, int(out.get_height() * 0.2)).a > 0.95,
-			"the cutout erased a white part of the object that does not touch the edge")
-		_ok(out.get_width() < 300 and out.get_height() < 360, "the cutout is not cropped to the object (or kept the speck): %s"
-			% str(out.get_size()))
+	var objects := ep.steps().filter(func(st: Variant) -> bool: return String(st).contains("object"))
+	_ok(objects.is_empty(), "a plan naming objects still makes steps for them: %s" % str(objects))
+	_ok(ep.steps().has("image:card:3") and ep.steps().has("image:surface"), "the plan's other steps went too: %s" % str(ep.steps()))
+	var p := TarotPrompts.producer("T", "B", 7, 3, true, TarotTable.FACES, TarotTable.FRAMES, [], TarotDeck.standard())
+	_ok(p.has("prompt") and not String(p["prompt"]).contains("\"objects\""), "the planner is still asked for objects")
 	return true
 
 
@@ -692,3 +686,9 @@ func _only_what_was_asked() -> bool:
 	for s in ["design:1", "design:3", "image:back", "image:surface", "say:intro"]:
 		_ok(all._tries.has(s), "Generate did not try %s (it tried %s)" % [s, str(all._tries.keys())])
 	return true
+
+
+func dict_with(d: Dictionary, k: String, v: Variant) -> Dictionary:
+	var o := d.duplicate()
+	o[k] = v
+	return o

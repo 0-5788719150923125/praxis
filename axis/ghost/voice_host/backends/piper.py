@@ -318,10 +318,18 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
     `dynamics` (0..1) scales the whole timing half, `prosody_arc` is the paragraph
     pitch arc in SEMITONES peak-to-peak, and `effort` scales the tilt/level
     contour. All default to 0.
+
+    THE LEAN. `lean_semis` and `lean_effort` move this sentence's register and effort by
+    a little, on top of everything above - the delivery a script marks for a stretch
+    (a reader brightening, or going grave), eased across sentences by the caller. The
+    pitch rides the same formant-locked path as the arc, so a brighter sentence is the
+    same person a touch higher, never a smaller one. Clamped small: a lean, not a voice.
     """
     depth = max(0.0, float(params.get("dynamics", 0.0)))
     arc = max(0.0, float(params.get("prosody_arc", 0.0)))
     effort = max(0.0, float(params.get("effort", 0.0)))
+    lean_semis = min(max(float(params.get("lean_semis", 0.0) or 0.0), -1.5), 1.5)
+    lean_effort = min(max(float(params.get("lean_effort", 0.0) or 0.0), -0.5), 0.5)
     n = len(groups)
     lens = [max(1, len(g)) for g in groups]
     typical = sum(lens) / float(n) if n else 1.0
@@ -348,6 +356,7 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
         semis = (
             arc * (0.5 - u * u * 0.5 - u * 0.5) * 0.62
             + arc * (0.5 - v_in * v_in * 0.5 - v_in * 0.5) * 0.38
+            + lean_semis
         )
         # Progressive final lengthening into the unit's boundary, strongest at the
         # end. 18% AT THE TOP OF THE DIAL: a real pre-boundary rime lengthens far more
@@ -399,7 +408,7 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
             1.0
             - 2.0
             * ((u * u * 0.5 + u * 0.5) * 0.62 + (v_in * v_in * 0.5 + v_in * 0.5) * 0.38)
-        ) * effort
+        ) * effort + lean_effort
         plan.append(
             {
                 "rate": max(0.55, rate),

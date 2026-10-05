@@ -79,7 +79,7 @@ const USES := {
 	"book": ["camera", "illustrations"],
 	"notebook": ["camera", "illustrations", "handwriting"],
 	"tablet": ["camera", "illustrations"],
-	"tarot": ["camera"],
+	"tarot": [],
 }
 
 ## MEDIA THAT BELONG TO A MODE: key -> the mode that shows its readings in it. The tarot table

@@ -9,7 +9,7 @@ A script is plain Markdown, and ghost reads more out of it than the words: speak
 
 AN ENTRY DOES NOT IMPLEMENT ITS MARK. The parsers of record stay where they are (`Manuscript` for cues, rests and pictures; `TextNorm` and `Phonemes` for the rest), and `tests/script_marks_check.gd` inserts every entry's example and asks THOSE parsers what they make of it - so an entry that drifts from what the reader actually does fails there, and a new entry without a check fails too.
 
-Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_marks.gd) (28 entries). Each one is proven against the parser that reads it by `tests/script_marks_check.gd`.
+Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_marks.gd) (29 entries). Each one is proven against the parser that reads it by `tests/script_marks_check.gd`.
 
 ## Voices
 
@@ -22,6 +22,7 @@ Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_
 | Mark | Example | Panels | What it does |
 |---|---|---|---|
 | Hesitation | `<!-- hesitation -->` | Generative | A longer rest at exactly this point, mid-sentence included. Its length is the panel's Hesitate dial. |
+| Delivery | `<!-- delivery: quicker, brighter -->` | Generative | Lean how the rest of this paragraph is said, a step at a time: quicker / slower, brighter / graver, tighter / looser (pauses), louder / softer, or excited, serious, hushed, urgent, playful, tender, dry; steady is the voice's own. Small, and eased in and out over a few sentences. |
 | Timed hesitation | `<!-- hesitation: 2.5 -->` | Generative | A rest of exactly this many seconds, whatever the Hesitate dial says. |
 | Log-entry time | `21:40` | Generative | A time opening a paragraph is read as its heading, with a hesitation after it. The Notebook sets it in the margin. |
 | Thinking hum | `Hmm.` | Generative | Hm, Hmm, Mmm as a sentence of their own are held to most of a second, settling and falling in pitch, instead of read as a clipped syllable. |

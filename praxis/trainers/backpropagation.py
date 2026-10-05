@@ -11,6 +11,7 @@ from torcheval.metrics.functional import perplexity
 
 from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.metrics import compute_softmax_collapse
+from praxis.metrics.context_gain import context_gain
 from praxis.metrics.copy_probe import COPY_PROBE_ROWS, copy_gain
 from praxis.metrics.trunk_probe import trunk_swap_cost
 from praxis.trainers.compile import try_compile
@@ -569,6 +570,24 @@ class BackpropagationTrainer(LightningModule):
             prog_bar=True,
             sync_dist=False,  # Disable sync during validation to prevent deadlocks in multi-node setups
         )
+
+        # Does loss keep falling as context grows? Read off this same forward,
+        # on every row, weighted by the rows that hold a long enough document.
+        # See praxis/metrics/context_gain.py.
+        if not self.outputs_are_aligned:
+            reading = context_gain(outputs.logits, input_ids, fields.get("block_ids"))
+            if reading is not None:
+                value, rows = reading
+                self.log(
+                    "val_context_gain",
+                    value,
+                    on_step=False,
+                    on_epoch=True,
+                    logger=True,
+                    batch_size=rows,
+                    prog_bar=True,
+                    sync_dist=False,
+                )
 
     def on_validation_end(self):
         super().on_validation_end()

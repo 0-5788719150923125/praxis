@@ -239,7 +239,6 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "voice. Design: next/tarot.md at the repo root.",
         [
             "tarot_editor.gd",
-            "tarot_cutout.gd",
             "tarot_producer.gd",
             "tarot_episode.gd",
             "tarot_prompts.gd",

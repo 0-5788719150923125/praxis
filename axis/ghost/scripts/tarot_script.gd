@@ -119,7 +119,9 @@ static func parse(body: String) -> Dictionary:
 	for p in passages:
 		var kind := String((p as Dictionary)["kind"])
 		var text := "\n".join(PackedStringArray((p as Dictionary)["lines"] as Array)).strip_edges()
-		# authoring notes are never read, and never counted as words
+		# THE READER'S DELIVERY MARKS go on to the voice - a delivery, a hesitation - but no comment is
+		# ever a word the table follows, and any other note is not read at all
+		var voiced := _voice_marks(text)
 		text = Manuscript._rx(Manuscript.COMMENT).sub(text, "", true).strip_edges()
 		if not kind.is_empty():
 			var dur := rest_of(kind, showing)
@@ -140,9 +142,23 @@ static func parse(body: String) -> Dictionary:
 				if not n.is_empty():
 					spoken.append(n)
 		if not text.is_empty():
-			speak.append(text)
+			speak.append(voiced)
 	return {"passages": out_passages, "actions": actions, "spoken": spoken,
 		"speakable": "\n\n".join(speak), "cards": cards}
+
+
+## [param text] with every comment taken out but the ones the voice acts on: a delivery, a hesitation.
+static func _voice_marks(text: String) -> String:
+	var lean := _rx(Manuscript.DELIVERY)
+	var hes := _rx(Manuscript.HESITATION)
+	var out := ""
+	var at := 0
+	for m in _rx(Manuscript.COMMENT).search_all(text):
+		out += text.substr(at, m.get_start() - at)
+		at = m.get_end()
+		if lean.search(m.get_string()) != null or hes.search(m.get_string()) != null:
+			out += m.get_string()
+	return (out + text.substr(at)).strip_edges()
 
 
 ## THE VIDEO'S CHAPTERS, from a rendered take: when the intro, each card and the spread begin,

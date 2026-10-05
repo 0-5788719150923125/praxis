@@ -42,12 +42,9 @@ const FRAMES := {
 	"bleed": "the picture runs nearly to the edge, with only a hairline rule",
 }
 
-## THINGS ON THE TABLE. The candles are the table's own (a flame that lights the cards is not
-## something a picture can do); everything else is PAINTED - the look names two to four objects,
-## each is painted alone, cut out of its background ([TarotCutout]) and stood on the table facing
-## the camera, which never moves. A size is how tall the object stands, in meters.
-const OBJECT_SIZES := {"small": 0.075, "medium": 0.12, "large": 0.19}
-const MAX_OBJECTS := 4
+## THE CANDLES are the only things on the table besides the cloth and the cards. Painted objects
+## were tried (2026-10-04) and taken off: a cut-out painting brings its own camera, light and
+## grade, and could neither take the candlelight nor cast a shadow.
 const MAX_CANDLES := 4
 
 ## A look's colors when the producer's are missing or not colors at all.
@@ -75,7 +72,7 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 	out["frame"] = f
 	var face := String(look.get("title_face", "")).strip_edges().to_lower()
 	out["title_face"] = face if FACES.has(face) else "roman"
-	# the candles: a count - a look from before the objects named props, and its candles carry over
+	# the candles: a count - an older look named props, and its candles carry over
 	var candles := 1
 	var nc: Variant = look.get("candles")
 	if nc is int or nc is float:
@@ -85,20 +82,7 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 		candles = 3 if old.has("candles") else (1 if old.has("candle") else 0)
 	out["candles"] = candles
 	out.erase("props")
-	# the objects: what each is, and how big
-	var objects: Array = []
-	for o in (look.get("objects", []) if look.get("objects") is Array else []):
-		var what := ""
-		var size := "medium"
-		if o is Dictionary:
-			what = str((o as Dictionary).get("what", "")).strip_edges()
-			size = str((o as Dictionary).get("size", "medium")).strip_edges().to_lower()
-		elif o is String:
-			what = (o as String).strip_edges()
-		if what.is_empty():
-			continue
-		objects.append({"what": what.substr(0, 240), "size": size if OBJECT_SIZES.has(size) else "medium"})
-	out["objects"] = objects.slice(0, MAX_OBJECTS)
+	out.erase("objects")
 	var light: Dictionary = look.get("light", {}) if look.get("light") is Dictionary else {}
 	out["light"] = {"kind": String(light.get("kind", "candlelight")),
 		"color": String(light.get("color", "")) if _is_color(String(light.get("color", ""))) else "#ffb36b",
@@ -150,8 +134,6 @@ static func on_the_table(look: Dictionary) -> String:
 	var n := int(look.get("candles", 0))
 	if n > 0:
 		things.append("%s lit candle%s" % [["", "one", "two", "three", "four"][mini(n, 4)], "" if n == 1 else "s"])
-	for o in look.get("objects", []):
-		things.append(String((o as Dictionary).get("what", "")))
 	return "; ".join(things) if not things.is_empty() else "nothing else"
 
 

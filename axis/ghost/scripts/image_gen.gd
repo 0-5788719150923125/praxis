@@ -98,6 +98,9 @@ class Codex:
 			"exec", "--skip-git-repo-check", "--json",
 			"-s", "workspace-write", "-C", dir,
 			"-c", "model_reasoning_effort=low"])
+		# the model of the AGENT that calls the image tool - the picture is the tool's either way
+		if not String(job.get("model", "")).is_empty():
+			args.append_array(["-m", String(job["model"])])
 		# `--image=` per file, then `--`: the flag takes MANY values, and a bare `-i a.png`
 		# followed by the prompt swallowed the prompt as a second image ("No prompt provided").
 		for r in job.get("refs", []):
@@ -132,10 +135,31 @@ class Codex:
 
 	## `$CODEX_HOME/generated_images`, defaulting to ~/.codex like the CLI does.
 	static func generated_dir() -> String:
-		var home := OS.get_environment("CODEX_HOME")
-		if home.is_empty():
-			home = Deps.home().path_join(".codex")
-		return home.path_join("generated_images")
+		return home().path_join("generated_images")
+
+	## `$CODEX_HOME`, defaulting to ~/.codex like the CLI does.
+	static func home() -> String:
+		var h := OS.get_environment("CODEX_HOME")
+		return h if not h.is_empty() else Deps.home().path_join(".codex")
+
+	## THE MODELS CODEX OFFERS, as a picker shows them: `[{key, label}]`, the CLI's own default first
+	## (key "", labelled with the model the author's config names). Read from the catalog the CLI
+	## keeps for itself (`models_cache.json` - what `codex debug models` prints), so it is the list
+	## this installation actually has, and reading it costs nothing. Hidden entries stay hidden.
+	static func models() -> Array:
+		var dflt := ""
+		for line in FileAccess.get_file_as_string(home().path_join("config.toml")).split("\n"):
+			var t := String(line).strip_edges()
+			if t.begins_with("model ") or t.begins_with("model="):
+				dflt = t.get_slice("=", 1).strip_edges().trim_prefix("\"").trim_suffix("\"")
+				break
+		var out: Array = [{"key": "", "label": "Default" + ((" (%s)" % dflt) if not dflt.is_empty() else "")}]
+		var j := JSON.new()
+		if j.parse(FileAccess.get_file_as_string(home().path_join("models_cache.json"))) == OK and j.data is Dictionary:
+			for m in (j.data as Dictionary).get("models", []):
+				if m is Dictionary and String((m as Dictionary).get("visibility", "list")) == "list":
+					out.append({"key": String(m["slug"]), "label": String((m as Dictionary).get("display_name", m["slug"]))})
+		return out
 
 	## The thread id from a `codex exec --json` event log, or "".
 	static func thread_id(events_path: String) -> String:

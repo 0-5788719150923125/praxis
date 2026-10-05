@@ -217,6 +217,18 @@ func _parsers_agree() -> void:
 					"a note reached the page")
 				_ok(not Manuscript.unspoken("Before %s after." % ex).contains(fill),
 					"a note survives into the synthesis reading")
+			"delivery":
+				# a delivery is the voice's business (GenerativeEditor reads it, multi_voice_check holds
+				# what it does); here: it carries its words, and it is never read aloud or printed
+				var lm := Manuscript._rx(Manuscript.DELIVERY).search(ex)
+				_ok(lm != null and lm.get_string(1) == fill, "a delivery mark does not carry its words")
+				_ok(not _words(Manuscript.unspoken("Before.\n%s\nAfter." % ex)).has("quicker"),
+					"a delivery mark is read aloud")
+				var b := Manuscript.blocks("Before.\n%s\nAfter.\n" % ex)
+				var shown := ""
+				for blk in b:
+					shown += String((blk as Dictionary).get("text", ""))
+				_ok(not shown.contains("quicker"), "a delivery mark reached the page")
 			_:
 				_ok(false, "%s has no check in script_marks_check - prove it before shipping it" % k)
 	# THE SYNTHESIS FIX, two-sided: the raw text DOES read a cue aloud, the stripped text not.

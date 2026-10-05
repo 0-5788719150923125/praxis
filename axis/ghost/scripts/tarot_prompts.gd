@@ -31,7 +31,9 @@ const SPOKEN_RULES := """FORMAT - everything you write is spoken aloud by a voic
 - You may put single asterisks around ONE word you lean on - *this* - and only now and then.
 - Write numbers, symbols and abbreviations the way they are said ("eleven eleven", "twenty percent", "okay").
 - Plain paragraphs. Short sentences land; vary the rhythm.
-- The viewer sees the table, not you. Never describe your own hands or face."""
+- The viewer sees the table, not you. Never describe your own hands or face.
+
+HOW YOU SAY IT - the voice reading your words has a steady delivery of its own, and you can lean it a little, the way a real reader speeds up as they get going, goes graver for a hard card, or barely pauses when they are on a roll. Put a mark on a line of its own before the stretch: <!-- delivery: quicker, brighter -->. The words: quicker or slower; brighter or graver (a touch higher and livelier, or lower and flatter); tighter or looser (shorter pauses, as when you are on a roll, or longer ones, letting a moment sit); louder or softer (projecting, or leaning in); or one of excited, serious, hushed, urgent, playful, tender, dry. It lasts to the end of its paragraph and eases in and out over a few sentences. Where you would really stop - a beat before a reveal - put <!-- hesitation --> at that exact spot (<!-- hesitation: 2 --> for two seconds). Sparingly: most paragraphs carry no mark at all, and a passage seldom more than one or two. These marks are never read aloud, so never also describe the delivery in words."""
 
 
 ## What the producer is told about the deck: the standard tarot, or the show's own cards by name
@@ -74,7 +76,7 @@ static func dice(seed: int) -> Dictionary:
 
 
 ## The registry keys a look may name, for the producer to choose from: the faces the card titles
-## are set in and the things on the table. Passed in by the caller so this file names no asset.
+## are set in and the frames round them. Passed in by the caller so this file names no asset.
 static func producer(title: String, brief: String, seed: int, cards: int, reversals: bool,
 		faces: Dictionary, frames: Dictionary, history: Array, deck: Array = []) -> Dictionary:
 	var d := dice(seed)
@@ -94,7 +96,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	lines.append("")
 	lines.append(deck_line(deck))
 	lines.append("")
-	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: medium, era and influences, linework, texture, palette, how figures are drawn. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, how many lit candles stand on the table, and the OBJECTS on it: two to four things that belong to this setting and this episode - the reader's own clutter, a tool of the trade, something the episode is about - each described for a photographer (what it is, its material, its state). Never cards, a deck, a cloth, a person, or anything with writing on it. The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
+	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: medium, era and influences, linework, texture, palette, how figures are drawn. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lit candles stand on the table - nothing else stands on it. The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
 	lines.append("")
 	lines.append("INSPIRATION. These numbers were drawn for this episode. Let them push the episode somewhere this show has never been - a culture, a period, a material, a mood - without being literal about them: a place %s; a year %d; a hue %d degrees; the hour %d:00. Before deciding, brainstorm twelve sharply different directions for the episode (topic, angle and look together), then commit to direction number %d." % [String(d["place"]), int(d["year"]), int(d["hue"]), int(d["hour"]), int(d["direction"])])
 	if not past.is_empty():
@@ -111,7 +113,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
   "audience": "who this collective reading says it is for",
   "topic": "what the reading is about, in a few words",
   "premise": "the episode's angle, in one or two sentences",
-  "reader_mood": "how the reader is today, and any running bit for this episode - a bit the reader SAYS, never a thing done or an object shown (the viewer sees only the cloth, the deck, the cards, the candles and the objects you choose), and never a way of speaking (the show's voice is fixed: no whispering, accents or singing)",
+  "reader_mood": "how the reader is today, and any running bit for this episode - a bit the reader SAYS, never a thing done or an object shown (the viewer sees only the cloth, the deck, the cards and the candles), and never a way of speaking (the show's voice is fixed: no whispering, accents or singing)",
   "spread": {"name": "the spread's name", "positions": [{"name": "position name", "asks": "what it asks"}]},
   "look": {
     "deck_name": "the deck's name",
@@ -124,8 +126,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
     "surface": "the cloth or tabletop the cards lie on, seen from above",
     "setting": "the place beyond the table",
     "light": {"kind": "what lights the table", "color": "#rrggbb", "warmth": "warm or cool"},
-    "candles": 2,
-    "objects": [{"what": "one object, for a photographer: what it is, its material, its state", "size": "small, medium or large"}]
+    "candles": 2
   }
 }""" % [", ".join(frames.keys()), ", ".join(faces.keys())])
 	return {"system": show_context(title, brief), "prompt": "\n".join(lines), "dice": d}
@@ -319,22 +320,6 @@ static func surface_image(look: Dictionary, target: String) -> String:
 	lines.append("THE PICTURE: a photograph looking STRAIGHT DOWN at %s, laid flat on a reading table and filling the whole frame edge to edge. Even, soft light; true colors; the texture of the material sharp. Nothing on it - no cards, no objects, no hands, no text." % String(look.get("surface", "a reading cloth")))
 	lines.append("Its colors belong to this palette: %s." % ", ".join(PackedStringArray(look.get("palette", []))))
 	lines.append("FORMAT: SQUARE 1:1 (1024x1024). No border, no vignette, no watermark, no text.")
-	return "\n".join(lines)
-
-
-## ONE OBJECT ON THE TABLE, painted alone to be cut out and stood there: seen from the reader's
-## chair (the table's camera looks down at about forty degrees), lit as the table is, on nothing.
-static func object_image(look: Dictionary, object: Dictionary, target: String) -> String:
-	var light: Dictionary = look.get("light", {}) if look.get("light") is Dictionary else {}
-	var lines := PackedStringArray([_paint_head(target), ""])
-	lines.append("THE PICTURE: a photograph of ONE object, alone: %s. It stands on a tarot reader's table in %s, lit by %s." % [
-		String(object.get("what", "")), String(look.get("setting", "a quiet room")), String(light.get("kind", "low lamplight"))])
-	lines.append("THE VIEW: from a chair at that table, looking down at the object at about 40 degrees - the way it looks standing on a tabletop just in front of you. Its base at the bottom of the picture.")
-	lines.append("NOTHING ELSE: no table, no floor, no shadow, no hands, no other objects, no text. The object is cut out of this picture and stood on the table separately.")
-	lines.append("BACKGROUND: transparent (a PNG with an alpha channel) if your image tool can make one; otherwise a flat, evenly lit, pure white background (#FFFFFF) - no gradient, no texture, no vignette.")
-	lines.append("FRAMING: the whole object in frame and centered, with a margin of empty background all round.")
-	lines.append("Its colors sit with this palette: %s." % ", ".join(PackedStringArray(look.get("palette", []))))
-	lines.append("FORMAT: SQUARE 1:1 (1024x1024). No watermark, no signature.")
 	return "\n".join(lines)
 
 

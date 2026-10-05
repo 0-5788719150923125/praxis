@@ -113,6 +113,20 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": True,
         },
     },
+    "val_context_gain": {
+        "description": (
+            "Bits per token saved late in a document (positions L/2-L) versus "
+            "early (L/32-L/16), same documents, every validation row. Higher = "
+            "more use of long context."
+        ),
+        "chart": {
+            "title": "In-Context Learning Score",
+            "y_label": "bits per token saved",
+            "y_scale": "linear",
+            "order": 51,
+            "is_validation": True,
+        },
+    },
     "val_copy_gain": {
         "description": (
             "Bits per token saved on a passage's second copy (a row's first 256 "
