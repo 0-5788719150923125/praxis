@@ -44,6 +44,7 @@ const REGISTRY := {
 	"book": "res://scripts/media/book.gd",
 	"notebook": "res://scripts/media/notebook.gd",
 	"tablet": "res://scripts/media/tablet.gd",
+	"tarot": "res://scripts/media/tarot.gd",
 }
 
 ## Display names for the registry keys, in registry order - for the settings surface.
@@ -53,6 +54,7 @@ const LABELS := {
 	"book": "Novel",
 	"notebook": "Notebook",
 	"tablet": "Tablet",
+	"tarot": "Tarot table",
 }
 
 ## WHICH OPTIONAL SETTINGS EACH MEDIUM ACTUALLY USES, as a list of tags per key.
@@ -77,7 +79,26 @@ const USES := {
 	"book": ["camera", "illustrations"],
 	"notebook": ["camera", "illustrations", "handwriting"],
 	"tablet": ["camera", "illustrations"],
+	"tarot": ["camera"],
 }
+
+## MEDIA THAT BELONG TO A MODE: key -> the mode that shows its readings in it. The tarot table
+## is drawn from an episode the tarot mode produced - its deck, its pictures, its spread - so a
+## chapter read in any other mode has nothing to put on it. Such a medium is never offered by a
+## picker ([method pickable]) and never becomes the remembered setting; its mode pins it for the
+## session instead (see [member Director.medium_override]).
+const OWNED := {
+	"tarot": "tarot",
+}
+
+
+## The keys a picker offers, in registry order: every medium no mode owns.
+static func pickable() -> Array:
+	var out: Array = []
+	for k in REGISTRY:
+		if not OWNED.has(k):
+			out.append(k)
+	return out
 
 ## Does [param key]'s medium use the [param feature] group? Unknown media and unknown
 ## features answer TRUE, deliberately: the failure of a wrong answer here is a control the
@@ -97,6 +118,7 @@ const BLURBS := {
 	"notebook": "The chapter handwritten into a ruled research notebook - margin times, underlined emphasis, photos paper-clipped over the writing at an angle, and sketches (`<!-- sketch: ... -->`) drawn onto the page in the same ink. For a chapter drafted as a journal or a lab report.",
 	"tablet": "Somebody browsing on a tablet lying on a desk: the chapter is web pages (`<!-- url: -->`), read aloud as they are scrolled, with searches, new tabs, a turn to landscape and links followed between them - every tap and keystroke timed into the rests the voice leaves for it.",
 	"comic": "The same scenes drawn into the panels of an open comic book - two facing pages, flown over by a real perspective camera. Each cut fills the next panel; a full spread turns the leaf on its spine.",
+	"tarot": "A tarot reading at a table, seen from the reader's chair: the deck shuffles while the reader talks, each card is drawn, held up beside its booklet entry, read and laid into the spread. The tarot mode's own medium - its deck, pictures and spread come from the episode the agents produced.",
 }
 
 

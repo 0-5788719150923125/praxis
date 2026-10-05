@@ -85,6 +85,13 @@ fi
 PROBE_LOG=$(mktemp)
 trap 'cleanup; rm -f "$PROBE_LOG"' EXIT INT TERM
 RUNNER+=(--log-file "$PROBE_LOG")
+# SILENT, on the real renderer: `--headless` already implies the Dummy audio driver, but a GPU
+# probe that plays a reading would otherwise speak it out of the author's speakers.
+# GHOST_PROBE_MUTE=1 keeps the mixer running - playback positions still advance - and sends
+# the sound nowhere.
+if [[ "${GHOST_PROBE_MUTE:-0}" != "0" ]]; then
+  RUNNER+=(--audio-driver Dummy)
+fi
 
 # Anything after the timeout is handed to the PROBE as user args (read them with
 # OS.get_cmdline_user_args), so a probe can take options the way clown_look_probe does.

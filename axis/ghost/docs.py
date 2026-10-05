@@ -232,6 +232,31 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         ],
     ),
     (
+        "Tarot",
+        "An automatic tarot reading: a show's brief, its episodes - each "
+        "planned, painted and written by agents one card at a time, kept on "
+        "disk step by step - and the table they are read at, in the Generative "
+        "voice. Design: next/tarot.md at the repo root.",
+        [
+            "tarot_editor.gd",
+            "tarot_cutout.gd",
+            "tarot_producer.gd",
+            "tarot_episode.gd",
+            "tarot_prompts.gd",
+            "tarot_script.gd",
+            "tarot_deck.gd",
+            "tarot_table.gd",
+            "tarot_cards.gd",
+        ],
+    ),
+    (
+        "Agents",
+        "Every piece of writing and painting ghost asks an AI for: who writes "
+        "(TextGen) and who paints (ImageGen), one queue for both (AgentJobs), "
+        "and where a reading's voice is in its document (ReadingFollower).",
+        ["text_gen.gd", "agent_jobs.gd", "reading_follower.gd"],
+    ),
+    (
         "Storyboards & stage",
         "Manual mode as data: the YAML-subset parser, the storyboard loader, "
         "and the Cast/Actions/Track stack that renders a described scene. "
@@ -364,6 +389,13 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         False,
     ),
     (
+        "--tarot",
+        "",
+        "Open the tarot mode: a show's brief, its episodes (planned, painted and written by "
+        "agents one card at a time) and the Generative voice that reads them at the table.",
+        False,
+    ),
+    (
         "--mask-edit",
         "<session.json>",
         "Open the Masking editor on a session (also creates one from a " "video path).",
@@ -411,6 +443,11 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
 # excluded from the drift check.
 ENGINE_FLAGS = {
     "--headless",
+    # the window arguments a launch can give, which Boot.fit_window then leaves alone
+    "--resolution",
+    "--position",
+    "--fullscreen",
+    "--maximized",
     "--path",
     "--editor",
     "--quit",
@@ -427,6 +464,13 @@ ENGINE_FLAGS = {
     "--resume",
     "--skip-git-repo-check",
     "--verbose",
+    # ...and TextGen's bare writers (the tarot mode's agents): no tools, no project, no session
+    "--safe-mode",
+    "--tools",
+    "--system-prompt-file",
+    "--no-session-persistence",
+    "--input-format",
+    "--ephemeral",
     # yt-dlp/pip arguments (mask_editor's URL import subprocess), not ghost flags
     "--newline",
     "--no-playlist",

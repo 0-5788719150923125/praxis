@@ -25,12 +25,20 @@ class_name ScriptWriter
 ## card, never in the editor. Each is read by something: the label, its tooltip, the panels
 ## that use it.
 const FIELDS := {
-	"title": {"label": "Title", "modes": ["generative"],
-		"tip": "The chapter's title. Read aloud first, by the voice that opens the chapter, and set at the head of the chapter in the Novel and Notebook."},
+	"title": {"label": "Title", "modes": ["generative", "tarot"],
+		"tip": "The chapter's title. Read aloud first, by the voice that opens the chapter, and set at the head of the chapter in the Novel and Notebook. For a tarot show, the channel's name."},
 	"author": {"label": "Author", "modes": ["generative"],
 		"tip": "Who wrote it. Printed on the cover in the Novel and Notebook."},
 	"book": {"label": "Book", "modes": ["generative"],
 		"tip": "The book this chapter belongs to. Printed on the cover in the Novel and Notebook."},
+}
+
+## WHAT THE DOCUMENT IS CALLED, where it is not a script: a tarot show's body is the BRIEF its
+## agents work from - written by hand, never read aloud.
+const WORDING := {
+	"tarot": {"edit": "Edit brief…", "window": "Brief",
+		"edit_tip": "Open the show's brief in an editor: what the show is, who reads it and by what rules. Every agent behind every episode is handed it word for word.",
+		"placeholder": "What is this show? Who reads it, how, and by what rules?"},
 }
 
 ## How long typing must pause before the card's summary is recounted.
@@ -52,6 +60,10 @@ var _speakers_head: Label
 var _timer: Timer
 var _speaker_names := PackedStringArray()
 var _field_edits := {}          # key -> LineEdit
+
+
+func _wording(key: String, dflt: String) -> String:
+	return String((WORDING.get(_mode, {}) as Dictionary).get(key, dflt))
 
 
 ## Build the card, the window and the [DocSource] inside it. [param section] and [param block]
@@ -78,10 +90,10 @@ func setup(section: String, block: String, mode: String) -> void:
 	clear.pressed.connect(func() -> void: doc.clear())
 	row.add_child(clear)
 	var edit := Button.new()
-	edit.text = "Edit script…"
-	edit.tooltip_text = ("Open the script in an editor, with every mark this panel "
-		+ "understands listed beside it - speakers, hesitations, pictures, pronunciations - "
-		+ "ready to insert at the cursor.")
+	edit.text = String(_wording("edit", "Edit script…"))
+	edit.tooltip_text = String(_wording("edit_tip", "Open the script in an editor, with every mark "
+		+ "this panel understands listed beside it - speakers, hesitations, pictures, "
+		+ "pronunciations - ready to insert at the cursor."))
 	edit.pressed.connect(open_editor)
 	row.add_child(edit)
 	_summary = Label.new()
@@ -182,7 +194,7 @@ func open_editor() -> void:
 
 func _build_window(section: String, block: String) -> void:
 	_window = Window.new()
-	_window.title = "Script"
+	_window.title = _wording("window", "Script")
 	_window.visible = false
 	_window.transient = true
 	_window.min_size = Vector2i(760, 440)
@@ -217,7 +229,7 @@ func _build_window(section: String, block: String) -> void:
 	text_edit.custom_minimum_size = Vector2(420, 240)
 	text_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	text_edit.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text_edit.placeholder_text = "Once upon a time..."
+	text_edit.placeholder_text = String(_wording("placeholder", "Once upon a time..."))
 	text_edit.highlight_current_line = true
 	text_edit.caret_blink = true
 	# Prose, not code: nothing may type a character the author did not.
@@ -345,11 +357,12 @@ func _refresh() -> void:
 	if text_edit == null:
 		return
 	var text := text_edit.text
-	var source := doc.doc_path().get_file() if doc.is_sync() else "Unsynced script"
+	var source := doc.doc_path().get_file() if doc.is_sync() \
+		else "Unsynced %s" % _wording("window", "Script").to_lower()
 	_name.text = source
 	_name.tooltip_text = ("Synced to " + doc.doc_path()) if doc.is_sync() else \
 		"Kept by ghost alone, in no file. Sync to… in the editor writes it into one."
-	_window.title = "Script - %s" % source
+	_window.title = "%s - %s" % [_wording("window", "Script"), source]
 	for k in _field_edits:
 		var e: LineEdit = _field_edits[k]
 		if not e.has_focus():

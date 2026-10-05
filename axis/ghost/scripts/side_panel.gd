@@ -57,6 +57,8 @@ var _restore: Button
 
 var _scroll: ScrollContainer
 var _pad: MarginContainer
+## Controls already named for making the panel too wide (see [method _check_width]).
+var _warned := {}
 
 
 func _init(width := 380.0) -> void:
@@ -157,3 +159,62 @@ func _apply() -> void:
 	# size it was last given, so without this the panel stays at its old height and the scroll
 	# view is laid out inside a box that is still too tall.
 	size = get_combined_minimum_size()
+	_check_width()
+
+
+## THE WIDTH IS DECLARED, NOT GROWN INTO - but nothing enforces it: the panel is as wide as its
+## widest row (horizontal scrolling is off, see [method _init]), so one control asking for more -
+## an OptionButton sized to its longest item, a row of one control too many - pushes the whole
+## panel out across the stage. Clipping it would hide that control instead, so the culprit is
+## NAMED, once, and found from the log rather than by eye.
+func _check_width() -> void:
+	if get_combined_minimum_size().x <= custom_minimum_size.x + 0.5:
+		return
+	for c in overwide(self):
+		var key := str((c as Control).get_path())
+		if _warned.has(key):
+			continue
+		_warned[key] = true
+		push_warning("ghost: the %s panel is %d px wide, not %d - %s asks for %d px" % [
+			title if not title.is_empty() else "side", int(get_combined_minimum_size().x),
+			int(custom_minimum_size.x), describe(c as Control), int((c as Control).get_combined_minimum_size().x)])
+
+
+## The controls that make [param panel] wider than it was declared: the innermost visible ones
+## asking for more than the room inside it (a row whose controls only add up to too much is
+## itself the culprit). Empty when the panel fits.
+static func overwide(panel: SidePanel) -> Array:
+	var chrome := panel.get_combined_minimum_size().x - panel.body.get_combined_minimum_size().x
+	var room := panel.custom_minimum_size.x - chrome
+	var out: Array = []
+	_collect_overwide(panel.body, room, out)
+	return out
+
+
+## Adds the innermost too-wide controls under [param n] to [param out]; true when it added any.
+static func _collect_overwide(n: Control, room: float, out: Array) -> bool:
+	var inner := false
+	for c in n.get_children():
+		var k := c as Control
+		if k != null and k.visible and k.get_combined_minimum_size().x > room + 0.5:
+			inner = _collect_overwide(k, room, out) or inner
+	if inner or n.get_combined_minimum_size().x <= room + 0.5:
+		return inner
+	out.append(n)
+	return true
+
+
+## A control as a log line can name it: its class, and the first words on it or inside it.
+static func describe(c: Control) -> String:
+	var words := PackedStringArray()
+	for n in [c] + c.find_children("*", "Control", true, false):
+		var t := ""
+		if n is Label:
+			t = (n as Label).text
+		elif n is Button:
+			t = (n as Button).text
+		if not t.strip_edges().is_empty():
+			words.append("'%s'" % t.strip_edges().substr(0, 40))
+		if words.size() >= 4:
+			break
+	return "%s %s" % [c.get_class(), " ".join(words)]

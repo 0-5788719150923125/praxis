@@ -26,6 +26,37 @@ func _enter_tree() -> void:
 	DisplayServer.window_set_position(Vector2i(-5000, -5000))   # X11 honors this
 
 
+## How much of its screen the window opens on, each way.
+const WINDOW_SHARE := 0.75
+## Engine arguments that say where or how big the window is - a launch that gives one keeps it.
+const WINDOW_ARGS := ["--resolution", "--position", "-f", "--fullscreen", "-m", "--maximized"]
+
+## THE WINDOW OPENS AT THREE QUARTERS OF ITS SCREEN, centered on the space the desktop leaves
+## free (panels and docks excluded). The project's 1920x1080 is the STAGE - what the picture is
+## composed for, which the canvas_items stretch scales to any window - and Godot opens the window
+## at that size by default, which on a 3840x2160 screen is a quarter of it. Only for a person's
+## session: a render, a probe or a headless run keeps the size it was given (a render records
+## the viewport, and the exporter sizes that window itself), as does a launch that names a size,
+## a position or a mode. [param force] is the probe's seam. True when the window was resized.
+func fit_window(force := false) -> bool:
+	if not force:
+		if DisplayServer.get_name() == "headless" or Settings.is_read_only():
+			return false
+		for a in OS.get_cmdline_args():
+			if WINDOW_ARGS.has(String(a).get_slice("=", 0)):
+				return false
+	var win := get_window()
+	if win == null or win.mode != Window.MODE_WINDOWED:
+		return false
+	var area := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+	if area.size.x <= 0 or area.size.y <= 0:
+		return false
+	var size := Vector2i(roundi(area.size.x * WINDOW_SHARE), roundi(area.size.y * WINDOW_SHARE))
+	win.size = size
+	win.position = area.position + (area.size - size) / 2
+	return true
+
+
 ## TOOLTIP WRAPPING, applied to the whole app.
 ##
 ## Godot's built-in tooltip is a Label with autowrap OFF, and there is no theme item to change
@@ -48,6 +79,10 @@ const TIP_MAX_PX := 480.0
 
 
 func _ready() -> void:
+	# HERE, not in _enter_tree: autoloads all ENTER the tree before any is ready, so Settings has
+	# not yet decided whether this process is a render or a probe when Boot enters it
+	if not OS.get_cmdline_user_args().has("--export"):
+		fit_window()
 	get_tree().node_added.connect(_hook_tooltip)
 
 

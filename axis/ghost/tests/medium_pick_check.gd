@@ -36,11 +36,13 @@ func _run() -> void:
 		print("vpick: FAILED - the picker was never built")
 		fails += 1
 	else:
-		var keys: Array = Medium.REGISTRY.keys()
+		# what a picker offers: every medium no mode owns (Medium.OWNED - the tarot table is the
+		# tarot mode's, pinned for its sessions, and never a choice here)
+		var keys: Array = Medium.pickable()
 		print("vpick: %d items, selected %d (%s)" % [
 			opt.item_count, opt.selected, opt.get_item_text(maxi(0, opt.selected))])
 		if opt.item_count != keys.size():
-			print("vpick: FAILED - %d items for %d registered media" % [
+			print("vpick: FAILED - %d items for %d pickable media" % [
 				opt.item_count, keys.size()])
 			fails += 1
 		if opt.get_item_text(maxi(0, opt.selected)) != String(Medium.LABELS.get(Director.medium, "")):
@@ -93,12 +95,12 @@ func _run() -> void:
 		fails += 1
 	else:
 		var cam := Director.medium
-		for key in Medium.REGISTRY:
+		for key in Medium.pickable():
 			var vk := String(key)
 			# select() AND the signal: a real click does both, and the two are separate in
 			# Godot - emitting alone leaves `selected` on the previous item.
-			ed._medium_pick.select(Medium.REGISTRY.keys().find(vk))
-			ed._medium_pick.item_selected.emit(Medium.REGISTRY.keys().find(vk))
+			ed._medium_pick.select(Medium.pickable().find(vk))
+			ed._medium_pick.item_selected.emit(Medium.pickable().find(vk))
 			for tag in ed._medium_rows:
 				var want: bool = Medium.uses(vk, String(tag))
 				for row in ed._medium_rows[tag] as Array:
@@ -114,7 +116,7 @@ func _run() -> void:
 		var differs := false
 		for tag in ed._medium_rows:
 			var seen := {}
-			for key in Medium.REGISTRY:
+			for key in Medium.pickable():
 				seen[Medium.uses(String(key), String(tag))] = true
 			if seen.size() > 1:
 				differs = true
@@ -124,7 +126,7 @@ func _run() -> void:
 			fails += 1
 		Director.set_medium(cam)
 		Director._save_pacing()
-		ed._medium_pick.select(maxi(0, Medium.REGISTRY.keys().find(cam)))
+		ed._medium_pick.select(maxi(0, Medium.pickable().find(cam)))
 		ed._sync_medium_rows()
 	# THE LOOK FILTERS, and the same three questions: a row per registry entry, each showing
 	# the live setting, and a tick that actually reaches the Director. The failure mode here is

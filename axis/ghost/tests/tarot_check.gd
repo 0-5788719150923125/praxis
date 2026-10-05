@@ -1,0 +1,694 @@
+extends SceneTree
+
+## The tarot mode's gate: everything that can be held to a rule without a writer, a painter or a
+## renderer.
+##
+##   godot --headless --path . --script res://tests/tarot_check.gd
+##
+## - THE DECK: 78 cards, the Rider-Waite-Smith order, numerals, a meaning for every card.
+## - THE SHUFFLE is a pure function of the seed.
+## - ONE WALK, TWO READERS: the voice's text and the table's actions come from the same parse, and
+##   the rest the voice takes for each action is the one the table performs it in.
+## - THE SCHEDULE puts every action in the rest the voice left for it.
+## - NO CHEATING: the reader's prompt for card K names cards 1..K and NO card after it, on an
+##   episode written to disk the way the producer writes one. Two-sided: the same check run on a
+##   prompt handed every card fails.
+## - A REDO deletes the step and exactly what was made from it.
+## - The helpers agents' replies go through: lenient JSON, spoken-text cleanup, look sanitizing.
+## - THE QUEUE'S LANES run one job at a time, in order, and a rerun starts from a cleared folder.
+## - REPLIES OF THE WRONG SHAPE are reshaped as they land; a step that writes nothing fails.
+## - A SCRUB into a reading that repeats itself finds the repeat nearest where it was asked for.
+## - THE SPREAD lies clear of the deck.
+## - DELETING AN EPISODE takes its whole folder and nothing else.
+## - A PART ASKED FOR IS THE PART MADE: a redo makes that step (and the free steps that follow it),
+##   never the whole episode - that is Generate's.
+## - THE READER SEES THE PAINTING: a card's passage waits for its picture and is sent it (upside
+##   down when reversed), the close is sent them all, and nothing is sent a picture not yet drawn.
+
+var _fails := 0
+
+
+func _init() -> void:
+	# EVERY CHECK MUST REACH ITS END: a script error inside one stops it part way and returns
+	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
+	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
+			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _objects]:
+		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
+			% (check as Callable).get_method())
+	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
+		"" if _fails == 1 else "s"])
+	quit(1 if _fails > 0 else 0)
+
+
+func _ok(cond: bool, what: String) -> void:
+	if not cond:
+		_fails += 1
+		print("  FAIL: " + what)
+
+
+func _deck() -> bool:
+	var cards := TarotDeck.standard()
+	_ok(cards.size() == 78, "the standard deck has %d cards, not 78" % cards.size())
+	var keys := {}
+	var by := {}
+	for c in cards:
+		keys[String((c as Dictionary)["key"])] = true
+		by[String((c as Dictionary)["name"])] = c
+	_ok(keys.size() == 78, "card keys are not unique")
+	_ok(String((cards[8] as Dictionary)["name"]) == "Strength", "major 8 is not Strength (RWS order)")
+	_ok(String((cards[11] as Dictionary)["name"]) == "Justice", "major 11 is not Justice (RWS order)")
+	_ok(by.has("King of Pentacles"), "there is no King of Pentacles")
+	_ok(String((by["The Fool"] as Dictionary)["numeral"]) == "0", "the Fool's numeral is not 0")
+	_ok(String((by["The Sun"] as Dictionary)["numeral"]) == "XIX", "the Sun's numeral is not XIX")
+	_ok(String((by["Four of Cups"] as Dictionary)["numeral"]) == "IV", "a pip's numeral is not its rank")
+	_ok(String((by["Queen of Swords"] as Dictionary)["numeral"]).is_empty(), "a court card carries a numeral")
+	_ok(String((by["Ace of Wands"] as Dictionary)["numeral"]).is_empty(), "an Ace carries a numeral")
+	var missing := 0
+	for c in cards:
+		if String((c as Dictionary)["meaning"]).strip_edges().is_empty():
+			missing += 1
+	_ok(missing == 0, "%d standard cards have no meaning from the corpus" % missing)
+	# THE STANDARD DECK WRITTEN OUT reads back as itself
+	var back := TarotDeck.parse(TarotDeck.standard_section())
+	var same := back.size() == 78
+	for i in mini(back.size(), 78):
+		for k in ["name", "numeral", "group", "meaning"]:
+			same = same and (back[i] as Dictionary)[k] == (cards[i] as Dictionary)[k]
+	_ok(same, "the standard deck written out does not read back as itself")
+	# AN ALTERNATIVE DECK, defined in a show's brief
+	var body := "# A show\n\nSome brief.\n\n## The Cards\n\nRead these upside down too.\n\n### The Feed\n" \
+		+ "- 1. The Algorithm: what you were shown, and why it was you\n" \
+		+ "- **The Ex** - still there, still not texting\n" \
+		+ "- The Pinned Comment \u2014 one in ten thousand\n" \
+		+ "  (and nobody pins the other nine thousand)\n\n### The Bed\n" \
+		+ "- 12) The Snooze: nine more minutes, forever\n" \
+		+ "- The Ex: a second Ex, to test names\n" \
+		+ "- Untitled\n\n## After\n\n- not a card\n"
+	var own := TarotDeck.parse(body)
+	_ok(own.size() == 6, "an alternative deck of 6 cards parsed as %d" % own.size())
+	if own.size() == 6:
+		_ok(own[0]["name"] == "The Algorithm" and own[0]["numeral"] == "1" and own[0]["group"] == "The Feed",
+			"a numbered card in a group parsed as %s" % str(own[0]))
+		_ok(own[1]["name"] == "The Ex" and String(own[1]["meaning"]).begins_with("still there"),
+			"a bold name with a spaced dash parsed as %s" % str(own[1]))
+		_ok(String(own[2]["meaning"]).contains("nine thousand"), "an indented line did not continue its card")
+		_ok(own[3]["numeral"] == "12" and own[3]["group"] == "The Bed", "a `12)` numeral or a second group was lost")
+		_ok(own[4]["key"] != own[1]["key"], "two cards with one name share a key")
+		_ok(own[5]["name"] == "Untitled" and String(own[5]["meaning"]).is_empty(), "a card with no meaning was lost")
+	# A NESTED BULLET SAYS MORE ABOUT ITS CARD; it is not a card
+	var nested := "## Cards\n\n- The Moon: dreams\n  - Reversed: clarity at last\n- The Sun: plain day\n"
+	var nd := TarotDeck.parse(nested)
+	_ok(nd.size() == 2 and String(nd[0]["meaning"]).contains("Reversed: clarity at last"),
+		"a nested bullet became a card: %s" % str(nd))
+	_ok(TarotDeck.strip(nested).contains("This deck has 2 cards") and not TarotDeck.strip(nested).contains("clarity"),
+		"stripping a deck with nested bullets miscounted it or left them in")
+	# A SECTION ABOUT THE DECK'S LOOK is not a deck
+	var looks := "## The Deck\n\n- Style: woodcut\n- Colors: ink and rust\n"
+	_ok(TarotDeck.parse(looks).is_empty() and TarotDeck.strip(looks) == looks,
+		"a '## The Deck' section of bullets was read as a deck of its bullets")
+	_ok(TarotDeck.of(body).size() == 6 and TarotDeck.of("No cards here.").size() == 78,
+		"a show without a Cards section does not read the standard deck")
+	var stripped := TarotDeck.strip(body)
+	_ok(not stripped.contains("The Algorithm") and not stripped.contains("nine thousand"),
+		"the brief handed to agents still lists the cards")
+	_ok(stripped.contains("Read these upside down too.") and stripped.contains("This deck has 6 cards")
+		and stripped.contains("## After") and stripped.contains("- not a card"),
+		"stripping the cards took the rest of the brief with it")
+	print("tarot_check: deck - standard %d, %d without meanings; an alternative deck of %d" % [cards.size(), missing, own.size()])
+	return true
+
+
+func _shuffle() -> bool:
+	var deck := TarotDeck.standard()
+	var a := TarotDeck.shuffled(deck, 7, true)
+	var b := TarotDeck.shuffled(deck, 7, true)
+	var c := TarotDeck.shuffled(deck, 8, true)
+	_ok(a == b, "the same seed shuffled differently")
+	_ok(a != c, "two seeds shuffled the same")
+	_ok(a.size() == 78, "a shuffle lost cards")
+	var rev := 0
+	for x in a:
+		rev += 1 if bool((x as Dictionary)["reversed"]) else 0
+	_ok(rev > 10 and rev < 40, "%d of 78 reversed - far from a third" % rev)
+	var none := 0
+	for x in TarotDeck.shuffled(deck, 7, false):
+		none += 1 if bool((x as Dictionary)["reversed"]) else 0
+	_ok(none == 0, "reversals came up with reversals off")
+	_ok(not (deck[0] as Dictionary).has("reversed"), "a shuffle wrote into the deck it was given")
+	var small := [{"key": "a", "name": "A"}, {"key": "b", "name": "B"}, {"key": "c", "name": "C"}]
+	var names := {}
+	for x in TarotDeck.shuffled(small, 3, true):
+		names[String((x as Dictionary)["name"])] = true
+	_ok(names.size() == 3, "an alternative deck lost cards in the shuffle")
+	var seeds := {}
+	for i in 20:
+		var t := TarotDeck.true_seed()
+		_ok(t >= 1 and t <= 999999, "a true seed out of range: %d" % t)
+		seeds[t] = true
+	_ok(seeds.size() >= 18, "twenty true seeds were %d distinct" % seeds.size())
+	var tiny := TarotProducer.new(TarotEpisode.open("check-show", 1), {"deck": small, "cards": [5, 6]})
+	_ok(tiny._spread_n() == 3, "a spread of %d was drawn from a deck of 3" % tiny._spread_n())
+	_ok(TarotProducer.spread_size(3, 3, 6) == TarotProducer.spread_size(3, 3, 6), "the spread size is not a function of the seed")
+	var sizes := {}
+	for s in 60:
+		var n := TarotProducer.spread_size(s, 3, 6)
+		_ok(n >= 3 and n <= 6, "spread size %d outside 3-6" % n)
+		sizes[n] = true
+	_ok(sizes.size() == 4, "spread sizes do not cover the range: %s" % str(sizes.keys()))
+	_ok(TarotPrompts.dice(5) == TarotPrompts.dice(5) and TarotPrompts.dice(5) != TarotPrompts.dice(6),
+		"the dice are not a function of the seed")
+	return true
+
+
+func _script() -> bool:
+	var passages := [
+		{"kind": "shuffle", "card": 0, "text": "Hello, my loves. Welcome back.\n\nLet's shuffle."},
+		{"kind": "jumper", "card": 1, "text": "Oh, a jumper! The Tower."},
+		{"kind": "draw", "card": 2, "text": "The *Star*, reversed. Spirit says: drink water."},
+		{"kind": "spread", "card": 0, "text": "Like and subscribe. It won't change your life."},
+	]
+	var body := TarotScript.compose(passages)
+	_ok(TarotScript.is_tarot(body), "a composed reading is not recognized as one")
+	_ok(not TarotScript.is_tarot("Once upon a time."), "a chapter is taken for a tarot reading")
+	var p := TarotScript.parse(body)
+	_ok((p["passages"] as Array).size() == 4, "the reading has %d passages, not 4" % (p["passages"] as Array).size())
+	_ok(int(p["cards"]) == 2, "the reading draws %d cards, not 2" % int(p["cards"]))
+	var actions: Array = p["actions"]
+	_ok(actions.size() == 4, "%d actions, not 4" % actions.size())
+	var kinds := []
+	for a in actions:
+		kinds.append(String((a as Dictionary)["kind"]))
+	_ok(kinds == ["shuffle", "jumper", "draw", "spread"], "actions out of order: %s" % str(kinds))
+	# THE RESTS AGREE: what the voice is told to wait, and what the table performs in
+	var speak := String(p["speakable"])
+	var holds := []
+	for m in Manuscript._rx(TabletScript.HOLD).search_all(speak):
+		holds.append(float(m.get_string(1)))
+	_ok(holds.size() == 4, "the voice is given %d rests for 4 actions" % holds.size())
+	var want := [TarotScript.SHUFFLE_LEAD, TarotScript.JUMP, TarotScript.LAY + TarotScript.DRAW,
+		TarotScript.LAY + TarotScript.SETTLE]
+	for i in mini(holds.size(), want.size()):
+		_ok(absf(float(holds[i]) - float(want[i])) < 0.011, "rest %d is %.2fs, the table takes %.2fs" % [i, holds[i], want[i]])
+	# EVERY WORD SPOKEN IS A WORD THE TABLE FOLLOWS, in order
+	var words := PackedStringArray()
+	for q in passages:
+		for w in String((q as Dictionary)["text"]).split(" ", false):
+			for piece in String(w).split("\n", false):
+				var n := TabletScript.norm(piece)
+				if not n.is_empty():
+					words.append(n)
+	_ok(words == p["spoken"], "the table's words are not the voice's words")
+	# seven words of intro, five of the jumper's passage
+	_ok(int((actions[2] as Dictionary)["after"]) == 12, "the draw is anchored after word %d, not 12" % int((actions[2] as Dictionary)["after"]))
+	_ok(not speak.contains("tarot:"), "a tarot mark survives into what the voice reads")
+	# THE FIRST CARD WAITS FOR THE DECK: shuffled in the middle, it is pushed to its side first
+	var plain := TarotScript.parse(TarotScript.compose([{"kind": "shuffle", "text": "one two"},
+		{"kind": "draw", "card": 1, "text": "three four"}, {"kind": "draw", "card": 2, "text": "five six"}]))
+	var dur: Array = []
+	for a in plain["actions"]:
+		dur.append(float((a as Dictionary)["dur"]))
+	_ok(dur.size() == 3 and absf(float(dur[1]) - (TarotScript.PUSH + TarotScript.DRAW)) < 0.01
+		and absf(float(dur[2]) - (TarotScript.LAY + TarotScript.DRAW)) < 0.01,
+		"the first draw does not wait for the deck to be pushed aside, or a later one does: %s" % str(dur))
+	_ok(TarotScript.speakable("Plain text.") == "Plain text.", "a non-tarot text is rewritten")
+	return true
+
+
+func _schedule() -> bool:
+	var body := TarotScript.compose([
+		{"kind": "shuffle", "text": "one two three four"},
+		{"kind": "draw", "card": 1, "text": "five six seven"},
+		{"kind": "spread", "text": "eight nine"}])
+	var p := TarotScript.parse(body)
+	var f := ReadingFollower.new()
+	f.reset(p["spoken"])
+	# the voice: words 0.3 s apart from t=5, with each action's rest left before its word
+	var words: Array = []
+	var t := 5.0
+	var rest := {}
+	for a in p["actions"]:
+		rest[int((a as Dictionary)["after"])] = float((a as Dictionary)["dur"]) + 0.5
+	for i in (p["spoken"] as PackedStringArray).size():
+		t += float(rest.get(i, 0.0))
+		words.append({"text": (p["spoken"] as PackedStringArray)[i], "t0": t, "t1": t + 0.25})
+		t += 0.3
+	f.extend(words)
+	_ok(f.known_last() == words.size() - 1, "the follower matched %d of %d words" % [f.known_last() + 1, words.size()])
+	var sched := f.place(p["actions"], 3.0, 0.25, 0.2)
+	_ok(sched.size() == 3, "%d actions placed, not 3" % sched.size())
+	for e in sched:
+		var a: Dictionary = e["a"]
+		var n := int(a["after"])
+		var end := float(e["t0"]) + float(a["dur"]) * float(e["s"])
+		if n < words.size():
+			_ok(end <= float((words[n] as Dictionary)["t0"]) - 0.19, "%s ends %.2fs, after its next word at %.2fs" % [a["kind"], end, (words[n] as Dictionary)["t0"]])
+		if n > 0:
+			_ok(float(e["t0"]) >= float((words[n - 1] as Dictionary)["t1"]), "%s starts before the word ahead of it ends" % a["kind"])
+	# A VOICE THAT SPELLS A WORD ITS OWN WAY costs that word, never the pointer
+	var g := ReadingFollower.new()
+	g.reset(PackedStringArray(["the", "7", "cards", "fell"]))
+	g.extend([{"text": "the", "t0": 0.0, "t1": 0.2}, {"text": "seven", "t0": 0.3, "t1": 0.5},
+		{"text": "cards", "t0": 0.6, "t1": 0.8}, {"text": "fell", "t0": 0.9, "t1": 1.0}])
+	# float32 storage: compared approximately
+	_ok(is_equal_approx(g.st0[2], 0.6) and is_equal_approx(g.st0[3], 0.9) and g.st0[1] == ReadingFollower.NO_TIME,
+		"the follower lost its place over a number read out")
+	return true
+
+
+## A fake episode on disk, made the way the producer makes one, under a test root.
+func _episode(n: int) -> TarotEpisode:
+	TarotEpisode.root = "user://tarot_check"
+	var ep := TarotEpisode.open("check-show", 4242)
+	if DirAccess.dir_exists_absolute(ep.dir):
+		for f in DirAccess.get_files_at(ep.dir):
+			DirAccess.remove_absolute(ep.dir.path_join(f))
+	var positions: Array = []
+	for i in n:
+		positions.append({"name": "Position %d" % (i + 1), "asks": "what position %d asks" % (i + 1)})
+	ep.write_json("plan", {"episode_title": "A Message Meant To Find You", "audience": "everyone",
+		"topic": "waiting", "premise": "the premise", "reader_mood": "calm",
+		"spread": {"name": "The Spread", "positions": positions},
+		"look": TarotTable.sanitize_look({"deck_name": "The Test Deck", "props": ["candle"]})})
+	var cards: Array = []
+	var deck := TarotDeck.shuffled(TarotDeck.standard(), ep.seed, true)
+	for i in n:
+		var card := (deck[i] as Dictionary).duplicate()
+		card["jumper"] = false
+		cards.append(card)
+		ep.write_json("design:%d" % (i + 1), {"art": "art for card %d" % (i + 1), "booklet": {
+			"keywords": ["kw%d" % (i + 1)], "upright": "booklet text number %d upright" % (i + 1),
+			"reversed": "booklet text number %d reversed" % (i + 1)}})
+	ep.write_json("draw", {"seed": ep.seed, "cards": cards})
+	ep.write_text("say:intro", "Hello, my loves.")
+	for i in n:
+		ep.write_text("say:%d" % (i + 1), "Passage for card %d." % (i + 1))
+	return ep
+
+
+func _no_cheating() -> bool:
+	var n := 5
+	var ep := _episode(n)
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief."})
+	var names: Array = []
+	for k in range(1, n + 1):
+		names.append(String(prod._card(k)["name"]))
+	var plan: Dictionary = ep.read_json("plan")
+	var leaks := 0
+	for k in range(0, n + 2):
+		var step := "intro" if k == 0 else ("close" if k == n + 1 else str(k))
+		var upto := 0 if k == 0 else (n if k == n + 1 else k)
+		var said: Array = [] if k == 0 else prod._said(mini(k - 1, n) if k <= n else n)
+		var p := TarotPrompts.reader("Test Tarot", "A brief.", plan, step, said, prod._drawn(upto), n)
+		var text := String(p["system"]) + "\n" + String(p["prompt"])
+		for j in range(1, n + 1):
+			var named := text.contains(String(names[j - 1]))
+			var booklet := text.contains("booklet text number %d" % j)
+			var art := text.contains("art for card %d" % j)
+			var means := text.contains(String(prod._card(j)["meaning"]))
+			if j > upto and (named or booklet or art or means):
+				leaks += 1
+				print("  card %d (%s) is in the prompt for %s" % [j, names[j - 1], step])
+			if j == upto and step.is_valid_int() and not named:
+				_ok(false, "the prompt for card %d does not name it" % j)
+		if step == "close":
+			for j in range(1, n + 1):
+				_ok(text.contains(String(names[j - 1])), "the close does not know card %d" % j)
+	_ok(leaks == 0, "%d later card(s) reached a reader prompt" % leaks)
+	# TWO-SIDED: the same check, run on a prompt handed every card, must see them
+	var cheat := TarotPrompts.reader("Test Tarot", "A brief.", plan, "1", prod._said(0), prod._drawn(n), n)
+	var seen := 0
+	for j in range(2, n + 1):
+		seen += 1 if String(cheat["prompt"]).contains(String(names[j - 1])) else 0
+	_ok(seen == n - 1, "the leak check is blind: a prompt given every card shows only %d of %d later ones" % [seen, n - 1])
+	# AND THROUGH THE PRODUCER ITSELF: the prompt it would actually send, for every passage
+	var prod_leaks := 0
+	for k in range(0, n + 2):
+		var step := "intro" if k == 0 else ("close" if k == n + 1 else str(k))
+		var upto := 0 if k == 0 else (n if k == n + 1 else k)
+		var p := prod.say_prompt(step)
+		var text := String(p.get("system", "")) + "\n" + String(p.get("prompt", ""))
+		_ok(not text.strip_edges().is_empty(), "the producer built no prompt for %s" % step)
+		for j in range(upto + 1, n + 1):
+			if text.contains(String(names[j - 1])) or text.contains("booklet text number %d" % j) \
+					or text.contains("art for card %d" % j):
+				prod_leaks += 1
+				print("  card %d (%s) is in the producer's prompt for %s" % [j, names[j - 1], step])
+		if step.is_valid_int():
+			_ok(text.contains(String(names[upto - 1])), "the producer's prompt for card %d does not name it" % upto)
+		# THE PAINTINGS SENT: card K's own for card K, all of them for the close, none before
+		var sent: Array = []
+		for im in p.get("images", []):
+			sent.append(String((im as Dictionary)["path"]).get_file())
+		var want: Array = []
+		if step == "close":
+			for j in range(1, n + 1):
+				want.append("card_%d.png" % j)
+		elif step.is_valid_int():
+			want = ["card_%d.png" % upto]
+		_ok(sent == want, "the reader's prompt for %s is sent the paintings %s, not %s" % [step, str(sent), str(want)])
+		_ok(want.is_empty() == not (text.contains("painting above") or text.contains("paintings above")),
+			"the reader's prompt for %s %s the paintings it is sent" % [step, "is not told about" if not want.is_empty() else "speaks of"])
+	_ok(prod_leaks == 0, "%d later card(s) reached a prompt the producer builds" % prod_leaks)
+	print("tarot_check: no cheating - %d reader prompts, %d leaks (%d through the producer)" % [n + 2, leaks, prod_leaks])
+	return true
+
+
+func _redo() -> bool:
+	var n := 4
+	var ep := _episode(n)
+	for s in ["image:back", "image:surface", "image:backdrop"]:
+		ep.write_text(s, "png")
+	for k in range(1, n + 1):
+		ep.write_text("image:card:%d" % k, "png")
+	ep.write_text("say:close", "Bye.")
+	ep.write_text("script", "<!-- tarot: shuffle -->")
+	_ok(ep.complete(), "a fully written episode is not complete")
+	ep.invalidate("design:2")
+	for s in ["design:2", "image:card:2", "say:2", "say:3", "say:4", "say:close", "script"]:
+		_ok(not ep.has(s), "redoing design 2 kept %s" % s)
+	for s in ["design:1", "design:3", "image:card:1", "image:card:3", "image:back", "say:1", "say:intro"]:
+		_ok(ep.has(s), "redoing design 2 took %s with it" % s)
+	ep.invalidate("image:back")
+	_ok(not ep.has("image:back") and ep.has("image:card:3"), "redoing the back took a card's picture with it")
+	ep.invalidate("say:intro")
+	_ok(not ep.has("say:1") and ep.has("design:1"), "redoing the intro did not redo every passage after it")
+	ep.invalidate("plan")
+	_ok(not ep.has("draw") and not ep.has("design:1") and not ep.has("image:card:1"),
+		"redoing the plan left the episode's cards")
+	return true
+
+
+func _helpers() -> bool:
+	_ok(TextGen.extract_json("```json\n{\"a\": 1}\n```") is Dictionary, "a fenced JSON reply is not read")
+	_ok(TextGen.extract_json("Sure! {\"a\": {\"b\": 2}} Hope that helps.") is Dictionary, "a JSON reply with words around it is not read")
+	_ok(TextGen.extract_json("no json here") == null, "a reply with no JSON reads as JSON")
+	var c := TarotProducer.clean_spoken("\"# Intro\n*shuffles the deck*\nHello, my loves \u2014 welcome.\n[pause]\n**Truly.**\"")
+	_ok(not c.contains("#") and not c.contains("shuffles") and not c.contains("[") and not c.contains("\u2014"),
+		"stage directions or markup survive the cleanup: %s" % c)
+	_ok(c.contains("Hello, my loves - welcome.") and c.contains("*Truly.*"), "the cleanup lost words: %s" % c)
+	var look := TarotTable.sanitize_look({"palette": ["red", "#zzzzzz"], "title_face": "Comic Sans",
+		"props": ["candle", "laser", "candle"], "frame": {"style": "weird"}, "foil": 7})
+	var objs := TarotTable.sanitize_look({"candles": 9, "objects": ["a brass astrolabe",
+		{"what": "a cracked teacup", "size": "HUGE"}, {"what": ""}, {"what": "a", "size": "small"},
+		{"what": "b", "size": "large"}, {"what": "c"}]})
+	_ok((look["palette"] as Array).size() >= 3, "a bad palette was kept")
+	_ok(String(look["title_face"]) == "roman", "an unknown face was kept")
+	_ok(int(look["candles"]) == 1 and (look["objects"] as Array).is_empty() and not look.has("props"),
+		"an older look's props did not become its candles: %s" % str(look))
+	_ok(int(objs["candles"]) == TarotTable.MAX_CANDLES, "the candles were not clamped: %d" % int(objs["candles"]))
+	var ob: Array = objs["objects"]
+	_ok(ob.size() == TarotTable.MAX_OBJECTS and String((ob[0] as Dictionary)["what"]) == "a brass astrolabe"
+		and String((ob[1] as Dictionary)["size"]) == "medium" and String((ob[2] as Dictionary)["size"]) == "small",
+		"the objects were not sanitized (a bare name, a bad size, an empty one, the limit): %s" % str(ob))
+	_ok(TarotTable.on_the_table(objs).begins_with("four lit candles; a brass astrolabe"),
+		"what the reader is told is on the table: %s" % TarotTable.on_the_table(objs))
+	_ok(String((look["frame"] as Dictionary)["style"]) == "line", "an unknown frame was kept")
+	_ok(float(look["foil"]) == 1.0, "foil was not clamped")
+	_ok(TarotEpisode.slug("Truthful Tarot!") == "truthful-tarot", "the show's slug is %s" % TarotEpisode.slug("Truthful Tarot!"))
+	return true
+
+
+## Lanes, on the queue itself, with no subprocess: two text jobs in one lane and one outside it.
+func _lanes() -> bool:
+	AgentJobs._queue = [
+		{"id": "a", "kind": "text", "lane": "L"},
+		{"id": "b", "kind": "text", "lane": "L"},
+		{"id": "c", "kind": "text"}]
+	AgentJobs._running = {}
+	_ok(AgentJobs._next_startable() == 0, "the first job in a lane cannot start")
+	AgentJobs._running = {"a": AgentJobs._queue.pop_at(0)}
+	_ok(AgentJobs._next_startable() == 1, "a job ran beside another in its own lane")
+	AgentJobs._running["c"] = AgentJobs._queue.pop_at(1)
+	_ok(AgentJobs._next_startable() == -1, "a job started past the kind's limit or its lane")
+	AgentJobs._running.erase("a")
+	_ok(AgentJobs._next_startable() == 0, "a lane did not move on once its job ended")
+	AgentJobs._queue = []
+	AgentJobs._running = {}
+	return true
+
+
+## REPLIES OF THE WRONG SHAPE are reshaped as they land, and still build a reader's prompt; a
+## local step that writes nothing is a failure on screen.
+func _landing() -> bool:
+	TarotEpisode.root = "user://tarot_check"
+	var ep := TarotEpisode.open("check-show", 777)
+	ep.invalidate("plan")
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief.", "cards": [3, 3]})
+	var err := prod._land_plan(JSON.stringify({"episode_title": "T", "tags": "one, two",
+		"spread": {"name": "S", "positions": ["Past", {"name": "Present", "asks": "now"}, 7]},
+		"look": {"deck_name": "D"}}))
+	_ok(err.is_empty(), "a plan of the wrong shape was refused: %s" % err)
+	var plan: Dictionary = ep.read_json("plan") if ep.read_json("plan") is Dictionary else {}
+	var pos: Array = ((plan.get("spread", {}) as Dictionary).get("positions", [])) as Array
+	_ok(pos.size() == 3 and pos[0] is Dictionary and String((pos[0] as Dictionary)["name"]) == "Past"
+		and String((pos[2] as Dictionary)["name"]) == "7", "positions were not reshaped: %s" % str(pos))
+	_ok(plan.get("tags") is Array and plan.get("tags") == ["one", "two"], "tags as one string were not split: %s" % str(plan.get("tags")))
+	var d_err := prod._land_design("design:1", JSON.stringify({"art": "a gate", "booklet": {
+		"keywords": "love, union", "upright": "together"}}))
+	var design: Variant = ep.read_json("design:1")
+	_ok(d_err.is_empty() and design is Dictionary
+		and ((design as Dictionary)["booklet"] as Dictionary)["keywords"] == ["love", "union"],
+		"keywords as one string were not split: %s" % str(design))
+	# the draw, then a reader's prompt from what landed - it used to fail inside the builder
+	prod.spec["deck"] = TarotDeck.standard()
+	prod._finish("draw", prod._make_draw())
+	var p := prod.say_prompt("1")
+	_ok(String(p.get("prompt", "")).contains("Past") and String(p.get("prompt", "")).contains("love, union"),
+		"a reader's prompt could not be built from reshaped replies")
+	# A STEP THAT WRITES NOTHING says so - two-sided: one that wrote its file does not
+	var quiet := TarotProducer.new(ep, {})
+	quiet._finish("script", "")
+	_ok(not quiet.error_of("script").is_empty(), "a local step that wrote nothing was taken as done")
+	quiet._finish("draw", "")
+	_ok(quiet.error_of("draw").is_empty(), "a local step that wrote its file was taken as failed")
+	# A DECK CUT BELOW THE SPREAD the plan was made for is an error, not an index past the end
+	ep.invalidate("draw")
+	var short := TarotProducer.new(ep, {"deck": [{"key": "a", "name": "A"}], "cards": [3, 3]})
+	_ok(not short._make_draw().is_empty() and not ep.has("draw"), "a draw ran past the end of a small deck")
+	ep.invalidate("plan")
+	print("tarot_check: landing - reshaped plan, booklet and a reader's prompt from them")
+	return true
+
+
+## A RERUN STARTS FROM A CLEARED FOLDER: the last run's picture or reply would otherwise be taken
+## for this run's when it ends without writing one.
+func _rerun_clears() -> bool:
+	var dir := ProjectSettings.globalize_path("user://tarot_check/jobs_rerun")
+	DirAccess.make_dir_recursive_absolute(dir)
+	for f in ["image.png", "reply.jsonl", "prompt.txt"]:
+		TextGen.put(dir.path_join(f), "old")
+	var err := AgentJobs.clear_outputs({"kind": "image", "dir": dir})
+	_ok(err.is_empty() and not FileAccess.file_exists(AgentJobs.paint_target(dir)),
+		"a painter's rerun starts beside the last run's picture")
+	err = AgentJobs.clear_outputs({"kind": "text", "dir": dir})
+	_ok(err.is_empty() and not FileAccess.file_exists(dir.path_join("reply.jsonl")),
+		"a writer's rerun starts beside the last run's reply")
+	_ok(FileAccess.file_exists(dir.path_join("prompt.txt")), "clearing a rerun took the prompt record with it")
+	return true
+
+
+## A SCRUB INTO A READING THAT REPEATS ITSELF: the same start words at two places, and the one
+## nearest where the scrub landed wins - two-sided: with no hint, the first.
+func _scrub_near() -> bool:
+	var norms := PackedStringArray(["oh", "wow", "okay", "so", "the", "tower", "oh", "wow", "okay", "so", "the", "star"])
+	var start := PackedStringArray(["oh", "wow", "okay", "so", "the"])
+	_ok(TabletScript.find_run(norms, start) == 0, "with no hint the first match did not win")
+	_ok(TabletScript.find_run(norms, start, 7) == 6, "a scrub near the repeat started at the first one")
+	_ok(TabletScript.find_run(norms, start, 1) == 0, "a scrub near the first started at the repeat")
+	# a better match still beats a nearer one
+	var exact := PackedStringArray(["oh", "wow", "okay", "so", "the", "star"])
+	_ok(TabletScript.find_run(norms, exact, 0) == 6, "a nearer, worse match beat an exact one")
+	return true
+
+
+## THE SPREAD LIES CLEAR OF THE DECK: two rows reaching into its corner step back, or aside, by
+## the least that clears it; a spread nowhere near it is not moved.
+func _clear_of_deck() -> bool:
+	var card := Vector2(0.07, 0.12)
+	var keep := Rect2(0.17 - 0.035 - 0.012, 0.04 - 0.06 - 0.012, 0.07 + 0.024, 0.12 + 0.024)
+	var rows: Array = []
+	for i in 10:
+		var row := 0 if i < 5 else 1
+		var k := i if row == 0 else i - 5
+		rows.append({"pos": Vector3((float(k) - 2.0) * 0.085, 0.0, -0.165 + float(row) * 0.1344), "yaw": 0.02})
+	var touching := 0
+	for sl in rows:
+		touching += 1 if TarotTable.footprint(sl["pos"], sl["yaw"], card).intersects(keep) else 0
+	_ok(touching > 0, "the control does not reach the deck - the check below proves nothing")
+	var off := TarotTable.clear_of(rows, card, keep)
+	var still := 0
+	for sl in rows:
+		var moved: Vector3 = (sl["pos"] as Vector3) + Vector3(off.x, 0.0, off.y)
+		still += 1 if TarotTable.footprint(moved, sl["yaw"], card).intersects(keep) else 0
+	_ok(still == 0, "%d cards still lie in the deck after the spread moved by %s" % [still, str(off)])
+	_ok(off.length() < 0.12, "the spread moved %.3f to clear the deck" % off.length())
+	var far: Array = [{"pos": Vector3(-0.1, 0.0, -0.1), "yaw": 0.0}, {"pos": Vector3(0.0, 0.0, -0.1), "yaw": 0.0}]
+	_ok(TarotTable.clear_of(far, card, keep) == Vector2.ZERO, "a spread clear of the deck was moved")
+	# a card past the deck's far side rules out stepping aside (it would cross the deck)
+	var past: Array = [{"pos": Vector3(0.14, 0.0, 0.03), "yaw": 0.0}, {"pos": Vector3(0.3, 0.0, 0.03), "yaw": 0.0}]
+	var po := TarotTable.clear_of(past, card, keep)
+	_ok(po.x == 0.0 and po.y < 0.0, "a spread was stepped aside through the deck: %s" % str(po))
+	return true
+
+
+## DELETING AN EPISODE takes its whole folder - jobs and all - out of the show's history, and
+## leaves the show's other episodes as they were. The trash is swapped for a plain delete here,
+## so the check never fills the author's trash.
+func _trash_episode() -> bool:
+	TarotEpisode.root = "user://tarot_check"
+	var eps: Array = []
+	for seed in [5, 6]:
+		var ep := TarotEpisode.open("trash-show", seed)
+		ep.write_json("plan", {"episode_title": "Episode %d" % seed})
+		TextGen.put(ep.job_dir("plan").path_join("prompt.txt"), "a prompt")
+		eps.append(ep)
+	var seeds := func() -> Array:
+		var out: Array = []
+		for h in TarotEpisode.history("trash-show"):
+			out.append(int((h as Dictionary)["seed"]))
+		out.sort()
+		return out
+	_ok(seeds.call() == [5, 6], "the show does not list both episodes before a delete: %s" % str(seeds.call()))
+	TarotEpisode.discard = _remove_tree
+	var err := (eps[0] as TarotEpisode).trash()
+	_ok(err.is_empty(), "deleting an episode failed: %s" % err)
+	_ok(not DirAccess.dir_exists_absolute((eps[0] as TarotEpisode).dir), "a deleted episode's folder is still there")
+	_ok(seeds.call() == [6], "after deleting #5 the show lists %s" % str(seeds.call()))
+	_ok((eps[1] as TarotEpisode).has("plan"), "deleting one episode touched another")
+	_ok(not (eps[0] as TarotEpisode).trash().is_empty(), "deleting an episode that is not there succeeded")
+	(eps[1] as TarotEpisode).trash()
+	TarotEpisode.discard = Callable()
+	return true
+
+
+func _remove_tree(path: String) -> int:
+	for d in DirAccess.get_directories_at(path):
+		_remove_tree(path.path_join(d))
+	for f in DirAccess.get_files_at(path):
+		DirAccess.remove_absolute(path.path_join(f))
+	return DirAccess.remove_absolute(path)
+
+
+## THE READER SEES THE PAINTING. The order: a card's passage waits for its picture, and painting a
+## card again rewrites its passage and every one after it (they were written looking at it), but
+## not the next card's picture. The prompt: told to talk about the painting, and given no
+## designer's plan for it. The picture: no larger than the edge it is sent at, upside down for a
+## reversed card - and a picture that cannot be read stops the run rather than going unseen.
+func _pictures() -> bool:
+	var n := 4
+	var ep := _episode(n)
+	for k in range(1, n + 1):
+		ep.write_text("image:card:%d" % k, "png")
+	ep.write_text("say:close", "Bye.")
+	ep.write_text("script", "<!-- tarot: shuffle -->")
+	_ok(ep.needs("say:2").has("image:card:2") and not ep.needs("say:intro").has("image:card:1"),
+		"a card's passage does not wait for its painting: %s" % str(ep.needs("say:2")))
+	ep.invalidate("image:card:3")
+	for s in ["image:card:3", "say:3", "say:4", "say:close", "script"]:
+		_ok(not ep.has(s), "painting card 3 again kept %s" % s)
+	for s in ["image:card:4", "say:2", "image:card:2", "design:3"]:
+		_ok(ep.has(s), "painting card 3 again took %s with it" % s)
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief."})
+	var plan: Dictionary = ep.read_json("plan")
+	var told := TarotPrompts.reader("T", "B", plan, "2", prod._said(1), prod._drawn(2), n, true)
+	_ok(String(told["prompt"]).contains("painting above") and not String(told["prompt"]).contains("art for card 2"),
+		"a pictured card's prompt still describes the designer's plan, or never mentions the painting")
+	var blind := TarotPrompts.reader("T", "B", plan, "2", prod._said(1), prod._drawn(2), n, false)
+	_ok(String(blind["prompt"]).contains("art for card 2"), "with no painting, the designer's plan is not given either")
+	# the picture itself: a tall one, red over blue, sent at the edge, and turned over
+	var img := Image.create(1200, 1800, false, Image.FORMAT_RGB8)
+	img.fill_rect(Rect2i(0, 0, 1200, 900), Color(0.9, 0.1, 0.1))
+	img.fill_rect(Rect2i(0, 900, 1200, 900), Color(0.1, 0.1, 0.9))
+	var path := ProjectSettings.globalize_path("user://tarot_check/picture.png")
+	img.save_png(path)
+	for flip in [false, true]:
+		var b := TextGen.image_block(path, flip)
+		var raw := Marshalls.base64_to_raw(String(((b.get("source", {}) as Dictionary).get("data", ""))))
+		var back := Image.new()
+		_ok(back.load_jpg_from_buffer(raw) == OK and maxi(back.get_width(), back.get_height()) == TextGen.PICTURE_EDGE,
+			"a picture is not sent as a JPEG at %d px on its long edge" % TextGen.PICTURE_EDGE)
+		var top := back.get_pixel(back.get_width() / 2, 10)
+		_ok((top.r > top.b) != flip, "a %s picture arrives %s" % ["reversed" if flip else "upright",
+			"right way up" if top.r > top.b else "upside down"])
+	var m := TextGen.Claude.compose({"prompt": "Read it.", "images": [{"path": path, "label": "Card 1:", "flip": true}]})
+	var content: Array = (((JSON.parse_string(String(m["input"])) as Dictionary)["message"] as Dictionary)["content"]) as Array
+	_ok(content.size() == 3 and String((content[0] as Dictionary)["text"]) == "Card 1:"
+		and String((content[1] as Dictionary)["type"]) == "image" and String((content[2] as Dictionary)["text"]) == "Read it.",
+		"the message is not the label, the picture, then the prompt")
+	_ok(String(m["shown"]).begins_with("[picture: Card 1 (turned over, as it lies) - picture.png]"),
+		"the prompt record does not list the picture sent: %s" % String(m["shown"]).substr(0, 80))
+	var gone := TextGen.Claude.compose({"prompt": "x", "images": [{"path": path + ".missing"}]})
+	_ok(not String(gone["error"]).is_empty(), "a picture that cannot be read did not stop the run")
+	# CODEX, the other writer: told to work from the message alone, the pictures attached as files
+	# in order and named in the message, read-only
+	var job := {"dir": "/tmp/job", "system": "The system.", "prompt": "Read it.", "tier": "fast",
+		"images": [{"path": path, "label": "Card 1:", "flip": true}, {"path": path, "label": "Card 2:"}]}
+	var cm := TextGen.Codex.compose(job)
+	var cp := String(cm["prompt"])
+	_ok(cp.begins_with(TextGen.Codex.ONLY_THIS) and cp.contains("The system.") and cp.ends_with("Read it.")
+		and cp.contains("Attached picture 1 - Card 1") and cp.contains("Attached picture 2 - Card 2"),
+		"the Codex writer's message is not the instruction, the system prompt, the pictures, then the prompt")
+	var argv := TextGen.Codex.argv(job, cm["pictures"])
+	var at := argv.find("--image=/tmp/job/picture_1.jpg")
+	_ok(at >= 0 and argv.find("--image=/tmp/job/picture_2.jpg") == at + 1 and argv.find("--") > at + 1
+		and argv[argv.find("-s") + 1] == "read-only", "the Codex writer's command line is wrong: %s" % " ".join(argv))
+	_ok(bool((cm["pictures"][0] as Dictionary)["flip"]) and not bool((cm["pictures"][1] as Dictionary)["flip"]),
+		"a reversed card's picture is not turned over for Codex")
+	_ok(TextGen.has("codex") and TextGen.has("claude"), "the writers on offer are not Claude and Codex")
+	return true
+
+
+## THE OBJECTS ON THE TABLE: a step each, painted from the plan alone, cleared with the plan;
+## and the cutout - the background (read off the picture's own border) gone, a white cup's white
+## inside kept because it does not touch the edge, a speck dropped, cropped to the object.
+func _objects() -> bool:
+	var ep := _episode(3)
+	var plan: Dictionary = ep.read_json("plan")
+	(plan["look"] as Dictionary)["objects"] = [{"what": "a cup", "size": "small"}, {"what": "a lamp", "size": "large"}]
+	ep.write_json("plan", plan)
+	_ok(ep.steps().has("image:object:1") and ep.steps().has("image:object:2") and not ep.steps().has("image:object:3"),
+		"the episode does not have a step per object: %s" % str(ep.steps()))
+	_ok(ep.needs("image:object:2") == ["plan"] and ep.file_of("image:object:2").ends_with("object_2.png"),
+		"an object is not painted from the plan alone, or kept in its own file")
+	ep.write_text("image:object:1", "png")
+	ep.invalidate("plan")
+	_ok(not ep.has("image:object:1"), "redoing the plan kept an object painted for the old one")
+	var img := Image.create(1024, 1024, false, Image.FORMAT_RGB8)
+	img.fill(Color(0.97, 0.96, 0.93))
+	img.fill_rect(Rect2i(300, 380, 420, 520), Color(0.1, 0.15, 0.45))
+	img.fill_rect(Rect2i(380, 420, 260, 120), Color(0.98, 0.98, 0.97))
+	img.fill_rect(Rect2i(60, 60, 3, 3), Color(0.2, 0.2, 0.2))
+	var src := ProjectSettings.globalize_path("user://tarot_check/object.raw.png")
+	var dst := src.replace(".raw", "")
+	img.save_png(src)
+	var err := TarotCutout.cut(src, dst)
+	var out := Image.load_from_file(dst) if err.is_empty() else null
+	_ok(out != null, "the cutout failed: %s" % err)
+	if out != null:
+		_ok(out.get_pixel(0, 0).a < 0.05 and out.get_pixel(10, out.get_height() - 10).a > 0.95,
+			"the cutout did not take the background out and keep the object")
+		_ok(out.get_pixel(out.get_width() / 2, int(out.get_height() * 0.2)).a > 0.95,
+			"the cutout erased a white part of the object that does not touch the edge")
+		_ok(out.get_width() < 300 and out.get_height() < 360, "the cutout is not cropped to the object (or kept the speck): %s"
+			% str(out.get_size()))
+	return true
+
+
+## A PART ASKED FOR IS THE PART MADE. Run against a queue that refuses every job (no Settings
+## here), so what the producer TRIED is the record: one step asked for is one step tried - with
+## the shuffle, which costs nothing, made on the way - where Generate tries everything ready.
+func _only_what_was_asked() -> bool:
+	var ep := _episode(3)
+	for f in DirAccess.get_files_at(ep.dir):
+		if not String(f).begins_with("plan"):
+			DirAccess.remove_absolute(ep.dir.path_join(f))
+	var prod := TarotProducer.new(ep, {"title": "T", "brief": "B", "deck": TarotDeck.standard(), "cards": [3, 3]})
+	prod.start(["design:2"])
+	_ok(prod._tries.keys() == ["design:2"], "asked for design 2, the producer tried %s" % str(prod._tries.keys()))
+	_ok(ep.has("draw"), "the shuffle a design needs, which costs nothing, was not made on the way")
+	_ok(not prod.running, "a run asked for one step is still running after it")
+	var all := TarotProducer.new(ep, {"title": "T", "brief": "B", "deck": TarotDeck.standard(), "cards": [3, 3]})
+	all.start()
+	for s in ["design:1", "design:3", "image:back", "image:surface", "say:intro"]:
+		_ok(all._tries.has(s), "Generate did not try %s (it tried %s)" % [s, str(all._tries.keys())])
+	return true

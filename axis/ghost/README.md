@@ -8,15 +8,17 @@ Standalone: it does not import or depend on Praxis.
 
 **This README carries the philosophy and the map. The reference documentation is generated from the source** (doc comments, registries, the scene roster) into [docs/index.md](docs/index.md) - every script, scene, layer, force, actor, verb, Masking effect, and CLI flag. Regenerate with `python docs.py`; it also warns about drift, so it cannot quietly go stale.
 
-## Four instruments
+## Six instruments
 
-The splash lists all four, always. A mode button _is_ start.
+The splash lists all six, always. A mode button _is_ start.
 
 | Mode | Consumes | What it does |
 | --- | --- | --- |
 | **Auto** | a song | The seeded show. The Director picks scenes by novelty and cuts on the music. |
 | **Manual** | a song + a storyboard | Your authored sequence, described as data (`storyboards/*.yaml`), endless and re-converging. |
 | **Synthesis** | a written script | ghost speaks it in a synthesized voice, and the show reacts to the narration. |
+| **Generative** | a written script (a Markdown chapter) | The same in a small local neural voice, with speakers, hesitations and pictures, in any medium - a comic, a novel, a notebook, a tablet. |
+| **Tarot** | a show's brief (a Markdown document) | An automatic tarot reading: each episode is planned, painted and written by agents one card at a time - the reader never sees a card before it is drawn - and read in the Generative voice at a table. See [next/tarot.md](../../next/tarot.md). |
 | **Masking** | a video clip, a file path, or a YouTube URL | A chroma-key effects editor over footage: 18 effects, markers on a timeline, render to video. |
 
 ### Media: what carries the show

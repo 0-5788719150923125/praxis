@@ -233,7 +233,12 @@ static func norm(s: String) -> String:
 ## position, "Dionysus, the god" missed by one, the start was never found, and the screen
 ## restarted from the top of the chapter and raced through it ("permanently stuck... resetting
 ## to the beginning... at extremely fast speed").
-static func find_run(norms: PackedStringArray, start: PackedStringArray) -> int:
+##
+## [param near], when known, is about where the run should be (a word index): among EQUALLY good
+## matches the nearest wins. A reading that repeats its openings ("Oh, wow. Okay, so...") has the
+## same six start words at several places, and the first of them is the wrong one for a scrub to
+## the third.
+static func find_run(norms: PackedStringArray, start: PackedStringArray, near := -1) -> int:
 	var at := PackedInt32Array()
 	for i in norms.size():
 		if not norms[i].is_empty():
@@ -250,7 +255,8 @@ static func find_run(norms: PackedStringArray, start: PackedStringArray) -> int:
 		for k in m:
 			if norms[at[i + k]] == start[k]:
 				hits += 1
-		if hits > best_hits:
+		if hits > best_hits or (hits == best_hits and best >= 0 and near >= 0
+				and absi(at[i] - near) < absi(best - near)):
 			best_hits = hits
 			best = at[i]
 	return best

@@ -166,6 +166,10 @@ func _ready() -> void:
 	if args.has("--synth"):
 		_open_synth_editor()
 		return
+	# --tarot: straight into the tarot mode (its document is the one it last had open)
+	if args.has("--tarot"):
+		_open_synth_editor("tarot")
+		return
 	if _wants_direct_boot():
 		_begin_session()                 # CLI flags / --no-splash: skip the splash
 	else:
@@ -402,6 +406,8 @@ func _process(delta: float) -> void:
 	# The same argument for a picture being painted: the job is a subprocess, and the panel
 	# that started it may have been closed or scrolled away long before it finishes.
 	Illustrations.pump()
+	# ...and every other agent's writing and painting (the tarot mode's episodes).
+	AgentJobs.pump()
 	# The background render reports its progress (playback position / length) so the
 	# live app's exporter can show a percentage in the status notification.
 	if _clock_watch:
@@ -552,6 +558,9 @@ func _open_synth_editor(mode := "fishing") -> void:
 	if mode == "neural":
 		_open_generative_editor()
 		return
+	if mode == "tarot":
+		_open_generative_editor(preload("res://scripts/tarot_editor.gd"))
+		return
 	# No furniture wiring here: the chrome (exporter + assistant, created in
 	# _ready for every interactive mode) already covers it - a synth take
 	# exports exactly like a song, and ` feedback works over the running show.
@@ -565,6 +574,7 @@ func _open_synth_editor(mode := "fishing") -> void:
 	if _chrome.exporter != null:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
+		_chrome.exporter.name_provider = Callable()
 		_chrome.exporter.automation_available = true
 	_feedback = _chrome.attach_feedback()
 
@@ -574,8 +584,11 @@ func _open_synth_editor(mode := "fishing") -> void:
 ## synth_editor - the fishing game's economy is defined over the procedural
 ## engine's 25-dimensional genome and a neural backend exposes a speaker id and
 ## three scalars, so one UI cannot serve both. See VOICE_PLAN.md section 6.
-func _open_generative_editor() -> void:
-	var editor := preload("res://scripts/generative_editor.gd").new()
+##
+## [param script] is the panel: the Generative one, or a mode built on it (the tarot mode's
+## [TarotEditor], whose reading is written by agents) - the same stream, export and subtitles.
+func _open_generative_editor(script: Script = preload("res://scripts/generative_editor.gd")) -> void:
+	var editor: GenerativeEditor = script.new()
 	editor.begin_stream = _begin_generative_stream
 	editor.end_stream = _end_generative_stream
 	_synth_editor = editor
@@ -587,6 +600,7 @@ func _open_generative_editor() -> void:
 	if _chrome.exporter != null:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
+		_chrome.exporter.name_provider = editor.export_name
 		_chrome.exporter.automation_available = false
 		# no fishing game on this path, so nothing to record
 	_feedback = _chrome.attach_feedback()

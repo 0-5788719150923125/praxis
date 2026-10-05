@@ -207,6 +207,28 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 - [`voice_fx.gd`](../scripts/voice_fx.gd) **VoiceFX** - the ambience from Synthesis, over any PCM.
 - [`room_fx.gd`](../scripts/room_fx.gd) **RoomFX** - THE ROOM, decided once and rendered twice.
 
+### Tarot
+
+An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice. Design: next/tarot.md at the repo root.
+
+- [`tarot_editor.gd`](../scripts/tarot_editor.gd) **TarotEditor** - the tarot mode: a reading nobody writes by hand.
+- [`tarot_cutout.gd`](../scripts/tarot_cutout.gd) **TarotCutout** - one painted object, cut out of its background so it can stand on the table.
+- [`tarot_producer.gd`](../scripts/tarot_producer.gd) **TarotProducer** - makes whatever an episode is missing, in the order a reading happens.
+- [`tarot_episode.gd`](../scripts/tarot_episode.gd) **TarotEpisode** - one episode of a tarot show, as it lies on disk.
+- [`tarot_prompts.gd`](../scripts/tarot_prompts.gd) **TarotPrompts** - what each agent behind a tarot episode is told. Pure: strings in, strings out, so a gate can hold every prompt to the rules (see tests/tarot_check.gd).
+- [`tarot_script.gd`](../scripts/tarot_script.gd) **TarotScript** - a tarot reading as the voice reads it and the table performs it.
+- [`tarot_deck.gd`](../scripts/tarot_deck.gd) **TarotDeck** - the cards a show reads with, and how an episode's deck is shuffled.
+- [`tarot_table.gd`](../scripts/tarot_table.gd) **TarotTable** - what an episode's look may name, and how a look is made safe to draw.
+- [`tarot_cards.gd`](../scripts/tarot_cards.gd) **TarotCards** - a card's face, its back and its booklet page, composed in 2D for the table.
+
+### Agents
+
+Every piece of writing and painting ghost asks an AI for: who writes (TextGen) and who paints (ImageGen), one queue for both (AgentJobs), and where a reading's voice is in its document (ReadingFollower).
+
+- [`text_gen.gd`](../scripts/text_gen.gd) **TextGen** - who writes the words. The text counterpart of `ImageGen`.
+- [`agent_jobs.gd`](../scripts/agent_jobs.gd) **AgentJobs** - every piece of writing and painting ghost asks an AI for, in one queue.
+- [`reading_follower.gd`](../scripts/reading_follower.gd) **ReadingFollower** - where the voice is in a document, and when each of its words was said.
+
 ### Storyboards & stage
 
 Manual mode as data: the YAML-subset parser, the storyboard loader, and the Cast/Actions/Track stack that renders a described scene. See [storyboards/README.md](../storyboards/README.md) for the data spec and [stage.md](stage.md) for the actor/verb registries.

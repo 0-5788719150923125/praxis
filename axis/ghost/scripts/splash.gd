@@ -3,14 +3,16 @@ class_name Splash
 
 ## Splash - the start screen: every mode, always visible.
 ##
-## The front door lists all four instruments as a column of mode rows - name,
+## The front door lists every instrument as a column of mode rows - name,
 ## one-line description, and what each consumes - so nothing is hidden behind
 ## an import kind (an earlier design showed only the buttons matching the last
 ## import, which read as "modes missing" once there were four):
-##   Auto      - the seeded show; the Director picks scenes, cuts on the music.
-##   Manual    - the workspace + storyboards; orchestrate the show by hand.
-##   Synthesis - write a script, ghost speaks it; the show reacts to the voice.
-##   Masking  - chroma-key effects over an imported video clip.
+##   Auto       - the seeded show; the Director picks scenes, cuts on the music.
+##   Manual     - the workspace + storyboards; orchestrate the show by hand.
+##   Synthesis  - write a script, ghost speaks it; the show reacts to the voice.
+##   Generative - the same in a local neural voice, in any medium.
+##   Tarot      - a reading agents write and paint, read at a table.
+##   Masking    - chroma-key effects over an imported video clip.
 ## A mode button *is* start - there is no separate start button.
 ##
 ## ONE source row imports everything: the picker button plus a free-form field
@@ -42,7 +44,7 @@ const ASSISTANT_KEYS := ["", "claude_cli", "codex_cli"]
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
 var start_mask: Callable       # start_mask.call(video_path: String)
-var start_synth: Callable      # start_synth.call(mode: "fishing"|"neural")
+var start_synth: Callable      # start_synth.call(mode: "fishing"|"neural"|"tarot")
 
 var _audio_path := ""
 var _video_path := ""
@@ -183,6 +185,13 @@ func _build_ui() -> void:
 		"The same, in a small local neural voice - clearer, at the cost of "
 		+ "a downloaded model.", "downloads a voice once",
 		func() -> void: _choose_synth("neural"))
+	# A reading nobody writes: agents plan, paint and write each episode, one card at a time, and
+	# the Generative voice reads it at a tarot table. Its own mode rather than a medium of
+	# Generative, because what drives it is not a script but a show's brief.
+	_add_mode_row(col, "Tarot  ▶",
+		"An automatic tarot reading - agents plan, paint and write each episode one card at a "
+		+ "time, and a voice reads it at the table.", "uses the Claude and Codex CLIs",
+		func() -> void: _choose_synth("tarot"))
 	_uses_mask = _add_mode_row(col, "Masking  ▶",
 		"Chroma-key effects over a video - markers, tracks, renders.", "", _start_mask)
 	_refresh_sources()

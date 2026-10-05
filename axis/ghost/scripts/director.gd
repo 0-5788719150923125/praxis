@@ -260,6 +260,12 @@ var hand := "kalam"
 ## `--medium NAME` overrides it for one run (tests, and a render of a session that was
 ## deliberately not the remembered setting).
 var medium := "full"
+## A MEDIUM PINNED BY THE MODE THAT IS UP, for its sessions only: "" when the author's [member
+## medium] applies. Never saved - the tarot mode shows every reading on its table, and leaving it
+## must hand the next session back the medium the author chose. [method resolved_medium] honors
+## it under an explicit `--medium`, and the exporter passes what that resolves to, so a render of
+## a pinned session is drawn in the same medium.
+var medium_override := ""
 ## THE LOOK - a post-process over the whole picture, as `{filter key: amount}` with only the
 ## live ones present (see [Filters]). Combinable by construction: monochrome AND grain is one
 ## dictionary with two entries, not a choice between two modes.
@@ -565,7 +571,8 @@ func set_hand(key: String) -> void:
 ## re-hosting the live scene into a different surface while it is drawing; the honest
 ## version of that is a restart, so the surface says so rather than half-doing it.
 func set_medium(key: String) -> void:
-	if not Medium.REGISTRY.has(key) or key == medium:
+	# a mode's own medium is pinned for its sessions, never remembered (see Medium.OWNED)
+	if not Medium.REGISTRY.has(key) or Medium.OWNED.has(key) or key == medium:
 		return
 	medium = key
 	_save_pacing()
@@ -616,6 +623,8 @@ func resolved_medium() -> String:
 		if Medium.REGISTRY.has(k):
 			return k
 		push_warning("ghost: --medium %s is not a known medium - using %s" % [k, medium])
+	if Medium.REGISTRY.has(medium_override):
+		return medium_override
 	return medium
 
 
@@ -629,7 +638,7 @@ func _load_pacing() -> void:
 	outro_hold = clampf(float(Settings.read("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
 	# `vehicle` was this key's name until 2026-09-24; read it once so the choice survives
 	var v := String(Settings.read("director", "medium", Settings.read("director", "vehicle", "full")))
-	medium = v if Medium.REGISTRY.has(v) else "full"
+	medium = v if Medium.pickable().has(v) else "full"
 	# Through `sanitize`, always: a filter dropped from the registry between builds comes back
 	# as a key nothing declares a uniform for, and writing one is a silent no-op rather than
 	# an error - so it is discarded here instead of being carried around forever.

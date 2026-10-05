@@ -24,6 +24,14 @@ class_name GenerativeEditor
 ## the next one in. First audio arrives in seconds however long the chapter is,
 ## and memory stays bounded.
 
+## A READING OF A DOCUMENT, WHOEVER WROTE IT. This panel is the voice, the room and the picture
+## a reading is heard and seen in; what is read comes from the document a [ScriptWriter] holds.
+## A mode whose words are written FOR it - [TarotEditor], whose reading is written by agents at
+## the table - extends this class and overrides the few seams below (`_section`,
+## [method _build_source], [method _reading_body], [method _reading_of], [method _pinned_medium],
+## [method _has_reading]), so the voice pipeline, the cast, the export and the scrubbing exist
+## once rather than once per mode.
+
 ## Set by main: open ONE generator session for the whole chapter.
 var begin_stream: Callable     # begin_stream.call(fp, sample_rate, words) -> playback
 
@@ -426,6 +434,10 @@ var _lead_in := 0.0        # the intro seeded into _pending by _plan, in seconds
 var _outro: HSlider
 var _dirty := false
 var _last_edit_ms := 0
+## The [Settings] section this panel's own state lives in, and the sub-key of the document's
+## `ghost:` block its voice is written under. One per mode, so two modes reading in the same
+## voice machinery never overwrite each other's cast.
+var _section := "generative"
 
 
 func _ready() -> void:
@@ -548,15 +560,42 @@ func _build_panel() -> void:
 	# and a Control outside a container is never asked to fit anything - the rows past the
 	# bottom edge were unreachable rather than clipped. See side_panel.gd.
 	_panel = preload("res://scripts/side_panel.gd").new(380.0)
-	_panel.title = "Generative"
+	_panel.title = _panel_title()
 	add_child(_panel)
 	var box: VBoxContainer = _panel.body
 	box.add_theme_constant_override("separation", 8)
+	_build_header(box)
+	_build_source(box)
+	# A rule between the script and the cast. Everything from here to the tab bar
+	# is global; everything below the tab bar belongs to the tab that is showing.
+	box.add_child(HSeparator.new())
+	_build_cast(box)
+	_build_voice(box)
+	# --- THE PICTURE, not the voice ------------------------------------------
+	box.add_child(HSeparator.new())
+	_build_picture(box)
+	_status = Label.new()
+	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_status.add_theme_font_size_override("font_size", 11)
+	_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
+	box.add_child(_status)
 
+
+## The panel's name, on its title bar and its heading.
+func _panel_title() -> String:
+	return "Generative"
+
+
+## The line under the heading: what this panel is for, in a sentence or two.
+func _panel_hint() -> String:
+	return "Write or open a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Edit script… lists every mark the reading understands - speakers, hesitations, pictures, pronunciations."
+
+
+func _build_header(box: VBoxContainer) -> void:
 	var title_row := HBoxContainer.new()
 	box.add_child(title_row)
 	var title := Label.new()
-	title.text = "Generative"
+	title.text = _panel_title()
 	title.add_theme_font_size_override("font_size", 20)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
@@ -568,16 +607,19 @@ func _build_panel() -> void:
 	title_row.add_child(hide)
 
 	var hint := Label.new()
-	hint.text = "Write or open a chapter. It is spoken in chunks, so the show starts while the rest is still being made. Edit script… lists every mark the reading understands - speakers, hesitations, pictures, pronunciations."
+	hint.text = _panel_hint()
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
 
-	# THE SCRIPT: a card here, the writing in the editor window it opens. Where the words
-	# come from (a draft, or a file on disk re-read at every Speak) is the DocSource inside it.
+
+## THE SCRIPT: a card here, the writing in the editor window it opens. Where the words
+## come from (a draft, or a file on disk re-read at every Speak) is the DocSource inside it.
+## The card's section, block and marks are this panel's own (see [member _section]).
+func _build_source(box: VBoxContainer) -> void:
 	_writer = preload("res://scripts/script_writer.gd").new()
-	_writer.setup("generative", "generative", "generative")
+	_writer.setup(_section, _section, _section)
 	_doc = _writer.doc
 	_doc.capture = _doc_capture
 	_doc.apply = _doc_apply
@@ -590,16 +632,19 @@ func _build_panel() -> void:
 			return          # the document being shown, not the author typing
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec()
-		if not _chunks.is_empty():
-			_stale = true            # the reading no longer matches the box
-			_show_speak_label()
-		)
+		_on_source_edited())
 	box.add_child(_writer)
 
-	# A rule between the script and the cast. Everything from here to the tab bar
-	# is global; everything below the tab bar belongs to the tab that is showing.
-	box.add_child(HSeparator.new())
 
+## The author changed the document by hand. Here the document IS the reading, so what is on the
+## stream no longer matches it.
+func _on_source_edited() -> void:
+	if not _chunks.is_empty():
+		_stale = true            # the reading no longer matches the box
+		_show_speak_label()
+
+
+func _build_cast(box: VBoxContainer) -> void:
 	# THE HANDOVER REST, above the tabs because it belongs to no tab: it is the
 	# silence BETWEEN two of them. Unlike Pause it needs no re-synthesis - the
 	# gap is spliced in as the chunks are joined, not asked of the model - so it
@@ -709,7 +754,7 @@ func _build_panel() -> void:
 	_cast_timer = Timer.new()
 	_cast_timer.one_shot = true
 	_cast_timer.wait_time = 0.4
-	_cast_timer.timeout.connect(func() -> void: _refresh_cast(_text.text))
+	_cast_timer.timeout.connect(func() -> void: _refresh_cast(_cast_text()))
 	add_child(_cast_timer)
 	_seek_timer = Timer.new()
 	_seek_timer.one_shot = true
@@ -717,6 +762,10 @@ func _build_panel() -> void:
 	_seek_timer.timeout.connect(_seek_now)
 	add_child(_seek_timer)
 
+
+## THE VOICE: the model, Speak / Stop / Test, the reader, the tone, the pace and pauses, the
+## delivery dials and the room - every control below belongs to the tab that is showing.
+func _build_voice(box: VBoxContainer) -> void:
 	var vrow := HBoxContainer.new()
 	vrow.add_theme_constant_override("separation", 8)
 	box.add_child(vrow)
@@ -785,6 +834,11 @@ func _build_panel() -> void:
 	_speaker_row.add_child(sl2)
 	_speaker = SpinBox.new()
 	_speaker.min_value = 0
+	# NO CEILING UNTIL THE MODEL IS KNOWN. A Range's default max is 100, and a document or a stored
+	# cast is applied at boot, before the host has listed its voices - so reader 692 of
+	# libritts-high (904 readers) was clamped to 100 and then saved that way. The real ceiling is
+	# set by _show_voice_license once the voice's reader count is known.
+	_speaker.max_value = 100000
 	_speaker.step = 1
 	_speaker.tooltip_text = "Which reader, on a model that holds more than one (libritts carries 904). Same model and same accent, a different person - so it changes WHO is reading, not how. Grayed out on single-speaker voices. Regenerates the un-played chunks."
 	_speaker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -972,18 +1026,20 @@ func _build_panel() -> void:
 		+ "reader's pitch moving. Low is the bed alone; higher, the bass comes more often.")
 	_build_ink_row(box)
 
-	# --- THE PICTURE, not the voice ------------------------------------------
-	# These two live here, with every other option, rather than off in the shared
-	# chrome: one place to reach for a setting beats an architecturally tidier
-	# second home nobody finds. They drive the [Director], so they persist and
-	# apply in every mode - this panel is just where you turn them.
-	#
-	# NOT called "pace" or "pacing". Those words are already taken by the voice
-	# slider three rows up, and the same word on two sliders that do unrelated
-	# things is how someone ends up afraid to touch either.
-	var sep := HSeparator.new()
-	box.add_child(sep)
-	_medium_pick = _medium_option(box)
+
+## THE PICTURE, not the voice. These live here, with every other option, rather than off in the
+## shared chrome: one place to reach for a setting beats an architecturally tidier second home
+## nobody finds. They drive the [Director], so they persist and apply in every mode - this panel
+## is just where you turn them.
+##
+## NOT called "pace" or "pacing". Those words are already taken by the voice slider above, and
+## the same word on two sliders that do unrelated things is how someone ends up afraid to touch
+## either.
+func _build_picture(box: VBoxContainer) -> void:
+	# A mode that pins its medium (see [method _pinned_medium]) offers no picker: there is
+	# nothing to choose, and a picker that changes nothing reads as broken.
+	if _pinned_medium().is_empty():
+		_medium_pick = _medium_option(box)
 	_build_films(box)
 	# THE BOOK'S PICTURES, under the medium picker for the reason the films are: they only
 	# mean something to the medium that prints them, and they appear the moment it is picked.
@@ -1030,11 +1086,50 @@ func _build_panel() -> void:
 		+ "0 ends the video on the final syllable.",
 		func(v: float) -> void: Director.set_outro_hold(v))
 
-	_status = Label.new()
-	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status.add_theme_font_size_override("font_size", 11)
-	_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
-	box.add_child(_status)
+
+# --- the seams a mode built on this panel overrides ---------------------------
+
+
+## THE WORDS TO READ, fresh: what Speak, a scrub and an export read. Here the document's own
+## body - in sync mode the file as it is on disk RIGHT NOW (see [method DocSource.pull]).
+func _reading_body() -> String:
+	return _doc.pull()
+
+
+## What the VOICE reads of [param body] and the title it announces first: `{body, title}`. A
+## tablet chapter is read off the screen and nothing else - no title announced, skipped text
+## out, link targets out, a rest for every run of taps.
+func _reading_of(body: String) -> Dictionary:
+	if TabletScript.is_tablet(body):
+		return {"body": TabletScript.speakable(body), "title": ""}
+	return {"body": body, "title": _doc_field(body, "title").strip_edges()}
+
+
+## The text the cast is derived from - the speaker cues in it are the tabs.
+func _cast_text() -> String:
+	return _text.text
+
+
+## The text the live session is fingerprinted by (its scenes' seed, the pad's notes).
+func _fingerprint_text() -> String:
+	return _text.text
+
+
+## Whether there is anything to read (and so to export).
+func _has_reading() -> bool:
+	return not _text.text.strip_edges().is_empty()
+
+
+## A medium this mode is ALWAYS shown in, or "" when the author picks. A pinned medium has no
+## picker on the panel and is never written into (or read from) the document's picture block -
+## see [member Director.medium_override], which is how it reaches the stage and the export.
+func _pinned_medium() -> String:
+	return ""
+
+
+## The passage every voice is auditioned with by Test.
+func _test_passage() -> String:
+	return TEST_PASSAGE
 
 
 # --- persistence (mirrors SynthEditor._persist / _load_persisted) ------------
@@ -1053,47 +1148,47 @@ func _persist() -> void:
 	# is already in _slots. Capture before writing or the tab being edited saves
 	# whatever it held when it was last switched away from.
 	_capture_slot()
-	Settings.write("generative", "text", _doc.draft())
-	Settings.write("generative", "cast", _cast_dict())
-	Settings.write("generative", "turn", _turn.value)
+	Settings.write(_section, "text", _doc.draft())
+	Settings.write(_section, "cast", _cast_dict())
+	Settings.write(_section, "turn", _turn.value)
 	# A NEW KEY, not "tab": that one held an int index, and Settings' no-op guard compares
 	# the stored value with the new one - an int against a String is a script error.
-	Settings.write("generative", "tab_name", _tab_name())
-	Settings.write("generative", "hesitate", _hesitate.value)
-	Settings.write("generative", "hesitate_on", _hesitate_on.button_pressed)
+	Settings.write(_section, "tab_name", _tab_name())
+	Settings.write(_section, "hesitate", _hesitate.value)
+	Settings.write(_section, "hesitate_on", _hesitate_on.button_pressed)
 
 
 func _load_persisted() -> void:
 	_syncing = true
-	_turn.value = clampf(float(Settings.read("generative", "turn", 1.0)), 0.0, MAX_TURN_SCALE)
-	_hesitate.value = clampf(float(Settings.read("generative", "hesitate", HESITATE_DEFAULT)),
+	_turn.value = clampf(float(Settings.read(_section, "turn", 1.0)), 0.0, MAX_TURN_SCALE)
+	_hesitate.value = clampf(float(Settings.read(_section, "hesitate", HESITATE_DEFAULT)),
 		_hesitate.min_value, HESITATE_MAX)
-	_hesitate_on.button_pressed = bool(Settings.read("generative", "hesitate_on", true))
+	_hesitate_on.button_pressed = bool(Settings.read(_section, "hesitate_on", true))
 	_hesitate.editable = _hesitate_on.button_pressed
 	_syncing = false
-	var cast: Variant = Settings.read("generative", "cast", {})
+	var cast: Variant = Settings.read(_section, "cast", {})
 	if cast is Dictionary and not (cast as Dictionary).is_empty():
 		_stash = _merge_cast(cast as Dictionary)
 	else:
 		# MIGRATION, from the numbered tabs. Tab N was cued `<!-- speaker: N -->`, and tab 1
 		# also read everything before the first cue - so it becomes both "1" and the narrator.
-		var rows: Variant = Settings.read("generative", "slots", [])
+		var rows: Variant = Settings.read(_section, "slots", [])
 		_stash = _cast_from_rows(rows if rows is Array else [],
-			str(Settings.read("generative", "text", "")))
+			str(Settings.read(_section, "text", "")))
 		if _stash.is_empty():
 			# ...and from the single-voice file before that, read exactly once.
 			_stash[Manuscript.NARRATOR] = _merge({
-				"voice": str(Settings.read("generative", "voice", "")),
-				"speaker": int(Settings.read("generative", "speaker", 0)),
-				"tone": int(Settings.read("generative", "tone", 0)),
-				"pace": float(Settings.read("generative", "pace", 1.0)),
-				"pause": float(Settings.read("generative", "pause", 1.0)),
+				"voice": str(Settings.read(_section, "voice", "")),
+				"speaker": int(Settings.read(_section, "speaker", 0)),
+				"tone": int(Settings.read(_section, "tone", 0)),
+				"pace": float(Settings.read(_section, "pace", 1.0)),
+				"pause": float(Settings.read(_section, "pause", 1.0)),
 			})
-	var tab: Variant = Settings.read("generative", "tab_name", "")
+	var tab: Variant = Settings.read(_section, "tab_name", "")
 	_names = PackedStringArray()
 	_slots = []
 	# From the stored draft first, so the tabs exist before the box is bound below.
-	_refresh_cast(str(Settings.read("generative", "text", "")), str(tab) if tab is String else "")
+	_refresh_cast(str(Settings.read(_section, "text", "")), str(tab) if tab is String else "")
 	# Last, and once: every dial the chain reads is now in the slot, so this is the one
 	# place the loaded session's room is applied.
 	_apply_fx(_fx, _cfg(_slot))
@@ -1102,7 +1197,7 @@ func _load_persisted() -> void:
 	# the words and the voice, which is what makes it safe for the panel to write back to it
 	# on its own. See DocSource.bind_text. The text arriving re-derives the tabs.
 	_doc.bind_text(_text)
-	_refresh_cast(_text.text)
+	_refresh_cast(_cast_text())
 
 
 # --- the document's own voice -------------------------------------------------
@@ -1131,11 +1226,16 @@ func _picture_capture() -> Dictionary:
 	var looks := {}
 	for k in Filters.REGISTRY:
 		looks[k] = snappedf(Director.filter_amount(k), 0.01)
-	return {"medium": Director.medium, "filters": looks,
+	var out := {"medium": Director.medium, "filters": looks,
 		"scene_hold": snappedf(Director.pacing, 0.01), "flourishes": snappedf(Director.flourish, 0.01),
 		"camera": snappedf(Director.camera, 0.01), "hand": Director.hand,
 		"intro": snappedf(Director.intro_hold, 0.01),
 		"outro": snappedf(Director.outro_hold, 0.01), "film_frequency": snappedf(Films.frequency(), 0.01)}
+	# A PINNED MEDIUM IS THE MODE'S, not the document's: written here it would be the author's
+	# chosen medium the next time this document is read in a mode that does let them choose.
+	if not _pinned_medium().is_empty():
+		out.erase("medium")
+	return out
 
 
 ## ...and back. Each key the block names is set through the same control a hand would use,
@@ -1143,10 +1243,10 @@ func _picture_capture() -> Dictionary:
 ## document from before this block keeps whatever the machine had).
 func _picture_apply(pic: Dictionary) -> void:
 	var med := String(pic.get("medium", ""))
-	if Medium.REGISTRY.has(med) and med != Director.medium:
+	if _pinned_medium().is_empty() and Medium.pickable().has(med) and med != Director.medium:
 		Director.set_medium(med)
 		if _medium_pick != null:
-			_medium_pick.select(maxi(0, Medium.REGISTRY.keys().find(med)))
+			_medium_pick.select(maxi(0, Medium.pickable().find(med)))
 		_sync_medium_rows()
 	if pic.has("hand"):
 		Director.set_hand(String(pic["hand"]))
@@ -1196,7 +1296,7 @@ func _doc_apply(cfg: Dictionary) -> void:
 			_illustrations.sync_from_library()
 	var rows: Variant = cfg.get("voices", {})
 	var cast: Dictionary = _merge_cast(rows as Dictionary) if rows is Dictionary \
-		else _cast_from_rows(rows if rows is Array else [], _text.text)
+		else _cast_from_rows(rows if rows is Array else [], _cast_text())
 	if cast.is_empty():
 		return
 	_stash = cast
@@ -1210,7 +1310,7 @@ func _doc_apply(cfg: Dictionary) -> void:
 	_hesitate.editable = _hesitate_on.button_pressed
 	_syncing = false
 	var tab: Variant = cfg.get("tab", "")
-	_refresh_cast(_text.text, str(tab) if tab is String else "")
+	_refresh_cast(_cast_text(), str(tab) if tab is String else "")
 	# The room, once, exactly as [method _load_persisted] does it: the chain is stateful
 	# and a tab switch alone does not re-dial it.
 	_apply_fx(_fx, _cfg(_slot))
@@ -1226,7 +1326,7 @@ func _doc_apply(cfg: Dictionary) -> void:
 ## The TITLE, the BOOK's name and its AUTHOR are carried separately because in sync mode the body arrives without its
 ## frontmatter, which is where a chapter's title lives.
 func book_document(body := "") -> Dictionary:
-	var src := body if not body.is_empty() else _doc.pull()
+	var src := body if not body.is_empty() else _reading_body()
 	# Each voice's pen, beside the text for the reason the title is: in sync mode the text has
 	# no frontmatter, and the voices live there.
 	var inks := {}
@@ -1236,7 +1336,8 @@ func book_document(body := "") -> Dictionary:
 		if not v.is_empty():
 			inks[who] = v
 	return {"source": src, "title": _doc_field(src, "title"), "book": _doc_field(src, "book"),
-		"author": _doc_field(src, "author"), "inks": inks, "start_words": _start_words()}
+		"author": _doc_field(src, "author"), "inks": inks, "start_words": _start_words(),
+		"start_index": _start_index()}
 
 
 ## A top-level frontmatter field (`title:`, `book:`): what the source says (the synced file,
@@ -1575,13 +1676,11 @@ func _split_speakers(body: String) -> Array:
 	# THE TITLE IS READ FIRST, as a heading of its own, by the voice that opens the chapter.
 	# The frontmatter as metadata is still never spoken - only the title's value, the way a
 	# reader announces a chapter before its first word. Not twice: a chapter that already
-	# opens on its title as a heading keeps that one.
-	var title := _doc_field(body, "title").strip_edges()
-	# A TABLET CHAPTER is read off the screen and nothing else: no title announced, skipped text
-	# out, link targets out, a rest for every run of taps
-	if TabletScript.is_tablet(body):
-		title = ""
-		body = TabletScript.speakable(body)
+	# opens on its title as a heading keeps that one. A chapter read off a screen announces
+	# nothing (see [method _reading_of]).
+	var read := _reading_of(body)
+	var title := String(read["title"])
+	body = String(read["body"])
 	var first := true
 	var fading := false
 	for p in Manuscript.passages(body):
@@ -1721,8 +1820,9 @@ func _on_test() -> void:
 	_test_name = _tab_name()
 	_holds = []
 	_hold_i = 0
-	_test_chunks = _cut(TEST_PASSAGE, 0)["chunks"]
-	_place_chunks(_test_chunks, TEST_PASSAGE)
+	var passage := _test_passage()
+	_test_chunks = _cut(passage, 0)["chunks"]
+	_place_chunks(_test_chunks, passage)
 	_test_parts = {}
 	_test_req = {}
 	_test_tasks = {}
@@ -1776,7 +1876,7 @@ func _on_test_part(id: int, result: Dictionary) -> void:
 	var ratio := _pitch_ratio_of(s)
 	if _test_fx == null:
 		_test_fx = VoiceFX.new()
-		_test_fx.pad_seed = hash(TEST_PASSAGE)
+		_test_fx.pad_seed = hash(_test_passage())
 		_test_fx.setup(_sr)
 		_apply_fx(_test_fx, s)
 	# DECODE AND RESAMPLE OFF THE MAIN THREAD. Both are per-sample GDScript loops, and a long
@@ -2286,7 +2386,7 @@ func _medium_option(box: VBoxContainer) -> OptionButton:
 	var opt := OptionButton.new()
 	opt.focus_mode = Control.FOCUS_NONE
 	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var keys: Array = Medium.REGISTRY.keys()
+	var keys: Array = Medium.pickable()
 	var tip := "What the show is drawn ON, as opposed to what drives it - every mode gets " 		+ "every medium. Takes effect on the next reading, not the one already playing.\n"
 	for k in keys:
 		opt.add_item(String(Medium.LABELS.get(k, k)))
@@ -2755,7 +2855,7 @@ func _on_speak() -> void:
 	# THE REAL-TIME READ. In sync mode this is the file as it is on disk RIGHT NOW, not as
 	# it was when the document was opened - which is what lets the author keep writing in
 	# their own editor with ghost open beside it.
-	var body := _doc.pull().strip_edges()
+	var body := _reading_body().strip_edges()
 	if body.is_empty():
 		_set_status("Nothing to speak yet.")
 		return
@@ -2782,7 +2882,7 @@ func _on_speak() -> void:
 ## request map, so replies still in flight for the old voice are dropped on
 ## arrival rather than spliced in.
 func _restart_speaking() -> void:
-	var body := _doc.pull().strip_edges()
+	var body := _reading_body().strip_edges()
 	if body.is_empty():
 		return
 	_refresh_cast(body)
@@ -2933,7 +3033,7 @@ func _speak_from(k: int) -> void:
 	if _host == null or not _host.is_up() or _voices.selected < 0:
 		_set_status("The voice is not ready yet - wait for it, then scrub.")
 		return
-	var body := _doc.pull().strip_edges()
+	var body := _reading_body().strip_edges()
 	if body.is_empty():
 		return
 	if not _chunks.is_empty() or _playback != null:
@@ -2969,6 +3069,20 @@ func _start_at(k: int) -> int:
 		_next_to_request = k
 		_next_to_play = k
 	return k
+
+
+## About where those words are: how many words with letters come before the chunk a reading
+## starts at (-1 for a reading from the top). A medium breaks ties between equally good matches
+## of [method _start_words] with it - see [method TabletScript.find_run].
+func _start_index() -> int:
+	if _start_chunk <= 0 or _start_chunk >= _chunks.size():
+		return -1
+	var n := 0
+	for ci in _start_chunk:
+		for w in (_chunks[ci] as Dictionary).get("words", []):
+			if not TabletScript.norm(String((w as Dictionary).get("text", ""))).is_empty():
+				n += 1
+	return n
 
 
 ## The first words of the chunk a reading starts at, normalized - how a medium finds its place.
@@ -3577,7 +3691,7 @@ func _drain_ready() -> void:
 			if have < lead and _next_to_play < _chunks.size():
 				continue          # keep accumulating; nothing is lost, it is all queued
 			# same text, same music: the pad's note choices are seeded
-			_fx.pad_seed = hash(_text.text)
+			_fx.pad_seed = hash(_fingerprint_text())
 			_fx.setup(_sr)
 			# every dial onto the fresh chain, in one call - the preset's own nudge
 			# to the bed included: a mood is carried by the room as much as by the
@@ -3590,7 +3704,7 @@ func _drain_ready() -> void:
 			# and the harmonic seed does not re-derive every few sentences
 			_stream_open = true
 			if begin_stream.is_valid():
-				_playback = begin_stream.call(hash(_text.text), _sr, _sub_words)
+				_playback = begin_stream.call(hash(_fingerprint_text()), _sr, _sub_words)
 			# NO SCRUB HOOKS HERE. Seeking a live generator was implemented and is
 			# WITHDRAWN - see the note above _seek_take.
 			# MEASURE the ring, do not compute it. Godot sizes a generator's
@@ -4033,10 +4147,16 @@ static func _decode_wav(path: String) -> PackedFloat32Array:
 # --- export ------------------------------------------------------------------
 
 
+## What an export of this reading is called, without an extension; "" keeps the exporter's own
+## name (see [member Exporter.name_provider]).
+func export_name() -> String:
+	return ""
+
+
 ## Gate for the export button. The procedural path asks whether a seed has been
 ## caught; here the only requirements are text and a loaded voice.
 func can_export_take() -> bool:
-	return not _text.text.strip_edges().is_empty() \
+	return _has_reading() \
 		and not _voice_meta.is_empty() and _host != null and _host.is_up()
 
 
@@ -4047,7 +4167,7 @@ func can_export_take() -> bool:
 ## the entire reading including the part not yet spoken, and must not disturb a
 ## reading in progress.
 func export_take() -> String:
-	var body := _doc.pull().strip_edges()
+	var body := _reading_body().strip_edges()
 	if body.is_empty() or _voices.selected < 0:
 		return ""
 	_refresh_cast(body)

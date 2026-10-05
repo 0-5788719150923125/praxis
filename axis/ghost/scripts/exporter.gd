@@ -143,6 +143,11 @@ var take_provider := Callable()
 ## click could only produce a video of nothing.
 var take_ready := Callable()
 
+## What the video is called, when the mode knows: returns a name without an extension (an
+## episode's title, say), or "" for the exporter's own `ghost_<quality>`. Asked as the save
+## dialog opens; whatever it returns goes through [method safe_name].
+var name_provider := Callable()
+
 ## Whether this mode has a UI worth recording. Only the fishing game does; the
 ## generative path has a text box and some sliders, and an option offering to
 ## "record the game" there is noise.
@@ -435,8 +440,29 @@ func _on_quality(id: int) -> void:
 		_quality_menu.set_item_checked(_quality_menu.get_item_index(UI_TOGGLE_ID), _synth_autoplay)
 		return
 	_quality = QUALITIES[id]
-	_dialog.current_file = "ghost_%s.mp4" % _quality.tag
+	var named := safe_name(String(name_provider.call())) if name_provider.is_valid() else ""
+	_dialog.current_file = ("%s.mp4" % named) if not named.is_empty() else "ghost_%s.mp4" % _quality.tag
 	_dialog.popup_centered()
+
+
+## [param title] as a file name every system accepts, still reading as the title: a colon becomes
+## " -", the characters Windows refuses go, whitespace collapses, no trailing dot or space, and
+## it stops at a word before 120 characters. "" when nothing is left.
+static func safe_name(title: String) -> String:
+	var t := title.replace(":", " -")
+	var out := ""
+	for ch in t:
+		if ch.unicode_at(0) >= 32 and not "/\\*?\"<>|".contains(ch):
+			out += ch
+	out = Manuscript._rx("\\s+").sub(out, " ", true).strip_edges()
+	if out.length() > 120:
+		out = out.substr(0, 120)
+		var cut := out.rfind(" ")
+		if cut > 60:
+			out = out.substr(0, cut)
+	while out.ends_with(".") or out.ends_with(" "):
+		out = out.left(-1)
+	return out
 
 
 func _on_path(out_path: String) -> void:
