@@ -266,6 +266,24 @@ const TOOLS := [
 		},
 		"site": "https://developers.openai.com/codex/cli",
 	},
+	{
+		"key": "aws",
+		"name": "AWS CLI",
+		"bins": ["aws"],
+		"version_args": ["--version"],
+		"tier": TIER_EXTRA,
+		"used_for": "Amazon Bedrock, as a writer and a painter: Amazon's own Nova models and the open "
+			+ "models Bedrock hosts for the tarot mode's words, Stability AI's image models for its "
+			+ "pictures and the book's illustrations. Called with your AWS credentials and region (set "
+			+ "them with `aws configure`) and billed per token or per picture to your AWS account, so "
+			+ "it runs only when asked.",
+		"install": {
+			"linux": "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install   ·   Arch: sudo pacman -S aws-cli-v2",
+			"macos": "brew install awscli   ·   or the installer: https://awscli.amazonaws.com/AWSCLIV2.pkg",
+			"windows": "winget install Amazon.AWSCLI   ·   or msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi",
+		},
+		"site": "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
+	},
 ]
 
 

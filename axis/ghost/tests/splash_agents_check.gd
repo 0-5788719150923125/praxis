@@ -27,7 +27,9 @@ extends Node
 const ROLES := {"writer": preload("res://scripts/text_gen.gd"), "painter": preload("res://scripts/image_gen.gd")}
 ## Every program a writer or painter backend resolves. If a backend is added on another CLI, the
 ## "no agent at all" state fails loudly naming it, rather than testing a machine that still has one.
-const AGENT_PROGRAMS := ["claude", "codex"]
+const AGENT_PROGRAMS := ["claude", "codex", "aws"]
+## The programs every [ImageGen] painter resolves (a precondition below says so if one is added).
+const PAINTER_PROGRAMS := ["codex", "aws"]
 const ASSIST := preload("res://scripts/assistant_backends.gd")
 
 var _fails: Array = []
@@ -107,11 +109,13 @@ func _run() -> void:
 	_check(not opt.get_popup().visible, "a click on the grayed Assistant dropdown opens nothing")
 	await _hover(null)
 
-	# --- 3. a writer, but nothing that paints
+	# --- 3. a writer, but nothing that paints: every painter's program hidden, Claude's kept
 	Deps.forget_all()
-	Deps._resolved["codex"] = ""
+	for prog in PAINTER_PROGRAMS:
+		Deps._resolved[prog] = ""
+	_check(_have("painter").is_empty(), "with %s gone, nothing paints (%s)" % [PAINTER_PROGRAMS, _have("painter")])
 	if _have("writer").is_empty():
-		print("splash_agents: no writer here but Codex - skipping the writer-without-painter state")
+		print("splash_agents: no writer here but the painters' CLIs - skipping the writer-without-painter state")
 	else:
 		env.probed.emit()
 		_state(splash, tarot, ungated, "writer, no painter")

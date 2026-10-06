@@ -335,12 +335,28 @@ six to eight sweeps round the pile over ~7 s, each taking a few cards - some onl
 missed and fetched by a later sweep - landing nearly squared, so the end is a light tidy, never
 the whole spread arriving at once. THE MIXING IS MOST OF IT (the user, 2026-10-05: "BARELY
 shuffled at all. 3 or 4 cards might shift slightly... no changing of z-order... maybe 5 or 10
-seconds long"): it had been 5 s of two hands drifting through less than one slow loop. Each palm
-now works a patch in a loop or two while traveling, lifts and comes down on the next, mostly on its
-own side; a card under another drags less than the one on top, so cards slide over and under. The
+seconds long"): it had been 5 s of two hands drifting through less than one slow loop. The
 ORDER is decided when two cards meet - the one sliding in on top - and held while they touch, so
 it changes all through the wash and never through a card. A wash the first card would cut short is
-replanned to fit, the same wash up to its own gather. Gate: `tests/tarot_wash_check.gd`. A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
+replanned to fit, the same wash up to its own gather. THE HANDS SWEEP (the user, the same day:
+"cards barely move... the movements are very small, very localized... It would be much more common
+for cards to sweep back, and forth, back, and forth in various directions, crossing large regions of
+the table, creating chaos along their path. Today, these sort of just shift in tiny little
+circles"): each palm had worked a 6 cm circle and the cards under it went round it and back - 4 cm
+the longest straight run, 11 cm the farthest a card got - and the gate, which measured PATH length,
+passed it. Now a palm comes down where the cards are and mostly SCRUBS: passes of 20-40 cm back and
+forth across the spread, its line turning and drifting between them; or it swirls wide, or fetches
+the card lying farthest out back through the middle (`_wash_gesture`). The cards slide as cards do
+(`_wash_rub`, `_wash_drag`, `_wash_palm`, `_wash_move`): a palm's grip is friction-limited at five
+points a card, so a card pressed whole goes with it, one caught at an end swings round behind it,
+one brushed stays; each pass takes hold afresh, so a scrub carries a different few each way and
+leaves some at the far end; where another card lies over a point the palm presses that one instead,
+so a half-covered card is pulled out by its free half; two cards lying one on the other drag each
+other, hard under a pressed card; a card run into is knocked. Now half a card's travel is in
+straight runs of 15 cm or more (the circles: 4), 89% of the cards get 15 cm or more from where the
+mixing found them (24%), and two thirds of the still cards a sweep runs over are knocked askew. Gate:
+`tests/tarot_wash_check.gd` (two-sided: the circling wash fails four of its checks, and tiny
+circles made up inside the gate fail them too). A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
 RIGHT (shown, never read); both turn a little on their axes, and the card is now and then turned
 to look at its back. A lay: page out, card down into the spread. A JUMPER FLIES OUT OF A SHUFFLE
 (the user, 2026-10-05: "that jump should probably happen during a shuffle - not when the cards are

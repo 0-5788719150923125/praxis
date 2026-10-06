@@ -20,6 +20,11 @@ class_name AgentJobs
 ## it wrote, wherever the caller keeps its own data - the evidence a reading never cheated is on
 ## disk, not in a promise.
 ##
+## A BACKEND MAY WORK IN STEPS: when a step's process ends, its `advance(job)` may start the next
+## one and return that pid, and the job runs on - a writer that has to look its route up before it
+## can write does both without ever blocking a frame. A one-step backend's `advance` returns 0 and
+## the job lands, as it always did. Its timeout counts from the first step.
+##
 ## Polled from `main._process`, the [Films] / [Illustrations] rule: a job is a subprocess, and
 ## something with a frame has to see it end. NOTHING STARTS ON ITS OWN - a job runs because a
 ## person pressed something - and a read-only process (a render, a probe) refuses every
@@ -174,6 +179,10 @@ static func pump() -> void:
 					"error": "timed out after %d s" % int(TIMEOUT_S[String(job["kind"])])}
 			continue
 		Subprocess.forget(pid)
+		var next := int(job["gen"].advance(job))
+		if next > 0:
+			job["pid"] = next
+			continue
 		_running.erase(id)
 		_ended[id] = _land(job)
 	if read_only():

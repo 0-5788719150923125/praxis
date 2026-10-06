@@ -791,19 +791,31 @@ static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transfor
 		var mid := hh
 		if heap:
 			var lowest := INF
-			for k in 6:
+			for k in 30:
 				var q := Vector2.from_angle(rng.randf() * TAU) * radius * sqrt(rng.randf())
 				var y := hh
+				var held := 0.0    # how far off the middle of the lump holding it up it sits, as a share of their reach
 				for e in laid:
 					# two lumps meet across their half-widths, a little less, as rounded things nestle; a
 					# lump taken as wide as its longest reach stood on air off the narrow side of another
 					var touch := (girth * s + float(e[4])) * 0.9
 					var d := q.distance_to(e[0])
 					if d < touch:
-						y = maxf(y, float(e[2]) + (hh + float(e[3])) * sqrt(1.0 - pow(d / touch, 2.0)) * 0.9)
+						var up := float(e[2]) + (hh + float(e[3])) * sqrt(1.0 - pow(d / touch, 2.0)) * 0.9
+						if up > y:
+							y = up
+							held = d / touch
+				# a lump resting on another's shoulder would roll off it: it sits on the floor or over the middle
+				if held > 0.5 and y > hh * 1.05:
+					continue
 				if y < lowest:
 					lowest = y
 					spot = q
+				if k >= 5 and lowest < INF:
+					break
+			if lowest == INF:
+				lowest = hh
+				spot = Vector2.from_angle(rng.randf() * TAU) * radius * 1.3
 			mid = lowest
 		else:
 			var wide := radius

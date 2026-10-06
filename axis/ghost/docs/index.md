@@ -226,10 +226,11 @@ An automatic tarot reading: a show's brief, its episodes - each planned, painted
 
 ### Agents
 
-Every piece of writing and painting ghost asks an AI for: who writes (TextGen) and who paints (ImageGen), one queue for both (AgentJobs), and where a reading's voice is in its document (ReadingFollower).
+Every piece of writing and painting ghost asks an AI for: who writes (TextGen) and who paints (ImageGen), one queue for both (AgentJobs), which Amazon Bedrock models an AWS account can call (BedrockCatalog), and where a reading's voice is in its document (ReadingFollower).
 
 - [`text_gen.gd`](../scripts/text_gen.gd) **TextGen** - who writes the words. The text counterpart of `ImageGen`.
 - [`agent_jobs.gd`](../scripts/agent_jobs.gd) **AgentJobs** - every piece of writing and painting ghost asks an AI for, in one queue.
+- [`bedrock_catalog.gd`](../scripts/bedrock_catalog.gd) **BedrockCatalog** - which Amazon Bedrock models this AWS account can call, and how to reach each. Shared by the Bedrock writer (`TextGen`'s `bedrock`) and painter (`ImageGen`'s `bedrock`); it only ever makes the free listing calls, never a model call.
 - [`reading_follower.gd`](../scripts/reading_follower.gd) **ReadingFollower** - where the voice is in a document, and when each of its words was said.
 
 ### Storyboards & stage

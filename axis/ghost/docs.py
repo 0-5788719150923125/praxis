@@ -257,8 +257,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "Agents",
         "Every piece of writing and painting ghost asks an AI for: who writes "
         "(TextGen) and who paints (ImageGen), one queue for both (AgentJobs), "
+        "which Amazon Bedrock models an AWS account can call (BedrockCatalog), "
         "and where a reading's voice is in its document (ReadingFollower).",
-        ["text_gen.gd", "agent_jobs.gd", "reading_follower.gd"],
+        ["text_gen.gd", "agent_jobs.gd", "bedrock_catalog.gd", "reading_follower.gd"],
     ),
     (
         "Storyboards & stage",
@@ -486,6 +487,17 @@ ENGINE_FLAGS = {
     "--no-session-persistence",
     "--input-format",
     "--ephemeral",
+    # the AWS CLI's (bedrock_catalog.gd and the Bedrock writer and painter), not ghost flags
+    "--region",
+    "--output",
+    "--no-cli-pager",
+    "--cli-input-json",
+    "--cli-binary-format",
+    "--cli-read-timeout",
+    "--model-id",
+    "--body",
+    "--content-type",
+    "--accept",
     # yt-dlp/pip arguments (mask_editor's URL import subprocess), not ghost flags
     "--newline",
     "--no-playlist",

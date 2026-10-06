@@ -42,17 +42,20 @@ const PICTURE_EDGE := 768
 const REGISTRY := {
 	"claude": Claude,
 	"codex": Codex,
+	"bedrock": Bedrock,
 }
 
 const LABELS := {
 	"claude": "Claude (Claude Code CLI)",
 	"codex": "OpenAI (Codex CLI)",
+	"bedrock": "Amazon Bedrock (AWS CLI)",
 }
 
 ## One string literal per entry, for a picker's tooltip - same rule as Medium.BLURBS.
 const BLURBS := {
 	"claude": "Anthropic's models through the Claude Code CLI, run with no tools and no project context. Uses the Claude Code login.",
 	"codex": "OpenAI's models through the Codex CLI, run read-only in the job's own folder and told to work only from the message it is given. Uses the Codex login.",
+	"bedrock": "Models on Amazon Bedrock - Amazon's own Nova by default, and the open models Bedrock hosts - through the AWS CLI with your AWS credentials and region (aws configure). Billed per token to your AWS account; a model from another provider may subscribe the account to it through AWS Marketplace on first use.",
 }
 
 ## THE TIER is what a caller asks for instead of a model name: `best` for words somebody will
@@ -159,6 +162,11 @@ class Backend:
 
 	func failure(job: Dictionary) -> String:
 		return String(job.get("error", "the writer produced nothing"))
+
+	## A writer that works in steps starts the next one here once a step's process has ended, and
+	## returns its pid; 0 when there is no next step (see [AgentJobs]).
+	func advance(_job: Dictionary) -> int:
+		return 0
 
 	## The files every backend writes into the job's directory, named once. `prompt` is the
 	## record a person reads; `input` is exactly what the CLI was sent; `reply` is its output
@@ -384,3 +392,244 @@ class Codex:
 			var lines := err.split("\n")
 			return String(lines[lines.size() - 1]).substr(0, 240)
 		return String(job.get("error", "codex finished without a reply"))
+
+
+## MODELS ON AMAZON BEDROCK, THROUGH THE AWS CLI: Amazon's own Nova (the default) and the open
+## models Bedrock hosts, run on the machine's AWS credentials and region (`aws configure`) and
+## billed per token to that account.
+##
+## One `bedrock-runtime converse` call per job. Its whole request - the system prompt, the pictures
+## (JPEG, base64) and the prompt - is a JSON file the CLI reads itself (`--cli-input-json
+## file://...`), so nothing the author wrote is ever in argv. `--cli-binary-format base64` is
+## explicit because a `cli_binary_format = raw-in-base64-out` in the user's config would send the
+## pictures' base64 as the bytes themselves.
+##
+## WHICH MODELS, AND WHERE TO CALL THEM, is the account's own answer: [BedrockCatalog]. A model is
+## kept by its base id and called on its route, in the region that serves it; a job finding no
+## fresh catalog looks it up first, as steps of its own ([method advance]).
+##
+## ONE API, MANY MODELS: Converse evens out most differences between providers, and the two that
+## remain are retried as steps: a model that takes no system prompt is sent it at the head of the
+## message, and one whose output limit is under [constant MAX_TOKENS] is asked again inside it.
+class Bedrock:
+	extends Backend
+
+	const Catalog := preload("res://scripts/bedrock_catalog.gd")
+	## The model per tier: Amazon's newest for what is heard, its cheaper one for bookkeeping. Both
+	## see pictures - a tarot card's passage is sent its card.
+	const MODELS := {"best": "amazon.nova-2-lite-v1:0", "fast": "amazon.nova-lite-v1:0"}
+	## Nova 1 models stop at 10K output tokens (Nova 2 Lite at 64K); a tarot plan runs to ~6K.
+	const MAX_TOKENS := 10000
+	## What the model picker offers before the account has been asked; the catalog replaces it.
+	const SEED := [
+		{"id": "amazon.nova-2-lite-v1:0", "name": "Nova 2 Lite", "provider": "Amazon", "images": true},
+		{"id": "amazon.nova-pro-v1:0", "name": "Nova Pro", "provider": "Amazon", "images": true},
+		{"id": "amazon.nova-lite-v1:0", "name": "Nova Lite", "provider": "Amazon", "images": true},
+		{"id": "amazon.nova-micro-v1:0", "name": "Nova Micro", "provider": "Amazon", "images": false},
+	]
+
+	func binary() -> String:
+		var p := Deps.resolve("aws")
+		return p if not p.is_empty() else "aws"
+
+	func available() -> bool:
+		return Deps.has("aws")
+
+	## The account's text models when it has been asked, else [constant SEED].
+	static func listed() -> Array:
+		var list := Catalog.models("TEXT")
+		return list if not list.is_empty() else SEED
+
+	static func models() -> Array:
+		var out: Array = [{"key": "", "label": "Default (%s)" % Bedrock.name_of(MODELS["best"])}]
+		for m in Bedrock.listed():
+			var d: Dictionary = m
+			out.append({"key": String(d["id"]),
+				"label": Catalog.label(d) + ("" if bool(d.get("images", true)) else " (text only)")})
+		return out
+
+	static func name_of(id: String) -> String:
+		for m in Bedrock.listed() + SEED:
+			if String((m as Dictionary)["id"]) == id:
+				return Catalog.label(m)
+		return id
+
+	## The base model a job runs on: the one chosen for it, else its tier's.
+	static func model_of(job: Dictionary) -> String:
+		var chosen := String(job.get("model", ""))
+		return chosen if not chosen.is_empty() else String(MODELS.get(String(job.get("tier", "best")), MODELS["best"]))
+
+	## False only for a model known to read text alone.
+	static func sees_pictures(id: String) -> bool:
+		for m in Bedrock.listed() + SEED:
+			if String((m as Dictionary)["id"]) == id:
+				return bool((m as Dictionary).get("images", true))
+		return true
+
+	func start(job: Dictionary) -> int:
+		var model := Bedrock.model_of(job)
+		if not (job.get("images", []) as Array).is_empty() and not Bedrock.sees_pictures(model):
+			job["error"] = "%s reads text only, and this job sends pictures - choose another model" % Bedrock.name_of(model)
+			return -1
+		var m := Bedrock.compose(job)
+		if not String(m["error"]).is_empty():
+			job["error"] = m["error"]
+			return -1
+		var p := Backend.paths(job)
+		for pair in [["prompt", m["shown"]], ["system", String(job.get("system", ""))]]:
+			var err := TextGen.put(String(p[pair[0]]), String(pair[1]))
+			if not err.is_empty():
+				job["error"] = err
+				return -1
+		job["content"] = m["content"]
+		job["max_tokens"] = MAX_TOKENS
+		job["catalog"] = Catalog.fresh()
+		if (job["catalog"] as Dictionary).is_empty():
+			return Catalog.start_lookup(job, binary())
+		return _converse(job)
+
+	## After a step: the next lookup, the call itself, or the call again where a retry applies.
+	func advance(job: Dictionary) -> int:
+		match String(job.get("step", "")):
+			"lookup":
+				var next := Catalog.after_lookup(job, binary())
+				return _converse(job) if next == 0 else maxi(next, 0)
+			"converse":
+				if not Provision.read_json(String(Backend.paths(job)["reply"])).is_empty():
+					return 0
+				match Bedrock.retry_of(job, Catalog.cli_error(String(Backend.paths(job)["log"]))):
+					"fold":
+						job["fold"] = true
+						return _converse(job)
+					"cap":
+						job["max_tokens"] = Bedrock.output_cap(Catalog.cli_error(String(Backend.paths(job)["log"])),
+							int(job["max_tokens"]))
+						return _converse(job)
+		return 0
+
+	## What to do about a failed call, from the CLI's complaint: "fold" (the model takes no system
+	## prompt - send it in the message), "cap" (ask inside the model's own output limit) or "".
+	## Each is tried once.
+	static func retry_of(job: Dictionary, why: String) -> String:
+		var t := why.to_lower()
+		if t.contains("system message") and not bool(job.get("fold", false)) \
+				and not String(job.get("system", "")).strip_edges().is_empty():
+			return "fold"
+		if Bedrock.output_cap(why, int(job.get("max_tokens", MAX_TOKENS))) > 0:
+			return "cap"
+		return ""
+
+	## The output limit a refusal names ("... is not less or equal to 4096"): the largest number in
+	## it under [param asked], when the complaint is about the token limit at all; else 0.
+	static func output_cap(why: String, asked: int) -> int:
+		var t := why.to_lower()
+		if not (t.contains("max_tokens") or t.contains("maxtokens") or t.contains("max tokens") or t.contains("maximum tokens")):
+			return 0
+		var best := 0
+		for m in RegEx.create_from_string("\\d+").search_all(t):
+			var n := int(m.get_string())
+			if n >= 256 and n < asked and n > best:
+				best = n
+		return best
+
+	func _converse(job: Dictionary) -> int:
+		job["step"] = "converse"
+		var p := Backend.paths(job)
+		var model := Bedrock.model_of(job)
+		var e := Catalog.entry(job.get("catalog", {}), model)
+		if e.is_empty():
+			job["error"] = "%s is not offered to this AWS account in any region it reaches" % Bedrock.name_of(model)
+			return -1
+		job["route"] = "%s in %s" % [String(e["route"]), String(e["region"])]
+		var req := Bedrock.request(String(e["route"]), String(job.get("system", "")), job.get("content", []),
+			int(job.get("max_tokens", MAX_TOKENS)), bool(job.get("fold", false)))
+		var err := TextGen.put(String(p["input"]), JSON.stringify(req))
+		if not err.is_empty():
+			job["error"] = err
+			return -1
+		return Catalog.run(job, binary(), Bedrock.argv(String(p["input"]), String(e["region"])),
+			String(p["reply"]), String(p["log"]), "bedrock writer")
+
+	## THE MESSAGE: each picture under its label, then the prompt, as Converse content blocks
+	## (`content`), and the record a person reads (`shown`). `error` names a picture that could not
+	## be read: a writer told to talk about a card it was never sent would make it up.
+	static func compose(job: Dictionary) -> Dictionary:
+		var content: Array = []
+		var record := PackedStringArray()
+		for im in job.get("images", []):
+			var d: Dictionary = im
+			var block := Bedrock.picture_block(String(d.get("path", "")), bool(d.get("flip", false)))
+			if block.is_empty():
+				return {"error": "could not read the picture %s" % String(d.get("path", "")).get_file(),
+					"content": [], "shown": ""}
+			var label := String(d.get("label", ""))
+			if not label.is_empty():
+				content.append({"text": label})
+			content.append(block)
+			record.append(TextGen.picture_line(d))
+		var prompt := String(job.get("prompt", ""))
+		content.append({"text": prompt})
+		return {"error": "", "content": content,
+			"shown": ("\n".join(record) + "\n\n" + prompt) if not record.is_empty() else prompt}
+
+	## A picture as a Converse image block (JPEG, base64); {} when it cannot be read.
+	static func picture_block(path: String, flip := false) -> Dictionary:
+		var img := TextGen.picture(path, flip)
+		if img == null:
+			return {}
+		return {"image": {"format": "jpeg", "source": {"bytes": Marshalls.raw_to_base64(img.save_jpg_to_buffer(0.9))}}}
+
+	## The Converse request, as the CLI reads it from its input file. [param fold] sends the system
+	## prompt at the head of the message, for a model that takes none.
+	static func request(model_id: String, system: String, content: Array, max_tokens := MAX_TOKENS,
+			fold := false) -> Dictionary:
+		var blocks := content.duplicate()
+		var has_system := not system.strip_edges().is_empty()
+		if fold and has_system:
+			blocks.push_front({"text": system})
+		var req := {"modelId": model_id,
+			"messages": [{"role": "user", "content": blocks}],
+			"inferenceConfig": {"maxTokens": max_tokens}}
+		if has_system and not fold:
+			req["system"] = [{"text": system}]
+		return req
+
+	## Flags and a path only - the request is in the file.
+	static func argv(request_path: String, region := "") -> PackedStringArray:
+		var args := PackedStringArray(["bedrock-runtime", "converse",
+			"--cli-input-json", "file://" + request_path,
+			"--cli-binary-format", "base64", "--cli-read-timeout", "300"])
+		if not region.is_empty():
+			args.append_array(["--region", region])
+		args.append_array(["--output", "json", "--no-cli-pager"])
+		return args
+
+	func resolve(job: Dictionary) -> String:
+		return Bedrock.reply_text(job, String(Backend.paths(job)["reply"]))
+
+	## A Converse reply's words: its text blocks, joined (a reasoning model's thinking is left out);
+	## "" for a reply cut off at the token limit, which is a failure and not a short answer.
+	static func reply_text(job: Dictionary, path: String) -> String:
+		if String(job.get("step", "")) != "converse":
+			return ""
+		var d := Provision.read_json(path)
+		if d.is_empty() or String(d.get("stopReason", "")) == "max_tokens":
+			return ""
+		var parts := PackedStringArray()
+		for c in ((d.get("output", {}) as Dictionary).get("message", {}) as Dictionary).get("content", []):
+			if c is Dictionary and (c as Dictionary).has("text"):
+				parts.append(String((c as Dictionary)["text"]))
+		var u: Dictionary = d.get("usage", {})
+		print("ghost: %s wrote %d tokens from %d (%s)" % [Bedrock.name_of(Bedrock.model_of(job)),
+			int(u.get("outputTokens", 0)), int(u.get("inputTokens", 0)), String(job.get("route", ""))])
+		return "".join(parts).strip_edges()
+
+	func failure(job: Dictionary) -> String:
+		if job.has("error"):
+			return String(job["error"])
+		var d := Provision.read_json(String(Backend.paths(job)["reply"]))
+		if String(d.get("stopReason", "")) == "max_tokens":
+			return "%s ran past %d tokens and was cut off" % [Bedrock.name_of(Bedrock.model_of(job)),
+				int(job.get("max_tokens", MAX_TOKENS))]
+		var err := Catalog.cli_error(String(Backend.paths(job)["log"]))
+		return err if not err.is_empty() else "aws finished without a reply"

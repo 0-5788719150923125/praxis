@@ -327,7 +327,10 @@ A few things stay the machine's own, and the panel shows the command for each: o
 `setpriv` and `fallocate` (part of util-linux, on every distribution) and, optionally,
 `xvfb-run`, which gives a video export a display of its own; and the **Claude Code** and
 **Codex** CLIs behind the Assistant, the tarot mode's writers and the book's
-illustrations, which keep their own logins.
+illustrations, which keep their own logins - plus, optionally, the **AWS CLI**, which
+brings in Amazon Bedrock as both a writer (Amazon's Nova by default, and the open models
+Bedrock hosts) and a painter (Stability AI's models; Amazon retired its own), with your
+credentials and region, billed per token or per picture to your account.
 
 Linux, macOS and Windows are all meant to work, and nothing requires a Unix shell:
 background programs are launched directly, and where output has to be redirected, ghost

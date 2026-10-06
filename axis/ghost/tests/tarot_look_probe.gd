@@ -10,6 +10,9 @@ extends Node
 ## `--marks 1` photographs each action instead: the moment it starts, a beat in, and the card
 ## held up after it. `--things 1` prints what stands on the table and every flame's light;
 ## `--dark 0,2` puts out those lights (a lit thing's one light; -1 the lamp), to find which light does something.
+## `--wash W` makes the shuffle one wash (seed W, its longest) and `--clip A,B` writes EVERY frame
+## from A to B seconds into it (`<out>_c0000.png`...) - motion is judged in motion:
+##   ffmpeg -framerate 30 -i <out>_c%04d.png -pix_fmt yuv420p wash.mp4
 ## Asserts only that a frame is not uniform.
 
 const W := 1280
@@ -29,6 +32,8 @@ var _from := -1         # --from N: start the reading at spoken word N, as a scr
 var _foil := -1.0       # --foil F: force the deck's foil amount
 var _things := false    # --things 1: print what stands on the table and every flame's light
 var _dark: Array = []   # --dark 0,2: put out those flames' lights (the flames still burn), to find a light
+var _wash := -1         # --wash W: the shuffle is one wash, of seed W
+var _clip := Vector2(-1.0, -1.0)   # --clip A,B: every frame from A to B seconds (into the wash, with --wash)
 
 
 func _ready() -> void:
@@ -55,6 +60,10 @@ func _run() -> void:
 			"--dark":
 				for x in String(args[i + 1]).split(","):
 					_dark.append(int(x))
+			"--wash": _wash = int(args[i + 1])
+			"--clip":
+				var ab := String(args[i + 1]).split(",")
+				_clip = Vector2(float(ab[0]), float(ab[1]))
 			"--times":
 				_times = []
 				for s in String(args[i + 1]).split(","):
@@ -118,10 +127,31 @@ func _run() -> void:
 			for d in [0.2, 1.4, 2.4, 4.5]:
 				_times.append(float(a) + d)
 		_times.append(end - 2.0)
-	_times.sort()
 	var t := 0.0
 	Spectrum.virtual_clock = 0.0
+	if _wash >= 0:
+		# one step so the table is built, then the shuffle is nothing but the wash
+		Spectrum.current.time = t
+		subs._process(DT)
+		medium.advance(Spectrum.current, DT, 1.0)
+		var tmed := medium as TarotMedium
+		var dur := float(TarotMedium.RUNS["wash"]["dur"][1])
+		tmed._moves = [{"kind": "wash", "t0": 0.15, "dur": dur, "pause": 1000.0, "seed": _wash,
+			"plan": tmed._wash_plan(_wash, dur)}]
+		var at := float(tmed._times()["shuffle"]) + 0.15
+		print("tarot_look_probe: the wash runs %.1f-%.1f s, mixing %s s into it" % [at, at + dur,
+			str((tmed._moves[0]["plan"] as Dictionary)["mix"])])
+		if _clip.y > _clip.x:
+			_clip += Vector2(at, at)
+	if _clip.y > _clip.x:
+		_times = []
+		var tc := _clip.x
+		while tc <= _clip.y:
+			_times.append(tc)
+			tc += DT
+	_times.sort()
 	var step := 0
+	var frame := 0
 	for want in _times:
 		while t < float(want):
 			t += DT
@@ -139,7 +169,7 @@ func _run() -> void:
 			step += 1
 			if step % 20 == 0 or float(want) - t < 0.2:
 				await get_tree().process_frame
-		for _i in 3:
+		for _i in (1 if _clip.y > _clip.x else 3):
 			await get_tree().process_frame
 		var img := stage.get_texture().get_image()
 		if want == _times[0] and _things:
@@ -161,11 +191,15 @@ func _run() -> void:
 				str(cur == tmed._cam), str(tmed._cam.environment.glow_enabled if tmed._cam.environment else false),
 				tmed._env.glow_hdr_threshold, tmed._foil])
 		var path := "%s_t%05.1f.png" % [_out, float(want)]
+		if _clip.y > _clip.x:
+			path = "%s_c%04d.png" % [_out, frame]
+			frame += 1
 		img.save_png(path)
 		var st := _spread(img)
 		if st < 0.02:
 			_flat += 1
-		print("tarot_look_probe: t=%.1f -> %s (spread %.3f)" % [want, path, st])
+		if _clip.y <= _clip.x or frame == 1:
+			print("tarot_look_probe: t=%.1f -> %s (spread %.3f)" % [want, path, st])
 	print("tarot_look_probe: done, %d flat" % _flat)
 	Spectrum.virtual_clock = -1.0
 	Director.hold(false)

@@ -696,6 +696,17 @@ static func pump() -> void:
 			"url": String(c["url"])}, String(c["url"]), "page")
 		if err.is_empty():
 			print("ghost: page %s captured" % String(c["url"]))
+	_advance_jobs()
+	while _jobs.size() < MAX_JOBS:
+		var i := _next_startable()
+		if i < 0:
+			break
+		_start(_queue.pop_at(i))
+
+
+## Notice which painting jobs ended: land each, or - for a painter in steps (see [AgentJobs]) -
+## let it start its next one, and the job runs on.
+static func _advance_jobs() -> void:
 	for key in _jobs.keys():
 		var job: Dictionary = _jobs[key]
 		var pid := int(job["pid"])
@@ -706,13 +717,12 @@ static func pump() -> void:
 				_jobs.erase(key)
 			continue
 		Subprocess.forget(pid)
+		var next := int((job["gen"] as ImageGen.Backend).advance(job))
+		if next > 0:
+			job["pid"] = next
+			continue
 		_jobs.erase(key)
 		_land(String(key), job)
-	while _jobs.size() < MAX_JOBS:
-		var i := _next_startable()
-		if i < 0:
-			break
-		_start(_queue.pop_at(i))
 
 
 ## The first queued request that may start now. A self-referencing kind runs ONE AT A TIME, in

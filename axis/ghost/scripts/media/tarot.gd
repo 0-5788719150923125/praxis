@@ -102,6 +102,46 @@ const WASH_ROOM := 9.0
 ## A card lying on the cloth in a wash: its center this high - clear of the cloth (at 0.6 mm) by a
 ## hair, so the weave never shows through it.
 const WASH_FLOOR := 0.0006 + 0.00035 + 0.0002
+## THE HANDS IN A WASH (2026-10-05, the user: "cards barely move... the movements are very small,
+## very localized... It would be much more common for cards to sweep back, and forth, back, and
+## forth in various directions, crossing large regions of the table, creating chaos along their
+## path"): each palm had worked a 6 cm circle, and the cards under it went round that circle and
+## back - 4 cm the longest straight run, 11 cm the farthest a card got. How often a palm scrubs,
+## swirls or fetches ([method _wash_gesture]), how long a scrub's pass is (meters), and how often a
+## palm rests a moment between gestures.
+const WASH_GESTURES := {"scrub": 0.65, "swirl": 0.15, "fetch": 0.2}
+const WASH_SCRUB := Vector2(0.2, 0.4)
+const WASH_REST := 0.12
+## A palm flat on the cards: half its width and half its length (meters), its length along the
+## forearm from the reader's shoulder (to the side and toward the reader, about the deck's place).
+## It comes down and lifts over WASH_TOUCH seconds, keeps its middle WASH_APART from the other
+## palm's when it can, and fetches a card lying out past WASH_STRAY of the spread's reach.
+const PALM := Vector2(0.045, 0.08)
+const WASH_SHOULDER := Vector2(0.19, 0.46)
+const WASH_TOUCH := 0.12
+const WASH_APART := 0.14
+const WASH_STRAY := 0.85
+## Where on a card a palm takes hold (meters across and along it, from its middle), and a card's
+## turning inertia over its mass (meters squared: a 70 x 120 mm sheet).
+const GRIP_AT := [Vector2.ZERO, Vector2(-0.022, -0.04), Vector2(0.022, -0.04), Vector2(-0.022, 0.04),
+	Vector2(0.022, 0.04)]
+const CARD_I := (0.07 * 0.07 + 0.12 * 0.12) / 12.0
+## HOW CARDS SLIDE in a wash (centers: each wash samples its own feel round them). How hard a palm
+## can pull a card it presses whole (m/s each second - far past what the cloth holds back, so the
+## card goes with it) - where another card lies over it, WASH_COVERED of that; the drag between two
+## cards lying one on the other (per second: loose, and added when a palm presses the top one); how
+## much of the difference in their speeds a card sliding into another gives it as they meet; how fast
+## a loose card slows (m/s each second, WASH_ON_CARD of that on another card) and stops turning
+## (radians/s each second); and the fastest a hand drags a card (m/s) or turns one (radians/s).
+const WASH_GRIP := 40.0
+const WASH_COVERED := 0.25
+const WASH_DRAG := Vector2(5.0, 40.0)
+const WASH_KNOCK := 0.5
+const WASH_SLIDE := 3.0
+const WASH_ON_CARD := 0.55
+const WASH_SPIN := 40.0
+const HAND_SPEED := 1.2
+const WASH_TURN_MAX := 7.0
 ## The first card's PUSH (TarotScript.PUSH): the deck squares, then slides to its side this long.
 const PUSH_SLIDE := 0.85
 ## A held card is turned over now and then, to look at its back: the chance a card is, how long
@@ -2350,15 +2390,22 @@ static func _cards_overlap(a: Vector2, ya: float, b: Vector2, yb: float) -> bool
 		return false
 	if d.length_squared() < CARD.x * CARD.x:
 		return true
-	var axes := [Vector2(cos(ya), -sin(ya)), Vector2(sin(ya), cos(ya)), Vector2(cos(yb), -sin(yb)), Vector2(sin(yb), cos(yb))]
+	# each card's two axes in turn (written out: a wash asks this some hundred thousand times)
+	var a0 := Vector2(cos(ya), -sin(ya))
+	var a1 := Vector2(sin(ya), cos(ya))
+	var b0 := Vector2(cos(yb), -sin(yb))
+	var b1 := Vector2(sin(yb), cos(yb))
+	return not (_parted(d, a0, a0, a1, b0, b1) or _parted(d, a1, a0, a1, b0, b1)
+		or _parted(d, b0, a0, a1, b0, b1) or _parted(d, b1, a0, a1, b0, b1))
+
+
+## Whether two cards [param d] apart, turned to axes [param a0] [param a1] and [param b0]
+## [param b1], are parted along [param v]: their reaches along it fall short of the gap.
+static func _parted(d: Vector2, v: Vector2, a0: Vector2, a1: Vector2, b0: Vector2, b1: Vector2) -> bool:
 	var h := CARD * 0.5
-	for ax in axes:
-		var v: Vector2 = ax
-		var ra := h.x * absf((axes[0] as Vector2).dot(v)) + h.y * absf((axes[1] as Vector2).dot(v))
-		var rb := h.x * absf((axes[2] as Vector2).dot(v)) + h.y * absf((axes[3] as Vector2).dot(v))
-		if absf(d.dot(v)) > ra + rb:
-			return false
-	return true
+	var ra := h.x * absf(a0.dot(v)) + h.y * absf(a1.dot(v))
+	var rb := h.x * absf(b0.dot(v)) + h.y * absf(b1.dot(v))
+	return absf(d.dot(v)) > ra + rb
 
 
 ## THE WASH, planned once and sampled at [constant WASH_HZ] - because it is a SIMULATION, not a
@@ -2367,11 +2414,10 @@ static func _cards_overlap(a: Vector2, ya: float, b: Vector2, yb: float) -> bool
 ## so it is the same every time it is posed.
 ##
 ##   out      the deck is pushed out across the cloth, top cards first (~2 s)
-##   mix      most of the wash (2026-10-05: "BARELY shuffled at all... 3 or 4 cards might shift
-##            slightly... maybe 5 or 10 seconds long"): each palm works a patch of the spread in a
-##            circle or two, lifts, and comes down on the next ([method _wash_strokes]), dragging
-##            what is under it - the card on top more than one covered by another, so cards slide
-##            over and under each other
+##   mix      most of the wash: the palms scrub back and forth across the spread, swirl wide and
+##            fetch strays back through the middle ([method _wash_gesture]); a card a palm holds
+##            goes its way ([method _wash_palm]), slides on when it lets go, and drags and turns
+##            every card it passes over ([method _wash_drag])
 ##   gather   six to eight sweeps, each taking the next share of the cards by direction: most land
 ##            on the pile, some are only pushed near it and wait, some are missed and fetched later
 ##   square   the pile is squared into the deck
@@ -2397,10 +2443,10 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	# WIDE: the cards go well out across the cloth, a few of them a long way
 	var rx := rng.randf_range(0.24, 0.29)
 	var rz := rng.randf_range(0.12, 0.15)
-	var pos: Array = []
+	var pos := PackedVector2Array()
 	var yaw := PackedFloat32Array()
-	var start: Array = []
-	var aim: Array = []
+	var start := PackedVector2Array()
+	var aim := PackedVector2Array()
 	var t_out := PackedFloat32Array()
 	for i in n:
 		var jit: Vector3 = _slot_jit[i] if i < _slot_jit.size() else Vector3.ZERO
@@ -2423,9 +2469,20 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var spin0 := PackedFloat32Array()
 	for i in n:
 		spin0.append(rng.randf_range(-1.1, 1.1))
-	var was: Array = pos.duplicate()        # where each card was at the step before
-	var palms := _wash_strokes(seed, out_end, mix_end, rx, rz)
-	var at_stroke := PackedInt32Array([0, 0])
+	var was := pos.duplicate()             # where each card was at the step before, and its turn
+	var was_yaw := yaw.duplicate()
+	# HOW EACH CARD IS MOVING while it slides (x / z a second, and its turn a second), how hard a palm
+	# held it at the last step, and whether a sweep of the gather moves it instead (or it lies in the
+	# pile)
+	var vel := PackedVector2Array()
+	var spin := PackedFloat32Array()
+	var held := PackedFloat32Array()
+	var kin := PackedByteArray()
+	vel.resize(n)
+	spin.resize(n)
+	held.resize(n)
+	kin.resize(n)
+	var hands := _wash_hands(seed, out_end, rx, rz)
 	# the sweeps, one after another across the gather
 	var sweep_len := gather / float(swipes)
 	var caught := PackedInt32Array()       # the sweep that brings each card in for good
@@ -2440,15 +2497,14 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var t_go := PackedFloat32Array()       # when the sweep that brings it in reaches it
 	t_in.resize(n)
 	t_go.resize(n)
-	var from_p: Array = []                 # a sweep under way: where the card was, where it goes
-	var to_p: Array = []
+	var from_p := PackedVector2Array()     # a sweep under way: where the card was, where it goes
+	var to_p := PackedVector2Array()
+	from_p.resize(n)
+	to_p.resize(n)
 	var from_yaw := PackedFloat32Array()
 	var to_yaw := PackedFloat32Array()
 	from_yaw.resize(n)
 	to_yaw.resize(n)
-	for i in n:
-		from_p.append(Vector2.ZERO)
-		to_p.append(Vector2.ZERO)
 	var begun := {}
 	var land_order: Array = []
 	var planned_sweeps := false
@@ -2459,19 +2515,23 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var under: Array = []                  # card -> the cards it lies directly on
 	for i in n:
 		under.append([])
-	var covered := PackedByteArray()       # a card with another lying on it, at the step before
-	covered.resize(n)
+	var over: Array = []                   # card -> the cards lying on it, at the step before
+	for i in n:
+		over.append([])
 	var layer := PackedInt32Array()
 	layer.resize(n)
 	var moved := PackedFloat32Array()
 	moved.resize(n)
+	var stirred := PackedByteArray()       # moved or turned this step: only then can it meet or part
+	stirred.resize(n)
+	var restacked := true                  # who lies on whom changed this step
 	# THE SAME WASH, CUT SHORT ([param base], the whole of it): up to where this one gathers, the
 	# spreading and the palms are the same, so its tracks are copied rather than made again, and
-	# the cards - where they lay, and who on whom - are taken up from there
+	# the cards - where they lay, how they were sliding, and who on whom - are taken up from there
 	var s_from := 0
 	if not base.is_empty() and is_equal_approx(float((base["mix"] as Vector2).x), out_end) \
 			and mix_end <= float((base["mix"] as Vector2).y):
-		s_from = clampi(int(ceil(mix_end * WASH_HZ)), 1, ((base["tracks"] as Array)[0] as PackedVector4Array).size() - 1)
+		s_from = clampi(int(ceil(mix_end * WASH_HZ)), 2, ((base["tracks"] as Array)[0] as PackedVector4Array).size() - 1)
 		for i in n:
 			var tr: PackedVector4Array = (base["tracks"] as Array)[i]
 			var copied: Array = []
@@ -2479,9 +2539,13 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				copied.append(tr[st])
 			tracks[i] = copied
 			var q: Vector4 = tr[s_from - 1]
+			var q0: Vector4 = tr[s_from - 2]
 			pos[i] = Vector2(q.x, q.z)
 			was[i] = pos[i]
 			yaw[i] = q.w
+			was_yaw[i] = q.w
+			vel[i] = Vector2(q.x - q0.x, q.z - q0.z) * WASH_HZ
+			spin[i] = (q.w - q0.w) * WASH_HZ
 		for i in n:
 			for j in range(i + 1, n):
 				if _cards_overlap(pos[i], yaw[i], pos[j], yaw[j]):
@@ -2493,33 +2557,21 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 		var t := float(step) * dt
 		if t < out_end:
 			# OUT: each card slides from the deck to its place on the cloth, turning as it goes
+			kin.fill(1)
 			for i in n:
 				var e := _ease(clampf((t - t_out[i]) / minf(1.1, out_end * 0.45), 0.0, 1.0))
-				pos[i] = (start[i] as Vector2).lerp(aim[i], e)
+				pos[i] = start[i].lerp(aim[i], e)
 				yaw[i] = (_slot_jit[i] as Vector3).z + spin0[i] * e if i < _slot_jit.size() else spin0[i] * e
 		elif t < mix_end:
-			# MIX: each palm drags what is under it - a covered card less than the one on top
+			# MIX: the cloth slows what slides, cards drag what they lie on, the palms bring what they
+			# press to their speed (last, so what a palm holds goes its way), and every card moves
+			kin.fill(0)
+			_wash_rub(hands, vel, spin, under, kin, dt)
+			_wash_drag(hands, pos, vel, spin, held, kin, rel, dt)
+			held.fill(0.0)
 			for h in 2:
-				var p0 := _palm(palms[h], at_stroke, h, t)
-				var p1 := _palm(palms[h], at_stroke, h, t + dt)
-				var press := minf(p0.z, p1.z)
-				if press <= 0.0:
-					continue
-				var vel := Vector2(p1.x - p0.x, p1.y - p0.y) * press
-				var c := Vector2(p0.x, p0.y)
-				for i in n:
-					var off: Vector2 = (pos[i] as Vector2) - c
-					var w := 1.0 - smoothstep(0.04, 0.09, off.length())
-					if w <= 0.0:
-						continue
-					w *= 0.45 if covered[i] == 1 else 1.0
-					pos[i] = (pos[i] as Vector2) + vel * w * 0.9
-					yaw[i] += clampf((off.x * vel.y - off.y * vel.x) / maxf(off.length_squared(), 0.0016) * w * 0.5, -0.08, 0.08)
-					# kept on the cloth, softly
-					var q: Vector2 = pos[i]
-					var k := (q.x / rx) * (q.x / rx) + ((q.y + 0.01) / rz) * ((q.y + 0.01) / rz)
-					if k > 1.2:
-						pos[i] = q * lerpf(1.0, sqrt(1.2 / k), 0.3)
+				_wash_palm(hands, h, t, dt, mix_end, pos, yaw, vel, spin, over, held)
+			_wash_move(hands, pos, yaw, vel, spin, kin, dt)
 		else:
 			if not planned_sweeps:
 				planned_sweeps = true
@@ -2529,8 +2581,7 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				# missed now and then and a later sweep fetches it; some are only pushed near.
 				var by_angle: Array = []
 				for i in n:
-					var q: Vector2 = pos[i]
-					by_angle.append([atan2(q.y, q.x), i])
+					by_angle.append([atan2(pos[i].y, pos[i].x), i])
 				by_angle.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) < float(y[0]))
 				var first_card := rng.randi_range(0, n - 1)
 				var share := PackedInt32Array()
@@ -2549,7 +2600,7 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				# the pile's order is the order they arrive in
 				var order: Array = []
 				for i in n:
-					order.append([caught[i], (pos[i] as Vector2).length(), i])
+					order.append([caught[i], pos[i].length(), i])
 				order.sort_custom(func(x: Array, y: Array) -> bool:
 					if int(x[0]) != int(y[0]):
 						return int(x[0]) < int(y[0])
@@ -2557,7 +2608,11 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				for o in order:
 					land_order.append(int(o[2]))
 			var g := t - mix_end
+			kin.fill(0)
 			for i in n:
+				# in the pile for good: nothing slides it again
+				if t_in[i] > 0.0 and t >= t_in[i]:
+					kin[i] = 1
 				for k in [nudged[i], caught[i]]:
 					if int(k) < 0:
 						continue
@@ -2566,7 +2621,7 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 					var u1 := s0 + sweep_len * 0.82
 					var key := i * 8 + int(k)
 					if not begun.has(key):
-						var r := clampf((pos[i] as Vector2).length() / maxf(rx, rz), 0.0, 1.0)
+						var r := clampf(pos[i].length() / maxf(rx, rz), 0.0, 1.0)
 						var u0 := s0 + (1.0 - r) * 0.28
 						if g < u0:
 							continue
@@ -2584,27 +2639,51 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 							t_in[i] = mix_end + u1
 						else:
 							# caught, but only pushed up against the pile: the next sweep brings it in
-							var away: Vector2 = (pos[i] as Vector2).normalized() if (pos[i] as Vector2).length() > 0.001 else Vector2.RIGHT
+							var away: Vector2 = pos[i].normalized() if pos[i].length() > 0.001 else Vector2.RIGHT
 							to_p[i] = away * rng.randf_range(0.035, 0.055)
 							to_yaw[i] = yaw[i] + rng.randf_range(-0.25, 0.25)
 					var b0 := float(begun[key])
 					if g > u1 + dt:
 						continue
 					var e2 := _ease(clampf((g - b0) / maxf(u1 - b0, 0.05), 0.0, 1.0))
-					pos[i] = (from_p[i] as Vector2).lerp(to_p[i], e2)
+					pos[i] = from_p[i].lerp(to_p[i], e2)
 					yaw[i] = lerp_angle(from_yaw[i], to_yaw[i], e2)
+					kin[i] = 1
+			# WHAT NO SWEEP HAS REACHED YET SLIDES ON: the palms lift, and a card they let go of
+			# mid-pass runs on and stops, rather than freezing where the gather began
+			for i in n:
+				if kin[i] == 1:
+					vel[i] = Vector2.ZERO
+					spin[i] = 0.0
+			held.fill(0.0)
+			_wash_rub(hands, vel, spin, under, kin, dt)
+			_wash_drag(hands, pos, vel, spin, held, kin, rel, dt)
+			_wash_move(hands, pos, yaw, vel, spin, kin, dt)
 		# NOTHING PASSES THROUGH WHAT STANDS ON THE TABLE: every card goes from where it was to where
-		# this step put it, and whatever it runs into stops it - it slides along it instead
+		# this step put it, and whatever it runs into stops it - it slides along it instead, at the
+		# speed it really went
 		for i in n:
+			# a card lying still has nowhere new to be
+			if kin[i] == 0 and vel[i] == Vector2.ZERO and spin[i] == 0.0:
+				moved[i] = 0.0
+				stirred[i] = 0
+				continue
 			pos[i] = _card_clear(was[i], pos[i], yaw[i])
-			moved[i] = (pos[i] as Vector2).distance_to(was[i])
+			moved[i] = pos[i].distance_to(was[i])
+			stirred[i] = 1 if moved[i] > 0.0 or yaw[i] != was_yaw[i] else 0
+			if kin[i] == 0:
+				vel[i] = (pos[i] - was[i]) * WASH_HZ
 			was[i] = pos[i]
+			was_yaw[i] = yaw[i]
 		# WHO LIES ON WHOM: pairs that came apart forget their order; a pair that has just met lies
 		# the way it met, the card sliding in on top (in the deck, the higher slot on top)
 		var far2 := Vector2(CARD.x, CARD.y).length_squared()
 		for i in n:
 			var pi_: Vector2 = pos[i]
 			for j in range(i + 1, n):
+				# two cards that both lay still lie as they did - once the first step has said how
+				if step > s_from and stirred[i] == 0 and stirred[j] == 0:
+					continue
 				var key := i * 64 + j
 				var d2 := pi_.distance_squared_to(pos[j])
 				var apart := d2 > far2 or (d2 > CARD.x * CARD.x and not _cards_overlap(pi_, yaw[i], pos[j], yaw[j]))
@@ -2613,6 +2692,7 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 						var top := i if int(rel[key]) > 0 else j
 						(under[top] as Array).erase(j if top == i else i)
 						rel.erase(key)
+						restacked = true
 					continue
 				if rel.has(key):
 					continue
@@ -2624,23 +2704,29 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 					i_top = true
 				rel[key] = 1 if i_top else -1
 				(under[i if i_top else j] as Array).append(j if i_top else i)
+				restacked = true
+				# A CARD RUN INTO IS KNOCKED: the one sliding in rides up over it and shoves it on
+				# its way, turning it if it was struck off its middle ([constant WASH_KNOCK])
+				if kin[i] == 0 and kin[j] == 0:
+					var top := i if i_top else j
+					var bot := j if i_top else i
+					var c := (pos[top] + pos[bot]) * 0.5
+					var dv := (vel[top] - vel[bot]) * float(hands["knock"])
+					_wash_push(vel, spin, bot, c - pos[bot], dv)
+					_wash_push(vel, spin, top, c - pos[top], -dv)
 		# HEIGHTS: a card one above the highest card it lies on; alone, flat on the cloth just above it
-		layer.fill(0)
-		for pass_ in n:
-			var changed := false
+		if restacked:
+			restacked = false
+			layer.fill(-1)
+			for i in n:
+				_layer_of(i, under, layer)
+			for i in n:
+				(over[i] as Array).clear()
 			for i in n:
 				for j in under[i]:
-					if layer[i] < layer[int(j)] + 1:
-						layer[i] = layer[int(j)] + 1
-						changed = true
-			if not changed:
-				break
-		covered.fill(0)
-		for i in n:
-			for j in under[i]:
-				covered[int(j)] = 1
-		for i in n:
-			height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + 0.00015)
+					(over[int(j)] as Array).append(i)
+			for i in n:
+				height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + 0.00015)
 		for i in n:
 			var q: Vector2 = pos[i]
 			var y := float(height[i])
@@ -2652,7 +2738,8 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				stacked = 1.0 - pow(1.0 - w, 3.0)
 			var slot_y := (float(land_order.find(i)) if t_in[i] > 0.0 else float(i)) * DECK_T + DECK_T * 0.5
 			(tracks[i] as Array).append(Vector4(q.x, lerpf(y, slot_y, stacked), q.y, yaw[i]))
-	# SQUARE: from wherever the pile left each card to its slot in the deck
+	# SQUARE: from wherever the pile left each card to its slot in the deck - turned the short way
+	# round, whatever turns the wash gave it
 	var last := steps - 1
 	var sq0 := int(floor((dur - square) * WASH_HZ))
 	for i in n:
@@ -2662,13 +2749,25 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 		var jit3: Vector3 = _slot_jit[slot] if slot < _slot_jit.size() else Vector3.ZERO
 		var tr := PackedVector4Array(tracks[i] as Array)
 		var from: Vector4 = tr[mini(sq0, tr.size() - 1)]
-		var to := Vector4(jit3.x, (float(slot) + 0.5) * DECK_T, jit3.y, jit3.z)
+		var to := Vector4(jit3.x, (float(slot) + 0.5) * DECK_T, jit3.y, from.w + wrapf(jit3.z - from.w, -PI, PI))
 		for st in range(sq0, tr.size()):
 			var e3 := _ease(float(st - sq0) / maxf(float(last - sq0), 1.0))
 			tr[st] = from.lerp(to, e3)
 		tracks[i] = tr
 	return {"tracks": tracks, "out": t_out, "in": t_in, "spread": 1.0, "order": land_order,
-		"mix": Vector2(out_end, mix_end)}
+		"mix": Vector2(out_end, mix_end), "hands": hands["log"]}
+
+
+## How many cards card [param i] lies on, one on another at the deepest: its layer in the pile, kept in
+## [param layer] (-1 for one not walked yet). Who lies on whom never loops, so the walk ends.
+static func _layer_of(i: int, under: Array, layer: PackedInt32Array) -> int:
+	if layer[i] >= 0:
+		return layer[i]
+	var l := 0
+	for j in under[i]:
+		l = maxi(l, _layer_of(int(j), under, layer) + 1)
+	layer[i] = l
+	return l
 
 
 ## Whether card [param a] lies, however far down, on card [param b] - walking down what each lies on.
@@ -2686,67 +2785,367 @@ static func _lies_on(under: Array, a: int, b: int) -> bool:
 	return false
 
 
-## THE PALMS' STROKES for a wash: each palm works one patch of the spread - a circle or two, the
-## two palms often turning opposite ways - lifts, and comes down on the next, mostly on its own
-## side of the cloth and now and then across. Their own dice, so a wash cut short ([method
-## _wash_fit]) has the same hands up to where it was cut. Per palm, in order:
-## {t0, t1, c (the patch's middle), v (how it travels), r (the circle), a0, om (where on it, and how
-## fast round)}.
-func _wash_strokes(seed: int, t0: float, t1: float, rx: float, rz: float) -> Array:
+## THE HANDS OF A WASH: their own dice - so a wash cut short ([method _wash_fit]) has the same hands
+## up to where it was cut - and their own FEEL, each wash sampled round the centers ([constant
+## WASH_GRIP] and on): how firmly a palm holds, how cards drag and slide, how briskly these hands
+## move. Each palm: its gesture under way, when it next comes down, its size, and how it holds
+## each card this pass; and every gesture the palms made, in order ([palm, gesture]).
+func _wash_hands(seed: int, t0: float, rx: float, rz: float) -> Dictionary:
 	var r := RandomNumberGenerator.new()
 	r.seed = hash([seed, "wash-palms"])
 	var palms: Array = []
 	for h in 2:
-		var side := -1.0 if h == 0 else 1.0
-		var list: Array = []
-		var t := t0 + r.randf_range(0.0, 0.5)
-		while t < t1:
-			var span := r.randf_range(1.3, 2.6)
-			var cx := side * r.randf_range(0.08, 0.9) * rx
-			if r.randf() < 0.2:
-				cx = r.randf_range(-0.55, 0.55) * rx       # across, into the middle or the other side
-			var c := Vector2(cx, r.randf_range(-0.75, 0.75) * rz - 0.01)
-			# circling while it travels: a loop drawn across the cloth, toward its middle more than out
-			var drift := Vector2.from_angle(r.randf() * TAU) * r.randf_range(0.02, 0.06) - c * 0.12
-			list.append({"t0": t, "t1": minf(t + span, t1), "c": c, "v": drift,
-				"r": r.randf_range(0.045, 0.085), "a0": r.randf() * TAU,
-				"om": r.randf_range(2.4, 4.0) * (1.0 if r.randf() < 0.5 else -1.0)})
-			t += span + r.randf_range(0.15, 0.35)      # lifted, moving to the next patch
-		palms.append(list)
-	return palms
+		var grip := PackedFloat32Array()
+		grip.resize(DECK_N)
+		palms.append({"g": {}, "next": t0 + r.randf_range(0.0, 0.4), "pass": -1, "grip": grip,
+			"size": PALM * r.randf_range(0.9, 1.12)})
+	var touched := PackedFloat32Array()
+	touched.resize(DECK_N)
+	return {"r": r, "palms": palms, "rx": rx, "rz": rz, "touched": touched, "log": [],
+		"grip": WASH_GRIP * r.randf_range(0.85, 1.15), "drag": WASH_DRAG * r.randf_range(0.8, 1.25),
+		"slide": WASH_SLIDE * r.randf_range(0.85, 1.2), "spin": WASH_SPIN * r.randf_range(0.8, 1.25),
+		"knock": WASH_KNOCK * r.randf_range(0.75, 1.25),
+		"pace": r.randf_range(0.85, 1.15)}
 
 
-## Palm [param h] at [param t]: (x, z, how hard it presses - 0 lifted, 1 down). [param at] keeps
-## each palm's place in its strokes; times only go forward while a plan is made.
-func _palm(strokes: Array, at: PackedInt32Array, h: int, t: float) -> Vector3:
-	var k := at[h]
-	while k < strokes.size() and t > float((strokes[k] as Dictionary)["t1"]):
+## PALM [param h] for the step from [param t]. Lifted between gestures, it comes down on its next
+## ([method _wash_gesture]) where the cards are. At each of [constant GRIP_AT]'s points it presses, a
+## card is brought to the palm's speed - as far as the palm's friction there allows ([constant
+## WASH_GRIP]): a card pressed whole goes with it, one caught at an end swings round behind it, one
+## only brushed slips. Where another card lies over it the palm hardly touches it ([constant
+## WASH_COVERED]), so a card half under another is pulled out by its free half. Each pass the palm
+## takes hold afresh - the heel of a hand bears on some cards and skims others - so a scrub carries
+## a different few each way, and what it carried out it often leaves there.
+func _wash_palm(hands: Dictionary, h: int, t: float, dt: float, t_end: float, pos: PackedVector2Array,
+		yaw: PackedFloat32Array, vel: PackedVector2Array, spin: PackedFloat32Array, over: Array,
+		held: PackedFloat32Array) -> void:
+	var p: Dictionary = (hands["palms"] as Array)[h]
+	var r: RandomNumberGenerator = hands["r"]
+	var g: Dictionary = p["g"]
+	if not g.is_empty() and t >= float(g["t1"]):
+		# lifted: a moment's reach to the next place, now and then a rest
+		p["next"] = float(g["t1"]) + (r.randf_range(0.5, 1.2) if r.randf() < WASH_REST else r.randf_range(0.08, 0.3))
+		g = {}
+		p["g"] = g
+	if g.is_empty():
+		if t < float(p["next"]) or t > t_end - 0.5:
+			return
+		g = _wash_gesture(hands, h, t, pos, t_end)
+		p["g"] = g
+		p["pass"] = -1
+		if g.is_empty():
+			p["next"] = t + 0.25
+			return
+		(hands["log"] as Array).append([h, g])
+	var a := _gesture_at(g, t)
+	var b := _gesture_at(g, t + dt)
+	var press := minf(a.z, b.z)
+	if press <= 0.0:
+		return
+	var grip: PackedFloat32Array = p["grip"]
+	var k := _gesture_pass(g, t)
+	if k != int(p["pass"]):
+		p["pass"] = k
+		for i in grip.size():
+			var u := r.randf()
+			# held (it goes with the palm), dragged (it slides along slower, and falls behind), or
+			# brushed (it stays): how the palm's friction there compares with the cloth's
+			grip[i] = 1.0 if u < 0.45 else (r.randf_range(0.1, 0.2) if u < 0.75 else r.randf_range(0.02, 0.07))
+	var at := Vector2(a.x, a.y)
+	var v := (Vector2(b.x, b.y) - at) / dt
+	var size: Vector2 = p["size"]
+	# the hand lies along the forearm, from the reader's shoulder on its side
+	var along := (at - Vector2(WASH_SHOULDER.x * (-1.0 if h == 0 else 1.0), WASH_SHOULDER.y)).normalized()
+	var across := Vector2(-along.y, along.x)
+	var reach := size.y * 1.05 + Vector2(CARD.x, CARD.y).length() * 0.5
+	var most := float(hands["grip"]) * dt / float(GRIP_AT.size())
+	var touched: PackedFloat32Array = hands["touched"]
+	for i in pos.size():
+		if pos[i].distance_squared_to(at) > reach * reach:
+			continue
+		var ax := Vector2(cos(yaw[i]), -sin(yaw[i]))
+		var az := Vector2(sin(yaw[i]), cos(yaw[i]))
+		var hold := press * grip[i]
+		for q in GRIP_AT:
+			var o: Vector2 = q
+			var rr := ax * o.x + az * o.y
+			var d := pos[i] + rr - at
+			var e := Vector2(d.dot(across) / size.x, d.dot(along) / size.y).length()
+			if e >= 1.05:
+				continue
+			var w := hold * (1.0 - smoothstep(0.75, 1.05, e))
+			# where another card lies over it, the palm presses that one instead
+			for k2 in over[i]:
+				if _card_has(pos[int(k2)], yaw[int(k2)], pos[i] + rr):
+					w *= WASH_COVERED
+					break
+			held[i] = maxf(held[i], w)
+			_wash_push(vel, spin, i, rr, v - vel[i] - Vector2(rr.y, -rr.x) * spin[i], most * w)
+		if held[i] > 0.2:
+			touched[i] = t
+
+
+## Whether a card lying at [param at] turned [param yaw] covers the point [param pt] (x by z).
+static func _card_has(at: Vector2, yaw: float, pt: Vector2) -> bool:
+	var d := pt - at
+	return absf(d.dot(Vector2(cos(yaw), -sin(yaw)))) <= CARD.x * 0.5 and absf(d.dot(Vector2(sin(yaw), cos(yaw)))) <= CARD.y * 0.5
+
+
+## Card [param i]'s point [param rr] (from its middle) brought [param dv] nearer the speed it is
+## pushed toward - no more than [param most] m/s of the card's own speed changed (a friction's
+## limit; the card slips past it): it moves and turns as a flat card would, pushed there, so a push
+## through its middle only moves it and one at an end turns it too.
+static func _wash_push(vel: PackedVector2Array, spin: PackedFloat32Array, i: int, rr: Vector2, dv: Vector2,
+		most: float = INF) -> void:
+	var rp := Vector2(rr.y, -rr.x)
+	var j := dv - rp * (rp.dot(dv) / (CARD_I + rr.length_squared()))
+	if j.length() > most:
+		j *= most / j.length()
+	vel[i] += j
+	spin[i] += rp.dot(j) / CARD_I
+
+
+## THE CLOTH SLOWS EVERY LOOSE CARD by the same each second, as cloth does - a card let go mid-pass
+## runs on a little and stops, sooner on cloth than on another card - and its turning stops too.
+static func _wash_rub(hands: Dictionary, vel: PackedVector2Array, spin: PackedFloat32Array, under: Array,
+		kin: PackedByteArray, dt: float) -> void:
+	var slide := float(hands["slide"]) * dt
+	var turn := float(hands["spin"]) * dt
+	for i in vel.size():
+		if kin[i] == 1 or (vel[i] == Vector2.ZERO and spin[i] == 0.0):
+			continue
+		var sp := vel[i].length()
+		if sp > 0.0:
+			var mu := slide * (1.0 if (under[i] as Array).is_empty() else WASH_ON_CARD)
+			vel[i] *= maxf(0.0, sp - mu) / sp
+		spin[i] = signf(spin[i]) * maxf(0.0, absf(spin[i]) - turn)
+
+
+## CARDS DRAG CARDS: two lying one on the other pull each toward the other's speed where they touch
+## - hard when a palm pressed the top one at the last step ([constant WASH_DRAG], [param held]), so a
+## card scrubbed across the spread drags and turns what it passes over and leaves a wake of cards
+## knocked askew. Before the palms, so what a palm holds goes its way whatever lies under it.
+func _wash_drag(hands: Dictionary, pos: PackedVector2Array, vel: PackedVector2Array, spin: PackedFloat32Array,
+		held: PackedFloat32Array, kin: PackedByteArray, rel: Dictionary, dt: float) -> void:
+	var far := Vector2(CARD.x, CARD.y).length()
+	var drag: Vector2 = hands["drag"]
+	for key in rel:
+		var i := int(key) >> 6
+		var j := int(key) & 63
+		if kin[i] == 1 or kin[j] == 1:
+			continue
+		if vel[i] == Vector2.ZERO and vel[j] == Vector2.ZERO and spin[i] == 0.0 and spin[j] == 0.0:
+			continue
+		var top := i if int(rel[key]) > 0 else j
+		var bot := j if top == i else i
+		var k := (drag.x + drag.y * held[top]) * (1.0 - clampf(pos[top].distance_to(pos[bot]) / far, 0.0, 1.0))
+		if k <= 0.0:
+			continue
+		var c := (pos[top] + pos[bot]) * 0.5
+		var rt := c - pos[top]
+		var rb := c - pos[bot]
+		var dv := ((vel[top] + Vector2(rt.y, -rt.x) * spin[top]) - (vel[bot] + Vector2(rb.y, -rb.x) * spin[bot])) \
+			* (0.5 * (1.0 - exp(-k * dt)))
+		_wash_push(vel, spin, bot, rb, dv)
+		_wash_push(vel, spin, top, rt, -dv)
+
+
+## THE CARDS MOVE, one step: none faster than a hand ([constant HAND_SPEED]), and one going out past
+## the spread's edge is turned back, the harder the farther out, as a hand would.
+func _wash_move(hands: Dictionary, pos: PackedVector2Array, yaw: PackedFloat32Array, vel: PackedVector2Array,
+		spin: PackedFloat32Array, kin: PackedByteArray, dt: float) -> void:
+	var rx := float(hands["rx"])
+	var rz := float(hands["rz"])
+	for i in pos.size():
+		if kin[i] == 1 or (vel[i] == Vector2.ZERO and spin[i] == 0.0):
+			continue
+		var sp := vel[i].length()
+		if sp > HAND_SPEED:
+			vel[i] *= HAND_SPEED / sp
+		spin[i] = clampf(spin[i], -WASH_TURN_MAX, WASH_TURN_MAX)
+		var q := Vector2(pos[i].x / rx, (pos[i].y + 0.01) / rz)
+		var l := q.length()
+		if l > 1.0:
+			var nrm := Vector2(q.x / rx, q.y / rz).normalized()
+			var vn := vel[i].dot(nrm)
+			if vn > 0.0:
+				vel[i] -= nrm * vn * clampf((l - 1.0) / 0.15, 0.0, 1.0)
+		pos[i] += vel[i] * dt
+		yaw[i] += spin[i] * dt
+
+
+## A PALM'S NEXT GESTURE, from [param t]. It comes down on a card - mostly one on its own side of the
+## spread, and one the hands have left alone a while - and the best of a few tries keeps clear of
+## the other palm ([constant WASH_APART]). How often each ([constant WASH_GESTURES]):
+##
+##   scrub   passes back and forth, each across a good part of the spread ([constant WASH_SCRUB]),
+##           its line turning and drifting a little between them
+##   swirl   wide rounds, often the other way round from the other palm's
+##   fetch   out to the card lying farthest out, and back through the middle with it
+##
+## A scrub or a fetch is its turning points `pts` at times `ts`, pressed `press` on each pass; a
+## swirl its middle `c` (drifting `v`), radii `a` and `b` turned `rot`, where round it `ph`, how
+## fast `om` and how hard `press`. Empty when there is no time left for one.
+func _wash_gesture(hands: Dictionary, h: int, t: float, pos: PackedVector2Array, t_end: float) -> Dictionary:
+	var r: RandomNumberGenerator = hands["r"]
+	var rx := float(hands["rx"])
+	var rz := float(hands["rz"])
+	var pace := float(hands["pace"])
+	var side := -1.0 if h == 0 else 1.0
+	var touched: PackedFloat32Array = hands["touched"]
+	var other: Dictionary = ((hands["palms"] as Array)[1 - h] as Dictionary)["g"]
+	var best := {}
+	var best_apart := -1.0
+	for attempt in 6:
+		# where it comes down
+		var ws := PackedFloat32Array()
+		var total := 0.0
+		for i in pos.size():
+			var w := (1.0 / (1.0 + exp(-side * pos[i].x / 0.07)) + 0.08) * (0.3 + clampf((t - touched[i]) / 2.5, 0.0, 1.0))
+			ws.append(w)
+			total += w
+		var pick := r.randf() * total
+		var land := pos[pos.size() - 1]
+		for i in pos.size():
+			pick -= ws[i]
+			if pick <= 0.0:
+				land = pos[i]
+				break
+		# the card lying farthest out, for a fetch
+		var stray := -1
+		var out_most := WASH_STRAY
+		for i in pos.size():
+			var k := Vector2(pos[i].x / rx, (pos[i].y + 0.01) / rz).length() * (1.15 if pos[i].x * side > 0.0 else 1.0)
+			if k > out_most:
+				out_most = k
+				stray = i
+		var u := r.randf() * (float(WASH_GESTURES["scrub"]) + float(WASH_GESTURES["swirl"]) + float(WASH_GESTURES["fetch"]))
+		var g := {}
+		if u < float(WASH_GESTURES["swirl"]):
+			var a := rx * r.randf_range(0.28, 0.5)
+			var b := rz * r.randf_range(0.5, 0.85)
+			var rot := r.randf_range(-0.4, 0.4)
+			var om := r.randf_range(3.2, 5.5) * pace
+			if String(other.get("kind", "")) == "swirl" and r.randf() < 0.65:
+				om *= -signf(float(other["om"]))
+			elif r.randf() < 0.5:
+				om = -om
+			var ph := r.randf() * TAU
+			var c := land - Vector2(cos(ph) * a, sin(ph) * b).rotated(rot)
+			c = Vector2(clampf(c.x, -rx * 0.92 + a, rx * 0.92 - a), clampf(c.y, -rz * 0.92 + b - 0.01, rz * 0.92 - b - 0.01))
+			var t1 := minf(t + r.randf_range(0.75, 1.5) * TAU / absf(om), t_end - 0.1)
+			if t1 - t < 0.5:
+				continue
+			g = {"kind": "swirl", "t0": t, "t1": t1, "c": c, "v": Vector2.from_angle(r.randf() * TAU) * r.randf_range(0.0, 0.02),
+				"a": a, "b": b, "rot": rot, "ph": ph, "om": om, "press": r.randf_range(0.6, 1.0)}
+		else:
+			var pts := PackedVector2Array()
+			var ts := PackedFloat32Array([t])
+			var press := PackedFloat32Array()
+			if u < float(WASH_GESTURES["swirl"]) + float(WASH_GESTURES["fetch"]) and stray >= 0:
+				# FETCH: onto the stray's outer edge, in through the middle and on a little past it, and
+				# now and then a lighter half-pass back
+				var p0 := pos[stray] + (pos[stray] + Vector2(0.0, 0.01)).normalized() * 0.02
+				var p1 := _wash_into(Vector2(r.randf_range(-0.35, 0.35) * rx, r.randf_range(-0.35, 0.35) * rz - 0.01), rx, rz, 0.9)
+				p1 = _wash_into(p1 + (p1 - p0).normalized() * r.randf_range(0.0, 0.08), rx, rz, 0.92)
+				pts.append(p0)
+				pts.append(p1)
+				press.append(r.randf_range(0.8, 1.0))
+				if r.randf() < 0.4:
+					pts.append(p1.lerp(p0, r.randf_range(0.35, 0.6)))
+					press.append(r.randf_range(0.4, 0.7))
+			else:
+				# SCRUB: from the card, toward somewhere a good way across the spread, then back and
+				# forth along that line - turning and drifting a little each pass
+				var p := _wash_into(land + Vector2(r.randf_range(-0.025, 0.025), r.randf_range(-0.02, 0.02)), rx, rz, 0.92)
+				var to := _wash_into(Vector2(r.randf_range(-1.0, 1.0) * rx, r.randf_range(-1.0, 1.0) * rz - 0.01), rx, rz, 0.9)
+				var dir := (to - p).normalized() if p.distance_to(to) > 0.08 else Vector2.from_angle(r.randf() * TAU)
+				var span := r.randf_range(WASH_SCRUB.x, WASH_SCRUB.y)
+				pts.append(p)
+				for pass_ in r.randi_range(2, 6):
+					var d := dir.rotated(r.randf_range(-0.3, 0.3)) * (1.0 if pass_ % 2 == 0 else -1.0)
+					var q := _wash_into(p + d * span * r.randf_range(0.75, 1.1) + Vector2(-d.y, d.x) * r.randf_range(-0.035, 0.035), rx, rz, 0.92)
+					if p.distance_to(q) < 0.06:
+						break
+					pts.append(q)
+					press.append(r.randf_range(0.6, 1.0))
+					p = q
+			# each pass in its own time, at a hand's pace for its length
+			for k in range(1, pts.size()):
+				var tt := ts[k - 1] + pts[k - 1].distance_to(pts[k]) / (r.randf_range(0.32, 0.58) * pace)
+				if tt > t_end - 0.1:
+					break
+				ts.append(tt)
+			if ts.size() < 2:
+				continue
+			pts.resize(ts.size())
+			press.resize(ts.size() - 1)
+			g = {"kind": "scrub", "t0": t, "t1": ts[ts.size() - 1], "pts": pts, "ts": ts, "press": press}
+		var apart := _palms_apart(g, other)
+		if apart > best_apart:
+			best = g
+			best_apart = apart
+		if apart >= WASH_APART:
+			break
+	return best
+
+
+## Gesture [param g] at [param t]: (x, z, how hard it presses - nothing outside it, coming down and
+## lifting over [constant WASH_TOUCH]). A scrub's pass eases out to a stop at each end.
+static func _gesture_at(g: Dictionary, t: float) -> Vector3:
+	var t0 := float(g["t0"])
+	var t1 := float(g["t1"])
+	if t < t0 or t > t1:
+		return Vector3.ZERO
+	var touch := clampf((t - t0) / WASH_TOUCH, 0.0, 1.0) * clampf((t1 - t) / WASH_TOUCH, 0.0, 1.0)
+	if String(g["kind"]) == "swirl":
+		var u := t - t0
+		var ph := float(g["ph"]) + float(g["om"]) * u
+		var p := (g["c"] as Vector2) + (g["v"] as Vector2) * u + Vector2(cos(ph) * float(g["a"]), sin(ph) * float(g["b"])).rotated(float(g["rot"]))
+		return Vector3(p.x, p.y, touch * float(g["press"]))
+	var ts: PackedFloat32Array = g["ts"]
+	var pts: PackedVector2Array = g["pts"]
+	var k := _gesture_pass(g, t)
+	var p2 := pts[k].lerp(pts[k + 1], _ease((t - ts[k]) / maxf(ts[k + 1] - ts[k], 0.001)))
+	return Vector3(p2.x, p2.y, touch * (g["press"] as PackedFloat32Array)[k])
+
+
+## Which pass of gesture [param g] is under way at [param t]: a scrub's leg, a swirl's half-round.
+static func _gesture_pass(g: Dictionary, t: float) -> int:
+	if String(g["kind"]) == "swirl":
+		return int(absf(float(g["om"])) * (t - float(g["t0"])) / PI)
+	var ts: PackedFloat32Array = g["ts"]
+	var k := 0
+	while k < ts.size() - 2 and t > ts[k + 1]:
 		k += 1
-	at[h] = k
-	if k >= strokes.size():
-		var last: Dictionary = strokes[strokes.size() - 1] if not strokes.is_empty() else {}
-		return Vector3(_stroke_at(last, float(last.get("t1", t))).x, _stroke_at(last, float(last.get("t1", t))).y, 0.0) \
-			if not last.is_empty() else Vector3.ZERO
-	var s: Dictionary = strokes[k]
-	if t < float(s["t0"]):
-		# lifted: from where the last stroke ended to where this one begins
-		var p1 := _stroke_at(s, float(s["t0"]))
-		if k == 0:
-			return Vector3(p1.x, p1.y, 0.0)
-		var prev: Dictionary = strokes[k - 1]
-		var p0 := _stroke_at(prev, float(prev["t1"]))
-		var u := _ease((t - float(prev["t1"])) / maxf(float(s["t0"]) - float(prev["t1"]), 0.01))
-		var p := p0.lerp(p1, u)
-		return Vector3(p.x, p.y, 0.0)
-	var p := _stroke_at(s, t)
-	var press := clampf((t - float(s["t0"])) / 0.15, 0.0, 1.0) * clampf((float(s["t1"]) - t) / 0.15, 0.0, 1.0)
-	return Vector3(p.x, p.y, press)
+	return k
 
 
-static func _stroke_at(s: Dictionary, t: float) -> Vector2:
-	var u := t - float(s["t0"])
-	var a := float(s["a0"]) + float(s["om"]) * u
-	return (s["c"] as Vector2) + (s["v"] as Vector2) * u + Vector2(cos(a), sin(a)) * float(s["r"])
+## How near gesture [param g] comes to the other palm's [param other] while both press (INF when
+## they never do at once).
+static func _palms_apart(g: Dictionary, other: Dictionary) -> float:
+	if g.is_empty() or other.is_empty():
+		return INF
+	var least := INF
+	var t := maxf(float(g["t0"]), float(other["t0"]))
+	var t1 := minf(float(g["t1"]), float(other["t1"]))
+	while t <= t1:
+		var a := _gesture_at(g, t)
+		var b := _gesture_at(other, t)
+		if a.z > 0.0 and b.z > 0.0:
+			least = minf(least, Vector2(a.x, a.y).distance_to(Vector2(b.x, b.y)))
+		t += 0.1
+	return least
+
+
+## [param p] brought in to the spread's edge, scaled by [param k], when it lies out past it.
+static func _wash_into(p: Vector2, rx: float, rz: float, k: float) -> Vector2:
+	var q := Vector2(p.x / rx, (p.y + 0.01) / rz)
+	var l := q.length()
+	if l <= k:
+		return p
+	q *= k / l
+	return Vector2(q.x * rx, q.y * rz - 0.01)
 
 
 ## A card just landed on the deck, not yet squared.
