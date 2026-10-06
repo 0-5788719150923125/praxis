@@ -494,7 +494,7 @@ func _process(_delta: float) -> void:
 	# BEFORE the playback guard: a window cut is not part of a reading, and one started
 	# with nothing playing would otherwise never be noticed to have finished.
 	_pump_films()
-	# the reading ends on its own (a stream never says so): put Speak back when it does
+	# the reading ends on its own (a stream never says so): put Play back when it does
 	if _go != null and _go.text.begins_with("Pause") and not _reading_live():
 		_show_speak_label()
 	if _playback == null:
@@ -578,6 +578,27 @@ func _fx_admit(avail: int) -> int:
 	return mini(avail, maxi(0, int((_fx_marks[0] as Dictionary)["at"]) - _pushed))
 
 
+## SPACE PLAYS AND PAUSES, wherever the focus is. It was only ever the Play button's own key -
+## Space presses whatever button has the focus - so it stopped working the moment anything else in
+## the panel was clicked, the panel's collapse button above all (2026-10-05: "When I click the
+## Tarot/collapse button in the top-left corner, the spacebar's ability to Play/Pause the scene
+## stops working"). Taken here, before the focused control can, except while someone is typing.
+func _input(event: InputEvent) -> void:
+	if _space_plays(event, get_viewport().gui_get_focus_owner()):
+		_on_speak()
+		get_viewport().set_input_as_handled()
+
+
+## Whether [param event] is Space meant for playback: plain Space, nobody typing into
+## [param focus], and Play there to press.
+func _space_plays(event: InputEvent, focus: Control) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE):
+		return false
+	if event.ctrl_pressed or event.alt_pressed or event.meta_pressed:
+		return false
+	return not (focus is TextEdit or focus is LineEdit) and _go != null and not _go.disabled
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F2:
 		_panel.visible = not _panel.visible
@@ -646,7 +667,7 @@ func _build_header(box: VBoxContainer) -> void:
 
 
 ## THE SCRIPT: a card here, the writing in the editor window it opens. Where the words
-## come from (a draft, or a file on disk re-read at every Speak) is the DocSource inside it.
+## come from (a draft, or a file on disk re-read at every Play) is the DocSource inside it.
 ## The card's section, block and marks are this panel's own (see [member _section]).
 func _build_source(box: VBoxContainer) -> void:
 	_writer = preload("res://scripts/script_writer.gd").new()
@@ -761,7 +782,7 @@ func _build_cast(box: VBoxContainer) -> void:
 
 	# THE TABS - one per name the script cues, derived rather than managed (see the note on
 	# the speaker cues above). Everything below this row belongs to the selected tab; the
-	# Speak button beside the voice picker does not - it reads the whole script, in every
+	# Play button beside the voice picker does not - it reads the whole script, in every
 	# voice it asks for. A FLOW, not a TabBar, so a chapter with eight speakers shows all
 	# eight names at once instead of hiding half of them behind scroll arrows.
 	# A LIST WITH A HEADING, one row per person, each saying what voice they have now - a
@@ -775,7 +796,7 @@ func _build_cast(box: VBoxContainer) -> void:
 		+ "own reading <!-- speaker: Emily --> hands the text after it to Emily - and the "
 		+ "list follows the script as it changes. Pick a person to edit their voice below; "
 		+ "Test hears it on its own. A name that drops out of the script keeps its settings "
-		+ "for when it comes back. Speak still reads the whole script.")
+		+ "for when it comes back. Play still reads the whole script.")
 	box.add_child(_cast_head)
 	_tabs = VBoxContainer.new()
 	_tabs.add_theme_constant_override("separation", 2)
@@ -794,7 +815,7 @@ func _build_cast(box: VBoxContainer) -> void:
 	add_child(_seek_timer)
 
 
-## THE VOICE: the model, Speak / Stop / Test, the reader, the tone, the pace and pauses, the
+## THE VOICE: the model, Play / Stop / Test, the reader, the tone, the pace and pauses, the
 ## delivery dials and the room - every control below belongs to the tab that is showing.
 func _build_voice(box: VBoxContainer) -> void:
 	var vrow := HBoxContainer.new()
@@ -802,7 +823,7 @@ func _build_voice(box: VBoxContainer) -> void:
 	box.add_child(vrow)
 	_voices = OptionButton.new()
 	_voices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# SIZED BY THE ROW, NOT BY ITS LONGEST VOICE: Speak becomes "Resume ●" beside it, and a picker
+	# SIZED BY THE ROW, NOT BY ITS LONGEST VOICE: Play becomes "Resume ●" beside it, and a picker
 	# as wide as "libritts high (downloads)" pushed the whole panel out (see SidePanel._check_width)
 	_voices.fit_to_longest_item = false
 	_voices.clip_text = true
@@ -823,14 +844,14 @@ func _build_voice(box: VBoxContainer) -> void:
 		_last_edit_ms = Time.get_ticks_msec())
 	vrow.add_child(_voices)
 	_go = Button.new()
-	_go.text = "Speak"
-	_go.tooltip_text = ("Read the script aloud and drive the visuals from it. While a reading "
-		+ "plays this is Pause, then Resume - it picks up exactly where it stopped. To read again "
-		+ "from the top (or to hear an edit, marked with a dot), press Stop, then Speak.")
+	_go.text = "Play"
+	_go.tooltip_text = ("Read the script aloud and drive the visuals from it (Space). While a reading "
+		+ "plays this is Pause, then Resume - it picks up exactly where it stopped. To play again "
+		+ "from the top (or to hear an edit, marked with a dot), press Stop, then Play.")
 	_go.disabled = true
 	_go.pressed.connect(_on_speak)
 	vrow.add_child(_go)
-	# STOP, beside Speak. Ending the reading needs its own control: Speak restarts from the
+	# STOP, beside Play. Ending the reading needs its own control: Play restarts from the
 	# top, which is the opposite of what someone about to export wants.
 	_stop = Button.new()
 	_stop.text = "Stop"
@@ -1125,7 +1146,7 @@ func _build_picture(box: VBoxContainer) -> void:
 # --- the seams a mode built on this panel overrides ---------------------------
 
 
-## THE WORDS TO READ, fresh: what Speak, a scrub and an export read. Here the document's own
+## THE WORDS TO READ, fresh: what Play, a scrub and an export read. Here the document's own
 ## body - in sync mode the file as it is on disk RIGHT NOW (see [method DocSource.pull]).
 func _reading_body() -> String:
 	return _doc.pull()
@@ -1647,7 +1668,7 @@ func _mark_stale() -> void:
 
 ## SPEAK IS A TOGGLE while a reading plays: Pause, then Resume, from where it was. It restarted
 ## the reading from the top every time, and "there are times when I need to pause the
-## visualization and come back to it later". Reading again from the top is Stop, then Speak.
+## visualization and come back to it later". Reading again from the top is Stop, then Play.
 var _stale := false
 var _outro_queued := false       # the outro's silence is on the stream (see the drain)
 ## THE OUTRO MARK, live: how long the fade is (0 = no mark), the stream sample it starts at
@@ -1657,10 +1678,10 @@ var _fade_at := -1
 ## LIVE SCRUBBING, BY SENTENCE. A live reading is synthesized a sentence or two ahead, so there
 ## is no audio behind or ahead of the playhead to seek within. The scrub bar (Chrome's Scrubber,
 ## through Spectrum's scrub hooks) therefore seeks by SENTENCE: its positions are estimated
-## sentence starts, and a seek is Stop + Speak from that sentence - a fresh reading that is only
+## sentence starts, and a seek is Stop + Play from that sentence - a fresh reading that is only
 ## synthesized from there on. The media start in the state they would be in at that point
 ## (book_document()["start_words"]). The in-place generator seek recorded above _repace stays
-## withdrawn; this never seeks a stream, it ends one and starts another, as Stop then Speak does.
+## withdrawn; this never seeks a stream, it ends one and starts another, as Stop then Play does.
 var _start_chunk := 0
 var _chunk_at := {}                      # chunk -> the stream sample its audio starts at
 var _chunk_t := PackedFloat32Array()     # chunk -> its estimated start along the reading, s (n + 1)
@@ -1677,7 +1698,7 @@ const OUTRO_WORDS_PER_SECOND := 3.5
 
 ## A reading that is still going: planned, and not yet played out to the end. A generated
 ## stream never announces its end, so "every chunk played and the buffer drained" is the end -
-## and then Speak reads again from the top rather than pausing silence.
+## and then Play reads again from the top rather than pausing silence.
 func _reading_live() -> bool:
 	if _chunks.is_empty():
 		return false
@@ -1689,7 +1710,7 @@ func _reading_live() -> bool:
 func _show_speak_label() -> void:
 	if _go == null:
 		return
-	var label := "Speak"
+	var label := "Play"
 	if _reading_live():
 		label = "Resume" if Spectrum.stream_paused() else "Pause"
 	_go.text = label + (" ●" if _stale and not _chunks.is_empty() else "")
@@ -2600,7 +2621,7 @@ func _slider_readout(row: HBoxContainer, sl: HSlider, suffix := "") -> Label:
 
 
 ## THE INK: which pen this voice writes in, where the medium writes by hand (the Notebook).
-## Not a sound, so changing it restarts nothing; it reaches the page at the next Speak.
+## Not a sound, so changing it restarts nothing; it reaches the page at the next Play.
 var _ink_pick: OptionButton
 var _ink_raw := ""               # the slot's ink as stored, kept when it is a hex the list lacks
 
@@ -2791,7 +2812,7 @@ func _fill_voices(voices: Array) -> void:
 				break
 	_test.disabled = false
 	_refresh_tab_labels()           # model names are known now, not just ids
-	_go.disabled = false        # from here on Speak is always live: pressing it
+	_go.disabled = false        # from here on Play is always live: pressing it
 	                            # mid-reading restarts with the current text
 	_show_voice_license()
 
@@ -2903,7 +2924,7 @@ func _on_speak() -> void:
 		_set_status("Nothing to speak yet.")
 		return
 	# The cast NOW, not at the next pause in typing: a name written a moment ago must read in
-	# its own voice from the first Speak.
+	# its own voice from the first Play.
 	_refresh_cast(body)
 	if _test_busy():
 		_stop_test()
@@ -2986,7 +3007,7 @@ func _reset_playback() -> void:
 	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
 
 
-## Speak and Stop, from one place. Two buttons whose enabled state is set at each of the
+## Play and Stop, from one place. Two buttons whose enabled state is set at each of the
 ## several points a reading starts or ends is two buttons that will eventually disagree.
 func _sync_speak_buttons() -> void:
 	var reading := not _chunks.is_empty()
@@ -3068,7 +3089,7 @@ func _seek_now() -> void:
 		_speak_from(k)
 
 
-## Read from sentence [param k]: Stop, then Speak from there. The old stream is ENDED (the voice
+## Read from sentence [param k]: Stop, then Play from there. The old stream is ENDED (the voice
 ## stops at once and the stage is handed back), then a fresh reading is planned and requested
 ## from [param k] on, with no intro. The media start where it starts ([method _start_words]).
 func _speak_from(k: int) -> void:
@@ -3203,7 +3224,7 @@ func _stop_speaking() -> void:
 	if end_stream.is_valid():
 		end_stream.call()
 	_sync_speak_buttons()
-	_set_status("Stopped. Press Speak to read again from the top.")
+	_set_status("Stopped. Press Play to play again from the top.")
 
 
 ## Pure: text in, chunk plan out. Shared by playback and by export, so an export
@@ -3263,7 +3284,7 @@ func _build_chunks(body: String) -> Array:
 	_ease_leans(out)
 	out = _trim_to_outro(out)
 	# LAST, so it wins the status line. TextNorm has already warned into the log,
-	# but this is the surface someone is looking at with their hand on Speak, and
+	# but this is the surface someone is looking at with their hand on Play, and
 	# a macro with no default is words missing from a reading about to be made.
 	if not bare.is_empty():
 		_note("%d macro(s) will not read as intended: %s - write ${NAME:value}"
@@ -3655,7 +3676,7 @@ func _pump() -> void:
 		return
 	# THE INTRO IS NOT LOOKAHEAD. It is seeded into the queue as silence before anything is
 	# requested, so counting it made an Intro of LOOKAHEAD_SECONDS or more look like a full
-	# buffer: nothing was ever requested, the stream never opened, and Speak did nothing at
+	# buffer: nothing was ever requested, the stream never opened, and Play did nothing at
 	# all ("at 9 the video breaks, at 7 it works"). Only the SPEECH queued counts; the intro
 	# still to be pushed is taken off (an underestimate once it plays, so it stays safe).
 	var intro_left := maxf(0.0, _lead_in - float(_pushed) / float(maxi(_sr, 1)))

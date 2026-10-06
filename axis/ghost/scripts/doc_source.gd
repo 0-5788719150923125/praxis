@@ -25,7 +25,7 @@ class_name DocSource
 ##
 ## SYNC IS READ AT EVERY SPEAK, not at every keystroke and not when the document was picked.
 ## The point of it is that the author keeps working in their own editor while ghost is open:
-## save the file, press Speak, hear the change. A watcher polling for modifications would be
+## save the file, press Play, hear the change. A watcher polling for modifications would be
 ## the same thing done worse - it would re-read mid-reading, which is exactly when the file
 ## is most likely to be half-written.
 ##
@@ -35,9 +35,9 @@ class_name DocSource
 ##
 ## BOTH DIRECTIONS FOLLOW THE AUTHOR, with no button for either. SAVING is automatic - a
 ## dial moved is a dial written, on a quiet period, exactly the way the rest of ghost saves
-## (see [Settings]). LOADING happens at every Speak and export ([method pull]), because the
+## (see [Settings]). LOADING happens at every Play and export ([method pull]), because the
 ## file is the authoritative source - and never on a timer, because an import firing by
-## itself would undo a dial the author had just moved. A Speak cannot do that: it writes any
+## itself would undo a dial the author had just moved. A Play cannot do that: it writes any
 ## change still waiting first, so what it reads back already holds it.
 ##
 ## What makes the automatic direction safe is not that the write is small, it is that the
@@ -49,7 +49,7 @@ class_name DocSource
 ## ...AND NOT IN AN UNATTENDED PROCESS. An export render boots this whole app against the
 ## author's settings, which is exactly how a render would come to edit a manuscript nobody
 ## is watching. Automatic saving is refused wherever [Settings] is read-only - a render, the
-## offline analyzer, a test probe. Flushing on Speak is not, because pressing Speak is a person.
+## offline analyzer, a test probe. Flushing on Play is not, because pressing Play is a person.
 ##
 ## The panel supplies the two halves it alone can know, as Callables: [member capture]
 ## returns the settings to store, [member apply] takes the ones a document carried.
@@ -67,7 +67,7 @@ const CLEAR_TIP := ("Start an empty script that is saved nowhere, and forget the
 	+ "synced to. The file itself is left exactly as it is. Text that was not synced anywhere "
 	+ "can be brought back with Ctrl+Z in the editor.")
 ## Open…'s tooltip; the button is on the [ScriptWriter] card.
-const OPEN_TIP := ("Open a Markdown file and sync to it: it is read fresh at every Speak, "
+const OPEN_TIP := ("Open a Markdown file and sync to it: it is read fresh at every Play, "
 	+ "and edits made here are saved into it. Edit it in your own editor too if you like. "
 	+ "Its YAML frontmatter is never shown or spoken - the panel keeps the voice there.")
 
@@ -83,7 +83,7 @@ signal mode_changed(sync: bool)
 ## source's block. Set by the owner; a source without it simply cannot save a voice.
 var capture: Callable
 ## The other direction: a document's stored block -> the panel. Called on open and on
-## Reload, never on a Speak.
+## Reload, never on a Play.
 var apply: Callable
 
 var _section := "generative"     # the [Settings] section this source's draft and path live in
@@ -201,7 +201,7 @@ func bind_text(te: TextEdit) -> void:
 
 ## True while THIS widget is writing the text box, so the panel's own `text_changed`
 ## handler can tell a document being shown from the author typing. Without it, a synced
-## Speak marks its own reading stale the instant it starts.
+## Play marks its own reading stale the instant it starts.
 func is_quiet() -> bool:
 	return _syncing
 
@@ -229,7 +229,7 @@ func field(key: String) -> String:
 ## Set a field. Synced, it is written into the file at once - one key, by the same checked line
 ## surgery as the voice, and REMOVED when emptied rather than left as an empty key; unsynced, it
 ## is kept with the script and goes into the file at Sync to…. Called on a person's edit, so not
-## refused in a read-only process (the same reasoning as the flush on Speak).
+## refused in a read-only process (the same reasoning as the flush on Play).
 func set_field(key: String, value: String) -> bool:
 	value = value.strip_edges()
 	if field(key) == value:
@@ -263,11 +263,11 @@ func draft() -> String:
 
 
 ## THE REAL-TIME READ: the document as it is on disk at this instant - its words AND its
-## voice. The file is the authoritative source, so every Speak and every export starts here
+## voice. The file is the authoritative source, so every Play and every export starts here
 ## and there is no separate "re-read" to remember to press.
 ##
 ## A SETTING NOT YET WRITTEN IS WRITTEN FIRST. The autosave waits for a quiet period, so a
-## dial moved a moment before Speak exists only in the panel; reading the voice back without
+## dial moved a moment before Play exists only in the panel; reading the voice back without
 ## flushing it would put the OLDER value from the file straight over the one just chosen.
 ## Flushed, the panel's latest change is in the file, and what comes back is the file - the
 ## author's own edits to the frontmatter included.
@@ -420,7 +420,7 @@ func _process(_delta: float) -> void:
 	if not is_sync():
 		return
 	# An export render, the offline analyzer and a test probe all boot the whole app against
-	# the author's own settings - and would find their own document open. A person pressing Speak
+	# the author's own settings - and would find their own document open. A person pressing Play
 	# is a person; a background process is not.
 	if Settings.is_read_only() and not _autosave_for_test:
 		return
@@ -472,7 +472,7 @@ func allow_autosave_for_test() -> void:
 ## WRITE THE PANEL INTO THE DOCUMENT WITHOUT UNDOING AN EDIT MADE TO IT OUTSIDE GHOST.
 ##
 ## The panel writes its WHOLE block whenever anything in it changes, and the document is only
-## re-read at Speak - so a value the author reverted in their own editor was written straight
+## re-read at Play - so a value the author reverted in their own editor was written straight
 ## back from the panel's memory by the next unrelated change (a slider, a tab, the Handwriting
 ## picker): "I keep reverting the frontmatter, yet Ghost keeps resetting it". So when the block
 ## on disk is no longer what ghost last read or wrote (`_saved`), this is a THREE-WAY MERGE:
@@ -616,7 +616,7 @@ func _show(body: String) -> void:
 	if _text.text == body:
 		return
 	_syncing = true
-	# The caret and the scroll, kept: a re-read at every Speak would otherwise throw the
+	# The caret and the scroll, kept: a re-read at every Play would otherwise throw the
 	# reader back to the top of the chapter every time.
 	body = FrontMatter_.lf(body)
 	var col := _text.get_caret_column()

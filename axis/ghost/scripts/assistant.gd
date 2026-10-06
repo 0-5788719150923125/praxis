@@ -9,7 +9,9 @@ class_name Assistant
 ## shouldn't require opting into it.
 ##
 ## Dispatch itself is gated on the splash's Assistant dropdown (see
-## splash.gd): set to anything but Off, every feedback submission is
+## splash.gd) AND on that CLI being installed ([method Splash.assistant_backend]
+## reads as Off without it; a follow-up or resume needs its own pinned CLI):
+## set to anything but Off, every feedback submission is
 ## immediately handed to a fresh `claude -p --dangerously-skip-permissions`
 ## subprocess - the same one-shot workflow already used interactively all
 ## session, just wired to fire the moment feedback lands instead of waiting
@@ -110,8 +112,16 @@ func _backend_of(entry: Dictionary) -> String:
 	var b := String(entry.get("backend", ""))
 	if Backends.has(b):
 		return b
-	var chosen := Splash.assistant_backend()
+	var chosen := Splash.assistant_choice()
 	return chosen if Backends.has(chosen) else Backends.LEGACY
+
+
+## "" when the CLI this entry runs on is installed, else "<that CLI> is not installed". A
+## follow-up or resume is pinned to the CLI that started it, so it is THAT one's presence that
+## counts, whatever the dropdown says now.
+func _missing_cli(entry: Dictionary) -> String:
+	var b := _backend_of(entry)
+	return "" if Splash.installed_assistants().has(b) else "%s is not installed" % Backends.label(b)
 
 
 ## ghost's project root is axis/ghost - the actual git repo (praxis) is two
@@ -234,6 +244,16 @@ func _pump_queue() -> void:
 ## record) or a typed follow-up - either way it lands on the SAME claude
 ## session once `entry.session_id` is set, via --resume.
 func _dispatch(entry: Dictionary, prompt: String) -> void:
+	# NEVER LAUNCH A CLI THAT IS NOT THERE. The buttons that queue a run are grayed out without
+	# it, so this is the backstop: a failed launch leaves a resumable conversation as a dead
+	# "error". It is parked where its own button picks it up again once the CLI is installed.
+	var missing := _missing_cli(entry)
+	if not missing.is_empty():
+		entry.status = "interrupted" if String(entry.session_id) != "" else "orphaned"
+		entry.error_text = missing + " - install it, then rescan on the home screen"
+		_save_entry(entry)
+		_refresh_list()
+		return
 	entry.code_mtime = _max_ghost_source_mtime() # baseline: detect if THIS run edits code
 	_running_count += 1
 	entry.status = "running"
@@ -669,7 +689,8 @@ func _refresh_list() -> void:
 		elif e.status == "queued":
 			queued += 1
 	if Splash.assistant_backend() == "":
-		_header.text = "Feedback (assistant off - browse/delete only)"
+		_header.text = "Feedback (assistant %s - browse/delete only)" \
+			% ("off" if Splash.assistant_choice() == "" else "not installed")
 	elif running == 0 and queued == 0:
 		_header.text = "Assistant"
 	else:
@@ -825,7 +846,7 @@ func _build_body(entry: Dictionary) -> Control:
 				body.add_child(_dim_label("not sent automatically"))
 				body.add_child(_build_send_row(entry))
 			else:
-				body.add_child(_dim_label("no assistant selected - pick one on the home screen to send this"))
+				body.add_child(_dim_label("not sent - %s" % Splash.assistant_gap()))
 		"queued":
 			body.add_child(_dim_label("queued - waiting for the current run to finish"))
 		"interrupted":
@@ -910,6 +931,10 @@ func _build_followup_row(entry: Dictionary) -> Control:
 	var send := Button.new()
 	send.text = "Send"
 	send.focus_mode = Control.FOCUS_NONE
+	var missing := _missing_cli(entry)
+	send.disabled = not missing.is_empty()
+	if not missing.is_empty():
+		send.tooltip_text = missing + " - a follow-up continues that CLI's own session"
 	# Goes through the SAME queue as a fresh submission (see
 	# enqueue/_pump_queue) - a follow-up on an idle, already-done entry only
 	# waits if MAX_CONCURRENT other entries are already running.
@@ -926,7 +951,10 @@ func _build_followup_row(entry: Dictionary) -> Control:
 		_save_entry(entry)
 		_refresh_list()
 		_pump_queue())
-	edit.text_submitted.connect(func(_t): send.pressed.emit())
+	# emitting `pressed` by hand bypasses `disabled`, so Enter asks it too
+	edit.text_submitted.connect(func(_t):
+		if not send.disabled:
+			send.pressed.emit())
 	row.add_child(send)
 	return row
 
@@ -981,6 +1009,10 @@ func _build_resume_row(entry: Dictionary) -> Control:
 	resume.focus_mode = Control.FOCUS_NONE
 	resume.tooltip_text = "Continue the same %s session (%s) where it left off" \
 		% [Backends.label(_backend_of(entry)), String(entry.session_id)]
+	var missing := _missing_cli(entry)
+	resume.disabled = not missing.is_empty()
+	if not missing.is_empty():
+		resume.tooltip_text = missing + " - a resume continues that CLI's own session"
 	var do_resume := func():
 		var extra := edit.text.strip_edges()
 		var prompt := "The previous run was interrupted before finishing."
@@ -998,7 +1030,9 @@ func _build_resume_row(entry: Dictionary) -> Control:
 		_refresh_list()
 		_pump_queue()
 	resume.pressed.connect(do_resume)
-	edit.text_submitted.connect(func(_t): do_resume.call())
+	edit.text_submitted.connect(func(_t):
+		if not resume.disabled:
+			do_resume.call())
 	row.add_child(resume)
 
 	col.add_child(row)

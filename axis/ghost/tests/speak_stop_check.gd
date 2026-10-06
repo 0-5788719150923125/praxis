@@ -41,6 +41,7 @@ func _run() -> void:
 	_check_stop_ends_a_reading()
 	_check_stop_is_idempotent()
 	_check_the_button_follows_the_state()
+	_check_space_plays_wherever_the_focus_is()
 	print("")
 	if _fails.is_empty():
 		print("speak_stop_check: ALL OK - Stop ends a reading and hands the stage back.")
@@ -116,8 +117,48 @@ func _check_the_button_follows_the_state() -> void:
 	_ok(not _ed._stop.disabled, "and live once a reading is planned")
 	_ed._stop_speaking()
 	_ok(_ed._stop.disabled, "and grayed again after Stop")
-	_ok(_ed._go.text == "Speak",
-		"Speak has dropped its unsaved-edit dot after a stop (%s)" % _ed._go.text)
+	_ok(_ed._go.text == "Play",
+		"Play has dropped its unsaved-edit dot after a stop (%s)" % _ed._go.text)
+
+
+## SPACE PLAYS AND PAUSES WHEREVER THE FOCUS IS (2026-10-05: "When I click the Tarot/collapse
+## button in the top-left corner, the spacebar's ability to Play/Pause the scene stops working").
+## Space had only ever been the Play button's own key, pressing whatever button had the focus -
+## and the panel's collapse button takes the focus when clicked, which the control shows. Now the
+## editor takes Space first, with that button focused or the panel hidden, unless someone types.
+func _check_space_plays_wherever_the_focus_is() -> void:
+	print("")
+	print("space_plays_wherever_the_focus_is")
+	var collapse: Button = null
+	for b in _ed._panel.find_children("*", "Button", true, false):
+		if (b as Button).text == "–":
+			collapse = b
+	_ok(collapse != null, "the panel has its collapse button")
+	if collapse == null:
+		return
+	_ok(collapse.focus_mode != Control.FOCUS_NONE,
+		"control: clicking the collapse button takes the keyboard focus (which is why Space went to it)")
+	var space := InputEventKey.new()
+	space.keycode = KEY_SPACE
+	space.pressed = true
+	_ed._go.disabled = false
+	_ok(_ed._space_plays(space, collapse), "Space plays with the collapse button focused")
+	_ok(_ed._space_plays(space, null), "and with nothing focused")
+	_ed._panel.visible = false
+	_ok(_ed._space_plays(space, null), "and with the panel collapsed")
+	_ed._panel.visible = true
+	_ok(not _ed._space_plays(space, _ed._text), "but not while typing in the script")
+	var field := LineEdit.new()
+	_ok(not _ed._space_plays(space, field), "or in a text field")
+	field.free()
+	var ctrl := space.duplicate() as InputEventKey
+	ctrl.ctrl_pressed = true
+	_ok(not _ed._space_plays(ctrl, null), "Ctrl+Space is not Space")
+	var held := space.duplicate() as InputEventKey
+	held.echo = true
+	_ok(not _ed._space_plays(held, null), "a held key does not toggle again and again")
+	_ed._go.disabled = true
+	_ok(not _ed._space_plays(space, null), "and nothing happens before Play can be pressed")
 
 
 func _ok(cond: bool, what: String) -> void:

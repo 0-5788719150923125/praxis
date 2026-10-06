@@ -180,11 +180,11 @@ func _check_opening_a_document() -> void:
 
 
 ## THE REAL-TIME CLAIM, which is the whole point of sync mode: the author keeps writing
-## off-screen and the next Speak is the file as it is NOW.
+## off-screen and the next Play is the file as it is NOW.
 func _check_speak_rereads_the_disk() -> void:
 	_write(HEAD + BODY_B)
 	var body := _doc.pull()
-	_ok(body == BODY_B, "a second Speak did not re-read the file (got %s)"
+	_ok(body == BODY_B, "a second Play did not re-read the file (got %s)"
 		% body.strip_edges().substr(0, 60))
 	_ok(_ed._text.text == BODY_B, "the box did not follow the document's new text")
 
@@ -307,7 +307,7 @@ func _check_autosave_waits_for_quiet() -> void:
 
 ## EVERY SPEAK READS THE VOICE TOO, not only the words - the file is the authoritative source
 ## and there is no re-read button. Two-sided: an edit made to the frontmatter outside ghost
-## must arrive, AND a dial moved a moment before Speak (still inside the autosave's quiet
+## must arrive, AND a dial moved a moment before Play (still inside the autosave's quiet
 ## period) must survive it - the flush writes it first, so the file's older value cannot
 ## come back over it.
 func _check_speak_takes_the_voice() -> void:
@@ -315,14 +315,14 @@ func _check_speak_takes_the_voice() -> void:
 	_write(HEAD.replace("pace: 0.8", "pace: 0.65") + BODY_A)
 	_doc.pull()
 	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 0.65),
-		"a Speak did not take the voice edited in the file: %s" % str(_ed._cfg(0)))
+		"a Play did not take the voice edited in the file: %s" % str(_ed._cfg(0)))
 	_ed._select_tab(0)
 	_ed._rate.value = 1.2
 	_doc.pull()
 	_ok(is_equal_approx(float(_ed._cfg(0).get("pace", 0.0)), 1.2),
-		"a Speak put the file's older pace over the dial just moved: %s" % str(_ed._cfg(0)))
+		"a Play put the file's older pace over the dial just moved: %s" % str(_ed._cfg(0)))
 	_ok(FileAccess.get_file_as_string(_path).contains("pace: 1.2"),
-		"the dial moved before Speak was not written to the document first")
+		"the dial moved before Play was not written to the document first")
 	_doc._autosave_for_test = false
 
 
@@ -353,7 +353,7 @@ func _check_outside_edit_survives() -> void:
 
 ## THE PICTURE TRAVELS WITH THE DOCUMENT - medium, Look filters and the Director's dials. They
 ## lived only in ghost.cfg, so a chapter opened on another machine came up in that machine's
-## medium and look. Set here, saved, changed, and read back by the next Speak.
+## medium and look. Set here, saved, changed, and read back by the next Play.
 func _check_the_picture_travels() -> void:
 	var was := {"medium": Director.medium, "filters": Director.filters.duplicate(),
 		"pacing": Director.pacing, "hand": Director.hand}
@@ -391,7 +391,7 @@ func _check_the_picture_travels() -> void:
 
 
 ## THE PICTURES' LOOK TRAVELS WITH THE DOCUMENT - painter, style and reference images, into
-## the frontmatter and back at the next Speak. The style is the awkward case on purpose: a
+## the frontmatter and back at the next Play. The style is the awkward case on purpose: a
 ## colon, quotes and a line break, all of which YAML would take apart if written carelessly.
 func _check_the_look_travels() -> void:
 	Illustrations.use_for_test({}, false)
@@ -408,7 +408,7 @@ func _check_the_look_travels() -> void:
 	_ok(raw.contains("illustrations:") and raw.contains("painter:"),
 		"the look was not written into the frontmatter")
 	_ok(raw.ends_with(BODY_A), "writing the look changed the chapter")
-	# Change everything in the library, then Speak: the document's look must come back.
+	# Change everything in the library, then Play: the document's look must come back.
 	Illustrations.set_style("something else")
 	Illustrations.set_style("something else", "sketch")
 	Illustrations.set_look({"references": []})
@@ -428,7 +428,7 @@ func _check_the_look_travels() -> void:
 ## THE DOCUMENT IS WRITTEN IN GHOST'S OWN EDITOR. Typed text reaches the file's body after
 ## the quiet period and not during it, the frontmatter is byte-identical, and the three ways a
 ## clash can end are each held: refused (the file keeps the outside edit, the editor keeps the
-## author's, a Speak reads what is on screen), "Take the file's", and "Keep mine".
+## author's, a Play reads what is on screen), "Take the file's", and "Keep mine".
 func _check_editing_in_ghost() -> void:
 	_doc.allow_autosave_for_test()
 	_doc.pull()
@@ -456,7 +456,7 @@ func _check_editing_in_ghost() -> void:
 		"an edit made in ghost was written over an edit made outside it")
 	_ok(_doc._conflict, "the clash was not raised for the author to resolve")
 	_ok(_doc.pull() == te.text and te.text.contains("And more."),
-		"a Speak during a clash threw away the words typed in ghost")
+		"a Play during a clash threw away the words typed in ghost")
 	# ...and Clear may not discard them either.
 	_doc.clear()
 	_ok(_doc.is_sync() and te.text.contains("And more."),

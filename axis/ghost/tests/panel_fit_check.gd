@@ -90,6 +90,7 @@ func _run() -> void:
 	await _check_width("Synthesis", _synth._panel)
 	await _check_width("Tarot", _tarot._panel)
 	await _check_long_items_would_widen()
+	await _check_episode_entry_follows()
 	await _check_short_panel_is_not_stretched()
 	await _check_the_old_arrangement_overflows()
 	await _check_wheel_skips_sliders(_ed._panel)
@@ -264,13 +265,13 @@ func _tarot_episodes() -> void:
 	_tarot._open_episode()
 
 
-## AT ITS DECLARED WIDTH, whatever its rows hold - and whatever its buttons say: Speak is
+## AT ITS DECLARED WIDTH, whatever its rows hold - and whatever its buttons say: Play is
 ## "Resume ●" while a stale reading is paused, the widest it gets. A failure names what is too wide.
 func _check_width(name: String, panel: SidePanel_) -> void:
 	get_tree().root.size = Vector2i(1280, 1080)
 	var go: Button = null
 	for b in panel.find_children("*", "Button", true, false):
-		if (b as Button).text == "Speak":
+		if (b as Button).text == "Play":
 			go = b
 	if go != null:
 		go.text = "Resume ●"
@@ -282,7 +283,32 @@ func _check_width(name: String, panel: SidePanel_) -> void:
 	_ok(w <= panel.custom_minimum_size.x + 0.5, "%s: the panel is %.0f px wide, not %.0f - %s"
 		% [name, w, panel.custom_minimum_size.x, ", ".join(names)])
 	if go != null:
-		go.text = "Speak"
+		go.text = "Play"
+
+
+## THE EPISODE'S ENTRY FOLLOWS ITS PLAN: an episode made while it was open (2026-10-05: "I just
+## clicked on Generate and all components were successful, but that picker entry still says (Not
+## made yet)... I have to pick a DIFFERENT entry, then return to that one"). The control is the
+## entry before the panel looks again - the stale one the report was about.
+func _check_episode_entry_follows() -> void:
+	var pick: OptionButton = _tarot._episode_pick
+	var fresh := TarotEpisode.open("fit-check", 13)
+	DirAccess.remove_absolute(fresh.file_of("plan"))       # a run before this one made it
+	_tarot._knobs["seed"] = 13
+	_tarot._open_episode()
+	var at := _tarot._episode_seeds.find(13)
+	_ok(at >= 0 and pick.get_item_text(at).ends_with("(not made yet)"),
+		"a fresh episode is listed as not made yet (%s)" % (pick.get_item_text(at) if at >= 0 else "missing"))
+	TarotEpisode.open("fit-check", 13).write_json("plan", {"episode_title": "Made While You Watched",
+		"spread": {"positions": [{"name": "Past"}]}})
+	_ok(pick.get_item_text(at).ends_with("(not made yet)"), "control: the entry is stale until the panel looks again")
+	_tarot._refresh_rows()
+	_ok(pick.get_item_text(at).ends_with("Made While You Watched") and pick.selected == at
+		and pick.text.ends_with("Made While You Watched"),
+		"its entry takes the title once the plan lands, shown on the button (%s)" % pick.text)
+	DirAccess.remove_absolute(fresh.file_of("plan"))
+	_tarot._knobs["seed"] = 11
+	_tarot._open_episode()
 
 
 ## THE CONTROL for the tarot panel: its episode list sized to its items again must push the

@@ -19,7 +19,7 @@ format and voice, told true).
    designs), Codex's from the catalog the CLI keeps (`~/.codex/models_cache.json`, listed entries
    only; Default is the author's config). Saved as `writer_model` / `painter_model`. The painter's
    model is the agent that asks for a picture; the picture is Codex's image tool's either way. **Folder** opens the episode: every prompt beside its reply.
-3. **Speak** reads it at the table (the karaoke line tracks the voice). The voice is the panel's
+3. **Play** reads it at the table (the karaoke line tracks the voice). The voice is the panel's
    own and is saved in the show's frontmatter; **Test** auditions it.
 4. **Export** renders the video, named after the episode's title; the episode's folder then holds
    `upload.md` - the title, a description, chapters timed per card from the take, and tags.
@@ -127,12 +127,17 @@ decks and settings and told not to repeat them. The table samples its own layout
 (camera, deck position, spread layout, shuffle moves, props, light).
 
 **The card stock** (2026-10-05, the user: "most if not all generated tarot cards have a light tan
-color"): asked only for "card stock", the producer printed all four decks on cream. The stock's
-LIGHTNESS is now a die (`TarotPrompts.dice`, 5-95, its own rng so the other dice keep their
-values) that the producer is held to - the one literal die; it picks the hue, ink and accent.
-`TarotTable.sanitize_look` keeps the ink readable on whatever stock lands (`legible_ink`, WCAG
-contrast >= `INK_CONTRAST` 3). Episodes planned before keep their cream until the plan is redone.
-Gate: tarot_check `_card_stock`.
+color"): asked only for "card stock", the producer printed all four decks on cream. It stays the
+PRODUCER'S CHOICE (the user: "the AI will pick more complementary colors, rather than just a random
+roll" - a lightness die was tried and dropped the same day; its one episode got a muddy mauve-gray
+from outside its own palette): the prompt says what the stock is (the card's own color, round the
+picture and behind the name, and the booklet's), that decks are printed on every color, and to
+choose the one that sets off the paintings; each earlier episode in its history shows its stock,
+and "do not repeat" covers card stocks. `TarotTable.sanitize_look` keeps the ink readable on
+whatever stock lands (`legible_ink`, WCAG contrast >= `INK_CONTRAST` 3). THE BOOKLET IS PRINTED IN
+THE CARD'S COLORS (`TarotCards.page_colors`): the stock as its paper, the ink and accent for its
+type, kept readable on it (running text at `TEXT_CONTRAST` 4.5) - it was a fixed cream page.
+Episodes planned before keep their cream until the plan is redone. Gate: tarot_check `_card_stock`.
 
 ## The table
 
@@ -199,6 +204,27 @@ reached the reflection probe and blacked out everything that reflects it (a paua
 it is guarded now and called on every pixel - a derivative in a branch some pixels skip is
 undefined. A flag written "yes" crashed the sanitizer (`Props._flag`). The set dresser is told
 that many readers keep stones, set on the cloth or heaped in a dish. Gate: tarot_check `_stones`.
+
+CANDLES OF EVERY FORM, AND GROUPS (2026-10-05; the user: "I would prefer if the model had a lot of
+control, so that it could explore novel objects from our well-defined interfaces... short, fat ones
+with 3 wicks in a triangle. Or a candelabra. Or even just tiny tea light candles"). The model still
+writes DATA, never code - its expression is in how it uses the spec. WICKS as data: `wicks` 2-6 set
+round a candle's top (three make a triangle) or `wicks` [[x, z], ...] placed, each standing on the
+melted pool as deep as the pool is there (a single wick sits where it always did). ONE LIGHT A LIT
+THING (`TarotMedium._light_flames`): a candelabra's tapers or a pillar's three wicks light the room as
+one light from among them, as bright as all its flames together (then capped by the cloth like any
+other), so a candle costs one shadow however many flames it has; every flame still flickers on its
+own dice and the light follows their mean. `_lights` (was `_flames`) holds one entry per lit thing
+with its `flames`; the cap is `TarotTable.MAX_CANDLES` lit things and `MAX_FLAMES` flames on one, and
+the set dresser is told "Exactly N lit things" (the plan's `candles`) plus a nudge toward every form
+- tapers, multi-wick pillars, tea lights, votives, a pricket, an oil lamp, a candelabra. GROUPS
+(`{"parts": [...], "at", "turn", "copies"}`): a part that is parts, placed and repeated as one -
+arm, cup and taper written once and copied round a ring - nested `Props.MAX_DEPTH` deep, every part
+in every group counted toward `MAX_PARTS` (now 16), and `MAX_INSTANCES` parts made in all. EXTRUDE:
+an outline (polygon, star, circle, rect, heart, or its own `points` going in and out) raised straight
+up with `taper`, `bevel` and a `wall` that makes it a tray. Gate: tarot_check `_candles`;
+tarot_place_check counts lights and flames apart (the pair of pillars is one light, two flames). A
+tall candelabra fits only where the frame has headroom - the set dresser is told each zone's.
 
 WHERE A THING STANDS IS FOUND (`_place_things`, `_stand`): groups biggest first, a group's tallest
 nearest its zone's middle, the rest round it - the shorter toward the reader; on the CLOTH (on the
@@ -271,6 +297,25 @@ effort alone - and a wider pause step, x1.3), two steps at most, and EASED: each
 sentence goes half way from the last one's delivery (`_ease_leans`), in and back out. The host
 takes `lean_semis` / `lean_effort` in `_discourse_plan` (`voice_host/test_lean.py`). A script mark
 like any other (`ScriptMarks` "delivery"), so a Generative chapter can carry it too.
+
+THE ROOM IS SEEN FROM THE READER'S EYE (2026-10-05; the user: "the backgrounds are 2D, so when
+the background is just a wall or a window, it's very close to the table and the angles feel
+wrong... if it's a distant landscape, the backgrounds look better"). The camera looks down 34-42
+degrees through a 42-degree lens, so the frame's top is already 13-21 degrees below eye level: all it
+sees past the table is a thin band BELOW the horizon - in a real room, the floor and the feet of
+things. The picture had been a level photograph laid square to the tilted camera with its horizon on
+the table's edge: the room seen from the height of the cloth, a wall's uprights left parallel.
+Neither skewing it nor asking the painter for the camera's own tilt (image models steer poorly to an
+angle) - the backdrop is asked for as the photograph models make most reliably, LEVEL at a seated
+eye (110 cm), horizon across the exact middle, a 20 mm lens (`TarotTable.BACKDROP_LENS`), its lower
+third carrying the place; and PROJECTED FROM THE CAMERA'S EYE (`_place_backdrop`): an upright plane
+straight ahead, its middle at the eye's height, 36 x 24 times its reach over the lens - so every
+pixel lies in the direction it was seen from, and Godot's own perspective does the rest. The view it
+was asked for is kept beside it (`backdrop.json`, written as the job is submitted); a picture made
+before has none, holds nothing below its horizon, and keeps the old placement until its backdrop
+step is made again. Tried on a synthetic level photograph (a checker floor and a striped wall): as a
+card the wall stood upright at the table's edge; projected, the floor and a rug lay past it,
+foreshortened with the table. Gates: tarot_place_check (two-sided), tarot_check `_room_prompt`.
 
 THE INTRO IS OUT OF FOCUS: the channel's name alone (no episode title - that is the video's, on
 the platform) over the table behind a lens's bokeh, and the focus PULLS near to far as the shuffle

@@ -537,10 +537,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F11:
 				_toggle_fullscreen()
 			KEY_SPACE:
-				# Mask mode owns Space itself (play/pause the clip, see mask_editor.gd) -
-				# it never attaches Director, so Director.next() would be meaningless
-				# there anyway; this just makes the skip explicit rather than relying on
-				# Director to no-op safely while unattached.
+				# Mask mode and the voice panels own Space themselves (play/pause, taken in
+				# their _input before any focused button can - see mask_editor.gd and
+				# GenerativeEditor._input), so it only reaches here elsewhere. Mask mode
+				# never attaches Director, so Director.next() would be meaningless there
+				# anyway; this just makes the skip explicit.
 				if _mask_editor == null or not is_instance_valid(_mask_editor):
 					Director.next()
 			KEY_ESCAPE:
@@ -568,7 +569,7 @@ func _arg_value(args: PackedStringArray, flag: String) -> String:
 	return ""
 
 
-## --synth: the voice-synthesis editor. Each Speak renders a WAV take and plays it
+## --synth: the voice-synthesis editor. Each reading renders a WAV take and plays it
 ## as a fresh session (new fingerprint, new show); the take loops when it ends,
 ## like a manual session, so the show stays up while the user iterates.
 func _open_synth_editor(mode := "fishing") -> void:
@@ -681,7 +682,7 @@ func _open_synth_autopilot() -> void:
 
 
 ## Start (or restart) the session on a live VoiceStream: audio begins the same
-## frame Speak was clicked - the stream synthesizes ahead of the playhead and
+## frame Play was clicked - the stream synthesizes ahead of the playhead and
 ## the analyzer bus hears it like a song. Streamed takes loop endlessly inside
 ## the stream itself (song_finished never fires for a generator).
 func _begin_synth_stream(stream: Node) -> void:

@@ -12,7 +12,8 @@ extends Node
 ##     table stands nearly whole - on the cloth, off everywhere the cards go, nothing standing in
 ##     another, no group in front of another in the picture;
 ##   - no lit thing nearer the reader than the middle of the table, all wholly in the frame;
-##   - every thing throws a shadow from every flame but its own (it floated, casting none);
+##   - every thing throws a shadow from every light but its own (it floated, casting none), and a
+##     lit thing is ONE light however many wicks it has (every wick still burns);
 ##   - candles standing together light the cloth no hotter than it takes, all at once - against
 ##     each at its own limit as the control, which overheats it;
 ##   - in a wash no card passes through anything standing, and every card still ends in the deck -
@@ -118,7 +119,8 @@ func _run() -> void:
 	var set := _sweep("dark", 2, SET_TABLE)
 	var wanted := (SET_TABLE["things"] as Array).size() * SEEDS
 	_ok(set["things"] >= wanted * 0.9, "nearly every thing finds room (%d of %d)" % [set["things"], wanted])
-	_ok(set["candles"] == 3 * SEEDS, "every wick is lit (%d of %d)" % [set["candles"], 3 * SEEDS])
+	_ok(set["flames"] == 3 * SEEDS, "every wick burns (%d of %d)" % [set["flames"], 3 * SEEDS])
+	_ok(set["candles"] == 2 * SEEDS, "each lit thing is one light, the pair of pillars too (%d of %d)" % [set["candles"], 2 * SEEDS])
 	_ok(set["off_cloth"] == 0 and set["on_cards"] == 0, "all on the cloth, none where the cards go (%d off, %d on)" % [set["off_cloth"], set["on_cards"]])
 	_ok(set["touching"] == 0, "none standing in another (%d)" % set["touching"])
 	_ok(set["out"] == 0 and set["overlap"] == 0, "all wholly in the frame, no group in front of another (%d, %d)" % [set["out"], set["overlap"]])
@@ -173,6 +175,8 @@ func _run() -> void:
 	print("how they flicker")
 	_flicker()
 
+	print("the room past the table")
+	_backdrop()
 	print("the outro")
 	_outro()
 
@@ -198,7 +202,7 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 	for i in 3:
 		cards.append({"key": "c%d" % i, "name": "Card %d" % i, "numeral": str(i), "reversed": false,
 			"jumper": false, "position": {}, "booklet": {}, "art": ""})
-	var n := {"candles": 0, "front": 0, "out": 0, "overlap": 0, "over_cap": 0, "bad_key": 0,
+	var n := {"candles": 0, "flames": 0, "front": 0, "out": 0, "overlap": 0, "over_cap": 0, "bad_key": 0,
 		"casters": 0, "old_over": 0, "lamp_keys": 0, "full_keys": 0, "heat_at": 0.0, "heat_aim": 0.0,
 		"own_shadow": 0, "no_shadow": 0, "things": 0, "off_cloth": 0, "on_cards": 0, "touching": 0,
 		"over_joint": 0, "alone_over": 0, "behind": 0, "lit_things": 0}
@@ -233,17 +237,19 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 					n["touching"] += 1
 				if String(a["group"]) != String(b["group"]) and (a["rect"] as Rect2).intersects(b["rect"] as Rect2):
 					n["overlap"] += 1
-		n["candles"] += medium._flames.size()
-		# the light: each candle's thing is left out of its own flame's shadows, and only its own
+		n["candles"] += medium._lights.size()
+		for l in medium._lights:
+			n["flames"] += ((l as Dictionary)["flames"] as Array).size()
+		# the light: each candle's thing is left out of its own light's shadows, and only its own
 		for th in things:
 			var t: Dictionary = th
-			for i in medium._flames.size():
-				var mask: int = ((medium._flames[i] as Dictionary)["light"] as OmniLight3D).shadow_caster_mask
+			for i in medium._lights.size():
+				var mask: int = ((medium._lights[i] as Dictionary)["light"] as OmniLight3D).shadow_caster_mask
 				for m in t["meshes"]:
 					var cast := (mask & (m as MeshInstance3D).layers) != 0
-					if (t["flames"] as Array).has(i) and cast:
+					if (t["lights"] as Array).has(i) and cast:
 						n["own_shadow"] += 1
-					elif not (t["flames"] as Array).has(i) and not cast:
+					elif not (t["lights"] as Array).has(i) and not cast:
 						n["no_shadow"] += 1
 		# how pale the cloth is by each candle, against at the spot its zone aims for
 		for th in things:
@@ -262,8 +268,8 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 		var fields: Array = []
 		var old_key := -1
 		var old_best := INF
-		for i in medium._flames.size():
-			var fd: Dictionary = medium._flames[i]
+		for i in medium._lights.size():
+			var fd: Dictionary = medium._lights[i]
 			var base: Vector3 = fd["base"]
 			var lb: Vector3 = fd["light_base"]
 			var field := medium._heat_field(Vector3(base.x, 0.0, base.z), lb.y)
@@ -272,12 +278,12 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 			if TarotMedium.HEAT / maxf(TarotMedium._field_max(field), 0.05) >= TarotMedium.KEY_MIN and d < old_best:
 				old_best = d
 				old_key = i
-		for i in medium._flames.size():
+		for i in medium._lights.size():
 			var field: Dictionary = fields[i]
 			var own_cap := minf(TarotMedium.KEY_ENERGY if i == old_key else TarotMedium.FILL_ENERGY,
 				TarotMedium.HEAT / maxf(TarotMedium._field_max(field), 0.05))
 			for c in field:
-				total[c] = float(total.get(c, 0.0)) + float((medium._flames[i] as Dictionary)["energy"]) * float(field[c])
+				total[c] = float(total.get(c, 0.0)) + float((medium._lights[i] as Dictionary)["energy"]) * float(field[c])
 				alone[c] = float(alone.get(c, 0.0)) + own_cap * float(field[c])
 		for c in total:
 			if float(total[c]) > TarotMedium.HEAT + 0.001:
@@ -290,8 +296,8 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 		var casters := 1 if medium._lamp.shadow_enabled else 0
 		var nearest := -1
 		var best := INF
-		for i in medium._flames.size():
-			var f: Dictionary = medium._flames[i]
+		for i in medium._lights.size():
+			var f: Dictionary = medium._lights[i]
 			var base: Vector3 = f["base"]
 			var lb: Vector3 = f["light_base"]
 			var cap := TarotMedium.HEAT / maxf(medium._heat(Vector3(base.x, 0.0, base.z), lb.y), 0.05)
@@ -303,19 +309,19 @@ func _sweep(cloth: String, candles: int, table := {}) -> Dictionary:
 			if i == medium._key_flame:
 				if float(f["energy"]) < TarotMedium.KEY_MIN - 0.0001:
 					n["bad_key"] += 1
-				if absf(float(f["energy"]) - TarotMedium.KEY_ENERGY) < 0.0001:
+				if absf(float(f["energy"]) - TarotMedium.KEY_ENERGY * float((f["flames"] as Array).size())) < 0.0001:
 					n["full_keys"] += 1
 			var d := (base * Vector3(1, 0, 1)).length()
 			if d < best:
 				best = d
 				nearest = i
-		if casters != medium._flames.size() + 1:
+		if casters != medium._lights.size() + 1:
 			n["casters"] += 1
 		if medium._key_flame < 0:
 			n["lamp_keys"] += 1
 		if nearest >= 0:
-			var nb: Vector3 = (medium._flames[nearest] as Dictionary)["base"]
-			var nl: Vector3 = (medium._flames[nearest] as Dictionary)["light_base"]
+			var nb: Vector3 = (medium._lights[nearest] as Dictionary)["base"]
+			var nl: Vector3 = (medium._lights[nearest] as Dictionary)["light_base"]
 			if TarotMedium.KEY_ENERGY > TarotMedium.HEAT / maxf(medium._heat(Vector3(nb.x, 0.0, nb.z), nl.y), 0.05):
 				n["old_over"] += 1
 	if FileAccess.file_exists(tf):
@@ -414,7 +420,10 @@ func _flicker() -> void:
 		var tempos := PackedFloat32Array()
 		var old_tempos := PackedFloat32Array()
 		var dips: Array = []
-		for f in medium._flames:
+		var flames: Array = []
+		for l in medium._lights:
+			flames.append_array((l as Dictionary)["flames"])
+		for f in flames:
 			var fk: Dictionary = (f as Dictionary)["flicker"]
 			var series := PackedFloat32Array()
 			var old := PackedFloat32Array()
@@ -487,6 +496,45 @@ func _mean_lum(at: Vector3, r: float) -> float:
 
 ## THE OUTRO, on a reading whose word times are known: the table's brightness from the end fade,
 ## and the title's from its own curve, sampled across the whole reading.
+## THE ROOM IS SEEN FROM THE READER'S EYE: a picture asked for level (`backdrop.json` beside it)
+## stands on an upright plane straight ahead of the camera, its middle at the eye's height and as
+## wide as its lens saw - two-sided: with no view beside it, the picture made before keeps its old
+## place, square to the tilted camera.
+func _backdrop() -> void:
+	var dir := DIR.path_join("dark")
+	var vf := dir.path_join("backdrop.json")
+	var level := 0
+	var old := 0
+	for s in range(1, 9):
+		for v in [true, false]:
+			if v:
+				var f := FileAccess.open(vf, FileAccess.WRITE)
+				f.store_string(JSON.stringify({"view": "level", "lens_mm": 20}))
+				f.close()
+			elif FileAccess.file_exists(vf):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(vf))
+			var doc := {"show": "place-check", "seed": s, "dir": dir, "plan": {"look": {"candles": 1}}, "cards": []}
+			subs.document = {"source": _script, "title": "Place Check", "tarot": doc}
+			medium._key = ""
+			medium._ensure_doc()
+			var xf := medium._backdrop.global_transform
+			var eye := medium._cam_base.origin
+			var size := (medium._backdrop.mesh as QuadMesh).size
+			var ahead := -medium._cam_base.basis.z
+			if v:
+				var upright := absf(xf.basis.y.normalized().dot(Vector3.UP) - 1.0) < 0.001
+				var at_eye := absf(xf.origin.y - eye.y) < 0.001
+				var facing := xf.basis.z.normalized().dot(-Vector3(ahead.x, 0.0, ahead.z).normalized()) > 0.999
+				var lens := size.distance_to(Vector2(36.0, 24.0) * 3.2 / 20.0) < 0.001
+				level += 1 if upright and at_eye and facing and lens else 0
+			else:
+				old += 1 if xf.basis.y.normalized().dot(medium._cam_base.basis.y.normalized()) > 0.999 else 0
+	if FileAccess.file_exists(vf):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(vf))
+	_ok(level == 8, "a level picture stands upright at the eye, straight ahead, as wide as its lens (%d of 8)" % level)
+	_ok(old == 8, "a picture made before keeps its place, square to the camera (%d of 8)" % old)
+
+
 func _outro() -> void:
 	var outro_was := Director.outro_hold
 	Director.outro_hold = 6.0

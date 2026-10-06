@@ -95,10 +95,6 @@ static func dice(seed: int) -> Dictionary:
 	rng.seed = hash([seed, "tarot-dice"])
 	var lat := snappedf(rng.randf_range(-55.0, 70.0), 0.1)
 	var lon := snappedf(rng.randf_range(-180.0, 180.0), 0.1)
-	# THE CARD STOCK'S LIGHTNESS, the one die the producer is held to: asked only for "card
-	# stock", it printed every deck on cream. Its own rng, so the dice above keep their values.
-	var stock := RandomNumberGenerator.new()
-	stock.seed = hash([seed, "tarot-stock"])
 	return {
 		"place": "%.1f°%s %.1f°%s" % [absf(lat), "N" if lat >= 0.0 else "S", absf(lon),
 			"E" if lon >= 0.0 else "W"],
@@ -106,7 +102,6 @@ static func dice(seed: int) -> Dictionary:
 		"hue": rng.randi_range(0, 359),
 		"hour": rng.randi_range(0, 23),
 		"direction": rng.randi_range(1, 12),
-		"stock": stock.randi_range(5, 95),
 	}
 
 
@@ -119,8 +114,9 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	for h in history.slice(0, 12):
 		var p: Dictionary = (h as Dictionary).get("plan", {})
 		var look: Dictionary = p.get("look", {})
-		past.append("- \"%s\" (%s) - deck: %s; setting: %s" % [String(p.get("episode_title", "?")),
+		past.append("- \"%s\" (%s) - deck: %s; card stock %s; setting: %s" % [String(p.get("episode_title", "?")),
 			String(p.get("topic", "?")), String(look.get("deck_style", "?")).substr(0, 140),
+			String((look.get("frame", {}) as Dictionary).get("stock", "?")) if look.get("frame") is Dictionary else "?",
 			String(look.get("setting", "?")).substr(0, 100)])
 	var lines := PackedStringArray()
 	lines.append("You are the PRODUCER. Plan episode #%d before the camera rolls. Nobody knows which cards will come up - the deck has not been shuffled - so plan nothing that depends on a card." % seed)
@@ -131,13 +127,13 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	lines.append("")
 	lines.append(deck_line(deck))
 	lines.append("")
-	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: medium, era and influences, linework, texture, palette, how figures are drawn. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lit candles stand on the table (the rest of what stands on it is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
-	lines.append("THE CARD STOCK this deck is printed on has a lightness of about %d out of 100 (0 is black, 100 is white). It is the card's own color, all round every picture and behind its name: choose its hue, and an ink and accent that read on it, to suit the deck." % int(d["stock"]))
+	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: medium, era and influences, linework, texture, palette, how figures are drawn. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lights burn on the table - a candle in its holder, a candelabra, a dish of tea lights each count as one (what they are, and the rest of what stands on the table, is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
+	lines.append("THE CARD STOCK is the card's own color: it shows all round every picture and behind its name, and the deck's booklet is printed in the same colors. Decks are printed on stock of every color, dark and saturated as well as pale - choose the one that best sets off this deck's paintings, with an ink and accent that read on it.")
 	lines.append("")
 	lines.append("INSPIRATION. These numbers were drawn for this episode. Let them push the episode somewhere this show has never been - a culture, a period, a material, a mood - without being literal about them: a place %s; a year %d; a hue %d degrees; the hour %d:00. Before deciding, brainstorm twelve sharply different directions for the episode (topic, angle and look together), then commit to direction number %d." % [String(d["place"]), int(d["year"]), int(d["hue"]), int(d["hour"]), int(d["direction"])])
 	if not past.is_empty():
 		lines.append("")
-		lines.append("EARLIER EPISODES of this show. Do not repeat their topics, title formulas, deck styles, palettes or settings:")
+		lines.append("EARLIER EPISODES of this show. Do not repeat their topics, title formulas, deck styles, palettes, card stocks or settings:")
 		lines.append("\n".join(past))
 	lines.append("")
 	lines.append("Reply with ONLY a JSON object, no other text:")
@@ -156,7 +152,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
     "deck_style": "a paragraph an illustrator paints every card from",
     "palette": ["#rrggbb", "four to six colors"],
     "card_back": "the back design, symmetric under a half turn",
-    "frame": {"style": "one of: %s", "stock": "#rrggbb card stock, at that lightness", "ink": "#rrggbb border and lettering", "accent": "#rrggbb"},
+    "frame": {"style": "one of: %s", "stock": "#rrggbb card stock", "ink": "#rrggbb border and lettering", "accent": "#rrggbb"},
     "title_face": "one of: %s",
     "foil": 0.6,
     "surface": "the cloth or tabletop the cards lie on, seen from above",
@@ -231,7 +227,8 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 	lines.append("A reader sets the table on purpose, before every reading, and each thing on it has a reason in the reading's world - light to read by, protection, the four elements the suits stand for, the reading's own subject, devotion, comfort. Give each thing its reason in a few words.")
 	lines.append("This table belongs to this episode: its place, its era, its materials and its palette - the things a reader of that world would own and set out. Invent them; never reach for the same few things every time.")
 	lines.append("Many readers keep stones on the table: one large piece - a cluster, a geode, a sphere, a tower - or small tumbled ones of several kinds, set straight on the cloth in a loose handful, a row or an arc, or heaped in a dish or a shell; each for what it is said to hold. Give each stone its own colors, and its play of light if it has one.")
-	lines.append("Exactly %d lit candle%s, in whatever holds them (a candle is any part with a wick), and %d to %d other things." % [candles, "" if candles == 1 else "s", lo, hi])
+	lines.append("Exactly %d lit thing%s - a candle in its holder, a candelabra, a dish of tea lights: each burns as one light, however many flames it has (a flame is a wax part's `wick` or `wicks`) - and %d to %d other things." % [candles, "" if candles == 1 else "s", lo, hi])
+	lines.append("Candles take every form a reader of this world would light: a taper in a tall stick, a squat pillar with two or three wicks, tea lights in their tins, a votive in glass, a church candle on a pricket, an oil lamp, a candelabra with a taper in each cup. Make this table's its own, not always a pillar.")
 	lines.append("Compose it as a reader does: a few groups and a few things alone, never a row of things evenly spaced. Heights vary within a group, and odd numbers sit well. The middle of the cloth stays bare: the deck is shuffled there, and the cards drawn and laid.")
 	lines.append("Every thing is a real object, set out in earnest. Nothing on the table carries words, letters, numbers or labels.")
 	lines.append("")
@@ -253,7 +250,7 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 		lines.append("")
 		lines.append("EARLIER EPISODES' TABLES held these. Set none of them again: %s." % ", ".join(PackedStringArray(seen)))
 	lines.append("")
-	lines.append("CHECK each thing before you answer: every part rests on the cloth or on another part (nothing floats, nothing sinks through); it stands as it would really stand - a thing with a pointed or round bottom lies on its side or sits in a stand, a ring or a bowl, never balanced on its point; the lowest point is at height 0; the sizes are real and fit the place's height; a hollow vessel's profile goes up the outside and back down the inside; every candle's wax has `wick`.")
+	lines.append("CHECK each thing before you answer: every part rests on the cloth or on another part (nothing floats, nothing sinks through); it stands as it would really stand - a thing with a pointed or round bottom lies on its side or sits in a stand, a ring or a bowl, never balanced on its point; the lowest point is at height 0; the sizes are real and fit the place's height; a hollow vessel's profile goes up the outside and back down the inside; every candle's wax has `wick` or `wicks`, and a candle in a cup or a holder stands on its floor.")
 	lines.append("")
 	lines.append("Reply with ONLY a JSON object, no other text. The format, shown with one thing - a chess pawn, which never belongs on this table:")
 	lines.append(SET_EXAMPLE)
@@ -426,9 +423,10 @@ static func surface_image(look: Dictionary, target: String) -> String:
 static func backdrop_image(look: Dictionary, target: String) -> String:
 	var light: Dictionary = look.get("light", {}) if look.get("light") is Dictionary else {}
 	var lines := PackedStringArray([_paint_head(target), ""])
-	lines.append("THE PICTURE: the view from a chair at a tarot reader's table, looking across it at the room or the world beyond: %s. Lit by %s." % [
+	lines.append("THE PICTURE: a photograph of the room or the world a tarot reader sits in, taken from the reader's chair: %s. Lit by %s." % [
 		String(look.get("setting", "a quiet room")), String(light.get("kind", "low lamplight"))])
-	lines.append("Seated eye level; the horizon or the far wall sits in the lower third. Do NOT show the table, cards, hands or people - the table is placed in front of this picture separately, and the picture will be seen out of focus behind it, so broad shapes and light matter more than detail.")
+	lines.append("THE CAMERA IS LEVEL, at a seated person's eye height - about 110 cm above the floor - looking straight ahead through a wide %d mm lens: the eye's height (the horizon) runs straight across the exact middle of the picture, and every upright line stays upright, none leaning in." % int(TarotTable.BACKDROP_LENS))
+	lines.append("ONLY THE LOWER THIRD WILL BE SEEN, just past the far edge of a table and out of focus. So the lower half carries the place: the floor or the ground and what stands or lies on it - rugs, the feet of furniture, low shelves, baskets, a hearth, a doorway's sill, the ground or water running away outdoors - one place, its broad shapes and its light. Do NOT show a table, cards, hands or people: the table stands in front of this picture separately.")
 	lines.append("Its colors belong to this palette: %s." % ", ".join(PackedStringArray(look.get("palette", []))))
 	lines.append("FORMAT: LANDSCAPE 3:2 (1536x1024). No text, no watermark, no signature.")
 	return "\n".join(lines)

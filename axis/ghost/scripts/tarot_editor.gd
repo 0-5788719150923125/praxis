@@ -227,7 +227,7 @@ func _doc_capture() -> Dictionary:
 	return d
 
 
-## The document's block arrives at every read of it - on open, and at every Speak and export
+## The document's block arrives at every read of it - on open, and at every Play and export
 ## (see [method DocSource.pull]) - so the episode is reopened only when the block names a
 ## DIFFERENT one. Reopening on every read stopped a generation in progress, and reopening reads the
 ## document again, which used to recurse.
@@ -649,11 +649,15 @@ func _refill_episodes() -> void:
 		seen[cur] = ""
 		seeds.push_front(cur)
 	for s in seeds:
-		var t := String(seen[s])
-		_episode_pick.add_item("#%d  %s" % [int(s), t if not t.is_empty() else "(not made yet)"])
+		_episode_pick.add_item(_episode_label(int(s), String(seen[s])))
 		_episode_seeds.append(int(s))
 	_episode_pick.select(_episode_seeds.find(cur))
 	_syncing = false
+
+
+## An episode's entry in the picker: its seed, and its title once its plan has one.
+static func _episode_label(seed: int, title: String) -> String:
+	return "#%d  %s" % [seed, title if not title.is_empty() else "(not made yet)"]
 
 
 ## A NEW EPISODE IS A NEW SEED, drawn from the operating system's cryptographic randomness (see
@@ -854,10 +858,18 @@ func _table_things() -> PackedStringArray:
 func _refresh_rows() -> void:
 	if _episode == null or _rows_box == null:
 		return
+	var plan: Variant = _episode.read_json("plan")
+	# THE PICKER FOLLOWS THE EPISODE: its entries are written when the list is filled, so an episode
+	# made while it was open went on saying "(not made yet)" until another was picked and back
+	var at := _episode_seeds.find(int(_knobs["seed"]))
+	if at >= 0:
+		var label := _episode_label(int(_knobs["seed"]),
+			String((plan as Dictionary).get("episode_title", "")) if plan is Dictionary else "")
+		if _episode_pick.get_item_text(at) != label:
+			_episode_pick.set_item_text(at, label)
 	if _episode.card_count() != _rows_for:
 		_rebuild_rows()
 		return
-	var plan: Variant = _episode.read_json("plan")
 	var doc := {}
 	for w in _row_widgets:
 		var states := {}
@@ -922,7 +934,7 @@ func _refresh_rows() -> void:
 	_del_btn.disabled = not DirAccess.dir_exists_absolute(_episode.dir) or _exporting(_episode)
 	var note := ""
 	if _episode.complete():
-		note = "Ready - press Speak to hear it, or export it."
+		note = "Ready - press Play to watch it, or export it."
 	elif busy:
 		note = "Making episode #%d…" % _episode.seed
 	elif _episode.has("plan"):

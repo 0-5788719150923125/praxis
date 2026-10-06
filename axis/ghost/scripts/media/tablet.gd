@@ -362,7 +362,7 @@ func release() -> void:
 
 
 func _reset_reading() -> void:
-	# the intro this reading was started with: the voice's lead-in is fixed at Speak, so a slider
+	# the intro this reading was started with: the voice's lead-in is fixed at Play, so a slider
 	# moved during the reading must not move the opening run away from it
 	_intro = maxf(0.0, Director.intro_hold)
 	_map = []

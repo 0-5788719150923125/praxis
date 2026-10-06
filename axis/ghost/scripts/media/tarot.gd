@@ -229,7 +229,8 @@ var _backdrop_mat: StandardMaterial3D
 var _props: Node3D
 var _probe: ReflectionProbe
 var _probe_nudge := 1.0
-var _flames: Array = []             # [{mesh, light, base, light_base, energy, flicker}]
+var _lights: Array = []             # a light per lit thing: {light, base, light_base, energy, flames: [{mesh, base, flicker, glow}]}
+var _flame_n := 0                     # flames lit so far on this table, each with its own flicker
 var _glows: Array = []              # [{light, base, energy, flicker}] - candles in the room, out of shot
 var _lamp_base := 1.6                 # the lamp's light before a candle takes the key from it
 var _key_flame := -1                  # the key: the flame that leads the light, or -1 for the lamp
@@ -683,7 +684,7 @@ func _build_episode() -> void:
 	_faces = []
 	_face_canvas = []
 	_face_mats = []
-	# THIS EPISODE'S PICTURES ARE KEPT across its sessions (each Speak, each scrub): decoding a
+	# THIS EPISODE'S PICTURES ARE KEPT across its sessions (each Play, each scrub): decoding a
 	# dozen full-size paintings on the main thread is a visible hitch. Another episode's go.
 	var keep_dir := String(_pay.get("dir", "")) + "/"
 	for k in _textures.keys():
@@ -799,6 +800,8 @@ func _poll_pictures(force := false) -> void:
 		var soft := _soft(dir.path_join("backdrop.png"), room)
 		if _backdrop_mat.albedo_texture != soft:
 			_backdrop_mat.albedo_texture = soft
+			# a picture landing live may be one asked for level: placed again for its view
+			_place_backdrop()
 			_reflect()
 		_backdrop_mat.albedo_color = Color(1, 1, 1)
 	elif _backdrop_mat.albedo_texture == null:
@@ -921,9 +924,26 @@ func _picture(path: String, force := false) -> Texture2D:
 	return tex
 
 
-## THE ROOM, square to the camera far behind the table, placed so its horizon (the lower third
-## of the picture, as it was asked for) sits just above the table's far edge.
+## THE ROOM. A picture asked for as a LEVEL photograph from a seated eye (`backdrop.json` beside it
+## names its lens, [constant TarotTable.BACKDROP_LENS]) is PROJECTED FROM THE CAMERA'S EYE: an
+## upright plane far behind the table, its middle at the eye's height straight ahead, as wide as its
+## lens saw - so every point of the picture lies in the direction it was seen from, and the camera,
+## tilted down at the table, sees the room as it would really look past the table's edge (its
+## uprights running together below, the floor where a floor would be). Laid square to the tilted
+## camera with its horizon on the table's edge, a room was seen from the height of the cloth: a wall
+## or a window just past the table looked wrong, a far landscape got away with it (the user,
+## 2026-10-05: "the backgrounds are 2D... the angles feel wrong"). A picture made before (no view
+## beside it) holds nothing below its horizon for the camera to see, so it keeps that placement.
 func _place_backdrop() -> void:
+	var view := _backdrop_view()
+	if not view.is_empty():
+		var lens := clampf(float(view.get("lens_mm", TarotTable.BACKDROP_LENS)), 8.0, 200.0)
+		var reach := 3.2
+		var ahead := Vector3(-_cam_base.basis.z.x, 0.0, -_cam_base.basis.z.z).normalized()
+		_backdrop.transform = Transform3D(Basis.looking_at(ahead, Vector3.UP), _cam_base.origin + ahead * reach)
+		# a 36 x 24 frame behind a lens of this length, seen at this reach
+		(_backdrop.mesh as QuadMesh).size = Vector2(36.0, 24.0) * reach / lens
+		return
 	var dist := 3.2
 	var fwd := -_cam_base.basis.z
 	var center := _cam_base.origin + fwd * dist
@@ -941,6 +961,18 @@ func _place_backdrop() -> void:
 	var offset := edge_up - (-size.y * 0.5 + size.y * (1.0 / 3.0))
 	_backdrop.transform = Transform3D(_cam_base.basis, center + up * offset)
 	(_backdrop.mesh as QuadMesh).size = size
+
+
+## The view the room's picture was asked for (`backdrop.json` beside it): `{view, lens_mm}`, or empty
+## for a picture made before there was one.
+func _backdrop_view() -> Dictionary:
+	var path := String(_pay.get("dir", "")).path_join("backdrop.json")
+	if not FileAccess.file_exists(path):
+		return {}
+	var j := JSON.new()
+	if j.parse(FileAccess.get_file_as_string(path)) != OK or not (j.data is Dictionary):
+		return {}
+	return j.data if String((j.data as Dictionary).get("view", "")) == "level" else {}
 
 
 # --- the spread ------------------------------------------------------------------------------------
@@ -1028,7 +1060,8 @@ static func _face_up() -> Basis:
 func _build_table() -> void:
 	for c in _props.get_children():
 		c.queue_free()
-	_flames = []
+	_lights = []
+	_flame_n = 0
 	_standing = []
 	_standing_c = PackedVector2Array()
 	_standing_r = PackedFloat32Array()
@@ -1243,13 +1276,16 @@ func _put(t: Dictionary, b: Dictionary, spot: Dictionary, basis: Basis, group: S
 	# A CANDLE CASTS IN EVERY FLAME'S LIGHT BUT ITS OWN: its own, just above it, printed a hard dark
 	# disc round its base. So it has a render layer of its own, which only its flames leave out. A
 	# thing with no flame is on its own layer too, so the cloth's shades fall on the cloth alone.
-	var own := (CANDLE_LAYER << _flames.size()) if not wicks.is_empty() else THING_LAYER
+	var own := (CANDLE_LAYER << _lights.size()) if not wicks.is_empty() else THING_LAYER
 	for m in b["meshes"]:
 		(m as MeshInstance3D).layers = own
 	var glows: Array = b.get("glows", [])
-	var first := _flames.size()
-	for i in wicks.size():
-		_light_wick(node.transform * (wicks[i] as Vector3), own, glows[i] if i < glows.size() else null)
+	var first := _lights.size()
+	if not wicks.is_empty():
+		var flames: Array = []
+		for i in wicks.size():
+			flames.append(_flame(node.transform * (wicks[i] as Vector3), own, glows[i] if i < glows.size() else null))
+		_light_flames(flames, own)
 	var foot := _translated(_turned(b["foot"], basis), at)
 	if foot.size() >= 3:
 		_contact(foot)
@@ -1266,14 +1302,14 @@ func _put(t: Dictionary, b: Dictionary, spot: Dictionary, basis: Basis, group: S
 		_standing_r.append(r)
 	_things.append({"name": String(t.get("name", "")), "group": group, "place": String(t.get("place", "back")),
 		"node": node, "outline": spot["outline"], "bb": spot["bb"], "rect": spot["rect"], "foot": foot,
-		"lit": wicks.size(), "flames": range(first, _flames.size()), "meshes": b["meshes"]})
+		"lit": wicks.size(), "lights": range(first, _lights.size()), "meshes": b["meshes"]})
 
 
-## A FLAME at [param at], the top of a wick: a wick under it, the flame, and its light - which
-## lights everything but its own candle (render layer [param own]) and throws shadows from all of
-## it. A flame lighting its own holder blew it out: an oil lamp's flame sits a few centimeters above
-## its body. Its own wax glows instead, through [param glow] (its material's `flame`).
-func _light_wick(at: Vector3, own: int, glow: Variant = null) -> void:
+## A FLAME at [param at], the top of a wick: a wick under it (on its candle's layer, [param own])
+## and the flame, flickering in its own time. Its light is its thing's ([method _light_flames]); its
+## own wax glows with it, through [param glow] (its material's `flame`). The flame, as
+## `{mesh, base, flicker, glow}`.
+func _flame(at: Vector3, own: int, glow: Variant = null) -> Dictionary:
 	var wick := MeshInstance3D.new()
 	var wm := CylinderMesh.new()
 	wm.top_radius = 0.0006
@@ -1300,6 +1336,21 @@ func _light_wick(at: Vector3, own: int, glow: Variant = null) -> void:
 	flame.material_override = fm
 	flame.position = at + Vector3(0, 0.016, 0)
 	_props.add_child(flame)
+	_flame_n += 1
+	return {"mesh": flame, "base": flame.position, "flicker": _flicker_of(_flame_n - 1), "glow": glow}
+
+
+## A LIT THING'S ONE LIGHT, for every flame on it: a candelabra's tapers or a pillar's three wicks
+## light the room as one light from among them, as near together as they are - so a candle costs
+## one shadow however many flames it has. It lights everything but its own thing (render layer
+## [param own]) and throws shadows from all of it: a flame lighting its own holder blew it out (an
+## oil lamp's flame sits a few centimeters above its body). Its brightness follows its flames' -
+## each still flickers in its own time.
+func _light_flames(flames: Array, own: int) -> void:
+	var at := Vector3.ZERO
+	for f in flames:
+		at += (f as Dictionary)["base"]
+	at /= float(flames.size())
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.7, 0.4)
 	light.omni_range = 1.4
@@ -1309,14 +1360,13 @@ func _light_wick(at: Vector3, own: int, glow: Variant = null) -> void:
 	# a flame is a couple of centimeters across: the shadows it throws are soft at their ends. The
 	# biases are for a TABLETOP: at their defaults a deck's shadow began centimeters in front of it
 	light.light_size = 0.015
-	light.shadow_bias = 0.02
-	light.shadow_normal_bias = 0.4
+	light.shadow_bias = 0.004
+	light.shadow_normal_bias = 0.08
 	light.omni_shadow_mode = OmniLight3D.SHADOW_CUBE
 	light.shadow_enabled = true
-	light.position = at + Vector3(0, 0.032, 0)
+	light.position = at + Vector3(0, 0.016, 0)
 	_props.add_child(light)
-	_flames.append({"mesh": flame, "light": light, "base": flame.position, "light_base": light.position,
-		"energy": 0.28, "flicker": _flicker_of(_flames.size()), "glow": glow})
+	_lights.append({"light": light, "base": at, "light_base": light.position, "energy": 0.28, "flames": flames})
 
 
 ## A soft shade on the cloth under [param foot] (a thing's outline where it meets it): what
@@ -1471,23 +1521,28 @@ func _light_the_table() -> void:
 	var fields: Array = []
 	var key := -1
 	var best := INF
-	for i in _flames.size():
-		var base: Vector3 = (_flames[i] as Dictionary)["base"]
-		var lb: Vector3 = (_flames[i] as Dictionary)["light_base"]
+	for i in _lights.size():
+		var base: Vector3 = (_lights[i] as Dictionary)["base"]
+		var lb: Vector3 = (_lights[i] as Dictionary)["light_base"]
 		var field := _heat_field(Vector3(base.x, 0.0, base.z), lb.y)
 		fields.append(field)
 		var d := (base * Vector3(1, 0, 1)).length()
 		if HEAT / maxf(_field_max(field), 0.05) >= KEY_MIN and d < best:
 			best = d
 			key = i
+	# A LIGHT IS AS BRIGHT AS ITS FLAMES: a pillar's three wicks give three flames' light, a
+	# candelabra's five tapers five - capped like any other by the cloth they light
+	var flames := PackedFloat32Array()
+	for i in _lights.size():
+		flames.append(float(((_lights[i] as Dictionary)["flames"] as Array).size()))
 	var energy := PackedFloat32Array()
-	for i in _flames.size():
-		energy.append(minf(KEY_ENERGY if i == key else FILL_ENERGY, HEAT / maxf(_field_max(fields[i]), 0.05)))
+	for i in _lights.size():
+		energy.append(minf((KEY_ENERGY if i == key else FILL_ENERGY) * flames[i], HEAT / maxf(_field_max(fields[i]), 0.05)))
 	# the cloth's hottest spot under all of them at once, brought down to what it can take by
 	# dimming every flame that reaches it - a few times, as the hottest spot moves
 	for pass_ in 6:
 		var total := {}
-		for i in _flames.size():
+		for i in _lights.size():
 			for c in fields[i]:
 				total[c] = float(total.get(c, 0.0)) + energy[i] * float((fields[i] as Dictionary)[c])
 		var hot := -1
@@ -1498,15 +1553,15 @@ func _light_the_table() -> void:
 				hot = int(c)
 		if hot < 0:
 			break
-		for i in _flames.size():
+		for i in _lights.size():
 			if (fields[i] as Dictionary).has(hot):
 				energy[i] *= HEAT / most * 0.999
 	if key >= 0 and energy[key] < KEY_MIN:
 		key = -1
 	_key_flame = key
-	for i in _flames.size():
-		var f: Dictionary = _flames[i]
-		f["energy"] = energy[i] if i == key else minf(energy[i], FILL_ENERGY)
+	for i in _lights.size():
+		var f: Dictionary = _lights[i]
+		f["energy"] = energy[i] if i == key else minf(energy[i], FILL_ENERGY * flames[i])
 	# the candle has to carry much of the light at the cards, or its shadow is lost under the lamp's
 	_lamp.light_energy = _lamp_base * (1.0 if key < 0 else 0.4)
 	_lit_cloth = _cloth_mat.albedo_texture
@@ -1615,22 +1670,29 @@ func _contact_texture() -> Texture2D:
 
 
 func _tick_props(t: float) -> void:
-	for f in _flames:
-		var fl := _flame_at(f["flicker"], t)
-		var fast := _noise.get_noise_2d(t * 9.0 * float((f["flicker"] as Dictionary)["rate"]), float((f["flicker"] as Dictionary)["seed"]) + 91.0)
-		var lean := Vector3(fl.z * 0.0015, 0, 0)
-		var mesh: MeshInstance3D = f["mesh"]
-		mesh.scale = Vector3(1.0 + 0.06 * fast, fl.y, 1.0)
-		mesh.position = (f["base"] as Vector3) + lean
-		# a flame is a sprite facing the reader
-		mesh.look_at(mesh.global_position + (_cam.global_position - mesh.global_position) * Vector3(1, 0, 1), Vector3.UP)
-		mesh.rotate_object_local(Vector3.UP, PI)
-		var light: OmniLight3D = f["light"]
-		light.light_energy = float(f["energy"]) * fl.x
-		if f.get("glow") is ShaderMaterial:
-			(f["glow"] as ShaderMaterial).set_shader_parameter("flame", fl.x)
-		# the light leans with its flame, so the shadows breathe with it
-		light.position = (f["light_base"] as Vector3) + lean
+	for l in _lights:
+		# EACH FLAME IN ITS OWN TIME, and their light as bright as they are together
+		var bright := 0.0
+		var leans := Vector3.ZERO
+		for f in (l as Dictionary)["flames"]:
+			var fl := _flame_at(f["flicker"], t)
+			var fast := _noise.get_noise_2d(t * 9.0 * float((f["flicker"] as Dictionary)["rate"]), float((f["flicker"] as Dictionary)["seed"]) + 91.0)
+			var lean := Vector3(fl.z * 0.0015, 0, 0)
+			var mesh: MeshInstance3D = f["mesh"]
+			mesh.scale = Vector3(1.0 + 0.06 * fast, fl.y, 1.0)
+			mesh.position = (f["base"] as Vector3) + lean
+			# a flame is a sprite facing the reader
+			mesh.look_at(mesh.global_position + (_cam.global_position - mesh.global_position) * Vector3(1, 0, 1), Vector3.UP)
+			mesh.rotate_object_local(Vector3.UP, PI)
+			if f.get("glow") is ShaderMaterial:
+				(f["glow"] as ShaderMaterial).set_shader_parameter("flame", fl.x)
+			bright += fl.x
+			leans += lean
+		var n := maxf(float(((l as Dictionary)["flames"] as Array).size()), 1.0)
+		var light: OmniLight3D = (l as Dictionary)["light"]
+		light.light_energy = float((l as Dictionary)["energy"]) * bright / n
+		# the light leans with its flames, so the shadows breathe with them
+		light.position = ((l as Dictionary)["light_base"] as Vector3) + leans / n
 	for g in _glows:
 		(g["light"] as OmniLight3D).light_energy = float(g["energy"]) * _flame_at(g["flicker"], t).x
 

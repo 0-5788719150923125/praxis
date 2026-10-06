@@ -186,7 +186,7 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 ### Synthesis (voice)
 
-Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the source of the words (the text box, or a Markdown file on disk re-read at every Speak, whose frontmatter carries the voice), the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
+Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the source of the words (the text box, or a Markdown file on disk re-read at every Play, whose frontmatter carries the voice), the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`text_norm.gd`](../scripts/text_norm.gd) **TextNorm** - turn written English into speakable words, before anything else.
@@ -222,7 +222,7 @@ An automatic tarot reading: a show's brief, its episodes - each planned, painted
 - [`tarot_deck.gd`](../scripts/tarot_deck.gd) **TarotDeck** - the cards a show reads with, and how an episode's deck is shuffled.
 - [`tarot_table.gd`](../scripts/tarot_table.gd) **TarotTable** - what an episode's look may name, and how a look is made safe to draw.
 - [`tarot_cards.gd`](../scripts/tarot_cards.gd) **TarotCards** - a card's face, its back and its booklet page, composed in 2D for the table.
-- [`props.gd`](../scripts/props.gd) **Props** - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one. An agent writes the description - centimeters, the thing's base on y = 0, its front toward +z - and `sanitize` ...
+- [`props.gd`](../scripts/props.gd) **Props** - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one - or a GROUP of parts, placed and repeated as one (a candelabra's arm, cup and taper, copied round). An agent writes ...
 
 ### Agents
 

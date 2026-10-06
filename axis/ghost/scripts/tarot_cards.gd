@@ -205,8 +205,21 @@ class Face:
 				band_top.size.x, ns, ink)
 
 
-## THE BOOKLET PAGE beside a drawn card: its entry in the deck's little white booklet. Shown,
-## never read aloud.
+## THE BOOKLET'S COLORS are the card's: its stock for the paper, its ink and accent for the type,
+## each kept readable on that paper (the running text at [constant TarotTable.TEXT_CONTRAST]).
+## [param shade] (0..1) takes a page a hair darker, so two pages are not one sheet.
+static func page_colors(look: Dictionary, shade: float) -> Dictionary:
+	var frame: Dictionary = look.get("frame", {}) if look.get("frame") is Dictionary else {}
+	var stock := TarotTable.color(String(frame.get("stock", "#efe6d2")))
+	var paper := stock.lerp(stock.darkened(0.04), shade)
+	return {"paper": paper,
+		"ink": TarotTable.legible_ink(TarotTable.color(String(frame.get("ink", "#1d1a2b"))), paper,
+			TarotTable.TEXT_CONTRAST),
+		"accent": TarotTable.legible_ink(TarotTable.color(String(frame.get("accent", "#7a2e3a"))), paper)}
+
+
+## THE BOOKLET PAGE beside a drawn card: its entry in the deck's little booklet, printed in the
+## card's colors ([method page_colors]). Shown, never read aloud.
 class Page:
 	extends Node2D
 
@@ -218,14 +231,10 @@ class Page:
 		var sz := Vector2(TarotCards.PAGE_PX)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = hash([seed, "page"])
-		var paper := Color(0.955, 0.935, 0.885).lerp(Color(0.93, 0.9, 0.83), rng.randf())
-		var frame: Dictionary = look.get("frame", {})
-		var ink := TarotTable.color(String(frame.get("ink", "#1d1a2b"))).darkened(0.2)
-		if ink.get_luminance() > 0.45:
-			ink = Color(0.12, 0.1, 0.1)
-		var accent := TarotTable.color(String(frame.get("accent", "#7a2e3a")))
-		if accent.get_luminance() > 0.7:
-			accent = accent.darkened(0.45)
+		var col := TarotCards.page_colors(look, rng.randf())
+		var paper: Color = col["paper"]
+		var ink: Color = col["ink"]
+		var accent: Color = col["accent"]
 		TarotCards._box(self, Rect2(Vector2.ZERO, sz), paper, sz.x * 0.012)
 		# the page's own grain: a few soft blotches, never a texture that fights the type
 		for i in 24:

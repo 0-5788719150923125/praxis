@@ -179,14 +179,16 @@ func _close() -> void:
 	closed.emit()
 
 
-## The Ask box as it stands right now: with no assistant chosen on the home screen there is
-## nothing to ask, so it is shown off and unclickable - the remembered choice is untouched and
-## comes back once one is chosen.
+## The Ask box as it stands right now: with no assistant to send to - none chosen on the home
+## screen, the chosen one's CLI not installed, or no AI installed at all ([method
+## Splash.assistant_gap]) - there is nothing to ask, so it is shown off and unclickable. The
+## remembered choice is untouched and comes back once there is one.
 func _show_ask() -> void:
-	var none := Splash.assistant_backend() == ""
+	var gap := Splash.assistant_gap()
+	var none := not gap.is_empty()
 	_ask.disabled = none
 	_ask.set_pressed_no_signal(not none and bool(Settings.read(ASK_SECTION, ASK_KEY, true)))
-	_ask.tooltip_text = "No assistant is chosen on the home screen - the note is only logged" if none \
+	_ask.tooltip_text = (gap.left(1).to_upper() + gap.substr(1) + " - the note is only logged") if none \
 		else "Off: the screenshot and note are only logged (send one later from the feedback list)"
 
 

@@ -205,7 +205,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "synthesizer (no models, no weights, fully inspectable, and the only "
         "path that can sing), and a small local neural voice run by a "
         "subprocess host. Shared between them: the source of the words (the "
-        "text box, or a Markdown file on disk re-read at every Speak, whose "
+        "text box, or a Markdown file on disk re-read at every Play, whose "
         "frontmatter carries the voice), the text front end and its "
         "normalization, the threaded real-time stream, karaoke subtitles, and "
         "the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the "
@@ -392,7 +392,7 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         "--synth",
         "[text-file]",
         "Open the voice-synthesis editor: write or paste a script, sample a "
-        "voice by seed, Speak renders a WAV take and plays it as a normal "
+        "voice by seed; each reading renders a WAV take and plays it as a normal "
         "session (scenes react to the narration; karaoke subtitles track it).",
         False,
     ),

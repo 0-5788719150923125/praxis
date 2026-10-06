@@ -15,6 +15,10 @@ class_name Splash
 ##   Masking    - chroma-key effects over an imported video clip.
 ## A mode button *is* start - there is no separate start button.
 ##
+## A MODE THAT ONLY WORKS WITH AI AGENTS SAYS SO, and is grayed out until they are installed
+## (see [constant AGENT_ROLES]): still listed, so nothing looks missing, with a tooltip naming the
+## supported agents for whatever role is unfilled.
+##
 ## ONE source row imports everything: the picker button plus a free-form field
 ## that accepts a URL or a raw file path. Whatever arrives is routed to the
 ## right slot - http(s) URLs fill the clip slot (Masking's mask_editor
@@ -33,13 +37,30 @@ class_name Splash
 const VIDEO_EXTS := ["mp4", "mov", "mkv", "webm", "avi"]
 const AUDIO_EXTS := ["wav", "mp3", "ogg", "oga", "flac"]
 
-## The assistant dropdown: display name -> the persisted key (see
-## assistant_backend()). "" (Off) means no assistant at all - main.gd and
-## mask_editor.gd both gate creating an Assistant node on this being non-empty.
-## Each key is a row of [AssistantBackends], which owns everything that differs
-## between the CLIs; a new backend is a row there plus an entry here.
-const ASSISTANT_BACKENDS := ["Off", "Claude Code CLI", "Codex CLI (OpenAI)"]
-const ASSISTANT_KEYS := ["", "claude_cli", "codex_cli"]
+## The Assistant dropdown's rows: Off, then every row of [AssistantBackends], which owns
+## everything that differs between the CLIs - so a new backend is a row there and nothing here.
+## A row's key is what `[assistant] backend` stores (see [method assistant_keys]).
+const ASSISTANTS := preload("res://scripts/assistant_backends.gd")
+const ASSIST_TIP := "Feedback left with ` gets handed to this, one-shot, the moment you submit it."
+
+## What every gate on this screen tells a person to do about a missing agent.
+const INSTALL_HINT := ("Install one or several of them, then press rescan in the Environment panel. "
+	+ "Click an agent's row there for the command that installs it.")
+
+## WHAT A MODE CAN NEED THAT GHOST CANNOT INSTALL FOR IT: an AI agent in a ROLE. The agent CLIs keep
+## their own logins, so they stay the user's to install (see [constant Deps.TOOLS]). A role is a
+## backend registry, and it is filled when ANY ONE of its backends is installed. A mode row names
+## the roles it needs; while one is unfilled the button is grayed out and its tooltip lists every
+## agent that role's registry supports - so a new backend is offered here without an edit, and
+## nothing on this screen names one. Availability is the backend's own `available()`, the same
+## resolver its jobs launch through, so a mode is never lit for an agent its jobs cannot find.
+const AGENT_ROLES := {
+	"writer": preload("res://scripts/text_gen.gd"),
+	"painter": preload("res://scripts/image_gen.gd"),
+}
+
+const COL_DESC := Color(0.7, 0.78, 0.9)
+const COL_USES := Color(0.42, 0.48, 0.58)
 
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
@@ -48,20 +69,21 @@ var start_synth: Callable      # start_synth.call(mode: "fishing"|"neural"|"taro
 
 var _audio_path := ""
 var _video_path := ""
-var _assistant_backend := ""
 var _file_dialog: FileDialog
-var _env: Control                       # the Environment panel (deps_panel.gd)
+var _env: DepsPanel                     # the Environment panel (deps_panel.gd)
 var _source_edit: LineEdit
 var _uses_auto: Label     # per-mode source captions - see _refresh_sources
 var _uses_manual: Label
 var _uses_mask: Label
+var _gates: Array = []    # {button, row, desc, uses, needs} per mode that needs agents - see _refresh_gates
+var _asst_label: Label
+var _asst_option: OptionButton    # see _refresh_assistant
 
 
 func _ready() -> void:
 	layer = 200
 	_load_last_song()
 	_load_last_video()
-	_assistant_backend = assistant_backend()
 	_build_ui()
 	# THE ⤓ EXPORT BUTTON HAS NO BUSINESS HERE. It is session furniture - it renders the
 	# running show to video - and the home screen is not a session: there is nothing on
@@ -177,11 +199,12 @@ func _build_ui() -> void:
 	# Generative, because what drives it is not a script but a show's brief.
 	_add_mode_row(col, "Tarot  ▶",
 		"An automatic tarot reading - agents plan, paint and write each episode one card at a "
-		+ "time, and a voice reads it at the table.", "uses the Claude and Codex CLIs",
-		func() -> void: _choose_synth("tarot"))
+		+ "time, and a voice reads it at the table.", "",
+		func() -> void: _choose_synth("tarot"), ["writer", "painter"])
 	_uses_mask = _add_mode_row(col, "Masking  ▶",
 		"Chroma-key effects over a video - markers, tracks, renders.", "", _start_mask)
 	_refresh_sources()
+	_refresh_gates()
 
 	col.add_child(_spacer(6))
 	var asst_row := HBoxContainer.new()
@@ -189,22 +212,21 @@ func _build_ui() -> void:
 	asst_row.add_theme_constant_override("separation", 10)
 	col.add_child(asst_row)
 
-	var asst_label := Label.new()
-	asst_label.text = "Assistant:"
-	asst_label.add_theme_color_override("font_color", Color(0.55, 0.62, 0.75))
-	asst_row.add_child(asst_label)
+	_asst_label = Label.new()
+	_asst_label.text = "Assistant:"
+	asst_row.add_child(_asst_label)
 
-	var asst_option := OptionButton.new()
-	asst_option.focus_mode = Control.FOCUS_NONE
-	asst_option.tooltip_text = "Feedback left with ` gets handed to this, one-shot, the moment you submit it"
-	for name in ASSISTANT_BACKENDS:
-		asst_option.add_item(name)
+	_asst_option = OptionButton.new()
+	_asst_option.focus_mode = Control.FOCUS_NONE
+	var keys := assistant_keys()
+	for k in keys:
+		_asst_option.add_item("Off" if String(k).is_empty() else ASSISTANTS.label(k))
 	# BOUND, so the choice is stored and restored by construction - see Settings.bind. The
 	# keys are passed so the setting holds the backend NAME, not a row number that a new
 	# backend would silently reassign.
-	Settings.bind(asst_option, "assistant", "backend", "", ASSISTANT_KEYS)
-	asst_option.item_selected.connect(_on_assistant_selected)
-	asst_row.add_child(asst_option)
+	Settings.bind(_asst_option, "assistant", "backend", "", keys)
+	asst_row.add_child(_asst_option)
+	_refresh_assistant()
 
 	var hint := Label.new()
 	hint.text = "F11 fullscreen · ` feedback · Esc quit"
@@ -219,6 +241,9 @@ func _build_ui() -> void:
 	# the same corner here as in every mode (see DepsPanel._build_ui).
 	_env = preload("res://scripts/deps_panel.gd").new()
 	add_child(_env)
+	# its rescan is how an agent installed while this screen is open lights its mode up
+	_env.probed.connect(_refresh_gates)
+	_env.probed.connect(_refresh_assistant)
 
 	# Native file picker (falls back to Godot's built-in if no native dialog).
 	_file_dialog = FileDialog.new()
@@ -233,10 +258,13 @@ func _build_ui() -> void:
 
 
 ## One mode row: the start button on the left, description + source caption
-## beside it. Every mode is always clickable - a missing import is handled by
-## the mode itself (Auto idles without a song, Masking prompts for a clip).
+## beside it. A missing import is handled by the mode itself (Auto idles
+## without a song, Masking prompts for a clip); a missing AGENT is not - a mode
+## naming [param needs] (roles of [constant AGENT_ROLES]) is grayed out while
+## one is unfilled, see _refresh_gates, which also writes its caption.
 ## Returns the caption label so _refresh_sources can keep it current.
-func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable) -> Label:
+func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable,
+		needs: Array = []) -> Label:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 	col.add_child(row)
@@ -254,14 +282,18 @@ func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String,
 
 	var desc_label := Label.new()
 	desc_label.text = desc
-	desc_label.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
+	desc_label.add_theme_color_override("font_color", COL_DESC)
 	text_col.add_child(desc_label)
 
 	var uses_label := Label.new()
 	uses_label.text = uses
 	uses_label.add_theme_font_size_override("font_size", 12)
-	uses_label.add_theme_color_override("font_color", Color(0.42, 0.48, 0.58))
+	uses_label.add_theme_color_override("font_color", COL_USES)
 	text_col.add_child(uses_label)
+	if not needs.is_empty():
+		# the labels ignore the mouse, so the row's own tooltip answers a hover over them
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
+		_gates.append({"button": btn, "row": row, "desc": desc_label, "uses": uses_label, "needs": needs})
 	return uses_label
 
 
@@ -294,6 +326,87 @@ static func _short_source(p: String) -> String:
 		var s := p.trim_prefix("https://").trim_prefix("http://").trim_prefix("www.")
 		return s.substr(0, 40) + ("…" if s.length() > 40 else "")
 	return p.get_file()
+
+
+## GRAY OUT every mode whose agents are not installed. Runs when the screen is built and again
+## whenever the Environment panel's probe lands, so installing an agent and pressing rescan lights
+## its mode up without a restart. A disabled button still shows its tooltip, and the row carries
+## the same one for a hover over its words.
+func _refresh_gates() -> void:
+	for g in _gates:
+		var needs: Array = g["needs"]
+		var missing := missing_roles(needs)
+		var tip := agents_tooltip(needs, missing)
+		var btn: Button = g["button"]
+		btn.disabled = not missing.is_empty()
+		btn.tooltip_text = tip
+		(g["row"] as Control).tooltip_text = tip
+		var uses: Label = g["uses"]
+		uses.text = ("needs %s - none installed" % role_phrase(missing)) if not missing.is_empty() \
+			else "uses %s" % role_phrase(needs)
+		uses.add_theme_color_override("font_color", COL_USES if missing.is_empty() else DepsPanel.COL_BAD)
+		(g["desc"] as Label).add_theme_color_override("font_color",
+			COL_DESC if missing.is_empty() else COL_USES)
+
+
+## The keys of [param role]'s agents this machine has, in registry order.
+static func installed(role: String) -> Array:
+	var reg: GDScript = AGENT_ROLES[role]
+	return (reg.REGISTRY as Dictionary).keys().filter(func(k: String) -> bool: return reg.make(k).available())
+
+
+## The roles in [param needs] that no installed agent fills.
+static func missing_roles(needs: Array) -> Array:
+	return needs.filter(func(r: String) -> bool: return installed(r).is_empty())
+
+
+## "an AI painter", "an AI writer and painter".
+static func role_phrase(roles: Array) -> String:
+	return "an AI " + _join(roles, "and")
+
+
+## A gated mode's tooltip. With nothing [param missing], which installed agents fill each role in
+## [param needs]. Otherwise: what is not installed; for each unfilled role, EVERY agent its
+## registry supports; the agents that would fill all of them alone (a key names the same CLI in
+## every registry - `codex` writes and paints); and what to do about it.
+## Written as PARAGRAPHS: Boot re-flows every tooltip to a width, folding a single newline into
+## the line, so only a blank line survives as a break.
+static func agents_tooltip(needs: Array, missing: Array) -> String:
+	var paras := PackedStringArray()
+	if missing.is_empty():
+		for role in needs:
+			paras.append("%ss installed: %s." % [String(role).capitalize(),
+				_join(_labels(role, installed(role)), "and")])
+		return "\n\n".join(paras)
+	paras.append("No AI %s is installed." % _join(missing, "or"))
+	for role in missing:
+		paras.append("Supported %ss: %s." % [role,
+			_join(_labels(role, (AGENT_ROLES[role].REGISTRY as Dictionary).keys()), "and")])
+	if missing.size() > 1:
+		var every: Array = (AGENT_ROLES[missing[0]].REGISTRY as Dictionary).keys()
+		for role in missing.slice(1):
+			var reg: Dictionary = AGENT_ROLES[role].REGISTRY
+			every = every.filter(func(k: String) -> bool: return reg.has(k))
+		if not every.is_empty():
+			paras.append("%s can do %s." % [_join(_labels(missing[0], every), "or"),
+				"both" if missing.size() == 2 else "all of them"])
+	paras.append(INSTALL_HINT)
+	return "\n\n".join(paras)
+
+
+## Display labels for [param keys] of [param role]'s registry, each held together with no-break
+## spaces so the tooltip's re-flow never splits an agent's name across two lines.
+static func _labels(role: String, keys: Array) -> Array:
+	var labels: Dictionary = AGENT_ROLES[role].LABELS
+	return keys.map(func(k: String) -> String: return String(labels.get(k, k)).replace(" ", "\u00a0"))
+
+
+## "a", "a and b", "a, b and c".
+static func _join(words: Array, conj: String) -> String:
+	var w := PackedStringArray(words)
+	if w.size() < 2:
+		return "".join(w)
+	return "%s %s %s" % [", ".join(w.slice(0, w.size() - 1)), conj, w[w.size() - 1]]
 
 
 func _open_file_dialog() -> void:
@@ -417,20 +530,77 @@ func _remembered_source() -> String:
 	return _video_path if not _video_path.is_empty() else _audio_path
 
 
-func _on_assistant_selected(idx: int) -> void:
-	_assistant_backend = ASSISTANT_KEYS[idx]
+## GRAY OUT the assistants that cannot run: a CLI that is not installed is listed but not
+## choosable, and with none installed the whole dropdown is - there is nothing to send a note to,
+## and [method assistant_backend] reads as Off everywhere. The stored choice is never rewritten,
+## so it comes back the moment its CLI is found (a rescan re-runs this).
+func _refresh_assistant() -> void:
+	var keys := assistant_keys()
+	var have := installed_assistants()
+	for i in keys.size():
+		var k := String(keys[i])
+		if k.is_empty():
+			continue
+		_asst_option.set_item_text(i, ASSISTANTS.label(k) + ("" if have.has(k) else "  (not installed)"))
+		_asst_option.set_item_disabled(i, not have.has(k))
+	_asst_option.disabled = have.is_empty()
+	var gap := assistant_gap()
+	if have.is_empty():
+		var names: Array = ASSISTANTS.REGISTRY.keys().map(
+			func(k: String) -> String: return ASSISTANTS.label(k).replace(" ", "\u00a0"))
+		_asst_option.tooltip_text = "\n\n".join(PackedStringArray([
+			"No AI assistant is installed, so a note left with ` is only logged.",
+			"Supported assistants: %s." % _join(names, "and"), INSTALL_HINT]))
+	elif not gap.is_empty() and not assistant_choice().is_empty():
+		_asst_option.tooltip_text = "%s\n\n%s, so a note is only logged. Pick another, or install it." \
+			% [ASSIST_TIP, gap.left(1).to_upper() + gap.substr(1)]
+	else:
+		_asst_option.tooltip_text = ASSIST_TIP
+	_asst_label.add_theme_color_override("font_color",
+		COL_USES if have.is_empty() else Color(0.55, 0.62, 0.75))
 
 
-## The persisted assistant choice ("" = Off, "claude_cli" = Claude Code CLI,
-## "codex_cli" = Codex CLI) -
-## a STATIC reader over the same user://ghost.cfg this instance writes, so
-## main.gd and mask_editor.gd can both read it directly rather than have it
-## threaded through start_session/start_mask. That matters because splash
-## isn't even in the tree for a direct CLI --mask-edit launch - the setting
-## still has to apply there, from whatever a PREVIOUS run last chose.
-static func assistant_backend() -> String:
+## The Assistant dropdown's keys, in its order: "" (Off), then every row of [AssistantBackends].
+static func assistant_keys() -> Array:
+	return [""] + ASSISTANTS.REGISTRY.keys()
+
+
+## The assistant CLIs this machine has, in registry order - asked of the same resolver a
+## dispatch launches through.
+static func installed_assistants() -> Array:
+	return ASSISTANTS.REGISTRY.keys().filter(func(k: String) -> bool: return Deps.has(ASSISTANTS.dep(k)))
+
+
+## The persisted assistant choice as the dropdown shows it ("" = Off, else a row of
+## [AssistantBackends]), installed or not - a STATIC reader over the same user://ghost.cfg the
+## dropdown writes, so the Assistant and the feedback console read it directly. That matters
+## because the splash is not even in the tree for a direct `--mask-edit` launch - the setting
+## still applies there, from whatever a PREVIOUS run last chose.
+static func assistant_choice() -> String:
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null:
 		return ""
 	var st := tree.root.get_node_or_null("Settings")
 	return String(st.read("assistant", "backend", "")) if st != null else ""
+
+
+## THE ASSISTANT THAT CAN ACTUALLY RUN: the choice, when its CLI is installed; "" (Off) otherwise.
+## Whatever dispatches a note or offers to - the console's Ask box, the feedback list's Send -
+## asks this, so a CLI missing from this machine is never offered and with no AI installed the
+## feature is off. [method assistant_gap] says why.
+static func assistant_backend() -> String:
+	return assistant_choice() if assistant_gap().is_empty() else ""
+
+
+## Why no note can be sent, "" when one can: no AI assistant installed, none chosen, or the
+## chosen one's CLI missing. One lower-case clause, for whatever says so.
+static func assistant_gap() -> String:
+	var have := installed_assistants()
+	if have.is_empty():
+		return "no AI assistant is installed"
+	var chosen := assistant_choice()
+	if not ASSISTANTS.has(chosen):
+		return "no assistant is chosen on the home screen"
+	if not have.has(chosen):
+		return "%s is not installed" % ASSISTANTS.label(chosen)
+	return ""

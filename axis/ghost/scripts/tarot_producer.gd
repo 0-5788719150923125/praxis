@@ -330,6 +330,14 @@ func _make_image(step: String) -> void:
 		"surface":
 			_submit_image(step, TarotPrompts.surface_image(look, target), [])
 		"backdrop":
+			# THE VIEW IT IS ASKED FOR, kept beside it: the table projects a level picture from the
+			# camera's eye, and keeps a picture made before (none beside it) as it always stood
+			var view := episode.dir.path_join("backdrop.json")
+			var f := FileAccess.open(view + ".part", FileAccess.WRITE)
+			if f != null:
+				f.store_string(JSON.stringify({"view": "level", "lens_mm": TarotTable.BACKDROP_LENS}))
+				f.close()
+				DirAccess.rename_absolute(view + ".part", view)
 			_submit_image(step, TarotPrompts.backdrop_image(look, target), [])
 
 

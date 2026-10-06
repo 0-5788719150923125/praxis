@@ -237,10 +237,10 @@ const TOOLS := [
 		"bins": ["claude"],
 		"version_args": ["--version"],
 		"tier": TIER_EXTRA,
-		"used_for": "The Assistant dropdown on this screen. With it selected, a note left in the ` "
-			+ "feedback console is dispatched to Claude Code as a one-shot fix against this "
-			+ "checkout, and the tarot mode's writers run on it. It keeps its own login, so it "
-			+ "stays yours to install. Leave the dropdown Off and this is never touched.",
+		"used_for": "A writer for the tarot mode (its plan, booklet and reading), and the Assistant "
+			+ "dropdown on this screen: with it selected, a note left in the ` feedback console is "
+			+ "dispatched to Claude Code as a one-shot fix against this checkout. It keeps its own "
+			+ "login, so it stays yours to install, and it runs only when asked.",
 		"install": {
 			"linux": "curl -fsSL https://claude.ai/install.sh | bash",
 			"macos": "curl -fsSL https://claude.ai/install.sh | bash",
@@ -254,10 +254,11 @@ const TOOLS := [
 		"bins": ["codex"],
 		"version_args": ["--version"],
 		"tier": TIER_EXTRA,
-		"used_for": "The Assistant dropdown's Codex option (a ` feedback note dispatched to Codex "
-			+ "as a one-shot fix against this checkout), and painting the illustrations the book "
-			+ "medium prints, through Codex's built-in image generation. It keeps its own login, "
-			+ "so it stays yours to install. Neither runs unless you pick it.",
+		"used_for": "The tarot mode's painter (and a writer it can pick), the pictures the book and "
+			+ "notebook media print - both through Codex's built-in image generation - and the "
+			+ "Assistant dropdown's Codex option (a ` feedback note dispatched to Codex as a "
+			+ "one-shot fix against this checkout). It keeps its own login, so it stays yours to "
+			+ "install, and it runs only when asked.",
 		"install": {
 			"linux": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 			"macos": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",

@@ -42,9 +42,12 @@ const FRAMES := {
 	"bleed": "the picture runs nearly to the edge, with only a hairline rule",
 }
 
-## THE CANDLES: the most flames on a table. Each lights the table, and the one nearest the middle
-## throws its shadows (see [method TarotMedium._light_the_table]).
+## THE CANDLES: the most LIT THINGS on a table - a candle in its stick, a candelabra, a dish of tea
+## lights - each burning as ONE light however many flames it has (a light each is a shadow each, six
+## passes a frame), the brightest the key (see [method TarotMedium._light_the_table]); and the most
+## flames any one of them has.
 const MAX_CANDLES := 4
+const MAX_FLAMES := 12
 
 ## THE THINGS ON THE TABLE are modeled, not painted (see [Props]): the set dresser describes each
 ## in parts and materials and names where it stands; the table builds and places it. A painted
@@ -69,10 +72,17 @@ const FALLBACK_PALETTE := ["#1d1a2b", "#c9a227", "#e8dcc0", "#7a2e3a", "#2f5d62"
 ## The least contrast (WCAG ratio) a card's ink may have against its stock: the name is printed
 ## in it. 3 is WCAG's floor for large text.
 const INK_CONTRAST := 3.0
+## ...and the booklet's running text, which is small: WCAG's floor for body text.
+const TEXT_CONTRAST := 4.5
 
 
 ## THE LENS: the camera's vertical field of view, degrees, before an episode's own small turn of it.
 const VFOV := 42.0
+## THE ROOM'S PICTURE is asked for as a LEVEL photograph from a seated reader's eye, its horizon
+## across its middle, through a lens this wide (millimeters, on a 36 x 24 frame) - the photograph an
+## image model makes most reliably - and projected from the camera's own eye, so the room past the
+## table is seen as the tilted camera would see it ([method TarotMedium._place_backdrop]).
+const BACKDROP_LENS := 20.0
 
 
 ## THE EPISODE'S LAYOUT, drawn from [param rng] in a fixed order: the camera (`camera`, `fov`,
@@ -160,7 +170,7 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 	f["stock"] = String(frame.get("stock", "")) if _is_color(String(frame.get("stock", ""))) else "#efe6d2"
 	f["ink"] = String(frame.get("ink", "")) if _is_color(String(frame.get("ink", ""))) else String(pal[0])
 	f["accent"] = String(frame.get("accent", "")) if _is_color(String(frame.get("accent", ""))) else String(pal[1])
-	# the stock can be anything from black to white (TarotPrompts.dice): the name must read on it
+	# the producer may print on any stock, black to white: the name must read on it
 	var ink := color(f["ink"])
 	var readable := legible_ink(ink, color(f["stock"]))
 	if readable != ink:
@@ -190,13 +200,13 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 
 
 ## THE TABLE MADE SAFE: the set dresser's reply as [Props] can build it, every thing standing in a
-## zone the table knows ("back" when it named none), things sharing a `group` kept together, and
-## no more lit wicks than [constant MAX_CANDLES] - the first written keep their flames, the rest
-## stand unlit.
+## zone the table knows ("back" when it named none), things sharing a `group` kept together, no
+## more lit things than [constant MAX_CANDLES] and no more than [constant MAX_FLAMES] flames on one
+## - the first written keep their flames, the rest stand unlit.
 static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 	var out := Props.sanitize(spec, look.get("palette", FALLBACK_PALETTE) if look.get("palette") is Array else FALLBACK_PALETTE)
 	var things: Array = []
-	var flames := 0
+	var lit := 0
 	for t in (out["things"] as Array).slice(0, MAX_THINGS):
 		var thing: Dictionary = t
 		var place := String(thing.get("place", "")).strip_edges().to_lower()
@@ -204,16 +214,17 @@ static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 		var g: Variant = thing.get("group", "")
 		thing["group"] = str(int(g)) if (g is float or g is int) else String(g if g is String else "").strip_edges()
 		thing["turn"] = Props._num(thing.get("turn"), 0.0, -180.0, 180.0)
+		var flames := 0
 		for p in thing["parts"]:
-			var part: Dictionary = p
-			if not bool(part.get("wick", false)):
+			var n := Props.flames_of(p as Dictionary)
+			if n == 0:
 				continue
-			var copies: Dictionary = part.get("copies", {})
-			var n := int(copies.get("count", 1)) if not copies.is_empty() else 1
-			if flames + n > MAX_CANDLES:
-				part["wick"] = false
+			if lit >= MAX_CANDLES or flames + n > MAX_FLAMES:
+				Props.unlit(p as Dictionary)
 			else:
 				flames += n
+		if flames > 0:
+			lit += 1
 		things.append(thing)
 	out["things"] = things
 	return out
@@ -302,15 +313,15 @@ static func _luminance(c: Color) -> float:
 	return 0.2126 * l.r + 0.7152 * l.g + 0.0722 * l.b
 
 
-## [param ink] as it is when it reads on [param stock] (see [constant INK_CONTRAST]); otherwise
-## moved toward white or black, whichever stands further from the stock, until it does.
-static func legible_ink(ink: Color, stock: Color) -> Color:
-	if contrast(ink, stock) >= INK_CONTRAST:
+## [param ink] as it is when it reads on [param stock] (contrast at least [param least]);
+## otherwise moved toward white or black, whichever stands further from the stock, until it does.
+static func legible_ink(ink: Color, stock: Color, least := INK_CONTRAST) -> Color:
+	if contrast(ink, stock) >= least:
 		return ink
 	var to := Color.WHITE if contrast(Color.WHITE, stock) > contrast(Color.BLACK, stock) else Color.BLACK
 	for i in range(1, 11):
 		var c := ink.lerp(to, float(i) / 10.0)
-		if contrast(c, stock) >= INK_CONTRAST:
+		if contrast(c, stock) >= least:
 			return c
 	return to
 

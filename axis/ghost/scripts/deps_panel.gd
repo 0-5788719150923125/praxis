@@ -30,6 +30,10 @@ const COL_DIM := Color(0.50, 0.57, 0.68)
 const GROUPS := ["kept current by ghost", "built the first time a feature needs it",
 	"from this machine"]
 
+## A probe has landed: [Deps]' answers are fresh. The splash grays out its agent modes off them,
+## so a rescan after installing an agent CLI lights its mode up.
+signal probed
+
 var _rows: Array = []
 var _thread: Thread
 var _list: VBoxContainer
@@ -272,6 +276,7 @@ func _apply(rows: Array) -> void:
 	_join()
 	_rows = rows
 	_render()
+	probed.emit()
 	# Something a feature needs that is missing or failed overrides a remembered collapse: the one
 	# moment this panel exists to serve is the one where the user does not yet know to look.
 	if _collapsed and not _problem().is_empty():

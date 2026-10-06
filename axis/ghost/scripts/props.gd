@@ -2,7 +2,8 @@ extends RefCounted
 class_name Props
 
 ## Props - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes
-## and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one. An
+## and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one - or a
+## GROUP of parts, placed and repeated as one (a candelabra's arm, cup and taper, copied round). An
 ## agent writes the description - centimeters, the thing's base on y = 0, its front toward +z - and
 ## [method sanitize] makes whatever it wrote buildable; [method build] makes the meshes, in meters.
 ##
@@ -12,10 +13,15 @@ class_name Props
 ## Geometry is built here rather than from CSG nodes because a part's lobes, twist and wax drips
 ## displace it as it is built, which a spun polygon cannot do.
 
-## The most parts a thing has, points a profile or path has, and copies a part makes.
-const MAX_PARTS := 12
+## The most parts a thing has (every part in every group counted), points a profile or path has,
+## copies a part makes, groups deep a part may sit, parts a thing makes in all (every copy of every
+## part), and wicks one wax part has.
+const MAX_PARTS := 16
 const MAX_POINTS := 40
 const MAX_COPIES := 24
+const MAX_DEPTH := 3
+const MAX_INSTANCES := 96
+const MAX_WICKS := 6
 ## The largest anything may be, centimeters: a thing past it is scaled down whole.
 const MAX_SIZE := 60.0
 ## How high above the cloth a thing's FOOT is measured (meters): what a card sliding across the
@@ -26,7 +32,7 @@ const CLEAR := 0.8
 
 ## THE SHAPES a part can be, and what they are for.
 const SHAPES := {
-	"lathe": "a solid turned about the vertical axis, as on a lathe: vessels, candles, candlesticks, cups, bowls, bottles, vases, stems, bells, finials, coins. `profile`: [radius, height] points from the middle of the bottom outward and up the outside; a HOLLOW thing goes on over its rim and back down the inside to the middle of its inner floor - a bowl is [[0,0],[3,0],[6,4],[6.4,4.2],[5.8,4],[2.8,0.6],[0,0.6]]. Optional: `smooth` true curves through the points instead of joining them straight; `sides` 3-12 cuts it flat-sided (6 is hexagonal); `lobes` bulges round it (a scalloped bowl, a melon, a fluted column) with `lobe_depth` 0.05-0.4; `twist` in degrees from bottom to top (a twisted taper). A candle's wax has `wick` true - its flame is lit at the middle of its top, which is melted into a shallow pool - and `drips` 0-1.",
+	"lathe": "a solid turned about the vertical axis, as on a lathe: vessels, candles, candlesticks, cups, bowls, bottles, vases, stems, bells, finials, coins. `profile`: [radius, height] points from the middle of the bottom outward and up the outside; a HOLLOW thing goes on over its rim and back down the inside to the middle of its inner floor - a bowl is [[0,0],[3,0],[6,4],[6.4,4.2],[5.8,4],[2.8,0.6],[0,0.6]]. Optional: `smooth` true curves through the points instead of joining them straight; `sides` 3-12 cuts it flat-sided (6 is hexagonal); `lobes` bulges round it (a scalloped bowl, a melon, a fluted column) with `lobe_depth` 0.05-0.4; `twist` in degrees from bottom to top (a twisted taper). A candle's wax has `wick` true - its flame is lit at the middle of its top, which is melted into a shallow pool - or `wicks` 2-6, set round the top (three make a triangle), or `wicks` [[x, z], ...] placing each, centimeters from the middle; and `drips` 0-1.",
 	"box": "a block with rounded edges: books, boxes, tins, slabs, trays, a plinth. `size` [width, height, depth]; `round` the edges' radius; `taper` 0-0.9 narrows it toward the top.",
 	"ball": "a sphere, stretched to `size` [width, height, depth]: crystal balls, beads, fruit, eggs, orbs, pebbles, tumbled stones. `lumpy` 0-1 makes it irregular like a tumbled stone or a fruit; `facets` true cuts it into flat faces like a rough, raw stone.",
 	"point": "one crystal: a prism with a pointed end, standing up from its base - a tower, a single point. `radius`, `length` (the prism), `tip` (the point), `sides` (6 for quartz).",
@@ -36,7 +42,11 @@ const SHAPES := {
 	"tube": "a round rod along a path: handles, stems, incense sticks, wands, branches, wire, a snake, a feather's quill. `path` [[x,y,z], ...] in the thing's own space, `radius` (or `radii`, one per point), `smooth` (default true).",
 	"sheet": "a thin flat piece lying on the cloth unless turned, placed by its middle: a leaf, a petal, a feather, a page, a scrap of cloth. `outline` (leaf, petal, feather, oval or rect - or `points` [[x,z], ...] for any outline), `size` [width, length] (its length runs front to back), `bend` -1..1 (the tip curls up), `fold` 0-1 (the sides lift).",
 	"bloom": "a flower head, petals in rings round a small middle: `petals`, `layers` 1-4, `radius`, `cup` 0 (open flat) to 1 (a closed bud), `width` (a petal's width over its length).",
+	"extrude": "an outline raised straight up: trays, tiles, plaques, tablets, boxes, dishes and candles of any plan - a star, a hexagon, a heart. `outline` (polygon with `sides` 3-12, star with `sides` points, circle, rect or heart - or `points` [[x, z], ...] for any outline, which may go in and out), `size` [width, depth], `height`; optional `taper` 0-0.9 (narrower at the top), `bevel` (centimeters cut off the top edge), `wall` (centimeters: hollow, as a tray or a dish is, its floor as thick as its wall). A wax extrude takes `wick` or `wicks` as a turned candle does.",
 }
+
+## AN EXTRUDE's named outlines.
+const EXTRUDE_OUTLINES := ["polygon", "star", "circle", "rect", "heart"]
 
 ## THE MATERIALS, each with its shader `code` and its defaults. `polish` is how smooth it is,
 ## `wear` how used, `pattern` how strong its natural pattern, `clarity` how far light goes into
@@ -123,6 +133,10 @@ static func describe() -> String:
 		lines.append("- %s: %s" % [k, String((ORNAMENTS[k] as Dictionary)["about"])])
 	lines.append("")
 	lines.append("COPIES: a part's `copies` repeats it - \"copies\": {\"ring\": {\"count\": 5, \"radius\": 4}} round the vertical axis (`arc` less than 360 makes it an arc, from `start` degrees: 0 the thing's right, 90 its front, 270 its back), {\"line\": {\"count\": 3, \"step\": [x, y, z]}}, {\"scatter\": {\"count\": 9, \"radius\": 6}} strewn about, never touching (stones set out on the cloth), or {\"heap\": {\"count\": 12, \"radius\": 3}} piled up, each resting on the ones under it (stones heaped in a dish or a shell, a pile of coins) - with `jitter` 0-1 so the copies differ a little. A copied part's `material` can be a LIST of names, which its copies take in turn: a handful of stones of five kinds, books in three bindings. A copied candle's wax lights a flame on every copy.")
+	lines.append("")
+	lines.append("GROUPS: a part can be a GROUP instead of a shape - {\"parts\": [...], \"at\", \"turn\", \"copies\"} - whose own parts are placed in its space as a thing's are in the thing's; repeat the group and all of it repeats. A candelabra's arm, its cup and its taper are one group copied round in a ring; a group can hold groups, %d deep. A list of materials on a part inside a copied group goes to the group's copies in turn. Every part in every group counts toward the %d a thing may have." % [MAX_DEPTH, MAX_PARTS])
+	lines.append("")
+	lines.append("FLAMES: a thing's flames burn as ONE light, however many it has - a candelabra's tapers, a pillar's three wicks, a dish of tea lights - up to %d on one thing." % TarotTable.MAX_FLAMES)
 	return "\n".join(lines)
 
 
@@ -173,15 +187,34 @@ static func _sanitize_thing(t: Dictionary, mats: Dictionary, pal: Array) -> Dict
 	var out := t.duplicate(true)
 	out["name"] = _text(t.get("name", "a thing"), 100)
 	out["why"] = _text(t.get("why", ""), 200)
-	var parts: Array = []
-	for p in (t.get("parts", []) if t.get("parts") is Array else []):
-		if parts.size() >= MAX_PARTS:
+	out["parts"] = _sanitize_parts(t.get("parts"), mats, pal, 0, [MAX_PARTS])
+	return out
+
+
+## A list of parts made safe, a GROUP's own parts with it ({"parts": [...]} placed, turned and
+## repeated as one), [constant MAX_DEPTH] groups deep at most - a group past that is dropped, with
+## everything in it. [param budget] is how many shaped parts the thing has left ([constant
+## MAX_PARTS] in all), spent as they are kept. A group left with no part is dropped.
+static func _sanitize_parts(raw: Variant, mats: Dictionary, pal: Array, depth: int, budget: Array) -> Array:
+	var out: Array = []
+	for p in (raw if raw is Array else []):
+		if int(budget[0]) <= 0:
 			break
-		if p is Dictionary:
-			var part := _sanitize_part(p as Dictionary, mats, pal)
-			if not part.is_empty():
-				parts.append(part)
-	out["parts"] = parts
+		if not (p is Dictionary):
+			continue
+		var d: Dictionary = p
+		if d.get("parts") is Array:
+			if depth >= MAX_DEPTH:
+				continue
+			var kids := _sanitize_parts(d["parts"], mats, pal, depth + 1, budget)
+			if not kids.is_empty():
+				out.append({"parts": kids, "at": _vec3(d.get("at"), Vector3.ZERO, MAX_SIZE), "turn": _turn(d.get("turn")),
+					"wick": false, "copies": _copies_of(d)})
+			continue
+		var part := _sanitize_part(d, mats, pal)
+		if not part.is_empty():
+			out.append(part)
+			budget[0] = int(budget[0]) - 1
 	return out
 
 
@@ -191,6 +224,18 @@ static func _sanitize_part(p: Dictionary, mats: Dictionary, pal: Array) -> Dicti
 		return {}
 	var out := {"shape": shape, "at": _vec3(p.get("at"), Vector3.ZERO, MAX_SIZE),
 		"turn": _turn(p.get("turn")), "wick": _flag(p.get("wick"))}
+	# WICKS: `wick` true is one, at the middle of the top; `wicks` a number set round the top, or
+	# each placed [[x, z], ...]
+	var wicks := 1 if bool(out["wick"]) else 0
+	var spots: Array = []
+	if p.get("wicks") is Array:
+		spots = _points2(p["wicks"], Vector2(-MAX_SIZE, -MAX_SIZE), Vector2(MAX_SIZE, MAX_SIZE)).slice(0, MAX_WICKS)
+		wicks = spots.size()
+	elif p.get("wicks") is float or p.get("wicks") is int:
+		wicks = int(_num(p["wicks"], 1.0, 0.0, float(MAX_WICKS)))
+	out["wick"] = wicks > 0
+	out["wicks"] = wicks
+	out["wick_spots"] = spots
 	# THE MATERIAL: a name under `materials` or one written inline - or a LIST of them, which the
 	# part's copies take in turn
 	var names: Array = []
@@ -257,6 +302,17 @@ static func _sanitize_part(p: Dictionary, mats: Dictionary, pal: Array) -> Dicti
 					mats[b] = sanitize_material({"kind": "stone", "color": "#7a7168", "color2": "#b3aa9c", "polish": 0.1,
 						"wear": 0.5, "pattern": 0.15}, "#7a7168")
 			out["base"] = b
+		"extrude":
+			var outline := String(p.get("outline", "polygon")).strip_edges().to_lower()
+			out["outline"] = outline if EXTRUDE_OUTLINES.has(outline) else "polygon"
+			out["points"] = _points2(p.get("points"), Vector2(-MAX_SIZE, -MAX_SIZE), Vector2(MAX_SIZE, MAX_SIZE))
+			var sz := _points2([p.get("size")], Vector2(0.2, 0.2), Vector2(MAX_SIZE, MAX_SIZE))
+			out["size"] = sz[0] if not sz.is_empty() else Vector2(6.0, 6.0)
+			out["height"] = _num(p.get("height"), 2.0, 0.05, MAX_SIZE)
+			out["sides"] = int(_num(p.get("sides"), 6.0, 3.0, 12.0))
+			out["taper"] = _num(p.get("taper"), 0.0, 0.0, 0.9)
+			out["bevel"] = _num(p.get("bevel"), 0.0, 0.0, 5.0)
+			out["wall"] = _num(p.get("wall"), 0.0, 0.0, 10.0)
 		"ring":
 			out["radius"] = _num(p.get("radius"), 3.0, 0.2, MAX_SIZE * 0.5)
 			out["thickness"] = _num(p.get("thickness"), 0.4, 0.05, 10.0)
@@ -289,20 +345,46 @@ static func _sanitize_part(p: Dictionary, mats: Dictionary, pal: Array) -> Dicti
 			out["cup"] = _num(p.get("cup"), 0.4, 0.0, 1.0)
 			out["width"] = _num(p.get("width"), 0.55, 0.2, 1.2)
 	out["ornament"] = _sanitize_ornament(p.get("ornament"))
-	out["copies"] = _sanitize_copies(p.get("copies"))
-	# A REPEAT WRITTEN BESIDE THE PART, not under `copies` ({"line": {...}} on the part itself), is
-	# the same repeat: a set dresser wrote a skein's turns that way, and one turn of each color was
-	# built - the top one floating where the turns under it should have been
-	if (out["copies"] as Dictionary).is_empty():
-		var loose := {}
-		for kind in ["ring", "line", "scatter", "heap"]:
-			if p.get(kind) is Dictionary:
-				loose[kind] = p[kind]
-		if not loose.is_empty():
-			if p.has("jitter"):
-				loose["jitter"] = p["jitter"]
-			out["copies"] = _sanitize_copies(loose)
+	out["copies"] = _copies_of(p)
 	return out
+
+
+## A part's (or a group's) repeat: its `copies` - or a REPEAT WRITTEN BESIDE IT ({"line": {...}} on
+## the part itself), which is the same repeat: a set dresser wrote a skein's turns that way, and one
+## turn of each color was built, the top one floating where the turns under it should have been.
+static func _copies_of(p: Dictionary) -> Dictionary:
+	var c := _sanitize_copies(p.get("copies"))
+	if not c.is_empty():
+		return c
+	var loose := {}
+	for kind in ["ring", "line", "scatter", "heap"]:
+		if p.get(kind) is Dictionary:
+			loose[kind] = p[kind]
+	if loose.is_empty():
+		return {}
+	if p.has("jitter"):
+		loose["jitter"] = p["jitter"]
+	return _sanitize_copies(loose)
+
+
+## How many flames [param part] lights: its wicks on every copy of it - a group's parts' on every
+## copy of the group.
+static func flames_of(part: Dictionary) -> int:
+	var n := 0
+	if part.get("parts") is Array:
+		for q in part["parts"]:
+			n += flames_of(q as Dictionary)
+	elif part.get("wick") == true:
+		n = maxi(int(part.get("wicks", 1)), 1)
+	var c: Dictionary = part.get("copies", {})
+	return n * (int(c.get("count", 1)) if not c.is_empty() else 1)
+
+
+## [param part] standing unlit - a group with every part in it.
+static func unlit(part: Dictionary) -> void:
+	part["wick"] = false
+	for q in (part.get("parts", []) if part.get("parts") is Array else []):
+		unlit(q as Dictionary)
 
 
 ## The key of the material a part names: one under `materials`, one written inline (kept under a
@@ -451,15 +533,27 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 	var wicks: Array = []
 	var glows: Array = []
 	var meshes: Array = []
-	var parts: Array = thing.get("parts", [])
-	for pi in parts.size():
-		var part: Dictionary = parts[pi]
-		var rng := RandomNumberGenerator.new()
-		rng.seed = hash([seed, pi, "part"])
-		var geos := _geometry(part, rng)
-		if geos.is_empty():
+	# EVERY PART, its groups opened: its geometry and every place it stands - its groups' repeats and
+	# its own together - and no more of them in all than a thing may make
+	var leaves := _assemble(thing.get("parts", []), seed, [])
+	var budget := MAX_INSTANCES
+	for leaf in leaves:
+		var xs: Array = leaf["xforms"]
+		leaf["xforms"] = xs.slice(0, maxi(budget, 0))
+		budget -= xs.size()
+	for leaf in leaves:
+		var part: Dictionary = leaf["part"]
+		var geos: Array = leaf["geos"]
+		var xforms: Array = leaf["xforms"]
+		var salt: Variant = leaf["salt"]
+		if xforms.is_empty():
 			continue
-		var xforms := _placements(part, rng, geos)
+		# A FLAME FOR EVERY WICK on the top of a candle that is not turned (a turned one's are set
+		# where its pool is, in [method _lathe])
+		var g0: Tris = (geos[0] as Dictionary)["geo"]
+		if part.get("wick") == true and g0.wicks.is_empty():
+			for sp in _wick_spots(part, _top_radius(g0)):
+				g0.wicks.append(Vector3(g0.top.x + (sp as Vector2).x, g0.top.y, g0.top.z + (sp as Vector2).y))
 		# A LIST OF MATERIALS is taken by the copies in turn: a mesh for each material's copies
 		var names: Array = part.get("materials", [])
 		if names.is_empty():
@@ -484,7 +578,7 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 				var m: Dictionary = materials.get(nm, sanitize_material({}, "#808080"))
 				var mi := MeshInstance3D.new()
 				mi.mesh = merged.mesh()
-				var mat := material(m, part.get("ornament", {}), g.girth, g.height, hash([seed, pi, gi, nm]), _solid(part))
+				var mat := material(m, part.get("ornament", {}), g.girth, g.height, hash([seed, salt, gi, nm]), _solid(part))
 				mi.material_override = mat
 				if see_through(m):
 					mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -493,8 +587,9 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 				all.append_array(merged.v)
 				if gi == 0 and part.get("wick") == true:
 					for xf in mine:
-						wicks.append((xf as Transform3D) * g.top)
-						glows.append(mat)
+						for w in g.wicks:
+							wicks.append((xf as Transform3D) * w)
+							glows.append(mat)
 	var root := Node3D.new()
 	root.add_child(inner)
 	if all.is_empty():
@@ -518,6 +613,75 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 		"wicks": wicks, "glows": glows, "meshes": meshes}
 
 
+## A thing's parts, groups opened: `[{part, geos, xforms, salt}]` - each shaped part with its
+## geometry and every place it stands in the thing (its own repeats inside its groups', a group's
+## copies sized, for a scatter or a heap, by everything in it). [param path] is where these parts
+## sit among the groups; `salt` is a part's place, the same as it always was for a part in no group.
+static func _assemble(parts: Array, seed: int, path: Array) -> Array:
+	var out: Array = []
+	for pi in parts.size():
+		var part: Dictionary = parts[pi]
+		var here: Variant = pi if path.is_empty() else path + [pi]
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash([seed, here, "part"])
+		if part.get("parts") is Array:
+			var inner := _assemble(part["parts"], seed, path + [pi])
+			if inner.is_empty():
+				continue
+			var sized: Array = []
+			if String((part.get("copies", {}) as Dictionary).get("kind", "")) in ["scatter", "heap"]:
+				for leaf in inner:
+					for e in leaf["geos"]:
+						sized.append({"geo": ((e as Dictionary)["geo"] as Tris).placed(leaf["xforms"])})
+			var outer := _placements(part, rng, sized)
+			for leaf in inner:
+				var xs: Array = []
+				for o in outer:
+					for x in leaf["xforms"]:
+						xs.append((o as Transform3D) * (x as Transform3D))
+				leaf["xforms"] = xs
+				out.append(leaf)
+			continue
+		var geos := _geometry(part, rng)
+		if geos.is_empty():
+			continue
+		out.append({"part": part, "geos": geos, "xforms": _placements(part, rng, geos), "salt": here})
+	return out
+
+
+## Where a candle's wicks stand on a top of radius [param R] (meters), from its middle: each where
+## it was placed (kept on the top), or so many set round it - one in the middle, two to six on a
+## ring half way out (more a little further).
+static func _wick_spots(p: Dictionary, R: float) -> Array:
+	var out: Array = []
+	var spots: Array = p.get("wick_spots", [])
+	if not spots.is_empty():
+		for sp in spots:
+			var v := (sp as Vector2) * 0.01
+			if v.length() > R * 0.85:
+				v = v.normalized() * R * 0.85
+			out.append(v)
+		return out
+	var n := maxi(int(p.get("wicks", 1)), 1)
+	if n == 1:
+		return [Vector2.ZERO]
+	var r := R * (0.5 if n <= 3 else 0.62)
+	for i in n:
+		var a := -PI * 0.5 + TAU * float(i) / float(n)
+		out.append(Vector2(cos(a), sin(a)) * r)
+	return out
+
+
+## How far a part's top reaches from its middle (meters): what of it lies within a millimeter of its
+## highest point.
+static func _top_radius(g: Tris) -> float:
+	var r := 0.0
+	for q in g.v:
+		if q.y >= g.top.y - 0.001:
+			r = maxf(r, Vector2(q.x - g.top.x, q.z - g.top.z).length())
+	return maxf(r, 0.004)
+
+
 ## Whether a material is drawn see-through: glass, and crystal clear enough to see through.
 static func see_through(m: Dictionary) -> bool:
 	var kind := String(m.get("kind", ""))
@@ -527,6 +691,8 @@ static func see_through(m: Dictionary) -> bool:
 ## Whether a part is SOLID rather than a vessel: a ball, a crystal, a rod - or a turned part whose
 ## profile never goes back down (a hollow one climbs its outside and comes down its inside).
 static func _solid(part: Dictionary) -> bool:
+	if String(part.get("shape", "")) == "extrude":
+		return float(part.get("wall", 0.0)) <= 0.0
 	if String(part.get("shape", "")) != "lathe":
 		return String(part.get("shape", "")) in ["ball", "point", "cluster", "geode", "tube", "ring"]
 	var prof: Array = part.get("profile", [])
@@ -716,6 +882,8 @@ static func _geometry(p: Dictionary, rng: RandomNumberGenerator) -> Array:
 			return [{"geo": g}]
 		"bloom":
 			return [{"geo": _bloom(p, rng)}]
+		"extrude":
+			return [{"geo": _extrude(p)}]
 	return []
 
 
@@ -736,7 +904,11 @@ static func _lathe(p: Dictionary, rng: RandomNumberGenerator) -> Tris:
 		pts.insert(0, Vector2(0.0, (pts[0] as Vector2).y))
 	if (pts[-1] as Vector2).x > 0.0002:
 		pts.append(Vector2(0.0, (pts[-1] as Vector2).y))
+	# THE POOL a burning candle melts round its wicks, and where its rim is
+	var rim := Vector2.ZERO
 	if bool(p.get("wick", false)):
+		if pts.size() >= 3 and (pts[-2] as Vector2).x >= 0.002 and absf((pts[-2] as Vector2).y - (pts[-1] as Vector2).y) <= 0.002:
+			rim = pts[-2]
 		pts = _pool(pts)
 	var twist := deg_to_rad(float(p.get("twist", 0.0)))
 	var drips := float(p.get("drips", 0.0))
@@ -870,6 +1042,15 @@ static func _lathe(p: Dictionary, rng: RandomNumberGenerator) -> Tris:
 	g.girth = TAU * rmax * 100.0
 	g.height = height * 100.0
 	g.top = Vector3(0.0, (pts[-1] as Vector2).y, 0.0)
+	# THE WICKS stand on the pool, as deep in it as it is where each stands (one in the middle is at
+	# its bottom); a top with no pool has them on its top
+	if bool(p.get("wick", false)):
+		var R := rim.x if rim.x > 0.0 else maxf(rtop, 0.004)
+		var sink := minf(0.005, rim.x * 0.3) if rim.x > 0.0 else 0.0
+		var top_y := rim.y if rim.x > 0.0 else (pts[-1] as Vector2).y
+		for sp in _wick_spots(p, R):
+			var f := minf((sp as Vector2).length() / maxf(R, 1e-6), 1.0)
+			g.wicks.append(Vector3((sp as Vector2).x, top_y - sink * (1.0 - f * f), (sp as Vector2).y))
 	return g
 
 
@@ -1522,6 +1703,197 @@ static func _bloom(p: Dictionary, rng: RandomNumberGenerator) -> Tris:
 	return g
 
 
+## AN OUTLINE RAISED STRAIGHT UP, resting on y = 0: its walls - round where the outline is round,
+## crisp where it turns a corner - narrowed toward the top by the taper, its top edge cut back by
+## the bevel, its top and its bottom. With a WALL it is hollow, as a tray is: a rim round an inner
+## floor as thick as the wall, the inside's walls facing in. The inside is the outline drawn smaller
+## about its middle, so a star tray's wall is thinner at its points than in its notches.
+static func _extrude(p: Dictionary) -> Tris:
+	var g := Tris.new()
+	var pts := _outline2(p)
+	if pts.size() < 3:
+		return g
+	var h := float(p["height"]) * 0.01
+	var taper := float(p.get("taper", 0.0))
+	var wall := float(p.get("wall", 0.0)) * 0.01
+	var mid := Vector2.ZERO
+	for q in pts:
+		mid += q
+	mid /= float(pts.size())
+	var reach := 0.0
+	for q in pts:
+		reach += (q as Vector2).distance_to(mid)
+	reach = maxf(reach / float(pts.size()), 0.001)
+	var bevel := 0.0 if wall > 0.0 else minf(float(p.get("bevel", 0.0)) * 0.01, minf(h * 0.5, reach * 0.4))
+	# a point of the outline at height y, drawn smaller about the middle by k and by the taper there
+	var ring := func(k: float, y: float) -> Array:
+		var s := k * (1.0 - taper * y / maxf(h, 1e-6))
+		var out: Array = []
+		for q in pts:
+			var v: Vector2 = mid + ((q as Vector2) - mid) * s
+			out.append(Vector3(v.x, y, v.y))
+		return out
+	var n := pts.size()
+	# along the outline, for laying out a surface's pattern round it
+	var along := PackedFloat32Array([0.0])
+	for i in n:
+		along.append(along[i] + (pts[i] as Vector2).distance_to(pts[(i + 1) % n]))
+	var perim := maxf(along[n], 1e-6)
+	if wall <= 0.0:
+		_extrude_wall(g, ring.call(1.0, 0.0), ring.call(1.0, h - bevel), along, perim, h, 1.0)
+		if bevel > 0.0:
+			_extrude_wall(g, ring.call(1.0, h - bevel), ring.call(1.0 - bevel / reach, h), along, perim, h, 1.0)
+		_extrude_face(g, ring.call(1.0 - bevel / reach, h), 1.0, h)
+		_extrude_face(g, ring.call(1.0, 0.0), -1.0, h)
+	else:
+		var k_in := clampf(1.0 - wall / reach, 0.15, 0.95)
+		var floor_y := minf(wall, h * 0.5)
+		_extrude_wall(g, ring.call(1.0, 0.0), ring.call(1.0, h), along, perim, h, 1.0)
+		_extrude_wall(g, ring.call(k_in, floor_y), ring.call(k_in, h), along, perim, h, -1.0)
+		_extrude_rim(g, ring.call(1.0, h), ring.call(k_in, h), h)
+		_extrude_face(g, ring.call(k_in, floor_y), 1.0, h)
+		_extrude_face(g, ring.call(1.0, 0.0), -1.0, h)
+	g.girth = perim * 100.0
+	g.height = h * 100.0
+	g.top = Vector3(mid.x, h, mid.y)
+	return g
+
+
+## An extrude's outline in meters about its own middle, wound one way (its area positive, so an
+## edge's outside is to its right): a named one at its `size`, or its own `points`.
+static func _outline2(p: Dictionary) -> Array:
+	var out: Array = []
+	var own: Array = p.get("points", [])
+	var half: Vector2 = (p.get("size", Vector2(6.0, 6.0)) as Vector2) * 0.005
+	var n := int(p.get("sides", 6))
+	if own.size() >= 3:
+		for q in own:
+			out.append((q as Vector2) * 0.01)
+	else:
+		match String(p.get("outline", "polygon")):
+			"rect":
+				out = [Vector2(-half.x, -half.y), Vector2(half.x, -half.y), Vector2(half.x, half.y), Vector2(-half.x, half.y)]
+			"circle":
+				for i in 48:
+					var a := TAU * float(i) / 48.0
+					out.append(Vector2(cos(a) * half.x, sin(a) * half.y))
+			"star":
+				for i in n * 2:
+					var a := -PI * 0.5 + PI * float(i) / float(n)
+					var r := 1.0 if i % 2 == 0 else 0.48
+					out.append(Vector2(cos(a) * half.x * r, sin(a) * half.y * r))
+			"heart":
+				# the heart curve, its point toward the reader
+				for i in 48:
+					var t := TAU * float(i) / 48.0
+					var x := 16.0 * pow(sin(t), 3.0)
+					var y := 13.0 * cos(t) - 5.0 * cos(2.0 * t) - 2.0 * cos(3.0 * t) - cos(4.0 * t)
+					out.append(Vector2(x / 16.0 * half.x, -(y + 2.5) / 14.5 * half.y))
+			_:
+				for i in n:
+					var a := -PI * 0.5 + TAU * float(i) / float(n)
+					out.append(Vector2(cos(a) * half.x, sin(a) * half.y))
+	var clean: Array = []
+	for q in out:
+		if clean.is_empty() or (q as Vector2).distance_to(clean[-1]) > 1e-5:
+			clean.append(q)
+	while clean.size() > 1 and (clean[0] as Vector2).distance_to(clean[-1]) <= 1e-5:
+		clean.pop_back()
+	var area := 0.0
+	for i in clean.size():
+		var a2: Vector2 = clean[i]
+		var b2: Vector2 = clean[(i + 1) % clean.size()]
+		area += a2.x * b2.y - b2.x * a2.y
+	if area < 0.0:
+		clean.reverse()
+	return clean
+
+
+## A band of wall from ring [param lo] up to ring [param hi] (each a point per outline point), its
+## faces turned out ([param side] 1) or in (-1): smooth across a gentle turn of the outline, crisp
+## at a corner.
+static func _extrude_wall(g: Tris, lo: Array, hi: Array, along: PackedFloat32Array, perim: float, h: float, side: float) -> void:
+	var n := lo.size()
+	var faces: Array = []
+	for i in n:
+		var a: Vector3 = lo[i]
+		var b: Vector3 = lo[(i + 1) % n]
+		var c: Vector3 = hi[i]
+		var out2 := Vector3(b.z - a.z, 0.0, a.x - b.x) * side
+		var fn := (b - a).cross(c - a)
+		if fn.length() < 1e-12:
+			fn = out2
+		fn = fn.normalized()
+		if fn.dot(out2) < 0.0:
+			fn = -fn
+		faces.append(fn)
+	for i in n:
+		var j := (i + 1) % n
+		var na: Vector3 = faces[i]
+		var nb: Vector3 = faces[i]
+		if (faces[(i - 1 + n) % n] as Vector3).dot(faces[i]) > cos(deg_to_rad(35.0)):
+			na = ((faces[(i - 1 + n) % n] as Vector3) + (faces[i] as Vector3)).normalized()
+		if (faces[j] as Vector3).dot(faces[i]) > cos(deg_to_rad(35.0)):
+			nb = ((faces[j] as Vector3) + (faces[i] as Vector3)).normalized()
+		var u0 := along[i] / perim
+		var u1 := along[i + 1] / perim
+		var a: Vector3 = lo[i]
+		var b: Vector3 = lo[j]
+		var c: Vector3 = hi[j]
+		var d: Vector3 = hi[i]
+		g.quad(a, b, c, d, na, nb, nb, na, Vector2(u0, a.y / maxf(h, 1e-6)), Vector2(u1, b.y / maxf(h, 1e-6)),
+			Vector2(u1, c.y / maxf(h, 1e-6)), Vector2(u0, d.y / maxf(h, 1e-6)), a.y / maxf(h, 1e-6), b.y / maxf(h, 1e-6),
+			c.y / maxf(h, 1e-6), d.y / maxf(h, 1e-6))
+
+
+## A flat face over ring [param r], facing up ([param up] 1) or down (-1): the outline cut into
+## triangles, in and out as it goes - or, an outline that crosses itself, fanned from its middle.
+static func _extrude_face(g: Tris, r: Array, up: float, h: float) -> void:
+	var flat := PackedVector2Array()
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for q in r:
+		var v := Vector2((q as Vector3).x, (q as Vector3).z)
+		flat.append(v)
+		lo = lo.min(v)
+		hi = hi.max(v)
+	var span := (hi - lo).max(Vector2(1e-6, 1e-6))
+	var nrm := Vector3(0.0, up, 0.0)
+	var y := (r[0] as Vector3).y
+	var hf := y / maxf(h, 1e-6)
+	var tris := Geometry2D.triangulate_polygon(flat)
+	if tris.is_empty():
+		var c := Vector3.ZERO
+		for q in r:
+			c += q
+		c /= float(r.size())
+		for i in r.size():
+			tris.append_array([-1, i, (i + 1) % r.size()])
+		for t in range(0, tris.size(), 3):
+			var pa: Vector3 = c if tris[t] < 0 else r[tris[t]]
+			var pb: Vector3 = r[tris[t + 1]]
+			var pc: Vector3 = r[tris[t + 2]]
+			g.tri(pa, pb, pc, nrm, nrm, nrm, (Vector2(pa.x, pa.z) - lo) / span, (Vector2(pb.x, pb.z) - lo) / span,
+				(Vector2(pc.x, pc.z) - lo) / span, Vector2(hf, 0.0), Vector2(hf, 0.0), Vector2(hf, 0.0))
+		return
+	for t in range(0, tris.size(), 3):
+		var pa: Vector3 = r[tris[t]]
+		var pb: Vector3 = r[tris[t + 1]]
+		var pc: Vector3 = r[tris[t + 2]]
+		g.tri(pa, pb, pc, nrm, nrm, nrm, (flat[tris[t]] - lo) / span, (flat[tris[t + 1]] - lo) / span,
+			(flat[tris[t + 2]] - lo) / span, Vector2(hf, 0.0), Vector2(hf, 0.0), Vector2(hf, 0.0))
+
+
+## A hollow extrude's rim: the band across its top from ring [param outer] in to ring [param inner].
+static func _extrude_rim(g: Tris, outer: Array, inner: Array, h: float) -> void:
+	var n := outer.size()
+	for i in n:
+		var j := (i + 1) % n
+		g.quad(outer[i], outer[j], inner[j], inner[i], Vector3.UP, Vector3.UP, Vector3.UP, Vector3.UP,
+			Vector2(float(i) / n, 0.0), Vector2(float(i + 1) / n, 0.0), Vector2(float(i + 1) / n, 1.0), Vector2(float(i) / n, 1.0),
+			1.0, 1.0, 1.0, 1.0)
+
+
 # --- footprints ------------------------------------------------------------------------------
 
 ## The convex outline, seen from above, of everything in [param pts] up to [param below] meters
@@ -1564,6 +1936,8 @@ class Tris:
 	## Once placed, four floats a vertex: the middle of its copy (x, y, z) and the copy's own number
 	## (0..1), which a pattern centers on and varies by ([method placed])
 	var copy := PackedFloat32Array()
+	## Where a candle's flames stand on it, in its own space
+	var wicks := PackedVector3Array()
 	var girth := 10.0
 	var height := 10.0
 	var top := Vector3.ZERO

@@ -270,7 +270,7 @@ func _handle(line: String) -> void:
 
 
 ## The host fetching something it needs (a voice model, the tagger's data), shown beside
-## ghost's own installs so the wait on a first Speak is never a blank one.
+## ghost's own installs so the wait on a first Play is never a blank one.
 func _on_download(msg: Dictionary) -> void:
 	var what := String(msg.get("name", "a voice"))
 	if bool(msg.get("finished", false)):

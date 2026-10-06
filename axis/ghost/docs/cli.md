@@ -18,7 +18,7 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--provision` | `[all\|update]` | Install ghost's own dependencies now, printing each step, then exit: uv, FFmpeg and Python by default, every feature's environment too with `all`, or bring everything installed to its newest release with `update`. The same jobs an ordinary launch runs in the background. Exits non-zero if anything asked for could not be had. Pairs with `--headless`. |  |
 | `--seed` | `<N>` | Override the session seed (default derives from the audio's own content fingerprint, so the same song replays the same show). |  |
 | `--dial-demo` |  | Auto-turn the first Dial hands-free (demos, renders). |  |
-| `--synth` | `[text-file]` | Open the voice-synthesis editor: write or paste a script, sample a voice by seed, Speak renders a WAV take and plays it as a normal session (scenes react to the narration; karaoke subtitles track it). |  |
+| `--synth` | `[text-file]` | Open the voice-synthesis editor: write or paste a script, sample a voice by seed; each reading renders a WAV take and plays it as a normal session (scenes react to the narration; karaoke subtitles track it). |  |
 | `--say` |  | With `--synth`: speak the loaded text immediately on boot (automation, demos, headless checks). |  |
 | `--tarot` |  | Open the tarot mode: a show's brief, its episodes (planned, painted and written by agents one card at a time) and the Generative voice that reads them at the table. |  |
 | `--mask-edit` | `<session.json>` | Open the Masking editor on a session (also creates one from a video path). |  |

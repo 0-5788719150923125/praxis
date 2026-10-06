@@ -7135,6 +7135,15 @@ func _input(event: InputEvent) -> void:
 		_undo_press_key = ""
 	if render_mode:
 		return
+	# SPACE PLAYS AND PAUSES WHEREVER THE FOCUS IS: in _unhandled_input it came after the GUI, so
+	# a button clicked a moment before took Space for itself and pressed itself again
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE \
+			and _player != null and not (event.ctrl_pressed or event.alt_pressed or event.meta_pressed):
+		var f := get_viewport().gui_get_focus_owner()
+		if not (f is TextEdit or f is LineEdit):
+			_play(not _playing)
+			get_viewport().set_input_as_handled()
+			return
 	# A region drag in flight is tracked HERE, not in the overlay's gui_input, so
 	# it survives the cursor leaving the video pane - see _region_drag_motion.
 	if _region_drag != "":
@@ -7160,10 +7169,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if not event.pressed:
 		return
-	if event.keycode == KEY_SPACE:
-		_play(not _playing)
-		get_viewport().set_input_as_handled()
-	elif event.keycode == KEY_V:
+	if event.keycode == KEY_V:
 		_cycle_view_mode()
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_T:

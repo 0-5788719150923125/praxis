@@ -29,11 +29,14 @@ extends SceneTree
 ##   material, ornament and zone the builder knows, with the headroom of each zone.
 ## - WHAT IS BUILT is safe whatever was written: junk is dropped or clamped, flames are capped, a
 ##   thing stands on y = 0 with a foot to go round, and a candle's flame is lit at its wax's top.
+## - CANDLES of every form: wicks set round a top or placed by hand, a candelabra written once as a
+##   GROUP copied round, groups nested only so deep, extruded outlines standing sound - and a table
+##   lights no more things, and no thing more flames, than it may.
 ## - STONES: scattered copies never touch, heaped ones pile up without passing through each other
 ##   or the floor, a list of materials goes to the copies in turn, a geode keeps its crystals
 ##   inside it, and a play of light is kept only when the shader knows it.
-## - THE CARD STOCK: a die from the seed sets its lightness, the producer is told it, and the
-##   card's name stays readable on whatever stock comes of it.
+## - THE CARD STOCK is the producer's choice, shown earlier decks' stocks; the card's name reads on
+##   any stock, and the booklet is printed in the card's colors.
 
 var _fails := 0
 
@@ -43,7 +46,7 @@ func _init() -> void:
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
 			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects, _moves_after_words,
-			_table_step, _things_built, _stones, _card_stock]:
+			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -775,7 +778,7 @@ func _table_step() -> bool:
 	for z in TarotTable.ZONES:
 		_ok(text.contains("\"%s\": %s; up to %d cm" % [z, String((TarotTable.ZONES[z] as Dictionary)["about"]), int(head[z])]),
 			"the set dresser is not told the zone %s and its headroom" % z)
-	_ok(text.contains("Exactly 1 lit candle,"), "the set dresser is not told how many candles the look has")
+	_ok(text.contains("Exactly 1 lit thing -"), "the set dresser is not told how many lit things the look has")
 	_ok(text.contains("a brass bell"), "the set dresser is not told what earlier tables held")
 	_ok(int(head["back"]) < int(head["left"]) and int(head["back"]) > 3, "the back holds less height than the sides: %s" % str(head))
 	# THE EXAMPLE IS BUILDABLE, and the format it shows is the format read
@@ -833,9 +836,8 @@ func _things_built() -> bool:
 		"a junk place, group or turn was kept: %s, %s, %s" % [giant["place"], giant["group"], giant["turn"]])
 	var flames := 0
 	for p in (things[1] as Dictionary)["parts"]:
-		if bool((p as Dictionary)["wick"]):
-			flames += int(((p as Dictionary)["copies"] as Dictionary).get("count", 1))
-	_ok(flames <= TarotTable.MAX_CANDLES and flames > 0, "%d flames survived (the table allows %d)" % [flames, TarotTable.MAX_CANDLES])
+		flames += Props.flames_of(p as Dictionary)
+	_ok(flames == 6, "a candle's six flames (two parts of three copies) did not all survive: %d" % flames)
 	for i in things.size():
 		var b := Props.build(things[i], mats, 7 + i)
 		var box: AABB = b["size"]
@@ -995,32 +997,18 @@ func _stones() -> bool:
 	return true
 
 
-## THE CARD STOCK: a die sets its lightness (asked only for "card stock", the producer printed every
-## deck on cream), the producer is told its own episode's, and the name reads on any stock.
+## THE CARD STOCK is the producer's choice (asked only for "card stock", it printed every deck on
+## cream): it is told what the stock is and shown the stocks earlier decks used; the name reads on
+## any stock; and the booklet is printed in the card's colors.
 func _card_stock() -> bool:
-	# its own rng: the dice drawn before it keep the values they had for every existing seed
-	var d1 := TarotPrompts.dice(1)
-	var d2 := TarotPrompts.dice(895229)
-	_ok(String(d1["place"]) == "47.0°N 35.6°W" and int(d1["year"]) == 1272 and int(d1["hue"]) == 18
-		and int(d1["hour"]) == 16 and int(d1["direction"]) == 2, "the stock die moved the other dice: %s" % str(d1))
-	_ok(String(d2["place"]) == "45.0°S 177.8°W" and int(d2["year"]) == 510 and int(d2["hue"]) == 12
-		and int(d2["hour"]) == 4 and int(d2["direction"]) == 12, "the stock die moved the other dice: %s" % str(d2))
-	var dark := 0
-	var light := 0
-	for s in 200:
-		var v := int(TarotPrompts.dice(s)["stock"])
-		dark += 1 if v < 30 else 0
-		light += 1 if v > 70 else 0
-	_ok(dark >= 30 and light >= 30, "the stock die does not reach both ends: %d dark and %d light of 200" % [dark, light])
-	# the producer is told ITS episode's lightness - two-sided: another seed's is not in its prompt
-	var mine := int(TarotPrompts.dice(1)["stock"])
-	var other := 2
-	while int(TarotPrompts.dice(other)["stock"]) == mine:
-		other += 1
-	var said := "lightness of about %d out of 100"
-	var p := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, [])["prompt"])
-	_ok(p.contains(said % mine), "the producer is not told the stock's lightness")
-	_ok(not p.contains(said % int(TarotPrompts.dice(other)["stock"])), "the producer is told another episode's stock")
+	# shown an earlier deck's stock - two-sided: with no history that color is nowhere in the prompt
+	var past := [{"seed": 5, "plan": {"episode_title": "E", "look": {"frame": {"stock": "#2b1d3c"}}}}]
+	var p := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, past)["prompt"])
+	_ok(p.contains("THE CARD STOCK"), "the producer is not told what the card stock is")
+	_ok(p.contains("card stock #2b1d3c"), "the producer is not shown an earlier deck's stock")
+	var fresh := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, [])["prompt"])
+	_ok(not fresh.contains("#2b1d3c"), "control: a stock no earlier episode used is in the prompt")
+	_ok(not TarotPrompts.dice(1).has("stock"), "a die still decides the card stock")
 	# THE NAME READS ON ANY STOCK: an ink that does not is moved until it does, either way round...
 	for pair in [["#14121a", "#1d1a2b"], ["#efe6d2", "#f2e4c4"], ["#7a7a7a", "#808080"]]:
 		_ok(TarotTable.contrast(Color.html(pair[1]), Color.html(pair[0])) < TarotTable.INK_CONTRAST,
@@ -1031,5 +1019,157 @@ func _card_stock() -> bool:
 	# ...and one that already reads is the producer's own, untouched
 	var kept: Dictionary = TarotTable.sanitize_look({"frame": {"stock": "#e6d8bb", "ink": "#3A2A20"}})["frame"]
 	_ok(String(kept["ink"]) == "#3A2A20", "a readable ink was changed: %s" % kept["ink"])
-	print("tarot_check: card stock - lightness die %d dark / %d light of 200, ink kept readable" % [dark, light])
+	# THE BOOKLET IS PRINTED IN THE CARD'S COLORS: its page is the stock, a dark one included, and its
+	# type reads on it (the last look's ink and accent do not, as written)
+	for look in [{"frame": {"stock": "#1b2a3f", "ink": "#e9dcc0", "accent": "#c9a227"}},
+			{"frame": {"stock": "#efe6d2", "ink": "#3a2a20", "accent": "#7a2e3a"}},
+			{"frame": {"stock": "#16131c", "ink": "#2a2433", "accent": "#3a2f45"}}]:
+		var stock := TarotTable.color(String((look["frame"] as Dictionary)["stock"]))
+		for shade in [0.0, 1.0]:
+			var col := TarotCards.page_colors(look, shade)
+			var paper: Color = col["paper"]
+			_ok(TarotTable.contrast(paper, stock) < 1.15, "the booklet page %s is not the card's stock %s"
+				% [paper.to_html(false), stock.to_html(false)])
+			_ok(TarotTable.contrast(col["ink"], paper) >= TarotTable.TEXT_CONTRAST,
+				"the booklet's text does not read on its page: %s" % str(look))
+			_ok(TarotTable.contrast(col["accent"], paper) >= TarotTable.INK_CONTRAST,
+				"the booklet's accent does not read on its page: %s" % str(look))
+	# control: the fixed cream page the booklet had is nothing like a dark stock
+	_ok(TarotTable.contrast(Color(0.955, 0.935, 0.885), Color.html("#1b2a3f")) > 3.0,
+		"control: the old cream page passes for a dark stock")
+	print("tarot_check: card stock - the producer's choice, ink readable, booklet in the card's colors")
+	return true
+
+
+## CANDLES OF EVERY FORM, and what a table allows. A pillar's three wicks stand on its pool, apart and
+## inside its top; wicks placed by hand stand where they were put; a tea light in its tin lights one
+## flame; a candelabra written once as a GROUP - arm, cup and taper, copied round a ring - holds a
+## flame in every cup; groups nest only so deep and their parts count toward a thing's; a thing makes
+## no more parts in all than it may; an extruded outline (a star tray, a heart, a hexagonal candle,
+## an outline of its own going in and out) stands on the cloth, sound; and a table lights no more
+## things than it may, none with more flames than it may.
+func _candles() -> bool:
+	var mats := {"wax": {"kind": "wax", "color": "#e8dcc0"}, "tin": {"kind": "metal", "color": "#c0c0c0"},
+		"brass": {"kind": "metal", "color": "#b48a43"}, "slate": {"kind": "stone", "color": "#444a50"}}
+	var arm := {"parts": [
+		{"shape": "tube", "path": [[0, 12, 0], [5, 13, 0], [8, 15, 0]], "radius": 0.4, "material": "brass"},
+		{"shape": "lathe", "profile": [[0, 0], [1.4, 0.2], [1.6, 1.2], [1.4, 1.2], [1.2, 0.4], [0, 0.4]], "at": [8, 15, 0], "material": "brass"},
+		{"shape": "lathe", "profile": [[0, 0], [0.9, 0], [0.9, 9], [0, 9]], "at": [8, 15.4, 0], "material": "wax", "wick": true}],
+		"copies": {"ring": {"count": 5, "radius": 0}}}
+	var spec := TarotTable.sanitize_table({"materials": mats, "things": [
+		{"name": "a three-wick pillar", "parts": [{"shape": "lathe", "profile": [[0, 0], [5, 0], [5, 6], [0, 6]], "material": "wax", "wicks": 3}]},
+		{"name": "two wicks by hand", "parts": [{"shape": "lathe", "profile": [[0, 0], [4, 0], [4, 5], [0, 5]], "material": "wax", "wicks": [[-2, 0], [2, 0]]}]},
+		{"name": "a tea light", "parts": [
+			{"shape": "lathe", "profile": [[0, 0], [1.9, 0], [1.9, 1.6], [1.8, 1.6], [1.8, 0.1], [0, 0.1]], "material": "tin"},
+			{"shape": "lathe", "profile": [[0, 0], [1.8, 0], [1.8, 1.3], [0, 1.3]], "at": [0, 0.1, 0], "material": "wax", "wick": true}]},
+		{"name": "a candelabra", "parts": [
+			{"shape": "lathe", "profile": [[0, 0], [5, 0], [4, 1], [1, 2], [0.8, 14], [0, 14]], "material": "brass"}, arm]},
+		{"name": "a hexagonal candle", "parts": [{"shape": "extrude", "outline": "polygon", "sides": 6, "size": [6, 6], "height": 8,
+			"taper": 0.1, "material": "wax", "wicks": 2}]},
+		{"name": "a star tray", "parts": [{"shape": "extrude", "outline": "star", "sides": 5, "size": [12, 12], "height": 1.5, "wall": 0.4, "material": "brass"}]},
+		{"name": "a slate heart", "parts": [{"shape": "extrude", "outline": "heart", "size": [8, 7], "height": 1, "bevel": 0.3, "material": "slate"}]},
+		{"name": "an outline of its own", "parts": [{"shape": "extrude", "points": [[0, 0], [6, 0], [6, 4], [3, 1.5], [0, 4]], "height": 2, "material": "slate"}]},
+		]}, {})
+	var things: Array = spec["things"]
+	_ok(things.size() == 8, "%d of 8 candles and extrudes survived sanitizing" % things.size())
+	if things.size() != 8:
+		return true
+	var built: Array = []
+	for i in things.size():
+		var b := Props.build(things[i], spec["materials"], 11 + i)
+		built.append(b)
+		var box: AABB = b["size"]
+		_ok(absf(box.position.y) < 0.0005, "%s does not stand on the cloth (%.4f)" % [things[i]["name"], box.position.y])
+		var bad := 0
+		for m in b["meshes"]:
+			var arr := ((m as MeshInstance3D).mesh as ArrayMesh).surface_get_arrays(0)
+			var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var nn: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+			for j in v.size():
+				if not v[j].is_finite() or not nn[j].is_finite() or absf(nn[j].length() - 1.0) > 0.01:
+					bad += 1
+			bad += 0 if v.size() % 3 == 0 else 1
+		_ok(bad == 0 and not (b["meshes"] as Array).is_empty(), "%s has %d bad vertices or no mesh" % [things[i]["name"], bad])
+	# THREE WICKS on the pillar's pool: apart, inside its 5 cm top, a hair under its 6 cm
+	var w3: Array = (built[0] as Dictionary)["wicks"]
+	var apart := INF
+	var out := 0.0
+	var low := INF
+	var high := -INF
+	for i in w3.size():
+		var a: Vector3 = w3[i]
+		out = maxf(out, Vector2(a.x, a.z).length())
+		low = minf(low, a.y)
+		high = maxf(high, a.y)
+		for j in range(i + 1, w3.size()):
+			apart = minf(apart, a.distance_to(w3[j]))
+	_ok(w3.size() == 3 and apart > 0.03 and out < 0.045 and low > 0.054 and high <= 0.0601,
+		"a pillar's three wicks do not stand apart on its pool: %d, %.3f apart, %.3f out, %.4f-%.4f high" % [w3.size(), apart, out, low, high])
+	var w2: Array = (built[1] as Dictionary)["wicks"]
+	_ok(w2.size() == 2 and absf(absf((w2[0] as Vector3).x) - 0.02) < 0.001 and absf((w2[0] as Vector3).z) < 0.001
+		and (w2[0] as Vector3).x * (w2[1] as Vector3).x < 0.0, "wicks placed by hand are not where they were put: %s" % str(w2))
+	_ok(((built[2] as Dictionary)["wicks"] as Array).size() == 1, "a tea light does not light one flame")
+	# THE CANDELABRA: a flame in every cup, round the stem, as high as its tapers
+	var w5: Array = (built[3] as Dictionary)["wicks"]
+	var axis := Vector2.ZERO           # the stem: the flames' middle (a five-armed thing's box is not)
+	for w in w5:
+		axis += Vector2((w as Vector3).x, (w as Vector3).z) / float(maxi(w5.size(), 1))
+	var placed := 0
+	for w in w5:
+		var q: Vector3 = w
+		placed += 1 if absf(Vector2(q.x, q.z).distance_to(axis) - 0.08) < 0.006 and absf(q.y - 0.244) < 0.006 else 0
+	_ok(w5.size() == 5 and placed == 5, "a candelabra written once does not hold a flame in each of its 5 cups (%d flames, %d in place)" % [w5.size(), placed])
+	# THE TABLE'S CAPS: four lit things at most - the hexagonal candle, the fifth, stands unlit - and
+	# a part past the flames one thing may have is put out, alone
+	_ok(Props.flames_of((things[4] as Dictionary)["parts"][0]) == 0, "a fifth lit thing was left burning (the table allows %d)" % TarotTable.MAX_CANDLES)
+	var crowd := TarotTable.sanitize_table({"materials": mats, "things": [{"name": "a wall of candles", "parts": [
+		{"shape": "lathe", "profile": [[0, 0], [2, 0], [2, 6], [0, 6]], "material": "wax", "wicks": 3, "copies": {"ring": {"count": 6, "radius": 6}}},
+		{"shape": "lathe", "profile": [[0, 0], [2, 0], [2, 6], [0, 6]], "material": "wax", "wick": true}]}]}, {})
+	var wall_parts: Array = (crowd["things"][0] as Dictionary)["parts"]
+	_ok(Props.flames_of(wall_parts[0]) == 0 and Props.flames_of(wall_parts[1]) == 1,
+		"a part past the flames one thing may have (%d) was not put out alone" % TarotTable.MAX_FLAMES)
+	# GROUPS nest three deep, their parts count toward a thing's, and a thing makes no more parts in
+	# all than it may
+	var nest := {"shape": "ball", "radius": 1}
+	for k in 5:
+		nest = {"parts": [{"shape": "ball", "radius": 1}, nest]}
+	var many: Array = []
+	for k in 20:
+		many.append({"shape": "ball", "radius": 1, "at": [k, 0, 0]})
+	var deep := Props.sanitize({"things": [{"name": "nested", "parts": [nest]}, {"name": "crowded", "parts": [{"parts": many}]},
+		{"name": "repeated", "parts": [{"parts": [{"shape": "ball", "radius": 0.5, "copies": {"line": {"count": 24, "step": [1, 0, 0]}}}],
+			"copies": {"ring": {"count": 24, "radius": 20}}}]}]}, ["#112233"])
+	var leaves := func(parts: Array, f: Callable) -> int:
+		var c := 0
+		for q in parts:
+			c += int(f.call((q as Dictionary)["parts"], f)) if (q as Dictionary).has("parts") else 1
+		return c
+	var nested := int(leaves.call((deep["things"][0] as Dictionary)["parts"], leaves))
+	_ok(nested == 3, "groups nested past %d deep were kept (%d parts)" % [Props.MAX_DEPTH, nested])
+	_ok(int(leaves.call((deep["things"][1] as Dictionary)["parts"], leaves)) == Props.MAX_PARTS, "a group's parts did not count toward the %d" % Props.MAX_PARTS)
+	var rep := Props.build(deep["things"][2], deep["materials"], 5)
+	var one := Props.build(Props.sanitize({"things": [{"name": "one", "parts": [{"shape": "ball", "radius": 0.5}]}]}, ["#112233"])["things"][0],
+		deep["materials"], 5)
+	var per := ((one["meshes"][0] as MeshInstance3D).mesh as ArrayMesh).surface_get_array_len(0)
+	var total := 0
+	for m in rep["meshes"]:
+		total += ((m as MeshInstance3D).mesh as ArrayMesh).surface_get_array_len(0)
+	_ok(total > 0 and total <= per * Props.MAX_INSTANCES, "24 copies of 24 copies made %d balls (a thing makes %d at most)" % [total / maxi(per, 1), Props.MAX_INSTANCES])
+	for b in built + [rep, one]:
+		((b as Dictionary)["node"] as Node).free()
+	# the set dresser is told all of it
+	var words := Props.describe()
+	_ok(words.contains("- extrude:") and words.contains("GROUPS:") and words.contains("`wicks`") and words.contains("FLAMES:"),
+		"the set dresser is not told of extrudes, groups, wicks and one light a thing")
+	return true
+
+
+## THE ROOM'S PICTURE IS ASKED FOR AS THE TABLE PROJECTS IT: a level camera at a seated eye, its
+## horizon across the middle, through the lens the table assumes ([constant TarotTable.BACKDROP_LENS]),
+## with the lower third - all the tilted camera sees past the table - carrying the place.
+func _room_prompt() -> bool:
+	var p := TarotPrompts.backdrop_image({"setting": "a quiet room", "palette": ["#112233"]}, "/tmp/x.png")
+	_ok(p.contains("THE CAMERA IS LEVEL") and p.contains("%d mm lens" % int(TarotTable.BACKDROP_LENS))
+		and p.contains("exact middle") and p.contains("LOWER THIRD"),
+		"the room's picture is not asked for level, through the table's lens, its lower third carrying the place")
 	return true

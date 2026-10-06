@@ -179,7 +179,7 @@ func _check_outro_mark() -> void:
 
 ## LIVE SCRUBBING, BY SENTENCE: a planned reading lays the bar out over its sentences, a seek
 ## settles on the sentence under it, and a reading started there plays from it with no intro and
-## tells the media where it starts. Speak from the top hands them nothing.
+## tells the media where it starts. Play from the top hands them nothing.
 func _check_scrub() -> void:
 	_slots(1)
 	var text := ""
@@ -204,7 +204,7 @@ func _check_scrub() -> void:
 	_ok(sw.size() >= 4 and sw[0] == "sentence" and sw[2] == "5", "the media are told where it starts: %s" % str(sw))
 	_ok(_ed.book_document(text)["start_words"] == sw, "...through the document they read")
 	_ed._plan(text)
-	_ok(_ed._start_words().is_empty(), "Speak from the top hands them nothing")
+	_ok(_ed._start_words().is_empty(), "Play from the top hands them nothing")
 	# EVERY SENTENCE A SCRUB CAN LAND ON IS FOUND BY THE TABLET, from the words the panel hands
 	# it - links with a comma or period after them included, which the page sets as words of
 	# their own with no letters. One unfound start restarts the screen from the chapter's top.
