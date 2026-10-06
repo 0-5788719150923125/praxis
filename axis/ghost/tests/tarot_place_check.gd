@@ -609,7 +609,9 @@ func _inside(r: Rect2) -> bool:
 
 ## Four cloths - half felt and half pale boards (as the episode that found the flood), all pale,
 ## all dark, and a near-black blanket with a cream stripe toward its far edge (as the one that blew
-## out behind its candles).
+## out behind its candles). Painted landscape, as the painters make a cloth now, and laid out in
+## the CLOTH's own fractions through [method TarotTable.cloth_crop] - the stripe was once drawn in
+## the picture's top rows, which the cloth no longer shows since its pixels are kept square.
 func _fixture() -> void:
 	_clear()
 	var felt := Color(0.36, 0.5, 0.14)     # the episode's felt: linear luminance 0.18
@@ -617,15 +619,19 @@ func _fixture() -> void:
 	var deep := Color(0.3, 0.1, 0.12)      # an oxblood cloth: 0.02
 	var spruce := Color(0.22, 0.26, 0.2)   # the blanket: 0.045, with a cream stripe (0.46) near its far edge
 	var cream := Color(0.74, 0.7, 0.6)
+	var size := Vector2i(384, 256)
+	var crop := TarotTable.cloth_crop(Vector2(size), TarotMedium.CLOTH)
 	for cloth in ["half", "pale", "dark", "stripe"]:
 		var dir := DIR.path_join(cloth)
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
-		var surf := Image.create(256, 256, false, Image.FORMAT_RGB8)
-		for y in 256:
-			for x in 256:
-				var c := deep if cloth == "dark" else (felt if cloth == "half" and x < 128 else pine)
+		var surf := Image.create(size.x, size.y, false, Image.FORMAT_RGB8)
+		for y in size.y:
+			for x in size.x:
+				# where this pixel lies on the cloth, 0..1 across and from the far edge
+				var on := (Vector2(x + 0.5, y + 0.5) / Vector2(size) - crop.position) / crop.size
+				var c := deep if cloth == "dark" else (felt if cloth == "half" and on.x < 0.5 else pine)
 				if cloth == "stripe":
-					c = cream if y >= 16 and y < 51 else spruce
+					c = cream if on.y >= 0.0625 and on.y < 0.2 else spruce
 				surf.set_pixel(x, y, c.darkened(0.1 * float((x * 7 + y * 13) % 5) / 4.0))
 		surf.save_png(dir.path_join("surface.png"))
 

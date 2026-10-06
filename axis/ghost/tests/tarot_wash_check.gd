@@ -119,6 +119,8 @@ func _run() -> void:
 	_ok(float(n["ms"]) < 700.0, "a plan is cheap enough to make as an episode loads (%.0f ms)" % n["ms"])
 	_cut_short()
 	_jumper()
+	_looks()
+	_resting()
 	Director.hold(false)
 	Director.detach()
 	print("tarot_wash_check: %s" % ("ALL OK" if _fails == 0 else "%d FAILED" % _fails))
@@ -203,6 +205,230 @@ func _jumper() -> void:
 	_ok(at_spring >= 10, "when the card springs, the deck is riffling (%d of %d cards in the riffle)" % [at_spring, TarotMedium.DECK_N])
 	_ok(lift > 0.02, "and it springs off a half in the air, not the resting deck (%.0f mm from it)" % (lift * 1000.0))
 	_ok(after == 0, "the riffle done, the deck is square again (%d moving)" % after)
+
+
+## CARDS IN A WASH REST ON ONE ANOTHER (feedback 0007: "many of these cards are lifted off of the
+## table itself... they cannot rest upon each other with a gentle tilt"). Over the mixing of many
+## washes, every card spread on the cloth passes through no card under it and not into the cloth
+## (its plane at every corner and at every point where it crosses a card under it), and lies AS LOW
+## AS WHAT IS UNDER IT LETS IT - its middle exactly as high as the lowest plane over all of those
+## points, found here a second, independent way (the highest point any three of them, or two, or
+## one, hold up over the middle). Two-sided: the plan's flat layers sit above that, held up in the air.
+func _resting() -> void:
+	var through := 0
+	var afloat := 0
+	var cards := 0
+	var bare_new := 0.0
+	var bare_old := 0.0
+	var bare_n := 0
+	var tipped := 0
+	var worst_ms := 0.0
+	var judged := 0
+	var off_low := 0
+	var flat_high := 0
+	for s in range(1, 7):
+		var doc := {"show": "wash-check", "seed": s, "dir": "", "plan": {"look": {"candles": 2}}, "cards": []}
+		subs.document = {"source": TarotScript.compose([{"kind": "shuffle", "card": 0, "text": "Shuffle."}]), "title": "Wash Check", "tarot": doc}
+		medium._ensure_doc()
+		var plan: Dictionary = medium._wash_plan(3000 + s, 30.0)
+		var mix: Vector2 = plan["mix"]
+		for st in range(int(mix.x * TarotMedium.WASH_HZ) + 5, int(mix.y * TarotMedium.WASH_HZ), 11):
+			var t0 := Time.get_ticks_usec()
+			var rest: Array = medium._wash_rest(plan, st)
+			worst_ms = maxf(worst_ms, float(Time.get_ticks_usec() - t0) / 1000.0)
+			var v := float(st) / TarotMedium.WASH_HZ
+			var on: Array = []
+			for i in rest.size():
+				if medium._wash_spread_at(plan, i, v) >= 0.999:
+					on.append(i)
+			for i in on:
+				var qi: Vector4 = ((plan["tracks"] as Array)[i] as PackedVector4Array)[st]
+				var mid := Vector2(qi.x, qi.z)
+				var r: Vector3 = rest[i]
+				var g := Vector2(r.y, r.z)
+				var corners := TarotMedium._card_corners(mid, qi.w)
+				var least := INF
+				cards += 1
+				tipped += 1 if g.length() > 0.002 else 0
+				var covered := [false, false, false, false]
+				var pts := PackedVector2Array()
+				var hs := PackedFloat32Array()
+				for c in 4:
+					var gap := r.x + g.dot(corners[c] - mid) - TarotMedium.WASH_FLOOR
+					through += 1 if gap < -1e-5 else 0
+					least = minf(least, gap)
+					pts.append(corners[c] - mid)
+					hs.append(TarotMedium.WASH_FLOOR)
+				for j in on:
+					var qj: Vector4 = ((plan["tracks"] as Array)[j] as PackedVector4Array)[st]
+					if qj.y >= qi.y:
+						continue
+					var mj := Vector2(qj.x, qj.z)
+					var rj: Vector3 = rest[j]
+					var cj := TarotMedium._card_corners(mj, qj.w)
+					for piece in Geometry2D.intersect_polygons(corners, cj):
+						for p in piece:
+							var under := rj.x + Vector2(rj.y, rj.z).dot(p - mj) + TarotMedium.CARD_T + TarotMedium.STACK_GAP
+							var gap := (r.x + g.dot(p - mid)) - under
+							through += 1 if gap < -1e-5 else 0
+							least = minf(least, gap)
+							pts.append(p - mid)
+							hs.append(under)
+					for c in 4:
+						if Geometry2D.is_point_in_polygon(corners[c], cj):
+							covered[c] = true
+				afloat += 1 if least > 1e-5 else 0
+				if pts.size() > 4 and cards % 3 == 0:
+					var lowest := _held_up(pts, hs)
+					judged += 1
+					off_low += 1 if absf(r.x - lowest) > 2e-6 else 0
+					flat_high += 1 if qi.y > lowest + 0.0001 else 0
+				for c in 4:
+					if not covered[c]:
+						bare_new += r.x + g.dot(corners[c] - mid) - TarotMedium.WASH_FLOOR
+						bare_old += qi.y - TarotMedium.WASH_FLOOR
+						bare_n += 1
+	var mean_new := bare_new / maxf(float(bare_n), 1.0) * 1000.0
+	var mean_old := bare_old / maxf(float(bare_n), 1.0) * 1000.0
+	print("            resting: %d cards over 6 washes, %d tipped; corners over bare cloth %.2f mm up on average (flat layers: %.2f mm); the slowest step %.1f ms"
+		% [cards, tipped, mean_new, mean_old, worst_ms])
+	_ok(through == 0, "no card in a wash passes through a card under it or into the cloth (%d points)" % through)
+	_ok(afloat == 0, "every card rests on something (%d of %d in the air)" % [afloat, cards])
+	_ok(judged > 200 and off_low == 0, "every card lies as low as the cards under it let it (%d of %d judged do not)" % [off_low, judged])
+	_ok(flat_high > judged / 3, "control: on the plan's flat layers %d of %d sit higher than that" % [flat_high, judged])
+	_ok(mean_new < mean_old, "corners over bare cloth come down toward it: %.2f mm up, against %.2f mm on flat layers" % [mean_new, mean_old])
+	_ok(tipped > cards / 10, "cards resting on others tip (%d of %d)" % [tipped, cards])
+	_ok(worst_ms < 25.0, "a step of rest is cheap enough to make as it plays (%.1f ms)" % worst_ms)
+
+
+## The lowest plane above every support [param hs] at [param pts] (about a card's middle), at the
+## middle - found as the highest point any three supports (or two, or one) hold up over the middle,
+## the other way round from [method TarotMedium._rest_on], so the two cannot share a mistake.
+func _held_up(pts: PackedVector2Array, hs: PackedFloat32Array) -> float:
+	var best := -INF
+	var n := pts.size()
+	for i in n:
+		if pts[i].length() < 1e-7:
+			best = maxf(best, hs[i])
+		for j in range(i + 1, n):
+			var d := pts[j] - pts[i]
+			if d.length() > 1e-9 and absf(d.cross(-pts[i])) < 1e-12:
+				var u := (-pts[i]).dot(d) / d.length_squared()
+				if u >= 0.0 and u <= 1.0:
+					best = maxf(best, lerpf(hs[i], hs[j], u))
+			for k in range(j + 1, n):
+				var area := (pts[j] - pts[i]).cross(pts[k] - pts[i])
+				if absf(area) < 1e-12:
+					continue
+				var l0 := pts[j].cross(pts[k]) / area
+				var l1 := pts[k].cross(pts[i]) / area
+				var l2 := pts[i].cross(pts[j]) / area
+				if l0 >= -1e-9 and l1 >= -1e-9 and l2 >= -1e-9:
+					best = maxf(best, l0 * hs[i] + l1 * hs[j] + l2 * hs[k])
+	return best
+
+
+## THE HELD CARD'S LOOKS AT ITS BACK. Reported 2026-10-05: the hold "seems to be the exact same
+## length, always" (1.1-1.8 s); and asked for, a PIROUETTE - "rather than just reversing direction
+## back to the front... KEEP GOING in the same direction... such that 3 whole rotations are made in
+## the same direction (but we hold on the back artwork for the first 180, still)". So: the holds
+## spread wide - two-sided, the retired range does not; some looks are pirouettes and most are not;
+## a pirouette turns over, holds its back, then turns ONE way on round to face on three whole turns
+## from where it began; a plain look comes back the way it went; and over long held stretches the
+## card never jumps, a look's start and end included, and never turns as it goes down. Then (the
+## user's, 2026-10-05: "4-5 times for a single draw is far too many. I would expect the baseline to
+## be 0", and a card twirled 3 times in one draw): most held cards are never turned, few more than
+## once, pirouettes are rare and never twice on one card.
+func _looks() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var holds: Array = []
+	var spins := 0
+	var bad_spin := 0
+	var bad_plain := 0
+	var draws := 600
+	for i in draws:
+		var look := TarotMedium._look_of(rng)
+		var way := float(look["way"])
+		var turn := float(look["turn"])
+		var hold := float(look["hold"])
+		var total := float(look["total"])
+		var spin := float(look["twirl"]) > 0.0
+		if spin:
+			spins += 1
+		else:
+			holds.append(hold)
+		# along the look: does it ever turn against its way, and where does it end
+		var against := false
+		var prev := 0.0
+		for s in 600:
+			var a := TarotMedium._look_angle(look, total * float(s + 1) / 600.0)
+			if (a - prev) * way < -1e-5:
+				against = true
+			prev = a
+		var on_back := absf(TarotMedium._look_angle(look, turn + hold * 0.5) - way * PI) < 1e-4
+		var end := TarotMedium._look_angle(look, total)
+		if spin:
+			bad_spin += 0 if (not against and on_back and absf(end - way * 6.0 * PI) < 1e-3) else 1
+		else:
+			bad_plain += 0 if (against and on_back and absf(end) < 1e-3) else 1
+	holds.sort()
+	var spread := float(holds[int(holds.size() * 0.9)]) / float(holds[int(holds.size() * 0.1)])
+	var old: Array = []
+	for i in 600:
+		old.append(rng.randf_range(1.1, 1.8))
+	old.sort()
+	var old_spread := float(old[540]) / float(old[60])
+	_ok(spread >= 3.0, "a look's hold varies: the long ones %.1fx the short (%.1f-%.1f s)" % [spread, holds[int(holds.size() * 0.1)], holds[int(holds.size() * 0.9)]])
+	_ok(old_spread < 3.0, "control: the retired holds (1.1-1.8 s) vary %.1fx" % old_spread)
+	var share := float(spins) / float(draws)
+	_ok(share > 0.03 and share < 0.2, "a few looks are pirouettes, most are plain half turns (%.0f%%)" % (share * 100.0))
+	_ok(bad_spin == 0, "a pirouette holds its back, then turns one way to face on three whole turns round (%d did not)" % bad_spin)
+	_ok(bad_plain == 0, "a plain look holds its back and comes back the way it went (%d did not)" % bad_plain)
+	# OVER LONG HELD STRETCHES: never a jump (a pose a whole turn round is the same pose), the
+	# twirl seen turning, and nothing as the card goes down
+	var worst := 0.0
+	var round_seen := 0
+	var going_down := 0
+	var never := 0
+	var many := 0
+	var twice_spun := 0
+	var cards := 160
+	for k in cards:
+		var until := 60.0 + 0.75 * float(k)
+		var prev := 0.0
+		var looks := 0
+		var spins_k := 0
+		var turned := false
+		var past := false
+		for f in int(until * 30.0):
+			var t := float(f) / 30.0
+			var a := medium._turn_of(k, t, 0.0, until)
+			worst = maxf(worst, absf(wrapf(a - prev, -PI, PI)))
+			round_seen += 1 if absf(a) > TAU else 0
+			if t > until - 1.0 and absf(a) > 1e-6:
+				going_down += 1
+			var now_turned := absf(a) > 1e-6
+			if now_turned and not turned:
+				looks += 1
+				past = false
+			if absf(a) > TAU and not past:
+				spins_k += 1
+				past = true
+			turned = now_turned
+			prev = a
+		never += 1 if looks == 0 else 0
+		many += 1 if looks > 2 else 0
+		twice_spun += 1 if spins_k > 1 else 0
+	_ok(worst < 0.8, "a held card's turning never jumps (%.2f rad a frame at most)" % worst)
+	_ok(round_seen > 0, "a pirouette is seen in long held stretches (%d frames past a whole turn)" % round_seen)
+	_ok(going_down == 0, "and no card turns as it goes down (%d frames)" % going_down)
+	_ok(never > cards * 0.6, "most held cards are never turned (%d of %d)" % [never, cards])
+	_ok(many <= cards / 40, "hardly any card looks at its back more than twice (%d of %d)" % [many, cards])
+	_ok(twice_spun == 0, "no card pirouettes twice (%d did)" % twice_spun)
+	# the measure can see a snap: a pirouette half a turn short snaps from its back to its face
+	var short := absf(wrapf(5.0 * PI - 0.0, -PI, PI))
+	_ok(short > 3.0, "control: a twirl half a turn short is a snap of %.2f rad" % short)
 
 
 ## What one wash's tracks do: through its MIXING (the plan's own `mix` window, or between the

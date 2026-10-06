@@ -24,12 +24,17 @@ class_name TextGen
 ## reversed is seen upside down), and listed at the top of `prompt.txt`, so the record says
 ## which pictures a writer was shown as plainly as which words.
 ##
-## A WRITER, NOT AN AGENT. A run works from its prompt alone: Claude is run with no tools at
-## all; Codex, whose `exec` keeps a read-only shell, is TOLD to work only from the message and
-## never to open, list or read a file ([constant Codex.ONLY_THIS]) - the user's call (2026-10-04):
-## asking is enough, agents follow it. Each run is also STATELESS (no session is kept or
-## resumed) - a caller that wants a conversation sends the conversation, so every run's whole
-## input is the prompt file beside its reply.
+## A WRITER, NOT AN AGENT - unless ghost hands it tools. A run works from its prompt alone: Claude
+## is run with none of its own tools; Codex, whose `exec` keeps a read-only shell, is TOLD to work
+## only from the message and never to open, list or read a file ([constant Codex.ONLY_THIS]) - the
+## user's call (2026-10-04): asking is enough, agents follow it. Each run is also STATELESS (no
+## session is kept or resumed) - a caller that wants a conversation sends the conversation, so
+## every run's whole input is the prompt file beside its reply.
+##
+## GHOST'S TOOLS. A job carrying `tools_url` (an [AgentTools] endpoint) is run as an agent whose
+## ONLY tools are the ones ghost serves there - it calls them, sees what they return, and works in
+## that loop until it is done; every call is kept beside its prompt (`tools.jsonl`). A backend that
+## can take them says so ([method Backend.takes_tools]); one that cannot is asked the one-shot way.
 ##
 ## THE PROMPT IS NEVER IN ARGV, for the reason [AssistantBackends] gives: it reaches the CLI on
 ## stdin from a file, and the system prompt from a file the CLI reads itself.
@@ -150,6 +155,10 @@ class Backend:
 	func available() -> bool:
 		return false
 
+	## Whether a job's `tools_url` reaches this writer as tools it can call (see the class note).
+	func takes_tools() -> bool:
+		return false
+
 	## The models a picker offers for this writer: `[{key, label}]`, the default (key "") first.
 	static func models() -> Array:
 		return [{"key": "", "label": "Default"}]
@@ -213,6 +222,9 @@ class Claude:
 	func available() -> bool:
 		return Deps.has("claude")
 
+	func takes_tools() -> bool:
+		return true
+
 	func start(job: Dictionary) -> int:
 		var p := Backend.paths(job)
 		var m := Claude.compose(job)
@@ -224,18 +236,47 @@ class Claude:
 			if not err.is_empty():
 				job["error"] = err
 				return -1
-		var args := PackedStringArray(["-p",
-			"--model", Claude.model_of(job),
-			"--safe-mode", "--tools", "",
-			"--system-prompt-file", String(p["system"]),
-			"--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-			"--no-session-persistence"])
-		var pid := Subprocess.start_redirected(binary(), args, {"cwd": String(job["dir"]),
+		var tools := Claude.tool_args(job)
+		if tools.is_empty() and not String(job.get("tools_url", "")).is_empty():
+			job["error"] = "could not write the tools' config into " + String(job["dir"])
+			return -1
+		var pid := Subprocess.start_redirected(binary(), Claude.argv(job, String(p["system"]), tools), {"cwd": String(job["dir"]),
 			"stdin": String(p["input"]), "out": String(p["reply"]), "err": String(p["log"])},
 			"claude writer")
 		if pid <= 0:
 			job["error"] = "could not start claude (is the Claude Code CLI installed and logged in?)"
 		return pid
+
+	## Flags and paths only - the prompt is on stdin. [param tools]: [method tool_args]'s.
+	##
+	## NONE OF THE AUTHOR'S OWN SETUP: `--safe-mode`, which also drops every MCP server - ghost's
+	## included (measured, CLI 2.1.291) - so a writer given ghost's tools loads no settings at all
+	## instead (`--setting-sources ""`: no plugin, hook or memory; measured, it is shown no
+	## CLAUDE.md), and the system prompt replaces Claude Code's either way.
+	static func argv(job: Dictionary, system_path: String, tools: PackedStringArray) -> PackedStringArray:
+		var args := PackedStringArray(["-p", "--model", Claude.model_of(job)])
+		args.append_array(PackedStringArray(["--setting-sources", ""]) if not tools.is_empty() else PackedStringArray(["--safe-mode"]))
+		args.append_array(["--tools", "",
+			"--system-prompt-file", system_path,
+			"--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+			"--no-session-persistence"])
+		args.append_array(tools)
+		return args
+
+	## GHOST'S TOOLS for a job with a `tools_url`: the server named in a config file beside the
+	## prompt (`mcp.json` - a path in argv, never the URL's token), no other server the author has
+	## set up (`--strict-mcp-config`), and its tools allowed to run without asking - a print run has
+	## nobody to ask. Claude's own tools stay off (`--tools ""`), so ghost's are the only ones. Empty
+	## for a job without tools, or when the config cannot be written.
+	static func tool_args(job: Dictionary) -> PackedStringArray:
+		var url := String(job.get("tools_url", ""))
+		if url.is_empty():
+			return PackedStringArray()
+		var cfg := String(job["dir"]).path_join("mcp.json")
+		var err := TextGen.put(cfg, JSON.stringify({"mcpServers": {"ghost": {"type": "http", "url": url}}}, "\t"))
+		if not err.is_empty():
+			return PackedStringArray()
+		return PackedStringArray(["--mcp-config", cfg, "--strict-mcp-config", "--allowedTools", "mcp__ghost"])
 
 	## THE MESSAGE: each picture under its label, then the prompt - as the stream-json line the
 	## CLI reads (`input`), and as the record a person reads (`shown`: the pictures listed, then

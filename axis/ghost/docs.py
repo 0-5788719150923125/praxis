@@ -208,8 +208,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "text box, or a Markdown file on disk re-read at every Play, whose "
         "frontmatter carries the voice), the text front end and its "
         "normalization, the threaded real-time stream, karaoke subtitles, and "
-        "the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the "
-        "repo root.",
+        "the buffer effects. Design: next/voice.md.",
         [
             "phonemes.gd",
             "text_norm.gd",
@@ -240,7 +239,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "planned, painted and written by agents one card at a time, kept on "
         "disk step by step - and the table they are read at, in the Generative "
         "voice, with the things on it modeled from a written description "
-        "(Props). Design: next/tarot.md at the repo root.",
+        "(Props). Design: next/tarot.md.",
         [
             "tarot_editor.gd",
             "tarot_producer.gd",
@@ -251,15 +250,18 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "tarot_table.gd",
             "tarot_cards.gd",
             "props.gd",
+            "set_dresser_tools.gd",
+            "table_preview.gd",
         ],
     ),
     (
         "Agents",
         "Every piece of writing and painting ghost asks an AI for: who writes "
         "(TextGen) and who paints (ImageGen), one queue for both (AgentJobs), "
+        "the tools ghost serves an agent while it works (AgentTools), "
         "which Amazon Bedrock models an AWS account can call (BedrockCatalog), "
         "and where a reading's voice is in its document (ReadingFollower).",
-        ["text_gen.gd", "agent_jobs.gd", "bedrock_catalog.gd", "reading_follower.gd"],
+        ["text_gen.gd", "agent_jobs.gd", "agent_tools.gd", "bedrock_catalog.gd", "reading_follower.gd"],
     ),
     (
         "Storyboards & stage",
@@ -487,6 +489,11 @@ ENGINE_FLAGS = {
     "--no-session-persistence",
     "--input-format",
     "--ephemeral",
+    # ...and a writer working with ghost's own tools (AgentTools): their config, nothing else's
+    "--mcp-config",
+    "--strict-mcp-config",
+    "--allowedTools",
+    "--setting-sources",
     # the AWS CLI's (bedrock_catalog.gd and the Bedrock writer and painter), not ghost flags
     "--region",
     "--output",

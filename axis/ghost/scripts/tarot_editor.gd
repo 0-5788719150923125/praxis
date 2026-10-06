@@ -67,6 +67,7 @@ var _brief_changed := false
 var _deck_note: Label
 var _deck_seen := -1
 var _table_seen := {}
+var _table_log := {}
 ## THE EPISODE AN EXPORT IS OF, held from the moment it is asked for: synthesis takes minutes,
 ## and an episode picked meanwhile must not lend the take its cards or its upload notes.
 ## {episode, body, doc, title}, or empty.
@@ -206,10 +207,13 @@ func _show_title() -> String:
 
 
 ## What the producer works from, read fresh: the title, the brief (its card LIST taken out - see
-## [method TarotDeck.strip]), the deck the brief defines (or the standard 78), and the knobs.
+## [method TarotDeck.strip]), the deck the brief defines (or the standard 78), the show's voices
+## (every one its document names - the reader's and any other, a familiar's - for the reader to
+## hand lines to), and the knobs.
 func _spec() -> Dictionary:
 	var body := Manuscript.strip_frontmatter(_doc.pull())
 	return {"title": _show_title(), "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
+		"voices": _cast_dict().keys(),
 		"cards": _knobs["cards"], "reversals": _knobs["reversals"], "jumpers": _knobs["jumpers"],
 		"writer": _knobs["writer"], "writer_model": _knobs["writer_model"],
 		"painter": _knobs["painter"], "painter_model": _knobs["painter_model"]}
@@ -321,14 +325,13 @@ func _touch() -> void:
 
 
 ## The cast rows, built as the Generative panel builds them (the voice machinery reads them), with
-## the two that mean nothing for one reader reading an episode hidden: Turn rests at a change of
-## speaker, Hesitate lengthens marks the agents do not write.
+## Hesitate hidden: it lengthens marks the agents do not write. Turn stays - the rest where the
+## reader hands a line to another of the show's voices (a familiar's quip) and takes it back.
 func _build_cast(box: VBoxContainer) -> void:
 	super._build_cast(box)
-	for c in [_turn, _hesitate]:
-		var row := (c as Control).get_parent() as Control
-		if row != null:
-			row.visible = false
+	var row := _hesitate.get_parent() as Control
+	if row != null:
+		row.visible = false
 
 
 # --- the picture ---------------------------------------------------------------------------------
@@ -855,6 +858,23 @@ func _table_things() -> PackedStringArray:
 	return _table_seen["names"]
 
 
+## WHAT THE SET DRESSER IS DOING while it sets the table with its tools: its last call, from the
+## job's `tools.jsonl` (read again only when that file changes) - a run of many minutes otherwise
+## shows nothing but its glyph. "" before its first call, or for a set dresser with no tools.
+func _table_progress() -> String:
+	var path := _episode.job_dir("table").path_join("tools.jsonl") if _episode != null else ""
+	var mt := FileAccess.get_modified_time(path) if not path.is_empty() and FileAccess.file_exists(path) else -1
+	if mt != int(_table_log.get("mt", -2)) or path != String(_table_log.get("path", "")):
+		var lines := FileAccess.get_file_as_string(path).strip_edges().split("\n", false) if mt >= 0 else PackedStringArray()
+		var last: Variant = JSON.parse_string(String(lines[lines.size() - 1])) if not lines.is_empty() else null
+		var said := ""
+		if last is Dictionary:
+			said = "%s (call %d): %s" % [String((last as Dictionary).get("tool", "")), lines.size(),
+				String((last as Dictionary).get("text", "")).get_slice("\n", 0).left(90)]
+		_table_log = {"mt": mt, "path": path, "said": said}
+	return String(_table_log.get("said", ""))
+
+
 func _refresh_rows() -> void:
 	if _episode == null or _rows_box == null:
 		return
@@ -903,6 +923,8 @@ func _refresh_rows() -> void:
 				if not things.is_empty():
 					have.append("%d thing%s" % [things.size(), "" if things.size() == 1 else "s"])
 				text = ", ".join(have)
+				if _producer.state_of("table") == "running" and not _table_progress().is_empty():
+					text = "setting the table - " + _table_progress()
 			"Card":
 				if doc.is_empty():
 					doc = _episode.document()

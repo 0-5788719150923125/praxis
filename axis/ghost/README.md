@@ -87,7 +87,7 @@ Write or paste a script, and ghost narrates it - **no generative AI and no recor
 - **Finding a voice is a fishing trip.** A **throw** speaks a new candidate into the deep; its planned strikes (echo, stretch, pitch, hesitation) are the **bites**, each opening a detection window that decays - catch quickly and the odds are strong. **Pull** sets the hook, then the **reel** anneals the candidate toward and against your party before it freezes, and you **accept** or **release**. A catch presents a **card**: the seed drawn as a constellation, its color attuned to how near the candidate sits to the party's center. Accepting folds it into the belt and re-attunes every member. The game is integration - reading the color shifts, knowing when to hold and when to fold. Drift is a journey, not a clock: an odometer accelerates the longer the line is out (with warp streaks past the raw maximum), and reeling hauls it home in log-time. Reward profiles (Drift / Snap / Hunt) shape how throws range and how catches earn; a seasoned belt reels faster. Everything autosaves.
 - **Echo a living voice.** The sampler records you reading a fixed passage, **measures** the voice, and throws the recording away - what leaves the panel is ~20 scalars (a trait vector plus a partial prosody genome) that mint a brand-new seed. The synthesized voice stays fully synthetic; the seed just _sits_ where the living voice sits - its pitch, tempo, breathiness, pausing, melodic spread.
 
-Design and falsifiable rungs: [next/voice.md](../../next/voice.md) at the repo root.
+Design and falsifiable rungs: [next/voice.md](next/voice.md).
 
 ## Masking: the video effects editor
 

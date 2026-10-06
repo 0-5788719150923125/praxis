@@ -3,7 +3,7 @@ class_name Phonemes
 
 ## Phonemes - the phoneme inventory and the text-to-phoneme expansion.
 ##
-## The speech front end for [Voice] (see next/voice.md at the repo root): a table
+## The speech front end for [Voice] (see next/voice.md): a table
 ## of English phonemes with formant targets (Hz), durations, and source types, plus
 ## a rule-based letter-to-sound expansion (greedy digraph matching, a magic-e rule,
 ## and a small exceptions dictionary for the most common irregular words). This is

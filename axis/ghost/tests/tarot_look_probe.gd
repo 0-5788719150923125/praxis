@@ -10,6 +10,8 @@ extends Node
 ## `--marks 1` photographs each action instead: the moment it starts, a beat in, and the card
 ## held up after it. `--things 1` prints what stands on the table and every flame's light;
 ## `--dark 0,2` puts out those lights (a lit thing's one light; -1 the lamp), to find which light does something.
+## `--looks 1` prints when each held card looks at its back, and which looks are pirouettes - to
+## aim a `--clip` at one.
 ## `--wash W` makes the shuffle one wash (seed W, its longest) and `--clip A,B` writes EVERY frame
 ## from A to B seconds into it (`<out>_c0000.png`...) - motion is judged in motion:
 ##   ffmpeg -framerate 30 -i <out>_c%04d.png -pix_fmt yuv420p wash.mp4
@@ -34,6 +36,7 @@ var _things := false    # --things 1: print what stands on the table and every f
 var _dark: Array = []   # --dark 0,2: put out those flames' lights (the flames still burn), to find a light
 var _wash := -1         # --wash W: the shuffle is one wash, of seed W
 var _clip := Vector2(-1.0, -1.0)   # --clip A,B: every frame from A to B seconds (into the wash, with --wash)
+var _looks := false     # --looks 1: print each held card's looks at its back
 
 
 func _ready() -> void:
@@ -61,6 +64,7 @@ func _run() -> void:
 				for x in String(args[i + 1]).split(","):
 					_dark.append(int(x))
 			"--wash": _wash = int(args[i + 1])
+			"--looks": _looks = args[i + 1] == "1"
 			"--clip":
 				var ab := String(args[i + 1]).split(",")
 				_clip = Vector2(float(ab[0]), float(ab[1]))
@@ -184,6 +188,8 @@ func _run() -> void:
 					((f as Dictionary)["flames"] as Array).size(), "" if ((f as Dictionary)["flames"] as Array).size() == 1 else "s",
 					l.position.x, l.position.y, l.position.z, l.light_energy, float((f as Dictionary)["energy"]), str(l.shadow_enabled)])
 			print("tarot_look_probe: lamp energy %.2f shadows %s" % [tm._lamp.light_energy, str(tm._lamp.shadow_enabled)])
+		if want == _times[0] and _looks:
+			_print_looks(medium as TarotMedium)
 		if want == _times[0]:
 			var tmed := medium as TarotMedium
 			var cur := stage.get_camera_3d()
@@ -249,3 +255,32 @@ func _spread(img: Image) -> float:
 			lo = minf(lo, l)
 			hi = maxf(hi, l)
 	return hi - lo
+
+
+## Each held card's looks at its back, as the table will pose them: from when the card is fully up
+## until it is laid, every stretch it is turned, and whether it went round (a pirouette).
+func _print_looks(tm: TarotMedium) -> void:
+	var tt := tm._times()
+	var draws: Array = tt["draw"]
+	var lays: Array = tt["lay"]
+	for k in draws.size():
+		var d: Array = draws[k]
+		if float(d[0]) == INF:
+			continue
+		var s := maxf(float(d[1]), 0.05)
+		var up_at := float(d[0]) + (float(d[3]) + (TarotMedium.JUMP_RISE if String(d[2]) == "jumper" else TarotMedium.RISE_END)) * s
+		var until := float((lays[k] as Array)[0])
+		var from := -1.0
+		var most := 0.0
+		var t := up_at
+		while t < minf(until, up_at + 600.0):
+			var a := absf(tm._turn_of(k, t, up_at, until))
+			if a > 1e-4 and from < 0.0:
+				from = t
+				most = 0.0
+			most = maxf(most, a)
+			if a <= 1e-4 and from >= 0.0:
+				print("tarot_look_probe: card %d looks at its back %.1f-%.1f s%s" % [k + 1, from, t, " - a PIROUETTE" if most > TAU else ""])
+				from = -1.0
+			t += 1.0 / 30.0
+

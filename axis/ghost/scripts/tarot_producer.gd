@@ -12,7 +12,8 @@ class_name TarotProducer
 ##   draw       the deck is shuffled and cut (here, from the seed - no agent touches it)
 ##   design:K   the deck's creator draws up card K: its illustration and its booklet entry
 ##   image:*    the painter makes the back, the cloth, the room, then each card in turn
-##   table      the set dresser sets the reader's table, looking at the cloth
+##   table      the set dresser sets the reader's table, looking at the cloth - and, given a writer
+##              that takes tools, looking at what it builds as it builds it ([SetDresserTools])
 ##   say:intro  the reader opens the video, shuffling, knowing no card
 ##   say:K      the reader turns over card K - knowing cards 1..K and what it said before, and
 ##              LOOKING AT card K's painting, so the words are about the picture on screen
@@ -51,6 +52,7 @@ var running := false
 var only: Array = []
 
 var _jobs := {}        # step -> AgentJobs id
+var _tools := {}       # step -> {url, set}: the tools a step's agent is working with, until it lands
 var _errors := {}      # step -> why it failed, once it is out of tries
 var _tries := {}       # step -> runs started
 
@@ -84,6 +86,8 @@ func stop() -> void:
 		AgentJobs.cancel(String(_jobs[step]))
 		AgentJobs.forget(String(_jobs[step]))
 	_jobs.clear()
+	for step in _tools.keys():
+		_close_tools(String(step))
 	changed.emit()
 
 
@@ -162,17 +166,22 @@ func _make(step: String) -> void:
 			_make_table()
 
 
-func _submit_text(step: String, p: Dictionary, tier: String) -> void:
+## [param extra]: more of the job's spec - its tools and their timeout (see [method _make_table]).
+func _submit_text(step: String, p: Dictionary, tier: String, extra: Dictionary = {}) -> void:
 	_tries[step] = int(_tries.get(step, 0)) + 1
 	if not p.has("system") or not p.has("prompt"):
 		_errors[step] = "its prompt could not be built (see the log)"
+		_close_tools(step)
 		return
-	var id := AgentJobs.submit({"kind": "text", "backend": String(spec.get("writer", "claude")),
+	var job := {"kind": "text", "backend": String(spec.get("writer", "claude")),
 		"tier": tier, "dir": episode.job_dir(step), "system": String(p["system"]),
 		"prompt": String(p["prompt"]), "images": p.get("images", []), "label": "tarot %s" % step,
-		"model": String(spec.get("writer_model", ""))})
+		"model": String(spec.get("writer_model", ""))}
+	job.merge(extra, true)
+	var id := AgentJobs.submit(job)
 	if id.is_empty():
 		_errors[step] = "this session cannot start agents (read-only)"
+		_close_tools(step)
 		return
 	_jobs[step] = id
 
@@ -338,17 +347,50 @@ func _make_image(step: String) -> void:
 
 
 ## THE SET DRESSER sets the table from the plan, looking at the cloth, told the things earlier
-## episodes' tables held so this one holds others.
+## episodes' tables held so this one holds others. A writer that takes tools works with
+## [SetDresserTools]: it builds the table a few things at a time, LOOKS at what it built and at the
+## table as the camera will film it, fixes what it sees, and hands the table in - see [method _land].
+## One that cannot is asked for the table in one reply, as before.
 func _make_table() -> void:
 	var seen: Array = []
 	for e in TarotEpisode.archive(episode.show, episode.seed):
 		seen.append_array((e as Dictionary)["things"])
 	var cloth := episode.has("image:surface")
+	_close_tools("table")
+	# a table an earlier run handed in is not this run's answer, whoever writes this one
+	DirAccess.remove_absolute(episode.job_dir("table").path_join(SetDresserTools.SUBMITTED))
+	var extra := {}
+	if TextGen.make(String(spec.get("writer", "claude"))).takes_tools():
+		var toolset := SetDresserTools.new(episode, _plan(), episode.job_dir("table"))
+		var url := AgentTools.open(episode.job_dir("table"), toolset)
+		if not url.is_empty():
+			_tools["table"] = {"url": url, "set": toolset}
+			extra = {"tools_url": url, "timeout": SetDresserTools.TIMEOUT}
+		else:
+			toolset.release()
 	var p := TarotPrompts.set_dresser(String(spec.get("title", "")), String(spec.get("brief", "")), _plan(),
-		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth)
+		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth,
+		SetDresserTools.LOOKS if not extra.is_empty() else 0)
 	if cloth:
 		p["images"] = [{"path": episode.file_of("image:surface"), "label": "The cloth, seen from above:", "flip": false}]
-	_submit_text("table", p, "best")
+	_submit_text("table", p, "best", extra)
+
+
+## A step's tools stop answering, and what they built is given back.
+func _close_tools(step: String) -> void:
+	var t: Dictionary = _tools.get(step, {})
+	if t.is_empty():
+		return
+	AgentTools.close(String(t["url"]))
+	(t["set"] as SetDresserTools).release()
+	_tools.erase(step)
+
+
+## WHAT AN AGENT HANDED IN WITH A TOOL for [param step] (its job's `submitted.json`), or "" - an
+## answer that does not depend on its last words, or on its run ending cleanly.
+func _handed_in(step: String) -> String:
+	var path := episode.job_dir(step).path_join(SetDresserTools.SUBMITTED)
+	return FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else ""
 
 
 func _make_say(who: String) -> void:
@@ -390,7 +432,8 @@ func say_prompt(who: String) -> Dictionary:
 	for c in _deck():
 		names.append(String((c as Dictionary).get("name", "")))
 	var p := TarotPrompts.reader(String(spec.get("title", "")), String(spec.get("brief", "")),
-		_plan(), who, said, drawn, n, not images.is_empty(), TarotEpisode.archive(episode.show, episode.seed), names)
+		_plan(), who, said, drawn, n, not images.is_empty(), TarotEpisode.archive(episode.show, episode.seed), names,
+		_voices())
 	p["images"] = images
 	return p
 
@@ -418,7 +461,12 @@ func _make_script() -> String:
 
 func _land(step: String, res: Dictionary) -> void:
 	var err := ""
-	if not bool(res.get("ok", false)):
+	var had_tools := _tools.has(step)
+	var handed := _handed_in(step) if had_tools else ""
+	_close_tools(step)
+	if not handed.is_empty():
+		err = _land_table(handed)
+	elif not bool(res.get("ok", false)):
 		err = String(res.get("error", "the job failed"))
 	else:
 		match String(step.split(":")[0]):
@@ -427,13 +475,15 @@ func _land(step: String, res: Dictionary) -> void:
 			"design":
 				err = _land_design(step, String(res.get("text", "")))
 			"say":
-				var t := clean_spoken(String(res.get("text", "")))
+				var t := own_voices(clean_spoken(String(res.get("text", ""))), _voices())
 				err = "the reader wrote nothing speakable" if t.split(" ", false).size() < 20 \
 					else episode.write_text(step, t)
 			"image":
 				err = "" if episode.has(step) else "the picture did not arrive"
 			"table":
 				err = _land_table(String(res.get("text", "")))
+				if not err.is_empty() and had_tools:
+					err = "the set dresser stopped without handing its table in"
 	if err.is_empty():
 		_errors.erase(step)
 		return
@@ -517,6 +567,39 @@ static func _str(v: Variant) -> String:
 ## what is left to do when a writer adds a little anyway - wrapping quotes, a heading, a
 ## bracketed stage direction, a line that is nothing but an action in asterisks - and the em
 ## dash, which the voice reads as a pause either way and the subtitles show as a plain dash.
+## The show's voices besides the reader's ([constant Manuscript.NARRATOR]): the names its
+## document gives them, in its order.
+func _voices() -> Array:
+	var out: Array = []
+	for v in spec.get("voices", []):
+		if String(v) != Manuscript.NARRATOR and not out.has(String(v)):
+			out.append(String(v))
+	return out
+
+
+## [param text] with every change of speaker naming one of the show's own [param voices] (or the
+## reader), spelled as the show spells it; a cue naming anyone else is taken out, and its words
+## stay with whoever was speaking. A writer's "familiar" would otherwise be a new voice of its own,
+## a copy of the reader's, kept in the show's document from then on.
+static func own_voices(text: String, voices: Array) -> String:
+	var known := {Manuscript.NARRATOR.to_lower(): Manuscript.NARRATOR}
+	for v in voices:
+		known[String(v).to_lower()] = String(v)
+	var cue := Manuscript._rx(Manuscript.SPEAKER)
+	var out := ""
+	var at := 0
+	for m in Manuscript._rx(Manuscript.COMMENT).search_all(text):
+		var c := cue.search(m.get_string())
+		if c == null:
+			continue
+		out += text.substr(at, m.get_start() - at)
+		at = m.get_end()
+		var who := (c.get_string(1) if not c.get_string(1).is_empty() else c.get_string(2)).strip_edges()
+		if known.has(who.to_lower()):
+			out += "<!-- speaker: %s -->" % String(known[who.to_lower()])
+	return out + text.substr(at)
+
+
 static func clean_spoken(text: String) -> String:
 	var t := text.strip_edges()
 	if t.length() >= 2 and t.begins_with("\"") and t.ends_with("\""):

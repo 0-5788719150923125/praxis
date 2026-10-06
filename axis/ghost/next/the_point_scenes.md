@@ -1,6 +1,6 @@
 # the-point: full scene build
 
-Brief: `../tunes/compositions/the-point/` (script / structure / style / video.txt).
+Brief: `compositions/the-point/` in the sibling `tunes` repo (script / structure / style / video.txt).
 33s percussion-driven iPod-style ad. Pure-black void, static symmetric shot, two
 slots L/R. A human eye becoming its digital self (a Prism) then coming alive, then
 a swarm. 15 numbered beats in `video.txt`.

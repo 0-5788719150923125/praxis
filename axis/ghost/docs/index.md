@@ -186,7 +186,7 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 ### Synthesis (voice)
 
-Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the source of the words (the text box, or a Markdown file on disk re-read at every Play, whose frontmatter carries the voice), the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
+Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the source of the words (the text box, or a Markdown file on disk re-read at every Play, whose frontmatter carries the voice), the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`text_norm.gd`](../scripts/text_norm.gd) **TextNorm** - turn written English into speakable words, before anything else.
@@ -212,7 +212,7 @@ Text to narrated audio in two paths: ghost's own source-filter synthesizer (no m
 
 ### Tarot
 
-An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice, with the things on it modeled from a written description (Props). Design: next/tarot.md at the repo root.
+An automatic tarot reading: a show's brief, its episodes - each planned, painted and written by agents one card at a time, kept on disk step by step - and the table they are read at, in the Generative voice, with the things on it modeled from a written description (Props). Design: next/tarot.md.
 
 - [`tarot_editor.gd`](../scripts/tarot_editor.gd) **TarotEditor** - the tarot mode: a reading nobody writes by hand.
 - [`tarot_producer.gd`](../scripts/tarot_producer.gd) **TarotProducer** - makes whatever an episode is missing, in the order a reading happens.
@@ -223,13 +223,16 @@ An automatic tarot reading: a show's brief, its episodes - each planned, painted
 - [`tarot_table.gd`](../scripts/tarot_table.gd) **TarotTable** - what an episode's look may name, and how a look is made safe to draw.
 - [`tarot_cards.gd`](../scripts/tarot_cards.gd) **TarotCards** - a card's face, its back and its booklet page, composed in 2D for the table.
 - [`props.gd`](../scripts/props.gd) **Props** - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one - or a GROUP of parts, placed and repeated as one (a candelabra's arm, cup and taper, copied round). An agent writes ...
+- [`set_dresser_tools.gd`](../scripts/set_dresser_tools.gd) **SetDresserTools** - what the set dresser can do while it sets a tarot reader's table: MAKE a thing, LOOK at it, FIX it, and see the whole table as the camera will before handing it in.
+- [`table_preview.gd`](../scripts/table_preview.gd) **TablePreview** - a table described but not yet set, SEEN: each thing alone in a studio, and the whole table standing on the episode's own cloth, photographed from the camera's own place. It is what the set dresser looks through (`SetDresserTools`): it makes a thing, looks at it, and fixes what it sees.
 
 ### Agents
 
-Every piece of writing and painting ghost asks an AI for: who writes (TextGen) and who paints (ImageGen), one queue for both (AgentJobs), which Amazon Bedrock models an AWS account can call (BedrockCatalog), and where a reading's voice is in its document (ReadingFollower).
+Every piece of writing and painting ghost asks an AI for: who writes (TextGen) and who paints (ImageGen), one queue for both (AgentJobs), the tools ghost serves an agent while it works (AgentTools), which Amazon Bedrock models an AWS account can call (BedrockCatalog), and where a reading's voice is in its document (ReadingFollower).
 
 - [`text_gen.gd`](../scripts/text_gen.gd) **TextGen** - who writes the words. The text counterpart of `ImageGen`.
 - [`agent_jobs.gd`](../scripts/agent_jobs.gd) **AgentJobs** - every piece of writing and painting ghost asks an AI for, in one queue.
+- [`agent_tools.gd`](../scripts/agent_tools.gd) **AgentTools** - the tools an agent can call while it works, served by ghost itself.
 - [`bedrock_catalog.gd`](../scripts/bedrock_catalog.gd) **BedrockCatalog** - which Amazon Bedrock models this AWS account can call, and how to reach each. Shared by the Bedrock writer (`TextGen`'s `bedrock`) and painter (`ImageGen`'s `bedrock`); it only ever makes the free listing calls, never a model call.
 - [`reading_follower.gd`](../scripts/reading_follower.gd) **ReadingFollower** - where the voice is in a document, and when each of its words was said.
 

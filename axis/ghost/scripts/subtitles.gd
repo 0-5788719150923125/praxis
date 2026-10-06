@@ -59,6 +59,44 @@ var overlay_hidden := false
 var _cursor := 0.0                  # the narrator's eye: global word progress, eased
 var _hue_sm := 0.6
 var _overlay: Control
+var _order := {}                    # speaker -> its place among the reading's voices
+var _order_of: Array = []           # ...in this words array
+var _order_n := 0                   # ...read this far
+
+## EACH VOICE LIGHTS IN COLORS OF ITS OWN (the user, 2026-10-05: "the first can remain the rainbow
+## color, while the next could be a different spectrum"): the reading's first voice in the whole
+## rainbow, and every voice after it, in the order they first speak, in a band of hues - [from, to],
+## crossed the way listed: red through purple to blue, green to yellow, cyan to sea blue - swept
+## there and back by the same flowing phase. Past the last band they come round again.
+const VOICE_BANDS := [[1.0, 0.62], [0.36, 0.14], [0.44, 0.58]]
+
+
+## The hue a glyph lights in, for [param phase] (any real; the flow along the text and over time):
+## the phase itself on the whole wheel for the reading's first voice ([param order] 0), otherwise
+## swept across that voice's band and back, eased at both ends so the band never jumps.
+static func voice_hue(phase: float, order: int) -> float:
+	if order <= 0:
+		return fposmod(phase, 1.0)
+	var band: Array = VOICE_BANDS[(order - 1) % VOICE_BANDS.size()]
+	return fposmod(lerpf(float(band[0]), float(band[1]), 0.5 - 0.5 * cos(TAU * phase)), 1.0)
+
+
+## Voice [param who]'s place among this reading's voices, by when each first speaks (see
+## [constant VOICE_BANDS]). A word that names no voice - a synthesis take, an older sidecar - is
+## the first voice's. Read on as [member words] grows; a new reading starts it over.
+func voice_order(who: String) -> int:
+	if who.is_empty():
+		return 0
+	if not is_same(_order_of, words) or _order_n > words.size():
+		_order_of = words
+		_order = {}
+		_order_n = 0
+	while _order_n < words.size():
+		var w := String((words[_order_n] as Dictionary).get("speaker", ""))
+		if not w.is_empty() and not _order.has(w):
+			_order[w] = _order.size()
+		_order_n += 1
+	return int(_order.get(who, 0))
 
 
 ## The sidecar path for an audio file, or "" if none exists.
@@ -359,11 +397,12 @@ class Overlay:
 				var text: String = item.word.text
 				var ci: int = int(item.cstart)   # this word's first char, sentence-local
 				var face := _face(font, int(item.word.get("emph", 0)))
+				var order := owner_node.voice_order(String(item.word.get("speaker", "")))
 				for ch in text.length():
 					var glyph := text.substr(ch, 1)
 					var cw := face.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 					var pos := Vector2(x, y)
-					var col := _glyph_color(base_hue, ci + ch, ccur, now)
+					var col := _glyph_color(base_hue, ci + ch, ccur, now, order)
 					col.a *= vis
 					# the shadow, under every state - the edge that survives a
 					# bright frame bleeding past the plate
@@ -375,12 +414,14 @@ class Overlay:
 			y += lh
 
 	## A single glyph's color: a hue that drifts by position AND time (the band
-	## flowing through the sentence), and a brightness that tells the reading
-	## state - a muted preview ahead of the voice, a vivid flare as it is spoken,
-	## then a slow cool over LINGER characters behind so the color stays to be
-	## looked at rather than snapping dim the instant the word ends.
-	func _glyph_color(base_hue: float, ci: int, ccur: float, t: float) -> Color:
-		var hue := fposmod(base_hue + float(ci) * HUE_SPAN - t * HUE_DRIFT, 1.0)
+	## flowing through the sentence) - on the whole wheel, or across the band of the
+	## voice saying it ([param order], see [method Subtitles.voice_hue]) - and a
+	## brightness that tells the reading state - a muted preview ahead of the voice,
+	## a vivid flare as it is spoken, then a slow cool over LINGER characters behind
+	## so the color stays to be looked at rather than snapping dim the instant the
+	## word ends.
+	func _glyph_color(base_hue: float, ci: int, ccur: float, t: float, order := 0) -> Color:
+		var hue := Subtitles.voice_hue(base_hue + float(ci) * HUE_SPAN - t * HUE_DRIFT, order)
 		# the saturation band at this glyph: two incommensurate waves -> organic,
 		# non-repeating valleys (grounded) and peaks (colorful). Scales the state's
 		# own saturation from a near-gray floor up to full.

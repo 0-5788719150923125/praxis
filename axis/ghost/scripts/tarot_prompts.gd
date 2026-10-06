@@ -141,7 +141,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	lines.append("")
 	lines.append(deck_line(deck))
 	lines.append("")
-	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: what the cards picture (their cast) and how it is drawn, the medium and its influences, linework, texture, palette. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lights burn on the table - a candle in its holder, a candelabra, a dish of tea lights each count as one (what they are, and the rest of what stands on the table, is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
+	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: what the cards picture (their cast) and how it is drawn, the medium and its influences, linework, texture, palette. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above: the bare material, dry and clean of anything spilled or strewn - whatever stands on the table is set separately), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lights burn on the table - a candle in its holder, a candelabra, a dish of tea lights each count as one (what they are, and the rest of what stands on the table, is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
 	lines.append("THE CARD STOCK is the card's own color: it shows all round every picture and behind its name, and the deck's booklet is printed in the same colors. Decks are printed on stock of every color, dark and saturated as well as pale - choose the one that best sets off this deck's paintings, with an ink and accent that read on it.")
 	if not past.is_empty():
 		lines.append("")
@@ -173,7 +173,7 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
     "frame": {"style": "one of: %s", "stock": "#rrggbb card stock", "ink": "#rrggbb border and lettering", "accent": "#rrggbb"},
     "title_face": "one of: %s",
     "foil": 0.6,
-    "surface": "the cloth or tabletop the cards lie on, seen from above",
+    "surface": "the cloth or tabletop the cards lie on, seen from above: the bare material, dry",
     "setting": "the place beyond the table",
     "light": {"kind": "what lights the table", "color": "#rrggbb", "warmth": "warm or cool"},
     "candles": 2
@@ -223,16 +223,17 @@ static func designer(title: String, brief: String, look: Dictionary, card: Dicti
 ## episode's plan and look, and no card: none has been drawn. [param headroom] is how tall a thing
 ## can stand in each zone and be seen whole (centimeters, [method TarotTable.headroom]);
 ## [param seen] are the things earlier episodes' tables held; [param cloth] says the cloth's
-## picture goes with the prompt.
+## picture goes with the prompt. [param looks] > 0: the set dresser works with tools and SEES what it
+## builds ([SetDresserTools], that many pictures) - it is told how to work, and hands the table in
+## with a tool instead of replying with it.
 static func set_dresser(title: String, brief: String, plan: Dictionary, seed: int, headroom: Dictionary,
-		seen: Array, cloth: bool) -> Dictionary:
+		seen: Array, cloth: bool, looks := 0) -> Dictionary:
 	var look: Dictionary = plan.get("look", {}) if plan.get("look") is Dictionary else {}
 	var light: Dictionary = look.get("light", {}) if look.get("light") is Dictionary else {}
 	var candles := clampi(int(look.get("candles", 1)), 0, TarotTable.MAX_CANDLES)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([seed, "tarot-table-size"])
-	var lo := rng.randi_range(3, 4)
-	var hi := lo + 2
+	var size := table_size(seed)
+	var lo := size.x
+	var hi := size.y
 	var lines := PackedStringArray()
 	lines.append("You are the SET DRESSER. Before the camera rolls on episode #%d you set the reader's table: you choose every thing that stands on it, describe each exactly enough for a model maker to build it, and say where it stands. The cloth, the deck and the cards are not yours - only what stands round them." % seed)
 	lines.append("")
@@ -255,6 +256,7 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 	lines.append("Candles take every form a reader of this world would light: a taper in a tall stick, a squat pillar with two or three wicks, tea lights in their tins, a votive in glass, a church candle on a pricket, an oil lamp, a candelabra with a taper in each cup. Make this table's its own, not always a pillar.")
 	lines.append("Compose it as a reader does: a few groups and a few things alone, never a row of things evenly spaced. Heights vary within a group, and odd numbers sit well. The middle of the cloth stays bare: the deck is shuffled there, and the cards drawn and laid.")
 	lines.append("Every thing is a real object, set out in earnest. Nothing on the table carries words, letters, numbers or labels.")
+	lines.append("WHAT THE PARTS CAN MAKE: things of simple, solid form - vessels, candles and their holders, lamps, tools, boxes, books, bottles, bowls and dishes, stones and crystals, dried flowers and herbs. They cannot make a BODY: nothing with a head or limbs - no animal, fish, bird, insect or person, living or dead, no figurine, statue, doll or carving of one, and no fish or meat laid out as food. Built from balls and rods, a body reads as a crude toy or a monster. Where the reading's subject is a creature, a thing from its world stands for it - the tool that catches it, the vessel it is kept or served in, the stone named after it.")
 	lines.append("")
 	lines.append("WHERE THINGS STAND - each thing's `place`, and the tallest a thing there can be and still be seen whole:")
 	for z in TarotTable.ZONES:
@@ -274,11 +276,32 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 		lines.append("")
 		lines.append("EARLIER EPISODES' TABLES held these. Set none of them again: %s." % ", ".join(PackedStringArray(seen)))
 	lines.append("")
-	lines.append("CHECK each thing before you answer: every part rests on the cloth or on another part (nothing floats, nothing sinks through); it stands as it would really stand - a thing with a pointed or round bottom lies on its side or sits in a stand, a ring or a bowl, never balanced on its point; the lowest point is at height 0; the sizes are real and fit the place's height; a hollow vessel's profile goes up the outside and back down the inside; every candle's wax has `wick` or `wicks`, and a candle in a cup or a holder stands on its floor.")
-	lines.append("")
-	lines.append("Reply with ONLY a JSON object, no other text. The format, shown with one thing - a chess pawn, which never belongs on this table:")
-	lines.append(SET_EXAMPLE)
+	var check := "it has no body - no head, no limbs, real or carved; every part rests on the cloth or on another part (nothing floats, nothing sinks through); it stands as it would really stand - a thing with a pointed or round bottom lies on its side or sits in a stand, a ring or a bowl, never balanced on its point; the lowest point is at height 0; the sizes are real and fit the place's height; a hollow vessel's profile goes up the outside and back down the inside; every candle's wax has `wick` or `wicks`, and a candle in a cup or a holder stands on its floor."
+	if looks > 0:
+		lines.append("HOW YOU WORK: you build this table with tools, and you SEE what you build. `put` puts things (and the materials they use) on the table and answers with what was built - each thing's real size, anything the builder could not make as written - and a picture of them on a centimeter grid; `look` shows one thing close up from four sides; `set` stands everything on this episode's own table and photographs it from the camera's place, as the viewer will see it, saying what was made smaller or left off for want of room and which light leads; `remove` takes things off; `submit` hands the table in.")
+		lines.append("Make a thing, look at it, and fix whatever does not read as the thing you meant - a part floating or sunk, a proportion off, a material that reads as another, anything that reads as a body. When the things read, set the table and look at the frame: fix what was made smaller or left off, a group hidden behind another, a light that should lead and does not. Set it again after a fix, and submit when the frame is right. Every picture counts against the %d you have; put a few things at a time, and fix a thing by putting it again under the same name." % looks)
+		lines.append("")
+		lines.append("CHECK each thing as you look at it: " + check)
+		lines.append("")
+		lines.append("THE FORMAT of the things and materials you put - shown as a whole table with one thing, a chess pawn, which never belongs on this table:")
+		lines.append(SET_EXAMPLE)
+		lines.append("")
+		lines.append("Finish by calling submit. After it, your last message can be a single line.")
+	else:
+		lines.append("CHECK each thing before you answer: " + check)
+		lines.append("")
+		lines.append("Reply with ONLY a JSON object, no other text. The format, shown with one thing - a chess pawn, which never belongs on this table:")
+		lines.append(SET_EXAMPLE)
 	return {"system": show_context(title, brief), "prompt": "\n".join(lines)}
+
+
+## How many things besides its lit ones a set dresser is asked for on episode [param seed]'s table:
+## (fewest, most).
+static func table_size(seed: int) -> Vector2i:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([seed, "tarot-table-size"])
+	var lo := rng.randi_range(3, 4)
+	return Vector2i(lo, lo + 2)
 
 
 ## THE READER, one passage. [param step] is "intro", "close", or a card's place in the reading
@@ -295,12 +318,17 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 ## [param history] is the show's other episodes ([method TarotEpisode.archive]): what the
 ## audience has already heard at this point of an episode. Every name in [param names] (the
 ## show's deck) is masked out of it, so no card reaches a reader through another episode either.
+##
+## [param voices] are the show's OTHER voices (a familiar on the reader's shoulder), by the names
+## its document gives them: the reader writes their lines too and hands each one over with a
+## speaker cue ([method voices_rule]). Who they are and when they speak is the brief's to say.
 static func reader(title: String, brief: String, plan: Dictionary, step: String, said: Array,
 		drawn: Array, spread_size: int, pictured := false, history: Array = [],
-		names: Array = []) -> Dictionary:
+		names: Array = [], voices: Array = []) -> Dictionary:
 	var lines := PackedStringArray()
 	var positions: Array = ((plan.get("spread", {}) as Dictionary).get("positions", [])) as Array
-	lines.append("You are the READER: the voice of the video. You speak every word of it.")
+	lines.append("You are the READER: the voice of the video. You speak every word of it." if voices.is_empty()
+		else "You are the READER: the voice of the video. You write every word of it - your own, and the few lines the show's other voices say.")
 	lines.append("")
 	lines.append("THIS EPISODE")
 	lines.append("Title: %s" % String(plan.get("episode_title", "")))
@@ -383,11 +411,28 @@ static func reader(title: String, brief: String, plan: Dictionary, step: String,
 		lines.append("\n".join(heard_before))
 	lines.append("")
 	lines.append(MOVES)
+	if not voices.is_empty():
+		lines.append("")
+		lines.append(voices_rule(voices))
 	lines.append("")
 	lines.append("Write %d to %d words." % [int(lo_hi[0]), int(lo_hi[1])])
 	lines.append("")
 	lines.append(SPOKEN_RULES)
 	return {"system": show_context(title, brief), "prompt": "\n".join(lines)}
+
+
+## HOW A PASSAGE HANDS A LINE TO ANOTHER VOICE: the same own-line cue a manuscript uses, back to
+## the reader by name ([constant Manuscript.NARRATOR]), every passage opening in the reader's voice.
+static func voices_rule(voices: Array) -> String:
+	var names := PackedStringArray()
+	var cues := PackedStringArray()
+	for v in voices:
+		names.append(String(v))
+		cues.append("<!-- speaker: %s -->" % String(v))
+	return ("THE SHOW'S OTHER VOICES: %s. The brief says who %s and when %s speak%s. You write %s lines too, and %s reads them. Before the words such a voice says, put its cue on a line of its own - %s - and where you take it back, <!-- speaker: %s --> on a line of its own. Every passage opens in your voice. The cues are never read aloud, and the words never say who is speaking (\"the familiar says\", \"a voice whispers\"): the change of voice says it."
+		% [", ".join(names), "they are" if names.size() > 1 else "it is", "they" if names.size() > 1 else "it",
+			"" if names.size() > 1 else "s", "their" if names.size() > 1 else "its",
+			"each one's own voice" if names.size() > 1 else "its own voice", " or ".join(cues), Manuscript.NARRATOR])
 
 
 ## A list a writer was asked for, as strings: a JSON array, or one comma-separated string -
@@ -486,7 +531,9 @@ static func _heard_before(history: Array, kind: String, brief: String, names: Ar
 
 ## Spoken text as it is heard: no marks, no emphasis, one line.
 static func heard(text: String) -> String:
-	return _one_line(Manuscript._rx("<!--[\\s\\S]*?-->").sub(text, " ", true).replace("*", ""))
+	# who said a line stays with it: the familiar's quip is not the reader's opening
+	var named := Manuscript._rx("<!--\\s*speaker\\s*:\\s*(.+?)\\s*-->").sub(text, " ($1:) ", true)
+	return _one_line(Manuscript._rx("<!--[\\s\\S]*?-->").sub(named, " ", true).replace("*", ""))
 
 
 ## [param text] without the sentences [param brief] gives word for word (a greeting, a sign-off):
@@ -608,11 +655,18 @@ static func back_image(look: Dictionary, target: String) -> String:
 	return "\n".join(lines)
 
 
+## THE CLOTH: a texture, not a photograph of a moment - the table under it is lit by the scene's
+## own lights, so anything the picture carries of light, wet or things lying on it is painted flat
+## onto the cloth (feedback 0006: seawater beads that "have no depth"). Asked for at its true scale,
+## landscape like the cloth ([constant TarotTable.CLOTH_PICTURE]).
 static func surface_image(look: Dictionary, target: String) -> String:
 	var lines := PackedStringArray([_paint_head(target), ""])
-	lines.append("THE PICTURE: a photograph looking STRAIGHT DOWN at %s, laid flat on a reading table and filling the whole frame edge to edge. Even, soft light; true colors; the texture of the material sharp. Nothing on it - no cards, no objects, no hands, no text." % String(look.get("surface", "a reading cloth")))
+	lines.append("THE PICTURE: a photograph looking STRAIGHT DOWN at %s, laid flat on a reading table and filling the whole frame edge to edge. True colors; the texture of the material sharp." % String(look.get("surface", "a reading cloth")))
+	lines.append("THE SCALE: the frame shows %d cm of the surface from side to side and %d cm from top to bottom - as wide as the whole reading table, running on past every edge of the picture - so its weave, grain, boards, knots, scratches and stains are at their true size for that span, never a close-up." % [int(TarotTable.CLOTH_PICTURE.x), int(TarotTable.CLOTH_PICTURE.y)])
+	lines.append("IT IS A TEXTURE: a 3D table is built under it and lit by the scene's own lamp and candles, so the picture holds the material and nothing else - lit flat and even from every side, with no reflections, highlights, glare, sheen, shadows or light falling off toward the edges, even where the material is metal, glass or polished.")
+	lines.append("DRY AND BARE, whatever the description says: no water, droplets, beads, puddles, spills or wet patches, and nothing lying on it - no cards, objects, scraps, crumbs, petals, scales, string, hands or text.")
 	lines.append("Its colors belong to this palette: %s." % ", ".join(PackedStringArray(look.get("palette", []))))
-	lines.append("FORMAT: SQUARE 1:1 (1024x1024). No border, no vignette, no watermark, no text.")
+	lines.append("FORMAT: LANDSCAPE 3:2 (1536x1024). No border, no vignette, no watermark, no text.")
 	return "\n".join(lines)
 
 

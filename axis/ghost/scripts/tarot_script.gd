@@ -18,6 +18,12 @@ class_name TarotScript
 ## after `shuffle`, one passage per card after its `draw`, the close after `spread` - and a
 ## hand-written one works the same way.
 ##
+## MORE THAN ONE VOICE: a show may give the reader company (a familiar on its shoulder), and a
+## passage hands it a line with an own-line `<!-- speaker: Familiar -->` and takes it back with
+## `<!-- speaker: Narrator -->` - the Generative panel's own cues, kept for the voice. EVERY PASSAGE
+## OPENS IN THE READER'S VOICE: each is written on its own, so one that ended on another voice's
+## line is handed back before the next.
+##
 ## ONE WALK, TWO READERS, as in [TabletScript]: [method parse] produces both the spoken words the
 ## table follows the voice by and the text the voice reads ([member speakable]), in which every
 ## mark is a rest long enough to perform it (`<!-- action-hold: S -->`, spliced by the voice like a
@@ -116,11 +122,12 @@ static func parse(body: String) -> Dictionary:
 	var speak := PackedStringArray()
 	var showing := false
 	var cards := 0
+	var who := Manuscript.NARRATOR
 	for p in passages:
 		var kind := String((p as Dictionary)["kind"])
 		var text := "\n".join(PackedStringArray((p as Dictionary)["lines"] as Array)).strip_edges()
-		# THE READER'S DELIVERY MARKS go on to the voice - a delivery, a hesitation - but no comment is
-		# ever a word the table follows, and any other note is not read at all
+		# THE READER'S MARKS go on to the voice - a delivery, a hesitation, a change of speaker - but
+		# no comment is ever a word the table follows, and any other note is not read at all
 		var voiced := _voice_marks(text)
 		text = Manuscript._rx(Manuscript.COMMENT).sub(text, "", true).strip_edges()
 		if not kind.is_empty():
@@ -142,15 +149,26 @@ static func parse(body: String) -> Dictionary:
 				if not n.is_empty():
 					spoken.append(n)
 		if not text.is_empty():
+			# after the rest, so the rest stays on a word of the voice that spoke last
+			if who != Manuscript.NARRATOR and Manuscript.speaker_of_line(voiced.get_slice("\n", 0)).is_empty():
+				speak.append("<!-- speaker: %s -->" % Manuscript.NARRATOR)
 			speak.append(voiced)
+			who = Manuscript.NARRATOR
+			for line in voiced.split("\n"):
+				var cued := Manuscript.speaker_of_line(String(line))
+				if not cued.is_empty():
+					who = cued
 	return {"passages": out_passages, "actions": actions, "spoken": spoken,
 		"speakable": "\n\n".join(speak), "cards": cards}
 
 
-## [param text] with every comment taken out but the ones the voice acts on: a delivery, a hesitation.
+## [param text] with every comment taken out but the ones the voice acts on: a delivery, a
+## hesitation, a change of speaker - which is put on a line of its own, since a cue anywhere else
+## is read past as a note and the line goes to whoever spoke before it.
 static func _voice_marks(text: String) -> String:
 	var lean := _rx(Manuscript.DELIVERY)
 	var hes := _rx(Manuscript.HESITATION)
+	var cue := _rx(Manuscript.SPEAKER)
 	var out := ""
 	var at := 0
 	for m in _rx(Manuscript.COMMENT).search_all(text):
@@ -158,6 +176,8 @@ static func _voice_marks(text: String) -> String:
 		at = m.get_end()
 		if lean.search(m.get_string()) != null or hes.search(m.get_string()) != null:
 			out += m.get_string()
+		elif cue.search(m.get_string()) != null:
+			out = out.rstrip(" \t") + "\n" + m.get_string().strip_edges() + "\n"
 	return (out + text.substr(at)).strip_edges()
 
 

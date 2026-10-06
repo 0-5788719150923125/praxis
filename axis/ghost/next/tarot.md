@@ -41,6 +41,9 @@ format and voice, told true).
 | `scripts/tarot_script.gd` | `TarotScript`: the reading's marks; one walk gives the voice its text and the table its actions. |
 | `scripts/tarot_deck.gd` | `TarotDeck`: the show's deck, parsed from its brief's `## Cards` section (or the standard 78, generated, meanings from `data/tarot/meanings.json`, CC0); the seeded shuffle; true-random seeds. |
 | `scripts/tarot_table.gd` | `TarotTable`: what a look may name - title faces (`fonts/tarot/`, OFL), frames, the zones things stand in - `sanitize_look`, `sanitize_table`, and the layout a prompt can know ahead (`layout_of`, `headroom`). |
+| `scripts/agent_tools.gd` | `AgentTools`: tools ghost serves an agent WHILE it works - an MCP server (HTTP, JSON) inside the ghost process, a URL per job, every call logged beside the prompt (`tools.jsonl`, `look_NN.jpg`). Claude takes them (`TextGen.Backend.takes_tools`); Codex and Bedrock are still one reply. |
+| `scripts/set_dresser_tools.gd` | `SetDresserTools`: the set dresser's tools - `put`, `remove`, `look`, `set`, `submit` - over a draft table. |
+| `scripts/table_preview.gd` | `TablePreview`: what those tools show - a thing in a studio on a centimeter grid (four sides, or several in tiles), and the draft on the episode's own table from the show's camera. |
 | `scripts/props.gd` | `Props`: things built from a description - shapes, materials, ornaments (registries an agent reads), `sanitize`, `build`. Generic; the tarot table is its first user. Shaders `prop.gdshader`, `prop_glass.gdshader`, `prop_lens.gdshader`, `prop_common.gdshaderinc`. |
 | `scripts/tarot_cards.gd` | `TarotCards`: faces, backs and booklet pages, composed in 2D into stopped SubViewports. |
 | `scripts/media/tarot.gd` | `TarotMedium`: the table. Pinned by the mode (`Medium.OWNED`, `Director.medium_override`). |
@@ -80,7 +83,7 @@ cards themselves into `draw.json`, so an episode keeps what it drew whatever the
 | `draw` | ghost | the show's deck and the seed (shuffle, spread size, jumper) |
 | `design:K` | deck designer (fast tier), one card per run | the look, card K, its traditional meaning, how earlier decks pictured card K |
 | `image:back/surface/backdrop` | painter | the look |
-| `table` | set dresser (best tier) | the plan, the cloth's painting, earlier episodes' tables - no card |
+| `table` | set dresser (best tier), with tools when its writer takes them | the plan, the cloth's painting, earlier episodes' tables - no card; and, with tools, pictures of what it builds and of the table set |
 | `image:card:K` | painter | design K; the back + first + previous card as references |
 | `say:intro` | reader (best tier) | the plan - no card; how earlier episodes opened |
 | `say:K` | reader | the plan, every passage before, cards 1..K, and card K's PAINTING; how earlier episodes met a card |
@@ -208,6 +211,33 @@ setting the table again keeps the reading. NO IMAGE-TO-3D: the user ruled it out
 ("way too slow, and my GPU is in constant use... I'm not going to expect users to load giant
 models") - no Piper-sized model exists (TripoSR and SF3D are 1.6+ GB and want a GPU). Claude
 writing the geometry was the user's idea.
+
+THE SET DRESSER SEES WHAT IT BUILDS (2026-10-05; the user, on giving the agents a loop: "offer
+the agents the ability to make something, then view the model, then make revisions"). Every agent
+had been one prompt in and one reply out - `num_turns: 1` on every job of the last episode - so the
+table was ~5,000 tokens of geometry its author never saw, and a "CHECK each thing before you
+answer" list it had nothing to check against: the squid of balls and rods, stones perched on
+stones, things left off for want of room with only ghost's log knowing. Now, when the writer takes
+tools (Claude), ghost SERVES them (`AgentTools`, MCP over HTTP inside the ghost process) and the
+set dresser works a draft (`SetDresserTools`):
+- `put` things and materials (a name put again replaces it) - answered with each thing's real size,
+  parts and flames, every part or material the builder could not use and why, a thing taller than
+  its zone can show, the lit/other tally against what the look asked, and a PICTURE: each thing on
+  its own tile of a centimeter-ruled studio, from the episode camera's angle (`TablePreview.things`);
+- `look` at one thing from four sides - front, its right, above, the camera's view;
+- `set` the draft on the episode's OWN table - the show's `TarotMedium`, its seed, cloth, room,
+  lights, the deck, the cards laid face down in their spread - photographed from the camera's
+  place, with where each thing stood, what was made smaller or LEFT OFF, and which light leads;
+- `remove`; `submit`, which writes `jobs/table/submitted.json` for the producer to land whatever
+  the run's last words (and sends it to `set` once first, wherever a table can be stood).
+30 pictures, 1500 s. Any other writer gets the one-reply prompt (`TarotPrompts.set_dresser`'s
+`looks` = 0). A PICTURE COMES WITH THE QUESTION TO ASK OF IT (`SetDresserTools.JUDGE_THING`,
+`JUDGE_TABLE`: say what it actually shows, then whether a stranger would name it so): in the first
+real run (Haiku, on a copy of #352029, 7 turns, ~22k output tokens) the loop worked end to end - put, three
+looks, set, submit - but the model called a 1 cm flat disc it had named a soapstone oil lamp, and a
+bare rod it had named a dried grass bundle, "perfect". The pictures showed both plainly. CLAUDE WITH TOOLS CANNOT RUN `--safe-mode`, which drops every MCP server (measured):
+a tool job loads no settings instead (`--setting-sources ""`), and was measured to see no
+CLAUDE.md, memory or skills. Gates `tests/agent_tools_check.gd`, `tests/set_dresser_tools_check.gd`.
 
 BUILT IN THE ENGINE (`scripts/props.gd`, `Props.build`): meshes in meters, base on y = 0, each
 part's surface laid out for its own girth and height so a motif keeps its shape. A candle's wax
@@ -337,6 +367,26 @@ sentence goes half way from the last one's delivery (`_ease_leans`), in and back
 takes `lean_semis` / `lean_effort` in `_discourse_plan` (`voice_host/test_lean.py`). A script mark
 like any other (`ScriptMarks` "delivery"), so a Generative chapter can carry it too.
 
+MORE THAN ONE VOICE (2026-10-05; the user added a Familiar to Truthful Tarot's voices: "like that
+devil or angel on your shoulder: mostly silent, but sometimes they'll make a quip about something,
+which the narrator could respond to"). Who a show's other voices are and when they speak is the
+BRIEF's (Truthful Tarot's "## The familiar"; its old name for the reader's sincere mode, "the
+familiar", became "the spell"). The framework only hands lines over: the show's voices are its
+document's `voices:` (`TarotEditor._spec` -> `voices`), the reader prompt names the others and
+teaches the Generative panel's own cue, `<!-- speaker: Familiar -->` on a line of its own and
+`<!-- speaker: Narrator -->` to take it back (`TarotPrompts.voices_rule`; a show with one voice is
+told nothing); a reply's cues are held to the show's names (`TarotProducer.own_voices`: any
+spelling of one, anyone else's cue dropped with its words kept - a writer's "familiar" would have
+become a new voice, a copy of the reader's, kept in the document); `TarotScript` keeps the cues for
+the voice (an inline one put on its own line) and opens every passage in the reader's voice, after
+the table's rest so the rest stays on a word. The Turn row (the pause at a handover) is back in the
+Tarot panel. Earlier episodes' lines keep who said them (`heard`: "(Familiar:)"). Gates: tarot_check
+`_familiar`, multi_voice_check `_check_tarot_familiar` (two-sided). EACH VOICE IN ITS OWN COLORS (the
+user: "the first can remain the rainbow color, while the next could be a different spectrum like red
+through purple to blue, the third could be green to yellow"): subtitle words carry their speaker, and
+`Subtitles.voice_hue` gives the first voice to speak the whole rainbow and each after it a band of its
+own (`VOICE_BANDS`), swept there and back by the same flowing phase - the book's highlight too.
+
 THE ROOM IS SEEN FROM THE READER'S EYE (2026-10-05; the user: "the backgrounds are 2D, so when
 the background is just a wall or a window, it's very close to the table and the angles feel
 wrong... if it's a distant landscape, the backgrounds look better"). The camera looks down 34-42
@@ -360,7 +410,8 @@ THE INTRO IS OUT OF FOCUS: the channel's name alone (no episode title - that is 
 the platform) over the table behind a lens's bokeh, and the focus PULLS near to far as the shuffle
 starts (`_tick_focus`). Otherwise there is NO depth of field: a far blur behind the table drew a
 band along its far edge where the sharp table and the blurred room met, so the room's picture is
-softened itself (`_soft`). The stage runs 4x multisampling and a 4096 shadow atlas with the key
+drawn through its own lens blur (`shaders/tarot_room.gdshader`, a disc at full resolution - shrunk
+to an eighth and back, the strip the camera sees past the table was blocks). The stage runs 4x multisampling and a 4096 shadow atlas with the key
 light's quadrant whole, given back when the table leaves it. The camera is locked off; its dial is
 gone from the panel.
 
@@ -376,8 +427,18 @@ the whole spread arriving at once. THE MIXING IS MOST OF IT (the user, 2026-10-0
 shuffled at all. 3 or 4 cards might shift slightly... no changing of z-order... maybe 5 or 10
 seconds long"): it had been 5 s of two hands drifting through less than one slow loop. The
 ORDER is decided when two cards meet - the one sliding in on top - and held while they touch, so
-it changes all through the wash and never through a card. A wash the first card would cut short is
-replanned to fit, the same wash up to its own gather. THE HANDS SWEEP (the user, the same day:
+it changes all through the wash and never through a card. CARDS REST ON ONE ANOTHER (feedback
+0007: "many of these cards are lifted off of the table itself... they cannot rest upon each other
+with a gentle tilt"): the plan lays each card flat at its layer (one thickness above the deepest
+card under it), and where it hung past those cards it hung in the air, shadow and all. As it is
+posed, every card on the cloth, from the bottom of the pile up, is a rigid card at the LOWEST it can
+lie: the plane over the cloth under its corners and over the faces of the cards it lies on wherever
+they cross it (`Geometry2D.intersect_polygons`), lowest at its middle - the upper hull's face over
+the middle, walked to from the highest support (`TarotMedium._rest_on`). So a card tips: on a card
+at one end, on the cloth at the other. Per plan step, cached (`_wash_rest`, ~1-4 ms a step), and
+eased in as a card spreads and out as it is gathered. Exact against a brute-force hull on every card
+the gate judges; the plan's flat layers sit higher on two cards in three. A wash the first card would
+cut short is replanned to fit, the same wash up to its own gather. THE HANDS SWEEP (the user, the same day:
 "cards barely move... the movements are very small, very localized... It would be much more common
 for cards to sweep back, and forth, back, and forth in various directions, crossing large regions of
 the table, creating chaos along their path. Today, these sort of just shift in tiny little
@@ -397,7 +458,13 @@ mixing found them (24%), and two thirds of the still cards a sweep runs over are
 `tests/tarot_wash_check.gd` (two-sided: the circling wash fails four of its checks, and tiny
 circles made up inside the gate fail them too). A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
 RIGHT (shown, never read); both turn a little on their axes, and the card is now and then turned
-to look at its back. A lay: page out, card down into the spread. A JUMPER FLIES OUT OF A SHUFFLE
+to look at its back - either way round, its back held anywhere from half a second to five (most
+looks short; a fixed-feeling 1.1-1.8 s was "the exact same length, always"), and about one look in
+three a PIROUETTE (the user's, 2026-10-05: "the kind of trick a person might do in their own hands
+to show off"): over to the back, held a few seconds, then on round the same way, five half turns
+more, to face on again three whole turns from where it began (`TarotMedium._look_of`,
+`_look_angle`; gate: tarot_wash_check, two-sided on the holds; `tarot_look_probe --looks 1` says
+when they happen). A lay: page out, card down into the spread. A JUMPER FLIES OUT OF A SHUFFLE
 (the user, 2026-10-05: "that jump should probably happen during a shuffle - not when the cards are
 just sitting there on the table, doing nothing"): it had left the deck the moment the shuffle
 stopped, often after seconds of the deck lying still. Its action now opens with one more riffle,
@@ -428,6 +495,12 @@ draw the same frames.
   - the table over an episode with a synthetic voice.
 - `GHOST_PROBE_GPU=1 GHOST_PROBE_MUTE=1 tests/run_boot_probe.sh tests/tarot_voice_probe.gd 900 --spec <md> --seed N --export 1`
   - the panel, the real voice and the table, end to end, and the export take.
+- `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_look_probe.gd 300 --show S --seed N`
+  - what the set dresser's tools show, with no agent: an episode's table put, looked at and set.
+- `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_run_probe.gd 1600 --spec <md> --seed N [--model haiku]`
+  - the real set dresser at work through its tools (quota), on a COPY of an episode.
+- `godot --headless --path . --script res://tests/agent_tools_claude_probe.gd` - that the installed
+  Claude CLI reaches ghost's tools and sees their pictures (one short run).
 
 ## Not built yet
 
@@ -435,3 +508,8 @@ draw the same frames.
 - Pick-a-pile episodes (three piles, "all four piles say the same thing").
 - Moving `Illustrations`' own job pump onto `AgentJobs`.
 - Porting the tablet's follower onto `ReadingFollower`.
+- Tools for the other agents (proposed 2026-10-05): the painter checked by a vision pass and
+  repainted with notes (a back's half-turn symmetry measurable in pixels); the reader's
+  `check_passage` (word range, the MOVES phrases, what earlier episodes said), its loop inside one
+  passage only; the producer reading any earlier episode whole. Codex (`mcp_servers.<name>.url`)
+  and Bedrock (Converse tool use, turns as `advance()` steps) as tool-taking writers.

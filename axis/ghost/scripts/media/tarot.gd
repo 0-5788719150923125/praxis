@@ -49,6 +49,11 @@ const DECK_T := 0.0012
 const TABLE := Vector3(1.9, 0.05, 0.85)
 const TABLE_Z := 0.02
 const CLOTH := Vector2(1.2, 0.72)
+## THE ROOM, out of focus ([method _place_backdrop]): the picture drawn through a lens blur, each
+## point a disc this wide - its radius, as a share of the frame's width. A lens focused on the table
+## half a meter off sees a room some meters away about so soft at f/4.
+const ROOM_SHADER := preload("res://shaders/tarot_room.gdshader")
+const ROOM_BLUR := 0.005
 ## Where a shown card and its booklet page float, in the camera's frame (meters right, up, and
 ## away). The page sits a hair farther back so the card always reads as in front.
 const PRESENT_DIST := 0.23
@@ -102,6 +107,9 @@ const WASH_ROOM := 9.0
 ## A card lying on the cloth in a wash: its center this high - clear of the cloth (at 0.6 mm) by a
 ## hair, so the weave never shows through it.
 const WASH_FLOOR := 0.0006 + 0.00035 + 0.0002
+## A card lying on another in a wash: a hair over it, besides its own thickness, so the two faces
+## never fight for the same depth.
+const STACK_GAP := 0.00015
 ## THE HANDS IN A WASH (2026-10-05, the user: "cards barely move... the movements are very small,
 ## very localized... It would be much more common for cards to sweep back, and forth, back, and
 ## forth in various directions, crossing large regions of the table, creating chaos along their
@@ -144,11 +152,24 @@ const HAND_SPEED := 1.2
 const WASH_TURN_MAX := 7.0
 ## The first card's PUSH (TarotScript.PUSH): the deck squares, then slides to its side this long.
 const PUSH_SLIDE := 0.85
-## A held card is turned over now and then, to look at its back: the chance a card is, how long
-## a turn takes each way, and how long its back is looked at.
-const TURN_CHANCE := 0.6
-const TURN := 0.75
-const TURN_HOLD := Vector2(1.1, 1.8)
+## A held card is turned over now and then, to look at its back ([method _look_of]): the chance a
+## card is at all, the chance of each look after that, the seconds between looks, how long a turn
+## takes (each its own), and how long its back is looked at - drawn evenly in its logarithm, so most
+## looks are short and now and then one is long (a fixed-feeling 1.1-1.8 s was reported as "the
+## exact same length, always"). Most cards are never turned: 4-5 looks in one draw was too many.
+const TURN_CHANCE := 0.25
+const LOOK_AGAIN := 0.25
+const LOOK_GAP := Vector2(25.0, 45.0)
+const TURN := Vector2(0.6, 0.95)
+const TURN_HOLD := Vector2(0.6, 5.0)
+## THE PIROUETTE (the user's, 2026-10-05: "the kind of trick a person might do in their own hands
+## to show off"): the chance a look ends in one - over to the back and held there a few seconds,
+## then on round the SAME way, five half turns more, to face on again three whole turns from where
+## it started - the hold, and how long the twirl takes. Rare, and once a card at most: the plain
+## half turn is the common look.
+const PIROUETTE_CHANCE := 0.1
+const PIROUETTE_HOLD := Vector2(1.6, 4.0)
+const TWIRL := Vector2(1.5, 2.1)
 ## How far apart things stand on the table (meters): any two, and two of one group.
 const THING_GAP := 0.014
 const GROUP_GAP := 0.004
@@ -265,7 +286,9 @@ var _table: MeshInstance3D
 var _cloth: MeshInstance3D
 var _cloth_mat: StandardMaterial3D
 var _backdrop: MeshInstance3D
-var _backdrop_mat: StandardMaterial3D
+var _backdrop_mat: ShaderMaterial
+var _rest_plan: Dictionary = {}     # the wash plan [member _rest_steps] are of
+var _rest_steps := {}               # plan step -> every card at rest there ([method _wash_rest])
 var _props: Node3D
 var _probe: ReflectionProbe
 var _probe_nudge := 1.0
@@ -382,8 +405,8 @@ func _build_world() -> void:
 	# reads as a place rather than as a picture of one
 	# NOT BY DEPTH OF FIELD: a far blur behind the table drew a band along its far edge - the sharp
 	# table and the blurred room bleeding into each other where their depths meet. The room's own
-	# picture is softened instead ([method _soft]), which is also cheaper; the lens's blur is kept
-	# for the intro, when the whole table is out of focus ([method _tick_focus]).
+	# picture is drawn through a lens blur instead ([constant ROOM_SHADER]), which is also cheaper;
+	# the lens's blur is kept for the intro, when the whole table is out of focus ([method _tick_focus]).
 	_attrs = CameraAttributesPractical.new()
 	_attrs.dof_blur_far_enabled = false
 	_cam.attributes = _attrs
@@ -439,8 +462,8 @@ func _build_world() -> void:
 	var bq := QuadMesh.new()
 	bq.size = Vector2(1.0, 1.0)
 	_backdrop.mesh = bq
-	_backdrop_mat = StandardMaterial3D.new()
-	_backdrop_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_backdrop_mat = ShaderMaterial.new()
+	_backdrop_mat.shader = ROOM_SHADER
 	_backdrop.material_override = _backdrop_mat
 	_root3.add_child(_backdrop)
 
@@ -818,10 +841,16 @@ func _poll_pictures(force := false) -> void:
 		_cloth_mat.normal_enabled = true
 		_cloth_mat.normal_texture = _relief(dir.path_join("surface.png"), cloth)
 		_cloth_mat.normal_scale = 1.0
+		# its pixels square on the cloth: the part of the picture that fits, never the picture stretched
+		var crop := TarotTable.cloth_crop(Vector2(cloth.get_width(), cloth.get_height()), CLOTH)
+		_cloth_mat.uv1_scale = Vector3(crop.size.x, crop.size.y, 1.0)
+		_cloth_mat.uv1_offset = Vector3(crop.position.x, crop.position.y, 0.0)
 		_lum = _cloth_lum(dir.path_join("surface.png"))
 	elif _cloth_mat.albedo_texture == null:
 		_cloth_mat.albedo_color = _cloth_fallback()
 		_cloth_mat.albedo_texture = BookMedium._grime(hash([_seed, "cloth"]) & 0xFFFF, 0.05, 4, 0.12)
+		_cloth_mat.uv1_scale = Vector3.ONE
+		_cloth_mat.uv1_offset = Vector3.ZERO
 		_lum = PackedFloat32Array()
 	# a cloth that landed after the candles stood (live, it is painted while a reading can already
 	# be playing) lights the table again
@@ -837,16 +866,15 @@ func _poll_pictures(force := false) -> void:
 		_plan_moves()
 	var room := _picture(dir.path_join("backdrop.png"), force)
 	if room != null:
-		var soft := _soft(dir.path_join("backdrop.png"), room)
-		if _backdrop_mat.albedo_texture != soft:
-			_backdrop_mat.albedo_texture = soft
+		if _backdrop_mat.get_shader_parameter("picture") != room:
+			_backdrop_mat.set_shader_parameter("picture", room)
+			_backdrop_mat.set_shader_parameter("has_picture", 1.0)
 			# a picture landing live may be one asked for level: placed again for its view
 			_place_backdrop()
 			_reflect()
-		_backdrop_mat.albedo_color = Color(1, 1, 1)
-	elif _backdrop_mat.albedo_texture == null:
+	elif _backdrop_mat.get_shader_parameter("picture") == null:
 		var pal2: Array = _look.get("palette", TarotTable.FALLBACK_PALETTE)
-		_backdrop_mat.albedo_color = TarotTable.color(String(pal2[0])).darkened(0.25)
+		_backdrop_mat.set_shader_parameter("tint", TarotTable.color(String(pal2[0])).darkened(0.25))
 
 
 ## THE RELIEF OF A PICTURED SURFACE, from the picture itself: a weave or a grain photographed from
@@ -890,6 +918,10 @@ func _cloth_lum(path: String) -> PackedFloat32Array:
 	if img.is_compressed():
 		img.decompress()
 	img.clear_mipmaps()
+	# the part of the picture the cloth shows, as its material is laid out
+	var crop := TarotTable.cloth_crop(Vector2(img.get_width(), img.get_height()), CLOTH)
+	var size := Vector2(img.get_width(), img.get_height())
+	img = img.get_region(Rect2i(Vector2i((crop.position * size).round()), Vector2i((crop.size * size).round())))
 	img.convert(Image.FORMAT_RGB8)
 	img.srgb_to_linear()
 	img.resize(LUM_GRID.x, LUM_GRID.y, Image.INTERPOLATE_LANCZOS)
@@ -907,29 +939,6 @@ func _cloth_lum(path: String) -> PackedFloat32Array:
 func _cloth_fallback() -> Color:
 	var pal: Array = _look.get("palette", TarotTable.FALLBACK_PALETTE)
 	return TarotTable.color(String(pal[min(4, pal.size() - 1)])).darkened(0.35)
-
-
-## A picture out of focus: the room beyond the table, softened once (down to an eighth and back).
-func _soft(path: String, tex: Texture2D) -> Texture2D:
-	var key := path + "|soft"
-	if _textures.has(key) and int(_mtimes.get(key, -1)) == int(_mtimes.get(path, -2)):
-		return _textures[key]
-	var img := tex.get_image()
-	if img == null:
-		return tex
-	img = img.duplicate() as Image
-	if img.is_compressed():
-		img.decompress()
-	img.clear_mipmaps()
-	var w := img.get_width()
-	var h := img.get_height()
-	img.resize(maxi(4, w / 8), maxi(4, h / 8), Image.INTERPOLATE_BILINEAR)
-	img.resize(w / 2, h / 2, Image.INTERPOLATE_CUBIC)
-	img.generate_mipmaps()
-	var st := ImageTexture.create_from_image(img)
-	_textures[key] = st
-	_mtimes[key] = _mtimes.get(path, -2)
-	return st
 
 
 ## The picture at [param path] as a texture, reloaded when the file changes; null when absent.
@@ -983,24 +992,47 @@ func _place_backdrop() -> void:
 		_backdrop.transform = Transform3D(Basis.looking_at(ahead, Vector3.UP), _cam_base.origin + ahead * reach)
 		# a 36 x 24 frame behind a lens of this length, seen at this reach
 		(_backdrop.mesh as QuadMesh).size = Vector2(36.0, 24.0) * reach / lens
-		return
-	var dist := 3.2
-	var fwd := -_cam_base.basis.z
-	var center := _cam_base.origin + fwd * dist
-	var h := 2.0 * dist * tan(deg_to_rad(_cam.fov * 0.5))
-	var w := h * 16.0 / 9.0
-	var far_edge := Vector3(0.0, 0.0, TABLE_Z - TABLE.z * 0.5)
-	var up := _cam_base.basis.y
-	# where the far edge's line of sight crosses the backdrop's plane, along the camera's up axis
-	var to_edge := (far_edge - _cam_base.origin).normalized()
-	var along := to_edge.dot(fwd)
-	var hit := _cam_base.origin + to_edge * (dist / maxf(along, 0.05))
-	var edge_up := (hit - center).dot(up)
-	var size := Vector2(w * 1.45, w * 1.45 / 1.5)
-	# the picture's horizon (a third up from its bottom) on that line
-	var offset := edge_up - (-size.y * 0.5 + size.y * (1.0 / 3.0))
-	_backdrop.transform = Transform3D(_cam_base.basis, center + up * offset)
-	(_backdrop.mesh as QuadMesh).size = size
+	else:
+		var dist := 3.2
+		var fwd := -_cam_base.basis.z
+		var center := _cam_base.origin + fwd * dist
+		var h := 2.0 * dist * tan(deg_to_rad(_cam.fov * 0.5))
+		var w := h * 16.0 / 9.0
+		var far_edge := Vector3(0.0, 0.0, TABLE_Z - TABLE.z * 0.5)
+		var up := _cam_base.basis.y
+		# where the far edge's line of sight crosses the backdrop's plane, along the camera's up axis
+		var to_edge := (far_edge - _cam_base.origin).normalized()
+		var along := to_edge.dot(fwd)
+		var hit := _cam_base.origin + to_edge * (dist / maxf(along, 0.05))
+		var edge_up := (hit - center).dot(up)
+		var size := Vector2(w * 1.45, w * 1.45 / 1.5)
+		# the picture's horizon (a third up from its bottom) on that line
+		var offset := edge_up - (-size.y * 0.5 + size.y * (1.0 / 3.0))
+		_backdrop.transform = Transform3D(_cam_base.basis, center + up * offset)
+		(_backdrop.mesh as QuadMesh).size = size
+	_backdrop_mat.set_shader_parameter("radius", room_blur(_cam_base, _cam.fov, _backdrop.transform,
+		(_backdrop.mesh as QuadMesh).size))
+
+
+## HOW SOFT THE ROOM IS, as the disc's radius in its picture's UV (per axis): [constant ROOM_BLUR]
+## of the frame's width, measured where the camera sees the picture - just past the table's far
+## edge, under the top of the frame - since the room may be placed any way and seen at a slant.
+static func room_blur(cam: Transform3D, fov: float, room: Transform3D, size: Vector2) -> Vector2:
+	# the line of sight just under the top of the frame, to the picture's plane
+	var sight := (cam.basis * Vector3(0.0, tan(deg_to_rad(fov * 0.5)) * 0.8, -1.0)).normalized()
+	var normal := room.basis.z.normalized()
+	var facing := sight.dot(normal)
+	if absf(facing) < 1e-4:
+		return Vector2.ZERO
+	var hit := cam.origin + sight * ((room.origin - cam.origin).dot(normal) / facing)
+	# how much of the frame's width a meter of the picture there takes
+	var across := room.basis.x.normalized() * 0.5
+	var a: Variant = TarotTable.project(cam, fov, hit - across)
+	var b: Variant = TarotTable.project(cam, fov, hit + across)
+	if a == null or b == null:
+		return Vector2.ZERO
+	var meters := ROOM_BLUR / maxf(absf((b as Vector2).x - (a as Vector2).x), 1e-4)
+	return Vector2(meters / maxf(size.x, 1e-4), meters / maxf(size.y, 1e-4))
 
 
 ## The view the room's picture was asked for (`backdrop.json` beside it): `{view, lens_mm}`, or empty
@@ -1950,9 +1982,10 @@ func _present_xf(k: int, t: float, up_at := INF, until := INF) -> Transform3D:
 	return Transform3D(b, _cam_base * off)
 
 
-## How far card [param k] is turned over at [param t] (0 face on, PI showing its back): a turn,
-## a look at the back, a turn back, first some seconds after it is up and then every twenty or
-## so - never while it is coming up or about to go down, and not for every card.
+## How far card [param k] is turned over at [param t] (0 face on, PI showing its back - a whole
+## turn more is the same pose): a look at its back ([method _look_of]), first some seconds after it
+## is up and now and then another ([constant LOOK_AGAIN]) - never while it is coming up or about to
+## go down, and for most cards never.
 func _turn_of(k: int, t: float, up_at: float, until: float) -> float:
 	if up_at == INF or t < up_at:
 		return 0.0
@@ -1961,20 +1994,54 @@ func _turn_of(k: int, t: float, up_at: float, until: float) -> float:
 	if rng.randf() > TURN_CHANCE:
 		return 0.0
 	var at := up_at + rng.randf_range(5.0, 9.0)
+	var spun := false
 	for i in 64:
-		var hold := rng.randf_range(TURN_HOLD.x, TURN_HOLD.y)
-		var total := TURN * 2.0 + hold
+		var look := _look_of(rng, not spun)
+		spun = spun or float(look["twirl"]) > 0.0
+		var total := float(look["total"])
 		if t < at or at + total > until - 1.0:
 			return 0.0
-		var v := t - at
-		if v < total:
-			if v < TURN:
-				return PI * _ease(v / TURN)
-			if v < TURN + hold:
-				return PI
-			return PI * (1.0 - _ease((v - TURN - hold) / TURN))
-		at += total + rng.randf_range(14.0, 24.0)
+		if t - at < total:
+			return _look_angle(look, t - at)
+		if rng.randf() > LOOK_AGAIN:
+			return 0.0
+		at += total + rng.randf_range(LOOK_GAP.x, LOOK_GAP.y)
 	return 0.0
+
+
+## ONE LOOK AT A HELD CARD'S BACK, drawn: which way it turns (`way`, 1 or -1 - a hand turns a card
+## either way), how long the turn over takes (`turn`), how long the back is held (`hold`), then
+## either how long the turn back takes (`back`) or, for a PIROUETTE, the twirl on round (`twirl`) -
+## the other 0; `total` its seconds. A card that has already pirouetted does not again
+## ([param may_spin] false).
+static func _look_of(rng: RandomNumberGenerator, may_spin := true) -> Dictionary:
+	var way := 1.0 if rng.randf() < 0.5 else -1.0
+	var turn := rng.randf_range(TURN.x, TURN.y)
+	var spin := rng.randf() < PIROUETTE_CHANCE and may_spin
+	var hold := rng.randf_range(PIROUETTE_HOLD.x, PIROUETTE_HOLD.y) if spin \
+		else exp(rng.randf_range(log(TURN_HOLD.x), log(TURN_HOLD.y)))
+	var twirl := rng.randf_range(TWIRL.x, TWIRL.y) if spin else 0.0
+	var back := 0.0 if spin else rng.randf_range(TURN.x, TURN.y)
+	return {"way": way, "turn": turn, "hold": hold, "twirl": twirl, "back": back,
+		"total": turn + hold + twirl + back}
+
+
+## How far a held card is turned (radians) [param v] seconds into [param look] ([method _look_of]):
+## over to its back and held there; then back the way it came - or, in a pirouette, on round the
+## same way: a flick that winds down onto its face, three whole turns from where it started.
+static func _look_angle(look: Dictionary, v: float) -> float:
+	var way := float(look["way"])
+	var turn := float(look["turn"])
+	var hold := float(look["hold"])
+	if v < turn:
+		return way * PI * _ease(v / turn)
+	if v < turn + hold:
+		return way * PI
+	var twirl := float(look["twirl"])
+	if twirl > 0.0:
+		# quick out of the hold, long to wind down (still at both ends)
+		return way * (PI + 5.0 * PI * _ease(pow(clampf((v - turn - hold) / twirl, 0.0, 1.0), 0.7)))
+	return way * PI * (1.0 - _ease((v - turn - hold) / float(look["back"])))
 
 
 ## A drawn card at [param u] seconds into its draw.
@@ -2241,7 +2308,8 @@ func _cut(i: int, v: float, dur: float, seed: int) -> Transform3D:
 	return xf2
 
 
-## A WASH, posed from its plan (see [method _wash_plan]): card [param i] at [param v] seconds in.
+## A WASH, posed from its plan (see [method _wash_plan]): card [param i] at [param v] seconds in,
+## resting on what is under it ([method _wash_rest]) as far as it is spread on the cloth.
 func _wash(i: int, v: float, m: Dictionary) -> Transform3D:
 	var plan := _wash_fit(m)
 	if plan.is_empty():
@@ -2253,9 +2321,172 @@ func _wash(i: int, v: float, m: Dictionary) -> Transform3D:
 	var q := track[a].lerp(track[b], f - float(a))
 	# x, z about the deck's place; y above the cloth; w the card's turn. A card lying alone is a
 	# card's thickness, not a deck slot's: the slot mesh is thinned while it is spread
-	var thin := lerpf(1.0, CARD_T / DECK_T, _wash_spread_at(plan, i, v))
-	var basis := Basis(Vector3.UP, q.w).scaled(Vector3(1.0, thin, 1.0))
-	return Transform3D(basis, _cur_base + Vector3(q.x, q.y, q.z))
+	var spread := _wash_spread_at(plan, i, v)
+	var thin := lerpf(1.0, CARD_T / DECK_T, spread)
+	var ra: Vector3 = (_wash_rest(plan, a) as Array)[i]
+	var rb: Vector3 = (_wash_rest(plan, b) as Array)[i]
+	var r := ra.lerp(rb, f - float(a))
+	var y := lerpf(q.y, r.x, spread)
+	var g := Vector2(r.y, r.z) * spread
+	return Transform3D(_tipped(q.w, g) * Basis.from_scale(Vector3(1.0, thin, 1.0)), _cur_base + Vector3(q.x, y, q.z))
+
+
+## A card turned [param yaw] about the vertical and tipped to lie on a plane rising [param slope]
+## (meters per meter across x and z): its long and short sides follow the plane, its face is square to it.
+static func _tipped(yaw: float, slope: Vector2) -> Basis:
+	var flat := Basis(Vector3.UP, yaw)
+	if slope == Vector2.ZERO:
+		return flat
+	var x := flat.x + Vector3.UP * slope.dot(Vector2(flat.x.x, flat.x.z))
+	var z := flat.z + Vector3.UP * slope.dot(Vector2(flat.z.x, flat.z.z))
+	var up := z.cross(x).normalized()
+	x = x.normalized()
+	return Basis(x, up, x.cross(up).normalized())
+
+
+## CARDS IN A WASH REST ON ONE ANOTHER (feedback 0007: "cards with a higher z-index in the stack
+## seem to sort of hover... lifted off of the table... they cannot rest upon each other with a
+## gentle tilt"). The plan lays a card flat at its place in the pile - one card's thickness above
+## the deepest card it lies on - so where it hung past the cards under it, it hung in the air.
+## Here every card spread on the cloth, from the bottom of the pile up, is a rigid card resting on
+## whatever is under it: the cloth beneath its corners and the faces of the cards it lies on,
+## wherever they cross it ([method _rest_on]). So it tips: on a card at one end, on the cloth at
+## the other, and on the cards it lies on as they lie. Per step of the plan, kept for the frames
+## between. Each card `Vector3(height of its middle, slope across x, slope across z)`, the plan's
+## own height (and no slope) for one in a hand or the deck, which nothing rests on.
+func _wash_rest(plan: Dictionary, k: int) -> Array:
+	if not is_same(plan, _rest_plan):
+		_rest_plan = plan
+		_rest_steps = {}
+	if _rest_steps.has(k):
+		return _rest_steps[k]
+	if _rest_steps.size() > 8:
+		_rest_steps = {}
+	var tracks: Array = plan["tracks"]
+	var n := tracks.size()
+	var v := float(k) / WASH_HZ
+	var q: Array = []
+	var order: Array = []
+	for i in n:
+		var tr: PackedVector4Array = tracks[i]
+		q.append(tr[clampi(k, 0, tr.size() - 1)])
+		order.append(i)
+	order.sort_custom(func(x: int, y: int) -> bool:
+		return (q[x] as Vector4).y < (q[y] as Vector4).y or ((q[x] as Vector4).y == (q[y] as Vector4).y and x < y))
+	var out: Array = []
+	out.resize(n)
+	var under: Array = []      # [corners, middle, rest] of every card lying on the cloth so far
+	var reach := Vector2(CARD.x, CARD.y).length()
+	for i in order:
+		var qi: Vector4 = q[i]
+		if _wash_spread_at(plan, i, v) < 0.999:
+			out[i] = Vector3(qi.y, 0.0, 0.0)
+			continue
+		var mid := Vector2(qi.x, qi.z)
+		var corners := _card_corners(mid, qi.w)
+		var pts := PackedVector2Array()
+		var hs := PackedFloat32Array()
+		for c in corners:
+			pts.append(c - mid)
+			hs.append(WASH_FLOOR)
+		for u in under:
+			var umid: Vector2 = u[1]
+			if umid.distance_squared_to(mid) > reach * reach:
+				continue
+			var ur: Vector3 = u[2]
+			for piece in Geometry2D.intersect_polygons(corners, u[0]):
+				for p in piece:
+					pts.append(p - mid)
+					hs.append(ur.x + Vector2(ur.y, ur.z).dot(p - umid) + CARD_T + STACK_GAP)
+		var rest := Vector3(WASH_FLOOR, 0.0, 0.0) if pts.size() == 4 else _rest_on(pts, hs)
+		out[i] = rest
+		under.append([corners, mid, rest])
+	_rest_steps[k] = out
+	return out
+
+
+## A card's four corners on the cloth, its middle at [param mid], turned [param yaw].
+static func _card_corners(mid: Vector2, yaw: float) -> PackedVector2Array:
+	var ax := Vector2(cos(yaw), -sin(yaw)) * CARD.x * 0.5
+	var az := Vector2(sin(yaw), cos(yaw)) * CARD.y * 0.5
+	return PackedVector2Array([mid - ax - az, mid + ax - az, mid + ax + az, mid - ax + az])
+
+
+## THE LOWEST A RIGID CARD CAN LIE on supports [param hs] high at [param pts] (about its middle):
+## the plane above every one of them that is lowest at the middle - which is where a card settles,
+## its weight being at its middle. It is the face, above the middle, of the hull over the
+## supports, walked to from the highest of them: tip from that point toward the middle until a
+## second holds it, swing about those two until a third does, and over the edge the middle lies
+## beyond while it lies outside the three. Every step moves the plane only as far as the first
+## support it meets, so no support ever ends up above it. `Vector3(height at the middle, slope
+## across x, slope across z)`.
+static func _rest_on(pts: PackedVector2Array, hs: PackedFloat32Array) -> Vector3:
+	var n := pts.size()
+	var top := 0
+	for k in n:
+		if hs[k] > hs[top]:
+			top = k
+	var h := hs[top]
+	var g := Vector2.ZERO
+	if pts[top].length() < 1e-7:
+		return Vector3(h, 0.0, 0.0)
+	# tip about the highest support, lowering the middle, until a second meets the plane
+	var e := pts[top].normalized()
+	var t := INF
+	var second := -1
+	for k in n:
+		var de := e.dot(pts[top] - pts[k])
+		if de > 1e-7 and (hs[top] - hs[k]) / de < t:
+			t = (hs[top] - hs[k]) / de
+			second = k
+	if second < 0:
+		return Vector3(h, 0.0, 0.0)
+	g = e * t
+	h = hs[top] - g.dot(pts[top])
+	var held: Array = [top, second]
+	for it in 12:
+		if held.size() == 2:
+			var pa: Vector2 = pts[held[0]]
+			var dir: Vector2 = pts[held[1]] - pa
+			if dir.length() < 1e-7:
+				break
+			var across := Vector2(-dir.y, dir.x).normalized()
+			var side := across.dot(-pa)
+			if absf(side) < 1e-7:
+				break
+			if side < 0.0:
+				across = -across
+			# swing about the two, lowering the middle's side, until a third meets the plane
+			var s := INF
+			var third := -1
+			for k in n:
+				var dn := across.dot(pts[k] - pa)
+				if dn > 1e-7 and k != held[0] and k != held[1]:
+					var sk := maxf(h + g.dot(pts[k]) - hs[k], 0.0) / dn
+					if sk < s:
+						s = sk
+						third = k
+			if third < 0:
+				break
+			g -= across * s
+			h += s * across.dot(pa)
+			held.append(third)
+		# three hold it: settled if the middle lies among them, else over the edge it lies beyond
+		var p0: Vector2 = pts[held[0]]
+		var p1: Vector2 = pts[held[1]]
+		var p2: Vector2 = pts[held[2]]
+		var area := (p1 - p0).cross(p2 - p0)
+		if absf(area) < 1e-10:
+			held.remove_at(2)
+			break
+		var l0 := p1.cross(p2) / area
+		var l1 := p2.cross(p0) / area
+		var l2 := p0.cross(p1) / area
+		var least := minf(l0, minf(l1, l2))
+		if least >= -1e-6:
+			break
+		held.remove_at(0 if l0 == least else (1 if l1 == least else 2))
+	return Vector3(h, g.x, g.y)
 
 
 ## A wash's plan for the time it has: the whole of it, or - when the first card comes before it
@@ -2726,7 +2957,7 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				for j in under[i]:
 					(over[int(j)] as Array).append(i)
 			for i in n:
-				height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + 0.00015)
+				height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + STACK_GAP)
 		for i in n:
 			var q: Vector2 = pos[i]
 			var y := float(height[i])

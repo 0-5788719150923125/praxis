@@ -83,6 +83,21 @@ const VFOV := 42.0
 ## image model makes most reliably - and projected from the camera's own eye, so the room past the
 ## table is seen as the tilted camera would see it ([method TarotMedium._place_backdrop]).
 const BACKDROP_LENS := 20.0
+## THE CLOTH'S PICTURE is asked for as this much of the surface, centimeters - as wide as the
+## cloth and a little deeper, landscape as the painters make it - so its grain comes out at its
+## true size ([method cloth_crop]).
+const CLOTH_PICTURE := Vector2(120.0, 80.0)
+
+
+## THE PART OF A CLOTH'S PICTURE THE CLOTH SHOWS, as a UV rectangle: as much of it as fits on a
+## cloth [param cloth] (meters) with its pixels square, cut evenly off the long side. Stretched to
+## the cloth, a square picture came out 1.67 times as wide as it was painted, every bead and weave
+## with it.
+static func cloth_crop(picture: Vector2, cloth: Vector2) -> Rect2:
+	# the share of the picture's height the cloth takes when the picture spans its width
+	var k := (cloth.y / cloth.x) * (picture.x / maxf(picture.y, 1.0))
+	var size := Vector2(1.0, k) if k <= 1.0 else Vector2(1.0 / k, 1.0)
+	return Rect2((Vector2.ONE - size) * 0.5, size)
 
 
 ## THE EPISODE'S LAYOUT, drawn from [param rng] in a fixed order: the camera (`camera`, `fov`,

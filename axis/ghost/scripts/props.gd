@@ -39,7 +39,7 @@ const SHAPES := {
 	"cluster": "a crystal cluster: points growing out of one rough rock. `count` 3-24, `radius` (the rock), `length` [shortest, longest], `spread` (degrees the outer points lean out), `thickness` (a point's width over its length, 0.1-0.3), `base` (the rock's material, if not the crystal's).",
 	"geode": "a geode broken open: a rough round rock, hollow, the hollow lined with crystal points growing in toward its middle. It lies open side up; `turn` [30, 0, 0] tips the opening toward the reader. `radius` (the rock's), `rind` (the thickness of its shell), `length` (the crystals'), `base` (the rock's material; plain gray rock if not given). The part's own material is the crystals'.",
 	"ring": "a ring lying flat round the vertical axis, resting on whatever is under it: rims, rings, bangles, a coiled rope. `radius` (to the middle of the band), `thickness` (the band's), `arc` (degrees, less than 360 for an open ring).",
-	"tube": "a round rod along a path: handles, stems, incense sticks, wands, branches, wire, a snake, a feather's quill. `path` [[x,y,z], ...] in the thing's own space, `radius` (or `radii`, one per point), `smooth` (default true).",
+	"tube": "a round rod along a path: handles, stems, incense sticks, wands, branches, wire, a feather's quill. `path` [[x,y,z], ...] in the thing's own space, `radius` (or `radii`, one per point), `smooth` (default true).",
 	"sheet": "a thin flat piece lying on the cloth unless turned, placed by its middle: a leaf, a petal, a feather, a page, a scrap of cloth. `outline` (leaf, petal, feather, oval or rect - or `points` [[x,z], ...] for any outline), `size` [width, length] (its length runs front to back), `bend` -1..1 (the tip curls up), `fold` 0-1 (the sides lift).",
 	"bloom": "a flower head, petals in rings round a small middle: `petals`, `layers` 1-4, `radius`, `cup` 0 (open flat) to 1 (a closed bud), `width` (a petal's width over its length).",
 	"extrude": "an outline raised straight up: trays, tiles, plaques, tablets, boxes, dishes and candles of any plan - a star, a hexagon, a heart. `outline` (polygon with `sides` 3-12, star with `sides` points, circle, rect or heart - or `points` [[x, z], ...] for any outline, which may go in and out), `size` [width, depth], `height`; optional `taper` 0-0.9 (narrower at the top), `bevel` (centimeters cut off the top edge), `wall` (centimeters: hollow, as a tray or a dish is, its floor as thick as its wall). A wax extrude takes `wick` or `wicks` as a turned candle does.",
@@ -578,7 +578,7 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 				var m: Dictionary = materials.get(nm, sanitize_material({}, "#808080"))
 				var mi := MeshInstance3D.new()
 				mi.mesh = merged.mesh()
-				var mat := material(m, part.get("ornament", {}), g.girth, g.height, hash([seed, salt, gi, nm]), _solid(part))
+				var mat := material(m, part.get("ornament", {}), g.girth, g.height, hash([seed, salt, gi, nm]), _solid(part), not String(part.get("shape", "")) in ["lathe", "extrude"])
 				mi.material_override = mat
 				if see_through(m):
 					mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -615,10 +615,13 @@ static func build(thing: Dictionary, materials: Dictionary, seed: int) -> Dictio
 
 ## A thing's parts, groups opened: `[{part, geos, xforms, salt}]` - each shaped part with its
 ## geometry and every place it stands in the thing (its own repeats inside its groups', a group's
-## copies sized, for a scatter or a heap, by everything in it). [param path] is where these parts
-## sit among the groups; `salt` is a part's place, the same as it always was for a part in no group.
+## copies sized - for a scatter or a heap - and jittered about their middles by everything in it).
+## A heap is laid last, into whatever the other parts make of a vessel round it. [param path] is
+## where these parts sit among the groups; `salt` is a part's place, the same as it always was for a
+## part in no group.
 static func _assemble(parts: Array, seed: int, path: Array) -> Array:
 	var out: Array = []
+	var heaps: Array = []    # [place in out, rng]: laid last, into whatever they lie in ([method _walls])
 	for pi in parts.size():
 		var part: Dictionary = parts[pi]
 		var here: Variant = pi if path.is_empty() else path + [pi]
@@ -629,7 +632,8 @@ static func _assemble(parts: Array, seed: int, path: Array) -> Array:
 			if inner.is_empty():
 				continue
 			var sized: Array = []
-			if String((part.get("copies", {}) as Dictionary).get("kind", "")) in ["scatter", "heap"]:
+			var copies: Dictionary = part.get("copies", {})
+			if String(copies.get("kind", "")) in ["scatter", "heap"] or float(copies.get("jitter", 0.0)) > 0.0:
 				for leaf in inner:
 					for e in leaf["geos"]:
 						sized.append({"geo": ((e as Dictionary)["geo"] as Tris).placed(leaf["xforms"])})
@@ -645,7 +649,15 @@ static func _assemble(parts: Array, seed: int, path: Array) -> Array:
 		var geos := _geometry(part, rng)
 		if geos.is_empty():
 			continue
+		if String((part.get("copies", {}) as Dictionary).get("kind", "")) == "heap":
+			heaps.append([out.size(), rng])
+			out.append({"part": part, "geos": geos, "xforms": [], "salt": here})
+			continue
 		out.append({"part": part, "geos": geos, "xforms": _placements(part, rng, geos), "salt": here})
+	for h in heaps:
+		var leaf: Dictionary = out[h[0]]
+		var at: Vector3 = (leaf["part"] as Dictionary).get("at", Vector3.ZERO)
+		leaf["xforms"] = _placements(leaf["part"], h[1], leaf["geos"], _walls(out, h[0], at * 0.01))
 	return out
 
 
@@ -708,7 +720,7 @@ static func _solid(part: Dictionary) -> bool:
 ## its own girth and height (so a motif keeps its shape on a tall vase and a squat bowl alike).
 ## SEEN-THROUGH material is glass for a vessel - a flame inside it shows - and a lens for a solid
 ## thing, which bends what is behind it.
-static func material(m: Dictionary, orn: Variant, girth: float, height: float, salt: int, solid := false) -> ShaderMaterial:
+static func material(m: Dictionary, orn: Variant, girth: float, height: float, salt: int, solid := false, round_solid := true) -> ShaderMaterial:
 	var kind := String(m.get("kind", "painted"))
 	var mat := ShaderMaterial.new()
 	# CLEAR CRYSTAL IS SEEN THROUGH: an opaque shader made a crystal ball a pearl
@@ -720,6 +732,8 @@ static func material(m: Dictionary, orn: Variant, girth: float, height: float, s
 	mat.set_shader_parameter("color2", Color.html(String(m.get("color2", "#404040"))))
 	for k in ["polish", "wear", "pattern", "clarity", "grain"]:
 		mat.set_shader_parameter(k, float(m.get(k, 0.5)))
+	if clear and solid:
+		mat.set_shader_parameter("bend_y", 1.0 if round_solid else 0.0)
 	mat.set_shader_parameter("seed", float(salt & 0xFFF) / 64.0)
 	mat.set_shader_parameter("dims", Vector2(maxf(girth, 0.5), maxf(height, 0.5)))
 	var play := String(m.get("play", ""))
@@ -740,7 +754,7 @@ static func material(m: Dictionary, orn: Variant, girth: float, height: float, s
 ## Where each copy of a part goes, in the thing's space: the part turned about its own origin,
 ## then laid out as its copies ask, then moved to its `at`. [param geos] are the part's geometry
 ## ([method _geometry]), which strewn copies need the size of.
-static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Array) -> Array:
+static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Array, walls := {}) -> Array:
 	var turn: Vector3 = part.get("turn", Vector3.ZERO)
 	var own := Transform3D(Basis.from_euler(Vector3(deg_to_rad(turn.x), deg_to_rad(turn.y), deg_to_rad(turn.z))), Vector3.ZERO)
 	var at: Vector3 = (part.get("at", Vector3.ZERO) as Vector3) * 0.01
@@ -751,7 +765,11 @@ static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Arra
 	var n := int(c["count"])
 	var jit := float(c.get("jitter", 0.0))
 	if String(c["kind"]) in ["scatter", "heap"]:
-		return _strewn(String(c["kind"]) == "heap", n, jit, float(c["radius"]) * 0.01, own, at, _bounds(geos, own), rng)
+		return _strewn(String(c["kind"]) == "heap", n, jit, float(c["radius"]) * 0.01, own, at, _bounds(geos, own), rng, walls)
+	# A COPY'S JITTER TURNS IT ABOUT ITS OWN MIDDLE: about the part's origin, a rod drawn away from
+	# it (a squid's arm, a jig lying on its side) swung across the thing, and a row of them splayed
+	# like legs (feedback 0006)
+	var pivot := _pivot(geos, own)
 	for i in n:
 		var xf := Transform3D.IDENTITY
 		match String(c["kind"]):
@@ -765,23 +783,42 @@ static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Arra
 				xf = Transform3D(Basis(), (c["step"] as Vector3) * 0.01 * float(i))
 		if jit > 0.0:
 			var s := 1.0 + rng.randf_range(-0.15, 0.15) * jit
-			xf = xf * Transform3D(Basis(Vector3.UP, rng.randf_range(-0.45, 0.45) * jit).scaled(Vector3(s, s, s)), Vector3.ZERO)
+			var turn_by := Basis(Vector3.UP, rng.randf_range(-0.45, 0.45) * jit).scaled(Vector3(s, s, s))
+			xf = xf * Transform3D(Basis(), pivot) * Transform3D(turn_by, Vector3.ZERO) * Transform3D(Basis(), -pivot)
 		out.append(Transform3D(Basis(), at) * xf * own)
 	return out
 
 
+## The middle of a part's base, turned by [param own] as each copy is: halfway across what it
+## covers seen from above, at its lowest. The origin when there is no geometry to measure.
+static func _pivot(geos: Array, own: Transform3D) -> Vector3:
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	for e in geos:
+		for q in ((e as Dictionary)["geo"] as Tris).v:
+			var w := own.basis * q
+			lo = Vector3(minf(lo.x, w.x), minf(lo.y, w.y), minf(lo.z, w.z))
+			hi = Vector3(maxf(hi.x, w.x), maxf(hi.y, w.y), maxf(hi.z, w.z))
+	if lo.x > hi.x:
+		return Vector3.ZERO
+	return Vector3((lo.x + hi.x) * 0.5, lo.y, (lo.z + hi.z) * 0.5)
+
+
 ## STREWN COPIES. Scattered ones never touch: each takes a spot in the circle clear of the rest,
 ## and a handful too crowded for it spreads wider rather than pass through itself. HEAPED ones
-## settle as a dropped handful does: each tries a few spots in the circle and falls into the lowest
-## - on the floor, or resting on the copies under it there (each taken as the rounded lump it most
-## often is), a little tipped where it lies on others - so the floor fills before the heap rises.
+## settle as a dropped handful does ([method _heaped]): on the floor while there is room, then in
+## the pockets of the heap, a little tipped where they lie on others - so the floor fills before
+## the heap rises.
 static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transform3D, at: Vector3, bounds: Dictionary,
-		rng: RandomNumberGenerator) -> Array:
+		rng: RandomNumberGenerator, walls := {}) -> Array:
 	var reach := float(bounds["reach"])
 	var girth := float(bounds["girth"])
 	var low := float(bounds["low"])
 	var tall := float(bounds["high"]) - low
-	var laid: Array = []     # [where (x, z), reach, middle's height, half height, half-width]
+	var laid: Array = []     # [where (x, z), reach]
+	var mids := PackedVector3Array()   # a heap's lumps: middles, half-widths, half heights
+	var wide_of := PackedFloat32Array()
+	var high_of := PackedFloat32Array()
 	var out: Array = []
 	for i in n:
 		var s := 1.0 + rng.randf_range(-0.15, 0.15) * jit
@@ -790,33 +827,15 @@ static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transfor
 		var spot := Vector2.ZERO
 		var mid := hh
 		if heap:
-			var lowest := INF
-			for k in 30:
-				var q := Vector2.from_angle(rng.randf() * TAU) * radius * sqrt(rng.randf())
-				var y := hh
-				var held := 0.0    # how far off the middle of the lump holding it up it sits, as a share of their reach
-				for e in laid:
-					# two lumps meet across their half-widths, a little less, as rounded things nestle; a
-					# lump taken as wide as its longest reach stood on air off the narrow side of another
-					var touch := (girth * s + float(e[4])) * 0.9
-					var d := q.distance_to(e[0])
-					if d < touch:
-						var up := float(e[2]) + (hh + float(e[3])) * sqrt(1.0 - pow(d / touch, 2.0)) * 0.9
-						if up > y:
-							y = up
-							held = d / touch
-				# a lump resting on another's shoulder would roll off it: it sits on the floor or over the middle
-				if held > 0.5 and y > hh * 1.05:
-					continue
-				if y < lowest:
-					lowest = y
-					spot = q
-				if k >= 5 and lowest < INF:
-					break
-			if lowest == INF:
-				lowest = hh
-				spot = Vector2.from_angle(rng.randf() * TAU) * radius * 1.3
-			mid = lowest
+			var rest: Variant = _heaped(girth * s, hh, radius, mids, wide_of, high_of, walls, rng)
+			if rest == null:
+				continue
+			var p: Vector3 = rest
+			mids.append(p)
+			wide_of.append(girth * s)
+			high_of.append(hh)
+			spot = Vector2(p.x, p.z)
+			mid = p.y
 		else:
 			var wide := radius
 			for k in 240:
@@ -831,12 +850,256 @@ static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transfor
 				spot = q
 				if clear:
 					break
-		laid.append([spot, r, mid, hh, girth * s])
+		laid.append([spot, r])
 		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s, s))
 		if mid > hh * 1.2:
 			b = Basis(Vector3(rng.randf_range(-1.0, 1.0), 0.0, rng.randf_range(-1.0, 1.0)).normalized(), rng.randf_range(0.1, 0.35)) * b
-		out.append(Transform3D(Basis(), at) * Transform3D(b, Vector3(spot.x, mid - hh - low * s, spot.y)) * own)
+		# turned and tipped about its own middle, so a tipped lump stays in the pocket it was laid in
+		out.append(Transform3D(Basis(), at) * Transform3D(b, Vector3(spot.x, mid, spot.y))
+			* Transform3D(Basis(), Vector3(0.0, -(low + tall * 0.5), 0.0)) * own)
 	return out
+
+
+## WHERE A HEAPED LUMP COMES TO REST - its middle - [param a] wide and [param b] high (half sizes,
+## meters) among the lumps already down ([param mids], [param wide_of], [param high_of]): on the
+## floor where it is dropped while there is room there; then in a POCKET of the heap
+## ([method _pockets]) - or against the wall of the vessel it lies in ([param walls], see
+## [method _walls]); then on the floor further out, as a handful spills wider, but never through a
+## vessel's wall. Null when a vessel has no room left for it. NEVER ON TOP OF ONE ROUND LUMP: a
+## pebble balanced on another rolls off it, in the world and in the eye (feedback 0006 - a rule that
+## let a lump rest over another's middle stacked them into columns).
+static func _heaped(a: float, b: float, radius: float, mids: PackedVector3Array, wide_of: PackedFloat32Array,
+		high_of: PackedFloat32Array, walls: Dictionary, rng: RandomNumberGenerator) -> Variant:
+	# how far out its middle may lie, below the rim of what holds it
+	var inside := INF if walls.is_empty() else float(walls["radius"]) - a
+	var rim := INF if walls.is_empty() else float(walls["top"])
+	if inside <= 0.0:
+		return null
+	var drop := minf(radius, inside)
+	for k in 48:
+		var q := Vector2.from_angle(rng.randf() * TAU) * drop * sqrt(rng.randf())
+		if _free(Vector3(q.x, b, q.y), a, b, mids, wide_of, high_of):
+			return Vector3(q.x, b, q.y)
+	var rests: Array = []
+	for p in _pockets(a, b, mids, wide_of, high_of, rng):
+		var rest: Vector3 = p
+		# below the rim, inside the wall; above it, it may lean out over the rim
+		if rest.y - b >= rim or Vector2(rest.x, rest.z).length() <= inside:
+			rests.append(rest)
+	if not walls.is_empty():
+		rests.append_array(_wall_pockets(a, b, inside, rim, mids, wide_of, high_of))
+	if not rests.is_empty():
+		# it drops into one of the LOW places, not always the lowest of them
+		var lowest := INF
+		for p in rests:
+			lowest = minf(lowest, (p as Vector3).y)
+		var near: Array = rests.filter(func(p: Vector3) -> bool: return p.y <= lowest + b * 0.5)
+		return near[rng.randi() % near.size()]
+	var wide := drop
+	var q := Vector2.ZERO
+	for k in 240:
+		if k > 0 and k % 24 == 0:
+			wide = minf(wide * 1.15 + a * 0.3, inside)
+		q = Vector2.from_angle(rng.randf() * TAU) * wide * sqrt(rng.randf())
+		if _free(Vector3(q.x, b, q.y), a, b, mids, wide_of, high_of):
+			return Vector3(q.x, b, q.y)
+	# no room anywhere: a vessel leaves it out, the open cloth takes it where it fell
+	return null if not walls.is_empty() else Vector3(q.x, b, q.y)
+
+
+## THE WALL ROUND A HEAP, when it lies in a vessel - a dish, a bowl, a tray among the thing's other
+## [param leaves] (the heap's own, [param skip], and every other strewn part left out): the nearest
+## surface rising from the heap's floor, measured from its middle [param at] - `{radius, top}`,
+## meters out and how high it stands above that floor. Empty when a line out from the middle in any
+## direction meets no such surface - an open heap, on the cloth or beside a candle.
+static func _walls(leaves: Array, skip: int, at: Vector3) -> Dictionary:
+	const RAYS := 8
+	var mid := Vector2(at.x, at.z)
+	var hit := PackedFloat32Array()
+	hit.resize(RAYS)
+	hit.fill(INF)
+	var tops := PackedFloat32Array()
+	tops.resize(RAYS)
+	var nearest := INF
+	for li in leaves.size():
+		var leaf: Dictionary = leaves[li]
+		if li == skip or String(((leaf["part"] as Dictionary).get("copies", {}) as Dictionary).get("kind", "")) in ["scatter", "heap"]:
+			continue
+		for e in leaf["geos"]:
+			var g: Tris = (e as Dictionary)["geo"]
+			for x in leaf["xforms"]:
+				var xf: Transform3D = x
+				for t in range(0, g.v.size() - 2, 3):
+					var p0 := xf * g.v[t]
+					var p1 := xf * g.v[t + 1]
+					var p2 := xf * g.v[t + 2]
+					# a wall rises from the heap's floor: its foot down at the floor, its top above it
+					if minf(p0.y, minf(p1.y, p2.y)) > at.y + 0.002 or maxf(p0.y, maxf(p1.y, p2.y)) < at.y + 0.004:
+						continue
+					var top := maxf(p0.y, maxf(p1.y, p2.y)) - at.y
+					var flat := [Vector2(p0.x, p0.z), Vector2(p1.x, p1.z), Vector2(p2.x, p2.z)]
+					for k in 3:
+						var u: Vector2 = flat[k]
+						var w: Vector2 = flat[(k + 1) % 3]
+						nearest = minf(nearest, mid.distance_to(Geometry2D.get_closest_point_to_segment(mid, u, w)))
+						for r in RAYS:
+							var cross: Variant = Geometry2D.segment_intersects_segment(mid, mid + Vector2.from_angle(TAU * r / RAYS), u, w)
+							if cross != null:
+								var d := mid.distance_to(cross as Vector2)
+								if d < hit[r] - 0.0005:
+									hit[r] = d
+									tops[r] = top
+								elif d < hit[r] + 0.0005:
+									tops[r] = maxf(tops[r], top)
+	var rim := INF
+	for r in RAYS:
+		if hit[r] == INF:
+			return {}
+		rim = minf(rim, tops[r])
+	return {"radius": nearest, "top": rim}
+
+
+## How far rounded lumps nestle into each other: two touch where their half sizes, summed and taken
+## this much of, meet - a lump's bumps sit in another's hollows.
+const NESTLE := 0.9
+## A lump this many times wider than it is high (a coin, a tile, a skimming stone) is FLAT: it can
+## lie still across the middle of a single lump under it. A rounder one rolls off unless a pocket
+## holds it.
+const FLAT := 2.5
+
+
+## Whether a lump [param a] wide and [param b] high with its middle at [param p] passes through none
+## already down: each pair taken as touching ellipsoids, their half sizes summed ([constant NESTLE]).
+static func _free(p: Vector3, a: float, b: float, mids: PackedVector3Array, wide_of: PackedFloat32Array,
+		high_of: PackedFloat32Array) -> bool:
+	for i in mids.size():
+		var A := (a + wide_of[i]) * NESTLE
+		var B := (b + high_of[i]) * NESTLE
+		var d := p - mids[i]
+		if (d.x * d.x + d.z * d.z) / (A * A) + d.y * d.y / (B * B) < 0.999:
+			return false
+	return true
+
+
+## THE POCKETS A LUMP CAN REST IN: where three lumps hold it from below and its weight falls
+## between them - the contact forces, each pushing it straight off the lump it touches, add up to
+## something that holds it against gravity with every one of the three pushing ([method _pocket]).
+## A FLAT lump may also lie across the middle of any one. Where three lumps stand too far apart to
+## hold it, it falls between them to the floor - a place on the floor too. Places it would pass
+## through another lump to reach are not places.
+static func _pockets(a: float, b: float, mids: PackedVector3Array, wide_of: PackedFloat32Array,
+		high_of: PackedFloat32Array, rng: RandomNumberGenerator) -> Array:
+	var out: Array = []
+	var n := mids.size()
+	var reach := PackedFloat32Array()
+	var tall := PackedFloat32Array()
+	for i in n:
+		reach.append((a + wide_of[i]) * NESTLE)
+		tall.append((b + high_of[i]) * NESTLE)
+	for i in n:
+		if a >= b * FLAT:
+			var off := Vector2.from_angle(rng.randf() * TAU) * reach[i] * 0.35 * sqrt(rng.randf())
+			var top := mids[i] + Vector3(off.x, tall[i] * sqrt(1.0 - off.length_squared() / (reach[i] * reach[i])), off.y)
+			if top.y >= b and _free(top, a, b, mids, wide_of, high_of):
+				out.append(top)
+		for j in range(i + 1, n):
+			if not _both(i, j, mids, reach, tall):
+				continue
+			for k in range(j + 1, n):
+				if not (_both(i, k, mids, reach, tall) and _both(j, k, mids, reach, tall)):
+					continue
+				var p: Variant = _pocket([mids[i], mids[j], mids[k]], [reach[i], reach[j], reach[k]], [tall[i], tall[j], tall[k]], b)
+				if p != null and _free(p, a, b, mids, wide_of, high_of):
+					out.append(p)
+	return out
+
+
+## THE PLACES AGAINST A VESSEL'S WALL: two lumps holding a lump from below and the wall
+## ([param inside] meters out from the middle, for its middle) holding it from the side - where it
+## stands no higher than the wall's [param rim].
+static func _wall_pockets(a: float, b: float, inside: float, rim: float, mids: PackedVector3Array,
+		wide_of: PackedFloat32Array, high_of: PackedFloat32Array) -> Array:
+	var out: Array = []
+	var n := mids.size()
+	for i in n:
+		var ri := (a + wide_of[i]) * NESTLE
+		var ti := (b + high_of[i]) * NESTLE
+		if Vector2(mids[i].x, mids[i].z).length() + ri < inside:
+			continue
+		for j in range(i + 1, n):
+			var rj := (a + wide_of[j]) * NESTLE
+			var tj := (b + high_of[j]) * NESTLE
+			var d := mids[i] - mids[j]
+			if Vector2(mids[j].x, mids[j].z).length() + rj < inside or Vector2(d.x, d.z).length() >= ri + rj or absf(d.y) >= ti + tj:
+				continue
+			var p: Variant = _pocket([mids[i], mids[j]], [ri, rj], [ti, tj], b, inside)
+			if p != null and (p as Vector3).y - b < rim and _free(p, a, b, mids, wide_of, high_of):
+				out.append(p)
+	return out
+
+
+## Whether one lump can touch lumps [param i] and [param j] at once.
+static func _both(i: int, j: int, mids: PackedVector3Array, reach: PackedFloat32Array, tall: PackedFloat32Array) -> bool:
+	var d := mids[i] - mids[j]
+	return Vector2(d.x, d.z).length() < reach[i] + reach[j] and absf(d.y) < tall[i] + tall[j]
+
+
+## WHERE A LUMP TOUCHING LUMPS [param c] COMES TO REST (half sizes summed: [param A] across,
+## [param B] up) - three of them, or two and a vessel's wall [param wall] meters out from the
+## heap's middle - above them: Newton's method from above, then the contact forces solved for (a
+## lump's pushing straight off its surface, the wall's straight back in) and every one required to
+## carry a share. A rest under [param b] is where it falls through to the floor, and the floor
+## there is returned for the caller to judge. Null when nothing holds it there.
+static func _pocket(c: Array, A: Array, B: Array, b: float, wall := 0.0) -> Variant:
+	var lumps := c.size()
+	var p: Vector3 = Vector3.ZERO
+	for m in lumps:
+		p += c[m] / float(lumps)
+	if wall > 0.0:
+		var out := Vector2(p.x, p.z)
+		out = (out if out.length() > 1e-6 else Vector2(c[0].x, c[0].z)).normalized() * wall
+		p = Vector3(out.x, p.y, out.y)
+	for m in lumps:
+		p.y = maxf(p.y, c[m].y + B[m])
+	var g := [Vector3.ZERO, Vector3.ZERO, Vector3.ZERO]
+	var f := Vector3.ZERO
+	for it in 24:
+		for m in lumps:
+			var d: Vector3 = p - c[m]
+			var a2: float = A[m] * A[m]
+			var b2: float = B[m] * B[m]
+			f[m] = (d.x * d.x + d.z * d.z) / a2 + d.y * d.y / b2 - 1.0
+			g[m] = Vector3(2.0 * d.x / a2, 2.0 * d.y / b2, 2.0 * d.z / a2)
+		if wall > 0.0:
+			f[2] = (p.x * p.x + p.z * p.z) / (wall * wall) - 1.0
+			g[2] = Vector3(2.0 * p.x, 0.0, 2.0 * p.z) / (wall * wall)
+		if absf(f.x) + absf(f.y) + absf(f.z) < 1e-5:
+			break
+		# the gradients as COLUMNS: transposed, they are the rows of the Jacobian
+		var jt := Basis(g[0], g[1], g[2])
+		if absf(jt.determinant()) < 1e-9:
+			return null
+		var step := jt.transposed().inverse() * -f
+		if step.length() > A[0] + A[1]:
+			return null
+		p += step
+	if absf(f.x) + absf(f.y) + absf(f.z) >= 1e-5:
+		return null
+	if p.y < b:
+		return Vector3(p.x, b, p.z)
+	# HELD FROM BELOW: a pocket under the side of a higher lump is a wedge, and a lump dropped on
+	# the heap from above does not get in under another
+	for m in lumps:
+		if p.y <= c[m].y:
+			return null
+	# the forces: off each lump along its normal, and the wall's back toward the middle
+	var held := Basis(g[0], g[1], -g[2] if wall > 0.0 else g[2])
+	if absf(held.determinant()) < 1e-9:
+		return null
+	var w := held.inverse() * Vector3.UP
+	if minf(w.x, minf(w.y, w.z)) <= 0.05 * (w.x + w.y + w.z):
+		return null
+	return p
 
 
 ## How far a part reaches from its own origin seen from above (`reach`, its farthest; `girth`, the

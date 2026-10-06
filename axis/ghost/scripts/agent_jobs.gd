@@ -25,6 +25,10 @@ class_name AgentJobs
 ## can write does both without ever blocking a frame. A one-step backend's `advance` returns 0 and
 ## the job lands, as it always did. Its timeout counts from the first step.
 ##
+## A JOB MAY WORK WITH TOOLS ghost serves ([AgentTools], a text job's `tools_url`): it then runs as
+## a loop of calls rather than one reply, and takes as long as the loop does - so it names its own
+## `timeout`. The tool server is polled from [method pump] with everything else.
+##
 ## Polled from `main._process`, the [Films] / [Illustrations] rule: a job is a subprocess, and
 ## something with a frame has to see it end. NOTHING STARTS ON ITS OWN - a job runs because a
 ## person pressed something - and a read-only process (a render, a probe) refuses every
@@ -105,6 +109,8 @@ static func clear_outputs(job: Dictionary) -> String:
 ##              the picture is moved here whole, so nothing ever sees a half-written file there
 ##   lane     - optional: jobs sharing a lane run one at a time, in order
 ##   label    - optional: a few words for logs and status lines
+##   tools_url - text only, optional: the [AgentTools] endpoint whose tools the writer may call
+##   timeout  - optional: seconds before the run is abandoned, when not [constant TIMEOUT_S]'s
 static func submit(spec: Dictionary) -> String:
 	if read_only():
 		return ""
@@ -165,18 +171,19 @@ static func busy() -> int:
 	return _queue.size() + _running.size()
 
 
-## Notice what ended, start what fits.
+## Notice what ended, start what fits - and answer the tools jobs are calling.
 static func pump() -> void:
+	AgentTools.poll()
 	for id in _running.keys():
 		var job: Dictionary = _running[id]
 		var pid := int(job["pid"])
 		if Subprocess.alive(pid):
-			if int(Time.get_unix_time_from_system()) - int(job["started"]) \
-					> int(TIMEOUT_S[String(job["kind"])]):
+			var limit := int(job.get("timeout", TIMEOUT_S[String(job["kind"])]))
+			if int(Time.get_unix_time_from_system()) - int(job["started"]) > limit:
 				Subprocess.stop(pid)
 				_running.erase(id)
 				_ended[id] = {"ok": false, "text": "", "path": "", "label": job.get("label", ""),
-					"error": "timed out after %d s" % int(TIMEOUT_S[String(job["kind"])])}
+					"error": "timed out after %d s" % limit}
 			continue
 		Subprocess.forget(pid)
 		var next := int(job["gen"].advance(job))

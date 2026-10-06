@@ -58,6 +58,8 @@ func _ready() -> void:
 	_check_outro_mark()
 	_check_scrub()
 	_check_delivery_marks()
+	_check_tarot_familiar()
+	_check_voice_colors()
 	_ed.free()
 	if _fails.is_empty():
 		print("multi_voice_check: ALL OK")
@@ -482,6 +484,86 @@ func _check_turn_rest() -> void:
 		"the handover ran past the ceiling: %.2fs" % _ed._gap_before(chunks, 2, s))
 	_ok(_ed._gap_before(chunks, 2, s) > across, "the top of the dial is no longer than the middle")
 	_ed._turn.value = 1.0
+
+
+## A TAROT READING IN TWO VOICES - the reader, and a familiar on their shoulder with a quip now
+## and then: the script the tarot panel hands this voice ([method TarotScript.speakable]) splits at
+## the familiar's lines, the card after a quip opens in the reader's voice again, and every rest
+## the table moves in (the shuffle, each draw, the spread) survives the split as a hold. A rest
+## left alone on a passage with no words is dropped, and the cards would move while the voice ran on.
+func _check_tarot_familiar() -> void:
+	_cast([Manuscript.NARRATOR, "Familiar"])
+	var script := TarotScript.compose([
+		{"kind": "shuffle", "card": 0, "text": "Hello, my loves.\n<!-- speaker: Familiar -->\nHere we go again.\n<!-- speaker: Narrator -->\nShush. Let's shuffle."},
+		{"kind": "draw", "card": 1, "text": "The Tower. Big changes for you.\n<!-- speaker: Familiar -->\nThere is always a tower."},
+		{"kind": "draw", "card": 2, "text": "The Star. Hope, my loves."},
+		{"kind": "spread", "card": 0, "text": "That is the reading. Go and do the thing."}])
+	var segs: Array = _ed._split_speakers(TarotScript.speakable(script))
+	var n := Manuscript.NARRATOR
+	_ok(_who(segs) == [n, "Familiar", n, "Familiar", n], "a tarot reading's voices go %s" % str(_who(segs)))
+	var star := ""
+	for sg in segs:
+		if String((sg as Dictionary)["text"]).contains("Star"):
+			star = String((sg as Dictionary)["speaker"])
+	_ok(star == n, "the card after the familiar's quip is read by '%s'" % star)
+	_ok((_ed._holds as Array).size() == 4, "%d of the table's 4 rests survived the voices" % (_ed._holds as Array).size())
+
+
+## EACH VOICE IN COLORS OF ITS OWN (2026-10-05: "the first can remain the rainbow color, while
+## the next could be a different spectrum like red through purple to blue, the third could be green
+## to yellow"): a word carries who says it to the subtitles, the voices take their places by when
+## each first speaks, the first lights across the whole rainbow, and each after it stays inside a
+## band of its own, sweeping it without a jump. Two-sided: the rule it replaced - the whole wheel
+## for every voice - leaves the second voice's band.
+func _check_voice_colors() -> void:
+	_cast([Manuscript.NARRATOR, "Familiar"])
+	var was: Array = _ed._chunks
+	_ed._chunks = _ed._build_chunks("Hello, my loves.\n<!-- speaker: Familiar -->\nHere we go again.")
+	var said: Array = []
+	for i in _ed._chunks.size():
+		var spans: Array = []
+		for w in (_ed._chunks[i] as Dictionary)["words"]:
+			spans.append({"index": int((w as Dictionary)["index"]), "t0": 0.1, "t1": 0.2})
+		said.append_array(_ed._words_for(i, spans))
+	_ed._chunks = was
+	var who: Array = []
+	for w in said:
+		if who.is_empty() or who.back() != String((w as Dictionary).get("speaker", "")):
+			who.append(String((w as Dictionary).get("speaker", "")))
+	_ok(who == [Manuscript.NARRATOR, "Familiar"], "subtitle words carry voices %s" % str(who))
+	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
+	subs.words = said
+	_ok(subs.voice_order(Manuscript.NARRATOR) == 0 and subs.voice_order("Familiar") == 1 and subs.voice_order("") == 0,
+		"the voices' places are %d, %d" % [subs.voice_order(Manuscript.NARRATOR), subs.voice_order("Familiar")])
+	subs.words = [{"speaker": "Familiar"}, {"speaker": Manuscript.NARRATOR}]
+	_ok(subs.voice_order("Familiar") == 0 and subs.voice_order(Manuscript.NARRATOR) == 1,
+		"a new reading kept the last one's order of voices")
+	subs.free()
+	var outside := 0
+	var jumps := 0
+	var old_outside := 0
+	var wheel := true
+	for order in range(0, Subtitles.VOICE_BANDS.size() + 2):
+		var prev := -1.0
+		for i in 400:
+			var phase := float(i) / 100.0 - 1.37
+			var h := Subtitles.voice_hue(phase, order)
+			if prev >= 0.0 and absf(wrapf(h - prev, -0.5, 0.5)) > 0.04:
+				jumps += 1
+			prev = h
+			if order == 0:
+				wheel = wheel and absf(wrapf(h - phase, -0.5, 0.5)) < 1e-4
+				continue
+			var band: Array = Subtitles.VOICE_BANDS[(order - 1) % Subtitles.VOICE_BANDS.size()]
+			var mid := (float(band[0]) + float(band[1])) * 0.5
+			var half := absf(float(band[1]) - float(band[0])) * 0.5 + 1e-4
+			outside += 1 if absf(wrapf(h - mid, -0.5, 0.5)) > half else 0
+			if order == 1:
+				old_outside += 1 if absf(wrapf(fposmod(phase, 1.0) - mid, -0.5, 0.5)) > half else 0
+	_ok(wheel, "the first voice no longer lights across the whole rainbow")
+	_ok(outside == 0, "%d hues left their voice's band" % outside)
+	_ok(jumps == 0, "%d jumps in a voice's sweep" % jumps)
+	_ok(old_outside > 100, "control: the whole wheel stays in the second voice's band (%d out)" % old_outside)
 
 
 ## A CHAPTER FILE OPENS WITH ITS OWN METADATA, and the reader must not announce

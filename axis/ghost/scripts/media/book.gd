@@ -190,6 +190,7 @@ var _map_src_n := 0
 var _lay_t := {}                 # layout word -> when it finished being spoken (show time)
 var _lay_t0 := {}                # ...and when it began
 var _char0 := PackedInt32Array() # layout word -> its first character's index in the text
+var _voice_of := PackedInt32Array() # layout word -> its voice's place among the chapter's (Subtitles.voice_hue)
 var _sent_lo := {}               # subtitle sentence id -> first layout word
 var _sent_hi := {}
 
@@ -564,10 +565,16 @@ func _ensure_layout() -> void:
 	# Every word's first character as an index into the running text, so each LETTER has a
 	# hue of its own that never depends on where a line or a sentence happens to break.
 	_char0 = PackedInt32Array()
+	_voice_of = PackedInt32Array()
 	var c := 0
+	var voices := {}
 	for w in lay.words:
 		_char0.append(c)
 		c += String((w as Dictionary)["text"]).length() + 1
+		var who := String((w as Dictionary).get("speaker", ""))
+		if not voices.has(who):
+			voices[who] = voices.size()
+		_voice_of.append(int(voices[who]))
 	_map = []
 	_map_j = 0
 	_map_rem = ""
@@ -1008,7 +1015,7 @@ func draw_page(ci: CanvasItem, page: int, hl: Dictionary) -> void:
 					g = exp(-maxf((frac - at) * maxf(t1 - t0, 0.05), 0.0) / TRAIL_TAU)
 				if g > 0.01:
 					var ci_i := _char0[i] + k if i < _char0.size() else k
-					var hue := fposmod(_seed_hue + float(ci_i) * HUE_STEP, 1.0)
+					var hue := Subtitles.voice_hue(_seed_hue + float(ci_i) * HUE_STEP, _voice_of[i] if i < _voice_of.size() else 0)
 					# the subtitles' saturation wave: two slow incommensurate ripples along
 					# the text, so the color breathes instead of sitting at one intensity
 					var sw := 0.5 + 0.35 * sin(float(ci_i) * 0.21 - now * 0.9) \

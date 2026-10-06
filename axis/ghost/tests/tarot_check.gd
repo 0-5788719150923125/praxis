@@ -48,7 +48,7 @@ func _init() -> void:
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
 			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects, _moves_after_words,
-			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt, _archive]:
+			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt, _cloth_prompt, _familiar, _archive]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -782,6 +782,9 @@ func _table_step() -> bool:
 			"the set dresser is not told the zone %s and its headroom" % z)
 	_ok(text.contains("Exactly 1 lit thing -"), "the set dresser is not told how many lit things the look has")
 	_ok(text.contains("a brass bell"), "the set dresser is not told what earlier tables held")
+	# NO BODIES: balls and rods made a squid on ice a bug in a box (feedback 0006)
+	_ok(text.contains("cannot make a BODY") and text.contains("it has no body"),
+		"the set dresser is not told that the parts cannot make a body")
 	_ok(int(head["back"]) < int(head["left"]) and int(head["back"]) > 3, "the back holds less height than the sides: %s" % str(head))
 	# THE EXAMPLE IS BUILDABLE, and the format it shows is the format read
 	var ex: Variant = TextGen.extract_json(TarotPrompts.SET_EXAMPLE)
@@ -955,6 +958,70 @@ func _stones() -> bool:
 			_ok(stacked > 0, "a heap of %d in a 1.5 cm circle did not pile up (none above the floor)" % xforms.size())
 			_ok(through == 0, "%d pairs of heaped copies pass through each other" % through)
 		_ok(below == 0, "%d copies of %s sink below the floor" % [below, t["name"]])
+	# NO LUMP BALANCED ON ANOTHER (feedback 0005, 0006: "one pebble is balanced precariously upon
+	# another pebble"): every heaped lump off the floor lies in a POCKET - three or more lumps
+	# touching it from below, its middle inside them - unless it is flat. Over handfuls of every
+	# crowding; two-sided against the rule it replaced (a lump may rest over ONE lump's middle),
+	# which stacks columns on the same handfuls.
+	var perched := 0
+	var piled := 0
+	var crossed := 0
+	var old_perched := 0
+	var slowest := 0
+	for c in [[18, 1.5, [2, 1.2, 1.6], 0.6], [7, 2.6, [1.8, 1.4, 2.2], 0.5], [12, 3.0, [2.2, 1.6, 2.0], 0.3],
+			[24, 2.0, [1.4, 1.0, 1.6], 1.0], [16, 5.5, [2.2, 1.2, 2.4], 0.6]]:
+		var hp: Dictionary = (Props.sanitize({"things": [{"name": "h", "parts": [{"shape": "ball", "size": c[2], "lumpy": 0.4,
+			"copies": {"heap": {"count": c[0], "radius": c[1]}, "jitter": c[3]}}]}]}, ["#112233"])["things"][0] as Dictionary)["parts"][0]
+		for sd in 5:
+			var rng := RandomNumberGenerator.new()
+			rng.seed = sd
+			var geos := Props._geometry(hp, rng)
+			var bounds := Props._bounds(geos, Transform3D.IDENTITY)
+			var t0 := Time.get_ticks_msec()
+			var xforms := Props._placements(hp, rng, geos)
+			slowest = maxi(slowest, Time.get_ticks_msec() - t0)
+			var lumps := _lumps(xforms, bounds)
+			perched += _perched(lumps)
+			crossed += _crossed(lumps)
+			for l in lumps:
+				piled += 1 if (l[0] as Vector3).y > float(l[2]) * 1.05 else 0
+			var old := RandomNumberGenerator.new()
+			old.seed = sd
+			old_perched += _perched(_retired_heap(int(c[0]), float(c[3]), float(c[1]) * 0.01, bounds, old))
+	_ok(perched == 0, "%d heaped lumps balance on fewer than three (of %d off the floor)" % [perched, piled])
+	_ok(piled > 20, "the heaps hardly pile at all (%d lumps off the floor)" % piled)
+	_ok(crossed == 0, "%d pairs of heaped lumps pass through each other" % crossed)
+	_ok(old_perched > 0, "control: the retired rule balanced no lump on another")
+	print("  heaps: %d lumps off the floor, every one in a pocket (the retired rule balanced %d); slowest heap %d ms"
+		% [piled, old_perched, slowest])
+	# A HEAP IN A DISH STAYS IN IT: a handful too big for the dish's floor piles against its wall -
+	# never through it - and what has no room is left out. Two-sided: the same heap laid with no
+	# wall to know of spills through the dish.
+	var dish := Props.sanitize({"things": [{"name": "a crowded dish", "parts": [
+		{"shape": "extrude", "outline": "circle", "size": [9, 9], "height": 1.5, "wall": 0.35},
+		{"at": [0, 0.35, 0], "shape": "ball", "size": [1.8, 1.4, 2.2], "lumpy": 0.4,
+			"copies": {"heap": {"count": 20, "radius": 2.6}, "jitter": 0.5}}]}]}, ["#112233"])
+	var dparts: Array = (dish["things"][0] as Dictionary)["parts"]
+	var through_wall := 0
+	var blind_through := 0
+	var laid_in := 0
+	for sd in 4:
+		var leaves := Props._assemble(dparts, sd, [])
+		var walls := Props._walls(leaves, 1, Vector3(0.0, 0.0035, 0.0))
+		_ok(absf(float(walls.get("radius", 0.0)) - 0.0415) < 0.001 and absf(float(walls.get("top", 0.0)) - 0.0115) < 0.001,
+			"the dish's wall was not found 4.15 cm out and 1.15 cm high: %s" % str(walls))
+		var bounds := Props._bounds((leaves[1] as Dictionary)["geos"], Transform3D.IDENTITY)
+		laid_in += ((leaves[1] as Dictionary)["xforms"] as Array).size()
+		through_wall += _through_wall(_lumps((leaves[1] as Dictionary)["xforms"], bounds), 0.0035, walls)
+		var blind := RandomNumberGenerator.new()
+		blind.seed = sd
+		var bgeos := Props._geometry(dparts[1], blind)
+		blind_through += _through_wall(_lumps(Props._placements(dparts[1], blind, bgeos), bounds), 0.0035, walls)
+	_ok(through_wall == 0, "%d heaped stones pass through the wall of the dish they lie in" % through_wall)
+	_ok(laid_in > 60, "a dish of 20 kept only %d of 80 stones over four handfuls" % laid_in)
+	_ok(blind_through > 0, "control: a heap laid with no wall to know of stayed inside the dish anyway")
+	var open := Props._walls(Props._assemble([dparts[1]], 1, []), 0, Vector3(0.0, 0.0035, 0.0))
+	_ok(open.is_empty(), "a heap on the open cloth found a wall: %s" % str(open))
 	# A LIST OF MATERIALS: one mesh for each, its copies in turn; every vertex knows its copy
 	var heap := Props.build(things[1], mats, 3)
 	var colors := {}
@@ -997,6 +1064,107 @@ func _stones() -> bool:
 	_ok(absf((geo["size"] as AABB).position.y) < 0.0005, "a geode does not rest on the cloth")
 	(geo["node"] as Node).free()
 	return true
+
+
+## Heaped copies as lumps: `[middle, half-width, half height]`, read back off their transforms.
+func _lumps(xforms: Array, bounds: Dictionary) -> Array:
+	var tall := float(bounds["high"]) - float(bounds["low"])
+	var out: Array = []
+	for x in xforms:
+		var xf: Transform3D = x
+		var s := xf.basis.get_scale().x
+		out.append([xf * Vector3(0.0, float(bounds["low"]) + tall * 0.5, 0.0), float(bounds["girth"]) * s, tall * s * 0.5])
+	return out
+
+
+## How many lumps off the floor are held by fewer than three lumps under them, or stand outside
+## the ones holding them - a flat lump across the middle of one excepted.
+func _perched(lumps: Array) -> int:
+	var n := 0
+	for i in lumps.size():
+		var p: Vector3 = lumps[i][0]
+		var a := float(lumps[i][1])
+		var b := float(lumps[i][2])
+		if p.y <= b * 1.05:
+			continue
+		var under := PackedVector2Array()
+		var across := false
+		for j in lumps.size():
+			var q: Vector3 = lumps[j][0]
+			if j == i or q.y >= p.y:
+				continue
+			var A := (a + float(lumps[j][1])) * Props.NESTLE
+			var B := (b + float(lumps[j][2])) * Props.NESTLE
+			var d := p - q
+			if (d.x * d.x + d.z * d.z) / (A * A) + d.y * d.y / (B * B) <= 1.03:
+				under.append(Vector2(q.x, q.z))
+				across = across or (a >= b * Props.FLAT and Vector2(d.x, d.z).length() <= A * 0.5)
+		if across:
+			continue
+		if under.size() < 3 or not Geometry2D.is_point_in_polygon(Vector2(p.x, p.z), Geometry2D.convex_hull(under)):
+			n += 1
+	return n
+
+
+## How many lumps below a dish's rim reach past its wall (a millimeter's grace); [param floor] is
+## the dish's floor height, meters.
+func _through_wall(lumps: Array, floor: float, walls: Dictionary) -> int:
+	var n := 0
+	for l in lumps:
+		var p: Vector3 = l[0]
+		if p.y - floor - float(l[2]) < float(walls["top"]) and Vector2(p.x, p.z).length() + float(l[1]) > float(walls["radius"]) + 0.001:
+			n += 1
+	return n
+
+
+## How many pairs of lumps pass through each other (beyond the nestle).
+func _crossed(lumps: Array) -> int:
+	var n := 0
+	for i in lumps.size():
+		for j in range(i + 1, lumps.size()):
+			var A := (float(lumps[i][1]) + float(lumps[j][1])) * Props.NESTLE
+			var B := (float(lumps[i][2]) + float(lumps[j][2])) * Props.NESTLE
+			var d: Vector3 = lumps[i][0] - lumps[j][0]
+			if (d.x * d.x + d.z * d.z) / (A * A) + d.y * d.y / (B * B) < 0.97:
+				n += 1
+	return n
+
+
+## THE HEAP RULE IT REPLACED (feedback 0005's), kept as the control: the lowest of a few drops,
+## resting over the middle of whichever lump holds it up.
+func _retired_heap(n: int, jit: float, radius: float, bounds: Dictionary, rng: RandomNumberGenerator) -> Array:
+	var girth := float(bounds["girth"])
+	var tall := float(bounds["high"]) - float(bounds["low"])
+	var laid: Array = []
+	for i in n:
+		var s := 1.0 + rng.randf_range(-0.15, 0.15) * jit
+		var hh := tall * s * 0.5
+		var lowest := INF
+		var spot := Vector2.ZERO
+		for k in 30:
+			var q := Vector2.from_angle(rng.randf() * TAU) * radius * sqrt(rng.randf())
+			var y := hh
+			var held := 0.0
+			for e in laid:
+				var touch := (girth * s + float(e[2])) * 0.9
+				var d := q.distance_to(Vector2(e[0].x, e[0].z))
+				if d < touch:
+					var up: float = e[0].y + (hh + float(e[3])) * sqrt(1.0 - pow(d / touch, 2.0)) * 0.9
+					if up > y:
+						y = up
+						held = d / touch
+			if held > 0.5 and y > hh * 1.05:
+				continue
+			if y < lowest:
+				lowest = y
+				spot = q
+			if k >= 5 and lowest < INF:
+				break
+		if lowest == INF:
+			lowest = hh
+			spot = Vector2.from_angle(rng.randf() * TAU) * radius * 1.3
+		laid.append([Vector3(spot.x, lowest, spot.y), 0.0, girth * s, hh])
+	return laid.map(func(e: Array) -> Array: return [e[0], e[2], e[3]])
 
 
 ## THE CARD STOCK is the producer's choice (asked only for "card stock", it printed every deck on
@@ -1174,6 +1342,83 @@ func _room_prompt() -> bool:
 	_ok(p.contains("THE CAMERA IS LEVEL") and p.contains("%d mm lens" % int(TarotTable.BACKDROP_LENS))
 		and p.contains("exact middle") and p.contains("LOWER THIRD"),
 		"the room's picture is not asked for level, through the table's lens, its lower third carrying the place")
+	return true
+
+
+## THE CLOTH IS A TEXTURE (feedback 0006: painted seawater beads "have no depth"): asked for dry,
+## bare and flat-lit at its true scale, landscape - and laid on the cloth with its pixels square,
+## two-sided against the old stretch.
+func _cloth_prompt() -> bool:
+	var p := TarotPrompts.surface_image({"surface": "a wet steel table beaded with seawater", "palette": ["#112233"]}, "/tmp/x.png")
+	_ok(p.contains("DRY AND BARE, whatever the description says") and p.contains("IT IS A TEXTURE")
+		and p.contains("no reflections") and p.contains("LANDSCAPE 3:2"),
+		"the cloth's picture is not asked for dry, bare, flat-lit and landscape")
+	_ok(p.contains("%d cm of the surface from side to side" % int(TarotTable.CLOTH_PICTURE.x)), "the cloth's picture is not told its scale")
+	var plan := String(TarotPrompts.producer("T", "B", 7, 3, true, TarotTable.FACES, TarotTable.FRAMES, [], TarotDeck.standard())["prompt"])
+	_ok(plan.contains("the bare material, dry"), "the producer is not told the surface is the bare material, dry")
+	var cloth := Vector2(1.2, 0.72)
+	for pic in [Vector2(1024, 1024), Vector2(1536, 1024), Vector2(1024, 1536), Vector2(2048, 800)]:
+		var crop := TarotTable.cloth_crop(pic, cloth)
+		# meters a pixel across and down: equal, and the crop inside the picture
+		var across: float = cloth.x / (crop.size.x * pic.x)
+		var down: float = cloth.y / (crop.size.y * pic.y)
+		_ok(absf(across / down - 1.0) < 0.001 and crop.position.x >= 0.0 and crop.position.y >= 0.0
+			and crop.end.x <= 1.0001 and crop.end.y <= 1.0001, "a %s picture is laid on the cloth unevenly: %s" % [str(pic), str(crop)])
+	var stretched := (cloth.x / 1024.0) / (cloth.y / 1024.0)
+	_ok(absf(stretched - 1.0) > 0.5, "control: a square picture stretched over the cloth is already even")
+	var wide := TarotTable.cloth_crop(Vector2(TarotTable.CLOTH_PICTURE.x, TarotTable.CLOTH_PICTURE.y), cloth)
+	_ok(wide.size.x == 1.0 and wide.size.y > 0.85, "the picture asked for does not cover the cloth nearly whole: %s" % str(wide))
+	return true
+
+
+## MORE THAN ONE VOICE (2026-10-05: a familiar on the reader's shoulder, "mostly silent, but
+## sometimes they'll make a quip"): the reader is told the show's other voices and how to hand one
+## a line - and a show with one voice is told nothing of it (two-sided); the cues a writer sends
+## are held to the show's own names (any spelling of one; anyone else's cue taken out, its words
+## kept); and the script keeps them for the voice, on lines of their own, never as words the table
+## follows, every passage opening in the reader's voice - two-sided against the passages simply
+## joined, which gave the next card's reading to the familiar.
+func _familiar() -> bool:
+	var ep := _episode(2)
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief.", "voices": ["Narrator", "Familiar"]})
+	var told := String(prod.say_prompt("1")["prompt"])
+	_ok(told.contains("OTHER VOICES: Familiar.") and told.contains("<!-- speaker: Familiar -->")
+		and told.contains("<!-- speaker: %s -->" % Manuscript.NARRATOR) and told.contains("write every word of it - your own"),
+		"the reader is not told the show's other voice and how to hand it a line")
+	var alone := TarotProducer.new(ep, {"title": "Test Tarot", "brief": "A brief.", "voices": ["Narrator"]})
+	_ok(not String(alone.say_prompt("1")["prompt"]).contains("speaker:"), "control: a show with one voice is told about speaker cues")
+	# LANDING: the show's own spelling, and no voice the show does not have
+	var landed := TarotProducer.own_voices("Hello.\n<!-- speaker: familiar -->\nOh no.\n<!-- speaker: Spirit -->\nBoo. <!-- speaker: NARRATOR --> Hush.", ["Familiar"])
+	_ok(landed.contains("<!-- speaker: Familiar -->") and landed.contains("<!-- speaker: %s -->" % Manuscript.NARRATOR)
+		and not landed.contains("Spirit") and landed.contains("Boo.") and landed.contains("Oh no."),
+		"a writer's cues are not held to the show's voices: %s" % landed.c_escape())
+	# THE SCRIPT: a card ends on the familiar's quip (written inline, as a writer may); the next opens in the reader's
+	var texts := ["Hello, my loves. Welcome back.\n<!-- speaker: Familiar -->\nHere we go again.\n<!-- speaker: Narrator -->\nShush. Let's shuffle.",
+		"The Tower. Big changes for you. <!-- speaker: Familiar --> There is always a tower.",
+		"The Star. Hope, my loves, hope.", "That is the reading. Go and do the thing."]
+	var script := TarotScript.compose([{"kind": "shuffle", "card": 0, "text": texts[0]}, {"kind": "draw", "card": 1, "text": texts[1]},
+		{"kind": "draw", "card": 2, "text": texts[2]}, {"kind": "spread", "card": 0, "text": texts[3]}])
+	var p := TarotScript.parse(script)
+	var who: Array = []
+	var star := ""
+	for q in Manuscript.passages(String(p["speakable"])):
+		if not Manuscript.unspoken(String((q as Dictionary)["text"])).strip_edges().is_empty():
+			who.append(String((q as Dictionary)["speaker"]))
+			if String((q as Dictionary)["text"]).contains("The Star"):
+				star = String((q as Dictionary)["speaker"])
+	var n := Manuscript.NARRATOR
+	_ok(who == [n, "Familiar", n, "Familiar", n], "the reading's voices go %s" % str(who))
+	_ok(star == n, "the card after the familiar's quip is read by %s, not the reader" % star)
+	_ok(not (p["spoken"] as PackedStringArray).has("speaker") and not (p["spoken"] as PackedStringArray).has("familiar"),
+		"a cue's words are among the words the table follows")
+	_ok(String(p["speakable"]).count("action-hold") == 4, "a table's rest was lost among the cues")
+	var naive := ""
+	for q in Manuscript.passages("\n\n".join(PackedStringArray(texts)).replace(" <!-- speaker: Familiar --> ", "\n<!-- speaker: Familiar -->\n")):
+		if String((q as Dictionary)["text"]).contains("The Star"):
+			naive = String((q as Dictionary)["speaker"])
+	_ok(naive == "Familiar", "control: passages simply joined still gave the next card to the reader (%s)" % naive)
+	# WHAT EARLIER EPISODES SAID keeps who said it
+	_ok(TarotPrompts.heard("Hi.\n<!-- speaker: Familiar -->\nNo.").contains("(Familiar:) No."), "an earlier episode's quip is not marked as the familiar's")
 	return true
 
 

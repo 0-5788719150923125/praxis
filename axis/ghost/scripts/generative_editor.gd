@@ -4397,7 +4397,7 @@ func export_take() -> String:
 			if tail == null:
 				tail = span
 			rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
-				"emph": int(w.get("emph", 0)),
+				"emph": int(w.get("emph", 0)), "speaker": who,
 				"t0": 0.0 if span == null else
 					_shifted(float((span as Dictionary).get("t0", 0.0)), spliced["cuts"], ratio, true)
 					+ elapsed,
@@ -4582,7 +4582,7 @@ static func _bridge_words(rows: Array, label: String) -> Array:
 	for r in rows:
 		var d: Dictionary = r
 		out.append({"text": d["text"], "sentence": d["sentence"], "t0": d["t0"], "t1": d["t1"],
-			"emph": int(d.get("emph", 0))})
+			"emph": int(d.get("emph", 0)), "speaker": String(d.get("speaker", ""))})
 	return out
 
 
@@ -4599,6 +4599,8 @@ func _words_for(idx: int, spans: Array) -> Array:
 	for s in spans:
 		by_index[int((s as Dictionary).get("index", -1))] = s
 	var rows: Array = []
+	# WHO SAYS IT rides with each word: the subtitles color each voice its own way
+	var who := String((_chunks[idx] as Dictionary).get("speaker", ""))
 	for w in _chunks[idx]["words"]:
 		var span: Variant = by_index.get(int(w["index"]))
 		# A run's card is up from its first word to its LAST - `end` is that word
@@ -4608,7 +4610,7 @@ func _words_for(idx: int, spans: Array) -> Array:
 		if tail == null:
 			tail = span
 		rows.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
-			"emph": int(w.get("emph", 0)),
+			"emph": int(w.get("emph", 0)), "speaker": who,
 			"t0": 0.0 if span == null else float((span as Dictionary).get("t0", 0.0)),
 			"t1": 0.0 if tail == null else float((tail as Dictionary).get("t1", 0.0)),
 			"ok": span != null})
