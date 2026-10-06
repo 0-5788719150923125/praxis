@@ -497,6 +497,7 @@ ENGINE_FLAGS = {
     "--system-prompt-file",
     "--no-session-persistence",
     "--input-format",
+    "--effort",
     "--ephemeral",
     # ...and a writer working with ghost's own tools (AgentTools): their config, nothing else's
     "--mcp-config",

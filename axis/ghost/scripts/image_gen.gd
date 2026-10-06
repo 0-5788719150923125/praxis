@@ -65,6 +65,11 @@ class Backend:
 	func advance(_job: Dictionary) -> int:
 		return 0
 
+	## The reasoning efforts a picker offers the agent that asks for the picture (see
+	## [method TextGen.Backend.efforts]); the default alone where there is no such setting.
+	static func efforts(_model := "") -> Array:
+		return [{"key": "", "label": "Default"}]
+
 
 ## OPENAI THROUGH THE CODEX CLI.
 ##
@@ -76,8 +81,8 @@ class Backend:
 ## keyed by the thread id from the first JSONL event and filtered to files made after the job
 ## began - never "the newest png anywhere", which would hand one chapter another's picture.
 ##
-## Reasoning effort is pinned LOW for these runs: the author's default is the maximum, which
-## is right for code and pure latency for "call one tool and copy one file".
+## Reasoning effort is LOW unless the panel asks for another: the author's default is the
+## maximum, which is right for code and pure latency for "call one tool and copy one file".
 ##
 ## `--ephemeral`: ghost keeps the picture, so Codex keeps no session. A session log holds every
 ## reference and the result as base64 (5-20 MB a picture) and Codex never prunes them. Measured on
@@ -106,10 +111,19 @@ class Codex:
 			return -1
 		pf.store_string(String(job["prompt"]))
 		pf.close()
+		var pid := Subprocess.start_redirected(binary(), Codex.argv(job), {"stdin": prompt_path,
+			"out": String(job["events"]), "err": String(job["log"])}, "codex image")
+		if pid <= 0:
+			job["error"] = "could not start codex (is the Codex CLI installed and logged in?)"
+		return pid
+
+	## Flags and paths only - the prompt is on stdin.
+	static func argv(job: Dictionary) -> PackedStringArray:
+		var effort := String(job.get("effort", ""))
 		var args := PackedStringArray([
 			"exec", "--skip-git-repo-check", "--json", "--ephemeral",
-			"-s", "workspace-write", "-C", dir,
-			"-c", "model_reasoning_effort=low"])
+			"-s", "workspace-write", "-C", String(job["dir"]),
+			"-c", "model_reasoning_effort=" + (effort if not effort.is_empty() else "low")])
 		# the model of the AGENT that calls the image tool - the picture is the tool's either way
 		if not String(job.get("model", "")).is_empty():
 			args.append_array(["-m", String(job["model"])])
@@ -119,11 +133,10 @@ class Codex:
 			args.append("--image=" + String(r))
 		args.append("--")
 		args.append("-")
-		var pid := Subprocess.start_redirected(binary(), args, {"stdin": prompt_path,
-			"out": String(job["events"]), "err": String(job["log"])}, "codex image")
-		if pid <= 0:
-			job["error"] = "could not start codex (is the Codex CLI installed and logged in?)"
-		return pid
+		return args
+
+	static func efforts(model := "") -> Array:
+		return TextGen.effort_list(Codex.levels(model), "Default (low)")
 
 	func resolve(job: Dictionary) -> String:
 		var target := String(job.get("target", ""))
@@ -159,12 +172,7 @@ class Codex:
 	## keeps for itself (`models_cache.json` - what `codex debug models` prints), so it is the list
 	## this installation actually has, and reading it costs nothing. Hidden entries stay hidden.
 	static func models() -> Array:
-		var dflt := ""
-		for line in FileAccess.get_file_as_string(home().path_join("config.toml")).split("\n"):
-			var t := String(line).strip_edges()
-			if t.begins_with("model ") or t.begins_with("model="):
-				dflt = t.get_slice("=", 1).strip_edges().trim_prefix("\"").trim_suffix("\"")
-				break
+		var dflt := Codex.default_model()
 		var out: Array = [{"key": "", "label": "Default" + ((" (%s)" % dflt) if not dflt.is_empty() else "")}]
 		var j := JSON.new()
 		if j.parse(FileAccess.get_file_as_string(home().path_join("models_cache.json"))) == OK and j.data is Dictionary:
@@ -172,6 +180,39 @@ class Codex:
 				if m is Dictionary and String((m as Dictionary).get("visibility", "list")) == "list":
 					out.append({"key": String(m["slug"]), "label": String((m as Dictionary).get("display_name", m["slug"]))})
 		return out
+
+
+	## The model the author's config names (`model = ...` in config.toml), "" when it names none.
+	static func default_model() -> String:
+		for line in FileAccess.get_file_as_string(home().path_join("config.toml")).split("\n"):
+			var t := String(line).strip_edges()
+			if t.begins_with("model ") or t.begins_with("model="):
+				return t.get_slice("=", 1).strip_edges().trim_prefix("\"").trim_suffix("\"")
+		return ""
+
+
+	## THE REASONING LEVELS CODEX OFFERS [param model] (the config's own for ""), lightest first:
+	## its catalog's `supported_reasoning_levels`, so a picker never offers a level the model would
+	## refuse. A model the catalog does not list gets every level any listed model takes.
+	static func levels(model := "") -> PackedStringArray:
+		var want := model if not model.is_empty() else Codex.default_model()
+		var every := PackedStringArray()
+		var j := JSON.new()
+		if j.parse(FileAccess.get_file_as_string(home().path_join("models_cache.json"))) != OK or not (j.data is Dictionary):
+			return PackedStringArray(["low", "medium", "high"])
+		for m in (j.data as Dictionary).get("models", []):
+			if not (m is Dictionary):
+				continue
+			var mine := PackedStringArray()
+			for lv in (m as Dictionary).get("supported_reasoning_levels", []):
+				var e := str((lv as Dictionary).get("effort", "")) if lv is Dictionary else str(lv)
+				if not e.is_empty():
+					mine.append(e)
+					if not every.has(e):
+						every.append(e)
+			if String((m as Dictionary).get("slug", "")) == want and not mine.is_empty():
+				return mine
+		return every
 
 	## The thread id from a `codex exec --json` event log, or "".
 	static func thread_id(events_path: String) -> String:

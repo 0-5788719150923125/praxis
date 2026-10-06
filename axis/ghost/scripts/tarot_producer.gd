@@ -176,7 +176,7 @@ func _submit_text(step: String, p: Dictionary, tier: String, extra: Dictionary =
 	var job := {"kind": "text", "backend": String(spec.get("writer", "claude")),
 		"tier": tier, "dir": episode.job_dir(step), "system": String(p["system"]),
 		"prompt": String(p["prompt"]), "images": p.get("images", []), "label": "tarot %s" % step,
-		"model": String(spec.get("writer_model", ""))}
+		"model": String(spec.get("writer_model", "")), "effort": String(spec.get("writer_effort", ""))}
 	job.merge(extra, true)
 	var id := AgentJobs.submit(job)
 	if id.is_empty():
@@ -191,7 +191,7 @@ func _submit_image(step: String, prompt: String, refs: Array) -> void:
 	var id := AgentJobs.submit({"kind": "image", "backend": String(spec.get("painter", "codex")),
 		"dir": episode.job_dir(step), "prompt": prompt, "refs": refs,
 		"target": episode.file_of(step), "label": "tarot %s" % step,
-		"model": String(spec.get("painter_model", ""))})
+		"model": String(spec.get("painter_model", "")), "effort": String(spec.get("painter_effort", ""))})
 	if id.is_empty():
 		_errors[step] = "this session cannot start agents (read-only)"
 		return

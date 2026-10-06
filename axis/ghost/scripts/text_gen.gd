@@ -149,6 +149,20 @@ static func put(path: String, text: String) -> String:
 
 ## The base every backend extends. It does nothing; a backend that forgets a method fails
 ## visibly (no pid, no reply) rather than silently.
+## A picker's efforts: [param dflt] (key "") first, then each of [param levels].
+static func effort_list(levels: Array, dflt := "Default") -> Array:
+	var out: Array = [{"key": "", "label": dflt}]
+	for e in levels:
+		out.append({"key": String(e), "label": TextGen.effort_label(String(e))})
+	return out
+
+
+## An effort level as a person reads it.
+static func effort_label(key: String) -> String:
+	return String({"minimal": "Minimal", "low": "Low", "medium": "Medium", "high": "High",
+		"xhigh": "Extra high", "max": "Max", "ultra": "Ultra"}.get(key, key.capitalize()))
+
+
 class Backend:
 	extends RefCounted
 
@@ -161,6 +175,12 @@ class Backend:
 
 	## The models a picker offers for this writer: `[{key, label}]`, the default (key "") first.
 	static func models() -> Array:
+		return [{"key": "", "label": "Default"}]
+
+	## The reasoning efforts a picker offers for this writer running [param model]: `[{key, label}]`,
+	## the writer's own default (key "") first - and alone when the writer takes no such setting.
+	## A job's `effort` is one of the keys.
+	static func efforts(_model := "") -> Array:
 		return [{"key": "", "label": "Default"}]
 
 	func start(_job: Dictionary) -> int:
@@ -203,6 +223,24 @@ class Claude:
 	extends Backend
 
 	const MODELS := {"best": "opus", "fast": "sonnet"}
+	## `--effort`'s levels, as the CLI names them when handed another. Unset, a run takes the
+	## author's own Claude Code default for its model (see [method saved_effort]).
+	const EFFORTS := ["low", "medium", "high", "xhigh", "max"]
+
+	static func efforts(model := "") -> Array:
+		var mine := Claude.saved_effort(model if not model.is_empty() else String(MODELS["best"]))
+		return TextGen.effort_list(EFFORTS, "Default" + ((" (%s)" % TextGen.effort_label(mine)) if not mine.is_empty() else ""))
+
+	## The effort the author's Claude Code keeps for a model ([param alias]: "opus", "sonnet"...):
+	## `modelSettings.<model id>.effortLevel` in ~/.claude/settings.json, "" when it keeps none.
+	static func saved_effort(alias: String) -> String:
+		var ms: Variant = Provision.read_json(Deps.home().path_join(".claude/settings.json")).get("modelSettings", {})
+		if ms is Dictionary:
+			for id in ms as Dictionary:
+				var d: Variant = (ms as Dictionary)[id]
+				if String(id).contains(alias) and d is Dictionary and (d as Dictionary).has("effortLevel"):
+					return str((d as Dictionary)["effortLevel"])
+		return ""
 
 	## Claude Code's own aliases - each the newest model of its family, so the list never goes
 	## stale. "Default" is the tiers above: Opus for what is heard, Sonnet for the bookkeeping.
@@ -255,6 +293,8 @@ class Claude:
 	## CLAUDE.md), and the system prompt replaces Claude Code's either way.
 	static func argv(job: Dictionary, system_path: String, tools: PackedStringArray) -> PackedStringArray:
 		var args := PackedStringArray(["-p", "--model", Claude.model_of(job)])
+		if not String(job.get("effort", "")).is_empty():
+			args.append_array(["--effort", String(job["effort"])])
 		args.append_array(PackedStringArray(["--setting-sources", ""]) if not tools.is_empty() else PackedStringArray(["--safe-mode"]))
 		args.append_array(["--tools", "",
 			"--system-prompt-file", system_path,
@@ -351,6 +391,10 @@ class Codex:
 	static func models() -> Array:
 		return ImageGen.Codex.models()
 
+	## The levels Codex offers [param model]; unset, the tier's ([constant EFFORT]).
+	static func efforts(model := "") -> Array:
+		return TextGen.effort_list(ImageGen.Codex.levels(model), "Default (medium, low for designs)")
+
 	## What an agent with tools is told before anything else.
 	const ONLY_THIS := ("You are writing, not working: everything you need is in this message and the "
 		+ "pictures attached to it. Do not run commands, and do not open, list or read any file - "
@@ -411,7 +455,8 @@ class Codex:
 	static func argv(job: Dictionary, pictures: Array) -> PackedStringArray:
 		var args := PackedStringArray(["exec", "--skip-git-repo-check", "--json", "--ephemeral",
 			"-s", "read-only", "-C", String(job["dir"]),
-			"-c", "model_reasoning_effort=" + String(EFFORT.get(String(job.get("tier", "best")), "medium")),
+			"-c", "model_reasoning_effort=" + (String(job["effort"]) if not String(job.get("effort", "")).is_empty()
+				else String(EFFORT.get(String(job.get("tier", "best")), "medium"))),
 			"-o", String(Backend.paths(job)["last"])])
 		if not String(job.get("model", "")).is_empty():
 			args.append_array(["-m", String(job["model"])])
@@ -461,6 +506,9 @@ class Bedrock:
 	const MODELS := {"best": "amazon.nova-2-lite-v1:0", "fast": "amazon.nova-lite-v1:0"}
 	## Nova 1 models stop at 10K output tokens (Nova 2 Lite at 64K); a tarot plan runs to ~6K.
 	const MAX_TOKENS := 10000
+	## Nova 2's extended thinking (`reasoningConfig.maxReasoningEffort`), off unless asked for; no
+	## other Amazon model takes it. Its tokens bill as output.
+	const EFFORTS := ["low", "medium", "high"]
 	## What the model picker offers before the account has been asked; the catalog replaces it.
 	const SEED := [
 		{"id": "amazon.nova-2-lite-v1:0", "name": "Nova 2 Lite", "provider": "Amazon", "images": true},
@@ -488,6 +536,14 @@ class Bedrock:
 			out.append({"key": String(d["id"]),
 				"label": Catalog.label(d) + ("" if bool(d.get("images", true)) else " (text only)")})
 		return out
+
+	## Whether a model (a base id or a route) thinks when asked: Nova 2's.
+	static func thinks(id: String) -> bool:
+		return id.contains("nova-2")
+
+	static func efforts(model := "") -> Array:
+		var id := model if not model.is_empty() else String(MODELS["best"])
+		return TextGen.effort_list(EFFORTS if Bedrock.thinks(id) else [], "Default (off)")
 
 	static func name_of(id: String) -> String:
 		for m in Bedrock.listed() + SEED:
@@ -583,7 +639,7 @@ class Bedrock:
 			return -1
 		job["route"] = "%s in %s" % [String(e["route"]), String(e["region"])]
 		var req := Bedrock.request(String(e["route"]), String(job.get("system", "")), job.get("content", []),
-			int(job.get("max_tokens", MAX_TOKENS)), bool(job.get("fold", false)))
+			int(job.get("max_tokens", MAX_TOKENS)), bool(job.get("fold", false)), String(job.get("effort", "")))
 		var err := TextGen.put(String(p["input"]), JSON.stringify(req))
 		if not err.is_empty():
 			job["error"] = err
@@ -621,9 +677,10 @@ class Bedrock:
 		return {"image": {"format": "jpeg", "source": {"bytes": Marshalls.raw_to_base64(img.save_jpg_to_buffer(0.9))}}}
 
 	## The Converse request, as the CLI reads it from its input file. [param fold] sends the system
-	## prompt at the head of the message, for a model that takes none.
+	## prompt at the head of the message, for a model that takes none. [param effort] turns on a
+	## thinking model's extended thinking; at "high", Nova 2 wants no output cap at all.
 	static func request(model_id: String, system: String, content: Array, max_tokens := MAX_TOKENS,
-			fold := false) -> Dictionary:
+			fold := false, effort := "") -> Dictionary:
 		var blocks := content.duplicate()
 		var has_system := not system.strip_edges().is_empty()
 		if fold and has_system:
@@ -633,6 +690,10 @@ class Bedrock:
 			"inferenceConfig": {"maxTokens": max_tokens}}
 		if has_system and not fold:
 			req["system"] = [{"text": system}]
+		if not effort.is_empty() and Bedrock.thinks(model_id):
+			req["additionalModelRequestFields"] = {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
+			if effort == "high":
+				req.erase("inferenceConfig")
 		return req
 
 	## Flags and a path only - the request is in the file.

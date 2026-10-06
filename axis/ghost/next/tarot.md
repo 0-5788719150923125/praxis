@@ -18,7 +18,12 @@ format and voice, told true).
    each the newest of its family; Default is Opus for the plan and reading, Sonnet for the card
    designs), Codex's from the catalog the CLI keeps (`~/.codex/models_cache.json`, listed entries
    only; Default is the author's config). Saved as `writer_model` / `painter_model`. The painter's
-   model is the agent that asks for a picture; the picture is Codex's image tool's either way. **Folder** opens the episode: every prompt beside its reply.
+   model is the agent that asks for a picture; the picture is Codex's image tool's either way.
+   Beside each model, the REASONING EFFORT (2026-10-06), saved as `writer_effort` /
+   `painter_effort`: each CLI's own levels - Claude's `--effort` (low..max; Default = the author's
+   Claude Code setting for the model), Codex's `model_reasoning_effort` (the model's catalog levels;
+   Default = medium, low for designs; the painter low), Nova 2 Lite's extended thinking (low..high,
+   billed as output; Default off). Bedrock's painter takes none (the picker grays out). **Folder** opens the episode: every prompt beside its reply.
 3. **Play** reads it at the table (the karaoke line tracks the voice). The voice is the panel's
    own and is saved in the show's frontmatter; **Test** auditions it.
 4. **Export** renders the video, named after the episode's title; the episode's folder then holds

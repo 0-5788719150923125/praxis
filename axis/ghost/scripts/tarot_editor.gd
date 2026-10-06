@@ -21,7 +21,8 @@ const TagField := preload("res://scripts/tag_field.gd")
 ## The knobs a show keeps beside its voice. Also the schema: a stored value of the wrong shape
 ## falls back to these.
 const KNOBS := {"show": "", "seed": 1, "cards": [3, 6], "reversals": true, "jumpers": true,
-	"writer": "claude", "writer_model": "", "painter": "codex", "painter_model": ""}
+	"writer": "claude", "writer_model": "", "writer_effort": "", "painter": "codex", "painter_model": "",
+	"painter_effort": ""}
 ## The rows of the episode list: a label and the steps it covers ("K" is each card).
 const ROWS := [
 	["Plan", ["plan"]],
@@ -59,6 +60,8 @@ var _writer_pick: OptionButton
 var _painter_pick: OptionButton
 var _writer_model: OptionButton
 var _painter_model: OptionButton
+var _writer_effort: OptionButton
+var _painter_effort: OptionButton
 var _cards_lo: SpinBox
 var _cards_hi: SpinBox
 var _reversals: CheckBox
@@ -294,8 +297,8 @@ func _spec() -> Dictionary:
 	return {"title": _show_title(), "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
 		"voices": _cast_dict().keys(),
 		"cards": _knobs["cards"], "reversals": _knobs["reversals"], "jumpers": _knobs["jumpers"],
-		"writer": _knobs["writer"], "writer_model": _knobs["writer_model"],
-		"painter": _knobs["painter"], "painter_model": _knobs["painter_model"]}
+		"writer": _knobs["writer"], "writer_model": _knobs["writer_model"], "writer_effort": _knobs["writer_effort"],
+		"painter": _knobs["painter"], "painter_model": _knobs["painter_model"], "painter_effort": _knobs["painter_effort"]}
 
 
 func _doc_capture() -> Dictionary:
@@ -528,16 +531,26 @@ func _build_source(box: VBoxContainer) -> void:
 		func(k: String) -> bool: return TextGen.make(k).available(),
 		"Who writes the plan, the booklet and the reading.",
 		func(k: String) -> Array: return (TextGen.REGISTRY.get(k, TextGen.Claude) as GDScript).models(),
-		"The model that writes. Default is the CLI's own choice per job (for Claude: Opus for the plan and the reading, Sonnet for the card designs); a model chosen here writes all of it.")
+		"The model that writes. Default is the CLI's own choice per job (for Claude: Opus for the plan and the reading, Sonnet for the card designs); a model chosen here writes all of it.",
+		func(k: String, m: String) -> Array: return (TextGen.REGISTRY.get(k, TextGen.Claude) as GDScript).efforts(m),
+		("How hard the writer thinks before it writes - the CLI's own reasoning effort. Default is what "
+		+ "each CLI does unasked (Claude: your Claude Code setting for the model; Codex: medium, low for "
+		+ "the card designs; Amazon Nova: off - only Nova 2 Lite thinks, billed as output). A level "
+		+ "chosen here is used for every job. Higher is slower and spends more quota."))
 	_writer_pick = w[0]
 	_writer_model = w[1]
+	_writer_effort = w[2]
 	var p := _agent_pick(box, "Painter", "painter", ImageGen.REGISTRY, ImageGen.LABELS, ImageGen.BLURBS,
 		func(k: String) -> bool: return ImageGen.make(k).available(),
 		"Who paints the card back, the cloth, the room and every card.",
 		func(k: String) -> Array: return (ImageGen.REGISTRY.get(k, ImageGen.Codex) as GDScript).models(),
-		"The model of the agent that asks for each picture. The picture itself is made by the CLI's own image tool whichever model asks.")
+		"The model of the agent that asks for each picture. The picture itself is made by the CLI's own image tool whichever model asks.",
+		func(k: String, m: String) -> Array: return (ImageGen.REGISTRY.get(k, ImageGen.Codex) as GDScript).efforts(m),
+		("How hard the agent that asks for each picture thinks - not the picture itself. Default is "
+		+ "low for Codex (its job is to call one tool); Bedrock's painter takes no setting."))
 	_painter_pick = p[0]
 	_painter_model = p[1]
+	_painter_effort = p[2]
 
 	var grow := HBoxContainer.new()
 	grow.add_theme_constant_override("separation", 6)
@@ -600,7 +613,8 @@ func _build_source(box: VBoxContainer) -> void:
 ## the next Generate - a step already running finishes with what it started with. Returns
 ## [agent picker, model picker].
 func _agent_pick(box: VBoxContainer, title: String, knob: String, registry: Dictionary, labels: Dictionary,
-		blurbs: Dictionary, available: Callable, what: String, models_of: Callable, model_tip: String) -> Array:
+		blurbs: Dictionary, available: Callable, what: String, models_of: Callable, model_tip: String,
+		efforts_of: Callable, effort_tip: String) -> Array:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	box.add_child(row)
@@ -633,21 +647,68 @@ func _agent_pick(box: VBoxContainer, title: String, knob: String, registry: Dict
 	model.tooltip_text = model_tip
 	model.set_meta("models_of", models_of)
 	model.set_meta("knob", knob + "_model")
+	row.add_child(model)
+	# THE REASONING EFFORT, from the chosen agent's own levels for the chosen model
+	var effort := OptionButton.new()
+	effort.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	effort.size_flags_stretch_ratio = 0.7
+	effort.fit_to_longest_item = false
+	effort.clip_text = true
+	effort.focus_mode = Control.FOCUS_NONE
+	effort.tooltip_text = effort_tip
+	effort.set_meta("efforts_of", efforts_of)
+	effort.set_meta("knob", knob + "_effort")
+	effort.set_meta("agent_knob", knob)
+	effort.item_selected.connect(func(i: int) -> void:
+		if _syncing:
+			return
+		_knobs[knob + "_effort"] = String(effort.get_item_metadata(i))
+		_touch())
+	row.add_child(effort)
 	model.item_selected.connect(func(i: int) -> void:
 		if _syncing:
 			return
 		_knobs[knob + "_model"] = String(model.get_item_metadata(i))
+		# another model, perhaps other levels: the chosen one stays, marked if it is not offered
+		_fill_efforts(effort)
 		_touch())
-	row.add_child(model)
 	pick.item_selected.connect(func(i: int) -> void:
 		if _syncing:
 			return
 		_knobs[knob] = String(keys[i])
-		# another agent, another list of models: its own default until one is chosen
+		# another agent, another list of models and levels: its own defaults until chosen
 		_knobs[knob + "_model"] = ""
+		_knobs[knob + "_effort"] = ""
 		_fill_models(model, String(keys[i]))
+		_fill_efforts(effort)
 		_touch())
-	return [pick, model]
+	return [pick, model, effort]
+
+
+## [param pick]'s list of efforts for its agent's chosen model, the knob's choice selected - kept on
+## the list (marked) when this agent or model does not offer it. Grayed out where the agent takes
+## no effort setting.
+func _fill_efforts(pick: OptionButton) -> void:
+	var agent := String(_knobs.get(String(pick.get_meta("agent_knob")), ""))
+	var model := String(_knobs.get(String(pick.get_meta("agent_knob")) + "_model", ""))
+	var levels: Array = (pick.get_meta("efforts_of") as Callable).call(agent, model)
+	var want := String(_knobs.get(String(pick.get_meta("knob")), ""))
+	var was := _syncing
+	_syncing = true
+	pick.clear()
+	var at := 0
+	for e in levels:
+		pick.add_item(String((e as Dictionary)["label"]))
+		pick.set_item_metadata(pick.item_count - 1, String((e as Dictionary)["key"]))
+		if String((e as Dictionary)["key"]) == want:
+			at = pick.item_count - 1
+	if not want.is_empty() and at == 0:
+		pick.add_item("%s  (not offered)" % TextGen.effort_label(want))
+		pick.set_item_metadata(pick.item_count - 1, want)
+		at = pick.item_count - 1
+	pick.select(at)
+	pick.disabled = levels.size() <= 1 and want.is_empty()
+	_syncing = was
 
 
 ## [param pick]'s list for [param agent]'s models, the knob's choice selected - kept on the list
@@ -700,6 +761,8 @@ func _show_knobs() -> void:
 	_painter_pick.select(maxi(0, ImageGen.REGISTRY.keys().find(String(_knobs["painter"]))))
 	_fill_models(_writer_model, String(_knobs["writer"]))
 	_fill_models(_painter_model, String(_knobs["painter"]))
+	_fill_efforts(_writer_effort)
+	_fill_efforts(_painter_effort)
 	_syncing = false
 
 
