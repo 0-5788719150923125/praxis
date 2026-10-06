@@ -27,6 +27,8 @@ class_name ScriptWriter
 const FIELDS := {
 	"title": {"label": "Title", "modes": ["generative", "tarot"],
 		"tip": "The chapter's title. Read aloud first, by the voice that opens the chapter, and set at the head of the chapter in the Novel and Notebook. For a tarot show, the channel's name."},
+	"byline": {"label": "Byline", "modes": ["tarot"],
+		"tip": "A line under the channel's name on the title screen while the intro holds - \"with Pen & Ink\". Empty, the name stands alone."},
 	"author": {"label": "Author", "modes": ["generative"],
 		"tip": "Who wrote it. Printed on the cover in the Novel and Notebook."},
 	"book": {"label": "Book", "modes": ["generative"],

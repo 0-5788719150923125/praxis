@@ -30,15 +30,16 @@ extends SceneTree
 ##   makes chips and leaves the rest typed; × and Backspace in the empty box remove; each tag once
 ##   whatever its case; fixed tags first with no ×; a dimmed chip says why; read-only has no ×; a long
 ##   tag cannot widen the field.
-## - THE TAROT PANEL'S FIELDS: the title and description filled from the plan and edits written back
-##   into it (an emptied title is not; nothing is written without an edit); THE TAGS ARE THE SHOW'S
-##   (the user: "I want global tags, not per-episode ones"), the chips editing its `tags:` field; the
-##   byline into its `byline:`; nothing per episode in the document's block but the picked episode's
-##   title, one value; the upload described from all that, with the title screen's thumbnail moment,
-##   for the episode an export rendered even after another is picked.
+## - THE TAROT PANEL'S FIELDS ARE THE SHOW'S GLOBAL VALUES (the user: "it should have been grabbed
+##   immediately, since that stuff is global"): the description and the tags the show's, the title
+##   one value the picked episode overwrites (and an edit writes into its plan; an emptied one is
+##   not); a show with none takes the picked episode's once; a NEW EPISODE shows them at once; the
+##   byline on the document card right under Title (the user: "right under the title field"); the
+##   upload described from all that, with the title screen's thumbnail moment, for the episode an
+##   export rendered even after another is picked.
 ## - A REAL SHOW FILE: the tags and the byline land as top-level lines above ghost's block - the
-##   chapter format - the block holds the picked episode's title and no record per episode, and the
-##   rest of the file is untouched.
+##   chapter format - the block holds the show's title and description and no record per episode, the
+##   rest of the file is untouched, and a panel opening it fills a new episode from it at once.
 ## - THE THUMBNAIL'S MOMENT and ffmpeg's arguments for taking it.
 
 ## By path, not by class name: a new class is unknown to `--script` runs until the editor rescans.
@@ -420,10 +421,11 @@ func _panel_fields() -> bool:
 	ed._knobs["show"] = "panel-check"
 	ed._knobs["seed"] = 21
 	ed._open_episode()
-	_ok(ed._yt_title.text == "The Producer's Title" and ed._yt_desc.text == "The producer's words."
-		and ed._yt_title.editable, "the title and description are the plan's")
-	_ok(ed._yt_tags.get_tags().is_empty() and ed._yt_note.text.contains("No tags yet"),
-		"the tags are the show's, not the episode's: none until the show has some")
+	_ok(ed._yt_title.text == "The Producer's Title" and ed._yt_title.editable, "the title is the picked episode's")
+	_ok(ed._yt_desc.text.is_empty() and ed._yt_tags.get_tags().is_empty(), "a show with no description or tags shows none yet")
+	ed._seed_from_plan()
+	_ok(ed._yt_desc.text == "The producer's words." and Array(ed._yt_tags.get_tags()) == ["tarot", "4am"]
+		and ed._doc.field("tags") == "tarot, 4am", "...and takes the picked episode's once, as the show's own")
 	var before := ep.read_text("plan")
 	ed._flush_upload_fields()
 	_ok(ep.read_text("plan") == before, "nothing is written without an edit")
@@ -433,54 +435,52 @@ func _panel_fields() -> bool:
 	_ok(ed._yt_dirty > 0.0, "an edit waits a moment before it is written")
 	ed._flush_upload_fields(true)
 	var plan: Dictionary = ep.read_json("plan")
-	_ok(plan["episode_title"] == "My Own Title" and plan["description"] == "Mine." and plan["tags"] == ["tarot", "4am"]
-		and plan["premise"] == "p" and (plan["spread"] as Dictionary).has("positions"),
-		"an edit is written into the plan, the rest of it kept")
-	_ok(ed.export_name() == "My Own Title", "and names the export")
+	_ok(plan["episode_title"] == "My Own Title" and plan["premise"] == "p" and (plan["spread"] as Dictionary).has("positions"),
+		"an edited title is written into the episode's plan, the rest of it kept")
+	var doc: Dictionary = ed._doc_capture()
+	_ok(doc.get("episode_title") == "My Own Title" and doc.get("description") == "Mine." and not doc.has("youtube"),
+		"the block holds the show's title and description - one of each, no record per episode")
+	_ok(ed.export_name() == "My Own Title", "and the title names the export")
 	ed._yt_title.text = "   "
 	ed._upload_edited()
 	ed._flush_upload_fields(true)
 	_ok(String((ep.read_json("plan") as Dictionary)["episode_title"]) == "My Own Title", "an emptied title is not written")
-	# THE SHOW'S TAGS, typed as chips: the document's own `tags:` field
-	ed._yt_tags._input.text = "Truthful Tarot, satire, "
+	ed._yt_title.text = "My Own Title"
+	ed._yt_tags._input.text = "satire, "
 	ed._yt_tags._on_typed(ed._yt_tags._input.text)
-	ed._yt_tags._input.text = "pick a card"
-	ed._yt_tags.commit()
-	_ok(ed._doc.field("tags") == "Truthful Tarot, satire, pick a card", "the chips write the show's tags line (%s)" % ed._doc.field("tags"))
-	ed._yt_tags.remove("satire")
-	_ok(ed._doc.field("tags") == "Truthful Tarot, pick a card", "× takes a tag out of the show's line")
+	ed._yt_tags.remove("4am")
+	_ok(ed._doc.field("tags") == "tarot, satire", "the chips write the show's tags line (%s)" % ed._doc.field("tags"))
 	var meta: Dictionary = ed.upload_meta("")
 	_ok(meta.get("title") == "My Own Title" and meta.get("description") == "Mine."
-		and meta.get("tags") == ["Truthful Tarot", "pick a card"] and String(meta.get("record", "")).ends_with("/21/youtube.json"),
-		"the upload: the episode's title and description, the show's tags - not the episode's")
+		and meta.get("tags") == ["tarot", "satire"] and String(meta.get("record", "")).ends_with("/21/youtube.json"),
+		"the upload: the episode's title, the show's description and tags")
 	_ok(is_equal_approx(float(meta.get("thumbnail_at", -1.0)), ed.thumbnail_moment(ed._take_intro(""))),
 		"and the title screen's moment for its thumbnail")
-	# THE BYLINE: the document's `byline:`, and on the title screen's document
-	ed._byline.text = "with Pen & Ink"
-	ed._save_byline()
+	# THE BYLINE, on the document card right under Title
+	var card = ed._writer
+	var edits: Array = card._field_edits.keys()
+	_ok(edits.find("byline") == edits.find("title") + 1, "the byline is the card's field right under Title (%s)" % str(edits))
+	(card._field_edits["byline"] as LineEdit).text = "with Pen & Ink"
+	card._commit_field("byline")
 	_ok(ed._doc.field("byline") == "with Pen & Ink" and ed.book_document()["byline"] == "with Pen & Ink",
-		"the byline is the show's `byline:`, handed to the title screen")
-	# NOTHING PER EPISODE in the block but the picked episode's title, one value
-	var doc: Dictionary = ed._doc_capture()
-	_ok(not doc.has("youtube") and doc.get("episode_title") == "My Own Title",
-		"the block keeps no record per episode - only the picked episode's title (%s)" % str(doc.get("episode_title")))
-	var other := TarotEpisode.open("panel-check", 22)
+		"it is the show's `byline:`, handed to the title screen")
+	# A NEW EPISODE: the show's values at once
+	ed._knobs["seed"] = 22
+	ed._open_episode()
+	_ok(ed._yt_title.text == "My Own Title" and ed._yt_desc.text == "Mine." and Array(ed._yt_tags.get_tags()) == ["tarot", "satire"],
+		"a new episode shows the show's title, description and tags at once")
+	_ok(not ed._yt_title.editable and ed._yt_desc.editable, "its title waits for its plan; the show's description does not")
+	var other := TarotEpisode.open("panel-check", 23)
 	other.write_json("plan", {"episode_title": "Another Episode"})
 	var take := ProjectSettings.globalize_path(ROOT + "_files/take_9.wav")
 	ed._taken = {"take": take, "episode": ep}
-	ed._knobs["seed"] = 22
-	ed._open_episode()
-	_ok(ed._yt_title.text == "Another Episode" and ed._doc_capture().get("episode_title") == "Another Episode",
-		"another episode picked: its title, and it overwrites the block's one title")
-	_ok(Array(ed._yt_tags.get_tags()) == ["Truthful Tarot", "pick a card"], "the show's tags stay with the show")
-	_ok(ed.upload_meta(take).get("title") == "My Own Title" and ed.upload_meta("").get("title") == "Another Episode",
-		"an export's upload describes the episode it rendered, not the one picked since")
-	var empty := TarotEpisode.open("panel-check", 23)
 	ed._knobs["seed"] = 23
 	ed._open_episode()
-	_ok(not ed._yt_title.editable and ed.upload_meta("").is_empty() and ed._yt_note.text.contains("plan first"),
-		"an episode with no plan has nothing to upload and says why")
-	_ok(not DirAccess.dir_exists_absolute(empty.dir), "and nothing was written for it")
+	_ok(ed._yt_title.text == "Another Episode" and ed._doc_capture().get("episode_title") == "Another Episode"
+		and ed._yt_desc.text == "Mine.", "an episode with a plan overwrites the title, as the seed is; the description stays the show's")
+	_ok(ed.upload_meta(take).get("title") == "My Own Title" and ed.upload_meta("").get("title") == "Another Episode",
+		"an export's upload describes the episode it rendered, not the one picked since")
+	_ok(not DirAccess.dir_exists_absolute(TarotEpisode.open("panel-check", 22).dir), "nothing was written for the new episode")
 	_ok(ed.thumbnail_moment(9.0) == 3.6 and ed.thumbnail_moment(3.0) == 1.5 and ed.thumbnail_moment(0.5) == 1.5,
 		"the thumbnail is taken with the name up and the table still out of focus")
 	var args: PackedStringArray = load("res://scripts/exporter.gd").thumbnail_args("/v/a b.mp4", "/v/a b.thumbnail.jpg", 3.6)
@@ -546,22 +546,22 @@ func _tag_field() -> bool:
 	return true
 
 
-## A real show file: opened, its tags and byline edited, written by the document's own writer, read back.
+## A real show file: opened, seeded, its byline set on the card, written by the document's own writer, read
+## back - and opened again by another panel, whose new episode is filled from it at once.
 func _doc_file() -> bool:
 	var ed = load("res://scripts/tarot_editor.gd").new()
 	ed._build_panel()
 	var ep := TarotEpisode.open("doc-check", 31)
-	ep.write_json("plan", {"episode_title": "Episode Thirty-One", "description": "The producer's words.",
-		"tags": ["episode", "only"], "spread": {"positions": [{"name": "Past"}]}})
+	ep.write_json("plan", {"episode_title": "Episode Thirty-One", "description": "First paragraph.\n\nSecond: with a colon.",
+		"tags": ["tarot", "pick a card"], "spread": {"positions": [{"name": "Past"}]}})
 	var body := "# The brief\n\nWhat the show is.\n"
 	var path := _file("show.md", "---\ntitle: Doc Check Show\nghost:\n  tarot:\n    show: doc-check\n    seed: 31\n---\n" + body)
 	ed._doc._on_picked(path)
 	_ok(ed._doc.is_sync() and int(ed._knobs["seed"]) == 31 and ed._yt_title.text == "Episode Thirty-One",
 		"the show file opens on its episode")
-	ed._yt_tags._input.text = "tarot, pick a card,"
-	ed._yt_tags._on_typed(ed._yt_tags._input.text)
-	ed._byline.text = "with Pen & Ink"
-	ed._save_byline()
+	ed._seed_from_plan()
+	(ed._writer._field_edits["byline"] as LineEdit).text = "with Pen & Ink"
+	ed._writer._commit_field("byline")
 	_ok(ed._doc.save(), "the panel's block is written into the show file")
 	var raw := FileAccess.get_file_as_string(path)
 	var head := raw.substr(0, raw.find("\n---\n", 4))
@@ -571,9 +571,18 @@ func _doc_file() -> bool:
 		"the tags and the byline are the file's own lines, above ghost's block, as a chapter keeps them:\n%s" % head)
 	var data: Variant = FrontMatter.read_block(raw).get("data")
 	var tarot: Dictionary = (data as Dictionary).get("tarot", {}) if data is Dictionary else {}
-	_ok(tarot.get("episode_title") == "Episode Thirty-One" and not tarot.has("youtube"),
-		"the block holds the picked episode's title and no record per episode")
-	_ok(raw.ends_with("---\n" + body) and BookLayout.field_of(raw, "tags") == "tarot, pick a card",
-		"the body is untouched, and the tags read back as the chapters' do")
+	_ok(tarot.get("episode_title") == "Episode Thirty-One" and tarot.get("description") == "First paragraph.\n\nSecond: with a colon."
+		and not tarot.has("youtube"), "the block holds the show's title and description, whole, and no record per episode")
+	_ok(raw.ends_with("---\n" + body), "the body is untouched")
 	ed.free()
+	# ANOTHER PANEL OPENS THE FILE, AND MAKES A NEW EPISODE: filled from the file at once
+	var again = load("res://scripts/tarot_editor.gd").new()
+	again._build_panel()
+	again._doc._on_picked(path)
+	again._knobs["seed"] = 99
+	again._open_episode()
+	_ok(again._yt_title.text == "Episode Thirty-One" and again._yt_desc.text == "First paragraph.\n\nSecond: with a colon."
+		and Array(again._yt_tags.get_tags()) == ["tarot", "pick a card"] and again._writer._field_edits["byline"].text == "with Pen & Ink",
+		"a new episode is filled from the file at once: title, description, tags, byline")
+	again.free()
 	return true

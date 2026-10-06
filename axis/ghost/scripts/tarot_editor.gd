@@ -85,12 +85,11 @@ var _yt_tags: TagField
 var _yt_note: Label
 var _yt_dirty := 0.0       # seconds until edits are written into the plan; 0 = nothing waiting
 var _yt_seen := {}         # {path, mt}: the plan the fields were last filled from
-## The picked episode's title, kept in the show's document as ONE value overwritten as the episode
-## changes, as the seed is - never a record per episode (see [method _doc_capture]).
+## THE SHOW'S YOUTUBE TITLE AND DESCRIPTION, kept in its document's block - global, never a record
+## per episode. The title is ONE value overwritten by whichever episode is picked (as the seed is);
+## the description is the show's, the same for every episode (see [method _doc_capture]).
 var _cur_title := ""
-## THE BYLINE: a line under the show's name on the title screen, kept in the document's `byline:`.
-var _byline: LineEdit
-var _byline_t := 0.0       # seconds until an edited byline is written into the document
+var _cur_desc := ""
 
 
 func _init() -> void:
@@ -119,10 +118,6 @@ func _process(delta: float) -> void:
 		_yt_dirty -= delta
 		if _yt_dirty <= 0.0:
 			_flush_upload_fields(true)
-	if _byline_t > 0.0:
-		_byline_t -= delta
-		if _byline_t <= 0.0:
-			_save_byline()
 	# four times a second is plenty for runs that take tens of seconds, and every tick asks the
 	# disk which steps exist
 	_row_t -= delta
@@ -131,6 +126,7 @@ func _process(delta: float) -> void:
 		if _producer != null:
 			_producer.tick()
 		_refresh_rows()
+		_seed_globals()
 
 
 # --- the seams ---------------------------------------------------------------------------
@@ -217,14 +213,13 @@ func export_take() -> String:
 	var ep := _episode
 	if ep == null:
 		return ""
-	_save_byline()
 	_export_pin = {"episode": ep, "body": ep.script().strip_edges(), "doc": ep.document(),
 		"title": _show_title(), "byline": _show_byline()}
 	var path: String = await super.export_take()
 	_export_pin = {}
 	if not path.is_empty():
 		_taken = {"take": path, "episode": ep}
-		var err := ep.write_upload_notes(path, _show_tags())
+		var err := ep.write_upload_notes(path, _show_tags(), _cur_desc)
 		_set_status(("Rendered the take; upload notes are in the episode's folder (upload.md)." if err.is_empty()
 			else "Rendered the take; the upload notes failed: " + err))
 	return path
@@ -244,7 +239,7 @@ func upload_meta(take: String) -> Dictionary:
 	var n := ep.upload_notes(take)
 	if String(n["title"]).is_empty():
 		return {}
-	var desc := String(n["description"])
+	var desc := _cur_desc if not _cur_desc.is_empty() else String(n["description"])
 	var chapters: PackedStringArray = n["chapters"]
 	if not chapters.is_empty():
 		desc += "\n\n" + "\n".join(chapters)
@@ -312,9 +307,12 @@ func _doc_capture() -> Dictionary:
 		pic.erase(k)
 	for k in KNOBS:
 		d[k] = _knobs[k]
-	# THE PICKED EPISODE'S TITLE, one value overwritten as the episode changes, as the seed is
+	# THE SHOW'S YOUTUBE TITLE AND DESCRIPTION: global values, the title overwritten as the episode
+	# changes (as the seed is)
 	if not _cur_title.is_empty():
 		d["episode_title"] = _cur_title
+	if not _cur_desc.is_empty():
+		d["description"] = _cur_desc
 	return d
 
 
@@ -331,6 +329,8 @@ func _doc_apply(cfg: Dictionary) -> void:
 	var was := "%s#%d" % [String(_knobs["show"]), int(_knobs["seed"])]
 	_knobs = KNOBS.duplicate(true)
 	_take_knobs(cfg)
+	_cur_title = str(cfg.get("episode_title", ""))
+	_cur_desc = str(cfg.get("description", ""))
 	super._doc_apply(cfg)
 	if _episode == null or "%s#%d" % [String(_knobs["show"]), int(_knobs["seed"])] != was:
 		_open_episode()
@@ -353,6 +353,8 @@ func _on_doc_mode(sync: bool) -> void:
 
 func _fresh_show() -> void:
 	_knobs = KNOBS.duplicate(true)
+	_cur_title = ""
+	_cur_desc = ""
 	_show_knobs()
 	_open_episode()
 	_refresh_show_fields()
@@ -437,25 +439,6 @@ func _build_picture(box: VBoxContainer) -> void:
 		"Seconds the table holds before the reader speaks, with the channel's name and the "
 		+ "episode's title over it. The deck starts shuffling a beat before the first word.",
 		func(v: float) -> void: Director.set_intro_hold(v))
-	var brow := HBoxContainer.new()
-	brow.add_theme_constant_override("separation", 6)
-	box.add_child(brow)
-	var bl := Label.new()
-	bl.text = "Byline"
-	bl.custom_minimum_size = Vector2(56, 0)
-	bl.add_theme_font_size_override("font_size", 12)
-	brow.add_child(bl)
-	_byline = LineEdit.new()
-	_byline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_byline.placeholder_text = "with Pen & Ink"
-	_byline.tooltip_text = ("A line under the show's name on the title screen while the intro holds - "
-		+ "\"with Pen & Ink\". Kept in the show's document as its `byline:`; empty, the name stands alone.")
-	_byline.text_changed.connect(func(_t: String) -> void:
-		if not _syncing:
-			_byline_t = 0.8)
-	_byline.text_submitted.connect(func(_t: String) -> void: _save_byline())
-	_byline.focus_exited.connect(_save_byline)
-	brow.add_child(_byline)
 	_outro = _director_slider(box, "Outro", Director.OUTRO_MIN, Director.OUTRO_MAX, 0.5,
 		Director.outro_hold,
 		"Seconds held after the last word, the spread on the table and the channel's name over "
@@ -1141,9 +1124,12 @@ static func _mtime(path: String) -> int:
 	return FileAccess.get_modified_time(path) if not path.is_empty() and FileAccess.file_exists(path) else -1
 
 
-## The title and description from the picked episode's plan when it changed on disk (made, redone,
-## another episode) and nobody is typing in them - or at once with [param force]. A new upload
-## refreshes the note.
+## THE FIELDS SHOW THE SHOW'S GLOBAL VALUES from its document at once - on open, on New episode, on
+## any pick (the user: "it should have been grabbed immediately, since that stuff is global"): the
+## description and the tags as the show keeps them, and the title the picked episode overwrites
+## when it has a plan (as the seed is overwritten) - a new episode shows the last until its plan
+## gives its own. Refilled when the plan changes on disk unless one is being typed in, or at once
+## with [param force]. A new upload refreshes the note.
 func _fill_upload_fields(force := false) -> void:
 	if _yt_title == null:
 		return
@@ -1158,64 +1144,81 @@ func _fill_upload_fields(force := false) -> void:
 		return
 	_yt_seen["path"] = path
 	_yt_seen["mt"] = mt
-	var n: Dictionary = _episode.upload_notes() if mt >= 0 else {"title": "", "description": ""}
+	if mt >= 0:
+		var t := String(_episode.upload_notes()["title"])
+		if not t.is_empty():
+			_cur_title = t
 	var was := _syncing
 	_syncing = true
-	if _yt_title.text != String(n["title"]):
-		_yt_title.text = String(n["title"])
-	if _yt_desc.text != String(n["description"]):
-		_yt_desc.text = String(n["description"])
+	if _yt_title.text != _cur_title:
+		_yt_title.text = _cur_title
+	if _yt_desc.text != _cur_desc:
+		_yt_desc.text = _cur_desc
 	_syncing = was
-	_cur_title = String(n["title"])
+	# the title is the episode's (an edit is written into its plan), so it waits for a plan
 	_yt_title.editable = mt >= 0
-	_yt_desc.editable = mt >= 0
+	_yt_desc.editable = true
 	_refresh_show_fields()
 
 
-## The show's own fields - its tags and its byline - from its document, unless one is being typed in.
+## The show's tags from its document, unless they are being typed in.
 func _refresh_show_fields() -> void:
 	if _yt_tags != null and not _yt_tags.typing():
 		_yt_tags.set_tags(_show_tags())
-	if _byline != null and not _byline.has_focus() and _byline_t <= 0.0:
-		var was := _syncing
-		_syncing = true
-		if _byline.text != _show_byline():
-			_byline.text = _show_byline()
-		_syncing = was
 	_refresh_upload_note()
 
 
-## The edited title and description, written back into the plan - only when something was edited
-## (with [param force], when the edit's wait is over) and only what changed. An emptied title is not
-## written: a video needs one, and the plan's stays.
+## A SHOW THAT HAS NO DESCRIPTION OR TAGS YET TAKES THE PICKED EPISODE'S, once, so the section is
+## never empty for want of a first one: the producer writes both with every plan. After that they
+## are the show's, edited here. Run from the frame loop, not on open, so the document's autosave
+## sees the change (the snapshot a just-opened document is compared with is taken after it opens);
+## never in a process that may not write (a probe).
+func _seed_globals() -> void:
+	if not Settings.is_read_only():
+		_seed_from_plan()
+
+
+func _seed_from_plan() -> void:
+	if _episode == null or not _episode.has("plan") or _doc == null:
+		return
+	if _cur_desc.is_empty() and _yt_dirty <= 0.0 and not _yt_desc.has_focus():
+		var d := String(_episode.upload_notes()["description"]).strip_edges()
+		if not d.is_empty():
+			_cur_desc = d
+			_fill_upload_fields(true)
+	if _show_tags().is_empty() and not _yt_tags.typing():
+		var tags: PackedStringArray = _episode.upload_notes()["tags"]
+		if not tags.is_empty():
+			_doc.set_field("tags", ", ".join(tags))
+			_refresh_show_fields()
+
+
+## The edited title and description - only when something was edited (with [param force], when the
+## edit's wait is over) and only what changed. The description is the show's (into its document);
+## the title is the picked episode's, written into its plan too, so the export's file name and the
+## episode picker follow. An emptied title is not written: a video needs one.
 func _flush_upload_fields(force := false) -> void:
 	if not force and _yt_dirty <= 0.0:
 		return
 	_yt_dirty = 0.0
-	if _yt_title == null or _episode == null:
+	if _yt_title == null:
 		return
-	var plan: Variant = _episode.read_json("plan")
-	if not (plan is Dictionary):
-		return
-	var p: Dictionary = plan
+	_cur_desc = _yt_desc.text.strip_edges()
 	var title := _yt_title.text.strip_edges()
-	var desc := _yt_desc.text.strip_edges()
-	var changed := false
-	if not title.is_empty() and title != String(p.get("episode_title", "")):
+	var plan: Variant = _episode.read_json("plan") if _episode != null else null
+	if title.is_empty() or not (plan is Dictionary):
+		_refresh_upload_note()
+		return
+	_cur_title = title
+	var p: Dictionary = plan
+	if title != String(p.get("episode_title", "")):
 		p["episode_title"] = title
-		changed = true
-	if desc != String(p.get("description", "")).strip_edges():
-		p["description"] = desc
-		changed = true
-	if not changed:
-		return
-	var err := _episode.write_json("plan", p)
-	if not err.is_empty():
-		_set_status("The YouTube fields could not be saved into the plan: " + err)
-		return
-	_yt_seen["path"] = _episode.file_of("plan")
-	_yt_seen["mt"] = _mtime(_episode.file_of("plan"))
-	_cur_title = String(p.get("episode_title", ""))
+		var err := _episode.write_json("plan", p)
+		if not err.is_empty():
+			_set_status("The title could not be saved into the episode's plan: " + err)
+			return
+		_yt_seen["path"] = _episode.file_of("plan")
+		_yt_seen["mt"] = _mtime(_episode.file_of("plan"))
 	_refresh_upload_note()
 
 
@@ -1226,15 +1229,6 @@ func _save_tags() -> void:
 	if not _doc.set_field("tags", ", ".join(_yt_tags.get_tags())):
 		_set_status("The tags could not be saved into the show's document.")
 	_refresh_upload_note()
-
-
-## The byline, written into the show's `byline:` (removed when emptied).
-func _save_byline() -> void:
-	_byline_t = 0.0
-	if _byline == null or _doc == null or _byline.text.strip_edges() == _show_byline():
-		return
-	if not _doc.set_field("byline", _byline.text.strip_edges()):
-		_set_status("The byline could not be saved into the show's document.")
 
 
 ## Under the fields: what goes up as tags against YouTube's limit, and where the episode already is
@@ -1257,7 +1251,7 @@ func _refresh_upload_note() -> void:
 	if _yt_tags != null:
 		_yt_tags.mark(reasons)
 	if _episode == null or not _episode.has("plan"):
-		_yt_note.text = "Generate the plan first: the producer writes the title and description."
+		_yt_note.text = "Generate the plan first: the producer writes the episode's title."
 		return
 	var t := ("Goes up with the show's %d tag%s, %d of YouTube's %d characters." % [fitted.size(),
 		"" if fitted.size() == 1 else "s", YouTube.tags_length(fitted), YouTube.TAGS_MAX]) if not fitted.is_empty() \

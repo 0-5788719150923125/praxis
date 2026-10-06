@@ -550,19 +550,21 @@ every future login"). `scripts/youtube.gd` is generic; the tarot mode opts in th
   project's test users gets a dead-end page that never comes back to Ghost Notes, so the dialog
   names it; add the account under Google Auth Platform > Audience > Test users, then "Open the page
   again" finishes the same sign-in. A newer sign-in replaces one still waiting.
-- **The panel's fields** (2026-10-06): Title and Description are the episode's - edits are saved
-  into its plan. THE TAGS ARE THE SHOW'S (the user: "I want global tags, not per-episode ones"):
+- **The panel's fields** (2026-10-06) show the SHOW'S GLOBAL VALUES at once, New episode included:
+  the description and tags are the show's; the title is one value the picked episode overwrites
+  when it has a plan (as the seed is) - an edit goes into its plan too. A show with no description
+  or tags yet takes the picked episode's once (the producer writes both with every plan). THE TAGS
+  ARE THE SHOW'S (the user: "I want global tags, not per-episode ones"):
   the document's own top-level `tags:` line, the North Star chapters' format, edited as CHIPS like
   YouTube Studio's - × removes one, a comma (or Enter, or a pasted "a, b, c") in the box at the end
   makes chips, Backspace in the empty box removes the last, a chip past 500 characters is dimmed.
-  NOTHING PER EPISODE goes into the markdown but the picked episode's title, one `episode_title`
-  overwritten as the episode changes, as the seed is ("I just don't want to store a bunch of
-  episode-specific logic in the frontmatter"). A per-seed record map was tried the same day and
-  removed.
+  The block keeps `episode_title` and `description` - one of each, NOTHING per episode ("I just
+  don't want to store a bunch of episode-specific logic in the frontmatter"); a per-seed record map
+  was tried the same day and removed.
 - **The title screen**: the show's name, and under it the BYLINE - the document's `byline:` ("with
-  Pen & Ink"), a field under the Intro slider.
-- **What goes up**: the plan's title and description (as the panel's fields left them), a chapter
-  per card timed from the take, the show's tags fitted to YouTube's 500 characters, and a THUMBNAIL:
+  Pen & Ink"), a field on the document card right under Title.
+- **What goes up**: the episode's title, the show's description with a chapter per card timed
+  from the take, the show's tags fitted to YouTube's 500 characters, and a THUMBNAIL:
   a 1280x720 frame of the saved video at the title screen - the name fully up over the out-of-focus
   table - set once the video is up (needs a verified channel; refused, the video stays up and the
   status line says why). Constants: unlisted, not made for kids, `containsSyntheticMedia`, no paid
