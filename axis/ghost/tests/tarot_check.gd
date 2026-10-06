@@ -37,6 +37,8 @@ extends SceneTree
 ##   inside it, and a play of light is kept only when the shader knows it.
 ## - THE CARD STOCK is the producer's choice, shown earlier decks' stocks; the card's name reads on
 ##   any stock, and the booklet is printed in the card's colors.
+## - WHAT THE SHOW HAS ALREADY MADE reaches each agent in the part it decides (the producer names the
+##   show's habits), never the episode being made, and never a card name through a reader's record.
 
 var _fails := 0
 
@@ -46,7 +48,7 @@ func _init() -> void:
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
 			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects, _moves_after_words,
-			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt]:
+			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt, _archive]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -1005,7 +1007,7 @@ func _card_stock() -> bool:
 	var past := [{"seed": 5, "plan": {"episode_title": "E", "look": {"frame": {"stock": "#2b1d3c"}}}}]
 	var p := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, past)["prompt"])
 	_ok(p.contains("THE CARD STOCK"), "the producer is not told what the card stock is")
-	_ok(p.contains("card stock #2b1d3c"), "the producer is not shown an earlier deck's stock")
+	_ok(p.contains("Card stock #2b1d3c"), "the producer is not shown an earlier deck's stock")
 	var fresh := String(TarotPrompts.producer("T", "B", 1, 3, true, TarotTable.FACES, TarotTable.FRAMES, [])["prompt"])
 	_ok(not fresh.contains("#2b1d3c"), "control: a stock no earlier episode used is in the prompt")
 	_ok(not TarotPrompts.dice(1).has("stock"), "a die still decides the card stock")
@@ -1172,4 +1174,127 @@ func _room_prompt() -> bool:
 	_ok(p.contains("THE CAMERA IS LEVEL") and p.contains("%d mm lens" % int(TarotTable.BACKDROP_LENS))
 		and p.contains("exact middle") and p.contains("LOWER THIRD"),
 		"the room's picture is not asked for level, through the table's lens, its lower third carrying the place")
+	return true
+
+
+## WHAT THE SHOW HAS ALREADY MADE reaches each agent in the part it decides: the producer sees an
+## earlier episode's angle, running bit, what its cards pictured, its stock, cloth and room, and is
+## asked to name the show's habits; the designer, how an earlier deck pictured the same card; a
+## reader passage, how earlier episodes opened, met a card (a jumper apart) and closed - without
+## the words the brief gives every episode, and with every card name masked, so no later card
+## reaches a reader through another episode. Two-sided: an episode alone in its show is told none
+## of it, and no episode is its own history.
+func _archive() -> bool:
+	TarotEpisode.root = "user://tarot_check"
+	var show := "archive-show"
+	var base := ProjectSettings.globalize_path(TarotEpisode.root.path_join(show))
+	if DirAccess.dir_exists_absolute(base):
+		_remove_tree(base)
+	var brief := "A brief. \"Hello, my loves\" opens every episode. Its last words are \"Go and do the thing.\""
+	var deck := TarotDeck.standard()
+	var names: Array = []
+	for c in deck:
+		names.append(String((c as Dictionary)["name"]))
+	var plan := {"episode_title": "THIS-TITLE", "audience": "everyone", "topic": "waiting",
+		"premise": "THIS-PREMISE", "reader_mood": "calm", "running_bit": "THIS-BIT",
+		"spread": {"name": "The Spread", "positions": [{"name": "One", "asks": "a"}, {"name": "Two", "asks": "b"},
+			{"name": "Three", "asks": "c"}]},
+		"look": TarotTable.sanitize_look({"deck_name": "This Deck", "deck_style": "THIS-STYLE"})}
+	# this episode draws the Tower, the Star, the Moon; the earlier one drew the Tower, the Fool
+	# (a jumper) and the Sun, and its reader named the MOON - a card this episode has not drawn yet
+	var ep := TarotEpisode.open(show, 4242)
+	ep.write_json("plan", plan)
+	var drawn: Array = []
+	for nm in ["The Tower", "The Star", "The Moon"]:
+		drawn.append({"name": nm, "reversed": false, "jumper": false, "meaning": "m"})
+	ep.write_json("draw", {"seed": 4242, "cards": drawn})
+	for k in range(1, 4):
+		ep.write_json("design:%d" % k, {"art": "this art %d" % k, "booklet": {"keywords": ["k"], "upright": "u"}})
+		ep.write_text("say:%d" % k, "Passage for card %d." % k)
+	ep.write_text("say:intro", "Opening of this episode.")
+	var prod := TarotProducer.new(ep, {"title": "Test Tarot", "brief": brief, "deck": deck})
+	var producer := func() -> String:
+		return String(TarotPrompts.producer("Test Tarot", brief, 4242, 3, true, TarotTable.FACES, TarotTable.FRAMES,
+			TarotEpisode.archive(show, 4242), deck)["prompt"])
+	var designer := func(k: int) -> String:
+		return String(TarotPrompts.designer("Test Tarot", brief, prod._look(), prod._card(k), true,
+			TarotEpisode.archive(show, 4242))["prompt"])
+	# ALONE IN ITS SHOW: told nothing of other episodes
+	_ok(TarotEpisode.archive(show, 4242).is_empty(), "an episode alone in its show has a history")
+	var alone := producer.call() as String
+	_ok(not alone.contains("EARLIER EPISODES") and not alone.contains("\"habits\""),
+		"a producer with no earlier episodes is shown some, or asked for their habits")
+	_ok(not (designer.call(1) as String).contains("EARLIER DECKS"), "a designer with no earlier decks is shown one")
+	for who in ["intro", "1", "close"]:
+		_ok(not String(prod.say_prompt(who)["prompt"]).contains("HOW EARLIER"), "a reader alone in its show is told what earlier ones said (%s)" % who)
+	# AN EARLIER EPISODE beside it
+	var old := TarotEpisode.open(show, 1111)
+	old.write_json("plan", {"episode_title": "OLD-TITLE", "audience": "OLD-AUDIENCE", "topic": "OLD-TOPIC",
+		"premise": "OLD-PREMISE", "reader_mood": "OLD-MOOD", "running_bit": "OLD-BIT",
+		"spread": {"name": "OLD-SPREAD", "positions": []},
+		"look": {"deck_name": "Old Deck", "deck_style": "OLD-STYLE", "frame": {"stock": "#123456"},
+			"surface": "OLD-CLOTH", "setting": "OLD-ROOM", "light": {"kind": "OLD-LIGHT"}}})
+	old.write_json("draw", {"seed": 1111, "cards": [{"name": "The Tower"}, {"name": "The Fool", "jumper": true}, {"name": "The Sun"}]})
+	for k in range(1, 4):
+		old.write_json("design:%d" % k, {"art": "OLD-ART-%d of the old deck" % k, "booklet": {"upright": "u"}})
+	old.write_text("say:intro", "Hello, my loves. OLD-OPENING, welcome.")
+	old.write_text("say:1", "Oh. The Tower. OLD-REACTION, and it is not the Moon either.")
+	old.write_text("say:2", "OLD-JUMPER, it flew right out.")
+	old.write_text("say:3", "The Sun. OLD-REACTION again.")
+	old.write_text("say:close", "So overall, OLD-CLOSING. <!-- hesitation --> Go and do the thing.")
+	old.write_json("table", {"things": [{"name": "OLD-THING"}]})
+	var past := TarotEpisode.archive(show, 4242)
+	_ok(past.size() == 1 and int((past[0] as Dictionary)["seed"]) == 1111, "the archive is not the other episode alone: %s" % str(past))
+	_ok(((past[0] as Dictionary)["things"] as Array) == ["OLD-THING"], "the archive does not hold the earlier table's things")
+	_ok(TarotEpisode.archive(show, 1111).size() == 1 and int((TarotEpisode.archive(show, 1111)[0] as Dictionary)["seed"]) == 4242,
+		"an episode is its own history")
+	# THE PRODUCER: every choice the earlier one made, and the habits asked for
+	var pp := producer.call() as String
+	for mark in ["OLD-TITLE", "OLD-PREMISE", "OLD-MOOD", "OLD-BIT", "OLD-STYLE", "OLD-ART-1", "OLD-ART-3", "#123456", "OLD-CLOTH", "OLD-ROOM", "OLD-LIGHT", "OLD-SPREAD"]:
+		_ok(pp.contains(mark), "the producer is not shown the earlier episode's %s" % mark)
+	_ok(pp.contains("\"habits\"") and pp.contains("THE SHOW'S HABITS"), "the producer is not asked to name the show's habits")
+	_ok(not pp.contains("THIS-TITLE") and not pp.contains("THIS-PREMISE"), "the producer is shown the episode it is planning")
+	# THE DESIGNER: the same card as an earlier deck pictured it, and only that card
+	var d1 := designer.call(1) as String
+	_ok(d1.contains("EARLIER DECKS") and d1.contains("OLD-ART-1") and d1.contains("Old Deck"),
+		"the designer of the Tower is not shown how an earlier deck pictured it")
+	_ok(not d1.contains("OLD-ART-2") and not d1.contains("OLD-ART-3"), "the designer is shown earlier decks' other cards")
+	_ok(not (designer.call(2) as String).contains("EARLIER DECKS"), "the designer of a card no earlier deck drew is shown one")
+	# THE READER, through the producer itself: what was heard at the same point, the brief's own words
+	# left out, card names masked
+	var intro := String(prod.say_prompt("intro")["prompt"])
+	_ok(intro.contains("HOW EARLIER EPISODES OPENED") and intro.contains("OLD-OPENING"), "the intro is not shown how earlier episodes opened")
+	_ok(not intro.contains("Hello, my loves"), "the intro's record keeps the greeting the brief gives every episode")
+	var one := String(prod.say_prompt("1")["prompt"])
+	_ok(one.contains("HOW EARLIER EPISODES MET A CARD") and one.contains("OLD-REACTION"), "a card's passage is not shown how earlier ones met a card")
+	_ok(not one.contains("OLD-JUMPER"), "a card's passage is shown how a jumper was met")
+	_ok(not one.contains("The Moon") and not one.contains("the Moon") and one.contains("[card]"),
+		"a later card reached a reader through an earlier episode's words")
+	_ok(one.contains("Your running bit: THIS-BIT"), "the reader is not told the episode's running bit")
+	var close := String(prod.say_prompt("close")["prompt"])
+	_ok(close.contains("HOW EARLIER EPISODES CLOSED") and close.contains("OLD-CLOSING"), "the close is not shown how earlier episodes closed")
+	_ok(close.contains("- \"So overall, OLD-CLOSING.\"\n") and not close.contains("Go and do the thing"),
+		"the close's record keeps the sign-off the brief gives every episode, or a mark")
+	var jumper: Dictionary = (drawn[0] as Dictionary).duplicate()
+	jumper["jumper"] = true
+	var jp := String(TarotPrompts.reader("Test Tarot", brief, plan, "1", prod._said(0), [jumper], 3, false, past, names)["prompt"])
+	_ok(jp.contains("HOW EARLIER EPISODES MET A JUMPER") and jp.contains("OLD-JUMPER") and not jp.contains("OLD-REACTION"),
+		"a jumper's passage is not shown how earlier jumpers were met, and only that")
+	# CONTROLS: unmasked, the later card is there; with no brief, the greeting stays
+	var bare := String(TarotPrompts.reader("Test Tarot", brief, plan, "1", prod._said(0), prod._drawn(1), 3, false, past, [])["prompt"])
+	_ok(bare.contains("the Moon"), "control: the mask check is blind - unmasked, the earlier reader's Moon is not there")
+	_ok(TarotPrompts.unfixed("Hello, my loves. Okay.", "").contains("Hello, my loves"),
+		"control: a greeting the brief does not give is dropped")
+	_ok(TarotPrompts.mask_cards("Oh. The Tower, and the Ace of Cups.", ["The Tower", "Ace of Cups", "Ace"]) == "Oh. [card], and [card].",
+		"card names are not masked whole: %s" % TarotPrompts.mask_cards("Oh. The Tower, and the Ace of Cups.", ["The Tower", "Ace of Cups", "Ace"]))
+	# A PLAN LANDS WITH ITS HABITS AND ITS RUNNING BIT in the shape their readers expect
+	var fresh := TarotEpisode.open(show, 2222)
+	var lp := TarotProducer.new(fresh, {"title": "T", "brief": brief, "cards": [3, 3]})
+	_ok(lp._land_plan(JSON.stringify({"episode_title": "T", "habits": "titles end in brackets, decks show people",
+		"running_bit": 7, "spread": {"positions": ["a", "b", "c"]}, "look": {}})).is_empty(), "a plan with habits did not land")
+	var landed: Dictionary = fresh.read_json("plan")
+	_ok(landed.get("habits") == ["titles end in brackets", "decks show people"] and String(landed.get("running_bit")) == "7",
+		"habits and the running bit did not land reshaped: %s / %s" % [str(landed.get("habits")), str(landed.get("running_bit"))])
+	_remove_tree(base)
+	print("tarot_check: archive - each agent shown what earlier episodes made in its own part; card names masked")
 	return true

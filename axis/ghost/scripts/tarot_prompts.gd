@@ -22,9 +22,27 @@ class_name TarotPrompts
 ##              cards drawn so far, and has no other way to learn one.
 ##   painter  - the deck's pictures; never shown the reading.
 ##   set dresser - the reader's table: what stands on it, described to be built; knows no card.
+##
+## WHAT THE SHOW HAS ALREADY MADE ([method TarotEpisode.archive]) reaches each role in the part
+## it decides, cut short: the producer sees every earlier episode's angle, running bit, deck (what
+## its cards pictured, and how) and cloth and room, and NAMES THE HABITS they share before it
+## plans; the designer sees how earlier decks pictured the same card; the set dresser, what
+## earlier tables held; a reader passage, how earlier episodes opened, met a card or closed. An
+## agent told only to vary drifts back to the likeliest choice, because it cannot steer away from
+## choices it has never seen - and the habits are in the form (every deck a human figure on every
+## card, every running bit a status revised at each card), not in the subjects, which do vary.
 
 ## How many words each passage runs to - the length of a tarot reading video comes from these.
 const WORDS := {"intro": [130, 190], "card": [110, 170], "close": [90, 140]}
+
+## How many earlier episodes the producer reads in full, and how many more in a line each.
+const PAST_FULL := 10
+const PAST_LINES := 30
+## How many earlier decks' pictures of the same card the designer is shown.
+const SAME_CARD := 6
+## How many earlier openings, card reactions and closes a reader passage is shown, and how many
+## words of each.
+const HEARD := {"intro": [6, 40], "card": [10, 14], "jumper": [6, 24], "close": [6, 60]}
 
 ## The shape every reader passage must keep, said once for every reader prompt.
 ## WHEN THE CARDS MOVE, for every reader prompt. A passage is spoken whole and the table acts only
@@ -107,17 +125,13 @@ static func dice(seed: int) -> Dictionary:
 
 ## The registry keys a look may name, for the producer to choose from: the faces the card titles
 ## are set in and the frames round them. Passed in by the caller so this file names no asset.
+## [param history] is the show's other episodes, newest first ([method TarotEpisode.archive]).
 static func producer(title: String, brief: String, seed: int, cards: int, reversals: bool,
 		faces: Dictionary, frames: Dictionary, history: Array, deck: Array = []) -> Dictionary:
 	var d := dice(seed)
 	var past := PackedStringArray()
-	for h in history.slice(0, 12):
-		var p: Dictionary = (h as Dictionary).get("plan", {})
-		var look: Dictionary = p.get("look", {})
-		past.append("- \"%s\" (%s) - deck: %s; card stock %s; setting: %s" % [String(p.get("episode_title", "?")),
-			String(p.get("topic", "?")), String(look.get("deck_style", "?")).substr(0, 140),
-			String((look.get("frame", {}) as Dictionary).get("stock", "?")) if look.get("frame") is Dictionary else "?",
-			String(look.get("setting", "?")).substr(0, 100)])
+	for i in mini(history.size(), PAST_FULL + PAST_LINES):
+		past.append(_past(_d(history[i])) if i < PAST_FULL else _past_line(_d(history[i])))
 	var lines := PackedStringArray()
 	lines.append("You are the PRODUCER. Plan episode #%d before the camera rolls. Nobody knows which cards will come up - the deck has not been shuffled - so plan nothing that depends on a card." % seed)
 	lines.append("")
@@ -127,17 +141,20 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	lines.append("")
 	lines.append(deck_line(deck))
 	lines.append("")
-	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: medium, era and influences, linework, texture, palette, how figures are drawn. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lights burn on the table - a candle in its holder, a candelabra, a dish of tea lights each count as one (what they are, and the rest of what stands on the table, is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
+	lines.append("THE LOOK is a tarot deck that has never existed, and the table it is read on. Make it specific enough that an illustrator could paint every card in one consistent hand: what the cards picture (their cast) and how it is drawn, the medium and its influences, linework, texture, palette. Then the card back (a design that reads the same when the card is turned upside down - exactly symmetric under a half turn), how much of the deck is printed in metallic foil (`foil`, 0 for matte ink to 1 for gold leaf everywhere), the surface the cards lie on (seen from directly above), the place the table stands in (seen past the far edge of the table, out of focus), the light, and how many lights burn on the table - a candle in its holder, a candelabra, a dish of tea lights each count as one (what they are, and the rest of what stands on the table, is set separately). The card's frame, its name and its numeral are printed by the deck itself, so the illustrations carry no lettering.")
 	lines.append("THE CARD STOCK is the card's own color: it shows all round every picture and behind its name, and the deck's booklet is printed in the same colors. Decks are printed on stock of every color, dark and saturated as well as pale - choose the one that best sets off this deck's paintings, with an ink and accent that read on it.")
-	lines.append("")
-	lines.append("INSPIRATION. These numbers were drawn for this episode. Let them push the episode somewhere this show has never been - a culture, a period, a material, a mood - without being literal about them: a place %s; a year %d; a hue %d degrees; the hour %d:00. Before deciding, brainstorm twelve sharply different directions for the episode (topic, angle and look together), then commit to direction number %d." % [String(d["place"]), int(d["year"]), int(d["hue"]), int(d["hour"]), int(d["direction"])])
 	if not past.is_empty():
 		lines.append("")
-		lines.append("EARLIER EPISODES of this show. Do not repeat their topics, title formulas, deck styles, palettes, card stocks or settings:")
+		lines.append("EARLIER EPISODES of this show, newest first: what each was about and how it was told, what its deck pictured and how it was painted, and what it was printed and read on.")
 		lines.append("\n".join(past))
+		lines.append("")
+		lines.append("THE SHOW'S HABITS. Read those episodes for what they share - not their subjects, which differ, but the formulas under them: the shape of the titles, the kind of angle, the kind of running bit, who or what the cards picture and how they are composed, the way the decks are painted, the card stocks, the cloths, the rooms, the hour and the light. Name each one in `habits`, with how many of the episodes fell into it. Then plan an episode that falls into none of them, in its form as well as its subject, and repeats none of their topics, title formulas, angles, running bits, casts, painting styles, palettes, card stocks, cloths or rooms.")
+	lines.append("")
+	lines.append("INSPIRATION. These numbers were drawn for this episode. Let them push the episode somewhere this show has never been - a culture, a period, a material, a mood - without being literal about them: a place %s; a year %d; a hue %d degrees; the hour %d:00. Before deciding, brainstorm twelve sharply different directions for the episode (topic, angle and look together)%s, then commit to direction number %d." % [String(d["place"]), int(d["year"]), int(d["hue"]), int(d["hour"]), ", none of them in one of the show's habits" if not past.is_empty() else "", int(d["direction"])])
 	lines.append("")
 	lines.append("Reply with ONLY a JSON object, no other text:")
-	lines.append("""{
+	lines.append(("""{
+  "habits": ["one habit of the earlier episodes per line, and how many of them fell into it"],""" if not past.is_empty() else "{") + """
   "brainstorm": ["twelve one-line directions"],
   "episode_title": "the video's title, as it appears on YouTube",
   "description": "the video's YouTube description, in the genre's own shape (a greeting, what this reading covers, the usual disclaimers and calls to action) and told the show's way; three short paragraphs, no emoji, no links",
@@ -145,7 +162,8 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
   "audience": "who this collective reading says it is for",
   "topic": "what the reading is about, in a few words",
   "premise": "the episode's angle, in one or two sentences",
-  "reader_mood": "how the reader is today, and any running bit for this episode - a bit the reader SAYS, never a thing done or an object shown (the viewer sees the table and the cards, never the reader), and never a way of speaking (the show's voice is fixed: no whispering, accents or singing)",
+  "reader_mood": "how the reader is today",
+  "running_bit": "any running bit for this episode - a bit the reader SAYS, never a thing done or an object shown (the viewer sees the table and the cards, never the reader), and never a way of speaking (the show's voice is fixed: no whispering, accents or singing)",
   "spread": {"name": "the spread's name", "positions": [{"name": "position name", "asks": "what it asks"}]},
   "look": {
     "deck_name": "the deck's name",
@@ -164,9 +182,10 @@ static func producer(title: String, brief: String, seed: int, cards: int, revers
 	return {"system": show_context(title, brief), "prompt": "\n".join(lines), "dice": d}
 
 
-## The deck's creator, for ONE card: its illustration and its booklet entry.
+## The deck's creator, for ONE card: its illustration and its booklet entry. [param history] is
+## the show's other episodes ([method TarotEpisode.archive]), for how their decks pictured it.
 static func designer(title: String, brief: String, look: Dictionary, card: Dictionary,
-		reversals: bool) -> Dictionary:
+		reversals: bool, history: Array = []) -> Dictionary:
 	var lines := PackedStringArray()
 	lines.append("You are the DESIGNER of the tarot deck \"%s\", used on this show. Its look:" % String(look.get("deck_name", "")))
 	lines.append(String(look.get("deck_style", "")))
@@ -180,8 +199,13 @@ static func designer(title: String, brief: String, look: Dictionary, card: Dicti
 	if not meaning.is_empty():
 		lines.append("What it means in this deck - grounding, not text to copy: %s" % meaning)
 	lines.append("")
-	lines.append("1. THE ILLUSTRATION: what this card shows, for the illustrator who paints the whole deck - subject, composition, the traditional symbolism of this card reinterpreted in this deck's world. Its own people and creatures, described so they could not be mistaken for another card's. Tall portrait format. No words, letters or numbers anywhere in the picture: the card's frame and name are printed separately.")
+	lines.append("1. THE ILLUSTRATION: what this card shows, for the illustrator who paints the whole deck - subject, composition, the traditional symbolism of this card reinterpreted in this deck's world. Whatever it pictures is its own, described so it could not be mistaken for another card's. Tall portrait format. No words, letters or numbers anywhere in the picture: the card's frame and name are printed separately.")
 	lines.append("2. ITS ENTRY IN THE DECK'S LITTLE BOOKLET, which is shown on screen beside the card. Write it the way the brief says this deck's booklet speaks (if it does not say, in the earnest, slightly old-fashioned voice decks' booklets use). It stands alone: never mention another card.")
+	var before := _pictured_before(history, String(card.get("name", "")))
+	if not before.is_empty():
+		lines.append("")
+		lines.append("EARLIER DECKS on this show pictured this card like this. Picture it some other way, in its subject and its composition both:")
+		lines.append("\n".join(before))
 	lines.append("")
 	lines.append("Reply with ONLY a JSON object, no other text:")
 	lines.append("""{
@@ -267,8 +291,13 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 ## the card's own for a card, every card's for the close - so the words are told to be about
 ## what is painted, and the designer's plan for the painting is left out: where the painter
 ## went its own way, the picture on screen is the one the viewer is looking at.
+##
+## [param history] is the show's other episodes ([method TarotEpisode.archive]): what the
+## audience has already heard at this point of an episode. Every name in [param names] (the
+## show's deck) is masked out of it, so no card reaches a reader through another episode either.
 static func reader(title: String, brief: String, plan: Dictionary, step: String, said: Array,
-		drawn: Array, spread_size: int, pictured := false) -> Dictionary:
+		drawn: Array, spread_size: int, pictured := false, history: Array = [],
+		names: Array = []) -> Dictionary:
 	var lines := PackedStringArray()
 	var positions: Array = ((plan.get("spread", {}) as Dictionary).get("positions", [])) as Array
 	lines.append("You are the READER: the voice of the video. You speak every word of it.")
@@ -279,6 +308,9 @@ static func reader(title: String, brief: String, plan: Dictionary, step: String,
 	lines.append("Topic: %s" % String(plan.get("topic", "")))
 	lines.append("Angle: %s" % String(plan.get("premise", "")))
 	lines.append("You today: %s" % String(plan.get("reader_mood", "")))
+	var bit := _s(plan.get("running_bit", ""))
+	if not bit.is_empty():
+		lines.append("Your running bit: %s" % bit)
 	lines.append("The spread: %s, %d cards:" % [String((plan.get("spread", {}) as Dictionary).get("name", "")), spread_size])
 	for i in positions.size():
 		var pos: Dictionary = positions[i] if positions[i] is Dictionary else {"name": str(positions[i])}
@@ -337,6 +369,18 @@ static func reader(title: String, brief: String, plan: Dictionary, step: String,
 			lines.append("End as you reach for the next card: after your last word this card goes down and the next comes up, so lead into that and never say it has happened - the next passage opens on the new card.")
 		else:
 			lines.append("It is the last card. End as you go to lay it down beside the others: it goes down after your last word, so never say it is down - the close opens on the whole spread.")
+	var kind := step if step == "intro" or step == "close" \
+		else ("jumper" if not drawn.is_empty() and bool((drawn[drawn.size() - 1] as Dictionary).get("jumper", false)) else "card")
+	var heard_before := _heard_before(history, kind, brief, names)
+	if not heard_before.is_empty():
+		lines.append("")
+		lines.append(String({
+			"intro": "HOW EARLIER EPISODES OPENED, after the words the brief gives every episode. The audience has heard these: open this one some other way.",
+			"card": "HOW EARLIER EPISODES MET A CARD - the first words as it was turned over ([card] stands for its name). The audience has heard these: meet this one some other way.",
+			"jumper": "HOW EARLIER EPISODES MET A JUMPER - the first words as it flew out ([card] stands for its name). The audience has heard these: meet this one some other way.",
+			"close": "HOW EARLIER EPISODES CLOSED, up to the words the brief gives every episode ([card] stands for a card's name). The audience has heard these: say what a close says some other way.",
+		}[kind]))
+		lines.append("\n".join(heard_before))
 	lines.append("")
 	lines.append(MOVES)
 	lines.append("")
@@ -360,6 +404,158 @@ static func strings(v: Variant) -> PackedStringArray:
 
 static func _card_line(c: Dictionary) -> String:
 	return "%s%s" % [String(c.get("name", "")), ", reversed (upside down)" if bool(c.get("reversed", false)) else ""]
+
+
+# --- what the show has already made ----------------------------------------------------------
+
+## ONE EARLIER EPISODE as the producer reads it: what it was about and how it was told, what its
+## deck pictured (the designs, so the cast as painted, not as planned) and how it was painted, and
+## what it was printed and read on - every field cut short, so ten read at a glance.
+static func _past(e: Dictionary) -> String:
+	var p := _d(e.get("plan"))
+	var look := _d(p.get("look"))
+	var frame := _d(look.get("frame"))
+	var light := _d(look.get("light"))
+	var lines := PackedStringArray()
+	lines.append("- \"%s\"" % _s(p.get("episode_title", "")))
+	lines.append("  For: %s" % clip(_s(p.get("audience", "")), 18))
+	lines.append("  Topic: %s | Angle: %s" % [clip(_s(p.get("topic", "")), 12), clip(_s(p.get("premise", "")), 40)])
+	lines.append("  The reader: %s" % clip(_s(p.get("reader_mood", "")), 60))
+	if not _s(p.get("running_bit", "")).is_empty():
+		lines.append("  Running bit: %s" % clip(_s(p.get("running_bit", "")), 30))
+	lines.append("  Spread: %s" % _s(_d(p.get("spread")).get("name", "")))
+	lines.append("  Deck \"%s\": %s" % [_s(look.get("deck_name", "")), clip(_s(look.get("deck_style", "")), 40)])
+	var pictured := PackedStringArray()
+	for c in e.get("cards", []) if e.get("cards") is Array else []:
+		var art := _s(_d(c).get("art", ""))
+		if not art.is_empty():
+			pictured.append("%s - %s" % [_s(_d(c).get("name", "")), clip(art, 26)])
+	if not pictured.is_empty():
+		lines.append("  Its cards pictured: %s" % "; ".join(pictured))
+	lines.append("  Card stock %s, ink %s, accent %s; %s frame, titles in %s, foil %s; palette %s" % [
+		_s(frame.get("stock", "")), _s(frame.get("ink", "")), _s(frame.get("accent", "")),
+		_s(frame.get("style", "")), _s(look.get("title_face", "")), _s(look.get("foil", "")),
+		" ".join(strings(look.get("palette", [])))])
+	lines.append("  Cloth: %s | Room: %s | Light: %s, %s lit on the table" % [clip(_s(look.get("surface", "")), 14),
+		clip(_s(look.get("setting", "")), 16), clip(_s(light.get("kind", "")), 12), _s(look.get("candles", ""))])
+	return "\n".join(lines)
+
+
+## An episode past the first [constant PAST_FULL], in a line.
+static func _past_line(e: Dictionary) -> String:
+	var p := _d(e.get("plan"))
+	var look := _d(p.get("look"))
+	return "- \"%s\" - %s; deck \"%s\": %s" % [_s(p.get("episode_title", "")), clip(_s(p.get("topic", "")), 10),
+		_s(look.get("deck_name", "")), clip(_s(look.get("deck_style", "")), 14)]
+
+
+## How earlier decks pictured the card named [param card_name], one line each.
+static func _pictured_before(history: Array, card_name: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	for e in history:
+		var deck := _s(_d(_d(_d(e).get("plan")).get("look")).get("deck_name", ""))
+		for c in _d(e).get("cards", []) if _d(e).get("cards") is Array else []:
+			var art := _s(_d(c).get("art", ""))
+			if _s(_d(c).get("name", "")) == card_name and not art.is_empty() and out.size() < SAME_CARD:
+				out.append("- in \"%s\": %s" % [deck, clip(art, 45)])
+	return out
+
+
+## WHAT THE AUDIENCE HAS HEARD at this point of an episode ([param kind]: intro, card, jumper or
+## close): the start of each earlier intro and card passage, the end of each close - past the words
+## the brief gives every episode, which stay ([method unfixed]) - with every card name masked.
+static func _heard_before(history: Array, kind: String, brief: String, names: Array) -> PackedStringArray:
+	var out := PackedStringArray()
+	var most := int((HEARD[kind] as Array)[0])
+	var words := int((HEARD[kind] as Array)[1])
+	for e in history:
+		var texts: Array = []
+		if kind == "intro" or kind == "close":
+			texts.append(_s(_d(e).get(kind, "")))
+		else:
+			for c in _d(e).get("cards", []) if _d(e).get("cards") is Array else []:
+				if bool(_d(c).get("jumper", false)) == (kind == "jumper"):
+					texts.append(_s(_d(c).get("said", "")))
+		for t in texts:
+			var line := mask_cards(unfixed(heard(String(t)), brief), names)
+			line = tail(line, words) if kind == "close" else clip(line, words)
+			if not line.is_empty() and out.size() < most:
+				out.append("- \"%s\"" % line)
+	return out
+
+
+## Spoken text as it is heard: no marks, no emphasis, one line.
+static func heard(text: String) -> String:
+	return _one_line(Manuscript._rx("<!--[\\s\\S]*?-->").sub(text, " ", true).replace("*", ""))
+
+
+## [param text] without the sentences [param brief] gives word for word (a greeting, a sign-off):
+## those are the same in every episode by design, and the record is of what changes.
+static func unfixed(text: String, brief: String) -> String:
+	var fixed := " %s " % _bare(brief)
+	var keep := PackedStringArray()
+	for m in Manuscript._rx("[^.!?]+[.!?]*").search_all(text):
+		var sentence := m.get_string().strip_edges()
+		var bare := _bare(sentence)
+		if sentence.is_empty() or (bare.split(" ", false).size() >= 3 and fixed.contains(" %s " % bare)):
+			continue
+		keep.append(sentence)
+	return " ".join(keep)
+
+
+## Every card name in [param names] out of [param text], as "[card]" - "The " before it included.
+static func mask_cards(text: String, names: Array) -> String:
+	var alts := PackedStringArray()
+	for n in names:
+		var bare := Manuscript._rx("(?i)^the\\s+").sub(String(n).strip_edges(), "")
+		if not bare.is_empty():
+			alts.append(_rx_escape(bare))
+	if alts.is_empty():
+		return text
+	alts.sort()
+	alts.reverse()          # the longer of two names sharing a start is tried first
+	return Manuscript._rx("\\b(?:[Tt]he\\s+)?(?:%s)\\b" % "|".join(alts)).sub(text, "[card]", true)
+
+
+## The first [param n] words of [param text], "..." where it was cut.
+static func clip(text: String, n: int) -> String:
+	var w := _one_line(text).split(" ", false)
+	return " ".join(w) if w.size() <= n else " ".join(w.slice(0, n)) + "..."
+
+
+## The last [param n] words of [param text], "..." where it was cut.
+static func tail(text: String, n: int) -> String:
+	var w := _one_line(text).split(" ", false)
+	return " ".join(w) if w.size() <= n else "..." + " ".join(w.slice(w.size() - n))
+
+
+static func _one_line(text: String) -> String:
+	return Manuscript._rx("\\s+").sub(text, " ", true).strip_edges()
+
+
+## Lowercase words and digits, single-spaced: what two spellings of one sentence share.
+static func _bare(text: String) -> String:
+	return Manuscript._rx("[^a-z0-9]+").sub(text.to_lower().replace("'", "").replace("’", ""), " ", true).strip_edges()
+
+
+static func _rx_escape(s: String) -> String:
+	var out := ""
+	for ch in s:
+		out += ("\\" + ch) if "\\.^$|?*+()[]{}".contains(ch) else ch
+	return out
+
+
+static func _d(v: Variant) -> Dictionary:
+	return v if v is Dictionary else {}
+
+
+## A field as text, whatever a writer made it (JSON numbers arrive as floats).
+static func _s(v: Variant) -> String:
+	if v is String:
+		return (v as String).strip_edges()
+	if v is float and is_equal_approx(v, roundf(v)):
+		return str(int(v))
+	return "" if v == null else str(v).strip_edges()
 
 
 # --- the painter -----------------------------------------------------------------------------

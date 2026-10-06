@@ -76,15 +76,15 @@ cards themselves into `draw.json`, so an episode keeps what it drew whatever the
 
 | step | who | from |
 |---|---|---|
-| `plan` | producer (best tier) | brief, title, the seed's dice, earlier episodes |
+| `plan` | producer (best tier) | brief, title, the seed's dice, earlier episodes (it names their habits first) |
 | `draw` | ghost | the show's deck and the seed (shuffle, spread size, jumper) |
-| `design:K` | deck designer (fast tier), one card per run | the look, card K, its traditional meaning |
+| `design:K` | deck designer (fast tier), one card per run | the look, card K, its traditional meaning, how earlier decks pictured card K |
 | `image:back/surface/backdrop` | painter | the look |
 | `table` | set dresser (best tier) | the plan, the cloth's painting, earlier episodes' tables - no card |
 | `image:card:K` | painter | design K; the back + first + previous card as references |
-| `say:intro` | reader (best tier) | the plan - no card |
-| `say:K` | reader | the plan, every passage before, cards 1..K, and card K's PAINTING |
-| `say:close` | reader | everything, and every card's painting |
+| `say:intro` | reader (best tier) | the plan - no card; how earlier episodes opened |
+| `say:K` | reader | the plan, every passage before, cards 1..K, and card K's PAINTING; how earlier episodes met a card |
+| `say:close` | reader | everything, and every card's painting; how earlier episodes closed |
 | `script` | ghost | the passages and the marks between them |
 
 **The reader looks at the cards** (the user, 2026-10-04: "otherwise, the text and the images are
@@ -122,9 +122,48 @@ file (`TextGen.Codex.ONLY_THIS`). The user's call, 2026-10-04: asking is enough 
 it - and choosing the agent matters more than sealing it.
 
 **Variety.** Each seed draws numeric dice (a place on Earth, a year, a hue, an hour, a
-brainstorm pick) - no word lists - and the producer is shown earlier episodes' titles, topics,
-decks and settings and told not to repeat them. The table samples its own layout from the seed
-(camera, deck position, spread layout, shuffle moves, props, light).
+brainstorm pick) - no word lists - and the table samples its own layout from the seed (camera,
+deck position, spread layout, shuffle moves, props, light).
+
+**What the show has already made** (2026-10-05; the user: "without any context about what we
+have already made, the models don't know what they should avoid, or what new things they should
+try"). Told only to vary, the agents varied the SUBJECT and converged on the FORM. Eight episodes
+in: seven decks were "painted as if it were [a craft object] from [a century]" with a human figure
+centered on nearly every card, seven of seven running bits were a status revised at each card
+with the third revision the punchline, every title ended on a bracketed twist, three readers said
+"it is three in the afternoon where I am", and closes reused "typing I claim it claims a comment".
+The producer's history had shown 140 characters of each deck's style - the medium, never the cast -
+and no angle or running bit; nobody else saw any. Now `TarotEpisode.archive(show, except)` reads
+every other episode (plan, the cards drawn with each design's art and the reader's words, table
+things, intro, close; newest first, at most 40), and each role gets the part it decides, cut short
+(`TarotPrompts.clip`/`tail`):
+- PRODUCER: the newest `PAST_FULL` (10) in full - title, audience, topic and angle, the reader and
+  running bit, spread, deck style, WHAT ITS CARDS PICTURED (the designs' art, so the cast as
+  painted), stock/ink/accent/frame/face/foil/palette, cloth, room, light - and `PAST_LINES` more
+  in a line. It is asked to NAME THE SHOW'S HABITS first (`habits` in its reply, kept in
+  `plan.json`): the formulas under the subjects, each with how many episodes fell into it, then
+  to brainstorm and plan outside them. A list alone shows eight different subjects; naming what
+  they share is what makes the formula visible.
+- DESIGNER: how earlier decks pictured THE SAME CARD (`SAME_CARD`, by name), to picture it some
+  other way.
+- SET DRESSER: the things earlier tables held, as before.
+- READER: what the audience has heard at this point of an episode (`HEARD`) - the start of
+  earlier intros, the first words of earlier card passages (jumpers apart), the end of earlier
+  closes - with the sentences the brief gives every episode word for word left out
+  (`TarotPrompts.unfixed`: "Hello, my loves", the sign-off) and EVERY CARD NAME OF THE DECK MASKED
+  (`mask_cards`, "[card]"), so no card reaches a reader through another episode's words.
+The plan's `reader_mood` was split: `running_bit` is its own field (the reader is told "Your
+running bit"), so the record shows it exactly; older plans keep it inside `reader_mood`, which the
+record shows 60 words of. The look's instruction no longer presumes the cast or the period ("what
+the cards picture (their cast) and how it is drawn, the medium and its influences"; it said "era
+and influences ... how figures are drawn"), nor the designer's ("whatever it pictures is its own";
+it said "its own people and creatures"). Gate: tarot_check `_archive` (two-sided: an episode alone
+in its show is told nothing; no episode is its own history; unmasked, the later card is there).
+STILL PULLING TOWARD THE FORMULAS, and the user's to decide: the brief's own examples ("runs it as
+a working system - with staff, policies, delays, a waiting list and a pricing page"; a running bit
+is "a count that moves, a story told in installments, a claim that keeps being revised") and the
+year and hour dice, which producers have read literally (a period piece of that year; the reader
+stating that hour).
 
 **The card stock** (2026-10-05, the user: "most if not all generated tarot cards have a light tan
 color"): asked only for "card stock", the producer printed all four decks on cream. It stays the

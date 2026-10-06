@@ -232,13 +232,9 @@ func _spread_n() -> int:
 
 func _make_plan() -> void:
 	var n := _spread_n()
-	var past: Array = []
-	for h in TarotEpisode.history(episode.show):
-		if int((h as Dictionary)["seed"]) != episode.seed:
-			past.append(h)
 	var p := TarotPrompts.producer(String(spec.get("title", "")), String(spec.get("brief", "")),
 		episode.seed, n, bool(spec.get("reversals", true)), TarotTable.FACES,
-		TarotTable.FRAMES, past, _deck())
+		TarotTable.FRAMES, TarotEpisode.archive(episode.show, episode.seed), _deck())
 	_submit_text("plan", p, "best")
 
 
@@ -296,7 +292,7 @@ func _drawn(upto: int) -> Array:
 func _make_design(k: int) -> void:
 	var card := _card(k)
 	var p := TarotPrompts.designer(String(spec.get("title", "")), String(spec.get("brief", "")),
-		_look(), card, bool(spec.get("reversals", true)))
+		_look(), card, bool(spec.get("reversals", true)), TarotEpisode.archive(episode.show, episode.seed))
 	_submit_text("design:%d" % k, p, "fast")
 
 
@@ -345,17 +341,8 @@ func _make_image(step: String) -> void:
 ## episodes' tables held so this one holds others.
 func _make_table() -> void:
 	var seen: Array = []
-	for h in TarotEpisode.history(episode.show):
-		var s := int((h as Dictionary)["seed"])
-		if s == episode.seed:
-			continue
-		var t: Variant = TarotEpisode.open(episode.show, s).read_json("table")
-		if t is Dictionary and (t as Dictionary).get("things") is Array:
-			for th in (t as Dictionary)["things"]:
-				if th is Dictionary and not _str((th as Dictionary).get("name", "")).is_empty():
-					seen.append(_str((th as Dictionary)["name"]))
-		if seen.size() >= 40:
-			break
+	for e in TarotEpisode.archive(episode.show, episode.seed):
+		seen.append_array((e as Dictionary)["things"])
 	var cloth := episode.has("image:surface")
 	var p := TarotPrompts.set_dresser(String(spec.get("title", "")), String(spec.get("brief", "")), _plan(),
 		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth)
@@ -399,8 +386,11 @@ func say_prompt(who: String) -> Dictionary:
 					String(c.get("name", "")), ", reversed" if bool(c.get("reversed", false)) else ""])
 			images.append({"path": episode.file_of("image:card:%d" % k), "label": label,
 				"flip": bool(c.get("reversed", false))})
+	var names: Array = []
+	for c in _deck():
+		names.append(String((c as Dictionary).get("name", "")))
 	var p := TarotPrompts.reader(String(spec.get("title", "")), String(spec.get("brief", "")),
-		_plan(), who, said, drawn, n, not images.is_empty())
+		_plan(), who, said, drawn, n, not images.is_empty(), TarotEpisode.archive(episode.show, episode.seed), names)
 	p["images"] = images
 	return p
 
@@ -469,9 +459,10 @@ func _land_plan(text: String) -> String:
 		elif not _str(q).is_empty():
 			pos.append({"name": _str(q), "asks": ""})
 	spread["name"] = _str(spread.get("name", ""))
-	for k in ["episode_title", "description", "audience", "topic", "premise", "reader_mood"]:
+	for k in ["episode_title", "description", "audience", "topic", "premise", "reader_mood", "running_bit"]:
 		plan[k] = _str(plan.get(k, ""))
-	plan["tags"] = Array(TarotPrompts.strings(plan.get("tags", [])))
+	for k in ["tags", "habits"]:
+		plan[k] = Array(TarotPrompts.strings(plan.get(k, [])))
 	# EXACTLY the size drawn for this seed: a plan that miscounts is trimmed, or filled out
 	# with the position readers reach for when they want one more card
 	pos = pos.slice(0, n)

@@ -70,6 +70,44 @@ static func history(show_key: String) -> Array:
 	return out
 
 
+## WHAT THE SHOW HAS ALREADY MADE, for a later episode's agents to go somewhere else (see
+## [TarotPrompts]): every other episode of [param show_key] with a plan, newest first, at most
+## [param most] - `{seed, plan, cards: [{name, reversed, jumper, art, said}], things, intro,
+## close}`: the cards it drew, what each pictured and what the reader said as it turned over, the
+## things on its table, and its first and last passages. What an episode has not made is empty.
+static func archive(show_key: String, except: int, most := 40) -> Array:
+	var out: Array = []
+	for h in history(show_key):
+		var s := int((h as Dictionary)["seed"])
+		if s == except:
+			continue
+		if out.size() >= most:
+			break
+		var ep := open(show_key, s)
+		var cards: Array = []
+		var draw: Variant = ep.read_json("draw")
+		var drawn: Array = []
+		if draw is Dictionary and (draw as Dictionary).get("cards") is Array:
+			drawn = (draw as Dictionary)["cards"]
+		for i in drawn.size():
+			var c: Dictionary = drawn[i] if drawn[i] is Dictionary else {}
+			var design: Variant = ep.read_json("design:%d" % (i + 1))
+			cards.append({"name": str(c.get("name", "")), "reversed": bool(c.get("reversed", false)),
+				"jumper": bool(c.get("jumper", false)),
+				"art": str((design as Dictionary).get("art", "")) if design is Dictionary else "",
+				"said": ep.read_text("say:%d" % (i + 1))})
+		var things: Array = []
+		var table: Variant = ep.read_json("table")
+		if table is Dictionary and (table as Dictionary).get("things") is Array:
+			for th in (table as Dictionary)["things"]:
+				var name := str((th as Dictionary).get("name", "")).strip_edges() if th is Dictionary else ""
+				if not name.is_empty():
+					things.append(name)
+		out.append({"seed": s, "plan": (h as Dictionary)["plan"], "cards": cards, "things": things,
+			"intro": ep.read_text("say:intro"), "close": ep.read_text("say:close")})
+	return out
+
+
 # --- files -----------------------------------------------------------------------------
 
 ## The file a step is kept in (see [method steps] for the keys).
