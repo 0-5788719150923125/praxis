@@ -222,7 +222,8 @@ func export_take() -> String:
 	_export_pin = {}
 	if not path.is_empty():
 		_taken = {"take": path, "episode": ep}
-		var err := ep.write_upload_notes(path, _show_tags(), _cur_desc)
+		var err := ep.write_upload_notes(path, _show_tags(), _cur_desc,
+			upload_title(_doc.field("title"), String(ep.upload_notes()["title"])))
 		_set_status(("Rendered the take; upload notes are in the episode's folder (upload.md)." if err.is_empty()
 			else "Rendered the take; the upload notes failed: " + err))
 	return path
@@ -246,8 +247,19 @@ func upload_meta(take: String) -> Dictionary:
 	var chapters: PackedStringArray = n["chapters"]
 	if not chapters.is_empty():
 		desc += "\n\n" + "\n".join(chapters)
-	return {"title": n["title"], "description": desc, "tags": Array(_show_tags()),
+	return {"title": upload_title(_doc.field("title"), String(n["title"])), "description": desc, "tags": Array(_show_tags()),
 		"thumbnail_at": thumbnail_moment(_take_intro(take)), "record": ep.file_of("youtube")}
+
+
+## THE UPLOAD'S TITLE: the show's name, then the episode's - "Truthful Tarot: My Episode Name" (the
+## user, 2026-10-06) - unless the episode's already begins with the name, or the show has none.
+## YouTube's 100 characters are cut from the end ([method YouTube.fit_title]), so the name stands.
+static func upload_title(show: String, episode: String) -> String:
+	var name := show.strip_edges()
+	var t := episode.strip_edges()
+	if name.is_empty() or t.to_lower().begins_with(name.to_lower()):
+		return t
+	return "%s: %s" % [name, t] if not t.is_empty() else name
 
 
 ## WHERE THE THUMBNAIL IS TAKEN, seconds into the video: the title screen with the show's name fully
@@ -288,13 +300,13 @@ func _show_title() -> String:
 	return t if not t.is_empty() else "Untitled Tarot"
 
 
-## What the producer works from, read fresh: the title, the brief (its card LIST taken out - see
+## What the producer works from, read fresh: the title and byline, the brief (its card LIST taken out - see
 ## [method TarotDeck.strip]), the deck the brief defines (or the standard 78), the show's voices
 ## (every one its document names - the reader's and any other, a familiar's - for the reader to
 ## hand lines to), and the knobs.
 func _spec() -> Dictionary:
 	var body := Manuscript.strip_frontmatter(_doc.pull())
-	return {"title": _show_title(), "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
+	return {"title": _show_title(), "byline": _show_byline(), "brief": TarotDeck.strip(body), "deck": TarotDeck.of(body),
 		"voices": _cast_dict().keys(),
 		"cards": _knobs["cards"], "reversals": _knobs["reversals"], "jumpers": _knobs["jumpers"],
 		"writer": _knobs["writer"], "writer_model": _knobs["writer_model"], "writer_effort": _knobs["writer_effort"],
@@ -1316,9 +1328,10 @@ func _refresh_upload_note() -> void:
 	if _episode == null or not _episode.has("plan"):
 		_yt_note.text = "Generate the plan first: the producer writes the episode's title."
 		return
-	var t := ("Goes up with the show's %d tag%s, %d of YouTube's %d characters." % [fitted.size(),
+	var t := "Goes up as \"%s\"" % YouTube.fit_title(upload_title(_doc.field("title"), _cur_title))
+	t += (", with the show's %d tag%s, %d of YouTube's %d characters." % [fitted.size(),
 		"" if fitted.size() == 1 else "s", YouTube.tags_length(fitted), YouTube.TAGS_MAX]) if not fitted.is_empty() \
-		else "No tags yet: the ones added here are the show's, and go up with every episode."
+		else ". No tags yet: the ones added here are the show's, and go up with every episode."
 	var ups := _episode.uploads()
 	if not ups.is_empty():
 		var last: Dictionary = ups[ups.size() - 1]

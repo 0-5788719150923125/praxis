@@ -456,6 +456,17 @@ func _panel_fields() -> bool:
 		"the upload: the episode's title, the show's description and tags")
 	_ok(is_equal_approx(float(meta.get("thumbnail_at", -1.0)), ed.thumbnail_moment(ed._take_intro(""))),
 		"and the title screen's moment for its thumbnail")
+	ed._doc._fields["title"] = "Truthful Tarot"
+	_ok(ed.upload_meta("").get("title") == "Truthful Tarot: My Own Title" and ed.export_name() == "My Own Title",
+		"the upload's title is the show's name, then the episode's - the file keeps the episode's alone")
+	ed._refresh_upload_note()
+	_ok(ed._yt_note.text.begins_with("Goes up as \"Truthful Tarot: My Own Title\""), "the note shows the title as it goes up")
+	_ok(ed.upload_title("Truthful Tarot", "truthful tarot: Already Named") == "truthful tarot: Already Named"
+		and ed.upload_title("", "Bare") == "Bare" and ed.upload_title("Show", "") == "Show",
+		"no name twice, none when the show has no title, the name alone when the episode has none")
+	var long_title: String = YouTube.fit_title(ed.upload_title("Truthful Tarot", "word ".repeat(30)))
+	_ok(long_title.begins_with("Truthful Tarot: ") and long_title.length() <= 100, "cut to 100 characters, the name stands")
+	ed._doc._fields.erase("title")
 	# THE BYLINE, on the document card right under Title
 	var card = ed._writer
 	var edits: Array = card._field_edits.keys()

@@ -27,7 +27,9 @@ extends Node
 ##     flicker (one tempo for all) as the control; and the room's out-of-shot candles are out of
 ##     shot, throw no shadows, and flicker too;
 ##   - the outro: lit while the voice speaks, fading to black after its last word and black as the
-##     outro runs out; the channel's name over the intro and never again (it came back at the end).
+##     outro runs out; the channel's name over the intro and never again (it came back at the end);
+##     the table thrown out of focus all the while the name is up, the thumbnail's moment included,
+##     the blur lifting as the focus pulls and off for the reading.
 ##
 ##   tests/run_boot_probe.sh tests/tarot_place_check.gd 180
 ##
@@ -565,7 +567,45 @@ func _outro() -> void:
 		shown += 1 if medium._title_alpha(t) > 0.001 else 0
 		t += 0.25
 	_ok(shown == 0, "and never again, the end included (%d moments)" % shown)
+	# THE INTRO IS A WASH OF COLOR all the while the name is up - the thumbnail's moment with it - and
+	# lifts as the focus pulls, never widening again, off for the whole reading
+	var wide := TarotTable.TITLE_BLUR
+	var full := 0
+	var moments := 0
+	var t1 := 1.4
+	while t1 < ts - TarotMedium.FOCUS_PULL.x:
+		medium._tick_focus(t1)
+		full += 1 if medium._blur.visible and is_equal_approx(_blur_sigma(), wide) else 0
+		moments += 1
+		t1 += 0.25
+	_ok(moments > 0 and full == moments, "the table is thrown out of focus all the while the name is up (%d of %d moments)" % [full, moments])
+	var thumb := TarotEditor.thumbnail_moment(Director.intro_hold)
+	medium._tick_focus(thumb)
+	_ok(medium._title_alpha(thumb) > 0.999 and medium._blur.visible and is_equal_approx(_blur_sigma(), wide),
+		"the thumbnail's moment (%.1f s) has the name fully up over the table out of focus" % thumb)
+	var was := wide
+	var widened := 0
+	t1 = ts - TarotMedium.FOCUS_PULL.x
+	while t1 < ts + TarotMedium.FOCUS_PULL.y:
+		medium._tick_focus(t1)
+		var sg := _blur_sigma() if medium._blur.visible else 0.0
+		widened += 1 if sg > was + 1e-6 else 0
+		was = sg
+		t1 += 0.05
+	_ok(widened == 0 and was == 0.0, "the blur lifts as the focus pulls, never widening (%d steps back; %.4f left)" % [widened, was])
+	var on := 0
+	t1 = ts + 0.2
+	while t1 < end_t:
+		medium._tick_focus(t1)
+		on += 1 if medium._blur.visible else 0
+		t1 += 0.5
+	_ok(on == 0, "and is off for the reading (%d moments on)" % on)
 	Director.outro_hold = outro_was
+
+
+## The intro blur's sigma as the medium last set it.
+func _blur_sigma() -> float:
+	return float((medium._blur.material as ShaderMaterial).get_shader_parameter("sigma"))
 
 
 ## How often a series crosses its own mean, a second.

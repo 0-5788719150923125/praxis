@@ -39,6 +39,11 @@ extends SceneTree
 ##   any stock, and the booklet is printed in the card's colors.
 ## - WHAT THE SHOW HAS ALREADY MADE reaches each agent in the part it decides (the producer names the
 ##   show's habits), never the episode being made, and never a card name through a reader's record.
+## - THE CARD'S FRAME keeps a border: no frameless style, an old look naming one drawn as `line`,
+##   and every card's name fits the stock below its picture, in every face.
+## - THE TITLE SCREEN: the name as large as the frame's width allows (two lines for a long one), in
+##   proportion at any frame size; the set dresser's color kept and junk dropped for the default; a
+##   shade round the name that its color always reads against.
 
 var _fails := 0
 
@@ -48,7 +53,8 @@ func _init() -> void:
 	# nothing, and it used to leave a gate that had checked half of something reading ALL OK
 	for check in [_deck, _shuffle, _script, _schedule, _no_cheating, _redo, _helpers, _landing,
 			_lanes, _rerun_clears, _scrub_near, _clear_of_deck, _trash_episode, _pictures, _only_what_was_asked, _no_objects, _moves_after_words,
-			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt, _cloth_prompt, _familiar, _archive]:
+			_table_step, _things_built, _stones, _card_stock, _candles, _room_prompt, _cloth_prompt, _familiar, _archive,
+			_title_screen, _card_frame]:
 		_ok((check as Callable).call() == true, "%s stopped part way (a script error - see above)"
 			% (check as Callable).get_method())
 	print("tarot_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails,
@@ -1208,6 +1214,99 @@ func _card_stock() -> bool:
 	_ok(TarotTable.contrast(Color(0.955, 0.935, 0.885), Color.html("#1b2a3f")) > 3.0,
 		"control: the old cream page passes for a dark stock")
 	print("tarot_check: card stock - the producer's choice, ink readable, booklet in the card's colors")
+	return true
+
+
+## THE CARD'S FRAME (feedback 0010, 2026-10-06: a deck printed `bleed` - the painting to the card's
+## edge, cropped to the card's shape, the name and numeral on plates over it, the name running off its
+## plate - "It looks nothing like other cards, from other episodes"): every style keeps a border of
+## stock, a look naming the old style is drawn as `line`, the picture's window leaves a band above it
+## and below it, and every standard card's name fits the band below at a readable size in every face.
+func _card_frame() -> bool:
+	_ok(not TarotTable.FRAMES.has("bleed"), "a frameless card style is still offered to the producer")
+	_ok(String((TarotTable.sanitize_look({"frame": {"style": "bleed"}})["frame"] as Dictionary)["style"]) == "line",
+		"a look naming the frameless style is not drawn with a border")
+	var sz := Vector2(TarotCards.FACE_PX)
+	var win := TarotCards.window()
+	_ok(win.position.x > 0.0 and win.end.x < sz.x and win.position.y >= sz.y * 0.075 and sz.y - win.end.y >= sz.y * 0.105,
+		"the picture's window leaves no border or no band for the numeral and the name: %s" % str(win))
+	var room := win.size.x - sz.x * 0.06 * 2.0
+	var worst := {"size": 999, "name": "", "face": ""}
+	for f in TarotTable.FACES:
+		var face := TarotTable.font(String(f))
+		for c in TarotDeck.standard():
+			# set as the card sets it: the capital faces in capitals
+			var name := String((c as Dictionary)["name"])
+			if String(f) in ["roman", "deco", "sign", "typed"]:
+				name = name.to_upper()
+			var size := TarotCards._fit(face, name, int(sz.y * 0.052), room)
+			if size < int(worst["size"]):
+				worst = {"size": size, "name": name, "face": f}
+			_ok(face.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= room, "%s in %s runs past the band" % [name, f])
+	_ok(int(worst["size"]) >= int(sz.y * 0.035), "%s in %s is set at %d px on a %d px card - too small to read" % [worst["name"], worst["face"], worst["size"], int(sz.y)])
+	print("tarot_check: card frame - a border always; the smallest name %s in %s at %d px" % [worst["name"], worst["face"], worst["size"]])
+	return true
+
+
+## THE TITLE SCREEN (the user, 2026-10-06: the name "too small in some layouts on mobile" - this frame
+## is the thumbnail - and "always the same color", camouflaged on a table of the same): the name as
+## large as fits the frame's width, up to its cap, on two lines where one would set it small, and the
+## byline under it, smaller; the same layout at any frame size, in proportion; the set dresser's color
+## kept as written and anything else read as the default; and a shade round the name - dark round a
+## light one, light round a dark one - that every color reads against.
+func _title_screen() -> bool:
+	var face := TarotTable.font("roman")
+	var italic := TarotTable.font(TarotTable.BOOK_ITALIC)
+	var hd := Vector2(1920, 1080)
+	var cap := int(hd.y * TarotTable.TITLE_SIZE)
+	var room := hd.x * TarotTable.TITLE_WIDTH
+	var lay := TarotTable.title_layout(face, italic, "Trustworthy Tarot", "with Pen & Ink", hd)
+	var lines: Array = lay["lines"]
+	_ok(lines.size() == 2 and not bool(lines[0]["italic"]) and bool(lines[1]["italic"]),
+		"the name and its byline are not set as two lines, the name first: %s" % str(lines))
+	var size := int(lines[0]["size"])
+	_ok(size >= int(84 * 1.7), "the name is set at %d px on a 1080 frame - hardly over the old 84" % size)
+	_ok(face.get_string_size("Trustworthy Tarot", HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= room,
+		"the name runs wider than the frame allows")
+	_ok(size == cap or face.get_string_size("Trustworthy Tarot", HORIZONTAL_ALIGNMENT_LEFT, -1, size + 1).x > room,
+		"the name is set smaller than fits (%d px)" % size)
+	_ok(int(lines[1]["size"]) < size and float(lines[1]["y"]) > float(lines[0]["y"]), "the byline is not smaller and under the name")
+	_ok(absf((lay["box"] as Rect2).get_center().y - hd.y * TarotTable.TITLE_MIDDLE) < 1.0, "the title is not centered where it is set")
+	var small: Array = TarotTable.title_layout(face, italic, "Trustworthy Tarot", "with Pen & Ink", Vector2(1280, 720))["lines"]
+	_ok(absf(float(small[0]["size"]) - size * 720.0 / 1080.0) <= 2.0, "the name is not set in proportion on a 720 frame: %d against %d" % [int(small[0]["size"]), size])
+	var short: Array = TarotTable.title_layout(face, italic, "Tarot", "", hd)["lines"]
+	_ok(short.size() == 1 and int(short[0]["size"]) == cap, "a short name is not set at the cap: %s" % str(short))
+	# A LONG NAME GOES ON TWO LINES, larger than one line would set it - two-sided: on one, it is small
+	var long_name := "The Extremely Honest Tarot Hour With Friends"
+	var one := TarotTable.fit_rows(face, PackedStringArray([long_name]), cap, room)
+	_ok(one < cap * TarotTable.TITLE_TWO_LINES, "control: the long name sets large enough on one line (%d px)" % one)
+	var two: Array = TarotTable.title_layout(face, italic, long_name, "", hd)["lines"]
+	_ok(two.size() == 2 and int(two[0]["size"]) > one, "a long name was not set on two lines, larger than one would: %s" % str(two))
+	if two.size() == 2:
+		_ok(String(two[0]["text"]) + " " + String(two[1]["text"]) == long_name, "the two lines are not the name")
+		for l in two:
+			_ok(face.get_string_size(String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(l["size"])).x <= room, "a line of the long name runs wider than the frame allows")
+	# THE COLOR is the set dresser's, kept as written; anything else reads as the default
+	var spec := TarotTable.sanitize_table({"things": [], "title": {"color": "#1d2f5c", "why": "deep ink on pale straw"}}, {})
+	_ok(TarotTable.title_ink(spec).to_html(false) == "1d2f5c" and String((spec["title"] as Dictionary)["why"]) == "deep ink on pale straw",
+		"the set dresser's color was not kept: %s" % str(spec["title"]))
+	var cream := TarotTable.color(TarotTable.TITLE_INK)
+	for junk in [{"color": "red"}, {"color": "#12345"}, {"color": 7}, {"colour": "#1d2f5c"}, "#1d2f5c", null]:
+		var j := TarotTable.sanitize_table({"title": junk}, {})
+		_ok((j["title"] as Dictionary).is_empty() and TarotTable.title_ink(j) == cream, "a title of %s was kept" % str(junk))
+	_ok(TarotTable.title_ink(TarotTable.default_table({"candles": 1}, 3)) == cream, "a table with no title is not printed in the default")
+	# THE SHADE: every color reads against its own - two-sided, the ink itself as its shade reads against nothing
+	var worst := INF
+	for h in 12:
+		for v in [0.05, 0.3, 0.45, 0.5, 0.55, 0.7, 0.95]:
+			for sat in [0.0, 0.6, 1.0]:
+				var ink := Color.from_hsv(h / 12.0, sat, v)
+				worst = minf(worst, TarotTable.contrast(ink, TarotTable.title_shade(ink)))
+	_ok(worst >= TarotTable.INK_CONTRAST, "a name's shade reads against it at only %.2f" % worst)
+	_ok(TarotTable.contrast(cream, cream.lerp(Color.BLACK, 0.2)) < TarotTable.INK_CONTRAST, "control: a shade barely pushed reads")
+	_ok(TarotTable.title_shade(cream).get_luminance() < 0.15 and TarotTable.title_shade(Color.html("#1d2f5c")).get_luminance() > 0.8,
+		"the shade is not dark round a light name and light round a dark one")
+	print("tarot_check: title screen - the name as large as fits, the set dresser's color, a shade it reads against")
 	return true
 
 

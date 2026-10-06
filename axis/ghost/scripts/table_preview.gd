@@ -15,7 +15,8 @@ class_name TablePreview
 ## camera, its lamp, where the deck sits, the spread the cards are laid in (face down: the set dresser
 ## knows no card) - with the description being tried standing in for the episode's table. Where a
 ## thing stands, what is made smaller or left off for want of room, which light leads: the answers
-## are the ones the show itself will give, because it is the show's own code giving them. The medium
+## are the ones the show itself will give, because it is the show's own code giving them. So is THE
+## OPENING ([method opening]): the show's name over the same table, thrown out of focus. The medium
 ## is loaded by its class name when a table is stood, and only where ghost's autoloads run (it, like
 ## every medium, reads the Director): naming it here would stop the gates that build prompts from
 ## compiling, and a command-line process cannot stand a table anyway - it says so ([method can_set]).
@@ -33,6 +34,8 @@ const STUDIO_FRAMES := 3
 const TABLE_FRAMES := 6
 ## The moment of a reading the air is shown at: some way in, its fog rolled and its motes about.
 const AIR_AT := 40.0
+## The moment the OPENING is shown at: the show's name up, the deck not yet shuffled.
+const OPENING_AT := 2.0
 ## The episode's table medium, by class name: looked up when it is needed, never compiled in - it
 ## needs ghost's autoloads, and so would anything naming it (see the class note).
 const MEDIUM := "TarotMedium"
@@ -96,6 +99,9 @@ class Doc:
 
 var episode: TarotEpisode
 var plan: Dictionary
+## The show's name and byline, set over the table at the opening ([method opening]).
+var show_name := ""
+var byline := ""
 var _dir := ""                   # the description being tried, beside copies of the episode's pictures
 var _pitch := 38.0                # the episode's camera, looking down (degrees)
 
@@ -110,11 +116,14 @@ var _medium = null               # a TarotMedium, loaded by class name
 var _doc: Doc
 
 
-## [param dir]: the folder the preview keeps its copies in (inside the job's own).
-func _init(ep: TarotEpisode, episode_plan: Dictionary, dir: String) -> void:
+## [param dir]: the folder the preview keeps its copies in (inside the job's own). [param name] and
+## [param line]: the show's name and byline.
+func _init(ep: TarotEpisode, episode_plan: Dictionary, dir: String, name := "", line := "") -> void:
 	episode = ep
 	plan = episode_plan
 	_dir = dir
+	show_name = name
+	byline = line
 	_pitch = float(TarotTable.layout_of(ep.seed)["pitch"])
 
 
@@ -404,6 +413,72 @@ func watch(raw: Dictionary, name: String) -> Dictionary:
 	return {"image": sheet, "frames": steps, "burst": burst}
 
 
+## THE OPENING - the video's first seconds, and its thumbnail - over this table: the deck squared in
+## the middle, the flames lit, the whole frame thrown out of focus as the intro throws it, and the
+## show's name over it in the color [param raw]'s `title` names. `{image, contrast}`: `contrast` is
+## the WCAG contrast between that color and the table behind the name - the worst of the left,
+## middle and right of its lines - read off the same frame without the name. `error` when the table
+## cannot be stood here.
+func opening(raw: Dictionary) -> Dictionary:
+	var err := _stand(raw)
+	if not err.is_empty():
+		return {"error": err}
+	var m = _medium
+	m._pose(OPENING_AT)
+	m._tick_camera(0.0)
+	m._tick_props(OPENING_AT)
+	m._tick_air(OPENING_AT)
+	(m._env as Environment).adjustment_brightness = 1.0
+	m._lens(0.0)
+	var title = m._title
+	title.alpha = 0.0
+	title.queue_redraw()
+	var bare: Image = await _render(_table, TABLE_FRAMES)
+	title.alpha = 1.0
+	title.queue_redraw()
+	var img: Image = await _render(_table, TABLE_FRAMES)
+	title.alpha = 0.0
+	title.queue_redraw()
+	m._lens(1.0)
+	if img == null or bare == null:
+		return {"error": "no picture could be taken"}
+	var lay := TarotTable.title_layout(title.face, title.italic, String(title.channel), String(title.byline), Vector2(SHEET))
+	return {"image": img, "contrast": title_contrast(bare, title.ink, lay, title.face)}
+
+
+## How far [param ink] stands out from [param frame] behind the name's lines in [param lay] (set in
+## [param face]): the WCAG contrast against the mean color of the left, middle and right third of
+## each line's capitals - the lowest of them.
+static func title_contrast(frame: Image, ink: Color, lay: Dictionary, face: Font) -> float:
+	var worst := INF
+	for l in lay.get("lines", []):
+		var d: Dictionary = l
+		if bool(d["italic"]):
+			continue
+		var size := int(d["size"])
+		var w := face.get_string_size(String(d["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		var top := float(d["y"]) - size * TarotTable.TITLE_CAP
+		for third in 3:
+			var x0 := (frame.get_width() - w) * 0.5 + w * third / 3.0
+			var r := Rect2i(Vector2i(roundi(x0), roundi(top)), Vector2i(roundi(w / 3.0), roundi(size * TarotTable.TITLE_CAP)))
+			r = r.intersection(Rect2i(Vector2i.ZERO, frame.get_size()))
+			if r.size.x <= 0 or r.size.y <= 0:
+				continue
+			worst = minf(worst, TarotTable.contrast(ink, _mean(frame, r)))
+	return worst if worst < INF else 0.0
+
+
+## The mean color of [param img] over [param r], read every few pixels.
+static func _mean(img: Image, r: Rect2i) -> Color:
+	var sum := Color(0, 0, 0, 0)
+	var n := 0
+	for y in range(r.position.y, r.end.y, 3):
+		for x in range(r.position.x, r.end.x, 3):
+			sum += img.get_pixel(x, y)
+			n += 1
+	return Color(sum.r / n, sum.g / n, sum.b / n) if n > 0 else Color.BLACK
+
+
 ## The episode's table built over [param raw] (the medium mounted the first time): "" when it stands.
 func _stand(raw: Dictionary) -> String:
 	if not can_set():
@@ -434,8 +509,9 @@ func _stand(raw: Dictionary) -> String:
 	for k in ["back", "surface", "backdrop"]:
 		if FileAccess.file_exists(_dir.path_join(k + ".png")):
 			images[k] = _dir.path_join(k + ".png")
-	_doc.document = {"source": "", "title": "", "tarot": {"show": episode.show, "seed": episode.seed, "dir": _dir,
-		"plan": plan, "images": images, "cards": cards}}
+	# the show's name stands over the table only at the opening: its alpha is 0 for every other picture
+	_doc.document = {"source": "", "title": show_name, "byline": byline, "tarot": {"show": episode.show, "seed": episode.seed,
+		"dir": _dir, "plan": plan, "images": images, "cards": cards}}
 	_medium._key = ""
 	_medium._ensure_doc()
 	return ""
@@ -539,7 +615,7 @@ func _pose_spread() -> void:
 	m._tick_camera(0.0)
 	m._tick_props(30.0)
 	(m._env as Environment).adjustment_brightness = 1.0
-	(m._attrs as CameraAttributesPractical).dof_blur_far_enabled = false
+	m._lens(1.0)
 
 
 ## What the medium made of [param spec] (the table made safe): where each thing stood, what found no

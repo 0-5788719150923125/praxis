@@ -19,6 +19,9 @@ class_name SetDresserTools
 ##           ([method TablePreview.table]) - and its AIR as it is some way into the reading
 ##   watch   one effect of the air ([Effects]) in motion: a burst at the moment it marks, fog or
 ##           motes a few seconds apart ([method TablePreview.watch])
+##   title   the color the show's name is printed in over this table at the opening, and a picture
+##           of that opening - the table thrown out of focus, the name over it - with how far the
+##           color stands out from what is behind it ([method TablePreview.opening])
 ##   submit  hand the draft in: written beside the job ([constant SUBMITTED]) for the producer to land
 ##           exactly as an answer in words would have landed ([method TarotProducer._land_table])
 ##
@@ -37,6 +40,7 @@ const SUBMITTED := "submitted.json"
 const JUDGE_THING := "Before you go on, say what each picture actually shows - its shape and proportions against the grid (1 cm squares, a brighter line every 5), its material - and whether a stranger would name it as you did. Put again what does not read: a part floating or sunk, a thing too flat or too small to read, a vessel that reads as a plate, a bundle that reads as a stick."
 const JUDGE_TABLE := "Before you submit, say what the frame actually shows: can each thing be told for what it is at this size, is any hidden, crowded or left off, and does the light come from where you meant? Fix what does not, and set the table again."
 const JUDGE_AIR := "Say what the pictures show of it: is it where you meant, as thick or as bright as you meant, in colors that belong to this table - and can every card still be seen through it? Put it again to change it."
+const JUDGE_TITLE := "Say what the picture shows: can the name be read at a glance - and would it still be, shrunk to a thumbnail the size of a stamp? Does its color stand clear of every part of the table behind it, and belong to this table's world? Choose again if not."
 ## How many pictures one set dresser may take, and how long its whole run may last (seconds).
 const LOOKS := 30
 const TIMEOUT := 1500
@@ -51,18 +55,21 @@ var _things: Array = []          # the draft, in the order put
 var _effects: Array = []         # ...its air, by name
 var _materials := {}
 var _idea := ""
+var _title := {}                 # the name's color over this table: {color, why}
 var _looks := 0
 var _set_since_change := false
 var _warned := false
+var _warned_title := false
 var _preview: TablePreview
 
 
-func _init(ep: TarotEpisode, episode_plan: Dictionary, job_dir: String) -> void:
+## [param name] and [param byline]: the show's, set over the table at the opening.
+func _init(ep: TarotEpisode, episode_plan: Dictionary, job_dir: String, name := "", byline := "") -> void:
 	episode = ep
 	plan = episode_plan
 	dir = job_dir
 	_look = TarotTable.sanitize_look(plan.get("look", {}) if plan.get("look") is Dictionary else {})
-	_preview = TablePreview.new(ep, plan, dir.path_join("preview"))
+	_preview = TablePreview.new(ep, plan, dir.path_join("preview"), name, byline)
 	# A RUN STARTS CLEAN: a rerun works in the folder the last run left, and its handed-in table or
 	# its pictures must not pass for this run's
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -97,6 +104,10 @@ func list_tools() -> Array:
 			"inputSchema": {"type": "object", "properties": {}}},
 		{"name": "watch", "description": "Watch one effect of the table's air in motion, on this episode's own table: a burst photographed four times in the second after the moment it marks (a card leaping from the deck, one held up and twirled...), fog or motes four times a few seconds apart. A sheet of four pictures.",
 			"inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+		{"name": "title", "description": "Choose the color the show's name is printed in at the opening, over this table thrown far out of focus - the video's first seconds, and its thumbnail. Answers with a picture of that opening and how far the color stands out from the table behind the name.",
+			"inputSchema": {"type": "object", "properties": {
+				"color": {"type": "string", "description": "#rrggbb"},
+				"why": {"type": "string", "description": "a few words: what it stands out against, and why it belongs to this table"}}, "required": ["color"]}},
 		{"name": "submit", "description": "Hand in the table as it now stands. Answers with what keeps it from being set, if anything; otherwise the table is done, and so is your work.",
 			"inputSchema": {"type": "object", "properties": {}}},
 	]
@@ -114,9 +125,11 @@ func call_tool(name: String, args: Dictionary) -> Dictionary:
 			return await _set_table()
 		"watch":
 			return await _watch(args)
+		"title":
+			return await _choose_title(args)
 		"submit":
 			return _submit()
-	return {"text": "There is no tool called \"%s\": put, remove, look, set, watch and submit are the tools." % name, "error": true}
+	return {"text": "There is no tool called \"%s\": put, remove, look, set, watch, title and submit are the tools." % name, "error": true}
 
 
 ## The draft as the set dresser has written it - the shape a one-reply table had.
@@ -124,6 +137,8 @@ func draft() -> Dictionary:
 	var out := {"idea": _idea, "things": _things.duplicate(true), "materials": _materials.duplicate(true)}
 	if not _effects.is_empty():
 		out["effects"] = _effects.duplicate(true)
+	if not _title.is_empty():
+		out["title"] = _title.duplicate()
 	return out
 
 
@@ -320,6 +335,32 @@ func _watch(args: Dictionary) -> Dictionary:
 	return {"text": "\n".join(lines), "images": [got["image"]]}
 
 
+## THE NAME'S COLOR over this table: kept in the draft, and - where a table can be stood - the
+## opening photographed with it, and how far it stands out from what is behind it.
+func _choose_title(args: Dictionary) -> Dictionary:
+	var c := String(args["color"]).strip_edges() if args.get("color") is String else ""
+	if not TarotTable._is_color(c):
+		return {"text": "\"%s\" is not a color: give `color` as #rrggbb." % str(args.get("color", "")), "error": true}
+	_title = {"color": c, "why": String(args["why"]).strip_edges() if args.get("why") is String else ""}
+	var lines := PackedStringArray(["The show's name is printed in %s." % c])
+	if _looks >= LOOKS:
+		lines.append(_looks_line(false))
+		return {"text": "\n".join(lines)}
+	if not _can_stand():
+		lines.append("The opening cannot be shown in this run (%s): judge the color against the cloth you were shown." %
+			("no renderer" if not _can_see() else "no ghost session"))
+		return {"text": "\n".join(lines)}
+	var got: Dictionary = await _preview.opening(draft())
+	if got.has("error"):
+		return {"text": "The opening could not be shown: %s" % String(got["error"]), "error": true}
+	_looks += 1
+	lines.append("The opening - the video's first seconds, and its thumbnail - with the name over this table thrown out of focus. Against the table behind it, the name's color stands at a contrast of %.1f where it is weakest (1 is the same color; 3 reads at a glance; 4.5 and up stands out even as a small thumbnail)." %
+		float(got["contrast"]))
+	lines.append(JUDGE_TITLE)
+	lines.append(_looks_line(true))
+	return {"text": "\n".join(lines), "images": [got["image"]]}
+
+
 func _submit() -> Dictionary:
 	var safe := _safe()
 	if (safe["things"] as Array).is_empty():
@@ -328,6 +369,10 @@ func _submit() -> Dictionary:
 	if not _set_since_change and not _warned and _can_stand() and _looks < LOOKS:
 		_warned = true
 		return {"text": "You have not seen the table as it now stands: call set, look at the frame, fix what it shows, then submit. (Submit again unchanged to hand it in as it is.)", "error": true}
+	# ...AND ITS NAME GIVEN A COLOR, once asked
+	if _title.is_empty() and not _warned_title:
+		_warned_title = true
+		return {"text": "You have not chosen the color the show's name is printed in over this table: call title and look at the opening. (Submit again to hand the table in with the name in its usual cream.)", "error": true}
 	var raw := draft()
 	var path := dir.path_join(SUBMITTED)
 	var err := TextGen.put(path + ".part", JSON.stringify(raw, "\t"))

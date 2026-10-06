@@ -13,7 +13,10 @@ extends SceneTree
 ## - REMOVE, LOOK and SET answer by name and say what is on the table when a name is wrong; with no
 ##   renderer, LOOK and SET say there is no picture and take none.
 ## - SUBMIT refuses an empty table, writes the draft exactly as written, and - where a table can be
-##   stood - sends the set dresser to look first, once.
+##   stood - sends the set dresser to look first, once; and to choose the name's color, once.
+## - TITLE keeps the name's color (a color only) in the draft, says so with no renderer and takes no
+##   picture; the toolset knows the show's name and byline, and both prompts tell the set dresser of
+##   the opening and the color it chooses.
 ## - THE PRODUCER gives a writer that takes tools the toolset (a URL, a long timeout, the working
 ##   prompt) and one that does not the one-reply prompt; it lands a handed-in table whatever the run's
 ##   last words, says so when a run with tools handed nothing in, and closes the tools when it stops.
@@ -61,7 +64,7 @@ func _ok(cond: bool, what: String) -> void:
 
 func _run() -> void:
 	AgentJobs.allow_for_tool()
-	for check in [_fresh_start, _tools_listed, _put_reports, _remove_look_set, _submit, _producer, _prompts, _claude_argv, _air]:
+	for check in [_fresh_start, _tools_listed, _put_reports, _remove_look_set, _submit, _title, _producer, _prompts, _claude_argv, _air]:
 		var done: Variant = await (check as Callable).call()
 		_ok(done == true, "%s stopped part way (a script error - see above)" % (check as Callable).get_method())
 	print("set_dresser_tools_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails, "" if _fails == 1 else "s"])
@@ -115,10 +118,10 @@ func _tools_listed() -> bool:
 		names.append(String((d as Dictionary)["name"]))
 		shaped = shaped and String(((d as Dictionary)["inputSchema"] as Dictionary).get("type", "")) == "object" \
 			and not String((d as Dictionary).get("description", "")).is_empty()
-	_ok(names == ["put", "remove", "look", "set", "watch", "submit"], "the set dresser's tools are %s" % str(names))
+	_ok(names == ["put", "remove", "look", "set", "watch", "title", "submit"], "the set dresser's tools are %s" % str(names))
 	_ok(shaped, "a tool has no description or no object schema")
 	var r: Dictionary = await t.call_tool("paint", {})
-	_ok(bool(r.get("error", false)) and String(r["text"]).contains("put, remove, look, set, watch and submit"),
+	_ok(bool(r.get("error", false)) and String(r["text"]).contains("put, remove, look, set, watch, title and submit"),
 		"an unknown tool did not name the real ones: %s" % r)
 	t.release()
 	return true
@@ -198,6 +201,7 @@ func _submit() -> bool:
 	var r: Dictionary = await t.call_tool("submit", {})
 	_ok(bool(r.get("error", false)) and not t.submitted, "an empty table was handed in")
 	await t.call_tool("put", {"idea": "a calm table", "things": [_candle("a pillar", 9.0)], "materials": {"beeswax": {"kind": "wax", "color": "#e8d9a8"}}})
+	await t.call_tool("title", {"color": "#1d2f5c", "why": "deep ink on a pale cloth"})
 	r = await t.call_tool("submit", {})
 	var path := ep.job_dir("table").path_join(SetDresserTools.SUBMITTED)
 	var j := JSON.new()
@@ -205,15 +209,44 @@ func _submit() -> bool:
 		and JSON.stringify(j.data) == JSON.stringify(JSON.parse_string(JSON.stringify(t.draft())))
 	_ok(not bool(r.get("error", false)) and t.submitted and same and String(r["text"]).begins_with("Handed in: 1 thing"),
 		"a table was not handed in exactly as drafted: %s" % r)
+	_ok(same and String((j.data as Dictionary).get("title", {}).get("color", "")) == "#1d2f5c", "the name's color was not handed in with the table")
 	t.release()
+	# THE NAME'S COLOR, asked for once - a table handed in without one gets the default
+	var plain := _tools(ep)
+	await plain.call_tool("put", {"things": [_candle("a pillar", 9.0)], "materials": {"beeswax": {"kind": "wax", "color": "#e8d9a8"}}})
+	r = await plain.call_tool("submit", {})
+	_ok(bool(r.get("error", false)) and String(r["text"]).contains("call title") and not plain.submitted, "a table with no name's color was handed in without a word")
+	r = await plain.call_tool("submit", {})
+	_ok(not bool(r.get("error", false)) and plain.submitted and not plain.draft().has("title"), "a second submit with no color was refused: %s" % r)
+	plain.release()
 	# WHERE A TABLE CAN BE STOOD, the set dresser looks before it hands in - asked once, then trusted
 	var s := Standing.new(ep, ep.read_json("plan"), ep.job_dir("table"))
 	await s.call_tool("put", {"things": [_candle("a pillar", 9.0)], "materials": {"beeswax": {"kind": "wax", "color": "#e8d9a8"}}})
 	r = await s.call_tool("submit", {})
 	_ok(bool(r.get("error", false)) and String(r["text"]).contains("call set") and not s.submitted, "a table never seen was handed in without a word")
+	await s.call_tool("title", {"color": "#e9dcc0"})
 	r = await s.call_tool("submit", {})
 	_ok(not bool(r.get("error", false)) and s.submitted, "a second submit, unchanged, was refused: %s" % r)
 	s.release()
+	return true
+
+
+## THE NAME'S COLOR: kept in the draft as given (a color only, the reason with it), said back with no
+## renderer and no picture taken; anything not a color refused, the color before it kept.
+func _title() -> bool:
+	var t := _tools(_episode())
+	var r: Dictionary = await t.call_tool("title", {"color": "#1d2f5c", "why": "deep ink on a pale cloth"})
+	_ok(not bool(r.get("error", false)) and String(r["text"]).contains("#1d2f5c") and String(r["text"]).contains("cannot be shown in this run")
+		and (r.get("images", []) as Array).is_empty(), "choosing the name's color with no renderer did not say so: %s" % r)
+	_ok(t.draft().get("title") == {"color": "#1d2f5c", "why": "deep ink on a pale cloth"}, "the draft does not carry the name's color: %s" % str(t.draft()))
+	_ok(TarotTable.title_ink(TarotTable.sanitize_table(t.draft(), {})).to_html(false) == "1d2f5c", "the table does not print the name in the color chosen")
+	for junk in ["navy", "#1d2f5", 12, ""]:
+		r = await t.call_tool("title", {"color": junk})
+		_ok(bool(r.get("error", false)) and String((t.draft()["title"] as Dictionary)["color"]) == "#1d2f5c",
+			"a color of %s was taken, or lost the one before: %s" % [str(junk), r])
+	r = await t.call_tool("title", {})
+	_ok(bool(r.get("error", false)), "a title with no color was taken")
+	t.release()
 	return true
 
 
@@ -221,10 +254,15 @@ func _producer() -> bool:
 	var ep := _episode()
 	TextGen.put(ep.file_of("image:surface"), "png")
 	# WITH TOOLS: the job gets the toolset's URL and a long timeout, and the working prompt
-	var spy := Spy.new(ep, {"title": "Test Tarot", "brief": "A brief.", "writer": "claude"})
+	var spy := Spy.new(ep, {"title": "Test Tarot", "byline": "with Pen & Ink", "brief": "A brief.", "writer": "claude"})
 	spy._make_table()
 	var extra: Dictionary = spy.sent.get("extra", {})
 	var prompt := String((spy.sent.get("prompt", {}) as Dictionary).get("prompt", ""))
+	var preview: TablePreview = (spy._tools.get("table", {}) as Dictionary).get("set")._preview if spy._tools.has("table") else null
+	_ok(preview != null and preview.show_name == "Test Tarot" and preview.byline == "with Pen & Ink",
+		"the toolset does not know the show's name and byline for the opening")
+	_ok(prompt.contains("\"Test Tarot\", set large across the middle of the frame, and under it \"with Pen & Ink\""),
+		"the set dresser is not told the name and byline over its table")
 	var url := String(extra.get("tools_url", ""))
 	_ok(url.begins_with("http://127.0.0.1:") and int(extra.get("timeout", 0)) == SetDresserTools.TIMEOUT,
 		"a writer that takes tools was not given them: %s" % extra)
@@ -298,6 +336,12 @@ func _prompts() -> bool:
 			"the set dresser %s is told the other way of working" % tag)
 		if looks > 0:
 			_ok(text.contains("against the %d you have" % looks), "the set dresser is not told how many pictures it has")
+		_ok(text.contains("THE TITLE:") and text.contains("\"Test Tarot\"") and text.contains("thumbnail"),
+			"the set dresser %s is not told of the opening and its thumbnail" % tag)
+		_ok(text.contains("`title` chooses the color") == (looks > 0) and text.contains("\"title\": {\"color\": \"#rrggbb\"") == (looks == 0),
+			"the set dresser %s is not told how to give the name's color" % tag)
+	_ok(not String(TarotPrompts.set_dresser("Test Tarot", "A brief.", ep.read_json("plan"), ep.seed, head, [], true)["prompt"]).contains("and under it"),
+		"a show with no byline is told of one")
 	return true
 
 
@@ -359,6 +403,7 @@ func _air() -> bool:
 	_ok(not bool(r.get("error", false)) and String(r["text"]).contains("cannot be watched") and (r.get("images", []) as Array).is_empty(),
 		"watching with no renderer did not say so: %s" % r)
 	await t.call_tool("put", {"things": [_candle("a pillar", 9.0)], "materials": {"beeswax": {"kind": "wax", "color": "#e8d9a8"}}})
+	await t.call_tool("title", {"color": "#e9dcc0"})
 	r = await t.call_tool("submit", {})
 	var handed: Variant = JSON.parse_string(FileAccess.get_file_as_string(ep.job_dir("table").path_join(SetDresserTools.SUBMITTED)))
 	_ok(handed is Dictionary and ((handed as Dictionary).get("effects", []) as Array).size() == 3, "the air was not handed in with the table")

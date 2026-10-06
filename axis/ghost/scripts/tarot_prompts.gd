@@ -226,8 +226,9 @@ static func designer(title: String, brief: String, look: Dictionary, card: Dicti
 ## picture goes with the prompt. [param looks] > 0: the set dresser works with tools and SEES what it
 ## builds ([SetDresserTools], that many pictures) - it is told how to work, and hands the table in
 ## with a tool instead of replying with it. [param airs]: earlier episodes' effects, to vary from.
+## [param byline]: the show's, under its name at the opening ([method title_rule]).
 static func set_dresser(title: String, brief: String, plan: Dictionary, seed: int, headroom: Dictionary,
-		seen: Array, cloth: bool, looks := 0, airs: Array = []) -> Dictionary:
+		seen: Array, cloth: bool, looks := 0, airs: Array = [], byline := "") -> Dictionary:
 	var look: Dictionary = plan.get("look", {}) if plan.get("look") is Dictionary else {}
 	var light: Dictionary = look.get("light", {}) if look.get("light") is Dictionary else {}
 	var candles := clampi(int(look.get("candles", 1)), 0, TarotTable.MAX_CANDLES)
@@ -276,6 +277,8 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 	lines.append("THE AIR: beside its things, a table can have air that moves - fog rolling in behind it, a few points of light drifting through, a burst of sparks or glitter at a moment of the reading. It goes in `effects`, a list beside `things` and `materials`. The air is part of the table's world as its things are, and the brief says what this show wants of it; a table may have none.")
 	lines.append(Effects.describe(air_regions(), TarotTable.MOMENTS))
 	lines.append("The cards are always seen: fog lies behind the table or low on the cloth, never thick over the cards, and a burst is over in a second or two. Its colors belong to the deck's palette or to the light of the episode's world.")
+	lines.append("")
+	lines.append(title_rule(title, byline))
 	if not seen.is_empty():
 		lines.append("")
 		lines.append("EARLIER EPISODES' TABLES held these. Set none of them again: %s." % ", ".join(PackedStringArray(seen)))
@@ -284,8 +287,8 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 	lines.append("")
 	var check := "it has no body - no head, no limbs, real or carved; every part rests on the cloth or on another part (nothing floats, nothing sinks through); it stands as it would really stand - a thing with a pointed or round bottom lies on its side or sits in a stand, a ring or a bowl, never balanced on its point; the lowest point is at height 0; the sizes are real and fit the place's height; a hollow vessel's profile goes up the outside and back down the inside; every candle's wax has `wick` or `wicks`, and a candle in a cup or a holder stands on its floor."
 	if looks > 0:
-		lines.append("HOW YOU WORK: you build this table with tools, and you SEE what you build. `put` puts things (and the materials they use, and the air's effects) on the table and answers with what was built - each thing's real size, anything the builder could not make as written - and a picture of them on a centimeter grid; `look` shows one thing close up from four sides; `set` stands everything on this episode's own table and photographs it from the camera's place, as the viewer will see it, its air with it, saying what was made smaller or left off for want of room and which light leads; `watch` shows one effect of the air in motion - a burst at the moment it marks; `remove` takes things or effects off; `submit` hands the table in.")
-		lines.append("Make a thing, look at it, and fix whatever does not read as the thing you meant - a part floating or sunk, a proportion off, a material that reads as another, anything that reads as a body. When the things read, set the table and look at the frame: fix what was made smaller or left off, a group hidden behind another, a light that should lead and does not. Set it again after a fix, and submit when the frame is right. Every picture counts against the %d you have; put a few things at a time, and fix a thing by putting it again under the same name." % looks)
+		lines.append("HOW YOU WORK: you build this table with tools, and you SEE what you build. `put` puts things (and the materials they use, and the air's effects) on the table and answers with what was built - each thing's real size, anything the builder could not make as written - and a picture of them on a centimeter grid; `look` shows one thing close up from four sides; `set` stands everything on this episode's own table and photographs it from the camera's place, as the viewer will see it, its air with it, saying what was made smaller or left off for want of room and which light leads; `watch` shows one effect of the air in motion - a burst at the moment it marks; `title` chooses the color the show's name is printed in and shows you the opening with it, saying how far the color stands out from the table behind the name; `remove` takes things or effects off; `submit` hands the table in.")
+		lines.append("Make a thing, look at it, and fix whatever does not read as the thing you meant - a part floating or sunk, a proportion off, a material that reads as another, anything that reads as a body. When the things read, set the table and look at the frame: fix what was made smaller or left off, a group hidden behind another, a light that should lead and does not. Set it again after a fix. Once the table is set, choose the title's color and look at the opening; submit when both are right. Every picture counts against the %d you have; put a few things at a time, and fix a thing by putting it again under the same name." % looks)
 		lines.append("")
 		lines.append("CHECK each thing as you look at it: " + check)
 		lines.append("")
@@ -298,7 +301,16 @@ static func set_dresser(title: String, brief: String, plan: Dictionary, seed: in
 		lines.append("")
 		lines.append("Reply with ONLY a JSON object, no other text. The format, shown with one thing - a chess pawn, which never belongs on this table:")
 		lines.append(SET_EXAMPLE)
+		lines.append("Beside `things` and `materials` (and `effects`, if the table has air), the reply carries the name's color: `\"title\": {\"color\": \"#rrggbb\", \"why\": \"a few words: what it stands out against\"}`.")
 	return {"system": show_context(title, brief), "prompt": "\n".join(lines)}
+
+
+## THE TITLE, as the set dresser is told it: the show's [param title] (and [param byline]) over its
+## table at the opening, and the color it chooses for it ([method TarotTable.title_ink]).
+static func title_rule(title: String, byline: String) -> String:
+	var under := byline.strip_edges()
+	return "THE TITLE: the video opens on this table thrown far out of focus - nothing on it can be made out, only its colors and the glow of its lights - with the show's name, \"%s\", set large across the middle of the frame%s. That frame is also the video's thumbnail, often seen no bigger than a stamp. Choose the color the name is printed in: one that stands out plainly from the colors of the table behind it - the cloth, its lights, what stands on it - and belongs to this episode's world. A soft shade is drawn round every letter, dark round a light color and light round a dark one." % [
+		title.strip_edges(), (", and under it \"%s\"" % under) if not under.is_empty() else ""]
 
 
 ## The table's [constant TarotTable.AIR] as the set dresser reads it: each place, and what it is.

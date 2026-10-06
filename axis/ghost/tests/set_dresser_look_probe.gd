@@ -9,8 +9,10 @@ extends Node
 ##       --show truthful-tarot --seed 26551 [--spec <table.json>] [--air <effects.json>] [--out /tmp/sd/look]
 ##
 ## The description is the episode's own `table.json` unless `--spec` names another; `--air` puts a
-## list of effects (or a table's `effects`) beside it, and every one of them is watched. The episode
-## is only read: the tools work in a folder of their own (`user://set_dresser_look`), never its jobs.
+## list of effects (or a table's `effects`) beside it, and every one of them is watched. Last, the
+## name's color is chosen (`--ink`, else the description's own `title`, else cream) and the OPENING is
+## shown under `--name`/`--byline`. The episode is only read: the tools work in a folder of their own
+## (`user://set_dresser_look`), never its jobs.
 
 var _out := "user://set_dresser_look/look"
 
@@ -25,9 +27,15 @@ func _run() -> void:
 	var seed := 0
 	var spec_path := ""
 	var air_path := ""
+	var ink := ""
+	var name := "Truthful Tarot"
+	var byline := ""
 	for i in args.size() - 1:
 		match args[i]:
 			"--air": air_path = args[i + 1]
+			"--ink": ink = args[i + 1]
+			"--name": name = args[i + 1]
+			"--byline": byline = args[i + 1]
 			"--show": show = args[i + 1]
 			"--seed": seed = int(args[i + 1])
 			"--spec": spec_path = args[i + 1]
@@ -43,7 +51,7 @@ func _run() -> void:
 		return
 	var dir := ProjectSettings.globalize_path("user://set_dresser_look")
 	DirAccess.make_dir_recursive_absolute(_out.get_base_dir() if _out.is_absolute_path() else ProjectSettings.globalize_path(_out).get_base_dir())
-	var tools := SetDresserTools.new(ep, plan as Dictionary, dir)
+	var tools := SetDresserTools.new(ep, plan as Dictionary, dir, name, byline)
 	print("set_dresser_look_probe: %s #%d, %d things; sees %s, stands %s" % [show, seed,
 		((table as Dictionary).get("things", []) as Array).size(), TablePreview.can_see(), TablePreview.can_set()])
 	var things: Array = (table as Dictionary).get("things", [])
@@ -62,6 +70,10 @@ func _run() -> void:
 	if not things.is_empty():
 		await _call(tools, "look", {"name": String((things[0] as Dictionary).get("name", ""))}, "look")
 	await _call(tools, "set", {}, "set")
+	if ink.is_empty():
+		var own: Variant = (table as Dictionary).get("title", {})
+		ink = String((own as Dictionary).get("color", TarotTable.TITLE_INK)) if own is Dictionary else TarotTable.TITLE_INK
+	await _call(tools, "title", {"color": ink, "why": "the probe's"}, "title")
 	print("set_dresser_look_probe: done in %.1f s" % [(Time.get_ticks_msec() - t0) / 1000.0])
 	tools.release()
 	get_tree().quit(0)

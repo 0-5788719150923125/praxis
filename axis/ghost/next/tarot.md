@@ -50,8 +50,8 @@ format and voice, told true).
 | `scripts/tarot_deck.gd` | `TarotDeck`: the show's deck, parsed from its brief's `## Cards` section (or the standard 78, generated, meanings from `data/tarot/meanings.json`, CC0); the seeded shuffle; true-random seeds. |
 | `scripts/tarot_table.gd` | `TarotTable`: what a look may name - title faces (`fonts/tarot/`, OFL), frames, the zones things stand in - `sanitize_look`, `sanitize_table`, and the layout a prompt can know ahead (`layout_of`, `headroom`). |
 | `scripts/agent_tools.gd` | `AgentTools`: tools ghost serves an agent WHILE it works - an MCP server (HTTP, JSON) inside the ghost process, a URL per job, every call logged beside the prompt (`tools.jsonl`, `look_NN.jpg`). Claude takes them (`TextGen.Backend.takes_tools`); Codex and Bedrock are still one reply. |
-| `scripts/set_dresser_tools.gd` | `SetDresserTools`: the set dresser's tools - `put`, `remove`, `look`, `set`, `submit` - over a draft table. |
-| `scripts/table_preview.gd` | `TablePreview`: what those tools show - a thing in a studio on a centimeter grid (four sides, or several in tiles), and the draft on the episode's own table from the show's camera. |
+| `scripts/set_dresser_tools.gd` | `SetDresserTools`: the set dresser's tools - `put`, `remove`, `look`, `set`, `watch`, `title`, `submit` - over a draft table. |
+| `scripts/table_preview.gd` | `TablePreview`: what those tools show - a thing in a studio on a centimeter grid (four sides, or several in tiles), the draft on the episode's own table from the show's camera, and the opening (the show's name over that table thrown out of focus). |
 | `scripts/effects.gd` | `Effects`: the AIR - fog, motes, bursts - as data an agent writes (registries it reads, `sanitize`, `build`), posed from show time. Generic; the tarot table names its regions and moments (`TarotTable.AIR`, `MOMENTS`). Shaders `effect_fog.gdshader`, `effect_sprite.gdshader`, `effect_smoke.gdshader`. |
 | `scripts/props.gd` | `Props`: things built from a description - shapes, materials, ornaments (registries an agent reads), `sanitize`, `build`. Generic; the tarot table is its first user. Shaders `prop.gdshader`, `prop_glass.gdshader`, `prop_lens.gdshader`, `prop_common.gdshaderinc`. |
 | `scripts/tarot_cards.gd` | `TarotCards`: faces, backs and booklet pages, composed in 2D into stopped SubViewports. |
@@ -92,7 +92,7 @@ cards themselves into `draw.json`, so an episode keeps what it drew whatever the
 | `draw` | ghost | the show's deck and the seed (shuffle, spread size, jumper) |
 | `design:K` | deck designer (fast tier), one card per run | the look, card K, its traditional meaning, how earlier decks pictured card K |
 | `image:back/surface/backdrop` | painter | the look |
-| `table` | set dresser (best tier), with tools when its writer takes them | the plan, the cloth's painting, earlier episodes' tables - no card; and, with tools, pictures of what it builds and of the table set |
+| `table` | set dresser (best tier), with tools when its writer takes them | the plan, the cloth's painting, earlier episodes' tables - no card; and, with tools, pictures of what it builds, of the table set and of the opening with the name in its color |
 | `image:card:K` | painter | design K; the back + first + previous card as references |
 | `say:intro` | reader (best tier) | the plan - no card; how earlier episodes opened |
 | `say:K` | reader | the plan, every passage before, cards 1..K, and card K's PAINTING; how earlier episodes met a card |
@@ -185,7 +185,13 @@ from outside its own palette): the prompt says what the stock is (the card's own
 picture and behind the name, and the booklet's), that decks are printed on every color, and to
 choose the one that sets off the paintings; each earlier episode in its history shows its stock,
 and "do not repeat" covers card stocks. `TarotTable.sanitize_look` keeps the ink readable on
-whatever stock lands (`legible_ink`, WCAG contrast >= `INK_CONTRAST` 3). THE BOOKLET IS PRINTED IN
+whatever stock lands (`legible_ink`, WCAG contrast >= `INK_CONTRAST` 3). EVERY FRAME KEEPS A BORDER
+(feedback 0010, 2026-10-06): a `bleed` style ran the painting to the card's edge, cropped it to the
+card's shape and set the name and numeral on plates over it - the name, fit to the picture's width,
+ran off a plate 0.08 of the card narrower each side ("It looks nothing like other cards, from other
+episodes"). It is gone from `TarotTable.FRAMES`, so a plan that named it is drawn as `line`; the
+picture's window is one function (`TarotCards.window`) the foil keys inside too. Gate: tarot_check
+`_card_frame` (every standard name fits the band below the picture in every face). THE BOOKLET IS PRINTED IN
 THE CARD'S COLORS (`TarotCards.page_colors`): the stock as its paper, the ink and accent for its
 type, kept readable on it (running text at `TEXT_CONTRAST` 4.5) - it was a fixed cream page.
 Episodes planned before keep their cream until the plan is redone. Gate: tarot_check `_card_stock`.
@@ -237,8 +243,11 @@ set dresser works a draft (`SetDresserTools`):
 - `set` the draft on the episode's OWN table - the show's `TarotMedium`, its seed, cloth, room,
   lights, the deck, the cards laid face down in their spread - photographed from the camera's
   place, with where each thing stood, what was made smaller or LEFT OFF, and which light leads;
+- `title` - the color the show's name is printed in at the opening (see "The title screen" below),
+  answered with a picture of that opening and the contrast it measured behind the name;
 - `remove`; `submit`, which writes `jobs/table/submitted.json` for the producer to land whatever
-  the run's last words (and sends it to `set` once first, wherever a table can be stood).
+  the run's last words (and sends it to `set` once first, wherever a table can be stood, and asks
+  once for the name's color).
 30 pictures, 1500 s. Any other writer gets the one-reply prompt (`TarotPrompts.set_dresser`'s
 `looks` = 0). A PICTURE COMES WITH THE QUESTION TO ASK OF IT (`SetDresserTools.JUDGE_THING`,
 `JUDGE_TABLE`: say what it actually shows, then whether a stranger would name it so): in the first
@@ -460,8 +469,9 @@ card the wall stood upright at the table's edge; projected, the floor and a rug 
 foreshortened with the table. Gates: tarot_place_check (two-sided), tarot_check `_room_prompt`.
 
 THE INTRO IS OUT OF FOCUS: the channel's name alone (no episode title - that is the video's, on
-the platform) over the table behind a lens's bokeh, and the focus PULLS near to far as the shuffle
-starts (`_tick_focus`). Otherwise there is NO depth of field: a far blur behind the table drew a
+the platform) over the table thrown far out of focus, and the focus PULLS as the shuffle starts
+(`_tick_focus`, `_lens`): the wide blur lifts over the first half of the pull, and the lens carries
+on near to far. See "The title screen" below. Otherwise there is NO depth of field: a far blur behind the table drew a
 band along its far edge where the sharp table and the blurred room met, so the room's picture is
 drawn through its own lens blur (`shaders/tarot_room.gdshader`, a disc at full resolution - shrunk
 to an eighth and back, the strip the camera sees past the table was blocks). The stage runs 4x multisampling and a 4096 shadow atlas with the key
@@ -473,25 +483,62 @@ activations"): several riffles, a string of cuts, a few overhand passes - one ki
 then nothing for a while (median ~3 s, now and then a long linger), in the MIDDLE of the table;
 before the first card the deck is squared and pushed to its side (`TarotScript.PUSH`, which the
 first draw's rest includes). A wash is rare, once at most, and a planned simulation: the deck
-spread WIDE (some cards flung well out), two flat palms working it for most of half a minute, then
-six to eight sweeps round the pile over ~7 s, each taking a few cards - some only pushed near, a few
-missed and fetched by a later sweep - landing nearly squared, so the end is a light tidy, never
-the whole spread arriving at once. THE MIXING IS MOST OF IT (the user, 2026-10-05: "BARELY
+flattened under the palm and spread WIDE (some cards flung well out), two flat palms working it for
+most of half a minute, then six to eight sweeps round the pile over ~7 s, each taking a few cards -
+a few missed and fetched by a later sweep - landing squared on the pile, so the end is a light tidy,
+never the whole spread arriving at once. THE MIXING IS MOST OF IT (the user, 2026-10-05: "BARELY
 shuffled at all. 3 or 4 cards might shift slightly... no changing of z-order... maybe 5 or 10
 seconds long"): it had been 5 s of two hands drifting through less than one slow loop. The
 ORDER is decided when two cards meet - the one sliding in on top - and held while they touch, so
 it changes all through the wash and never through a card. CARDS REST ON ONE ANOTHER (feedback
 0007: "many of these cards are lifted off of the table itself... they cannot rest upon each other
-with a gentle tilt"): the plan lays each card flat at its layer (one thickness above the deepest
-card under it), and where it hung past those cards it hung in the air, shadow and all. As it is
-posed, every card on the cloth, from the bottom of the pile up, is a rigid card at the LOWEST it can
-lie: the plane over the cloth under its corners and over the faces of the cards it lies on wherever
-they cross it (`Geometry2D.intersect_polygons`), lowest at its middle - the upper hull's face over
-the middle, walked to from the highest support (`TarotMedium._rest_on`). So a card tips: on a card
-at one end, on the cloth at the other. Per plan step, cached (`_wash_rest`, ~1-4 ms a step), and
-eased in as a card spreads and out as it is gathered. Exact against a brute-force hull on every card
-the gate judges; the plan's flat layers sit higher on two cards in three. A wash the first card would
-cut short is replanned to fit, the same wash up to its own gather. THE HANDS SWEEP (the user, the same day:
+with a gentle tilt"): every card - in the deck, spread, or gathered in the pile - from the bottom of
+the order the plan has them lying in, up, is a rigid card at the LOWEST it can lie: the plane over
+the cloth under its corners and over the faces of the cards under it wherever they cross it
+(`Geometry2D.intersect_polygons`), lowest at its middle - the upper hull's face over the middle,
+walked to from the highest support (`TarotMedium._rest_on`). So a card tips: on a card at one end,
+on the cloth at the other, over the deck's edge as it slides off it, up onto the pile as it is swept
+in. Exact against a brute-force hull on every card the gate judges; the plan's flat layers sit higher
+on two cards in three. A wash the first card would cut short is replanned to fit, the same wash up
+to its own gather.
+
+CALM, AND NEVER THROUGH A CARD (2026-10-06, the user: the cards "'repel' each other in a way that
+makes them almost bouncy - they are very unstable and they tilt far too much... the cards often
+clip through each other... cards moving THROUGH each other, which should be impossible"). Measured
+first, posed frame by frame: tilts to 24 degrees on heaps 27 mm tall, and some 1700 card-through-card
+frames a wash - most of them as the deck spread and as the pile gathered, where only fully spread
+cards were rested and the rest (the deck, the pile) were no support at all, so a card slid off the
+deck through it and into the pile under it. What changed: a spread card is a REAL card's thickness
+(`WASH_T` 0.3 mm, 0.1 mm between cards, where a deck slot stands for three cards); the deck
+flattens to it under the palm before the first card slides (`WASH_FLATTEN`) and the pile stays flat
+until it is squared; every card is rested, deck and pile included, each its own thickness; a card is
+rested AT THE FRAME'S OWN MOMENT (`_wash_rest_at`), not two steps' rests blended (which pass a card
+sliding onto another through its edge for a frame), in the order of the step that ends the moment -
+a pair keeps its order a step after it parts, and a pair touching only between two steps is caught
+at their midpoint; a card climbs one card, not a heap - one lying two or more above it it runs in
+under - and a loose card three or more up slumps off (`_wash_slump`); a sweep lays each card squared
+on the pile (a stiff card left with its middle at the pile's edge pivots there and every card on it
+leans); and a meeting is a NUDGE (`WASH_KNOCK` 0.16, at the point where they touch, spin capped at
+3.5 rad/s) - well short of evening their speeds, so nothing comes back the way it went. Now: no
+crossing, no card dipping into another or the cloth, no swap, over every frame; mixing cards tip
+under 2 degrees 99% of the time, 6 at most.
+
+THROWN OUT OF THE SPREAD (the user, the same day: "when a lot of repulsion is applied, a card can get
+ejected, it can land face-up, and the reader can choose to draw that card... I would expect some
+ejections to land face-down, and thus NOT be drawn"): a meeting faster than `EJECT_SPEED` may throw
+the card run into - surer the harder - a hop along the blow onto the cloth and wholly in the picture,
+its way clear of what stands (`_eject`, `_flight_xf`; in the air it rides up over anything its edge
+would dip into, `_flight_clear`). About one a wash, two at most, none late in the mixing, and FACE
+DOWN: a deck card's face is never painted, so only a drawn card may come down face up - the jumper.
+WHEN THE FIRST CARD IS A JUMPER and the deck is being washed as its moment comes, the wash runs on
+into it (`_jumper_plan`): the mixing stops and a hard blow throws it - over about the line across its
+flight, face up, its top away from the reader (toward them, reversed) - onto the fewest cards it can,
+on top of them; the drawn card's own mesh takes the wash card's place as it leaves, nothing slides
+over it, and it lies there until it is picked up and shown as from a riffle; then the hands gather
+the rest, one card short (`_wash_jump`, `_wash_jump_xf`). Half the episodes whose first card is a
+jumper hold their wash back for it (`_jumper_wash`: it begins `JUMPER_WASH_LEAD` before the jumper is
+reckoned to come, the script's words at a steady pace, and runs `JUMPER_WASH_SLACK` past it); the rest
+riffle as before - and either way, a wash under way when the jumper comes throws it. THE HANDS SWEEP (the user, 2026-10-05:
 "cards barely move... the movements are very small, very localized... It would be much more common
 for cards to sweep back, and forth, back, and forth in various directions, crossing large regions of
 the table, creating chaos along their path. Today, these sort of just shift in tiny little
@@ -505,9 +552,9 @@ points a card, so a card pressed whole goes with it, one caught at an end swings
 one brushed stays; each pass takes hold afresh, so a scrub carries a different few each way and
 leaves some at the far end; where another card lies over a point the palm presses that one instead,
 so a half-covered card is pulled out by its free half; two cards lying one on the other drag each
-other, hard under a pressed card; a card run into is knocked. Now half a card's travel is in
+other, hard under a pressed card; a card run into is nudged. Now half a card's travel is in
 straight runs of 15 cm or more (the circles: 4), 89% of the cards get 15 cm or more from where the
-mixing found them (24%), and two thirds of the still cards a sweep runs over are knocked askew. Gate:
+mixing found them (24%), and more than half the still cards a sweep runs over are knocked askew. Gate:
 `tests/tarot_wash_check.gd` (two-sided: the circling wash fails four of its checks, and tiny
 circles made up inside the gate fail them too). A draw: square, slide, flip, up to the camera on the LEFT beside the booklet page on the
 RIGHT (shown, never read); both turn a little on their axes, and the card is now and then turned
@@ -523,6 +570,7 @@ just sitting there on the table, doing nothing"): it had left the deck the momen
 stopped, often after seconds of the deck lying still. Its action now opens with one more riffle,
 and the card rides the top of a half and springs off it while the halves fall (`JUMP_RIFFLE`,
 `_jump_ride`); the deck goes aside once that riffle is done. The voice's rest for it grew to 5.0 s.
+Out of a wash under way, a blow throws it instead (THROWN OUT OF THE SPREAD, above).
 The channel's name opens it, and nothing closes it but the light: THE OUTRO (the user,
 2026-10-05: "a simple fade to black, after the voice is done speaking... not display the title
 again at the end") - a beat after the last word the table fades to black, reaching it exactly as
@@ -567,8 +615,39 @@ every future login"). `scripts/youtube.gd` is generic; the tarot mode opts in th
   don't want to store a bunch of episode-specific logic in the frontmatter"); a per-seed record map
   was tried the same day and removed.
 - **The title screen**: the show's name, and under it the BYLINE - the document's `byline:` ("with
-  Pen & Ink"), a field on the document card right under Title.
-- **What goes up**: the episode's title, the show's description with a chapter per card timed
+  Pen & Ink"), a field on the document card right under Title. REBUILT 2026-10-06 for the thumbnail
+  (the user: the text "too small in some layouts on mobile", "always the same color... camouflaged",
+  and the table showing "too much detail" - "an extremely strong blur, such that nothing is really
+  visible in the scene except for the colors"):
+  - THE TYPE (`TarotTable.title_layout`): the name as large as a line of it fits across 86% of the
+    frame, at most 15% of its height (Cinzel; "Trustworthy Tarot" went from 84 to 156 px at 1080, its
+    byline from 40 to 62), on two lines when one would set it under 70% of that; the byline 0.4 of its size; the block centered
+    45% down.
+  - THE COLOR IS THE SET DRESSER'S (`title: {color, why}` in `table.json`, `TarotTable.title_ink`):
+    it is the agent that sees the painted cloth, and with tools the table set - the producer only
+    describes a cloth before it is painted, and one planned "deep oxblood" was painted pale gold
+    (cream measured 1.3 against it). Its prompt says the frame is the thumbnail (`TarotPrompts.
+    title_rule`); with tools, `title` shows it the opening and the WCAG contrast behind the name.
+    A table set before this, or with no color, prints the name in cream (`TITLE_INK`) until the
+    table is set again.
+  - A SHADE ROUND THE LETTERS (`TarotTable.title_shade`): the ink's own hue taken 85% of the way to
+    black or white, whichever is further - a soft halo of stacked outlines and a smooth band behind
+    the block (it was 12 stacked rects, which drew visible stripes) - so any color reads (>= 3:1
+    against its shade, every hue and lightness).
+  - THE BLUR is not the lens's: at its softest the bokeh left every thing on the table plain. The
+    whole frame is read back through `shaders/tarot_intro.gdshader` - the canvas screen texture's
+    mips (Godot builds each level with a Gaussian), a B-spline read of the level that carries the
+    asked-for blur, mixed between two levels - at `TarotTable.TITLE_BLUR` (0.04125 of the frame's
+    height: 0.11 came first and was "just a smidge too blurry", the user asking for about 25% less,
+    then 0.0825 was cut "another 50%"; the lens's softest bokeh, the "too much table detail" it
+    replaced, measures a sigma of 6.2 px - 0.0086 of a 720 frame). Each level carries 2.07 of its
+    texels of blur (measured; the first guess, 1.1, drew every blur 1.9x too wide). It lifts, eased
+    through its log, over the first half of the focus pull and is then taken off (not drawn at all
+    during the reading). Gate: `tests/run_quiet.sh intro_blur_check` (width at 720 and 1080, round,
+    smooth, in place; the title width spreads an outline over 0.3-1.0 times the height of a 10 cm
+    thing, and the widths judged against it - the lens's 0.0086, and 0.0825 - fall outside that band).
+- **What goes up**: the show's name and the episode's title ("Truthful Tarot: My Episode Name";
+  the exported file keeps the episode's alone), the show's description with a chapter per card timed
   from the take, the show's tags fitted to YouTube's 500 characters, and a THUMBNAIL:
   a 1280x720 frame of the saved video at the title screen - the name fully up over the out-of-focus
   table - set once the video is up (needs a verified channel; refused, the video stays up and the
@@ -593,11 +672,14 @@ every future login"). `scripts/youtube.gd` is generic; the tarot mode opts in th
 - `tests/run_quiet.sh -- res://tests/props_look_probe.gd --spec <table.json> --out x.png` - a
   table description's things side by side under candlelight, no tarot table around them.
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/tarot_look_probe.gd 400 --show S --seed N --marks 1`
-  - the table over an episode with a synthetic voice.
+  - the table over an episode with a synthetic voice. `--times 3.6 --name "Show" --byline "with X"
+  --ink "#1d2f5c"` photographs the title screen with a set dresser's color.
+- `tests/run_quiet.sh intro_blur_check` - the intro's blur, in pixels (see "The title screen").
 - `GHOST_PROBE_GPU=1 GHOST_PROBE_MUTE=1 tests/run_boot_probe.sh tests/tarot_voice_probe.gd 900 --spec <md> --seed N --export 1`
   - the panel, the real voice and the table, end to end, and the export take.
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_look_probe.gd 300 --show S --seed N`
-  - what the set dresser's tools show, with no agent: an episode's table put, looked at and set.
+  - what the set dresser's tools show, with no agent: an episode's table put, looked at and set, and
+  the opening (`--ink`, `--name`, `--byline`).
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_run_probe.gd 1600 --spec <md> --seed N [--model haiku]`
   - the real set dresser at work through its tools (quota), on a COPY of an episode.
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/air_look_probe.gd 400 --show S --seed N --spec <effects.json> --moments 1`

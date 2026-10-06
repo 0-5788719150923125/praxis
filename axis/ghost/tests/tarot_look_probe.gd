@@ -10,6 +10,8 @@ extends Node
 ## `--marks 1` photographs each action instead: the moment it starts, a beat in, and the card
 ## held up after it. `--things 1` prints what stands on the table and every flame's light;
 ## `--dark 0,2` puts out those lights (a lit thing's one light; -1 the lamp), to find which light does something.
+## `--name N --byline B` set the title screen's name and byline (the show's own); `--ink #rrggbb` prints
+## the name in that color, as a set dresser's choice would.
 ## `--looks 1` prints when each held card looks at its back, and which looks are pirouettes - to
 ## aim a `--clip` at one.
 ## `--wash W` makes the shuffle one wash (seed W, its longest) and `--clip A,B` writes EVERY frame
@@ -37,6 +39,9 @@ var _dark: Array = []   # --dark 0,2: put out those flames' lights (the flames s
 var _wash := -1         # --wash W: the shuffle is one wash, of seed W
 var _clip := Vector2(-1.0, -1.0)   # --clip A,B: every frame from A to B seconds (into the wash, with --wash)
 var _looks := false     # --looks 1: print each held card's looks at its back
+var _name := "Truthful Tarot"
+var _byline := ""
+var _ink := ""          # --ink #rrggbb: the name's color, as a set dresser's choice
 
 
 func _ready() -> void:
@@ -65,6 +70,9 @@ func _run() -> void:
 					_dark.append(int(x))
 			"--wash": _wash = int(args[i + 1])
 			"--looks": _looks = args[i + 1] == "1"
+			"--name": _name = args[i + 1]
+			"--byline": _byline = args[i + 1]
+			"--ink": _ink = args[i + 1]
 			"--clip":
 				var ab := String(args[i + 1]).split(",")
 				_clip = Vector2(float(ab[0]), float(ab[1]))
@@ -92,7 +100,7 @@ func _run() -> void:
 	var subs: Subtitles = preload("res://scripts/subtitles.gd").new()
 	var parse := TarotScript.parse(script)
 	subs.words = timeline(parse, _word, Director.intro_hold)
-	subs.document = {"source": script, "title": "Truthful Tarot", "tarot": ep.document()}
+	subs.document = {"source": script, "title": _name, "byline": _byline, "tarot": ep.document()}
 	if _from > 0:
 		# A SCRUB: the voice starts at word N with no intro, and the medium is handed its first words
 		var later: Array = []
@@ -163,6 +171,8 @@ func _run() -> void:
 			Spectrum.current.time = t
 			subs._process(DT)
 			medium.advance(Spectrum.current, DT, 1.0)
+			if not _ink.is_empty():
+				(medium as TarotMedium)._title.ink = Color.html(_ink)
 			for k in _dark:
 				if int(k) >= 0 and int(k) < (medium as TarotMedium)._lights.size():
 					(((medium as TarotMedium)._lights[int(k)] as Dictionary)["light"] as OmniLight3D).light_energy = 0.0

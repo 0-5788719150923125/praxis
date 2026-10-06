@@ -391,17 +391,18 @@ static func chapter_clock(t: int) -> String:
 
 
 ## UPLOAD NOTES: `upload.md` - what an upload of the episode says (see [method upload_notes]), its
-## chapters timed from the take at [param take], the show's [param description] in place of the
-## plan's when there is one, and the tags that go up with it - [param tags], the show's - fitted to
-## YouTube's limit. "" on success, else why not.
-func write_upload_notes(take: String, tags := PackedStringArray(), description := "") -> String:
+## chapters timed from the take at [param take], the [param title] and the show's [param description]
+## it goes up with in place of the plan's when given, and the tags that go up with it - [param tags],
+## the show's - fitted to YouTube's limit. "" on success, else why not.
+func write_upload_notes(take: String, tags := PackedStringArray(), description := "", title := "") -> String:
 	var side := FileAccess.get_file_as_string(take.get_basename() + ".json")
 	var j := JSON.new()
 	if j.parse(side) != OK or not (j.data is Dictionary):
 		return "the take's sidecar is unreadable"
 	var n := upload_notes(take)
 	var desc := description.strip_edges() if not description.strip_edges().is_empty() else String(n["description"])
-	var lines := PackedStringArray(["# " + String(n["title"]), "", desc, "", "Chapters"])
+	var head := title.strip_edges() if not title.strip_edges().is_empty() else String(n["title"])
+	var lines := PackedStringArray(["# " + head, "", desc, "", "Chapters"])
 	lines.append_array(n["chapters"] as PackedStringArray)
 	var going: PackedStringArray = YouTube.fit_tags(Array(tags))
 	if not going.is_empty():

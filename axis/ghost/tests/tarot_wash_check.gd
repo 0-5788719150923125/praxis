@@ -34,7 +34,27 @@ extends Node
 ##   - a JUMPER flies out of a shuffle: when it springs the deck is mid-riffle, even when the
 ##     shuffle before it had gone quiet ("not when the cards are just sitting there").
 ##
-##   tests/run_boot_probe.sh tests/tarot_wash_check.gd 180
+## Reported 2026-10-06: the cards "'repel' each other in a way that makes them almost bouncy - they
+## are very unstable and they tilt far too much... the cards often clip through each other... cards
+## moving THROUGH each other, which should be impossible"; and asked: "when a lot of repulsion is
+## applied, a card can get ejected, it can land face-up, and the reader can choose to draw that
+## card... some ejections to land face-down, and thus NOT be drawn". So, posed as the camera sees
+## it, frame by frame:
+##
+##   - no card passes through another or into the cloth - the deck spreading and the pile gathering
+##     included - and two cards touching never swap which lies on top (control: posed as two steps'
+##     rests blended, cards cross);
+##   - cards lie gently: a mixing card tips a few degrees at most, and its tilt does not jump about;
+##   - a meeting is a nudge: the card run into never overtakes the card that struck it, which never
+##     comes back the way it went;
+##   - a hard blow throws a card out of the spread now and then: struck faster than EJECT_SPEED,
+##     face down, onto the cloth and wholly in the picture, its way clear of what stands;
+##   - a JUMPER OUT OF A WASH: when the first card is a jumper and the deck is being washed as it
+##     comes, a blow throws it over, face up and the right way round, clear of every card; it lies
+##     there, nothing passing through it, until it is picked up and shown; the deck is gathered one
+##     card short, then pushed aside. An episode that washes into its jumper holds its wash back for it.
+##
+##   tests/run_boot_probe.sh tests/tarot_wash_check.gd 420
 ##
 ## A BOOT probe (the medium reaches the Director); no GPU - the tracks are numbers.
 
@@ -79,6 +99,7 @@ func _run() -> void:
 		"position": {}, "booklet": {}, "art": ""}]
 	var n := {"dur": 0.0, "mix": 0.0, "path": 0.0, "sweep": 0.0, "long": 0.0, "reach": 0.0, "knocked": 0.0,
 		"flips": 0, "clips": 0, "jumps": 0, "ms": 0.0}
+	var plans: Array = []
 	for s in range(1, SEEDS + 1):
 		var doc := {"show": "wash-check", "seed": s, "dir": "", "plan": {"look": {"candles": 2}}, "cards": cards}
 		subs.document = {"source": script, "title": "Wash Check", "tarot": doc}
@@ -86,6 +107,8 @@ func _run() -> void:
 		var run: Dictionary = TarotMedium.RUNS["wash"]
 		var dur := lerpf(float(run["dur"][0]), float(run["dur"][1]), float(s) / float(SEEDS))
 		var plan: Dictionary = medium._wash_plan(1000 + s, dur)
+		plans.append(plan)
+		_throw_facts(plan)
 		var m := _measure(plan, dur)
 		for k in m:
 			n[k] = float(n[k]) + float(m[k]) / float(SEEDS) if k in ["dur", "mix", "path", "sweep", "long", "reach", "knocked"] \
@@ -120,7 +143,11 @@ func _run() -> void:
 	_cut_short()
 	_jumper()
 	_looks()
+	_nudge()
+	_throws(plans)
 	_resting()
+	_posed()
+	_wash_jumper()
 	Director.hold(false)
 	Director.detach()
 	print("tarot_wash_check: %s" % ("ALL OK" if _fails == 0 else "%d FAILED" % _fails))
@@ -148,7 +175,8 @@ func _cut_short() -> void:
 	for i in (cut["tracks"] as Array).size():
 		var b: PackedVector4Array = (cut["tracks"] as Array)[i]
 		for st in range(maxi(1, g - 10), mini(b.size(), g + 10)):
-			worst = maxf(worst, Vector2(b[st].x - b[st - 1].x, b[st].z - b[st - 1].z).length())
+			if TarotMedium._flight_of(cut, i, float(st) / TarotMedium.WASH_HZ).is_empty():
+				worst = maxf(worst, Vector2(b[st].x - b[st - 1].x, b[st].z - b[st - 1].z).length())
 	var last: PackedVector4Array = (cut["tracks"] as Array)[0]
 	_ok(same, "a wash cut short is the same wash up to its gather")
 	_ok(worst <= TarotMedium.HAND_SPEED / TarotMedium.WASH_HZ, "and nothing jumps where it turns to gathering (%.1f mm a step at most)" % (worst * 1000.0))
@@ -208,12 +236,13 @@ func _jumper() -> void:
 
 
 ## CARDS IN A WASH REST ON ONE ANOTHER (feedback 0007: "many of these cards are lifted off of the
-## table itself... they cannot rest upon each other with a gentle tilt"). Over the mixing of many
-## washes, every card spread on the cloth passes through no card under it and not into the cloth
-## (its plane at every corner and at every point where it crosses a card under it), and lies AS LOW
-## AS WHAT IS UNDER IT LETS IT - its middle exactly as high as the lowest plane over all of those
-## points, found here a second, independent way (the highest point any three of them, or two, or
-## one, hold up over the middle). Two-sided: the plan's flat layers sit above that, held up in the air.
+## table itself... they cannot rest upon each other with a gentle tilt"). At the plan's steps of many
+## washes - the deck spreading and the pile gathering as well as the mixing - every card on the table
+## passes through no card under it and not into the cloth (its plane at every corner and at every
+## point where it crosses a card under it, each card its own thickness), and lies AS LOW AS WHAT IS
+## UNDER IT LETS IT - its middle exactly as high as the lowest plane over all of those points, found
+## here a second, independent way (the highest point any three of them, or two, or one, hold up over
+## the middle). Two-sided: the plan's flat layers sit above that, held up in the air.
 func _resting() -> void:
 	var through := 0
 	var afloat := 0
@@ -225,24 +254,29 @@ func _resting() -> void:
 	var worst_ms := 0.0
 	var judged := 0
 	var off_low := 0
+	var off_most := 0.0
 	var flat_high := 0
-	for s in range(1, 7):
+	for s in range(1, 5):
 		var doc := {"show": "wash-check", "seed": s, "dir": "", "plan": {"look": {"candles": 2}}, "cards": []}
 		subs.document = {"source": TarotScript.compose([{"kind": "shuffle", "card": 0, "text": "Shuffle."}]), "title": "Wash Check", "tarot": doc}
 		medium._ensure_doc()
 		var plan: Dictionary = medium._wash_plan(3000 + s, 30.0)
-		var mix: Vector2 = plan["mix"]
-		for st in range(int(mix.x * TarotMedium.WASH_HZ) + 5, int(mix.y * TarotMedium.WASH_HZ), 11):
+		var tracks: Array = plan["tracks"]
+		var last := (tracks[0] as PackedVector4Array).size() - 1
+		for st in range(1, last, 7):
 			var t0 := Time.get_ticks_usec()
 			var rest: Array = medium._wash_rest(plan, st)
 			worst_ms = maxf(worst_ms, float(Time.get_ticks_usec() - t0) / 1000.0)
 			var v := float(st) / TarotMedium.WASH_HZ
 			var on: Array = []
 			for i in rest.size():
-				if medium._wash_spread_at(plan, i, v) >= 0.999:
+				if TarotMedium._flight_of(plan, i, v).is_empty():
 					on.append(i)
 			for i in on:
-				var qi: Vector4 = ((plan["tracks"] as Array)[i] as PackedVector4Array)[st]
+				var qi: Vector4 = (tracks[i] as PackedVector4Array)[st]
+				var si := medium._wash_spread_at(plan, i, v)
+				var thi := lerpf(TarotMedium.DECK_T, TarotMedium.WASH_T, si)
+				var low := lerpf(0.0, TarotMedium.CLOTH_TOP + TarotMedium.FLOOR_GAP, si) + thi * 0.5
 				var mid := Vector2(qi.x, qi.z)
 				var r: Vector3 = rest[i]
 				var g := Vector2(r.y, r.z)
@@ -254,51 +288,448 @@ func _resting() -> void:
 				var pts := PackedVector2Array()
 				var hs := PackedFloat32Array()
 				for c in 4:
-					var gap := r.x + g.dot(corners[c] - mid) - TarotMedium.WASH_FLOOR
+					var gap := r.x + g.dot(corners[c] - mid) - low
 					through += 1 if gap < -1e-5 else 0
 					least = minf(least, gap)
 					pts.append(corners[c] - mid)
-					hs.append(TarotMedium.WASH_FLOOR)
+					hs.append(low)
 				for j in on:
-					var qj: Vector4 = ((plan["tracks"] as Array)[j] as PackedVector4Array)[st]
-					if qj.y >= qi.y:
+					var qj: Vector4 = (tracks[j] as PackedVector4Array)[st]
+					if qj.y > qi.y or (qj.y == qi.y and j >= i):
 						continue
 					var mj := Vector2(qj.x, qj.z)
 					var rj: Vector3 = rest[j]
+					var sj := medium._wash_spread_at(plan, j, v)
+					var lift := lerpf(TarotMedium.DECK_T, TarotMedium.WASH_T, sj) * 0.5 + TarotMedium.STACK_GAP * maxf(si, sj) + thi * 0.5
 					var cj := TarotMedium._card_corners(mj, qj.w)
-					for piece in Geometry2D.intersect_polygons(corners, cj):
-						for p in piece:
-							var under := rj.x + Vector2(rj.y, rj.z).dot(p - mj) + TarotMedium.CARD_T + TarotMedium.STACK_GAP
+					var pieces := Geometry2D.intersect_polygons(corners, cj)
+					for piece in pieces:
+						for p: Vector2 in piece:
+							var under := rj.x + Vector2(rj.y, rj.z).dot(p - mj) + lift
 							var gap := (r.x + g.dot(p - mid)) - under
 							through += 1 if gap < -1e-5 else 0
 							least = minf(least, gap)
-							pts.append(p - mid)
-							hs.append(under)
+					# what the table rests it on: where they cross - or, lying squared on it, the face
+					# under it carried to its own corners
+					if mj.distance_to(mid) < 0.006 and absf(wrapf(qi.w - qj.w, -PI, PI)) < 0.12:
+						for c in 4:
+							hs[c] = maxf(hs[c], rj.x + Vector2(rj.y, rj.z).dot(corners[c] - mj) + lift)
+					else:
+						for piece in pieces:
+							for p: Vector2 in piece:
+								pts.append(p - mid)
+								hs.append(rj.x + Vector2(rj.y, rj.z).dot(p - mj) + lift)
 					for c in 4:
 						if Geometry2D.is_point_in_polygon(corners[c], cj):
 							covered[c] = true
-				afloat += 1 if least > 1e-5 else 0
+				var held := INF
+				for k in hs.size():
+					held = minf(held, (r.x + g.dot(pts[k])) - hs[k])
+				afloat += 1 if held > 1e-5 else 0
 				if pts.size() > 4 and cards % 3 == 0:
 					var lowest := _held_up(pts, hs)
 					judged += 1
 					off_low += 1 if absf(r.x - lowest) > 2e-6 else 0
+					off_most = maxf(off_most, absf(r.x - lowest))
 					flat_high += 1 if qi.y > lowest + 0.0001 else 0
-				for c in 4:
-					if not covered[c]:
-						bare_new += r.x + g.dot(corners[c] - mid) - TarotMedium.WASH_FLOOR
-						bare_old += qi.y - TarotMedium.WASH_FLOOR
-						bare_n += 1
+				if si > 0.99:
+					for c in 4:
+						if not covered[c]:
+							bare_new += r.x + g.dot(corners[c] - mid) - low
+							bare_old += qi.y - low
+							bare_n += 1
 	var mean_new := bare_new / maxf(float(bare_n), 1.0) * 1000.0
 	var mean_old := bare_old / maxf(float(bare_n), 1.0) * 1000.0
-	print("            resting: %d cards over 6 washes, %d tipped; corners over bare cloth %.2f mm up on average (flat layers: %.2f mm); the slowest step %.1f ms"
+	print("            resting: %d cards over 4 washes, %d tipped; corners over bare cloth %.2f mm up on average (flat layers: %.2f mm); the slowest step %.1f ms"
 		% [cards, tipped, mean_new, mean_old, worst_ms])
 	_ok(through == 0, "no card in a wash passes through a card under it or into the cloth (%d points)" % through)
 	_ok(afloat == 0, "every card rests on something (%d of %d in the air)" % [afloat, cards])
-	_ok(judged > 200 and off_low == 0, "every card lies as low as the cards under it let it (%d of %d judged do not)" % [off_low, judged])
+	_ok(judged > 200 and off_low == 0, "every card lies as low as the cards under it let it (%d of %d judged do not, by %.4f mm at most)" % [off_low, judged, off_most * 1000.0])
 	_ok(flat_high > judged / 3, "control: on the plan's flat layers %d of %d sit higher than that" % [flat_high, judged])
 	_ok(mean_new < mean_old, "corners over bare cloth come down toward it: %.2f mm up, against %.2f mm on flat layers" % [mean_new, mean_old])
 	_ok(tipped > cards / 10, "cards resting on others tip (%d of %d)" % [tipped, cards])
 	_ok(worst_ms < 25.0, "a step of rest is cheap enough to make as it plays (%.1f ms)" % worst_ms)
+
+
+## AS THE CAMERA SEES IT (2026-10-06: "the cards often clip through each other... cards moving
+## THROUGH each other"; "they tilt far too much"): washes posed frame by frame, as the table poses
+## them, between the plan's steps. Wherever two cards lie over one another their faces never cross,
+## the upper never dips into the lower, and the pair never swaps which is on top from one frame to
+## the next; no card on the cloth dips into it. Mixing cards tip a few degrees at most and their tilt
+## does not jump about. Control: posed as two steps' rests blended, cards pass through one another.
+func _posed() -> void:
+	var fps := 15.0
+	var crossings := 0
+	var sinks := 0
+	var swaps := 0
+	var cloth := 0
+	var mix_tilts: Array = []
+	var jerks := 0
+	var mix_frames := 0
+	var worst := 0.0
+	var blended := 0
+	for s in range(1, 4):
+		var doc := {"show": "wash-check", "seed": s, "dir": "", "plan": {"look": {"candles": 2}}, "cards": []}
+		subs.document = {"source": TarotScript.compose([{"kind": "shuffle", "card": 0, "text": "Shuffle."}]), "title": "Wash Check", "tarot": doc}
+		medium._ensure_doc()
+		medium._shuffle_room = INF
+		medium._jump_room = -1.0
+		var dur := 28.0
+		var plan: Dictionary = medium._wash_plan(6000 + s, dur)
+		var m := {"kind": "wash", "t0": 0.0, "dur": dur, "pause": 0.0, "seed": 6000 + s, "plan": plan}
+		var mix: Vector2 = plan["mix"]
+		var prev: Array = []
+		var prev_top := {}
+		var prev_up: Array = []
+		for f in int(dur * fps):
+			var v := float(f) / fps
+			var xfs: Array = []
+			for i in TarotMedium.DECK_N:
+				xfs.append(medium._wash(i, v, m))
+			var r := _overlaps(xfs, prev_top)
+			crossings += int(r["crossings"])
+			sinks += int(r["sinks"])
+			swaps += int(r["swaps"])
+			prev_top = r["tops"]
+			var ups: Array = []
+			for i in xfs.size():
+				var xf: Transform3D = xfs[i]
+				var up := xf.basis.y.normalized()
+				ups.append(up)
+				var aloft := not TarotMedium._flight_of(plan, i, v).is_empty()
+				if aloft:
+					continue
+				var sp := medium._wash_spread_at(plan, i, v)
+				if sp > 0.99 and _lowest(xf) < TarotMedium.CLOTH_TOP - 1e-5:
+					cloth += 1
+				if v > mix.x + 0.5 and v < mix.y:
+					var tilt := rad_to_deg(acos(clampf(up.y, -1.0, 1.0)))
+					mix_tilts.append(tilt)
+					worst = maxf(worst, tilt)
+					mix_frames += 1
+					if not prev_up.is_empty():
+						var turn := rad_to_deg(acos(clampf(up.dot(prev_up[i] as Vector3), -1.0, 1.0))) * fps
+						jerks += 1 if turn > 60.0 else 0
+			prev_up = ups
+			# CONTROL: the same frame posed as two steps' rests blended
+			if s == 1:
+				var old: Array = []
+				for i in TarotMedium.DECK_N:
+					old.append(_blended(plan, m, i, v))
+				blended += int(_overlaps(old, {})["crossings"])
+			prev = xfs
+	mix_tilts.sort()
+	var p99 := float(mix_tilts[int(mix_tilts.size() * 0.99)]) if not mix_tilts.is_empty() else 0.0
+	var jerk_share := float(jerks) / maxf(float(mix_frames), 1.0)
+	print("            posed: %d faces crossing, %d dipping into a card, %d swaps, %d into the cloth; mixing tilt 99%% under %.1f deg, at most %.1f; %.2f%% of mixing frames turn faster than 60 deg/s"
+		% [crossings, sinks, swaps, cloth, p99, worst, jerk_share * 100.0])
+	_ok(crossings == 0 and sinks == 0, "no card passes through another, frame by frame (%d crossing, %d dipping in)" % [crossings, sinks])
+	_ok(swaps == 0, "two cards touching never swap which is on top (%d)" % swaps)
+	_ok(cloth == 0, "no card on the cloth dips into it (%d)" % cloth)
+	_ok(blended > 0, "control: posed as two steps' rests blended, cards cross (%d)" % blended)
+	_ok(p99 < 3.0 and worst < 8.0, "mixing cards lie gently: 99%% tip under %.1f deg, the most %.1f" % [p99, worst])
+	_ok(jerk_share < 0.01, "and their tilt does not jump about (%.2f%% of frames turn faster than 60 deg/s)" % (jerk_share * 100.0))
+
+
+## Over cards posed at [param xfs]: wherever two lie over one another, whether their faces cross
+## (the lower's face above the upper's somewhere), whether the upper dips into the lower, and which
+## is on top - and whether that swapped from [param before] (pair -> lower index on top).
+func _overlaps(xfs: Array, before: Dictionary) -> Dictionary:
+	var crossings := 0
+	var sinks := 0
+	var swaps := 0
+	var tops := {}
+	for i in xfs.size():
+		var a: Transform3D = xfs[i]
+		var fa := _foot(a)
+		var ta := TarotMedium.DECK_T * a.basis.y.length()
+		for j in range(i + 1, xfs.size()):
+			var b: Transform3D = xfs[j]
+			if Vector2(a.origin.x - b.origin.x, a.origin.z - b.origin.z).length() > 0.14:
+				continue
+			if absf(a.basis.y.normalized().y) < 0.5 or absf(b.basis.y.normalized().y) < 0.5:
+				continue
+			var pieces := Geometry2D.intersect_polygons(fa, _foot(b))
+			if pieces.is_empty():
+				continue
+			var tb := TarotMedium.DECK_T * b.basis.y.length()
+			var hi := -INF
+			var lo := INF
+			var area := 0.0
+			var mid := Vector2.ZERO
+			var cnt := 0
+			for piece in pieces:
+				var pp: PackedVector2Array = piece
+				for k in pp.size():
+					area += pp[k].cross(pp[(k + 1) % pp.size()]) * 0.5
+				for p: Vector2 in pp:
+					var d := (_plane_y(a, p) + ta * 0.5) - (_plane_y(b, p) + tb * 0.5)
+					hi = maxf(hi, d)
+					lo = minf(lo, d)
+					mid += p
+					cnt += 1
+			if absf(area) < 2e-5:
+				continue
+			mid /= float(cnt)
+			var a_top := _plane_y(a, mid) > _plane_y(b, mid)
+			tops[i * 64 + j] = a_top
+			if hi > 0.0001 and lo < -0.0001:
+				crossings += 1
+			var dip := INF
+			for piece in pieces:
+				for p: Vector2 in piece:
+					dip = minf(dip, (_plane_y(a, p) - ta * 0.5) - (_plane_y(b, p) + tb * 0.5) if a_top
+						else (_plane_y(b, p) - tb * 0.5) - (_plane_y(a, p) + ta * 0.5))
+			sinks += 1 if dip < -0.00002 else 0
+			if before.has(i * 64 + j) and bool(before[i * 64 + j]) != a_top:
+				swaps += 1
+	return {"crossings": crossings, "sinks": sinks, "swaps": swaps, "tops": tops}
+
+
+## A posed card's middle plane at [param p] (x by z).
+static func _plane_y(xf: Transform3D, p: Vector2) -> float:
+	var n := xf.basis.y.normalized()
+	return xf.origin.y - (n.x * (p.x - xf.origin.x) + n.z * (p.y - xf.origin.z)) / maxf(absf(n.y), 1e-4) * signf(n.y)
+
+
+## A posed card's four corners on the table (x by z).
+static func _foot(xf: Transform3D) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for sv in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var s: Vector2 = sv
+		var p: Vector3 = xf.origin + xf.basis.x * (TarotMedium.CARD.x * 0.5 * s.x) + xf.basis.z * (TarotMedium.CARD.y * 0.5 * s.y)
+		out.append(Vector2(p.x, p.z))
+	return out
+
+
+## The lowest point of a posed card.
+static func _lowest(xf: Transform3D) -> float:
+	var b := xf.basis
+	return xf.origin.y - absf(b.x.y) * TarotMedium.CARD.x * 0.5 - absf(b.y.y) * TarotMedium.DECK_T * 0.5 - absf(b.z.y) * TarotMedium.CARD.y * 0.5
+
+
+## CONTROL: card [param i] posed as two steps' rests blended - what the table did before posing each
+## frame's own rest.
+func _blended(plan: Dictionary, m: Dictionary, i: int, v: float) -> Transform3D:
+	var track: PackedVector4Array = (plan["tracks"] as Array)[i]
+	var f := clampf(v * TarotMedium.WASH_HZ, 0.0, float(track.size() - 1))
+	var a := int(floor(f))
+	var b := mini(a + 1, track.size() - 1)
+	var q := track[a].lerp(track[b], f - float(a))
+	var th := lerpf(TarotMedium.DECK_T, TarotMedium.WASH_T, medium._wash_spread_at(plan, i, v))
+	var ra: Vector3 = (medium._wash_rest(plan, a) as Array)[i]
+	var rb: Vector3 = (medium._wash_rest(plan, b) as Array)[i]
+	var r := ra.lerp(rb, f - float(a))
+	return Transform3D(TarotMedium._tipped(q.w, Vector2(r.y, r.z)) * Basis.from_scale(Vector3(1.0, th / TarotMedium.DECK_T, 1.0)),
+		medium._cur_base + Vector3(q.x, r.x, q.z))
+
+
+## A MEETING IS A NUDGE (2026-10-06: the cards "'repel' each other in a way that makes them almost
+## bouncy"): a card sliding into one lying still, struck at its middle, an edge or a corner, at the
+## strongest the hands' feel samples ([constant TarotMedium.WASH_KNOCK] x 1.25) - where they touch,
+## the card run into never comes away faster than the one that struck it, which goes on its way.
+## Control: at half their speeds apart (the knock that made them bounce), it overtakes.
+func _nudge() -> void:
+	var bad := 0
+	var control := 0
+	var cases := 0
+	for k in [TarotMedium.WASH_KNOCK * 1.25, 0.5 * 1.25]:
+		for off in [Vector2.ZERO, Vector2(0.03, 0.0), Vector2(0.03, 0.05), Vector2(-0.02, 0.055)]:
+			var bot := Vector2(0.0, 0.0)
+			var top := Vector2(-0.07, 0.0) + (off as Vector2)
+			var vel := PackedVector2Array([Vector2(1.0, 0.0), Vector2.ZERO])
+			var spin := PackedFloat32Array([0.0, 0.0])
+			var c := TarotMedium._touch(bot, 0.0, top)
+			var dv := (vel[0] - vel[1]) * float(k)
+			TarotMedium._wash_push(vel, spin, 1, c - bot, dv)
+			TarotMedium._wash_push(vel, spin, 0, c - top, -dv)
+			# where they touch, along the blow
+			var rt := c - top
+			var rb := c - bot
+			var at_top := (vel[0] + Vector2(rt.y, -rt.x) * spin[0]).x
+			var at_bot := (vel[1] + Vector2(rb.y, -rb.x) * spin[1]).x
+			var ok := at_top > 0.0 and at_bot <= at_top + 1e-6
+			if is_equal_approx(float(k), TarotMedium.WASH_KNOCK * 1.25):
+				cases += 1
+				bad += 0 if ok else 1
+			else:
+				control += 0 if ok else 1
+	_ok(bad == 0, "a meeting is a nudge: the card run into never overtakes the one that struck it (%d of %d did)" % [bad, cases])
+	_ok(control > 0, "control: at half their speeds apart it does (%d of %d)" % [control, cases])
+
+
+## THROWN CARDS (2026-10-06: "when a lot of repulsion is applied, a card can get ejected... some
+## ejections to land face-down, and thus NOT be drawn"), over the washes [param plans] (their throws
+## checked as each was planned, in [method _throw_facts]): now and then, never more than the most.
+func _throws(plans: Array) -> void:
+	var some := 0
+	var most := 0
+	for p in plans:
+		var k := ((p as Dictionary)["flights"] as Array).size()
+		some += 1 if k > 0 else 0
+		most = maxi(most, k)
+	print("            throws: %d of %d washes threw a card, at most %d in one; %d thrown in all - %d not struck hard, %d face up, %d late, %d off the cloth, %d out of the picture, %d through or onto what stands"
+		% [some, plans.size(), most, _thrown["n"], _thrown["soft"], _thrown["up"], _thrown["late"], _thrown["off"], _thrown["unseen"], _thrown["things"]])
+	_ok(some >= plans.size() / 3 and most <= TarotMedium.EJECT_MOST, "a hard blow throws a card now and then (%d of %d washes), never more than %d (%d)"
+		% [some, plans.size(), TarotMedium.EJECT_MOST, most])
+	_ok(int(_thrown["soft"]) == 0, "every card thrown was struck faster than %.2f m/s (%d were not)" % [TarotMedium.EJECT_SPEED, _thrown["soft"]])
+	_ok(int(_thrown["up"]) == 0 and int(_thrown["late"]) == 0, "thrown face down, and in the mixing - down before the gather (%d face up, %d late)"
+		% [_thrown["up"], _thrown["late"]])
+	_ok(int(_thrown["off"]) == 0 and int(_thrown["unseen"]) == 0 and int(_thrown["things"]) == 0,
+		"each lands on the cloth, wholly in the picture, its way and its place clear of what stands (%d, %d, %d)"
+		% [_thrown["off"], _thrown["unseen"], _thrown["things"]])
+
+
+var _thrown := {"n": 0, "soft": 0, "up": 0, "late": 0, "off": 0, "unseen": 0, "things": 0}
+
+
+## What [param plan]'s throws were, judged on the table it was planned on (the medium's as it is).
+func _throw_facts(plan: Dictionary) -> void:
+	var mix: Vector2 = plan["mix"]
+	var off := Vector2(medium._mid.x, medium._mid.z)
+	var cloth := Rect2(-TarotMedium.CLOTH.x * 0.5, -0.02 - TarotMedium.CLOTH.y * 0.5, TarotMedium.CLOTH.x, TarotMedium.CLOTH.y)
+	for f in plan["flights"]:
+		var fd: Dictionary = f
+		_thrown["n"] = int(_thrown["n"]) + 1
+		_thrown["soft"] = int(_thrown["soft"]) + (1 if float(fd.get("blow", 0.0)) < TarotMedium.EJECT_SPEED else 0)
+		_thrown["up"] = int(_thrown["up"]) + (1 if bool(fd["up"]) else 0)
+		_thrown["late"] = int(_thrown["late"]) + (1 if float(fd["t0"]) > mix.y - TarotMedium.EJECT_ROOM + 1e-4 or float(fd["t0"]) < mix.x else 0)
+		var card := TarotMedium._card_poly((fd["to"] as Vector2) + off, float(fd["lie"]))
+		var off_cloth := false
+		var unseen := false
+		for c: Vector2 in card:
+			off_cloth = off_cloth or not cloth.has_point(c)
+			var sc: Variant = TarotTable.project(medium._cam_base, medium._cam.fov, Vector3(c.x, TarotMedium.WASH_FLOOR, c.y))
+			unseen = unseen or sc == null or not Rect2(0.0, 0.0, 1.0, 1.0).has_point(sc as Vector2)
+		_thrown["off"] = int(_thrown["off"]) + (1 if off_cloth else 0)
+		_thrown["unseen"] = int(_thrown["unseen"]) + (1 if unseen else 0)
+		var things := not medium._path_clear(fd["from"], fd["to"])
+		for foot in medium._standing:
+			things = things or TarotMedium._convex_overlap(card, foot, 0.0)
+		_thrown["things"] = int(_thrown["things"]) + (1 if things else 0)
+
+
+## A JUMPER OUT OF A WASH (2026-10-06: "a card can get ejected, it can land face-up, and the reader
+## can choose to draw that card"). The first card is a jumper and the deck is being washed as its
+## moment comes: a blow throws it - and only it - out of the wash, over onto its face, the right way
+## round for its draw, clear of every card; it lies there, no card sliding through or onto it, until
+## it is picked up and shown as a drawn card is; the deck is gathered one card short, squared, and
+## pushed aside. Then an episode whose jumper the wash is to throw holds its wash back for it, and
+## one whose jumper flies from a riffle keeps the shuffle as it was.
+func _wash_jumper() -> void:
+	var words := "I'm just mixing the cards slowly, no rush at all, while we settle in. Nobody needs anything from you right now. Breathe out, and let the hour be whatever hour it is. There."
+	var script := TarotScript.compose([{"kind": "shuffle", "card": 0, "text": words},
+		{"kind": "jumper", "card": 1, "text": "Oh, one jumped."}, {"kind": "spread", "card": 0, "text": "Done."}])
+	for reversed in [false, true]:
+		var cards: Array = [{"key": "c0", "name": "Card", "numeral": "0", "reversed": reversed, "jumper": true,
+			"position": {}, "booklet": {}, "art": ""}]
+		var doc := {"show": "wash-check", "seed": 78 if reversed else 77, "dir": "", "plan": {"look": {"candles": 2}}, "cards": cards}
+		subs.words = load("res://tests/tarot_look_probe.gd").timeline(TarotScript.parse(script), 0.36, Director.intro_hold)
+		subs.document = {"source": script, "title": "Wash Check", "tarot": doc}
+		medium._ensure_doc()
+		medium._follow.extend(subs.words)
+		medium._sched = medium._follow.place(medium._parse["actions"], maxf(Director.intro_hold, 0.6), TarotMedium.LEAD, TarotMedium.TAIL)
+		var tm := medium._times()
+		var first: Array = tm["first"]
+		var ts := float(tm["shuffle"])
+		var te := float(first[0])
+		var sc := maxf(float(first[1]), 0.05)
+		# the deck is being washed as the jumper comes: twelve seconds into it
+		var w0 := maxf(0.15, te - ts - 12.0)
+		medium._moves = [{"kind": "wash", "t0": w0, "dur": 30.0, "pause": 1000.0, "seed": 4321,
+			"plan": medium._wash_plan(4321, 30.0)}]
+		medium._now = te
+		medium._pose(te)
+		var wj := medium._wash_jump(ts)
+		_ok(not wj.is_empty(), "the jumper comes out of the wash under way (%s)" % ("reversed" if reversed else "upright"))
+		if wj.is_empty():
+			continue
+		var c := int(wj["card"])
+		var card: MeshInstance3D = medium._cards[0]
+		var hidden_before := true
+		var in_flight := true
+		var lies_up := true
+		var lies_right := true
+		var on_top := true
+		var through := 0
+		var rest_at := te + TarotMedium.JUMP_REST * sc
+		var t := ts + w0 + 2.0
+		while t < float(wj["end"]) + 2.0:
+			medium._now = t
+			medium._pose(t)
+			if t < float(wj["eject"]):
+				hidden_before = hidden_before and not card.visible and (medium._deck[c] as MeshInstance3D).visible
+			elif t < float(wj["land"]):
+				in_flight = in_flight and card.visible and not (medium._deck[c] as MeshInstance3D).visible
+			elif t < rest_at - 0.05:
+				var xf := card.transform
+				lies_up = lies_up and xf.basis.y.normalized().y < -0.98
+				var top := -xf.basis.z.normalized()
+				lies_right = lies_right and top.dot(Vector3(0.0, 0.0, 1.0 if reversed else -1.0)) > 0.5
+				# on top of whatever it came down on, nothing through it (as a deck mesh's pose, for
+				# its thickness)
+				var as_deck := xf
+				as_deck.basis.y = xf.basis.y * (TarotMedium.CARD_T / TarotMedium.DECK_T)
+				var posed: Array = [as_deck]
+				for i in TarotMedium.DECK_N:
+					var dm: MeshInstance3D = medium._deck[i]
+					if dm.visible:
+						posed.append(dm.transform)
+				var r := _overlaps(posed, {})
+				through += int(r["crossings"]) + int(r["sinks"])
+				for key in r["tops"]:
+					if int(key) < 64 and not bool(r["tops"][key]):
+						on_top = false
+			t += 1.0 / 20.0
+		_ok(hidden_before, "until it is thrown it is one of the wash's cards")
+		_ok(in_flight, "thrown, the drawn card flies in that card's place")
+		_ok(lies_up and lies_right, "it lies face up, its top %s the reader (%s, %s)" % ["toward" if reversed else "away from",
+			str(lies_up), str(lies_right)])
+		_ok(on_top and through == 0, "on top of whatever it came down on, nothing through it while it lies there (%s, %d)" % [str(on_top), through])
+		# picked up and shown; the deck one card short, squared and pushed aside
+		var up_at := te + TarotMedium.JUMP_RISE * sc
+		medium._now = up_at + 0.1
+		medium._pose(up_at + 0.1)
+		var shown := card.transform.origin.distance_to(medium._present_xf(0, up_at + 0.1, up_at, INF).origin)
+		var late := float(wj["end"]) + TarotMedium.PUSH_SLIDE * sc + 0.5
+		medium._now = late
+		medium._pose(late)
+		var visible := 0
+		for i in TarotMedium.DECK_N:
+			visible += 1 if (medium._deck[i] as MeshInstance3D).visible else 0
+		var at_side := medium._cur_base.distance_to(medium._deck_base)
+		_ok(shown < 0.002, "then it is picked up and shown (%.1f mm from the shown place)" % (shown * 1000.0))
+		_ok(visible == TarotMedium.DECK_N - 1 and at_side < 0.002, "the deck is gathered one card short and pushed aside (%d meshes, %.1f mm off its place)"
+			% [visible, at_side * 1000.0])
+	# THE SHUFFLE MAKES ROOM FOR IT: a jumper's episode that washes into it holds its one wash back to
+	# begin before the jumper is reckoned to come and run past it; another keeps the shuffle as it was
+	var held := -1
+	var free := -1
+	var long_intro := " ".join(PackedStringArray([words, words, words, words]))
+	var long_script := TarotScript.compose([{"kind": "shuffle", "card": 0, "text": long_intro},
+		{"kind": "jumper", "card": 1, "text": "Oh, one jumped."}, {"kind": "spread", "card": 0, "text": "Done."}])
+	for sd in range(1, 60):
+		if held >= 0 and free >= 0:
+			break
+		var doc := {"show": "wash-check", "seed": sd, "dir": "", "plan": {"look": {"candles": 2}},
+			"cards": [{"key": "c0", "name": "Card", "numeral": "0", "reversed": false, "jumper": true, "position": {}, "booklet": {}, "art": ""}]}
+		subs.document = {"source": long_script, "title": "Wash Check", "tarot": doc}
+		medium._ensure_doc()
+		if medium._wash_held and held < 0:
+			held = sd
+			var at := medium._wash_from + TarotMedium.JUMPER_WASH_LEAD
+			var m := medium._move_at(at)
+			var covers := not m.is_empty() and String(m["kind"]) == "wash"
+			var mixing := covers and at - float(m["t0"]) >= float(((m["plan"] as Dictionary)["mix"] as Vector2).x) + TarotMedium.JUMP_MIX \
+				and at - float(m["t0"]) <= float(((m["plan"] as Dictionary)["mix"] as Vector2).y)
+			var early := 0
+			for mv in medium._moves:
+				if String((mv as Dictionary)["kind"]) == "wash" and float((mv as Dictionary)["t0"]) < medium._wash_from - 6.0:
+					early += 1
+			_ok(mixing and early == 0, "a jumper's wash is held back for it: mixing when the jumper is reckoned to come (episode %d, %s)" % [sd, str(mixing)])
+		elif not medium._wash_held and free < 0:
+			free = sd
+	_ok(held >= 0 and free >= 0, "some jumpers' episodes wash into them, some riffle (%d, %d)" % [held, free])
 
 
 ## The lowest plane above every support [param hs] at [param pts] (about a card's middle), at the
@@ -317,13 +748,15 @@ func _held_up(pts: PackedVector2Array, hs: PackedFloat32Array) -> float:
 				if u >= 0.0 and u <= 1.0:
 					best = maxf(best, lerpf(hs[i], hs[j], u))
 			for k in range(j + 1, n):
+				# a triangle all but flat holds nothing up its edges do not (a corner lying in
+				# another card is a support twice over, a hair apart)
 				var area := (pts[j] - pts[i]).cross(pts[k] - pts[i])
-				if absf(area) < 1e-12:
+				if absf(area) < 1e-8:
 					continue
 				var l0 := pts[j].cross(pts[k]) / area
 				var l1 := pts[k].cross(pts[i]) / area
 				var l2 := pts[i].cross(pts[j]) / area
-				if l0 >= -1e-9 and l1 >= -1e-9 and l2 >= -1e-9:
+				if l0 >= -1e-9 and l1 >= -1e-9 and l2 >= -1e-9 and absf(l0 + l1 + l2 - 1.0) < 1e-6:
 					best = maxf(best, l0 * hs[i] + l1 * hs[j] + l2 * hs[k])
 	return best
 
@@ -469,7 +902,8 @@ func _measure(plan: Dictionary, dur: float) -> Dictionary:
 			var d := Vector2(p.x - q.x, p.z - q.z).length()
 			path[i] += d
 			speed[i] = d * TarotMedium.WASH_HZ
-			if d > TarotMedium.HAND_SPEED / TarotMedium.WASH_HZ:
+			if d > TarotMedium.HAND_SPEED / TarotMedium.WASH_HZ and TarotMedium._flight_of(plan, i, float(st) / TarotMedium.WASH_HZ).is_empty() \
+					and TarotMedium._flight_of(plan, i, float(st - 1) / TarotMedium.WASH_HZ).is_empty():
 				jumps += 1
 			# a run ends where the card's way stops being straight - turning back, or round a bend
 			var r0: Vector2 = run0[i]
@@ -491,7 +925,7 @@ func _measure(plan: Dictionary, dur: float) -> Dictionary:
 					if bool(touching.get(key, false)):
 						var qi: Vector4 = (tracks[i] as PackedVector4Array)[st - 1]
 						var qj: Vector4 = (tracks[j] as PackedVector4Array)[st - 1]
-						if (1 if qi.y > qj.y else -1) != top or absf(pi_.y - pj.y) < TarotMedium.CARD_T * 0.9:
+						if (1 if qi.y > qj.y else -1) != top or absf(pi_.y - pj.y) < TarotMedium.WASH_LAYER * 0.9:
 							clips += 1
 					else:
 						if met.has(key) and int(met[key]) != top:

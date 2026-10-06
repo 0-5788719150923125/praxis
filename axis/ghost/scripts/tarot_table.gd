@@ -33,13 +33,16 @@ const FACES := {
 const BOOK_FACE := "res://fonts/tarot/EBGaramond-Variable.ttf"
 const BOOK_ITALIC := "res://fonts/tarot/EBGaramond-Italic-Variable.ttf"
 
-## THE FRAME around a card's picture - the border the deck prints on every face and back.
+## THE FRAME around a card's picture - the border the deck prints on every face and back. Every
+## style keeps a border of stock round the picture, its numeral above it and its name below: a
+## frameless `bleed` style (removed 2026-10-06, feedback 0010) ran the painting to the card's edge,
+## cropped it to the card's shape, and set the name and numeral on plates over it - "It looks nothing
+## like other cards, from other episodes." A look naming it is drawn as `line`.
 const FRAMES := {
 	"line": "a plain border with one thin rule inside it",
 	"double": "a border with a double rule, thick and thin",
 	"corners": "a border with ornamental brackets in the four corners",
 	"deco": "a border with stepped Art Deco corners",
-	"bleed": "the picture runs nearly to the edge, with only a hairline rule",
 }
 
 ## THE CANDLES: the most LIT THINGS on a table - a candle in its stick, a candelabra, a dish of tea
@@ -102,6 +105,32 @@ const FALLBACK_PALETTE := ["#1d1a2b", "#c9a227", "#e8dcc0", "#7a2e3a", "#2f5d62"
 const INK_CONTRAST := 3.0
 ## ...and the booklet's running text, which is small: WCAG's floor for body text.
 const TEXT_CONTRAST := 4.5
+
+## THE TITLE SCREEN: the show's name over the table thrown out of focus, which is also the video's
+## thumbnail (the user, 2026-10-06: "too small in some layouts on mobile"). The name is as large as
+## a line of it fits across TITLE_WIDTH of the frame, and no larger than TITLE_SIZE of its height;
+## a name that would come out under TITLE_TWO_LINES of that on one line is set on two. The byline
+## is TITLE_BYLINE of the name's size, and the whole block is centered TITLE_MIDDLE down the frame.
+const TITLE_SIZE := 0.15
+const TITLE_WIDTH := 0.86
+const TITLE_TWO_LINES := 0.7
+const TITLE_BYLINE := 0.4
+const TITLE_MIDDLE := 0.45
+## How tall the title face's capitals stand, as a share of its size (Cinzel's), and how far apart
+## two lines of the name are.
+const TITLE_CAP := 0.7
+const TITLE_PITCH := 1.05
+## The name's color when the set dresser chose none (a table set before it was asked, or none
+## set yet), and how far the shade round it goes toward black or white ([method title_shade]).
+const TITLE_INK := "#fff7e6"
+const TITLE_SHADE := 0.85
+## THE TABLE BEHIND THE NAME, THROWN FAR OUT OF FOCUS (the user, 2026-10-06: "an extremely strong
+## blur, such that nothing is really visible in the scene except for the colors"): a Gaussian whose
+## sigma is this share of the frame's height ([TarotMedium], `shaders/tarot_intro.gdshader`). The
+## lens's softest bokeh (a sigma of 6.2 px, 0.0086 of a 720 frame, measured) showed "too much table
+## detail"; 0.11 came first and was "just a smidge too blurry" (the user: "reduce the blur by about
+## 25%"), and 0.0825 was cut "another 50%". tests/intro_blur_check.gd holds it between the verdicts.
+const TITLE_BLUR := 0.04125
 
 
 ## THE LENS: the camera's vertical field of view, degrees, before an episode's own small turn of it.
@@ -245,8 +274,9 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 ## THE TABLE MADE SAFE: the set dresser's reply as [Props] can build it, every thing standing in a
 ## zone the table knows ("back" when it named none), things sharing a `group` kept together, no
 ## more lit things than [constant MAX_CANDLES] and no more than [constant MAX_FLAMES] flames on one
-## - the first written keep their flames, the rest stand unlit - and its `effects` as [Effects] can
-## build them, in the table's [constant AIR] and at its [constant MOMENTS].
+## - the first written keep their flames, the rest stand unlit - its `effects` as [Effects] can
+## build them, in the table's [constant AIR] and at its [constant MOMENTS], and its `title` (the
+## color the show's name is printed in over it) when that is a color.
 static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 	var out := Props.sanitize(spec, look.get("palette", FALLBACK_PALETTE) if look.get("palette") is Array else FALLBACK_PALETTE)
 	var things: Array = []
@@ -274,6 +304,11 @@ static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 	# THE AIR: fog, motes and bursts the set dresser wrote beside its things
 	out["effects"] = Effects.sanitize(spec.get("effects", []), look.get("palette", FALLBACK_PALETTE) if look.get("palette") is Array else FALLBACK_PALETTE,
 		AIR.keys(), MOMENTS.keys())
+	# THE TITLE'S COLOR, chosen to stand out from this table: kept when it is a color at all
+	var title: Dictionary = spec.get("title", {}) if spec.get("title") is Dictionary else {}
+	out["title"] = {}
+	if _is_color(String(title.get("color", "")) if title.get("color") is String else ""):
+		out["title"] = {"color": String(title["color"]).strip_edges(), "why": Props._text(title.get("why", ""), 200)}
 	return out
 
 
@@ -358,6 +393,84 @@ static func contrast(a: Color, b: Color) -> float:
 static func _luminance(c: Color) -> float:
 	var l := c.srgb_to_linear()
 	return 0.2126 * l.r + 0.7152 * l.g + 0.0722 * l.b
+
+
+## THE TITLE'S INK: the color the set dresser chose for the show's name over its table ([param spec]
+## made safe by [method sanitize_table]), else [constant TITLE_INK].
+static func title_ink(spec: Dictionary) -> Color:
+	var title: Dictionary = spec.get("title", {}) if spec.get("title") is Dictionary else {}
+	return color(String(title.get("color", "")) if title.get("color") is String else "", color(TITLE_INK))
+
+
+## THE SHADE ROUND THE TITLE: the ink's own hue taken nearly to black or white, whichever stands
+## further from it - dark round a light name, light round a dark one - so the letters always have an
+## edge to read against, whatever the table behind them is.
+static func title_shade(ink: Color) -> Color:
+	var to := Color.WHITE if contrast(Color.WHITE, ink) > contrast(Color.BLACK, ink) else Color.BLACK
+	return ink.lerp(to, TITLE_SHADE)
+
+
+## THE TITLE SCREEN'S TYPE for a [param frame] (pixels): the show's [param name] in [param face] -
+## on one line as large as fits ([constant TITLE_SIZE], [constant TITLE_WIDTH]), or on two where one
+## would set it under [constant TITLE_TWO_LINES] of that and two set it larger - and [param under]
+## (the byline) beneath it in [param italic]. `{lines: [{text, italic, size, y}], box: Rect2}`: `y` is
+## a line's baseline, every line centered across the frame; `box` runs from the top of the name's
+## capitals to the foot of the last line.
+static func title_layout(face: Font, italic: Font, name: String, under: String, frame: Vector2) -> Dictionary:
+	var cap := maxi(int(frame.y * TITLE_SIZE), 8)
+	var room := frame.x * TITLE_WIDTH
+	var rows := PackedStringArray([name.strip_edges()])
+	var size := fit_rows(face, rows, cap, room)
+	var words := name.strip_edges().split(" ", false)
+	if size < cap * TITLE_TWO_LINES and words.size() >= 2:
+		# the break whose longer half is the shortest
+		var best := PackedStringArray()
+		var widest := INF
+		for i in range(1, words.size()):
+			var pair := PackedStringArray([" ".join(words.slice(0, i)), " ".join(words.slice(i))])
+			var w := maxf(face.get_string_size(pair[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x,
+				face.get_string_size(pair[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x)
+			if w < widest:
+				widest = w
+				best = pair
+		var two := fit_rows(face, best, cap, room)
+		if two > size:
+			rows = best
+			size = two
+	var lines: Array = []
+	var pitch := size * TITLE_PITCH
+	for i in rows.size():
+		lines.append({"text": rows[i], "italic": false, "size": size, "y": pitch * i})
+	var top := -size * TITLE_CAP
+	var bottom := pitch * (rows.size() - 1) + size * 0.05
+	var u := under.strip_edges()
+	if not u.is_empty() and italic != null:
+		var us := fit_rows(italic, PackedStringArray([u]), maxi(int(size * TITLE_BYLINE), 8), frame.x * 0.8)
+		var uy := pitch * (rows.size() - 1) + size * 0.32 + us * 0.8
+		lines.append({"text": u, "italic": true, "size": us, "y": uy})
+		bottom = uy + us * 0.25
+	var shift := frame.y * TITLE_MIDDLE - (top + bottom) * 0.5
+	for l in lines:
+		(l as Dictionary)["y"] = float((l as Dictionary)["y"]) + shift
+	return {"lines": lines, "box": Rect2(0.0, top + shift, frame.x, bottom - top)}
+
+
+## The largest size up to [param cap] at which every one of [param rows] fits [param room] pixels
+## across in [param font].
+static func fit_rows(font: Font, rows: PackedStringArray, cap: int, room: float) -> int:
+	var w := 0.0
+	for r in rows:
+		w = maxf(w, font.get_string_size(r, HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x)
+	var s := mini(cap, int(100.0 * room / maxf(w, 1.0)))
+	# a face's widths are not quite proportional to its size: step down to where it truly fits
+	while s > 8:
+		var widest := 0.0
+		for r in rows:
+			widest = maxf(widest, font.get_string_size(r, HORIZONTAL_ALIGNMENT_LEFT, -1, s).x)
+		if widest <= room:
+			break
+		s -= 1
+	return maxi(s, 8)
 
 
 ## [param ink] as it is when it reads on [param stock] (contrast at least [param least]);

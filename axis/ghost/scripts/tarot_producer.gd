@@ -363,7 +363,8 @@ func _make_table() -> void:
 	DirAccess.remove_absolute(episode.job_dir("table").path_join(SetDresserTools.SUBMITTED))
 	var extra := {}
 	if TextGen.make(String(spec.get("writer", "claude"))).takes_tools():
-		var toolset := SetDresserTools.new(episode, _plan(), episode.job_dir("table"))
+		var toolset := SetDresserTools.new(episode, _plan(), episode.job_dir("table"), String(spec.get("title", "")),
+			String(spec.get("byline", "")))
 		var url := AgentTools.open(episode.job_dir("table"), toolset)
 		if not url.is_empty():
 			_tools["table"] = {"url": url, "set": toolset}
@@ -372,7 +373,7 @@ func _make_table() -> void:
 			toolset.release()
 	var p := TarotPrompts.set_dresser(String(spec.get("title", "")), String(spec.get("brief", "")), _plan(),
 		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth,
-		SetDresserTools.LOOKS if not extra.is_empty() else 0, airs.slice(0, 24))
+		SetDresserTools.LOOKS if not extra.is_empty() else 0, airs.slice(0, 24), String(spec.get("byline", "")))
 	if cloth:
 		p["images"] = [{"path": episode.file_of("image:surface"), "label": "The cloth, seen from above:", "flip": false}]
 	_submit_text("table", p, "best", extra)

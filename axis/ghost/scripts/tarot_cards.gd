@@ -94,6 +94,16 @@ static func _placeholder(ci: CanvasItem, r: Rect2, palette: Array, seed: int) ->
 			ci.draw_circle(p, rad * (1.0 - float(k) * 0.17), c)
 
 
+## WHERE THE PICTURE GOES on a card face (pixels, [constant FACE_PX]): inside a border of stock, with
+## a band above it for the numeral and below it for the name - a back has no bands.
+static func window(back := false) -> Rect2:
+	var sz := Vector2(FACE_PX)
+	var m := sz.x * 0.06
+	var top := 0.0 if back else sz.y * 0.075
+	var bottom := 0.0 if back else sz.y * 0.105
+	return Rect2(Vector2(m, m + top), Vector2(sz.x - 2.0 * m, sz.y - 2.0 * m - top - bottom))
+
+
 ## The largest font size up to [param size] at which [param text] fits [param width].
 static func _fit(font: Font, text: String, size: int, width: float) -> int:
 	var s := size
@@ -122,10 +132,7 @@ class Face:
 		var accent := TarotTable.color(String(frame.get("accent", "#c9a227")))
 		var radius := sz.x * 0.06
 		TarotCards._box(self, Rect2(Vector2.ZERO, sz), stock, radius)
-		var m := sz.x * (0.018 if style == "bleed" else 0.06)
-		var top := 0.0 if back or style == "bleed" else sz.y * 0.075
-		var bottom := 0.0 if back or style == "bleed" else sz.y * 0.105
-		var win := Rect2(Vector2(m, m + top), Vector2(sz.x - 2.0 * m, sz.y - 2.0 * m - top - bottom))
+		var win := TarotCards.window(back)
 		if art != null:
 			# a reversed card is printed the right way up: the TABLE turns it over
 			TarotCards._cover(self, art, win)
@@ -134,7 +141,7 @@ class Face:
 				hash([seed, String(card.get("key", "back"))]))
 		_frame(style, win, ink, accent, sz)
 		if not back:
-			_lettering(style, win, ink, stock, sz)
+			_lettering(win, ink, sz)
 
 	func _frame(style: String, win: Rect2, ink: Color, accent: Color, sz: Vector2) -> void:
 		var r := sz.x * 0.02
@@ -167,13 +174,11 @@ class Face:
 						Vector2(rr.position.x + st, rr.end.y), Vector2(rr.position.x, rr.end.y - st),
 						Vector2(rr.position.x, rr.position.y + st), rr.position + Vector2(st, 0)])
 					draw_polyline(pts, accent if i == 1 else ink, sz.x * (0.006 if i == 1 else 0.004), true)
-			"bleed":
-				TarotCards._box(self, win, ink, r, false, sz.x * 0.003)
 			_:
 				TarotCards._box(self, win, ink, r, false, sz.x * 0.006)
 				TarotCards._box(self, win.grow(sz.x * 0.02), ink, r * 1.4, false, sz.x * 0.002)
 
-	func _lettering(style: String, win: Rect2, ink: Color, stock: Color, sz: Vector2) -> void:
+	func _lettering(win: Rect2, ink: Color, sz: Vector2) -> void:
 		var face := TarotTable.font(String(look.get("title_face", "roman")))
 		var caps := String(look.get("title_face", "roman")) in ["roman", "deco", "sign", "typed"]
 		var name := String(card.get("name", ""))
@@ -182,15 +187,6 @@ class Face:
 		var num := String(card.get("numeral", ""))
 		var band_top := Rect2(Vector2(win.position.x, sz.y * 0.06 * 0.5), Vector2(win.size.x, win.position.y - sz.y * 0.03))
 		var band_bot := Rect2(Vector2(win.position.x, win.end.y), Vector2(win.size.x, sz.y - win.end.y - sz.x * 0.05))
-		if style == "bleed":
-			band_top = Rect2(win.position + Vector2(0, sz.y * 0.012), Vector2(win.size.x, sz.y * 0.07))
-			band_bot = Rect2(Vector2(win.position.x, win.end.y - sz.y * 0.1), Vector2(win.size.x, sz.y * 0.085))
-			var plate := stock
-			plate.a = 0.86
-			draw_rect(band_bot.grow_individual(-sz.x * 0.08, 0, -sz.x * 0.08, 0), plate)
-			if not num.is_empty():
-				var w := sz.x * 0.2
-				draw_rect(Rect2(Vector2(sz.x * 0.5 - w * 0.5, band_top.position.y), Vector2(w, band_top.size.y)), plate)
 		var pad := sz.x * 0.06
 		var size := TarotCards._fit(face, name, int(sz.y * 0.052), band_bot.size.x - pad * 2.0)
 		var asc := face.get_ascent(size)

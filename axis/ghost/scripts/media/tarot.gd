@@ -106,12 +106,21 @@ const WASH_HZ := 20.0
 ## The least time a wash needs to spread, mix a little and gather (seconds): with less before the
 ## first card, the deck is not washed at all.
 const WASH_ROOM := 9.0
-## A card lying on the cloth in a wash: its center this high - clear of the cloth (at 0.6 mm) by a
-## hair, so the weave never shows through it.
-const WASH_FLOOR := 0.0006 + 0.00035 + 0.0002
-## A card lying on another in a wash: a hair over it, besides its own thickness, so the two faces
-## never fight for the same depth.
-const STACK_GAP := 0.00015
+## A SPREAD CARD IS A REAL CARD'S THICKNESS (the user: cards should rest "with a gentle tilt"): the
+## plan's chains of cards lying on cards run many deep, and every millimeter a card stands on tips
+## the card lying across it. The cloth's top, how far over it a spread card lies, a spread card's
+## thickness, and the hair between a card and the one under it (so two faces never fight for one
+## depth).
+const CLOTH_TOP := 0.0006
+const FLOOR_GAP := 0.0001
+const WASH_T := 0.0003
+const STACK_GAP := 0.0001
+## A spread card lying on the cloth: its middle this high. And one card's place in a pile.
+const WASH_FLOOR := CLOTH_TOP + FLOOR_GAP + WASH_T * 0.5
+const WASH_LAYER := WASH_T + STACK_GAP
+## How long the deck takes to flatten under the palm (seconds) - to its cards' own thickness, so
+## the first cards slide off a low stack, not a deck's height.
+const WASH_FLATTEN := 0.35
 ## THE HANDS IN A WASH (2026-10-05, the user: "cards barely move... the movements are very small,
 ## very localized... It would be much more common for cards to sweep back, and forth, back, and
 ## forth in various directions, crossing large regions of the table, creating chaos along their
@@ -143,15 +152,55 @@ const CARD_I := (0.07 * 0.07 + 0.12 * 0.12) / 12.0
 ## much of the difference in their speeds a card sliding into another gives it as they meet; how fast
 ## a loose card slows (m/s each second, WASH_ON_CARD of that on another card) and stops turning
 ## (radians/s each second); and the fastest a hand drags a card (m/s) or turns one (radians/s).
+## A MEETING IS A NUDGE, NOT A BOUNCE (the user: cards must not "repel each other in a way that makes
+## them almost bouncy"): the card run into takes a sixth of the difference in their speeds, where
+## they touch - well short of evening them, so nothing ever comes back the way it went - and a hand
+## turns a card a few radians a second at most. The chaos along a sweep is the drag's.
 const WASH_GRIP := 40.0
 const WASH_COVERED := 0.25
 const WASH_DRAG := Vector2(5.0, 40.0)
-const WASH_KNOCK := 0.5
+const WASH_KNOCK := 0.16
 const WASH_SLIDE := 3.0
 const WASH_ON_CARD := 0.55
 const WASH_SPIN := 40.0
 const HAND_SPEED := 1.2
-const WASH_TURN_MAX := 7.0
+const WASH_TURN_MAX := 3.5
+## A heap slumps ([method _wash_slump]): a loose card this many cards up creeps off it, this fast
+## (m/s) for each card higher.
+const SLUMP_FROM := 3
+const SLUMP := 0.012
+## A CARD STRUCK HARD IS THROWN OUT OF THE SPREAD (2026-10-06, the user: "when a lot of repulsion is
+## applied, a card can get ejected... I would expect some ejections to land face-down, and thus NOT
+## be drawn"): a meeting faster than EJECT_SPEED (m/s, their speeds apart) may throw the card run
+## into - surer the harder, up to EJECT_CHANCE - a hop of EJECT_REACH (meters) along the blow, onto
+## the cloth and in the picture, clear of everything that stands. It lands face down: a deck card's
+## face is never painted, so only a drawn card - a jumper - may come down face up. A card is thrown
+## only with nothing lying on it and no palm on it, at most EJECT_MOST a wash, and none in the last
+## EJECT_ROOM seconds of the mixing (it is down before the gather). Its hop's height (meters) and
+## how long it takes (seconds).
+const EJECT_SPEED := 0.5
+const EJECT_CHANCE := 0.35
+const EJECT_REACH := Vector2(0.1, 0.28)
+const EJECT_MOST := 2
+const EJECT_ROOM := 1.5
+const EJECT_HOP := Vector2(0.012, 0.035)
+const EJECT_TIME := Vector2(0.35, 0.55)
+## A JUMPER OUT OF A WASH: when the first card is a jumper and the deck is being washed as its moment
+## comes, the jumper is the card a hard blow throws out - over, face up, clear of the rest - this far
+## into its action (its own seconds), and lies there until it is picked up as from a riffle; the hands
+## stop as it flies and gather the rest once it is up. Its hop (meters) and flight (seconds), how long
+## the gather takes, and the least mixing before it (a wash only just spread has nothing to throw).
+const JUMP_EJECT := 0.35
+const JUMP_HOP := Vector2(0.075, 0.095)
+const JUMP_FLIGHT := Vector2(0.45, 0.6)
+const JUMP_GATHER := 4.2
+const JUMP_MIX := 3.0
+## An episode whose first card is a jumper washes the deck into it this often: its wash is held back
+## to begin this long before the jumper is reckoned to come (from the script's words at a steady
+## pace) and to run this long past it - a voice is never quite the pace reckoned.
+const JUMPER_WASH := 0.5
+const JUMPER_WASH_LEAD := 24.0
+const JUMPER_WASH_SLACK := 16.0
 ## The first card's PUSH (TarotScript.PUSH): the deck squares, then slides to its side this long.
 const PUSH_SLIDE := 0.85
 ## A held card is turned over now and then, to look at its back ([method _look_of]): the chance a
@@ -203,6 +252,13 @@ const THING_LAYER := 1 << 1
 ## (seconds), from a lens this soft (CameraAttributesPractical.dof_blur_amount).
 const FOCUS_PULL := Vector2(1.4, 1.6)
 const FOCUS_BLUR := 0.16
+## THE INTRO, THROWN FAR OUT OF FOCUS: while the name is up, the whole frame is drawn through a
+## Gaussian [constant TarotTable.TITLE_BLUR] of its height wide ([constant INTRO_SHADER]). It lifts
+## over the first INTRO_LIFT of the focus pull, eased through its log down to INTRO_SHARP (half a
+## pixel at 1080), then is taken off; the lens's own near-to-far pull carries on from there.
+const INTRO_SHADER := preload("res://shaders/tarot_intro.gdshader")
+const INTRO_LIFT := 0.5
+const INTRO_SHARP := 0.0005
 ## How deep a pictured surface's relief is (Image.bump_map_to_normal_map's scale).
 const RELIEF := 3.5
 const LEAD := 0.25
@@ -304,6 +360,12 @@ var _heat_cells := {}                 # grid cell -> its heat at HEAT_H, for thi
 var _contact_tex: Texture2D = null
 var _lit_cloth: Texture2D = null      # the cloth the table was last lit for
 var _shuffle_room := INF             # how long the shuffle has, from its start to the first card
+var _jump_room := -1.0                # ...when that first card is a jumper (-1: it is not, or not placed yet)
+var _jump_scale := 1.0                # ...and the speed its action is performed at
+var _wash_held := false               # the shuffle holds its wash back for a jumper ([method _jumper_wash])
+var _wash_from := 0.0                 # ...when (into the shuffle) it begins - before the first run ends, at once
+var _wash_until := 0.0                # ...and when it would end, past the jumper reckoned
+var _deck_gone := 0                   # deck meshes gone from the deck (a jumper thrown out of a wash)
 var _standing: Array = []             # what stands on the table: convex feet (x by z), for a wash to go round
 var _standing_c := PackedVector2Array()   # ...their middles
 var _standing_r := PackedFloat32Array()   # ...and how far they reach from them
@@ -324,6 +386,7 @@ var _page_vp: SubViewport
 var _page_canvas: TarotCards.Page
 var _page_mat: StandardMaterial3D
 var _page_for := -1
+var _blur: IntroBlur
 var _title: TitleCard
 var _card_mesh: ArrayMesh
 var _edge_mat: StandardMaterial3D
@@ -370,6 +433,9 @@ func mount(st: SubViewport) -> void:
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_noise.frequency = 1.0
 	_build_world()
+	# the intro's blur over the table, under the name
+	_blur = IntroBlur.new(INTRO_SHADER)
+	add_child(_blur)
 	_title = TitleCard.new()
 	add_child(_title)
 
@@ -620,6 +686,8 @@ func _exit_tree() -> void:
 
 
 func on_stage_resized(_size: Vector2) -> void:
+	if _blur != null:
+		_blur.queue_redraw()
 	if _title != null:
 		_title.queue_redraw()
 
@@ -709,9 +777,8 @@ func _estimated_times(n: int) -> PackedFloat32Array:
 func _build_episode() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([_seed, "tarot-table"])
-	_title.channel = String(_subs.document.get("title", "")) if _subs != null else ""
 	# THE CHANNEL'S NAME ONLY: the episode's title is the video's, on the platform, not on the table
-	_title.episode = ""
+	_title.channel = String(_subs.document.get("title", "")) if _subs != null else ""
 	# ...and the show's byline under it, when it has one ("with Pen & Ink")
 	_title.byline = String(_subs.document.get("byline", "")) if _subs != null else ""
 	# THE CHANNEL'S NAME IS THE CHANNEL'S, set the same way every episode - a brand, not a
@@ -806,12 +873,9 @@ func _build_episode() -> void:
 ## The part of a face that is the painting, in UV - foil is keyed inside it (the frame's foil is
 ## keyed by its color instead).
 func _face_window() -> Vector4:
-	var style := String((_look.get("frame", {}) as Dictionary).get("style", "line"))
 	var sz := Vector2(TarotCards.FACE_PX)
-	var m := sz.x * (0.018 if style == "bleed" else 0.06)
-	var top := 0.0 if style == "bleed" else sz.y * 0.075
-	var bottom := 0.0 if style == "bleed" else sz.y * 0.105
-	return Vector4(m / sz.x, (m + top) / sz.y, 1.0 - m / sz.x, 1.0 - (m + bottom) / sz.y)
+	var w := TarotCards.window()
+	return Vector4(w.position.x / sz.x, w.position.y / sz.y, w.end.x / sz.x, w.end.y / sz.y)
 
 
 ## Pictures that have landed since last looked - live, a reading can start while the deck is
@@ -1146,6 +1210,9 @@ func _build_table() -> void:
 	_things = []
 	_heat_cells = {}
 	var spec := _table_spec()
+	# the name over this table is printed in the color the set dresser chose to stand out from it
+	_title.ink = TarotTable.title_ink(spec)
+	_title.queue_redraw()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([_seed, "tarot-things"])
 	var things: Array = spec["things"]
@@ -1813,9 +1880,10 @@ func _tick_camera(_t: float) -> void:
 	_cam.transform = _cam_base
 
 
-## THE INTRO IS OUT OF FOCUS: the whole table behind a lens's bokeh while the channel's name is
-## up, then the focus PULLS - near to far, the cloth in front of the reader first - as the
-## shuffle starts, and the lens is off for the reading. The end card leaves it alone.
+## THE INTRO IS OUT OF FOCUS: the whole frame thrown far out of focus while the channel's name is
+## up - nothing on the table to be made out, only its colors - then the focus PULLS as the shuffle
+## starts: the wide blur lifts, and the lens carries on near to far, the cloth in front of the
+## reader first, and is off for the reading. The end card leaves it alone.
 func _tick_focus(t: float) -> void:
 	var ts := float(_times()["shuffle"])
 	var pull := 1.0                      # a reading with no shuffle placed: nothing to wait for
@@ -1823,6 +1891,15 @@ func _tick_focus(t: float) -> void:
 		pull = clampf((t - (ts - FOCUS_PULL.x)) / (FOCUS_PULL.x + FOCUS_PULL.y), 0.0, 1.0)
 	elif _sched.is_empty():
 		pull = 0.0                       # the intro: nothing placed yet
+	_lens(pull)
+
+
+## The lens at [param pull] of the intro's focus pull: 0 the intro (the frame through
+## [constant TarotTable.TITLE_BLUR], the lens at its softest), 1 sharp (both off).
+func _lens(pull: float) -> void:
+	var k := _ease(clampf(pull / INTRO_LIFT, 0.0, 1.0))
+	var wide := TarotTable.TITLE_BLUR
+	_blur.set_sigma(wide * pow(INTRO_SHARP / wide, k) if k < 1.0 else 0.0)
 	if pull >= 1.0:
 		_attrs.dof_blur_far_enabled = false
 		return
@@ -1914,14 +1991,21 @@ func _air_moments() -> Dictionary:
 		var up_at := td + (off + (JUMP_RISE if kind == "jumper" else RISE_END)) * s
 		var tl := float((lays[k] as Array)[0])
 		if kind == "jumper":
-			# ALONG ITS FLIGHT, from springing off the riffle to landing
+			# ALONG ITS FLIGHT, from springing off the riffle - or being thrown out of the wash - to
+			# landing
+			var wj := _wash_jump(maxf(float(tm["shuffle"]), minf(0.0, _now))) if k == 0 else {}
 			var t0 := td + (off + JUMP_FLY.x) * s
 			var t1 := td + (off + JUMP_FLY.y) * s
+			if not wj.is_empty():
+				t0 = float(wj["eject"])
+				t1 = float(wj["land"])
 			var path: Array = []
 			for i in 9:
 				var tt := lerpf(t0, t1, float(i) / 8.0)
-				_cur_base = _deck_at(tt, tm)
-				path.append([tt, _jump_xf(k, (tt - td) / s - off, Transform3D.IDENTITY)])
+				_cur_base = _deck_at(tt, tm, wj)
+				var u := (tt - td) / s - off
+				path.append([tt, _wash_jump_xf(u, tt, td + JUMP_REST * s, Transform3D.IDENTITY, wj) if not wj.is_empty()
+					else _jump_xf(k, u, Transform3D.IDENTITY)])
 			(out["jumper"] as Array).append({"t": t0, "dur": t1 - t0, "from": "card", "path": path})
 		(out["reveal"] as Array).append({"t": up_at, "dur": 0.3, "from": "card",
 			"path": [[up_at, _present_xf(k, up_at, up_at, tl)]]})
@@ -1956,7 +2040,37 @@ func _air_moments() -> Dictionary:
 func _plan_moves() -> void:
 	_move_rng.seed = hash([_seed, "tarot-moves"])
 	_moves = []
+	_jumper_wash()
 	_move_at(120.0)
+
+
+## A JUMPER'S WASH, held back for it: an episode whose first card is a jumper washes the deck into
+## it now and then ([constant JUMPER_WASH], its own die) - its one wash begins
+## [constant JUMPER_WASH_LEAD] before the jumper is reckoned to come (the script's words at the
+## follower's steady pace) and runs [constant JUMPER_WASH_SLACK] past it, so the jumper comes while
+## it mixes whatever the voice's real pace ([method _jumper_plan]).
+func _jumper_wash() -> void:
+	_wash_held = false
+	var first := {}
+	for a in _parse.get("actions", []):
+		var kind := String((a as Dictionary)["kind"])
+		if kind == "draw" or kind == "jumper":
+			first = a
+			break
+	if first.is_empty() or String(first["kind"]) != "jumper":
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([_seed, "jumper-wash"])
+	var spoken: PackedStringArray = _parse.get("spoken", PackedStringArray())
+	var k := mini(int(first["after"]), spoken.size())
+	if rng.randf() >= JUMPER_WASH or k <= 0:
+		return
+	# the shuffle starts its lead before the first word; the jumper a beat after the intro's last
+	var est := _estimated_times(spoken.size())
+	var at := est[k - 1] + 0.4 + LEAD - (est[0] - TarotScript.SHUFFLE_LEAD - TAIL)
+	_wash_held = true
+	_wash_from = at - JUMPER_WASH_LEAD
+	_wash_until = at + JUMPER_WASH_SLACK
 
 
 ## When each card is drawn and laid, and when the shuffle starts and stops, from the placed
@@ -2003,13 +2117,16 @@ func _times() -> Dictionary:
 
 ## Where the deck is at [param t]: in the middle while it is shuffled, then pushed to its side
 ## as the first card comes - squared first (SQUARE), then slid (PUSH_SLIDE), a hair off the cloth.
-## A jumper flies out of a riffle in the middle, and the deck goes once that riffle is done.
-func _deck_at(t: float, tm: Dictionary) -> Vector3:
+## A jumper flies out of a riffle in the middle, and the deck goes once that riffle is done - or,
+## out of a wash ([param wj], [method _wash_jump]), once the wash is gathered.
+func _deck_at(t: float, tm: Dictionary, wj := {}) -> Vector3:
 	var first: Array = tm["first"]
 	if first.is_empty():
 		return _mid
 	var s := maxf(float(first[1]), 0.05)
 	var go := SQUARE if String(first[2]) == "draw" else JUMP_RIFFLE
+	if not wj.is_empty():
+		go = (float(wj["end"]) - float(first[0])) / s
 	var u := clampf(((t - float(first[0])) / s - go) / PUSH_SLIDE, 0.0, 1.0)
 	return _mid.lerp(_deck_base, _ease(u)) + Vector3(0.0, sin(PI * u) * 0.004, 0.0)
 
@@ -2023,22 +2140,36 @@ func _pose(t: float) -> void:
 	var ts := maxf(float(tm["shuffle"]), minf(0.0, _now))
 	var te := float(tm["end"])
 	_shuffle_room = te - ts if te < INF else INF
-	_cur_base = _deck_at(t, tm)
-	# a jumper's own riffle, on the jumper's clock (its action's scale)
+	# a jumper's own riffle, on the jumper's clock (its action's scale) - or the wash it comes out of
 	var first: Array = tm["first"]
 	var jump_s := maxf(float(first[1]), 0.05) if not first.is_empty() and String(first[2]) == "jumper" else 0.0
+	_jump_room = te - ts if jump_s > 0.0 and te < INF else -1.0
+	_jump_scale = jump_s if jump_s > 0.0 else 1.0
+	var wj := _wash_jump(ts)
+	_cur_base = _deck_at(t, tm, wj)
+	# THE JUMPER'S CARD IS NOT IN THE DECK once a wash throws it: its mesh is hidden while the wash
+	# runs on, and the deck is one mesh short after (identical meshes: the top one goes)
+	var gone := -1
+	if not wj.is_empty() and t >= float(wj["eject"]):
+		gone = int(wj["card"]) if t < float(wj["end"]) else DECK_N - 1
+	_deck_gone = 1 if not wj.is_empty() and t >= float(wj["end"]) else 0
 	# THE DECK: shuffling from the shuffle mark until the first card leaves it, squared after - or,
-	# when the first card is a jumper, riffled once more first: the card flies out of that riffle
+	# when the first card is a jumper, riffled once more first: the card flies out of that riffle;
+	# or the wash under way runs on and throws it
 	for i in DECK_N:
 		var xf := _rest_xf(i)
 		if t >= ts:
 			if t < te:
 				xf = _shuffle_xf(i, t - ts)
-			elif jump_s > 0.0 and te < INF and t < te + JUMP_RIFFLE * jump_s:
+			elif not wj.is_empty() and t < float(wj["end"]):
+				xf = _wash(i, t - float(wj["base"]), wj["m"])
+			elif jump_s > 0.0 and wj.is_empty() and te < INF and t < te + JUMP_RIFFLE * jump_s:
 				xf = _jump_riffle(i, (t - te) / jump_s, _shuffle_xf(i, te - ts))
 			elif t < te + SQUARE and te < INF and jump_s == 0.0:
 				xf = _shuffle_xf(i, te - ts).interpolate_with(_rest_xf(i), _ease((t - te) / SQUARE))
-		(_deck[i] as MeshInstance3D).transform = xf
+		var dm: MeshInstance3D = _deck[i]
+		dm.transform = xf
+		dm.visible = i != gone
 	# THE CARDS
 	var showing := -1
 	var page_in := 0.0
@@ -2082,7 +2213,14 @@ func _pose(t: float) -> void:
 				m.transform = _slot_xf(k)
 			continue
 		if kind == "jumper":
-			m.transform = _jump_xf(k, local, pres)
+			if not wj.is_empty():
+				# out of a wash: in it, as one of its cards, until it is thrown
+				if t < float(wj["eject"]):
+					m.visible = false
+					continue
+				m.transform = _wash_jump_xf(local, t, td + JUMP_REST * s, pres, wj)
+			else:
+				m.transform = _jump_xf(k, local, pres)
 			if local >= JUMP_PAGE.x:
 				showing = k
 				page_in = _ease(clampf((local - JUMP_PAGE.x) / (JUMP_PAGE.y - JUMP_PAGE.x), 0.0, 1.0))
@@ -2111,7 +2249,7 @@ func _rest_xf(i: int) -> Transform3D:
 func _deck_top_xf(k: int) -> Transform3D:
 	var j: Vector3 = _slot_jit[DECK_N] if _slot_jit.size() > DECK_N else Vector3.ZERO
 	return Transform3D(Basis(Vector3.UP, j.z + (PI if _reversed(k) else 0.0)),
-		_cur_base + Vector3(j.x, float(DECK_N) * DECK_T + CARD_T * 0.5, j.y))
+		_cur_base + Vector3(j.x, float(DECK_N - _deck_gone) * DECK_T + CARD_T * 0.5, j.y))
 
 
 ## Card [param k] held up to the camera on the left: floating, turning a little on its axes as a
@@ -2248,6 +2386,30 @@ func _jump_ride(k: int, v: float) -> Transform3D:
 	return _deck_top_xf(k).interpolate_with(top, _ease(v / 0.35)) if v < 0.35 else top
 
 
+## THE JUMPER OUT OF A WASH at [param u] seconds into its action ([param t] show time): thrown as
+## the wash's card it was ([method _flight_xf]) - the drawn card's own mesh, a spread card's
+## thickness - lying face up where it fell until [param rest_at], then picked up and shown.
+func _wash_jump_xf(u: float, t: float, rest_at: float, pres: Transform3D, wj: Dictionary) -> Transform3D:
+	var c := int(wj["card"])
+	var base := float(wj["base"])
+	if u < JUMP_REST:
+		return _as_drawn(_wash(c, t - base, wj["m"]))
+	var lying := _as_drawn(_wash(c, rest_at - base, wj["m"]))
+	if u < JUMP_RISE:
+		var e := _ease((u - JUMP_REST) / (JUMP_RISE - JUMP_REST))
+		var xf := lying.interpolate_with(pres, e)
+		xf.origin.y += sin(PI * e) * 0.03
+		return xf
+	return pres
+
+
+## A deck mesh's pose [param xf] for a drawn card's mesh: the same card, the same thickness (a drawn
+## card's mesh is [constant CARD_T] thick, a deck slot's [constant DECK_T]).
+static func _as_drawn(xf: Transform3D) -> Transform3D:
+	xf.basis.y = xf.basis.y * (DECK_T / CARD_T)
+	return xf
+
+
 ## A jumper at [param u] seconds into its action: riding a riffle's half, springing off it as the
 ## halves fall, flying to land face up, lying there a moment, then picked up and shown.
 func _jump_xf(k: int, u: float, pres: Transform3D) -> Transform3D:
@@ -2335,11 +2497,13 @@ func _move_at(u: float) -> Dictionary:
 			var p: Dictionary = _moves[-1]
 			t0 = float(p["t0"]) + float(p["dur"]) + float(p["pause"])
 			last = String(p["kind"])
-		# the run's kind: weighted, never the same as the last run, no second wash, no wash first
+		# the run's kind: weighted, never the same as the last run, no second wash, no wash first -
+		# and a jumper's wash held back until its time ([method _jumper_wash])
+		var held_back := _wash_held and not washed
 		var total := 0.0
 		var pool: Array = []
 		for k in RUNS:
-			if k == last or (k == "wash" and (washed or _moves.is_empty())):
+			if k == last or (k == "wash" and (washed or _moves.is_empty() or held_back)):
 				continue
 			pool.append(k)
 			total += float((RUNS[k] as Dictionary)["weight"])
@@ -2350,6 +2514,9 @@ func _move_at(u: float) -> Dictionary:
 			if pick <= 0.0:
 				kind = String(k)
 				break
+		# its time: the run after this one would begin past it
+		if held_back and not _moves.is_empty() and t0 >= _wash_from - 6.0:
+			kind = "wash"
 		var run: Dictionary = RUNS[kind]
 		var n := _move_rng.randi_range(int(run["n"][0]), int(run["n"][1]))
 		var tempo := _move_rng.randf_range(float(run["dur"][0]), float(run["dur"][1]))
@@ -2362,6 +2529,8 @@ func _move_at(u: float) -> Dictionary:
 					gap = _move_rng.randf_range(9.0, IDLE_RANGE.y)
 			var move := {"kind": kind, "t0": t0, "dur": tempo * _move_rng.randf_range(0.95, 1.05),
 				"pause": gap, "seed": _move_rng.randi()}
+			if kind == "wash" and _wash_held:
+				move["dur"] = clampf(_wash_until - t0, float(run["dur"][0]), 44.0)
 			if kind == "wash":
 				move["plan"] = _wash_plan(int(move["seed"]), float(move["dur"]))
 			_moves.append(move)
@@ -2473,27 +2642,124 @@ func _cut(i: int, v: float, dur: float, seed: int) -> Transform3D:
 	return xf2
 
 
-## A WASH, posed from its plan (see [method _wash_plan]): card [param i] at [param v] seconds in,
-## resting on what is under it ([method _wash_rest]) as far as it is spread on the cloth.
+## A WASH, posed from its plan (see [method _wash_plan]): card [param i] at [param v] seconds in -
+## where the plan has it, resting on what is under it ([method _wash_rest]), a card's own thickness
+## once spread ([constant WASH_T]: a deck mesh stands for three); in the air if it is thrown
+## ([method _flight_xf]).
 func _wash(i: int, v: float, m: Dictionary) -> Transform3D:
 	var plan := _wash_fit(m)
 	if plan.is_empty():
 		return _rest_xf(i)
+	var fl := _flight_of(plan, i, v)
+	if not fl.is_empty():
+		return _flight_xf(plan, fl, v)
+	var q := _wash_at(plan, i, v)
+	var th := lerpf(DECK_T, WASH_T, _wash_spread_at(plan, i, v))
+	var r: Vector3 = (_wash_rest_at(plan, v) as Array)[i]
+	var b := _tipped(q.w, Vector2(r.y, r.z))
+	# the jumper, down: over about its long side, face up on what it lies on
+	if int(plan.get("jumper", -1)) == i and v >= float((plan["jumper_flight"] as Dictionary)["t1"]):
+		b = b * Basis(Vector3(0.0, 0.0, 1.0), PI)
+	return Transform3D(b * Basis.from_scale(Vector3(1.0, th / DECK_T, 1.0)), _cur_base + Vector3(q.x, r.x, q.z))
+
+
+## Card [param i]'s track at [param v] seconds into the wash, between the plan's steps: x, z and its
+## turn. (Its y is its place in the order the cards lie, [method _wash_rest_at] reads it at a step.)
+static func _wash_at(plan: Dictionary, i: int, v: float) -> Vector4:
 	var track: PackedVector4Array = (plan["tracks"] as Array)[i]
 	var f := clampf(v * WASH_HZ, 0.0, float(track.size() - 1))
 	var a := int(floor(f))
-	var b := mini(a + 1, track.size() - 1)
-	var q := track[a].lerp(track[b], f - float(a))
-	# x, z about the deck's place; y above the cloth; w the card's turn. A card lying alone is a
-	# card's thickness, not a deck slot's: the slot mesh is thinned while it is spread
-	var spread := _wash_spread_at(plan, i, v)
-	var thin := lerpf(1.0, CARD_T / DECK_T, spread)
-	var ra: Vector3 = (_wash_rest(plan, a) as Array)[i]
-	var rb: Vector3 = (_wash_rest(plan, b) as Array)[i]
-	var r := ra.lerp(rb, f - float(a))
-	var y := lerpf(q.y, r.x, spread)
-	var g := Vector2(r.y, r.z) * spread
-	return Transform3D(_tipped(q.w, g) * Basis.from_scale(Vector3(1.0, thin, 1.0)), _cur_base + Vector3(q.x, y, q.z))
+	return track[a].lerp(track[mini(a + 1, track.size() - 1)], f - float(a))
+
+
+## The throw card [param i] is in at [param v] - from the moment it leaves its place until it is
+## down - or empty.
+static func _flight_of(plan: Dictionary, i: int, v: float) -> Dictionary:
+	for f in (plan.get("airborne", {}) as Dictionary).get(i, []):
+		var fd: Dictionary = f
+		if v > float(fd["t0"]) and v < float(fd["t1"]):
+			return fd
+	return {}
+
+
+## Whether card [param i] is off the cloth at [param v]: in the air, or the jumper once picked up.
+static func _off_cloth(plan: Dictionary, i: int, v: float) -> bool:
+	return not _flight_of(plan, i, v).is_empty() or (int(plan.get("jumper", -1)) == i and v > float(plan["gather"]))
+
+
+## A THROWN CARD at [param v] seconds into the wash: off its place with a pop, along its way and
+## turning, and down onto whatever is where it comes down; a jumper turns over on the way.
+func _flight_xf(plan: Dictionary, f: Dictionary, v: float) -> Transform3D:
+	var i := int(f["card"])
+	var up := bool(f["up"])
+	var u := clampf((v - float(f["t0"])) / maxf(float(f["t1"]) - float(f["t0"]), 0.01), 0.0, 1.0)
+	if not f.has("r0"):
+		f["r0"] = (_wash_rest_at(plan, float(f["t0"])) as Array)[i]
+		f["r1"] = (_wash_rest_at(plan, float(f["t1"])) as Array)[i]
+	var r0: Vector3 = f["r0"]
+	var r1: Vector3 = f["r1"]
+	var g := _flight_ground(f, v)
+	var y := lerpf(r0.x, r1.x, _ease(u)) + float(f["hop"]) * sqrt(maxf(sin(PI * u), 0.0))
+	var h: Vector2 = f["axis"]
+	var axis := Vector3(h.x, 0.0, h.y)
+	var turned: Basis
+	if up:
+		# over about h, from lying as it lay to lying face up as it comes down ([method _wash]): the
+		# flat turn, eased off the slope it left and onto the one it lands on
+		var flat := Basis(axis, -PI * _ease((u - 0.08) / 0.8)) * Basis(Vector3.UP, g.z)
+		var off := Quaternion(_tipped(float(f["yaw0"]), Vector2(r0.y, r0.z)) * Basis(Vector3.UP, float(f["yaw0"])).inverse())
+		var land := _tipped(float(f["lie"]), Vector2(r1.y, r1.z)) * Basis(Vector3(0.0, 0.0, 1.0), PI)
+		var onto := Quaternion(land * (Basis(axis, -PI) * Basis(Vector3.UP, float(f["yaw1"]))).inverse())
+		turned = Basis(Quaternion.IDENTITY.slerp(onto, _ease((u - 0.8) / 0.2)) * Quaternion.IDENTITY.slerp(off, 1.0 - _ease(u / 0.2))) * flat
+	else:
+		var slope := Vector2(r0.y, r0.z) * (1.0 - _ease(u / 0.2)) + Vector2(r1.y, r1.z) * _ease((u - 0.8) / 0.2)
+		turned = Basis(axis, float(f["wobble"]) * sin(PI * u)) * _tipped(g.z, slope)
+	var xf := Transform3D(turned * Basis.from_scale(Vector3(1.0, WASH_T / DECK_T, 1.0)), Vector3(g.x, y, g.y))
+	# CLEAR OF WHAT IT PASSES OVER: turning about its middle, an edge would dip into the cloth or a
+	# card - so it rides up over that edge, as a card does
+	xf.origin.y += _flight_clear(plan, i, v, xf)
+	xf.origin += _cur_base
+	return xf
+
+
+## How far a thrown card posed at [param xf] (about the deck's place) must rise to be clear of the
+## cloth and of every card resting under it at [param v] ([method _wash_rest_at]): its lower face
+## against their faces wherever they cross, while it lies within 60 degrees of flat; its lowest
+## corner against the highest of them near it, while it is turned further over.
+func _flight_clear(plan: Dictionary, i: int, v: float, xf: Transform3D) -> float:
+	var b := xf.basis
+	var half := Vector3(CARD.x * 0.5, DECK_T * 0.5, CARD.y * 0.5)
+	var drop := absf(b.x.y) * half.x + absf(b.y.y) * half.y + absf(b.z.y) * half.z
+	var need := CLOTH_TOP + FLOOR_GAP - (xf.origin.y - drop)
+	var rests: Array = _wash_rest_at(plan, v)
+	var n := b.y.normalized()
+	var flat := absf(n.y) > 0.5
+	# the lower face: its middle, its normal, and its outline on the cloth
+	var face := xf.origin - b.y * (DECK_T * 0.5) * signf(n.y)
+	var foot := PackedVector2Array()
+	for s in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var p: Vector3 = face + b.x * (half.x * (s as Vector2).x) + b.z * (half.z * (s as Vector2).y)
+		foot.append(Vector2(p.x, p.z))
+	var mid := Vector2(xf.origin.x, xf.origin.z)
+	var reach := Vector2(CARD.x, CARD.y).length()
+	for j in rests.size():
+		if j == i or _off_cloth(plan, j, v):
+			continue
+		var q := _wash_at(plan, j, v)
+		var mj := Vector2(q.x, q.z)
+		if mj.distance_to(mid) > reach:
+			continue
+		var r: Vector3 = rests[j]
+		var g := Vector2(r.y, r.z)
+		var top := lerpf(DECK_T, WASH_T, _wash_spread_at(plan, j, v)) * 0.5 + STACK_GAP
+		if not flat:
+			need = maxf(need, r.x + g.length() * reach * 0.5 + top - (xf.origin.y - drop))
+			continue
+		for piece in Geometry2D.intersect_polygons(foot, _card_corners(mj, q.w)):
+			for p: Vector2 in piece:
+				var low := face.y - (n.x * (p.x - face.x) + n.z * (p.y - face.z)) / n.y
+				need = maxf(need, r.x + g.dot(p - mj) + top - low)
+	return maxf(need, 0.0)
 
 
 ## A card turned [param yaw] about the vertical and tipped to lie on a plane rising [param slope]
@@ -2509,65 +2775,92 @@ static func _tipped(yaw: float, slope: Vector2) -> Basis:
 	return Basis(x, up, x.cross(up).normalized())
 
 
-## CARDS IN A WASH REST ON ONE ANOTHER (feedback 0007: "cards with a higher z-index in the stack
-## seem to sort of hover... lifted off of the table... they cannot rest upon each other with a
-## gentle tilt"). The plan lays a card flat at its place in the pile - one card's thickness above
-## the deepest card it lies on - so where it hung past the cards under it, it hung in the air.
-## Here every card spread on the cloth, from the bottom of the pile up, is a rigid card resting on
-## whatever is under it: the cloth beneath its corners and the faces of the cards it lies on,
-## wherever they cross it ([method _rest_on]). So it tips: on a card at one end, on the cloth at
-## the other, and on the cards it lies on as they lie. Per step of the plan, kept for the frames
-## between. Each card `Vector3(height of its middle, slope across x, slope across z)`, the plan's
-## own height (and no slope) for one in a hand or the deck, which nothing rests on.
-func _wash_rest(plan: Dictionary, k: int) -> Array:
+## CARDS IN A WASH REST ON ONE ANOTHER (the user: they rest "upon each other with a gentle tilt").
+## Every card - in the deck, spread, or gathered in the pile - from the bottom of the order the plan
+## has them lying in, up, is a rigid card resting on whatever is under it: the cloth beneath its
+## corners and the faces of the cards under it, wherever they cross it ([method _rest_on]). So it
+## tips: on a card at one end, on the cloth at the other, and over the deck's edge as it slides off
+## it; and a card swept onto the pile rides up onto it rather than through it. A card is its own
+## thickness (a deck slot's in the deck and the pile, [constant WASH_T] spread); deck slots lie
+## flush, the bottom one sunk into the cloth as the squared deck is, spread cards a hair apart and a
+## hair over it.
+##
+## AT THE MOMENT ITSELF, [param v] seconds into the wash, the cards where their tracks have them
+## between the plan's steps - two steps' rests blended pass a card sliding onto another through its
+## edge for a frame - in the order of the step that ends the moment (a pair parting keeps its order
+## a step after it parts, so a pair touching at the moment is in the order it touches in). Kept for
+## the frames that ask again. Each card `Vector3(height of its middle, slope
+## across x, slope across z)`; a card in the air rests on nothing and nothing on it.
+func _wash_rest_at(plan: Dictionary, v: float) -> Array:
 	if not is_same(plan, _rest_plan):
 		_rest_plan = plan
 		_rest_steps = {}
-	if _rest_steps.has(k):
-		return _rest_steps[k]
-	if _rest_steps.size() > 8:
+	var key := int(round(v * 4000.0))
+	if _rest_steps.has(key):
+		return _rest_steps[key]
+	if _rest_steps.size() > 12:
 		_rest_steps = {}
 	var tracks: Array = plan["tracks"]
 	var n := tracks.size()
-	var v := float(k) / WASH_HZ
+	var last := (tracks[0] as PackedVector4Array).size() - 1
+	var f := clampf(v * WASH_HZ, 0.0, float(last))
+	var b := mini(int(ceil(f - 0.0001)), last)
 	var q: Array = []
+	var at: Array = []
 	var order: Array = []
 	for i in n:
-		var tr: PackedVector4Array = tracks[i]
-		q.append(tr[clampi(k, 0, tr.size() - 1)])
+		at.append(_wash_at(plan, i, v))
+		q.append((tracks[i] as PackedVector4Array)[b].y)
 		order.append(i)
 	order.sort_custom(func(x: int, y: int) -> bool:
-		return (q[x] as Vector4).y < (q[y] as Vector4).y or ((q[x] as Vector4).y == (q[y] as Vector4).y and x < y))
+		return float(q[x]) < float(q[y]) or (float(q[x]) == float(q[y]) and x < y))
 	var out: Array = []
 	out.resize(n)
-	var under: Array = []      # [corners, middle, rest] of every card lying on the cloth so far
+	var under: Array = []      # [corners, middle, rest, thickness, spread, turn] of every card resting so far
 	var reach := Vector2(CARD.x, CARD.y).length()
 	for i in order:
-		var qi: Vector4 = q[i]
-		if _wash_spread_at(plan, i, v) < 0.999:
-			out[i] = Vector3(qi.y, 0.0, 0.0)
+		var qi: Vector4 = at[i]
+		if _off_cloth(plan, i, v):
+			out[i] = Vector3(WASH_FLOOR, 0.0, 0.0)
 			continue
+		var s := _wash_spread_at(plan, i, v)
+		var th := lerpf(DECK_T, WASH_T, s)
+		var low := lerpf(0.0, CLOTH_TOP + FLOOR_GAP, s) + th * 0.5
 		var mid := Vector2(qi.x, qi.z)
 		var corners := _card_corners(mid, qi.w)
 		var pts := PackedVector2Array()
 		var hs := PackedFloat32Array()
 		for c in corners:
 			pts.append(c - mid)
-			hs.append(WASH_FLOOR)
+			hs.append(low)
 		for u in under:
 			var umid: Vector2 = u[1]
 			if umid.distance_squared_to(mid) > reach * reach:
 				continue
 			var ur: Vector3 = u[2]
+			var ug := Vector2(ur.y, ur.z)
+			var lift := float(u[3]) * 0.5 + STACK_GAP * maxf(s, float(u[4])) + th * 0.5
+			# SQUARED ONE ON THE OTHER (the deck, the pile): held up at its own corners - above the face
+			# under it over the whole card, so above it wherever they cross
+			if umid.distance_squared_to(mid) < 0.006 * 0.006 and absf(wrapf(qi.w - float(u[5]), -PI, PI)) < 0.12:
+				for c in 4:
+					hs[c] = maxf(hs[c], ur.x + ug.dot(corners[c] - umid) + lift)
+				continue
 			for piece in Geometry2D.intersect_polygons(corners, u[0]):
 				for p in piece:
 					pts.append(p - mid)
-					hs.append(ur.x + Vector2(ur.y, ur.z).dot(p - umid) + CARD_T + STACK_GAP)
-		var rest := Vector3(WASH_FLOOR, 0.0, 0.0) if pts.size() == 4 else _rest_on(pts, hs)
+					hs.append(ur.x + ug.dot(p - umid) + lift)
+		var rest := Vector3(hs[0], 0.0, 0.0) if pts.size() == 4 and hs[0] == hs[1] and hs[1] == hs[2] and hs[2] == hs[3] \
+			else _rest_on(pts, hs)
 		out[i] = rest
-		under.append([corners, mid, rest])
-	_rest_steps[k] = out
+		under.append([corners, mid, rest, th, s, qi.w])
+	_rest_steps[key] = out
 	return out
+
+
+## [method _wash_rest_at] at the plan's step [param k].
+func _wash_rest(plan: Dictionary, k: int) -> Array:
+	return _wash_rest_at(plan, float(k) / WASH_HZ)
 
 
 ## A card's four corners on the cloth, its middle at [param mid], turned [param yaw].
@@ -2658,8 +2951,12 @@ static func _rest_on(pts: PackedVector2Array, hs: PackedFloat32Array) -> Vector3
 ## would finish - one that mixes for less and gathers in time. The spreading and the hands are the
 ## same up to there (their own dice), so it is the same wash, cut short; without it the spread
 ## went back into the deck in [constant SQUARE]. With too little room to spread, mix and gather at
-## all, there is no wash: the deck waits, squared, for the first card (empty).
+## all, there is no wash: the deck waits, squared, for the first card (empty). When the first card
+## is a jumper that comes while this wash is mixing, the wash runs on into it ([method _jumper_plan]).
 func _wash_fit(m: Dictionary) -> Dictionary:
+	var jp := _jumper_plan(m)
+	if not jp.is_empty():
+		return jp
 	var room := _shuffle_room - float(m["t0"])
 	if room >= float(m["dur"]) - 0.05:
 		return m["plan"]
@@ -2672,11 +2969,55 @@ func _wash_fit(m: Dictionary) -> Dictionary:
 	return m["cut"]
 
 
-## How spread out card [param i] is at [param v] (0 squared in the deck, 1 lying on its own).
+## A JUMPER OUT OF A WASH: when the first card is a jumper ([member _jump_room] into the shuffle, its
+## action at [member _jump_scale]) and wash [param m] is mixing as it comes, the wash planned on
+## through it - mixing until the jumper is thrown [constant JUMP_EJECT] into its action, still while
+## it lies there, gathered once it is up ([constant JUMP_RISE]). Empty for any other wash, one only
+## just spread ([constant JUMP_MIX]) or already gathering, or one with no card it could throw.
+func _jumper_plan(m: Dictionary) -> Dictionary:
+	if _jump_room < 0.0 or String(m.get("kind", "")) != "wash" or not m.has("plan"):
+		return {}
+	var into := _jump_room - float(m["t0"])
+	var mix: Vector2 = (m["plan"] as Dictionary)["mix"]
+	var s := maxf(_jump_scale, 0.05)
+	var at := into + JUMP_EJECT * s
+	if into < mix.x + JUMP_MIX or at > mix.y:
+		return {}
+	var key := "%.3f|%.3f" % [into, s]
+	if String(m.get("jump_key", "")) != key:
+		m["jump_key"] = key
+		var pick := into + JUMP_RISE * s
+		var plan := _wash_plan(int(m["seed"]), pick + JUMP_GATHER + 0.6, m["plan"],
+			{"at": at, "pick": pick, "reversed": _reversed(0)})
+		m["jump"] = plan if int(plan["jumper"]) >= 0 else {}
+	return m["jump"]
+
+
+## THE JUMPER'S WASH as the table poses it, from the shuffle's start [param ts]: the wash move, its
+## plan, the card thrown, and when (show time) the wash began, the card leaves it and lands, and the
+## wash ends - or empty when the jumper does not come out of a wash.
+func _wash_jump(ts: float) -> Dictionary:
+	if _jump_room < 0.0:
+		return {}
+	var m := _move_at(_jump_room - 0.001)
+	if m.is_empty():
+		return {}
+	var plan := _jumper_plan(m)
+	if plan.is_empty():
+		return {}
+	var f: Dictionary = plan["jumper_flight"]
+	var at := ts + float(m["t0"])
+	return {"m": m, "plan": plan, "card": int(plan["jumper"]), "base": at, "eject": at + float(f["t0"]),
+		"land": at + float(f["t1"]), "end": at + float(plan["dur"])}
+
+
+## How spread out card [param i] is at [param v]: 0 a deck slot's thickness, flush in the deck, 1 a
+## card's own on the cloth - thinned as the deck is flattened ([constant WASH_FLATTEN]), thickened
+## as the pile is squared.
 func _wash_spread_at(plan: Dictionary, i: int, v: float) -> float:
 	var t_out := float((plan["out"] as PackedFloat32Array)[i])
 	var t_in := float((plan["in"] as PackedFloat32Array)[i])
-	return clampf((v - t_out) / 0.5, 0.0, 1.0) * (1.0 - clampf((v - t_in) / 0.6, 0.0, 1.0))
+	return clampf((v - t_out) / WASH_FLATTEN, 0.0, 1.0) * (1.0 - clampf((v - t_in) / 0.6, 0.0, 1.0))
 
 
 ## [param at] (a card's middle, about the deck's place) moved out from anything standing on the
@@ -2711,7 +3052,8 @@ func _path_clear(a: Vector2, b: Vector2) -> bool:
 ## NOTHING PASSES THROUGH WHAT STANDS ON THE TABLE. A card going from [param from] to
 ## [param want] (about the deck's place), turned [param yaw], is moved there a few millimeters at a
 ## time, and each time it has run into something it is pushed back out - away from that thing's
-## middle, the way it came - so it slides along it, and never jumps through to its far side.
+## middle, the way it came - so it slides along it, and never jumps through to its far side. Wedged
+## between two things, where a push out of one is a push into the other, it stays where it was.
 func _card_clear(from: Vector2, want: Vector2, yaw: float) -> Vector2:
 	if _standing.is_empty() or not _collide:
 		return want
@@ -2734,7 +3076,20 @@ func _card_clear(from: Vector2, want: Vector2, yaw: float) -> Vector2:
 			if (p + off).distance_to(c) > _standing_r[i] + reach:
 				continue
 			p += _push_out(_card_poly(p + off, yaw), _standing[i], (p + off) - c)
-	return p
+	# clear of every one at once
+	for round in 4:
+		var clear := true
+		for i in _standing.size():
+			var c: Vector2 = _standing_c[i]
+			if (p + off).distance_to(c) > _standing_r[i] + reach:
+				continue
+			var push := _push_out(_card_poly(p + off, yaw), _standing[i], (p + off) - c)
+			if push != Vector2.ZERO:
+				p += push
+				clear = false
+		if clear:
+			return p
+	return from
 
 
 ## A card lying at [param at] turned [param yaw]: its four corners (x by z).
@@ -2813,17 +3168,24 @@ static func _parted(d: Vector2, v: Vector2, a0: Vector2, a1: Vector2, b0: Vector
 ##   mix      most of the wash: the palms scrub back and forth across the spread, swirl wide and
 ##            fetch strays back through the middle ([method _wash_gesture]); a card a palm holds
 ##            goes its way ([method _wash_palm]), slides on when it lets go, and drags and turns
-##            every card it passes over ([method _wash_drag])
-##   gather   six to eight sweeps, each taking the next share of the cards by direction: most land
-##            on the pile, some are only pushed near it and wait, some are missed and fetched later
-##   square   the pile is squared into the deck
+##            every card it passes over ([method _wash_drag]); a card struck hard is thrown out of
+##            the spread, face down ([method _eject])
+##   gather   six to eight sweeps, each taking the next share of the cards by direction, onto the
+##            pile - some missed and fetched by a later one
+##   square   the pile is squared into the deck, in the order it lies
+##
+## A JUMPER'S WASH ([param jump]: `{at, pick, reversed}`, seconds into the wash): the mixing stops at
+## `at` and the jumper is thrown - over, face up, clear of every card - and lies there, the others
+## sliding on round it, until it is picked up at `pick`; then the hands gather the rest. It leaves
+## the deck: `jumper` names its card, -1 when no card could be thrown anywhere it may land.
 ##
 ## THE ORDER CHANGES, NEVER THROUGH A CARD: two cards that come to overlap lie the way they met -
 ## the one sliding in goes on top (never over a card already above it: no stacking loops) - and
-## keep that order while they touch; once apart, their next meeting decides again. A card's height
-## is how many cards it lies on. Each track is per card, x / z about the deck's place, y above the
-## cloth, w the card's turn.
-func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
+## keep that order while they touch; once apart, their next meeting decides again. Each track is
+## per card, x / z about the deck's place, y its place in the order the cards lie (what
+## [method _wash_rest] rests them in, bottom up), w the card's turn; `flights` are the throws
+## ([method _flight_xf]).
+func _wash_plan(seed: int, dur: float, base: Dictionary = {}, jump: Dictionary = {}) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([seed, "wash"])
 	var n := DECK_N
@@ -2836,6 +3198,12 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var swipes := rng.randi_range(6, 8)
 	var gather := clampf(dur * 0.24, 4.0, 7.0)
 	var mix_end := maxf(out_end, dur - square - gather)
+	var gather_t0 := mix_end
+	var jumping := not jump.is_empty()
+	if jumping:
+		mix_end = float(jump["at"])
+		gather_t0 = maxf(float(jump["pick"]), mix_end)
+		gather = maxf(dur - square - gather_t0, 1.0)
 	# WIDE: the cards go well out across the cloth, a few of them a long way
 	var rx := rng.randf_range(0.24, 0.29)
 	var rz := rng.randf_range(0.12, 0.15)
@@ -2881,18 +3249,14 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var hands := _wash_hands(seed, out_end, rx, rz)
 	# the sweeps, one after another across the gather
 	var sweep_len := gather / float(swipes)
-	var caught := PackedInt32Array()       # the sweep that brings each card in for good
-	var nudged := PackedInt32Array()       # a sweep that only pushes it near the pile, or -1
+	var caught := PackedInt32Array()       # the sweep that brings each card in
 	caught.resize(n)
-	nudged.resize(n)
 	# plain Arrays while they grow: appending to `tracks[i] as PackedVector4Array` appends to a COPY
 	var tracks: Array = []
 	for i in n:
 		tracks.append([])
 	var t_in := PackedFloat32Array()       # when a card is in the pile for good
-	var t_go := PackedFloat32Array()       # when the sweep that brings it in reaches it
 	t_in.resize(n)
-	t_go.resize(n)
 	var from_p := PackedVector2Array()     # a sweep under way: where the card was, where it goes
 	var to_p := PackedVector2Array()
 	from_p.resize(n)
@@ -2904,8 +3268,6 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var begun := {}
 	var land_order: Array = []
 	var planned_sweeps := false
-	var height := PackedFloat32Array()
-	height.resize(n)
 	# who lies on whom: pair (i * 64 + j, i < j) -> +1 i on top, -1 j on top, for pairs that overlap
 	var rel := {}
 	var under: Array = []                  # card -> the cards it lies directly on
@@ -2921,13 +3283,33 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 	var stirred := PackedByteArray()       # moved or turned this step: only then can it meet or part
 	stirred.resize(n)
 	var restacked := true                  # who lies on whom changed this step
-	# THE SAME WASH, CUT SHORT ([param base], the whole of it): up to where this one gathers, the
-	# spreading and the palms are the same, so its tracks are copied rather than made again, and
-	# the cards - where they lay, how they were sliding, and who on whom - are taken up from there
+	var parted := {}                       # pairs a step apart, keeping their order that step
+	# THE THROWS: every flight, the one each card is in at this step (-1 on the cloth), the jumper's
+	# card once it is picked up (out of the wash for good), and the hard blows of late (one of them
+	# throws the jumper)
+	var flights: Array = []
+	var flying := PackedInt32Array()
+	flying.resize(n)
+	var landed := PackedByteArray()
+	landed.resize(n)
+	var taken := PackedByteArray()
+	taken.resize(n)
+	var jumper := -1
+	var jumper_flight := {}
+	var tried := false
+	var blown: Array = []                  # [t, card, impact, the blow's way]
+	# THE SAME WASH, CUT SHORT ([param base], the whole of it): up to where this one stops mixing, the
+	# spreading and the palms are the same, so its tracks and throws are copied rather than made
+	# again, and the cards - where they lay, how they were sliding, and who on whom - are taken up
+	# from there
 	var s_from := 0
 	if not base.is_empty() and is_equal_approx(float((base["mix"] as Vector2).x), out_end) \
 			and mix_end <= float((base["mix"] as Vector2).y):
 		s_from = clampi(int(ceil(mix_end * WASH_HZ)), 2, ((base["tracks"] as Array)[0] as PackedVector4Array).size() - 1)
+		for f in base.get("flights", []):
+			if float((f as Dictionary)["t0"]) < float(s_from) * dt:
+				flights.append(_flight_copy(f as Dictionary))
+		var t_prev := float(s_from - 1) * dt
 		for i in n:
 			var tr: PackedVector4Array = (base["tracks"] as Array)[i]
 			var copied: Array = []
@@ -2943,108 +3325,143 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 			vel[i] = Vector2(q.x - q0.x, q.z - q0.z) * WASH_HZ
 			spin[i] = (q.w - q0.w) * WASH_HZ
 		for i in n:
+			if _in_flight(flights, i, t_prev):
+				vel[i] = Vector2.ZERO
+				spin[i] = 0.0
+				continue
 			for j in range(i + 1, n):
-				if _cards_overlap(pos[i], yaw[i], pos[j], yaw[j]):
+				if not _in_flight(flights, j, t_prev) and _cards_overlap(pos[i], yaw[i], pos[j], yaw[j]):
 					var yi := ((base["tracks"] as Array)[i] as PackedVector4Array)[s_from - 1].y
 					var yj := ((base["tracks"] as Array)[j] as PackedVector4Array)[s_from - 1].y
 					rel[i * 64 + j] = 1 if yi > yj else -1
 					(under[i if yi > yj else j] as Array).append(j if yi > yj else i)
+		for i in n:
+			for j in under[i]:
+				(over[int(j)] as Array).append(i)
+	var thrown := flights.size()
+	var last_pos := pos.duplicate()        # where each card was at the step before (for meetings between steps)
+	var last_yaw := yaw.duplicate()
 	for step in range(s_from, steps):
 		var t := float(step) * dt
+		last_pos = pos.duplicate()
+		last_yaw = yaw.duplicate()
+		# WHO IS IN THE AIR: a card from the moment it is thrown until it is down - and, the step it
+		# comes down, where its flight ends, on top of whatever it comes down on
+		flying.fill(-1)
+		landed.fill(0)
+		for fi in flights.size():
+			var f: Dictionary = flights[fi]
+			if t > float(f["t0"]) and t < float(f["t1"]):
+				flying[int(f["card"])] = fi
+			elif t >= float(f["t1"]) and t - dt < float(f["t1"]):
+				var c := int(f["card"])
+				landed[c] = 1
+				pos[c] = f["to"]
+				yaw[c] = float(f["lie"])
+				vel[c] = Vector2.ZERO
+				spin[c] = 0.0
+		# THE JUMPER, DOWN, lies still where it fell - on top of anything - until it is picked up
+		var lying := jumper if jumper >= 0 and t >= float(jumper_flight["t1"]) and t < gather_t0 else -1
+		if jumper >= 0 and t >= gather_t0:
+			taken[jumper] = 1
 		if t < out_end:
-			# OUT: each card slides from the deck to its place on the cloth, turning as it goes
+			# OUT: the palm comes down on the deck and it flattens ([constant WASH_FLATTEN]); then each
+			# card slides from it to its place on the cloth, turning as it goes
 			kin.fill(1)
 			for i in n:
-				var e := _ease(clampf((t - t_out[i]) / minf(1.1, out_end * 0.45), 0.0, 1.0))
+				var e := _ease(clampf((t - WASH_FLATTEN * 0.5 - t_out[i]) / minf(1.1, out_end * 0.4), 0.0, 1.0))
 				pos[i] = start[i].lerp(aim[i], e)
 				yaw[i] = (_slot_jit[i] as Vector3).z + spin0[i] * e if i < _slot_jit.size() else spin0[i] * e
-		elif t < mix_end:
+		elif t < gather_t0:
 			# MIX: the cloth slows what slides, cards drag what they lie on, the palms bring what they
-			# press to their speed (last, so what a palm holds goes its way), and every card moves
+			# press to their speed (last, so what a palm holds goes its way), and every card moves.
+			# Once the jumper is thrown the palms are still, and what slides runs on and stops.
 			kin.fill(0)
+			for i in n:
+				if flying[i] >= 0 or taken[i] == 1 or i == lying:
+					kin[i] = 1
 			_wash_rub(hands, vel, spin, under, kin, dt)
 			_wash_drag(hands, pos, vel, spin, held, kin, rel, dt)
 			held.fill(0.0)
-			for h in 2:
-				_wash_palm(hands, h, t, dt, mix_end, pos, yaw, vel, spin, over, held)
+			if t < mix_end:
+				for h in 2:
+					_wash_palm(hands, h, t, dt, mix_end, pos, yaw, vel, spin, over, held, kin)
 			_wash_move(hands, pos, yaw, vel, spin, kin, dt)
+			_wash_slump(pos, under, layer, held, kin, dt)
 		else:
 			if not planned_sweeps:
 				planned_sweeps = true
 				# who each sweep takes: the sweeps go round the pile, each taking the next SHARE of
 				# the cards by direction - so every sweep has cards to bring in, wherever the hands
 				# left them (fixed directions sent whole sweeps past empty cloth). A card is
-				# missed now and then and a later sweep fetches it; some are only pushed near.
+				# missed now and then and a later sweep fetches it. Each lands squared on the pile:
+				# a stiff card left with its middle at the pile's edge pivots there, and every card
+				# on it leans with it.
 				var by_angle: Array = []
 				for i in n:
-					by_angle.append([atan2(pos[i].y, pos[i].x), i])
+					if taken[i] == 0:
+						by_angle.append([atan2(pos[i].y, pos[i].x), i])
 				by_angle.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) < float(y[0]))
+				var ng := by_angle.size()
 				var first_card := rng.randi_range(0, n - 1)
 				var share := PackedInt32Array()
 				share.resize(n)
-				for r in n:
-					share[int((by_angle[(first_card + r) % n] as Array)[1])] = mini(swipes - 1, int(float(r) * float(swipes) / float(n)))
+				for r in ng:
+					share[int((by_angle[(first_card + r) % ng] as Array)[1])] = mini(swipes - 1, int(float(r) * float(swipes) / float(ng)))
 				for i in n:
+					if taken[i] == 1:
+						caught[i] = -1
+						t_in[i] = INF
+						continue
 					var k2 := share[i]
 					while k2 < swipes - 1 and rng.randf() < 0.15:
 						k2 += 1          # missed: a later sweep fetches it
 					caught[i] = k2
-					nudged[i] = -1
-					if k2 < swipes - 1 and rng.randf() < 0.2:
-						nudged[i] = k2   # caught, but only pushed near: brought in by the next
-						caught[i] = k2 + 1
 				# the pile's order is the order they arrive in
 				var order: Array = []
 				for i in n:
-					order.append([caught[i], pos[i].length(), i])
+					if taken[i] == 0:
+						order.append([caught[i], pos[i].length(), i])
 				order.sort_custom(func(x: Array, y: Array) -> bool:
 					if int(x[0]) != int(y[0]):
 						return int(x[0]) < int(y[0])
 					return float(x[1]) > float(y[1]))
 				for o in order:
 					land_order.append(int(o[2]))
-			var g := t - mix_end
+			var g := t - gather_t0
 			kin.fill(0)
 			for i in n:
+				if taken[i] == 1 or flying[i] >= 0:
+					kin[i] = 1
+					continue
 				# in the pile for good: nothing slides it again
 				if t_in[i] > 0.0 and t >= t_in[i]:
 					kin[i] = 1
-				for k in [nudged[i], caught[i]]:
-					if int(k) < 0:
+				# the sweep reaches the outermost cards first and pushes them in ahead of it
+				var k := caught[i]
+				var s0 := float(k) * sweep_len
+				var u1 := s0 + sweep_len * 0.82
+				if not begun.has(i):
+					var r := clampf(pos[i].length() / maxf(rx, rz), 0.0, 1.0)
+					var u0 := s0 + (1.0 - r) * 0.28
+					if g < u0:
 						continue
-					# the sweep reaches the outermost cards first and pushes them in ahead of it
-					var s0 := float(k) * sweep_len
-					var u1 := s0 + sweep_len * 0.82
-					var key := i * 8 + int(k)
-					if not begun.has(key):
-						var r := clampf(pos[i].length() / maxf(rx, rz), 0.0, 1.0)
-						var u0 := s0 + (1.0 - r) * 0.28
-						if g < u0:
-							continue
-						begun[key] = u0
-						from_p[i] = pos[i]
-						from_yaw[i] = yaw[i]
-						var slot := land_order.find(i)
-						if int(k) == caught[i]:
-							# into the pile, squared-ish, on top of what is there
-							var jit2: Vector3 = _slot_jit[slot] if slot >= 0 and slot < _slot_jit.size() else Vector3.ZERO
-							# squared as it lands, near enough: the pile is built, not tidied at the end
-							to_p[i] = Vector2(jit2.x, jit2.y) + Vector2(rng.randf_range(-0.0025, 0.0025), rng.randf_range(-0.0025, 0.0025))
-							to_yaw[i] = jit2.z + rng.randf_range(-0.05, 0.05)
-							t_go[i] = mix_end + u0
-							t_in[i] = mix_end + u1
-						else:
-							# caught, but only pushed up against the pile: the next sweep brings it in
-							var away: Vector2 = pos[i].normalized() if pos[i].length() > 0.001 else Vector2.RIGHT
-							to_p[i] = away * rng.randf_range(0.035, 0.055)
-							to_yaw[i] = yaw[i] + rng.randf_range(-0.25, 0.25)
-					var b0 := float(begun[key])
-					if g > u1 + dt:
-						continue
-					var e2 := _ease(clampf((g - b0) / maxf(u1 - b0, 0.05), 0.0, 1.0))
-					pos[i] = from_p[i].lerp(to_p[i], e2)
-					yaw[i] = lerp_angle(from_yaw[i], to_yaw[i], e2)
-					kin[i] = 1
+					begun[i] = u0
+					from_p[i] = pos[i]
+					from_yaw[i] = yaw[i]
+					# into the pile, squared as it lands, near enough: the pile is built, not tidied
+					var slot := land_order.find(i)
+					var jit2: Vector3 = _slot_jit[slot] if slot >= 0 and slot < _slot_jit.size() else Vector3.ZERO
+					to_p[i] = Vector2(jit2.x, jit2.y) + Vector2(rng.randf_range(-0.0025, 0.0025), rng.randf_range(-0.0025, 0.0025))
+					to_yaw[i] = jit2.z + rng.randf_range(-0.05, 0.05)
+					t_in[i] = gather_t0 + u1
+				var b0 := float(begun[i])
+				if g > u1 + dt:
+					continue
+				var e2 := _ease(clampf((g - b0) / maxf(u1 - b0, 0.05), 0.0, 1.0))
+				pos[i] = from_p[i].lerp(to_p[i], e2)
+				yaw[i] = lerp_angle(from_yaw[i], to_yaw[i], e2)
+				kin[i] = 1
 			# WHAT NO SWEEP HAS REACHED YET SLIDES ON: the palms lift, and a card they let go of
 			# mid-pass runs on and stops, rather than freezing where the gather began
 			for i in n:
@@ -3055,44 +3472,125 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 			_wash_rub(hands, vel, spin, under, kin, dt)
 			_wash_drag(hands, pos, vel, spin, held, kin, rel, dt)
 			_wash_move(hands, pos, yaw, vel, spin, kin, dt)
+		# A CARD IN THE AIR is where its flight has it; the jumper, down, stays where it fell
+		for i in n:
+			if i == lying:
+				vel[i] = Vector2.ZERO
+				spin[i] = 0.0
+			if flying[i] >= 0:
+				var fg := _flight_ground(flights[flying[i]], t)
+				pos[i] = Vector2(fg.x, fg.y)
+				yaw[i] = fg.z
+				vel[i] = Vector2.ZERO
+				spin[i] = 0.0
+		# THE JUMPER IS THROWN as the mixing stops: the card a hard blow struck last, or the one sliding
+		# fastest - over onto its face, clear of every card ([method _eject])
+		if jumping and not tried and t >= mix_end:
+			tried = true
+			var picks: Array = []
+			for i in n:
+				if flying[i] >= 0 or not (over[i] as Array).is_empty():
+					continue
+				var hit := 0.0
+				var way := vel[i]
+				for b in blown:
+					if int((b as Array)[1]) == i and t - float((b as Array)[0]) < 0.8 and float((b as Array)[2]) > hit:
+						hit = float((b as Array)[2])
+						way = (b as Array)[3]
+				if way.length() < 0.02:
+					way = pos[i] + Vector2(0.0, 0.01)
+				picks.append([hit * 4.0 + vel[i].length() + pos[i].length(), i, way.normalized(), hit])
+			picks.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) > float(y[0]))
+			for p in picks:
+				var i := int((p as Array)[1])
+				var fl := _eject(i, pos[i], yaw[i], (p as Array)[2], Vector2(0.15, 0.28), t, hash([seed, "jumper", i]), true,
+					pos, yaw, flights, bool(jump.get("reversed", false)))
+				if fl.is_empty():
+					continue
+				fl["blow"] = (p as Array)[3]
+				flights.append(fl)
+				jumper = i
+				jumper_flight = fl
+				vel[i] = Vector2.ZERO
+				spin[i] = 0.0
+				break
 		# NOTHING PASSES THROUGH WHAT STANDS ON THE TABLE: every card goes from where it was to where
 		# this step put it, and whatever it runs into stops it - it slides along it instead, at the
-		# speed it really went
+		# speed it really went. A thrown card's way was chosen clear.
 		for i in n:
-			# a card lying still has nowhere new to be
-			if kin[i] == 0 and vel[i] == Vector2.ZERO and spin[i] == 0.0:
+			if flying[i] >= 0 or taken[i] == 1 or (i == lying and landed[i] == 0):
+				moved[i] = pos[i].distance_to(was[i])
+				stirred[i] = 1 if flying[i] >= 0 or taken[i] == 1 else 0
+				was[i] = pos[i]
+				was_yaw[i] = yaw[i]
+				continue
+			# a card lying still has nowhere new to be (one just come down meets what it lies on)
+			if kin[i] == 0 and vel[i] == Vector2.ZERO and spin[i] == 0.0 and landed[i] == 0 and pos[i] == was[i]:
 				moved[i] = 0.0
 				stirred[i] = 0
 				continue
 			pos[i] = _card_clear(was[i], pos[i], yaw[i])
 			moved[i] = pos[i].distance_to(was[i])
-			stirred[i] = 1 if moved[i] > 0.0 or yaw[i] != was_yaw[i] else 0
+			stirred[i] = 1 if moved[i] > 0.0 or yaw[i] != was_yaw[i] or landed[i] == 1 else 0
 			if kin[i] == 0:
 				vel[i] = (pos[i] - was[i]) * WASH_HZ
 			was[i] = pos[i]
 			was_yaw[i] = yaw[i]
 		# WHO LIES ON WHOM: pairs that came apart forget their order; a pair that has just met lies
-		# the way it met, the card sliding in on top (in the deck, the higher slot on top)
+		# the way it met, the card sliding in on top (in the deck, the higher slot on top). A card in
+		# the air, or the jumper, lies on nothing and nothing on it.
 		var far2 := Vector2(CARD.x, CARD.y).length_squared()
+		var blows: Array = []
 		for i in n:
 			var pi_: Vector2 = pos[i]
+			var off_i := flying[i] >= 0 or taken[i] == 1
 			for j in range(i + 1, n):
-				# two cards that both lay still lie as they did - once the first step has said how
-				if step > s_from and stirred[i] == 0 and stirred[j] == 0:
-					continue
 				var key := i * 64 + j
+				if off_i or flying[j] >= 0 or taken[j] == 1:
+					parted.erase(key)
+					if rel.has(key):
+						var top0 := i if int(rel[key]) > 0 else j
+						(under[top0] as Array).erase(j if top0 == i else i)
+						rel.erase(key)
+						restacked = true
+					continue
+				# two cards that both lay still lie as they did - once the first step has said how
+				if step > s_from and stirred[i] == 0 and stirred[j] == 0 and not parted.has(key):
+					continue
 				var d2 := pi_.distance_squared_to(pos[j])
 				var apart := d2 > far2 or (d2 > CARD.x * CARD.x and not _cards_overlap(pi_, yaw[i], pos[j], yaw[j]))
-				if apart:
+				# ...or touching only between the steps ([method _wash_rest_at] poses between them)
+				var between := apart and d2 < far2 * 1.6 and moved[i] + moved[j] > 0.004 and _cards_overlap((last_pos[i] + pi_) * 0.5,
+					lerp_angle(last_yaw[i], yaw[i], 0.5), (last_pos[j] + pos[j]) * 0.5, lerp_angle(last_yaw[j], yaw[j], 0.5))
+				if apart and not between:
+					# a pair keeps its order the step it parts
 					if rel.has(key):
+						if not parted.has(key):
+							parted[key] = true
+							continue
 						var top := i if int(rel[key]) > 0 else j
 						(under[top] as Array).erase(j if top == i else i)
 						rel.erase(key)
 						restacked = true
+					parted.erase(key)
 					continue
+				if between:
+					parted[key] = true
+				else:
+					parted.erase(key)
 				if rel.has(key):
 					continue
 				var i_top := moved[i] > moved[j] + 1e-6 if absf(moved[i] - moved[j]) > 1e-6 else false
+				# A CARD CLIMBS ONE CARD, NOT A HEAP: one lying two or more above it it runs in under
+				if i_top and layer[j] >= layer[i] + 2:
+					i_top = false
+				elif not i_top and layer[i] >= layer[j] + 2:
+					i_top = true
+				# a card coming down lies on what it comes down on; nothing covers the jumper
+				if landed[i] != landed[j]:
+					i_top = landed[i] == 1
+				if i == lying or j == lying:
+					i_top = i == lying
 				# never over a card already above it, however far down the stack: no loops
 				if i_top and _lies_on(under, j, i):
 					i_top = false
@@ -3101,16 +3599,54 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 				rel[key] = 1 if i_top else -1
 				(under[i if i_top else j] as Array).append(j if i_top else i)
 				restacked = true
-				# A CARD RUN INTO IS KNOCKED: the one sliding in rides up over it and shoves it on
-				# its way, turning it if it was struck off its middle ([constant WASH_KNOCK])
+				# A CARD RUN INTO IS NUDGED where the other first touches it - on its way, turned if
+				# struck off its middle ([constant WASH_KNOCK]); a hard blow may throw it
 				if kin[i] == 0 and kin[j] == 0:
 					var top := i if i_top else j
 					var bot := j if i_top else i
-					var c := (pos[top] + pos[bot]) * 0.5
+					var impact := (vel[top] - vel[bot]).length()
+					var way := vel[top].normalized() if vel[top].length() > 1e-4 else (pos[bot] - pos[top]).normalized()
+					var c := _touch(pos[bot], yaw[bot], pos[top])
 					var dv := (vel[top] - vel[bot]) * float(hands["knock"])
 					_wash_push(vel, spin, bot, c - pos[bot], dv)
 					_wash_push(vel, spin, top, c - pos[top], -dv)
-		# HEIGHTS: a card one above the highest card it lies on; alone, flat on the cloth just above it
+					if impact >= EJECT_SPEED * 0.6:
+						blows.append([impact, top, bot, way])
+						blown.append([t, bot, impact, way])
+		while not blown.is_empty() and t - float((blown[0] as Array)[0]) > 1.0:
+			blown.pop_front()
+		# A HARD BLOW THROWS THE CARD IT STRIKES out of the spread, face down - the harder, the surer
+		if not blows.is_empty() and t >= out_end and t < mix_end - EJECT_ROOM and thrown < EJECT_MOST:
+			blows.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) > float(y[0]))
+			for bl in blows:
+				var impact := float((bl as Array)[0])
+				if impact < EJECT_SPEED or thrown >= EJECT_MOST:
+					break
+				var top := int((bl as Array)[1])
+				var bot := int((bl as Array)[2])
+				if held[bot] > 0.2 or not (over[bot] as Array).is_empty() or _lain_on(under, bot, top) \
+						or _thrown_lately(flights, bot, t):
+					continue
+				var die := float(hash([seed, "throw", step, bot]) & 0xFFFF) / 65535.0
+				if die >= EJECT_CHANCE * clampf((impact - EJECT_SPEED) / 0.3, 0.0, 1.0):
+					continue
+				var fl := _eject(bot, pos[bot], yaw[bot], (bl as Array)[3], EJECT_REACH, t, hash([seed, "throw-way", step, bot]),
+					false, pos, yaw, flights)
+				if fl.is_empty():
+					continue
+				fl["blow"] = impact
+				flights.append(fl)
+				thrown += 1
+				# it pops up onto the edge that struck it, and is off
+				var key := mini(top, bot) * 64 + maxi(top, bot)
+				if rel.has(key):
+					(under[top] as Array).erase(bot)
+					(under[bot] as Array).append(top)
+					rel[key] = 1 if bot < top else -1
+					restacked = true
+				vel[bot] = Vector2.ZERO
+				spin[bot] = 0.0
+		# THE ORDER THE CARDS LIE IN: each one above the highest card it lies on
 		if restacked:
 			restacked = false
 			layer.fill(-1)
@@ -3121,37 +3657,181 @@ func _wash_plan(seed: int, dur: float, base: Dictionary = {}) -> Dictionary:
 			for i in n:
 				for j in under[i]:
 					(over[int(j)] as Array).append(i)
-			for i in n:
-				height[i] = WASH_FLOOR + float(layer[i]) * (CARD_T + STACK_GAP)
 		for i in n:
-			var q: Vector2 = pos[i]
-			var y := float(height[i])
-			# leaving the deck and coming back to it, a card is at its deck slot's height - rising
-			# early on its way in, so it lands ON the pile rather than sliding through it
-			var stacked := 1.0 - clampf((t - t_out[i]) / 0.5, 0.0, 1.0)
-			if t_in[i] > 0.0 and t >= t_go[i]:
-				var w := clampf((t - t_go[i]) / maxf(t_in[i] - t_go[i], 0.05), 0.0, 1.0)
-				stacked = 1.0 - pow(1.0 - w, 3.0)
-			var slot_y := (float(land_order.find(i)) if t_in[i] > 0.0 else float(i)) * DECK_T + DECK_T * 0.5
-			(tracks[i] as Array).append(Vector4(q.x, lerpf(y, slot_y, stacked), q.y, yaw[i]))
-	# SQUARE: from wherever the pile left each card to its slot in the deck - turned the short way
-	# round, whatever turns the wash gave it
+			var y := WASH_FLOOR + float(layer[i]) * WASH_LAYER
+			if flying[i] >= 0 or taken[i] == 1:
+				y = WASH_FLOOR + float(n + 1) * WASH_LAYER
+			(tracks[i] as Array).append(Vector4(pos[i].x, y, pos[i].y, yaw[i]))
+	# SQUARE: from wherever the pile left each card to its place in the deck - its place being where
+	# it lies in the pile, so none passes through another as the deck is squared - turned the short
+	# way round, whatever turns the wash gave it
+	var order: Array = []
+	for i in n:
+		if taken[i] == 0:
+			order.append(i)
+	order.sort_custom(func(a: int, b: int) -> bool: return layer[a] < layer[b] or (layer[a] == layer[b] and a < b))
 	var last := steps - 1
 	var sq0 := int(floor((dur - square) * WASH_HZ))
 	for i in n:
-		var slot := land_order.find(i)
-		if slot < 0:
-			slot = i
+		tracks[i] = PackedVector4Array(tracks[i] as Array)
+	for slot in order.size():
+		var i := int(order[slot])
 		var jit3: Vector3 = _slot_jit[slot] if slot < _slot_jit.size() else Vector3.ZERO
-		var tr := PackedVector4Array(tracks[i] as Array)
+		var tr: PackedVector4Array = tracks[i]
 		var from: Vector4 = tr[mini(sq0, tr.size() - 1)]
-		var to := Vector4(jit3.x, (float(slot) + 0.5) * DECK_T, jit3.y, from.w + wrapf(jit3.z - from.w, -PI, PI))
+		var to := Vector4(jit3.x, WASH_FLOOR + float(slot) * WASH_LAYER, jit3.y, from.w + wrapf(jit3.z - from.w, -PI, PI))
 		for st in range(sq0, tr.size()):
 			var e3 := _ease(float(st - sq0) / maxf(float(last - sq0), 1.0))
 			tr[st] = from.lerp(to, e3)
 		tracks[i] = tr
-	return {"tracks": tracks, "out": t_out, "in": t_in, "spread": 1.0, "order": land_order,
-		"mix": Vector2(out_end, mix_end), "hands": hands["log"]}
+	var airborne := {}
+	for f in flights:
+		var c := int((f as Dictionary)["card"])
+		if not airborne.has(c):
+			airborne[c] = []
+		(airborne[c] as Array).append(f)
+	# EVERY CARD IS ITS OWN THICKNESS from the moment the palm comes down on the deck until the pile
+	# is squared ([method _wash_spread_at]): the deck flattens as it is spread and the pile builds
+	# flat, so nothing slides off, or up onto, a deck's height
+	var thin_at := PackedFloat32Array()
+	var thick_at := PackedFloat32Array()
+	for i in n:
+		thin_at.append(0.0)
+		thick_at.append(INF if taken[i] == 1 else dur - square)
+	return {"tracks": tracks, "out": thin_at, "in": thick_at, "order": order, "mix": Vector2(out_end, mix_end),
+		"gather": gather_t0, "dur": dur, "hands": hands["log"], "flights": flights, "airborne": airborne,
+		"jumper": jumper, "jumper_flight": jumper_flight}
+
+
+## Whether card [param i] is in the air at [param t] in [param flights].
+static func _in_flight(flights: Array, i: int, t: float) -> bool:
+	for f in flights:
+		var fd: Dictionary = f
+		if int(fd["card"]) == i and t > float(fd["t0"]) and t < float(fd["t1"]):
+			return true
+	return false
+
+
+## Whether card [param i] was thrown in the last few seconds before [param t] - a card lands and lies
+## a moment before anything throws it again.
+static func _thrown_lately(flights: Array, i: int, t: float) -> bool:
+	for f in flights:
+		var fd: Dictionary = f
+		if int(fd["card"]) == i and t - float(fd["t1"]) < 2.0:
+			return true
+	return false
+
+
+## Whether any card but [param but] lies on card [param i].
+static func _lain_on(under: Array, i: int, but: int) -> bool:
+	for c in under.size():
+		if c != but and (under[c] as Array).has(i):
+			return true
+	return false
+
+
+## A flight to carry into a plan of its own: its pose's cached rests are that plan's.
+static func _flight_copy(f: Dictionary) -> Dictionary:
+	var out := f.duplicate()
+	out.erase("r0")
+	out.erase("r1")
+	return out
+
+
+## The point of a card lying at [param at] turned [param yaw] nearest [param p] - where a card sliding
+## in from there first touches it.
+static func _touch(at: Vector2, yaw: float, p: Vector2) -> Vector2:
+	var ax := Vector2(cos(yaw), -sin(yaw))
+	var az := Vector2(sin(yaw), cos(yaw))
+	var d := p - at
+	return at + ax * clampf(d.dot(ax), -CARD.x * 0.5, CARD.x * 0.5) + az * clampf(d.dot(az), -CARD.y * 0.5, CARD.y * 0.5)
+
+
+## A CARD THROWN OUT OF THE SPREAD: card [param i], lying at [param at] turned [param yaw] (about the
+## deck's place), struck along [param way] at [param t] - a hop out along the blow, [param reach]
+## meters (least, most), onto the cloth and wholly in the picture, its way and where it lands clear
+## of what stands and of where a card in [param flights] comes down. Face down,
+## wobbling as it goes; or, the jumper ([param up]), higher and over onto its face - its top away
+## from the reader, or toward them [param reversed] - and down on as few of the cards where they lie
+## ([param pos], [param yaws]) as it can. A few tries round the blow: the flight
+## (`{card, t0, t1, from, to, yaw0, yaw1, lie, hop, axis, up, wobble}` - `lie` the turn of the card
+## as it lies when down - see [method _flight_xf]), or empty when none lands anywhere it may.
+func _eject(i: int, at: Vector2, yaw: float, way: Vector2, reach: Vector2, t: float, salt: int, up: bool,
+		pos: PackedVector2Array, yaws: PackedFloat32Array, flights: Array, reversed := false) -> Dictionary:
+	var r := RandomNumberGenerator.new()
+	r.seed = salt
+	var hop := r.randf_range(JUMP_HOP.x, JUMP_HOP.y) if up else r.randf_range(EJECT_HOP.x, EJECT_HOP.y)
+	var time := r.randf_range(JUMP_FLIGHT.x, JUMP_FLIGHT.y) if up else r.randf_range(EJECT_TIME.x, EJECT_TIME.y)
+	var wobble := r.randf_range(0.12, 0.35) * (1.0 if r.randf() < 0.5 else -1.0)
+	var best := {}
+	var best_on := 0
+	for attempt in 12:
+		var d := way.rotated(r.randf_range(-0.45, 0.45) * (1.0 + float(attempt) * 0.45)).normalized()
+		var to := at + d * r.randf_range(reach.x, reach.y) * (1.0 - 0.04 * float(attempt))
+		var h := Vector2(-d.y, d.x)
+		var yaw1 := yaw + r.randf_range(-1.3, 1.3)
+		var lie := yaw1
+		if up:
+			# turned over about h, its top lands pointing `top`: so before the turn it points top
+			# mirrored in h - and it lies along `top`
+			var top := Vector2(0.0, 1.0 if reversed else -1.0).rotated(r.randf_range(-0.5, 0.5))
+			var m := h * (2.0 * top.dot(h)) - top
+			yaw1 = yaw + wrapf(atan2(-m.x, -m.y) - yaw, -PI, PI)
+			lie = atan2(-top.x, -top.y)
+		if not _may_land(i, at, to, lie, up, flights):
+			continue
+		var fl := {"card": i, "t0": t, "t1": ceilf((t + time) * WASH_HZ - 0.001) / WASH_HZ, "from": at, "to": to,
+			"yaw0": yaw, "yaw1": yaw1, "lie": lie, "hop": hop, "axis": h, "up": up, "wobble": wobble}
+		if not up:
+			return fl
+		# the jumper comes down on the fewest cards it can - on none, where there is room
+		var on := 0
+		for j in pos.size():
+			if j != i and pos[j].distance_to(to) < Vector2(CARD.x, CARD.y).length() \
+					and _cards_overlap(pos[j], yaws[j], to, lie):
+				on += 1
+		if on == 0:
+			return fl
+		if best.is_empty() or on < best_on:
+			best = fl
+			best_on = on
+	return best
+
+
+## Whether card [param i] thrown from [param from] may come down at [param to] turned [param yaw]
+## (about the deck's place): its way clear of what stands, the card wholly on the cloth and in the
+## picture - the jumper ([param up]) well inside it - off everything standing, and off where any
+## card in [param flights] comes down.
+func _may_land(i: int, from: Vector2, to: Vector2, yaw: float, up: bool, flights: Array) -> bool:
+	if not _path_clear(from, to):
+		return false
+	var off := Vector2(_mid.x, _mid.z)
+	var card := _card_poly(to + off, yaw)
+	var cloth := Rect2(-CLOTH.x * 0.5 + 0.01, -0.02 - CLOTH.y * 0.5 + 0.01, CLOTH.x - 0.02, CLOTH.y - 0.02)
+	var frame := Rect2(0.1, 0.1, 0.8, 0.8) if up else Rect2(0.03, 0.03, 0.94, 0.94)
+	for c: Vector2 in card:
+		if not cloth.has_point(c):
+			return false
+		var sc: Variant = TarotTable.project(_cam_base, _cam.fov, Vector3(c.x, WASH_FLOOR, c.y))
+		if sc == null or not frame.has_point(sc as Vector2):
+			return false
+	for foot in _standing:
+		if _convex_overlap(card, foot, FOOT_MARGIN):
+			return false
+	for f in flights:
+		var fd: Dictionary = f
+		if int(fd["card"]) != i and _convex_overlap(card, _card_poly((fd["to"] as Vector2) + off, float(fd["lie"])), 0.01):
+			return false
+	return true
+
+
+## Where a thrown card is over the cloth at [param t] (about the deck's place), `Vector3(x, z, its
+## turn)`: fast off the blow, slowing as it comes down.
+static func _flight_ground(f: Dictionary, t: float) -> Vector3:
+	var u := clampf((t - float(f["t0"])) / maxf(float(f["t1"]) - float(f["t0"]), 0.01), 0.0, 1.0)
+	var p := 1.0 - (1.0 - u) * (1.0 - u)
+	var at := (f["from"] as Vector2).lerp(f["to"] as Vector2, p)
+	return Vector3(at.x, at.y, lerpf(float(f["yaw0"]), float(f["yaw1"]), _ease(u)))
 
 
 ## How many cards card [param i] lies on, one on another at the deepest: its layer in the pile, kept in
@@ -3211,10 +3891,11 @@ func _wash_hands(seed: int, t0: float, rx: float, rz: float) -> Dictionary:
 ## only brushed slips. Where another card lies over it the palm hardly touches it ([constant
 ## WASH_COVERED]), so a card half under another is pulled out by its free half. Each pass the palm
 ## takes hold afresh - the heel of a hand bears on some cards and skims others - so a scrub carries
-## a different few each way, and what it carried out it often leaves there.
+## a different few each way, and what it carried out it often leaves there. A card in the air
+## ([param kin]) it does not touch.
 func _wash_palm(hands: Dictionary, h: int, t: float, dt: float, t_end: float, pos: PackedVector2Array,
 		yaw: PackedFloat32Array, vel: PackedVector2Array, spin: PackedFloat32Array, over: Array,
-		held: PackedFloat32Array) -> void:
+		held: PackedFloat32Array, kin: PackedByteArray) -> void:
 	var p: Dictionary = (hands["palms"] as Array)[h]
 	var r: RandomNumberGenerator = hands["r"]
 	var g: Dictionary = p["g"]
@@ -3257,7 +3938,7 @@ func _wash_palm(hands: Dictionary, h: int, t: float, dt: float, t_end: float, po
 	var most := float(hands["grip"]) * dt / float(GRIP_AT.size())
 	var touched: PackedFloat32Array = hands["touched"]
 	for i in pos.size():
-		if pos[i].distance_squared_to(at) > reach * reach:
+		if kin[i] == 1 or pos[i].distance_squared_to(at) > reach * reach:
 			continue
 		var ax := Vector2(cos(yaw[i]), -sin(yaw[i]))
 		var az := Vector2(sin(yaw[i]), cos(yaw[i]))
@@ -3344,6 +4025,24 @@ func _wash_drag(hands: Dictionary, pos: PackedVector2Array, vel: PackedVector2Ar
 			* (0.5 * (1.0 - exp(-k * dt)))
 		_wash_push(vel, spin, bot, rb, dv)
 		_wash_push(vel, spin, top, rt, -dv)
+
+
+## A HEAP SLUMPS: a loose card lying [constant SLUMP_FROM] or more cards up creeps off the cards
+## under it, away from their middle, the higher the faster ([constant SLUMP]) - a heap of real cards
+## spreads under the hands, and a stiff card balanced on one tips steeply.
+static func _wash_slump(pos: PackedVector2Array, under: Array, layer: PackedInt32Array, held: PackedFloat32Array,
+		kin: PackedByteArray, dt: float) -> void:
+	for i in pos.size():
+		if kin[i] == 1 or held[i] > 0.2 or layer[i] < SLUMP_FROM or (under[i] as Array).is_empty():
+			continue
+		var c := Vector2.ZERO
+		for j in under[i]:
+			c += pos[int(j)]
+		c /= float((under[i] as Array).size())
+		var away := pos[i] - c
+		if away.length() < 1e-4:
+			continue
+		pos[i] += away.normalized() * SLUMP * float(layer[i] - SLUMP_FROM + 1) * dt
 
 
 ## THE CARDS MOVE, one step: none faster than a hand ([constant HAND_SPEED]), and one going out past
@@ -3587,40 +4286,80 @@ func _end_fade(t: float) -> float:
 	return 1.0 - _ease((t - (_follow.st1[last] + beat)) / maxf(outro - beat, 0.05))
 
 
+## THE INTRO'S BLUR: the whole stage read back through [constant INTRO_SHADER], drawn over the table
+## and under the name - and not drawn at all while it is off.
+class IntroBlur:
+	extends Node2D
+
+	var _mat := ShaderMaterial.new()
+
+	func _init(shader: Shader) -> void:
+		_mat.shader = shader
+		material = _mat
+		visible = false
+
+	## The blur's sigma, as a share of the frame's height; 0 takes it off.
+	func set_sigma(sigma: float) -> void:
+		_mat.set_shader_parameter("sigma", sigma)
+		visible = sigma > 0.0
+
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color.WHITE)
+
+
 class TitleCard:
 	extends Node2D
 
+	## A shade behind the type, at its middle (it fades to nothing above and below), and THE HALO
+	## round every letter: rings of the shade, each `x` of the type's size wide at `y` alpha, soft
+	## from the outside in.
+	const BAND := 0.32
+	const HALO := [Vector2(0.24, 0.06), Vector2(0.16, 0.08), Vector2(0.1, 0.12), Vector2(0.06, 0.18), Vector2(0.03, 0.3)]
+
 	var channel := ""
-	var episode := ""
-	## A line under the name in the italic face, where an episode line would go.
+	## A line under the name in the italic face.
 	var byline := ""
 	var face: Font = null
 	var italic: Font = null
 	var alpha := 0.0
+	## The name's color: the set dresser's, chosen to stand out from this table ([method TarotTable.title_ink]).
+	var ink := TarotTable.color(TarotTable.TITLE_INK)
+	var _lay := {}
+	var _lay_key := ""
 
 	func _draw() -> void:
 		if alpha <= 0.001 or face == null or channel.is_empty():
 			return
 		var vp := get_viewport_rect().size
-		var s := vp.y / 1080.0
-		var size := int(84.0 * s)
-		var y := vp.y * 0.4
-		# A SHADE BEHIND THE TYPE: the cloth is whatever the episode painted, often pale
-		var band := 260.0 * s
-		for i in 12:
-			var f := float(i) / 11.0
-			var h := band * (1.0 - f * 0.85)
-			draw_rect(Rect2(0, y - 60.0 * s - h * 0.5 + 30.0 * s, vp.x, h), Color(0, 0, 0, 0.045 * alpha))
-		var shadow := Color(0, 0, 0, 0.55 * alpha)
-		var ink := Color(1.0, 0.97, 0.9, alpha)
-		size = TarotCards._fit(face, channel, size, vp.x * 0.8)
-		for o in [Vector2(2, 3), Vector2(0, 0)]:
-			draw_string(face, Vector2(0, y) + (o as Vector2) * s, channel, HORIZONTAL_ALIGNMENT_CENTER,
-				vp.x, size, shadow if o != Vector2(0, 0) else ink)
-		var under := episode if not episode.is_empty() else byline
-		if under.is_empty() or italic == null:
-			return
-		var es := TarotCards._fit(italic, under, int(40.0 * s), vp.x * 0.78)
-		var ey := y + 70.0 * s
-		draw_string(italic, Vector2(2, ey + 2) * Vector2(1, 1), under, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, shadow)
-		draw_string(italic, Vector2(0, ey), under, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, ink)
+		var key := "%s|%s|%s" % [channel, byline, str(vp)]
+		if key != _lay_key:
+			_lay_key = key
+			_lay = TarotTable.title_layout(face, italic, channel, byline, vp)
+		var shade := TarotTable.title_shade(ink)
+		# A SHADE BEHIND THE TYPE, soft above and below: the cloth is whatever the episode painted
+		var box: Rect2 = _lay["box"]
+		var reach := box.size.y * 0.5 + vp.y * 0.12
+		_band(Rect2(0.0, box.get_center().y - reach, vp.x, reach * 2.0), shade)
+		for l in _lay["lines"]:
+			var d: Dictionary = l
+			var f: Font = italic if bool(d["italic"]) else face
+			var size := int(d["size"])
+			var at := Vector2(0.0, float(d["y"]))
+			for h in HALO:
+				draw_string_outline(f, at, String(d["text"]), HORIZONTAL_ALIGNMENT_CENTER, vp.x, size,
+					maxi(int(size * (h as Vector2).x), 1), Color(shade, (h as Vector2).y * alpha))
+			draw_string(f, at, String(d["text"]), HORIZONTAL_ALIGNMENT_CENTER, vp.x, size, Color(ink, alpha))
+
+	## A band of [param shade] across [param r], clear at its top and bottom edges and [constant BAND]
+	## at its middle - a raised cosine, drawn as strips whose corners carry it, so it has no steps.
+	func _band(r: Rect2, shade: Color) -> void:
+		var n := 12
+		for i in n:
+			var u0 := float(i) / n
+			var u1 := float(i + 1) / n
+			var a0 := Color(shade, BAND * alpha * (0.5 - 0.5 * cos(TAU * u0)))
+			var a1 := Color(shade, BAND * alpha * (0.5 - 0.5 * cos(TAU * u1)))
+			var y0 := r.position.y + r.size.y * u0
+			var y1 := r.position.y + r.size.y * u1
+			draw_polygon(PackedVector2Array([Vector2(r.position.x, y0), Vector2(r.end.x, y0), Vector2(r.end.x, y1), Vector2(r.position.x, y1)]),
+				PackedColorArray([a0, a0, a1, a1]))
