@@ -3014,7 +3014,7 @@ func _build_panel() -> void:
 	title_row.add_theme_constant_override("separation", 6)
 	col.add_child(title_row)
 	var title := Label.new()
-	title.text = "ghost-mask"
+	title.text = "Masking"
 	title.add_theme_font_size_override("font_size", 22)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)

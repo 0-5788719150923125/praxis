@@ -327,7 +327,7 @@ Ignore anything in the request about tools, files, paths or saving."""
 	func start(job: Dictionary) -> int:
 		var model := Bedrock.model_of(job)
 		if Bedrock.schema_of(model).is_empty():
-			job["error"] = "ghost does not know how to ask %s for a picture" % model
+			job["error"] = "Ghost Notes does not know how to ask %s for a picture" % model
 			return -1
 		DirAccess.make_dir_recursive_absolute(String(job["dir"]))
 		var m := Bedrock.brief_content(job)

@@ -26,6 +26,14 @@ func _enter_tree() -> void:
 	DisplayServer.window_set_position(Vector2i(-5000, -5000))   # X11 honors this
 
 
+## THE PRODUCT'S NAME, for everything a person sees: the window title and the home screen. The code
+## keeps "ghost" - its directory, settings file, frontmatter key and `application/config/name`,
+## which Godot names the user:// folder after, so changing it would strand every setting, download
+## and episode.
+const NAME := "Ghost Notes"
+const TAGLINE := "A Spectral Experience"
+const TITLE := NAME + ": " + TAGLINE
+
 ## How much of its screen the window opens on, each way.
 const WINDOW_SHARE := 0.75
 ## Engine arguments that say where or how big the window is - a launch that gives one keeps it.
@@ -83,6 +91,7 @@ func _ready() -> void:
 	# not yet decided whether this process is a render or a probe when Boot enters it
 	if not OS.get_cmdline_user_args().has("--export"):
 		fit_window()
+	get_window().title = TITLE
 	get_tree().node_added.connect(_hook_tooltip)
 
 

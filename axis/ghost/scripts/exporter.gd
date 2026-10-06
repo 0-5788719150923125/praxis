@@ -144,7 +144,7 @@ var take_provider := Callable()
 var take_ready := Callable()
 
 ## What the video is called, when the mode knows: returns a name without an extension (an
-## episode's title, say), or "" for the exporter's own `ghost_<quality>`. Asked as the save
+## episode's title, say), or "" for the exporter's own `ghost_notes_<quality>`. Asked as the save
 ## dialog opens; whatever it returns goes through [method safe_name].
 var name_provider := Callable()
 
@@ -245,7 +245,7 @@ func _build_ui() -> void:
 	_dialog.use_native_dialog = true
 	_dialog.title = "Export video"
 	_dialog.filters = PackedStringArray(["*.mp4 ; Video (MP4, H.264 + AAC)"])
-	_dialog.current_file = "ghost.mp4"
+	_dialog.current_file = "ghost_notes.mp4"
 	# Default to the Downloads folder so an export lands somewhere predictable (the native dialog
 	# otherwise opens in its last-used directory, which is easy to lose track of).
 	var downloads := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
@@ -448,7 +448,7 @@ func _on_quality(id: int) -> void:
 		return
 	_quality = QUALITIES[id]
 	var named := safe_name(String(name_provider.call())) if name_provider.is_valid() else ""
-	_dialog.current_file = ("%s.mp4" % named) if not named.is_empty() else "ghost_%s.mp4" % _quality.tag
+	_dialog.current_file = ("%s.mp4" % named) if not named.is_empty() else "ghost_notes_%s.mp4" % _quality.tag
 	_dialog.popup_centered()
 
 

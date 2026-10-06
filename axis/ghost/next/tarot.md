@@ -44,6 +44,7 @@ format and voice, told true).
 | `scripts/agent_tools.gd` | `AgentTools`: tools ghost serves an agent WHILE it works - an MCP server (HTTP, JSON) inside the ghost process, a URL per job, every call logged beside the prompt (`tools.jsonl`, `look_NN.jpg`). Claude takes them (`TextGen.Backend.takes_tools`); Codex and Bedrock are still one reply. |
 | `scripts/set_dresser_tools.gd` | `SetDresserTools`: the set dresser's tools - `put`, `remove`, `look`, `set`, `submit` - over a draft table. |
 | `scripts/table_preview.gd` | `TablePreview`: what those tools show - a thing in a studio on a centimeter grid (four sides, or several in tiles), and the draft on the episode's own table from the show's camera. |
+| `scripts/effects.gd` | `Effects`: the AIR - fog, motes, bursts - as data an agent writes (registries it reads, `sanitize`, `build`), posed from show time. Generic; the tarot table names its regions and moments (`TarotTable.AIR`, `MOMENTS`). Shaders `effect_fog.gdshader`, `effect_sprite.gdshader`, `effect_smoke.gdshader`. |
 | `scripts/props.gd` | `Props`: things built from a description - shapes, materials, ornaments (registries an agent reads), `sanitize`, `build`. Generic; the tarot table is its first user. Shaders `prop.gdshader`, `prop_glass.gdshader`, `prop_lens.gdshader`, `prop_common.gdshaderinc`. |
 | `scripts/tarot_cards.gd` | `TarotCards`: faces, backs and booklet pages, composed in 2D into stopped SubViewports. |
 | `scripts/media/tarot.gd` | `TarotMedium`: the table. Pinned by the mode (`Medium.OWNED`, `Director.medium_override`). |
@@ -238,6 +239,42 @@ looks, set, submit - but the model called a 1 cm flat disc it had named a soapst
 bare rod it had named a dried grass bundle, "perfect". The pictures showed both plainly. CLAUDE WITH TOOLS CANNOT RUN `--safe-mode`, which drops every MCP server (measured):
 a tool job loads no settings instead (`--setting-sources ""`), and was measured to see no
 CLAUDE.md, memory or skills. Gates `tests/agent_tools_check.gd`, `tests/set_dresser_tools_check.gd`.
+
+THE AIR (2026-10-05; the user: "some particle and/or volumetric effects could go a long way... gentle
+fog/smoke rolling in the background region (with less-severe fog in the foreground, perhaps even upon
+the table)... when a card is ejected from the deck - a burst of colorful sparks... when a card twirls...
+fireflies or pixies (just simple spots of color) that fly around, leaving the scene, coming back...
+generic primitives... pixies flying around behind the fog, with the color effects bleeding-through").
+The set dresser writes `effects` beside its things; `Effects` builds them:
+- FOG is Godot's own volumetric fog, a FogVolume per fog in one of `TarotTable.AIR`'s regions ("beyond
+  the table" - a bank from mid-table back, thickening to the far edge; "over the cloth"; "low on the
+  cloth"; "the whole room"). Its `density` is how much it HIDES over the region's `sight` (meters a
+  line of sight crosses there), so a layer on the cloth and a bank behind the table read alike; it
+  rolls and drifts as a function of show time, billows carved by finer wisps, soft at its sides but
+  never at its floor (fading at every face of the box had made a layer on the cloth vanish exactly
+  at the cloth). The lamp and candles scatter in it (their fog energy is raised when there is fog):
+  halos and shafts. Unlit fog only DIMS a bright cloth, which reads as nothing: it takes ambient light.
+- MOTES - pixie, firefly, wisp, ember, dust, snow - are placed on the CPU each frame (pure function of
+  show time): a home on screen along a line of sight, in front of the table (homes drawn from the
+  region's volume were mostly behind the table or above the frame - the camera sees only below the
+  table's plane a meter past it); a wander measured as a share of the picture at its own depth; darts;
+  VISITS that leave sideways and up out of frame and come back (the user: off-screen is fine, never
+  bounce at the frame's edge); a soft floor, which over the table or a thing on it is that thing's top,
+  falling away round it as a gentle dome - so a mote is lifted over what stands, never through it. Lit
+  motes carry a tiny OmniLight, so the fog glows in their color round them; the light is nearly all the
+  fog's (a surface sees 1/15), and a lit mote keeps 4 cm off what it flies over - at full strength a
+  pixie skimming the cloth bloomed into a red blot. Each look's size and brightness stay in its own range (the user: pixies
+  "quite small generally", adjustable "within constraints"): a pixie 3 mm, 1.5-8.
+- BURSTS - sparks, glitter, embers, flames, smoke, stars - mark a MOMENT (`TarotTable.MOMENTS`:
+  shuffle, jumper, reveal, pirouette, lay, close), read off the schedule by `TarotMedium._air_moments`
+  with the emitter's path from the table's own poses (the jumper's flight, the held card twirling -
+  `_looks` is now what `_turn_of` reads too). Particles are born on the CPU when a moment moves (most at
+  its start, on the card's edge or at a point), flown on the GPU in closed form (drag, gravity), so
+  any frame can be drawn alone. Tabletop scale: a few centimeters to a couple of hands.
+The set dresser sees it: `set` shows the air at a moment some way in; `watch` photographs one effect
+four times (a burst just after its staged moment, fog and motes 3 s apart). The show's taste is in the
+brief's "The table and its air". Gates `tests/effects_check.gd`, `tests/set_dresser_tools_check.gd`;
+look with `tests/air_look_probe.gd` on a COPY of an episode.
 
 BUILT IN THE ENGINE (`scripts/props.gd`, `Props.build`): meshes in meters, base on y = 0, each
 part's surface laid out for its own girth and height so a motif keeps its shape. A candle's wax
@@ -499,6 +536,8 @@ draw the same frames.
   - what the set dresser's tools show, with no agent: an episode's table put, looked at and set.
 - `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_run_probe.gd 1600 --spec <md> --seed N [--model haiku]`
   - the real set dresser at work through its tools (quota), on a COPY of an episode.
+- `GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/air_look_probe.gd 400 --show S --seed N --spec <effects.json> --moments 1`
+  - the air over a COPY of an episode, photographed at every moment a burst can mark.
 - `godot --headless --path . --script res://tests/agent_tools_claude_probe.gd` - that the installed
   Claude CLI reaches ghost's tools and sees their pictures (one short run).
 

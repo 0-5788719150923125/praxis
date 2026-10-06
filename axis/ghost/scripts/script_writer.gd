@@ -361,7 +361,7 @@ func _refresh() -> void:
 		else "Unsynced %s" % _wording("window", "Script").to_lower()
 	_name.text = source
 	_name.tooltip_text = ("Synced to " + doc.doc_path()) if doc.is_sync() else \
-		"Kept by ghost alone, in no file. Sync to… in the editor writes it into one."
+		"Kept by Ghost Notes alone, in no file. Sync to… in the editor writes it into one."
 	_window.title = "%s - %s" % [_wording("window", "Script"), source]
 	for k in _field_edits:
 		var e: LineEdit = _field_edits[k]

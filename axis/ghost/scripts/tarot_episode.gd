@@ -72,9 +72,10 @@ static func history(show_key: String) -> Array:
 
 ## WHAT THE SHOW HAS ALREADY MADE, for a later episode's agents to go somewhere else (see
 ## [TarotPrompts]): every other episode of [param show_key] with a plan, newest first, at most
-## [param most] - `{seed, plan, cards: [{name, reversed, jumper, art, said}], things, intro,
+## [param most] - `{seed, plan, cards: [{name, reversed, jumper, art, said}], things, air, intro,
 ## close}`: the cards it drew, what each pictured and what the reader said as it turned over, the
-## things on its table, and its first and last passages. What an episode has not made is empty.
+## things on its table and its air, and its first and last passages. What an episode has not made is
+## empty.
 static func archive(show_key: String, except: int, most := 40) -> Array:
 	var out: Array = []
 	for h in history(show_key):
@@ -103,7 +104,14 @@ static func archive(show_key: String, except: int, most := 40) -> Array:
 				var name := str((th as Dictionary).get("name", "")).strip_edges() if th is Dictionary else ""
 				if not name.is_empty():
 					things.append(name)
-		out.append({"seed": s, "plan": (h as Dictionary)["plan"], "cards": cards, "things": things,
+		# ITS AIR, each effect as what it was: a name and its look (or its kind, for fog)
+		var air: Array = []
+		if table is Dictionary and (table as Dictionary).get("effects") is Array:
+			for fx in (table as Dictionary)["effects"]:
+				if fx is Dictionary:
+					var d: Dictionary = fx
+					air.append("%s (%s)" % [str(d.get("name", "")).strip_edges(), str(d.get("look", d.get("kind", ""))).strip_edges()])
+		out.append({"seed": s, "plan": (h as Dictionary)["plan"], "cards": cards, "things": things, "air": air,
 			"intro": ep.read_text("say:intro"), "close": ep.read_text("say:close")})
 	return out
 

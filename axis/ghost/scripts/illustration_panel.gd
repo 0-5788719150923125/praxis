@@ -131,7 +131,7 @@ func _ready() -> void:
 	imp.tooltip_text = ("Pick images whose STYLE this kind (the dropdown above) should share. "
 		+ "They are attached to every request of that kind as style references only - their "
 		+ "subjects are never copied. With none, each picture is matched to the ones already "
-		+ "made before it in the chapter instead. Copied into ghost's own folder, so moving the "
+		+ "made before it in the chapter instead. Copied into Ghost Notes' own folder, so moving the "
 		+ "originals changes nothing.")
 	imp.pressed.connect(_open_dialog)
 	rrow.add_child(imp)

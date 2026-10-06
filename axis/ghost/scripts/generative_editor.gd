@@ -855,7 +855,7 @@ func _build_voice(box: VBoxContainer) -> void:
 	# top, which is the opposite of what someone about to export wants.
 	_stop = Button.new()
 	_stop.text = "Stop"
-	_stop.tooltip_text = "End the reading and hand the stage back. Use this before an export - a live reading is still driving the visuals and holding the audio stream, and until now the only way to end one was to restart ghost."
+	_stop.tooltip_text = "End the reading and hand the stage back. Use this before an export - a live reading is still driving the visuals and holding the audio stream, and until now the only way to end one was to restart Ghost Notes."
 	_stop.disabled = true
 	_stop.pressed.connect(_stop_speaking)
 	vrow.add_child(_stop)

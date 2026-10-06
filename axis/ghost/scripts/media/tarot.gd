@@ -341,6 +341,8 @@ var _noise := FastNoiseLite.new()
 var _mtimes := {}
 var _poll_t := 0.0
 var _textures := {}
+var _air = null                     # the set dresser's effects, built (Effects.Air), or null
+var _air_key := ""                  # the schedule its bursts were last planned on
 
 
 # --- mount -----------------------------------------------------------------------------------
@@ -641,6 +643,7 @@ func advance(_features, delta: float, _bookend: float) -> void:
 	_tick_focus(_now)
 	_tick_camera(_now)
 	_tick_props(_now)
+	_tick_air(_now)
 	_title.alpha = _title_alpha(_now)
 	_title.queue_redraw()
 
@@ -1150,6 +1153,7 @@ func _build_table() -> void:
 	_build_glows()
 	_light_the_table()
 	_reflect()
+	_build_air(spec)
 
 
 ## Catch the table again for the things to reflect: a probe that updates once does so again when
@@ -1374,7 +1378,8 @@ func _put(t: Dictionary, b: Dictionary, spot: Dictionary, basis: Basis, group: S
 		_standing_r.append(r)
 	_things.append({"name": String(t.get("name", "")), "group": group, "place": String(t.get("place", "back")),
 		"node": node, "outline": spot["outline"], "bb": spot["bb"], "rect": spot["rect"], "foot": foot,
-		"lit": wicks.size(), "lights": range(first, _lights.size()), "meshes": b["meshes"]})
+		"box": node.transform * (b["size"] as AABB), "lit": wicks.size(), "lights": range(first, _lights.size()),
+		"meshes": b["meshes"]})
 
 
 ## A FLAME at [param at], the top of a wick: a wick under it (on its candle's layer, [param own])
@@ -1798,6 +1803,108 @@ func _tick_focus(t: float) -> void:
 	_attrs.dof_blur_amount = lerpf(FOCUS_BLUR, FOCUS_BLUR * 0.4, e)
 
 
+# --- the air ---------------------------------------------------------------------------------------------
+
+## THE AIR: the set dresser's effects (its table's `effects`, [Effects]) - fog, motes and bursts -
+## built for this camera, with the stage's volumetric fog on only while there is fog to draw.
+func _build_air(spec: Dictionary) -> void:
+	if _air != null:
+		_air.release()
+		_air = null
+	var fx: Array = spec.get("effects", []) if spec.get("effects") is Array else []
+	if not fx.is_empty():
+		_air = Effects.build(fx, _air_stage(), hash([_seed, "air"]))
+		_root3.add_child(_air.root)
+	var foggy: bool = _air != null and _air.has_fog()
+	Effects.fog_environment(_env, foggy)
+	# IN FOG, A LIGHT IS SEEN: the lamp's beam and every candle's glow scatter in it, shafts and halos
+	_lamp.light_volumetric_fog_energy = 1.6 if foggy else 1.0
+	for l in _lights:
+		((l as Dictionary)["light"] as OmniLight3D).light_volumetric_fog_energy = 2.0 if foggy else 1.0
+	_air_key = ""
+
+
+## Where the air may be, the camera it is seen through, and what stands in it - the table and the
+## things on it, which motes are homed in front of and fly over.
+func _air_stage() -> Dictionary:
+	var under: Array = [AABB(Vector3(-TABLE.x * 0.5, -TABLE.y, TABLE_Z - TABLE.z * 0.5), TABLE)]
+	for th in _things:
+		under.append((th as Dictionary)["box"])
+	return {"regions": TarotTable.AIR, "camera": _cam_base, "fov": _cam.fov, "aspect": 16.0 / 9.0, "occluders": under}
+
+
+## The air at show time [param t] - its bursts planned again whenever the schedule moved.
+func _tick_air(t: float) -> void:
+	if _air == null:
+		return
+	var key := "%d|%d" % [_built_n, _sched.size()]
+	if key != _air_key:
+		_air_key = key
+		_air.plan(_air_moments())
+	_air.tick(t)
+
+
+## THE MOMENTS THE AIR CAN MARK, from the schedule: `{name: [{t, dur, path, from}]}` (see
+## [constant TarotTable.MOMENTS]) - each with the time it starts, how long it lasts, and where its
+## emitter is through it (`path`, `[[t, Transform3D], ...]`), read off the same poses the table draws.
+## A moment the voice has not reached yet is not here.
+func _air_moments() -> Dictionary:
+	var out := {}
+	for m in TarotTable.MOMENTS:
+		out[m] = []
+	var tm := _times()
+	var keep := _cur_base
+	if float(tm["shuffle"]) < INF:
+		var ts := float(tm["shuffle"])
+		(out["shuffle"] as Array).append({"t": ts, "dur": 0.5, "from": "point",
+			"path": [[ts, Transform3D(Basis.IDENTITY, _mid + Vector3(0.0, DECK_T * DECK_N, 0.0))]]})
+	var draws: Array = tm["draw"]
+	var lays: Array = tm["lay"]
+	for k in _cards.size():
+		var d: Array = draws[k]
+		var td := float(d[0])
+		if td == INF:
+			continue
+		var s := maxf(float(d[1]), 0.05)
+		var kind := String(d[2])
+		var off := float(d[3])
+		var up_at := td + (off + (JUMP_RISE if kind == "jumper" else RISE_END)) * s
+		var tl := float((lays[k] as Array)[0])
+		if kind == "jumper":
+			# ALONG ITS FLIGHT, from springing off the riffle to landing
+			var t0 := td + (off + JUMP_FLY.x) * s
+			var t1 := td + (off + JUMP_FLY.y) * s
+			var path: Array = []
+			for i in 9:
+				var tt := lerpf(t0, t1, float(i) / 8.0)
+				_cur_base = _deck_at(tt, tm)
+				path.append([tt, _jump_xf(k, (tt - td) / s - off, Transform3D.IDENTITY)])
+			(out["jumper"] as Array).append({"t": t0, "dur": t1 - t0, "from": "card", "path": path})
+		(out["reveal"] as Array).append({"t": up_at, "dur": 0.3, "from": "card",
+			"path": [[up_at, _present_xf(k, up_at, up_at, tl)]]})
+		for l in _looks(k, up_at, tl):
+			var look: Dictionary = (l as Dictionary)["look"]
+			if float(look["twirl"]) <= 0.0:
+				continue
+			# THROUGH THE TWIRL, the card's edges spinning with it
+			var a0 := float((l as Dictionary)["at"]) + float(look["turn"]) + float(look["hold"])
+			var dur := float(look["twirl"])
+			var path: Array = []
+			for i in 17:
+				var tt := a0 + dur * float(i) / 16.0
+				path.append([tt, _present_xf(k, tt, up_at, tl)])
+			(out["pirouette"] as Array).append({"t": a0, "dur": dur, "from": "card", "path": path})
+		if tl < INF:
+			var land := tl + LAY_END * maxf(float((lays[k] as Array)[1]), 0.05)
+			(out["lay"] as Array).append({"t": land, "dur": 0.2, "from": "card", "path": [[land, _slot_xf(k)]]})
+	_cur_base = keep
+	if float(tm["spread"]) < INF:
+		var tc := float(tm["spread"])
+		for k in _cards.size():
+			(out["close"] as Array).append({"t": tc, "dur": 0.8, "from": "card", "path": [[tc, _slot_xf(k)]]})
+	return out
+
+
 # --- the schedule ----------------------------------------------------------------------------------------
 
 ## THE SHUFFLE'S CHAIN, made now, wash plans and all, rather than a frame at a time while it
@@ -1989,24 +2096,39 @@ func _present_xf(k: int, t: float, up_at := INF, until := INF) -> Transform3D:
 func _turn_of(k: int, t: float, up_at: float, until: float) -> float:
 	if up_at == INF or t < up_at:
 		return 0.0
+	for l in _looks(k, up_at, until):
+		var at := float((l as Dictionary)["at"])
+		var look: Dictionary = (l as Dictionary)["look"]
+		if t < at:
+			return 0.0
+		if t - at < float(look["total"]):
+			return _look_angle(look, t - at)
+	return 0.0
+
+
+## EVERY LOOK AT CARD [param k]'s BACK while it is held - up at [param up_at], going down at
+## [param until] - in order: `[{at, look}]` ([method _look_of]). What [method _turn_of] poses, and
+## what the air's pirouettes are timed by, from one place.
+func _looks(k: int, up_at: float, until: float) -> Array:
+	var out: Array = []
+	if up_at == INF:
+		return out
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([_seed, k, "turn"])
 	if rng.randf() > TURN_CHANCE:
-		return 0.0
+		return out
 	var at := up_at + rng.randf_range(5.0, 9.0)
 	var spun := false
 	for i in 64:
 		var look := _look_of(rng, not spun)
 		spun = spun or float(look["twirl"]) > 0.0
-		var total := float(look["total"])
-		if t < at or at + total > until - 1.0:
-			return 0.0
-		if t - at < total:
-			return _look_angle(look, t - at)
+		if at + float(look["total"]) > until - 1.0:
+			return out
+		out.append({"at": at, "look": look})
 		if rng.randf() > LOOK_AGAIN:
-			return 0.0
-		at += total + rng.randf_range(LOOK_GAP.x, LOOK_GAP.y)
-	return 0.0
+			return out
+		at += float(look["total"]) + rng.randf_range(LOOK_GAP.x, LOOK_GAP.y)
+	return out
 
 
 ## ONE LOOK AT A HELD CARD'S BACK, drawn: which way it turns (`way`, 1 or -1 - a hand turns a card

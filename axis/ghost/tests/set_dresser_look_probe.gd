@@ -6,10 +6,11 @@ extends Node
 ## answered with.
 ##
 ##   GHOST_PROBE_GPU=1 tests/run_boot_probe.sh tests/set_dresser_look_probe.gd 300 \
-##       --show truthful-tarot --seed 352029 [--spec <table.json>] [--out /tmp/sd/look]
+##       --show truthful-tarot --seed 26551 [--spec <table.json>] [--air <effects.json>] [--out /tmp/sd/look]
 ##
-## The description is the episode's own `table.json` unless `--spec` names another. The episode is
-## only read: the tools work in a folder of their own (`user://set_dresser_look`), never its jobs.
+## The description is the episode's own `table.json` unless `--spec` names another; `--air` puts a
+## list of effects (or a table's `effects`) beside it, and every one of them is watched. The episode
+## is only read: the tools work in a folder of their own (`user://set_dresser_look`), never its jobs.
 
 var _out := "user://set_dresser_look/look"
 
@@ -23,8 +24,10 @@ func _run() -> void:
 	var show := "truthful-tarot"
 	var seed := 0
 	var spec_path := ""
+	var air_path := ""
 	for i in args.size() - 1:
 		match args[i]:
+			"--air": air_path = args[i + 1]
 			"--show": show = args[i + 1]
 			"--seed": seed = int(args[i + 1])
 			"--spec": spec_path = args[i + 1]
@@ -50,6 +53,12 @@ func _run() -> void:
 	await _call(tools, "put", {"things": things.slice(0, half), "materials": (table as Dictionary).get("materials", {}),
 		"idea": String((table as Dictionary).get("idea", ""))}, "put1")
 	await _call(tools, "put", {"things": things.slice(half)}, "put2")
+	var air: Variant = JSON.parse_string(FileAccess.get_file_as_string(air_path)) if not air_path.is_empty() else null
+	var effects: Array = ((air as Dictionary).get("effects", []) if air is Dictionary else air) if air != null else []
+	if not effects.is_empty():
+		await _call(tools, "put", {"effects": effects}, "air")
+		for e in effects:
+			await _call(tools, "watch", {"name": String((e as Dictionary).get("name", ""))}, "watch_" + String((e as Dictionary).get("name", "")).replace(" ", "_"))
 	if not things.is_empty():
 		await _call(tools, "look", {"name": String((things[0] as Dictionary).get("name", ""))}, "look")
 	await _call(tools, "set", {}, "set")

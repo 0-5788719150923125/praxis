@@ -219,7 +219,7 @@ static func write_body(path: String, body: String, expected: String) -> String:
 	var before := fh.get_as_text()
 	fh.close()
 	if lf(String(split(before).body)) != lf(expected):
-		return CONFLICT + "%s was changed outside ghost" % path.get_file()
+		return CONFLICT + "%s was changed outside Ghost Notes" % path.get_file()
 	var after := put_body(before, body)
 	if after.is_empty():
 		return "%s mixes line endings around its frontmatter - refusing to rewrite it" \

@@ -31,6 +31,8 @@ const STUDIO_FOV := 28.0
 ## settle in a few.
 const STUDIO_FRAMES := 3
 const TABLE_FRAMES := 6
+## The moment of a reading the air is shown at: some way in, its fog rolled and its motes about.
+const AIR_AT := 40.0
 ## The episode's table medium, by class name: looked up when it is needed, never compiled in - it
 ## needs ghost's autoloads, and so would anything naming it (see the class note).
 const MEDIUM := "TarotMedium"
@@ -349,14 +351,63 @@ func _shot(box: AABB, side: Vector3, size: Vector2i, caption: String) -> Image:
 # --- the table --------------------------------------------------------------------------------------
 
 ## THE WHOLE TABLE: [param raw] (the description as written) standing on the episode's table, the
-## cards laid face down in their spread and the deck beside it, from the camera's place.
+## cards laid face down in their spread and the deck beside it, its air (fog, motes) as it is some way
+## into a reading, from the camera's place.
 ## `{image, stood: [{name, place, at, k, tall}], left_off: [names], key, held_down: [names], cards,
 ## deck}` - `at` in centimeters from the cloth's middle (x to the reader's right, z toward them), `k`
 ## how far it was made smaller (1 = not at all), `tall` its share of the picture's height. `error`
 ## when the table cannot be stood here.
 func table(raw: Dictionary) -> Dictionary:
+	var err := _stand(raw)
+	if not err.is_empty():
+		return {"error": err}
+	_pose_spread()
+	_medium._tick_air(AIR_AT)
+	var out := _placed(TarotTable.sanitize_table(raw, TarotTable.sanitize_look(plan.get("look", {}) if plan.get("look") is Dictionary else {})))
+	out["image"] = await _render(_table, TABLE_FRAMES)
+	return out
+
+
+## ONE EFFECT IN MOTION: the effect named [param name] in [param raw]'s `effects`, on the episode's
+## table, photographed four times - a burst a moment after the thing it marks happens (a card leaping
+## from the deck, one held up and twirled, one laid down...: [constant TarotTable.MOMENTS], staged
+## here as the table stages them), fog or motes a few seconds apart, so their roll and their wander
+## show. A sheet of four, `{image, frames: [seconds after]}`; `error` when it cannot be shown.
+func watch(raw: Dictionary, name: String) -> Dictionary:
+	var err := _stand(raw)
+	if not err.is_empty():
+		return {"error": err}
+	var air = _medium._air
+	var fx := {}
+	for e in (TarotTable.sanitize_table(raw, TarotTable.sanitize_look(plan.get("look", {}) if plan.get("look") is Dictionary else {}))["effects"] as Array):
+		if String((e as Dictionary).get("name", "")) == name:
+			fx = e
+	if air == null or fx.is_empty():
+		return {"error": "no effect called \"%s\" can be built" % name}
+	var burst := String(fx["kind"]) == "burst"
+	var on := String(fx.get("on", ""))
+	var steps: Array = [0.08, 0.3, 0.6, 1.0] if burst else [0.0, 3.0, 6.0, 9.0]
+	var moment := _staged(on) if burst else {}
+	if burst:
+		air.plan({on: moment["moments"]})
+	var sheet := Image.create(SHEET.x, SHEET.y, false, Image.FORMAT_RGB8)
+	sheet.fill(Color(0.06, 0.06, 0.07))
+	for i in steps.size():
+		var t := AIR_AT + float(steps[i])
+		_pose_moment(on, moment, t)
+		air.tick(t)
+		var img: Image = await _render(_table, TABLE_FRAMES)
+		if img == null:
+			return {"error": "no picture could be taken"}
+		img.resize(SHEET.x / 2 - 2, SHEET.y / 2 - 2, Image.INTERPOLATE_LANCZOS)
+		sheet.blit_rect(img, Rect2i(Vector2i.ZERO, img.get_size()), Vector2i((i % 2) * (SHEET.x / 2) + 1, (i / 2) * (SHEET.y / 2) + 1))
+	return {"image": sheet, "frames": steps, "burst": burst}
+
+
+## The episode's table built over [param raw] (the medium mounted the first time): "" when it stands.
+func _stand(raw: Dictionary) -> String:
 	if not can_set():
-		return {"error": "this process cannot stand the table (%s)" % ("no renderer" if not can_see() else "no ghost session")}
+		return "this process cannot stand the table (%s)" % ("no renderer" if not can_see() else "no ghost session")
 	if _table == null or not is_instance_valid(_table):
 		_table = SubViewport.new()
 		_table.own_world_3d = true
@@ -367,14 +418,14 @@ func table(raw: Dictionary) -> Dictionary:
 		if _medium == null:
 			_table.queue_free()
 			_table = null
-			return {"error": "the table medium could not be loaded"}
+			return "the table medium could not be loaded"
 		_medium.mount(_table)
 		_doc = Doc.new()
 		_medium.bind_captions(_doc)
 	_sync_pictures()
 	var err := TextGen.put(_dir.path_join("table.json"), JSON.stringify(raw, "\t"))
 	if not err.is_empty():
-		return {"error": err}
+		return err
 	var cards: Array = []
 	for i in episode.card_count():
 		cards.append({"key": "card %d" % (i + 1), "name": "", "numeral": "", "reversed": false, "jumper": false,
@@ -387,10 +438,74 @@ func table(raw: Dictionary) -> Dictionary:
 		"plan": plan, "images": images, "cards": cards}}
 	_medium._key = ""
 	_medium._ensure_doc()
+	return ""
+
+
+## A MOMENT STAGED for a burst `on` [param on], at [constant AIR_AT], the way the table stages it: where
+## its emitter is through it (`moments`, as [method TarotMedium._air_moments] gives them) and how the
+## card in it moves (`card`: `[[t, Transform3D], ...]`, empty for none).
+func _staged(on: String) -> Dictionary:
+	var m = _medium
+	var consts := (m.get_script() as Script).get_script_constant_map()
+	var t0 := AIR_AT
+	var card: Array = []
+	var moments: Array = []
+	match on:
+		"shuffle":
+			m._cur_base = m._mid
+			moments.append({"t": t0, "dur": 0.5, "from": "point",
+				"path": [[t0, Transform3D(Basis.IDENTITY, (m._mid as Vector3) + Vector3(0.0, 0.03, 0.0))]]})
+		"jumper":
+			# a card springing off the deck in the middle and flying to land, as a jumper does
+			m._cur_base = m._mid
+			var fly: Vector2 = consts.get("JUMP_FLY", Vector2(1.15, 2.25))
+			var path: Array = []
+			for i in 9:
+				var u := lerpf(fly.x, fly.y, float(i) / 8.0)
+				path.append([t0 + (u - fly.x), m._jump_xf(0, u, Transform3D.IDENTITY)])
+			card = path
+			moments.append({"t": t0, "dur": fly.y - fly.x, "from": "card", "path": path})
+		"reveal":
+			var xf: Transform3D = m._present_xf(0, t0)
+			card = [[t0, xf]]
+			moments.append({"t": t0, "dur": 0.3, "from": "card", "path": card})
+		"pirouette":
+			# a card held up and twirled round three times, winding down as a hand's flourish does
+			var held: Transform3D = m._present_xf(0, t0)
+			var up: Vector3 = (m._cam_base as Transform3D).basis.y
+			var path: Array = []
+			for i in 17:
+				var u := float(i) / 16.0
+				var turn := PI + 5.0 * PI * (1.0 - pow(1.0 - u, 2.2))
+				path.append([t0 + u * 1.8, Transform3D(Basis(up, turn) * held.basis, held.origin)])
+			card = path
+			moments.append({"t": t0, "dur": 1.8, "from": "card", "path": path})
+		"lay":
+			card = [[t0, m._slot_xf(0)]]
+			moments.append({"t": t0, "dur": 0.2, "from": "card", "path": card})
+		"close":
+			for k in (m._cards as Array).size():
+				moments.append({"t": t0, "dur": 0.8, "from": "card", "path": [[t0, m._slot_xf(k)]]})
+	return {"moments": moments, "card": card}
+
+
+## The table as it is at [param t] in a staged moment ([method _staged]): the spread laid and the deck
+## at its side - or, for a shuffle or a jumper, the deck in the middle - and the moment's card where
+## the moment has it.
+func _pose_moment(on: String, moment: Dictionary, t: float) -> void:
+	var m = _medium
 	_pose_spread()
-	var out := _placed(TarotTable.sanitize_table(raw, TarotTable.sanitize_look(plan.get("look", {}) if plan.get("look") is Dictionary else {})))
-	out["image"] = await _render(_table, TABLE_FRAMES)
-	return out
+	if on == "shuffle" or on == "jumper":
+		m._cur_base = m._mid
+		for i in (m._deck as Array).size():
+			(m._deck[i] as MeshInstance3D).transform = m._rest_xf(i)
+		for k in (m._cards as Array).size():
+			(m._cards[k] as MeshInstance3D).visible = false
+	var card: Array = moment.get("card", [])
+	if not card.is_empty() and (m._cards as Array).size() > 0:
+		var c: MeshInstance3D = m._cards[0]
+		c.visible = true
+		c.transform = Effects._along(card, t)
 
 
 ## The episode's pictures beside the description, copied again when the episode's change (the room

@@ -163,14 +163,14 @@ static func hint(key: String) -> String:
 	if bool(s.get("ready", false)):
 		return ""
 	if bool(s.get("running", false)):
-		return "ghost is installing %s - %s." % [name, describe(key, s)]
+		return "Ghost Notes is installing %s - %s." % [name, describe(key, s)]
 	var err := String(s.get("error", ""))
 	if not err.is_empty():
 		return "%s could not be installed (%s). Retry it from the Environment panel on the home screen." \
 			% [name, err]
 	if can_install():
-		return "ghost is about to install %s by itself." % name
-	return "ghost installs %s by itself when it is launched normally (or run it with --provision)." % name
+		return "Ghost Notes is about to install %s by itself." % name
+	return "Ghost Notes installs %s by itself when it is launched normally (or run it with --provision)." % name
 
 
 static func mb(n: int) -> String:
@@ -199,7 +199,7 @@ static func unsupported(key: String) -> String:
 	if why.has(plat):
 		return String(why[plat])
 	if not PLATFORMS.has(plat):
-		return "ghost has no builds for %s" % plat
+		return "Ghost Notes has no builds for %s" % plat
 	if kind == Deps.KIND_FETCHED and source(row).is_empty():
 		return "there is no build for %s" % plat
 	return ""

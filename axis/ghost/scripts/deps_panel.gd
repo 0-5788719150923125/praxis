@@ -27,7 +27,7 @@ const COL_IDLE := Color(0.40, 0.46, 0.56)
 const COL_TEXT := Color(0.70, 0.78, 0.90)
 const COL_DIM := Color(0.50, 0.57, 0.68)
 
-const GROUPS := ["kept current by ghost", "built the first time a feature needs it",
+const GROUPS := ["kept current by Ghost Notes", "built the first time a feature needs it",
 	"from this machine"]
 
 ## A probe has landed: [Deps]' answers are fresh. The splash grays out its agent modes off them,
@@ -125,7 +125,7 @@ func _build_ui() -> void:
 	toggle.focus_mode = Control.FOCUS_NONE
 	toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	toggle.tooltip_text = "What ghost runs on, and what it is installing. Click to collapse."
+	toggle.tooltip_text = "What Ghost Notes runs on, and what it is installing. Click to collapse."
 	toggle.pressed.connect(_toggle_collapsed)
 	head.add_child(toggle)
 
@@ -157,7 +157,7 @@ func _build_ui() -> void:
 	# SAY THE ROWS CAN BE CLICKED. The detail pane is where a failure's reason and an install
 	# command live, and nothing about a flat row says it opens one.
 	var hint := Label.new()
-	hint.text = "ghost installs and updates these itself. Click one for what it does."
+	hint.text = "Ghost Notes installs and updates these itself. Click one for what it does."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(336, 0)
 	hint.add_theme_font_size_override("font_size", 10)
@@ -634,7 +634,7 @@ func _fill_detail(key: String) -> void:
 				lines.append("install:  " + hint)
 	elif bool(r.get("found", false)):
 		if group == 0 and not bool(r.get("own", true)):
-			lines.append("Using this machine's copy (%s) until ghost's own has downloaded." % path)
+			lines.append("Using this machine's copy (%s) until Ghost Notes' own has downloaded." % path)
 		else:
 			lines.append("at: " + path)
 	elif why.is_empty() and not bool(s.get("running", false)):

@@ -58,7 +58,7 @@ const FETCHED := [
 		"size": "~70 MB (~115 MB on Windows)",
 		"used_for": "Masking (clip prep, waveforms, thumbnails), video export and transcode, film "
 			+ "panels, and decoding the audio formats the engine has no loader for (FLAC, and MP3 "
-			+ "in some builds). ghost downloads the newest release itself: Martin Riedl's static "
+			+ "in some builds). Ghost Notes downloads the newest release itself: Martin Riedl's static "
 			+ "builds on Linux and macOS, Gyan Doshi's on Windows, BtbN's on Windows on ARM.",
 		"sources": {
 			"linux-x86_64": {"via": "riedl", "os": "linux", "arch": "amd64"},
@@ -80,7 +80,7 @@ const FETCHED := [
 		"version_args": ["--version"],
 		"tier": TIER_FEATURE,
 		"size": "~20 MB",
-		"used_for": "Builds ghost's Python environments: installs Python itself, then each "
+		"used_for": "Builds Ghost Notes' Python environments: installs Python itself, then each "
 			+ "feature's packages, from its own cache. The newest release, from PyPI.",
 		"sources": {"*": {"via": "pypi", "package": "uv"}},
 		"site": "https://docs.astral.sh/uv/",
@@ -100,7 +100,7 @@ const MANAGED := [
 		"tier": TIER_FEATURE,
 		"size": "~35 MB",
 		"used_for": "The interpreter every environment below runs on: CPython's newest patch of "
-			+ "the version ghost targets, installed by uv into ghost's own directory - never onto "
+			+ "the version Ghost Notes targets, installed by uv into its own directory - never onto "
 			+ "PATH or into the system.",
 	},
 	{
@@ -189,8 +189,8 @@ const TOOLS := [
 		"version_args": ["--version"],
 		"tier": TIER_EXTRA,
 		"platforms": ["linux"],
-		"used_for": "Binds every background program (ffmpeg, the voice host, a render) to ghost at "
-			+ "the kernel level, so they die with it even when ghost is killed outright. Without it "
+		"used_for": "Binds every background program (ffmpeg, the voice host, a render) to Ghost Notes "
+			+ "at the kernel level, so they die with it even when it is killed outright. Without it "
 			+ "they are only cleaned up on a clean quit - see subprocess.gd. Part of util-linux, "
 			+ "which every distribution installs.",
 		"install": {
@@ -517,7 +517,7 @@ static func format_report(rows: Array = []) -> String:
 	if rows.is_empty():
 		rows = report()
 	var lines: PackedStringArray = []
-	lines.append("ghost - environment report")
+	lines.append("Ghost Notes - environment report")
 	lines.append(describe_host())
 	var group := -1
 	for r in rows:
@@ -525,8 +525,8 @@ static func format_report(rows: Array = []) -> String:
 		if g != group:
 			group = g
 			lines.append("")
-			lines.append(["ghost's own, downloaded and kept current:",
-				"ghost's own, built the first time a feature needs it:",
+			lines.append(["Ghost Notes' own, downloaded and kept current:",
+				"Ghost Notes' own, built the first time a feature needs it:",
 				"From this machine:"][g])
 		var glyph := "[ok]" if bool(r.get("found", false)) else \
 			("[!!]" if int(r.get("tier", TIER_EXTRA)) == TIER_FEATURE and g != 1 else "[--]")
@@ -553,7 +553,7 @@ static func format_report(rows: Array = []) -> String:
 				else "optional"])
 			lines.append("    " + String(r.get("used_for", "")))
 			if _group_of(r) == 0:
-				lines.append("    ghost downloads this itself at an ordinary launch, or now with: "
+				lines.append("    Ghost Notes downloads this itself at an ordinary launch, or now with: "
 					+ "godot --headless --path axis/ghost -- --provision")
 				continue
 			var hint := install_hint(r)
@@ -682,7 +682,7 @@ static func _probe_fetched(t: Dictionary) -> Dictionary:
 		r["found"] = true
 		r["path"] = local
 		r["version"] = _version_of(local, t.get("version_args", ["--version"]))
-		r["note"] = "this machine's copy until ghost's own downloads"
+		r["note"] = "this machine's copy until Ghost Notes' own downloads"
 	else:
 		r["note"] = why if not why.is_empty() else "downloads at launch"
 	return r

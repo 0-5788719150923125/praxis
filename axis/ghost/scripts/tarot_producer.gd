@@ -353,8 +353,10 @@ func _make_image(step: String) -> void:
 ## One that cannot is asked for the table in one reply, as before.
 func _make_table() -> void:
 	var seen: Array = []
+	var airs: Array = []
 	for e in TarotEpisode.archive(episode.show, episode.seed):
 		seen.append_array((e as Dictionary)["things"])
+		airs.append_array((e as Dictionary).get("air", []))
 	var cloth := episode.has("image:surface")
 	_close_tools("table")
 	# a table an earlier run handed in is not this run's answer, whoever writes this one
@@ -370,7 +372,7 @@ func _make_table() -> void:
 			toolset.release()
 	var p := TarotPrompts.set_dresser(String(spec.get("title", "")), String(spec.get("brief", "")), _plan(),
 		episode.seed, TarotTable.headroom(episode.seed), seen.slice(0, 40), cloth,
-		SetDresserTools.LOOKS if not extra.is_empty() else 0)
+		SetDresserTools.LOOKS if not extra.is_empty() else 0, airs.slice(0, 24))
 	if cloth:
 		p["images"] = [{"path": episode.file_of("image:surface"), "label": "The cloth, seen from above:", "flip": false}]
 	_submit_text("table", p, "best", extra)

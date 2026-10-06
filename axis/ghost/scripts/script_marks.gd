@@ -120,7 +120,7 @@ const REGISTRY := {
 	"macro": {
 		"label": "Template macro",
 		"group": "text",
-		"blurb": "A placeholder for a fact only the book's build knows. ghost reads the default after the colon, never the macro itself; one with no default is skipped and named in the panel.",
+		"blurb": "A placeholder for a fact only the book's build knows. Ghost Notes reads the default after the colon, never the macro itself; one with no default is skipped and named in the panel.",
 		"before": "${", "fill": "CHAPTERS_BEFORE:twenty-one", "after": "}", "line": "",
 		"modes": ["generative", "synthesis"],
 		"pattern": "\\$\\{[A-Za-z_][A-Za-z0-9_.]*(?::(?:[^{}]|\\{[^{}]*\\})*)?\\}",

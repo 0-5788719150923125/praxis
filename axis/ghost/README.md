@@ -1,4 +1,4 @@
-# ghost
+# Ghost Notes: A Spectral Experience
 
 A spectral audio visualizer built with [Godot](https://godotengine.org/) 4.6 - _spectral_ both ways: it draws from the audio **spectrum**, and the things it conjures (drifting fog, falling snow, fireflies, auroras) haunt the frame like apparitions. Point it at a song and it draws geometry in response to the sound - rings, planes, harmonics, lattices, weather, whatever - then loops through scenes like a video you can record full-screen.
 
@@ -10,15 +10,15 @@ Standalone: it does not import or depend on Praxis.
 
 ## Six instruments
 
-The splash lists all six, always. A mode button _is_ start. A mode that needs AI agents ghost cannot install for you (Tarot needs a writer and a painter) is grayed out until one of each is installed, and hovering it lists the supported ones. The Assistant dropdown follows the same rule: a CLI that is not installed cannot be chosen, and with none installed the feature is off.
+The splash lists all six, always. A mode button _is_ start. A mode that needs AI agents Ghost Notes cannot install for you (Tarot needs a writer and a painter) is grayed out until one of each is installed, and hovering it lists the supported ones. The Assistant dropdown follows the same rule: a CLI that is not installed cannot be chosen, and with none installed the feature is off.
 
 | Mode | Consumes | What it does |
 | --- | --- | --- |
 | **Auto** | a song | The seeded show. The Director picks scenes by novelty and cuts on the music. |
 | **Manual** | a song + a storyboard | Your authored sequence, described as data (`storyboards/*.yaml`), endless and re-converging. |
-| **Synthesis** | a written script | ghost speaks it in a synthesized voice, and the show reacts to the narration. |
+| **Synthesis** | a written script | Ghost Notes speaks it in a synthesized voice, and the show reacts to the narration. |
 | **Generative** | a written script (a Markdown chapter) | The same in a small local neural voice, with speakers, hesitations and pictures, in any medium - a comic, a novel, a notebook, a tablet. |
-| **Tarot** | a show's brief (a Markdown document), an AI writer and an AI painter | An automatic tarot reading: each episode is planned, painted and written by agents one card at a time - the reader never sees a card before it is drawn - and read in the Generative voice at a table. See [next/tarot.md](../../next/tarot.md). |
+| **Tarot** | a show's brief (a Markdown document), an AI writer and an AI painter | An automatic tarot reading: each episode is planned, painted and written by agents one card at a time - the reader never sees a card before it is drawn - and read in the Generative voice at a table. See [next/tarot.md](next/tarot.md). |
 | **Masking** | a video clip, a file path, or a YouTube URL | A chroma-key effects editor over footage: 18 effects, markers on a timeline, render to video. |
 
 ### Media: what carries the show
@@ -46,7 +46,7 @@ The comic is not a second renderer - it is the same Director cutting the same sc
 
 **A cut picks a MOVE, and the camera travels it.** Not a target it eases toward - that is a spring settling, and it gives one behavior: bounce to the next panel, sit on it, bounce again. A move is a path (a start, an end, a duration, a curve) and most of them never settle: `drift` between two panels, `track` straight through the subject and out the far side, `sweep_h` / `sweep_v` clean across the sheet, `push` deep into one panel, `pull` back out of one, `orbit` around a fixed point. The rest are events rather than the rule - `swoop` in low off the _far side_ of the page, `whip`, a jump `cut`, a `dip` through black, and `hold`, which is the only one that just looks at a panel. The eye's offset is held in page-local spherical coordinates (an azimuth around the aim, an elevation off the paper), so traveling between panels slides the camera **parallel to the paper** rather than swinging it around.
 
-**The page is really in 3D**, and really turned: a quad under a `Lens3D` raked on X, Y and Z at once and drifting continuously, not a sheared 2D plane faking depth. An eye on the page's normal would see a flat rectangle however the sheet is rotated, so the rake comes from the elevation being off the paper, never square-on. How hard it rakes depends on what is in the panel: ghost already types every scene `subject` or `field`, and a field is raked gently for the same reason `Shots` already gives it the gentle moves - a hard angle on a recognizable object reads as foreshortening, and on a texture that fills the frame it just reads as a broken picture. Panels are drawn as subdivided grids of textured triangles with every vertex projected individually, because a two-triangle quad textures affinely and warps (28.5 px of error on a 512 px frame at a hard yaw, measured).
+**The page is really in 3D**, and really turned: a quad under a `Lens3D` raked on X, Y and Z at once and drifting continuously, not a sheared 2D plane faking depth. An eye on the page's normal would see a flat rectangle however the sheet is rotated, so the rake comes from the elevation being off the paper, never square-on. How hard it rakes depends on what is in the panel: Ghost Notes already types every scene `subject` or `field`, and a field is raked gently for the same reason `Shots` already gives it the gentle moves - a hard angle on a recognizable object reads as foreshortening, and on a texture that fills the frame it just reads as a broken picture. Panels are drawn as subdivided grids of textured triangles with every vertex projected individually, because a two-triangle quad textures affinely and warps (28.5 px of error on a 512 px frame at a hard yaw, measured).
 
 **Liveness follows the camera, not the clock.** Six live scenes is not a thing that runs - the stage governor spends its whole budget on one - so panels in shot are live and panels out of shot are stopped render targets holding their last frame (which survives both the stop and their scene being freed, bit-exact: `tests/medium_probe.gd`). At the reading distance that is one to three panels, and the ones off the focus repaint every other frame at a matching multiple of the step, so they run at the right speed with half the samples. Measured: three live panels cost 1.8x one (73 ms of active frame against 41), and the governor absorbs the rest. Capturing panels with `get_image()` instead would be the synchronous readback stall that once cost Masking its frame rate.
 
@@ -64,7 +64,7 @@ The show is **spectrally deterministic**: the session seed derives from the audi
 
 ## The idea: cattle, not pets
 
-Most 3D work treats each object as a **pet**: you hand-model _this_ eye, _this_ rock - name it, tune it, love it. It doesn't scale and it never surprises you. ghost is built the other way - **cattle**: an object is a _recipe_ of layered primitives whose parameters are **sampled from adjustable ranges**, so every instance is a fresh, naturally-occurring variation.
+Most 3D work treats each object as a **pet**: you hand-model _this_ eye, _this_ rock - name it, tune it, love it. It doesn't scale and it never surprises you. Ghost Notes is built the other way - **cattle**: an object is a _recipe_ of layered primitives whose parameters are **sampled from adjustable ranges**, so every instance is a fresh, naturally-occurring variation.
 
 The discipline, taken to its limit: **every tunable constant is a candidate for sampling.** Wherever a number could be perturbed and the geometry, animation, or shading would still read right, it should be drawn from an intelligent range (per instance, around a sensible center) rather than baked as one value.
 
@@ -80,7 +80,7 @@ A manual session is **endless**: the audio loops in place and the show stays up,
 
 ## Synthesis: a voice, and a game to find it
 
-Write or paste a script, and ghost narrates it - **no generative AI and no recordings**. `Voice` is Klatt-lineage source-filter synthesis, all in-house: a glottal source (Rosenberg pulse plus aspiration noise) through a cascade of formant resonators whose targets come from `Phonemes`, EMA-smoothed across segments so coarticulation falls out, with Fujisaki-style prosody (declination, accent bumps on stressed syllables). Pronunciation is co-owned: the letter-to-sound rules are deliberately 1980s technology and will miss rare words, so any word can be written phonetically inline as `[K AE T]`.
+Write or paste a script, and Ghost Notes narrates it - **no generative AI and no recordings**. `Voice` is Klatt-lineage source-filter synthesis, all in-house: a glottal source (Rosenberg pulse plus aspiration noise) through a cascade of formant resonators whose targets come from `Phonemes`, EMA-smoothed across segments so coarticulation falls out, with Fujisaki-style prosody (declination, accent bumps on stressed syllables). Pronunciation is co-owned: the letter-to-sound rules are deliberately 1980s technology and will miss rare words, so any word can be written phonetically inline as `[K AE T]`.
 
 - **`VoiceStream`** synthesizes on a worker thread and pushes PCM ahead of the playhead, so a heavy scene dropping frames cannot break the speech. It is a live instrument: `retune` swaps the voice mid-sentence (timbre bends _while_ it speaks) and `restart` replaces the content in place.
 - **`Subtitles`** are karaoke, session-owned: the cursor is a narrator's eye rather than a metronome - it ramps when the words run ahead, drifts when close, and rests at pauses. Timing comes from a sidecar JSON written next to each take, so the same overlay works in a live session, a plain `--audio` boot, and the export render.
@@ -91,7 +91,7 @@ Design and falsifiable rungs: [next/voice.md](next/voice.md).
 
 ## Masking: the video effects editor
 
-A second app surface alongside the visualizer (`--mask-edit <video-or-session>`), for keying effects over footage. The source can be a file or a **YouTube URL** - paste one into the splash's source field and the editor downloads it itself (yt-dlp, in the environment ghost builds for it the first time a URL is pasted), then transcodes it like any local clip.
+A second app surface alongside the visualizer (`--mask-edit <video-or-session>`), for keying effects over footage. The source can be a file or a **YouTube URL** - paste one into the splash's source field and the editor downloads it itself (yt-dlp, in the environment Ghost Notes builds for it the first time a URL is pasted), then transcodes it like any local clip.
 
 A session is a stack of **markers** over a source video. A marker is not a free-form dictionary but a fixed-schema scalar **vector**, so a session's marker list is literally a small matrix - the same shape as the harmonic-signature vectors elsewhere in this project, inspectable the same way. **Every marker is one layer**, and layers stack chronologically with their own ramp/damp envelopes: keying a second color adds to the first instead of silently rewriting it, and the subtractive half is explicit (`restore` for one color, `clear` for all). Sessions autosave under `masks/`, carry undo/redo and multi-track lanes with per-track trim and shift, and render to video headlessly.
 
@@ -284,18 +284,18 @@ godot --path axis/ghost                            # the splash: import a song, 
 godot --path axis/ghost -- --audio ~/track.wav     # skip the splash, boot straight in
 godot --path axis/ghost -- --storyboard default    # manual mode: storyboards/default.yaml
 godot --path axis/ghost -- --scene planes          # pin one scene for authoring
-godot --path axis/ghost -- --synth script.txt      # synthesis: write/paste a script, ghost speaks it
+godot --path axis/ghost -- --synth script.txt      # synthesis: write/paste a script, Ghost Notes speaks it
 godot --path axis/ghost -- --mask-edit clip.mp4    # masking: the video effects editor
 godot --path axis/ghost -- --no-splash             # auto mode, bundled/no audio
 ```
 
-Any of `--audio` / `--scene` / `--storyboard` / `--synth` / `--mask-edit` / `--no-splash` boots straight past the splash. `--audio` accepts `.wav`, `.mp3`, `.ogg`, and `.flac` (FLAC has no runtime loader in Godot, so it is transcoded via FFmpeg, which ghost installs itself). Every flag, including the internal ones the exporter and bake runner pass between processes: [docs/cli.md](docs/cli.md).
+Any of `--audio` / `--scene` / `--storyboard` / `--synth` / `--mask-edit` / `--no-splash` boots straight past the splash. `--audio` accepts `.wav`, `.mp3`, `.ogg`, and `.flac` (FLAC has no runtime loader in Godot, so it is transcoded via FFmpeg, which Ghost Notes installs itself). Every flag, including the internal ones the exporter and bake runner pass between processes: [docs/cli.md](docs/cli.md).
 
 Controls: `Space` next scene · `F11` full-screen · `` ` `` feedback · `>_` log console · `Esc` quit.
 
 ### What it needs installed
 
-Godot 4.7, and nothing else. Everything ghost runs beyond the engine, it installs and
+Godot 4.7, and nothing else. Everything Ghost Notes runs beyond the engine, it installs and
 keeps current itself, under its own data directory - never system-wide and never into
 your own environments:
 
@@ -308,12 +308,12 @@ your own environments:
   URL clip import (yt-dlp, with Deno for YouTube's download challenges), and the tablet's
   page capture (Playwright and its Chromium).
 
-uv, FFmpeg and Python download in the background the first time ghost opens; a
+uv, FFmpeg and Python download in the background the first time Ghost Notes opens; a
 feature's environment is built the first time you use that feature. While anything is
 downloading or installing, a notice at the top of the screen says what and how far
 along, and the home screen's Environment panel (bottom-right) lists every piece with
 its version - click a row for what it is for, where it lives, and why it failed if it
-did. With **keep up to date** ticked there, ghost checks for newer releases once a day
+did. With **keep up to date** ticked there, Ghost Notes checks for newer releases once a day
 at launch. The same report, and an install from a terminal:
 
 ```
@@ -333,8 +333,8 @@ Bedrock hosts) and a painter (Stability AI's models; Amazon retired its own), wi
 credentials and region, billed per token or per picture to your account.
 
 Linux, macOS and Windows are all meant to work, and nothing requires a Unix shell:
-background programs are launched directly, and where output has to be redirected, ghost
-does it itself (PowerShell on Windows for the AI-assistant features). ghost is developed
+background programs are launched directly, and where output has to be redirected, Ghost Notes
+does it itself (PowerShell on Windows for the AI-assistant features). Ghost Notes is developed
 on Linux, though, so Windows and macOS are the least exercised - if something fails
 there, the Environment panel is the first place to look. On an Intel Mac the voice and
 the trackers are unavailable (their libraries publish no build for it), and on Windows
@@ -389,7 +389,7 @@ Set `render_kind` in `build_params` so the scene is typed (`canvas` is the defau
 
 ## Toward a complete package: modeling the physical sciences
 
-The long arc is simple to state and enormous to fill: **ghost should be able to model anything physical.** Every scene is a recipe of sampled primitives; the goal is to keep growing the primitive kit until the catalog spans the natural world, so that pointing it at a song can summon _any_ phenomenon, alone or in combination. Most rows below reuse primitives that already exist (`Mesh3D`, `Swarm`, `Filament`, `Flow2D`, `Lighting`, `Lens3D`, the force registry); the work is composing them and lifting their numbers into sampled ranges.
+The long arc is simple to state and enormous to fill: **Ghost Notes should be able to model anything physical.** Every scene is a recipe of sampled primitives; the goal is to keep growing the primitive kit until the catalog spans the natural world, so that pointing it at a song can summon _any_ phenomenon, alone or in combination. Most rows below reuse primitives that already exist (`Mesh3D`, `Swarm`, `Filament`, `Flow2D`, `Lighting`, `Lens3D`, the force registry); the work is composing them and lifting their numbers into sampled ranges.
 
 - **Weather & atmosphere** - snow, rain, fog, fireflies, stars, aurora, petals, bubbles, dust, clouds (shipped as `Layer` components and scenes), with precipitation DENSITY now driven by the music rather than fixed at build; still open: wind streaks, hail, heat shimmer, a lightning storm.
 - **Light & shadow** - a positioned, moving light casting real shadows; day/night sweeps; god rays through fog; caustics; refraction through the glass and prism. Beyond `Lighting`'s 2D hotspots toward true occlusion.
@@ -440,8 +440,8 @@ Filling any one row is a scene; filling the map is the package. The unifying mec
 - **Simulation as a scene kind**: `SimClock`, the fixed-rate tick accumulator every running system advances on. Not a convenience - the Director pre-warms each scene with a dozen `update()` calls before its first frame and can sub-step fifteen times in one frame, so a system that advanced per call would be finished before it was seen.
 - **The bookend**: held silence before the first sound and after the last, on one continuous session clock, with picture and sound fading together. In Synthesis the silence is written into the take's own PCM so the ambience bed swells through the intro and the analyzer hears it; elsewhere playback is simply held.
 - **Pronunciation as data**: a `names:` block for invented words and proper nouns that outranks the neural backend, a context-sensitive homograph table, Markdown stripped before it can be spoken aloud, and `tests/pronounce_audit.gd` - which reads a script and reports every uncertain word BEFORE it is rendered, rather than after it is heard.
-- **Homographs by part of speech, with no pronunciation table**: eSpeak already knows both readings of `read` and picks between them from syntax, but ghost phonemizes word by word (it needs per-word boundaries for the karaoke line) and a word alone has no syntax. So `voice_host/homographs.py` tags the sentence and asks eSpeak the SAME question again inside a carrier phrase that forces that part of speech - "they have read them" - and takes the answer. Nothing is substituted from a dictionary, because a dictionary's readings are not this model's: translating a published homograph list through ghost's ARPAbet disagreed with eSpeak on 223 of 371 words. The tag alone is not enough either - `read` is spelled the same in every tense, so a tagger has no local evidence - so the tense comes from the clause instead: conjuncts share one ("I stood ... and read"), a complement inherits its matrix clause's, and a narrative holds one across sentences. And it keeps no word lists at all - eSpeak knows the homographs, nltk's stopword corpus knows the function words, the Penn tags name every other category, and where a category cannot be sourced the limitation is documented rather than guessed at.
-- **The vowel a checkpoint actually says, measured**: getting the phonemes right is not the end of it. `en_US-libritts-high` renders a word-initial `ɹˈiːd` with the vowel of `rid` - the reading is correct and the audio is not - and `reed` fails identically, so the defect is keyed to the symbol string and not the word. It is this same homograph bug one level down: eSpeak phonemized that model's training transcripts the way ghost does, so every past-tense "read" in the corpus was labeled `ɹˈiːd` over audio of someone saying `ɹˈɛd`, and the weights learned to hedge. `voice_host/vowel_probe.py` writes the offglide English already has there - phonetically null, and measured harmless on every word that was never broken - but only for a checkpoint that asks for it: three probe words in one frame, an /iː/ the model gets right, an /ɪ/ for the other end of the scale and the suspect between them, and the line is drawn where the suspect sits further from that reader's own /iː/ than its whole /iː/-to-/ɪ/ distance (measured: 1.46, 0.51, 0.23, 0.10, 0.02 across the five). Of those five exactly one needs the rewrite, and on one of the other four it would have done harm, which is why the answer is asked per voice and cached rather than written down. The probe renders with the model's noise terms at zero and its clock slowed, because a VITS voice is stochastic by design and that is precisely wrong for a measurement - at speaking settings the verdict flipped one cold start in ten, and with the noise off it is bit-exact.
+- **Homographs by part of speech, with no pronunciation table**: eSpeak already knows both readings of `read` and picks between them from syntax, but Ghost Notes phonemizes word by word (it needs per-word boundaries for the karaoke line) and a word alone has no syntax. So `voice_host/homographs.py` tags the sentence and asks eSpeak the SAME question again inside a carrier phrase that forces that part of speech - "they have read them" - and takes the answer. Nothing is substituted from a dictionary, because a dictionary's readings are not this model's: translating a published homograph list through Ghost Notes' ARPAbet disagreed with eSpeak on 223 of 371 words. The tag alone is not enough either - `read` is spelled the same in every tense, so a tagger has no local evidence - so the tense comes from the clause instead: conjuncts share one ("I stood ... and read"), a complement inherits its matrix clause's, and a narrative holds one across sentences. And it keeps no word lists at all - eSpeak knows the homographs, nltk's stopword corpus knows the function words, the Penn tags name every other category, and where a category cannot be sourced the limitation is documented rather than guessed at.
+- **The vowel a checkpoint actually says, measured**: getting the phonemes right is not the end of it. `en_US-libritts-high` renders a word-initial `ɹˈiːd` with the vowel of `rid` - the reading is correct and the audio is not - and `reed` fails identically, so the defect is keyed to the symbol string and not the word. It is this same homograph bug one level down: eSpeak phonemized that model's training transcripts the way Ghost Notes does, so every past-tense "read" in the corpus was labeled `ɹˈiːd` over audio of someone saying `ɹˈɛd`, and the weights learned to hedge. `voice_host/vowel_probe.py` writes the offglide English already has there - phonetically null, and measured harmless on every word that was never broken - but only for a checkpoint that asks for it: three probe words in one frame, an /iː/ the model gets right, an /ɪ/ for the other end of the scale and the suspect between them, and the line is drawn where the suspect sits further from that reader's own /iː/ than its whole /iː/-to-/ɪ/ distance (measured: 1.46, 0.51, 0.23, 0.10, 0.02 across the five). Of those five exactly one needs the rewrite, and on one of the other four it would have done harm, which is why the answer is asked per voice and cached rather than written down. The probe renders with the model's noise terms at zero and its clock slowed, because a VITS voice is stochastic by design and that is precisely wrong for a measurement - at speaking settings the verdict flipped one cold start in ten, and with the noise off it is bit-exact.
 - **The gates**: a whole-catalog smoke probe that builds, updates, renders and frees every registered scene at several seeds, plus checks for the bookend clock, the weather's dynamic range, the pad-led intro, and pronunciation.
 
 ## Status

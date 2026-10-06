@@ -250,6 +250,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "tarot_table.gd",
             "tarot_cards.gd",
             "props.gd",
+            "effects.gd",
             "set_dresser_tools.gd",
             "table_preview.gd",
         ],
@@ -1511,7 +1512,7 @@ def _render_index(
 ) -> str:
     lines = [
         AUTOGEN_HEADER,
-        "# ghost docs index",
+        "# Ghost Notes docs index",
         "",
         "Generated from the source of record (doc comments, registries, the "
         "scene roster) by [docs.py](../docs.py) - see the "

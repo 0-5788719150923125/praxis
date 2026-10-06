@@ -66,6 +66,34 @@ const ZONES := {
 	"by the deck": {"aim": Vector2.ZERO, "about": "beside the deck, near the front of the cloth on the side the reader keeps it"},
 }
 
+## WHERE THE AIR IS: the stretches of the scene an effect ([Effects]) may fill - boxes in the table's
+## space (meters: x to the reader's right, y up from the cloth, z toward the reader) - each with the
+## height fog lies on (`floor`: the cloth's), how much of it a line of sight crosses (`sight`, meters:
+## what a fog's density is judged over), where motes there fly when that is not the whole box (`motes`:
+## a bank's front thins out over the middle of the cloth, but its lights stay at the back) and what it
+## is, as the set dresser reads it. The camera looks
+## down across the cloth, so past the table's far edge it sees only the floor and the room's lower part.
+const AIR := {
+	"beyond the table": {"box": AABB(Vector3(-1.7, -0.75, -2.8), Vector3(3.4, 1.25, 2.8)), "floor": 0.0, "sight": 0.9,
+		"motes": AABB(Vector3(-1.7, -0.75, -2.8), Vector3(3.4, 1.2, 2.5)),
+		"about": "the back of the table and past its far edge: the floor and the room beyond, out of focus - where a bank of fog rolls in and lights hang in the distance; the near table stays clear"},
+	"over the cloth": {"box": AABB(Vector3(-0.6, 0.0, -0.4), Vector3(1.2, 0.26, 0.74)), "floor": 0.0, "sight": 0.35,
+		"about": "the air just over the cloth, among the things on it and the cards"},
+	"low on the cloth": {"box": AABB(Vector3(-0.62, 0.0, -0.42), Vector3(1.24, 0.1, 0.78)), "floor": 0.0, "sight": 0.08,
+		"about": "a thin layer lying on the cloth itself, round the feet of the cards and the things"},
+	"the whole room": {"box": AABB(Vector3(-2.6, -0.8, -3.0), Vector3(5.2, 2.2, 4.0)), "floor": 0.0, "sight": 3.0,
+		"about": "everywhere, the air near the camera too - for a faint haze only, or the reading cannot be seen"},
+}
+## THE MOMENTS a burst can mark, each where it happens on the table.
+const MOMENTS := {
+	"shuffle": "as the shuffling begins, at the deck in the middle of the cloth",
+	"jumper": "a card leaping out of the deck on its own during a shuffle - thrown along its flight",
+	"reveal": "each card as it comes up to the camera and faces the viewer - from its edges",
+	"pirouette": "a held card twirling round in the reader's fingers, a showman's flourish - from its edges as it spins",
+	"lay": "each card as it lands in the spread - from its edges",
+	"close": "when the last card is down and the reading closes - from every card in the spread",
+}
+
 ## A look's colors when the producer's are missing or not colors at all.
 const FALLBACK_PALETTE := ["#1d1a2b", "#c9a227", "#e8dcc0", "#7a2e3a", "#2f5d62"]
 
@@ -217,7 +245,8 @@ static func sanitize_look(look: Dictionary) -> Dictionary:
 ## THE TABLE MADE SAFE: the set dresser's reply as [Props] can build it, every thing standing in a
 ## zone the table knows ("back" when it named none), things sharing a `group` kept together, no
 ## more lit things than [constant MAX_CANDLES] and no more than [constant MAX_FLAMES] flames on one
-## - the first written keep their flames, the rest stand unlit.
+## - the first written keep their flames, the rest stand unlit - and its `effects` as [Effects] can
+## build them, in the table's [constant AIR] and at its [constant MOMENTS].
 static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 	var out := Props.sanitize(spec, look.get("palette", FALLBACK_PALETTE) if look.get("palette") is Array else FALLBACK_PALETTE)
 	var things: Array = []
@@ -242,6 +271,9 @@ static func sanitize_table(spec: Dictionary, look: Dictionary) -> Dictionary:
 			lit += 1
 		things.append(thing)
 	out["things"] = things
+	# THE AIR: fog, motes and bursts the set dresser wrote beside its things
+	out["effects"] = Effects.sanitize(spec.get("effects", []), look.get("palette", FALLBACK_PALETTE) if look.get("palette") is Array else FALLBACK_PALETTE,
+		AIR.keys(), MOMENTS.keys())
 	return out
 
 

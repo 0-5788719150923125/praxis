@@ -333,7 +333,7 @@ func _write_body(force: bool) -> bool:
 	if err.begins_with(FrontMatter_.CONFLICT):
 		_conflict = true
 		_conflict_row.visible = true
-		_note("⚠  %s was changed outside ghost while you were editing it here. Nothing is "
+		_note("⚠  %s was changed outside Ghost Notes while you were editing it here. Nothing is "
 			% _path.get_file() + "saved until you choose which to keep.")
 	else:
 		_note("⚠  " + err)
@@ -498,7 +498,7 @@ func _write_reconciled() -> String:
 		if apply.is_valid() and not same_value(merged, mine):
 			apply.call(merged as Dictionary)
 			mine = capture.call()
-			_note("%s was edited outside ghost - kept those edits." % _path.get_file())
+			_note("%s was edited outside Ghost Notes - kept those edits." % _path.get_file())
 	_seen = _snapshot()
 	_saved = _seen
 	ghost[_block] = mine
@@ -607,7 +607,7 @@ func _refresh_row() -> void:
 		_name.tooltip_text = _path
 	else:
 		_name.text = "Not synced to a file"
-		_name.tooltip_text = "This script is kept by ghost alone. Sync to… writes it into a file."
+		_name.tooltip_text = "This script is kept by Ghost Notes alone. Sync to… writes it into a file."
 
 
 func _show(body: String) -> void:

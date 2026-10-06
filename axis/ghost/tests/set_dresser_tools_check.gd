@@ -19,6 +19,9 @@ extends SceneTree
 ##   last words, says so when a run with tools handed nothing in, and closes the tools when it stops.
 ## - CLAUDE WITH TOOLS loads no settings instead of `--safe-mode` (which drops every MCP server) and is
 ##   pointed at the toolset by a config file; without tools its argv is as it was.
+## - THE AIR: effects put beside things are reported - what was built, and every kind, place, look or
+##   moment the builder does not know, a size kept within its look's range - replaced and removed by
+##   name, handed in with the table, and watched by name (with no renderer, said so).
 
 const ROOT := "user://set_dresser_check"
 
@@ -58,7 +61,7 @@ func _ok(cond: bool, what: String) -> void:
 
 func _run() -> void:
 	AgentJobs.allow_for_tool()
-	for check in [_fresh_start, _tools_listed, _put_reports, _remove_look_set, _submit, _producer, _prompts, _claude_argv]:
+	for check in [_fresh_start, _tools_listed, _put_reports, _remove_look_set, _submit, _producer, _prompts, _claude_argv, _air]:
 		var done: Variant = await (check as Callable).call()
 		_ok(done == true, "%s stopped part way (a script error - see above)" % (check as Callable).get_method())
 	print("set_dresser_tools_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails, "" if _fails == 1 else "s"])
@@ -112,10 +115,10 @@ func _tools_listed() -> bool:
 		names.append(String((d as Dictionary)["name"]))
 		shaped = shaped and String(((d as Dictionary)["inputSchema"] as Dictionary).get("type", "")) == "object" \
 			and not String((d as Dictionary).get("description", "")).is_empty()
-	_ok(names == ["put", "remove", "look", "set", "submit"], "the set dresser's tools are %s" % str(names))
+	_ok(names == ["put", "remove", "look", "set", "watch", "submit"], "the set dresser's tools are %s" % str(names))
 	_ok(shaped, "a tool has no description or no object schema")
 	var r: Dictionary = await t.call_tool("paint", {})
-	_ok(bool(r.get("error", false)) and String(r["text"]).contains("put, remove, look, set and submit"),
+	_ok(bool(r.get("error", false)) and String(r["text"]).contains("put, remove, look, set, watch and submit"),
 		"an unknown tool did not name the real ones: %s" % r)
 	t.release()
 	return true
@@ -271,6 +274,8 @@ func _prompts() -> bool:
 	var ep := _episode()
 	var head := TarotTable.headroom(ep.seed)
 	var size := TarotPrompts.table_size(ep.seed)
+	_ok(TarotPrompts.set_dresser("T", "B", ep.read_json("plan"), ep.seed, head, [], true, 0, ["sea mist (fog)"])["prompt"].contains("EARLIER EPISODES' AIR was this. Give this table its own, or none: sea mist (fog)"),
+		"the set dresser is not told what air earlier tables had")
 	for looks in [0, SetDresserTools.LOOKS]:
 		var p := TarotPrompts.set_dresser("Test Tarot", "A brief.", ep.read_json("plan"), ep.seed, head, [], true, looks)
 		var text := String(p["prompt"])
@@ -284,6 +289,11 @@ func _prompts() -> bool:
 			_ok(text.contains("\"%s\": %s; up to %d cm" % [z, String((TarotTable.ZONES[z] as Dictionary)["about"]), int(head[z])]),
 				"the set dresser %s is not told the zone %s" % [tag, z])
 		_ok(text.contains(TarotPrompts.SET_EXAMPLE), "the set dresser %s is not shown the format" % tag)
+		_ok(text.contains("THE AIR:"), "the set dresser %s is not told about the air" % tag)
+		for k in Effects.KINDS.keys() + Effects.MOTES.keys() + Effects.BURSTS.keys():
+			_ok(text.contains("- %s:" % k), "the set dresser %s is not told the effect word %s" % [tag, k])
+		for k in TarotTable.AIR.keys() + TarotTable.MOMENTS.keys():
+			_ok(text.contains("- \"%s\":" % k), "the set dresser %s is not told the place or moment %s" % [tag, k])
 		_ok(text.contains("HOW YOU WORK") == (looks > 0) and text.contains("Reply with ONLY a JSON object") == (looks == 0),
 			"the set dresser %s is told the other way of working" % tag)
 		if looks > 0:
@@ -314,3 +324,42 @@ func _claude_argv() -> bool:
 	_ok(TextGen.make("claude").takes_tools() and not TextGen.make("codex").takes_tools() and not TextGen.make("bedrock").takes_tools(),
 		"the writers that take tools are not Claude alone")
 	return true
+
+
+func _air() -> bool:
+	var ep := _episode()
+	var t := _tools(ep)
+	var r: Dictionary = await t.call_tool("put", {"effects": [
+		{"name": "sea mist", "kind": "fog", "where": "beyond the table", "density": 0.5},
+		{"name": "wisps", "kind": "motes", "look": "pixie", "where": "beyond the table", "count": 5, "size": 40},
+		{"name": "sparks", "kind": "burst", "look": "sparks", "on": "jumper"},
+		{"name": "rain", "kind": "weather"},
+		{"name": "lost", "kind": "fog", "where": "the ceiling"},
+		{"name": "odd", "kind": "burst", "look": "confetti", "on": "the end"}]})
+	var text := String(r["text"])
+	_ok(text.contains("sea mist: fog beyond the table") and text.contains("wisps: 5 pixies beyond the table") and text.contains("sparks: sparks on jumper"),
+		"effects put were not reported as built:\n%s" % text)
+	_ok(text.contains("a pixie is 1.5 to 8 mm"), "a mote's size outside its look's range was not reported:\n%s" % text)
+	_ok(text.contains("rain: NOT BUILT") and text.contains("\"weather\" is not a kind of effect"), "an unknown kind was not reported:\n%s" % text)
+	_ok(text.contains("lost: NOT BUILT") and text.contains("\"the ceiling\" is not a place in the air"), "an unknown place was not reported:\n%s" % text)
+	_ok(text.contains("\"confetti\" is not a look of burst") and text.contains("\"the end\" is not a moment"), "an unknown look or moment was not reported:\n%s" % text)
+	r = await t.call_tool("put", {"effects": [{"name": "sea mist", "kind": "fog", "where": "low on the cloth", "density": 0.2}]})
+	var fogs := 0
+	for e in t.draft()["effects"]:
+		fogs += 1 if String((e as Dictionary)["name"]) == "sea mist" else 0
+	_ok(fogs == 1 and String(r["text"]).contains("sea mist: fog low on the cloth"), "an effect put again under its name was not replaced")
+	r = await t.call_tool("remove", {"names": ["rain", "lost", "odd"]})
+	_ok((t.draft()["effects"] as Array).size() == 3, "effects were not removed by name: %s" % str(t.draft()["effects"]))
+	r = await t.call_tool("watch", {"name": "snow"})
+	_ok(bool(r.get("error", false)) and String(r["text"]).contains("In it: sea mist, wisps, sparks"), "watching an effect not there was not refused with what is: %s" % r)
+	r = await t.call_tool("watch", {"name": "sparks"})
+	_ok(not bool(r.get("error", false)) and String(r["text"]).contains("cannot be watched") and (r.get("images", []) as Array).is_empty(),
+		"watching with no renderer did not say so: %s" % r)
+	await t.call_tool("put", {"things": [_candle("a pillar", 9.0)], "materials": {"beeswax": {"kind": "wax", "color": "#e8d9a8"}}})
+	r = await t.call_tool("submit", {})
+	var handed: Variant = JSON.parse_string(FileAccess.get_file_as_string(ep.job_dir("table").path_join(SetDresserTools.SUBMITTED)))
+	_ok(handed is Dictionary and ((handed as Dictionary).get("effects", []) as Array).size() == 3, "the air was not handed in with the table")
+	_ok((TarotTable.sanitize_table(handed, TarotTable.sanitize_look({}))["effects"] as Array).size() == 3, "the air handed in does not build")
+	t.release()
+	return true
+

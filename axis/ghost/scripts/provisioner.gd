@@ -488,7 +488,7 @@ func _env_job(key: String, action: String) -> void:
 	var uv := Provision.uv()
 	var log_file := Provision.log_path(key)
 	if not Provision.uv_built(venv):
-		_step(key, "rebuilding it on ghost's own Python" if DirAccess.dir_exists_absolute(venv)
+		_step(key, "rebuilding it on Ghost Notes' own Python" if DirAccess.dir_exists_absolute(venv)
 			else "creating the environment")
 		var mk := PackedStringArray(["venv", venv, "--clear", "--python", Provision.python_exe(),
 			"--no-python-downloads"])

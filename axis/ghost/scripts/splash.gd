@@ -135,14 +135,14 @@ func _build_ui() -> void:
 	center.add_child(col)
 
 	var title := Label.new()
-	title.text = "ghost"
+	title.text = Boot.NAME
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 72)
 	title.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0))
 	col.add_child(title)
 
 	var sub := Label.new()
-	sub.text = "a spectral audio-visual instrument"
+	sub.text = Boot.TAGLINE
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.add_theme_color_override("font_color", Color(0.55, 0.62, 0.75))
 	col.add_child(sub)
@@ -188,7 +188,7 @@ func _build_ui() -> void:
 	# variants of each other. Synthesis has a genome, a belt and a fishing loop;
 	# Generative has a speaker id and three scalars. See VOICE_PLAN.md section 6.
 	_add_mode_row(col, "Synthesis  ▶",
-		"Write a script; ghost speaks it and the show reacts to the voice.",
+		"Write a script; Ghost Notes speaks it and the show reacts to the voice.",
 		"no import needed", func() -> void: _choose_synth("fishing"))
 	_add_mode_row(col, "Generative  ▶",
 		"The same, in a small local neural voice - clearer, at the cost of "

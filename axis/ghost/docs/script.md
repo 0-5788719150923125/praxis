@@ -47,7 +47,7 @@ Registry: `ScriptMarks.REGISTRY` in [scripts/script_marks.gd](../scripts/script_
 
 | Mark | Example | Panels | What it does |
 |---|---|---|---|
-| Template macro | `${CHAPTERS_BEFORE:twenty-one}` | Generative, Synthesis | A placeholder for a fact only the book's build knows. ghost reads the default after the colon, never the macro itself; one with no default is skipped and named in the panel. |
+| Template macro | `${CHAPTERS_BEFORE:twenty-one}` | Generative, Synthesis | A placeholder for a fact only the book's build knows. Ghost Notes reads the default after the colon, never the macro itself; one with no default is skipped and named in the panel. |
 
 ## Typography
 
