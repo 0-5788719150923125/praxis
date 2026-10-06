@@ -56,6 +56,7 @@ def _reporter(name: str):
 
     return hook
 
+
 HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 # VITS hop length: one duration-predictor frame is this many samples.
@@ -247,7 +248,9 @@ def _rest_floor(mark: str, params: dict) -> float:
     if m in SENTENCE_END or PAUSE_AFTER.get(m, 0.0) <= 0.0:
         return 0.0
     dwell = _dwell_for(m)
-    return max(0.0, min(dwell, (dwell + _top_up(m, params)) * _pause_multiplier(params)))
+    return max(
+        0.0, min(dwell, (dwell + _top_up(m, params)) * _pause_multiplier(params))
+    )
 
 
 # The graph input `_ensure_patched` adds: per-id frames the duration plan may not fall below.
@@ -263,7 +266,9 @@ SPLICE_ATTACK_MS = 12.0  # ramp back into one
 SPLICE_QUIET = 0.02  # share of the utterance's peak under which an edge is silence
 SPLICE_LOUD = 0.16  # share at which the ramps reach their full length
 SPLICE_REACH_MS = 70.0  # how far past a mark the cut may look when no plan bounds it
-SPLICE_REST_REACH = 2.0  # s each way a mark's rest is measured in: words bound it, not this
+SPLICE_REST_REACH = (
+    2.0  # s each way a mark's rest is measured in: words bound it, not this
+)
 
 # Symbols that are punctuation rather than a word's sound, as `_symbols` emits them.
 _MARK_SYMBOLS = frozenset(PAUSE_AFTER)
@@ -966,7 +971,9 @@ def _edge_level(audio, at: int, before: bool, sr: int) -> float:
 
     n = max(1, int(round(0.005 * sr)))
     seg = audio[max(0, at - n) : at] if before else audio[at : at + n]
-    return float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) if seg.size else 0.0
+    return (
+        float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) if seg.size else 0.0
+    )
 
 
 def _edge_ramp(level: float, peak: float, longest_ms: float, sr: int) -> int:
@@ -1116,7 +1123,9 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
             at = min(at, limit)
         inserted.append((at, pad / float(sr)))
         prev = cut
-        n_in = _edge_ramp(_edge_level(audio, cut, False, sr), peak, SPLICE_ATTACK_MS, sr)
+        n_in = _edge_ramp(
+            _edge_level(audio, cut, False, sr), peak, SPLICE_ATTACK_MS, sr
+        )
     if not inserted:
         return audio, []
     tail = np.array(audio[prev:], dtype=audio.dtype, copy=True)
@@ -1253,7 +1262,9 @@ def _silent_span(audio, at: int, thresh: float, sr: int, reach: float = 0.5) -> 
     return lo + start, lo + end
 
 
-def _silence_around(audio, at: int, thresh: float, sr: int, reach: float = 0.5) -> float:
+def _silence_around(
+    audio, at: int, thresh: float, sr: int, reach: float = 0.5
+) -> float:
     """Seconds of contiguous near-silence containing `at` - what the model rests here."""
     lo, hi = _silent_span(audio, at, thresh, sr, reach)
     return float(hi - lo) / sr
@@ -1560,7 +1571,11 @@ class PiperBackend(Backend):
                 urllib.request.urlretrieve(url, tmp, hook)
             except Exception as exc:  # noqa: BLE001
                 tmp.unlink(missing_ok=True)
-                report(f"voice {voice}", finished=True, error=f"could not fetch {url}: {exc}")
+                report(
+                    f"voice {voice}",
+                    finished=True,
+                    error=f"could not fetch {url}: {exc}",
+                )
                 raise BackendError(f"could not fetch {url}: {exc}") from exc
             tmp.replace(dest)  # atomic: a reader sees whole file or none
         report(f"voice {voice}", finished=True)
@@ -1643,7 +1658,9 @@ class PiperBackend(Backend):
             print(
                 f"ghost/voice: {onnx.name} is unpatched and the `onnx` package is "
                 "missing - "
-                + ("subtitles unavailable" if not aligned else "no rest floor at marks"),
+                + (
+                    "subtitles unavailable" if not aligned else "no rest floor at marks"
+                ),
                 file=sys.stderr,
             )
             return
@@ -1672,7 +1689,10 @@ class PiperBackend(Backend):
             graph.node.insert(
                 at[0] + 1,
                 helper.make_node(
-                    "Max", [planned, REST_FLOOR_INPUT], [tensor], name="ghost_rest_floor"
+                    "Max",
+                    [planned, REST_FLOOR_INPUT],
+                    [tensor],
+                    name="ghost_rest_floor",
                 ),
             )
             graph.initializer.append(
@@ -1684,7 +1704,9 @@ class PiperBackend(Backend):
                 )
             )
         data = model.SerializeToString()
-        ort.InferenceSession(data, sess_options=opts, providers=["CPUExecutionProvider"])
+        ort.InferenceSession(
+            data, sess_options=opts, providers=["CPUExecutionProvider"]
+        )
         tmp = onnx.with_suffix(onnx.suffix + ".part")
         tmp.write_bytes(data)
         tmp.replace(onnx)  # atomic: a reader sees whole graph or old graph
@@ -2427,7 +2449,8 @@ class PiperBackend(Backend):
         # and vowel_probe.py for what it is measuring.
         symbols = self._symbols(group, phonemizer, espeak_voice, voice)
         floors = {
-            ti: _rest_floor(str(t.get("punct", "")), params) for ti, t in enumerate(group)
+            ti: _rest_floor(str(t.get("punct", "")), params)
+            for ti, t in enumerate(group)
         }
         return self._render_symbols(symbols, cfg, sess, params, floors)
 

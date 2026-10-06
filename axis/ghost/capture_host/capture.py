@@ -73,7 +73,11 @@ POPUP = (
 def _click_first(page, pattern) -> bool:
     for frame in page.frames:
         try:
-            scope = frame.locator(POPUP) if frame == page.main_frame else frame.locator("body")
+            scope = (
+                frame.locator(POPUP)
+                if frame == page.main_frame
+                else frame.locator("body")
+            )
             for role in ("button", "link"):
                 loc = scope.get_by_role(role, name=pattern)
                 for i in range(min(loc.count(), 6)):

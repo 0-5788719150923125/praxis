@@ -263,7 +263,13 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "the tools ghost serves an agent while it works (AgentTools), "
         "which Amazon Bedrock models an AWS account can call (BedrockCatalog), "
         "and where a reading's voice is in its document (ReadingFollower).",
-        ["text_gen.gd", "agent_jobs.gd", "agent_tools.gd", "bedrock_catalog.gd", "reading_follower.gd"],
+        [
+            "text_gen.gd",
+            "agent_jobs.gd",
+            "agent_tools.gd",
+            "bedrock_catalog.gd",
+            "reading_follower.gd",
+        ],
     ),
     (
         "Storyboards & stage",
@@ -1129,7 +1135,9 @@ def _const_block(text: str, name: str) -> str:
 
 def _gd_string(lit: str) -> str:
     """A GDScript string literal's value (the escapes the registries use)."""
-    return lit.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
+    return (
+        lit.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
+    )
 
 
 def _render_script_doc(marks: Script) -> str:
@@ -1175,8 +1183,14 @@ def _render_script_doc(marks: Script) -> str:
         mine = [(k, f) for k, f in rows if f["group"] == gkey]
         if not mine:
             continue
-        lines.extend([f"## {glabel}", "", "| Mark | Example | Panels | What it does |",
-                      "|---|---|---|---|"])
+        lines.extend(
+            [
+                f"## {glabel}",
+                "",
+                "| Mark | Example | Panels | What it does |",
+                "|---|---|---|---|",
+            ]
+        )
         for k, f in mine:
             ex = (f["before"] + f["fill"] + f["after"]).strip().replace("|", "\\|")
             panels = ", ".join(m.capitalize() for m in f["modes"])

@@ -102,8 +102,9 @@ def register(cls: type[Backend]) -> type[Backend]:
 progress = None
 
 
-def report(name: str, done: int = 0, total: int = 0, finished: bool = False,
-           error: str = "") -> None:
+def report(
+    name: str, done: int = 0, total: int = 0, finished: bool = False, error: str = ""
+) -> None:
     if progress is not None:
         progress(name, done, total, finished, error)
 

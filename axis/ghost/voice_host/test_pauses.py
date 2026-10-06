@@ -453,13 +453,17 @@ def test_a_cut_in_silence_stays_short():
     ok(length > b - a, "silence was added (%d samples)" % (length - (b - a)))
     ok(
         abs(inserted[0][0] - 0.5 * (a + b) / SR) < 0.005,
-        "the cut is in the middle of the silence the voice left (%.4f)" % inserted[0][0],
+        "the cut is in the middle of the silence the voice left (%.4f)"
+        % inserted[0][0],
     )
     ok(
         np.array_equal(out[:a], audio[:a]),
         "speech before the silence is bit-identical: the ramp only touched silence",
     )
-    ok(np.array_equal(out[start + length :], audio[b:]), "speech after it is bit-identical")
+    ok(
+        np.array_equal(out[start + length :], audio[b:]),
+        "speech after it is bit-identical",
+    )
 
 
 @check
@@ -492,8 +496,15 @@ def test_a_cut_in_sound_is_released():
     import numpy as np
 
     tail = np.abs(new[s_new - round(0.5 * SPLICE_RELEASE_MS * SR / 1000.0) : s_new])
-    ok(float(tail.max()) < 0.5 * 0.55, "the last half of the release is under half level")
-    head = np.abs(new[s_new + n_new : s_new + n_new + round(0.25 * SPLICE_ATTACK_MS * SR / 1000.0)])
+    ok(
+        float(tail.max()) < 0.5 * 0.55,
+        "the last half of the release is under half level",
+    )
+    head = np.abs(
+        new[
+            s_new + n_new : s_new + n_new + round(0.25 * SPLICE_ATTACK_MS * SR / 1000.0)
+        ]
+    )
     ok(float(head.max()) < 0.5 * 0.2, "the first quarter of the onset stays low")
 
 
@@ -509,8 +520,15 @@ def test_the_cut_finds_the_dip():
     audio *= (1.0 - 0.9 * np.exp(-(((t - dip) / 0.006) ** 2))).astype(np.float32)
     out, inserted = _splice_pauses(audio, [(0.31, 0.12, 0.31, None, 0.29, 0.36)], SR)
     start, _ = _zero_runs(out)[0]
-    ok(abs(start / SR - dip) < 0.004, "cut at %.4f s, the dip is at %.4f" % (start / SR, dip))
-    eq([round(a, 4) for a, _ in inserted], [0.31], "reported at the mark, for the timings")
+    ok(
+        abs(start / SR - dip) < 0.004,
+        "cut at %.4f s, the dip is at %.4f" % (start / SR, dip),
+    )
+    eq(
+        [round(a, 4) for a, _ in inserted],
+        [0.31],
+        "reported at the mark, for the timings",
+    )
     # a dip outside the window is not reachable
     out2, _ = _splice_pauses(audio, [(0.31, 0.12, 0.31, None, 0.29, 0.32)], SR)
     start2, _ = _zero_runs(out2)[0]
@@ -541,15 +559,36 @@ def test_a_long_rest_is_trimmed_to_the_target():
         eq(len(runs), 1, "one rest after it %s" % what)
         start, length = runs[0]
         within(length, round(want * SR), "the rest %s to its target" % what, slop=3)
-        ok(np.array_equal(out[:a], audio[:a]), "speech before it is bit-identical (%s)" % what)
-        ok(np.array_equal(out[start + length :], audio[b:]), "speech after it is bit-identical (%s)" % what)
+        ok(
+            np.array_equal(out[:a], audio[:a]),
+            "speech before it is bit-identical (%s)" % what,
+        )
+        ok(
+            np.array_equal(out[start + length :], audio[b:]),
+            "speech after it is bit-identical (%s)" % what,
+        )
     eq(len(cut), 1, "one removal reported")
     at, dur = cut[0]
-    ok(dur < 0.0 and 0.25 < at < 0.65, "it is a removal inside the silence (%.4f, %.4f)" % (at, dur))
-    near(_shift(0.80, cut, True), 0.80 + dur, "a time after the removal moves back by all of it")
-    near(_shift(at + 0.5 * -dur, cut, False), at, "a time inside it lands where it starts")
+    ok(
+        dur < 0.0 and 0.25 < at < 0.65,
+        "it is a removal inside the silence (%.4f, %.4f)" % (at, dur),
+    )
+    near(
+        _shift(0.80, cut, True),
+        0.80 + dur,
+        "a time after the removal moves back by all of it",
+    )
+    near(
+        _shift(at + 0.5 * -dur, cut, False),
+        at,
+        "a time inside it lands where it starts",
+    )
     near(_shift(at, cut, True), at, "a time exactly at its start stays put")
-    near(_shift(0.65, cut, False), _shift(0.65, cut, True), "a mark's end and the next start agree")
+    near(
+        _shift(0.65, cut, False),
+        _shift(0.65, cut, True),
+        "a mark's end and the next start agree",
+    )
 
 
 @check
@@ -565,21 +604,40 @@ def test_the_floor_goes_on_the_space_after_a_mark():
         cfg = _cfg()
         with tempfile.TemporaryDirectory() as td:
             PiperBackend()._synth_tokens(
-                list(TOKENS_MARKS), "fake", str(Path(td) / "a.wav"),
-                {"phonemizer": "ghost", **params}, cfg, sess,
+                list(TOKENS_MARKS),
+                "fake",
+                str(Path(td) / "a.wav"),
+                {"phonemizer": "ghost", **params},
+                cfg,
+                sess,
             )
         return cfg["phoneme_id_map"], sess.fed
 
     pmap, runs = fed(_FloorSession(), {"pause_scale": 1.0})
     ids, floor = runs[0]
     comma, colon, space = pmap.get(",")[0], pmap.get(":")[0], pmap.get(" ")[0]
-    want = {i + 2: m for i, x in enumerate(ids) for m, c in ((",", comma), (":", colon)) if x == c}
+    want = {
+        i + 2: m
+        for i, x in enumerate(ids)
+        for m, c in ((",", comma), (":", colon))
+        if x == c
+    }
     ok(all(ids[i] == space for i in want), "two ids past each mark is its word-space")
     got = {i: float(f) for i, f in enumerate(floor) if f > 0.0}
     frame = HOP_LENGTH / float(SR)
-    eq(got, {i: float(round(_rest_floor(m, {"pause_scale": 1.0}) / frame)) for i, m in want.items()},
-       "frames on the space after , and : only")
-    eq(runs[1][1], None, "the sentence after the full stop has no paused mark: nothing fed")
+    eq(
+        got,
+        {
+            i: float(round(_rest_floor(m, {"pause_scale": 1.0}) / frame))
+            for i, m in want.items()
+        },
+        "frames on the space after , and : only",
+    )
+    eq(
+        runs[1][1],
+        None,
+        "the sentence after the full stop has no paused mark: nothing fed",
+    )
     _, runs = fed(_FloorSession(), {"pause_scale": 0.0})
     ok(all(f is None for _, f in runs), "nothing at Pause 0")
 
@@ -605,9 +663,15 @@ def test_a_floored_id_is_fixed_in_the_nominal_length():
     without = _nominal_seconds(frames, 1.25, SR)
     ok(with_floor > without, "the floored id keeps its frames at another scale")
     gap = (with_floor - without) * SR / HOP_LENGTH
-    ok(2.0 < gap < 3.0, "by what 13 frames lose at 1.25x, and only that id (%.2f)" % gap)
-    near(_nominal_seconds(frames, 1.0, SR, floor), _nominal_seconds(frames, 1.0, SR),
-         "no difference at ratio 1")
+    ok(
+        2.0 < gap < 3.0,
+        "by what 13 frames lose at 1.25x, and only that id (%.2f)" % gap,
+    )
+    near(
+        _nominal_seconds(frames, 1.0, SR, floor),
+        _nominal_seconds(frames, 1.0, SR),
+        "no difference at ratio 1",
+    )
 
 
 @check
@@ -648,10 +712,20 @@ def test_the_patch_on_a_small_graph():
         eq(path.read_bytes() == once, True, "a patched graph is left alone")
         s = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
     eq([o.name for o in s.get_outputs()], ["total", "w"], "the plan is an output")
-    eq([i.name for i in s.get_overridable_initializers()], [REST_FLOOR_INPUT], "the floor is optional")
+    eq(
+        [i.name for i in s.get_overridable_initializers()],
+        [REST_FLOOR_INPUT],
+        "the floor is optional",
+    )
     total, w = s.run(None, {"x": x})
-    eq(np.asarray(w).ravel().tolist(), [1.0, 2.0, 2.0], "unfed, the plan is the ceiling")
-    total, w = s.run(None, {"x": x, REST_FLOOR_INPUT: np.array([0.0, 5.0, 0.0], np.float32)})
+    eq(
+        np.asarray(w).ravel().tolist(),
+        [1.0, 2.0, 2.0],
+        "unfed, the plan is the ceiling",
+    )
+    total, w = s.run(
+        None, {"x": x, REST_FLOOR_INPUT: np.array([0.0, 5.0, 0.0], np.float32)}
+    )
     eq(np.asarray(w).ravel().tolist(), [1.0, 5.0, 2.0], "fed, the plan is floored")
     eq(float(total), 8.0, "and the graph's own reader of the plan sees the floor")
 
@@ -681,10 +755,21 @@ def test_rest_points_for_holds():
         raw = Path(out).read_bytes()
     audio = np.frombuffer(raw[44:], "<i2").astype(np.float32) / 32768.0
     rows = {t["index"]: t for t in res["tokens"]}
-    eq(sorted(i for i, t in rows.items() if "rest" in t), [0, 1, 2, 3], "who carries a rest")
-    for i, why in ((0, "after the comma"), (1, "after the colon"), (2, "between sentences")):
+    eq(
+        sorted(i for i, t in rows.items() if "rest" in t),
+        [0, 1, 2, 3],
+        "who carries a rest",
+    )
+    for i, why in (
+        (0, "after the comma"),
+        (1, "after the colon"),
+        (2, "between sentences"),
+    ):
         at = int(round(rows[i]["rest"] * SR))
-        ok(float(np.abs(audio[at - 5 : at + 5]).max()) == 0.0, "the rest %s is in silence" % why)
+        ok(
+            float(np.abs(audio[at - 5 : at + 5]).max()) == 0.0,
+            "the rest %s is in silence" % why,
+        )
     ok(
         rows[3]["t0"] < rows[3]["rest"] <= rows[4]["t0"] + 0.02,
         "an unmarked boundary's rest is between its words (%.4f)" % rows[3]["rest"],
@@ -1119,7 +1204,10 @@ def check_real_voice_comma():
         return
     sr = int(cfg["audio"]["sample_rate"])
     params = {
-        "speaker": 13, "length_scale": 1.08, "noise_scale": 0.78, "noise_w": 0.52,
+        "speaker": 13,
+        "length_scale": 1.08,
+        "noise_scale": 0.78,
+        "noise_w": 0.52,
         "pause_scale": 6.5,
     }
     toks = [_tok("Hello", ",", []), _tok("my", "", []), _tok("loves", ".", [])]
@@ -1135,8 +1223,13 @@ def check_real_voice_comma():
         out = []
         for start, length in _zero_runs(a, int(0.05 * sr)):
             if start + length < a.size:
-                for seg in (a[start - n3 : start], a[start + length : start + length + n3]):
-                    out.append(float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) / peak)
+                for seg in (
+                    a[start - n3 : start],
+                    a[start + length : start + length + n3],
+                ):
+                    out.append(
+                        float(np.sqrt(np.mean(np.square(seg, dtype=np.float64)))) / peak
+                    )
         return out
 
     P._splice_pauses = spy
@@ -1146,7 +1239,9 @@ def check_real_voice_comma():
         for _ in range(5):
             seen.clear()
             with tempfile.TemporaryDirectory() as td:
-                be._synth_tokens(list(toks), voice, str(Path(td) / "a.wav"), params, cfg, sess)
+                be._synth_tokens(
+                    list(toks), voice, str(Path(td) / "a.wav"), params, cfg, sess
+                )
             audio, points, mult = seen[0]
             peak = float(np.max(np.abs(audio)))
             with _old_ramps():
@@ -1158,8 +1253,10 @@ def check_real_voice_comma():
         P._rest_floor = floor
     new, _ = real(audio, points, sr, mult)
     e_old, e_new = edges(old, peak), edges(new, peak)
-    print("      edges (share of peak, 3 ms): old %s new %s"
-          % (" ".join("%.3f" % x for x in e_old), " ".join("%.3f" % x for x in e_new)))
+    print(
+        "      edges (share of peak, 3 ms): old %s new %s"
+        % (" ".join("%.3f" % x for x in e_old), " ".join("%.3f" % x for x in e_new))
+    )
     ok(max(e_old) > 0.03, "the old cut leaves a loud edge (control)")
     ok(max(e_new) < 0.02, "the new cut leaves none")
 
@@ -1187,11 +1284,19 @@ def check_real_voice_rests_at_a_mark():
         return
     sr = int(cfg["audio"]["sample_rate"])
     params = {
-        "speaker": 13, "length_scale": 1.08, "noise_scale": 0.78, "noise_w": 0.52,
+        "speaker": 13,
+        "length_scale": 1.08,
+        "noise_scale": 0.78,
+        "noise_w": 0.52,
         "pause_scale": 6.5,
     }
     sentences = [
-        [_tok("On", "", []), _tok("you", ",", []), _tok("my", "", []), _tok("loves", ".", [])],
+        [
+            _tok("On", "", []),
+            _tok("you", ",", []),
+            _tok("my", "", []),
+            _tok("loves", ".", []),
+        ],
         [_tok("Hello", ",", []), _tok("my", "", []), _tok("loves", ".", [])],
     ]
 
@@ -1220,10 +1325,18 @@ def check_real_voice_rests_at_a_mark():
     finally:
         P._rest_floor = floor
     floored = before_cuts()
-    print("      voice before the cut, no floor: %s" % " ".join("%.3f" % x for x in bare))
-    print("      voice before the cut, floored:  %s" % " ".join("%.3f" % x for x in floored))
+    print(
+        "      voice before the cut, no floor: %s" % " ".join("%.3f" % x for x in bare)
+    )
+    print(
+        "      voice before the cut, floored:  %s"
+        % " ".join("%.3f" % x for x in floored)
+    )
     ok(len(bare) >= 6 and len(floored) >= 6, "every take has its comma rest")
-    ok(sum(x > 0.05 for x in bare) * 2 > len(bare), "without the floor most cuts are in voice (control)")
+    ok(
+        sum(x > 0.05 for x in bare) * 2 > len(bare),
+        "without the floor most cuts are in voice (control)",
+    )
     ok(max(floored) < 0.04, "with it, every cut is in the model's own rest")
 
 
