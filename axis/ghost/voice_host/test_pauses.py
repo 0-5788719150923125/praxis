@@ -69,6 +69,35 @@ class _FakeSession:
         return [audio.reshape(1, 1, -1), frames.reshape(1, -1)]
 
 
+class _FloorSession(_FakeSession):
+    """The fake voice behind a patched graph: takes the optional rest floor, as a Max on
+    the duration plan, and records what was fed."""
+
+    def __init__(self) -> None:
+        self.fed: list = []
+
+    def get_overridable_initializers(self):
+        import types
+        from backends.piper import REST_FLOOR_INPUT
+
+        return [types.SimpleNamespace(name=REST_FLOOR_INPUT)]
+
+    def run(self, _outputs, feeds):
+        import numpy as np
+        from backends.piper import HOP_LENGTH, REST_FLOOR_INPUT
+
+        ids = list(feeds["input"][0])
+        floor = feeds.get(REST_FLOOR_INPUT)
+        self.fed.append((ids, None if floor is None else np.array(floor)))
+        frames = np.array([2 + (int(i) % 3) for i in ids], dtype=np.float32)
+        if floor is not None:
+            frames = np.maximum(frames, floor)
+        n = int(frames.sum()) * HOP_LENGTH
+        t = np.arange(n, dtype=np.float64)
+        audio = (0.8 * np.sin(2.0 * np.pi * t / 64.0)).astype(np.float32)
+        return [audio.reshape(1, 1, -1), frames.reshape(1, -1)]
+
+
 def _cfg() -> dict:
     return {
         "audio": {"sample_rate": SR},
@@ -486,6 +515,145 @@ def test_the_cut_finds_the_dip():
     out2, _ = _splice_pauses(audio, [(0.31, 0.12, 0.31, None, 0.29, 0.32)], SR)
     start2, _ = _zero_runs(out2)[0]
     ok(0.29 <= start2 / SR <= 0.32, "cut stays in its window (%.4f)" % (start2 / SR))
+
+
+@check
+def test_a_long_rest_is_trimmed_to_the_target():
+    """A rest longer than its target gives the excess back, from the middle of the silence.
+
+    Two-sided on one signal: the same 0.40 s rest grows to a 0.60 s target and shrinks to
+    a 0.20 s one, the speech either side bit-identical both ways.
+    """
+    import numpy as np
+    from backends.piper import _shift, _splice_pauses
+
+    audio = _sine(0.9)
+    a, b = round(0.25 * SR), round(0.65 * SR)
+    audio[a:b] = 0.0
+
+    def rest(dwell, top_up):  # target = (dwell + top_up) * mult, mult 1
+        return _splice_pauses(audio, [(0.65, top_up, 0.65, dwell, 0.24, 0.66)], SR)
+
+    grown, _ = rest(0.30, 0.30)
+    shrunk, cut = rest(0.10, 0.10)
+    for out, want, what in ((grown, 0.60, "grows"), (shrunk, 0.20, "shrinks")):
+        runs = _zero_runs(out)
+        eq(len(runs), 1, "one rest after it %s" % what)
+        start, length = runs[0]
+        within(length, round(want * SR), "the rest %s to its target" % what, slop=3)
+        ok(np.array_equal(out[:a], audio[:a]), "speech before it is bit-identical (%s)" % what)
+        ok(np.array_equal(out[start + length :], audio[b:]), "speech after it is bit-identical (%s)" % what)
+    eq(len(cut), 1, "one removal reported")
+    at, dur = cut[0]
+    ok(dur < 0.0 and 0.25 < at < 0.65, "it is a removal inside the silence (%.4f, %.4f)" % (at, dur))
+    near(_shift(0.80, cut, True), 0.80 + dur, "a time after the removal moves back by all of it")
+    near(_shift(at + 0.5 * -dur, cut, False), at, "a time inside it lands where it starts")
+    near(_shift(at, cut, True), at, "a time exactly at its start stays put")
+    near(_shift(0.65, cut, False), _shift(0.65, cut, True), "a mark's end and the next start agree")
+
+
+@check
+def test_the_floor_goes_on_the_space_after_a_mark():
+    """The model is asked to rest on the word-space after a mark that gets a pause.
+
+    Never on the lead-in spaces, an unmarked space or after a sentence end; nothing at
+    Pause 0; and nothing fed to a graph that cannot take it (two-sided: the same text).
+    """
+    from backends.piper import HOP_LENGTH, PiperBackend, _rest_floor
+
+    def fed(sess, params):
+        cfg = _cfg()
+        with tempfile.TemporaryDirectory() as td:
+            PiperBackend()._synth_tokens(
+                list(TOKENS_MARKS), "fake", str(Path(td) / "a.wav"),
+                {"phonemizer": "ghost", **params}, cfg, sess,
+            )
+        return cfg["phoneme_id_map"], sess.fed
+
+    pmap, runs = fed(_FloorSession(), {"pause_scale": 1.0})
+    ids, floor = runs[0]
+    comma, colon, space = pmap.get(",")[0], pmap.get(":")[0], pmap.get(" ")[0]
+    want = {i + 2: m for i, x in enumerate(ids) for m, c in ((",", comma), (":", colon)) if x == c}
+    ok(all(ids[i] == space for i in want), "two ids past each mark is its word-space")
+    got = {i: float(f) for i, f in enumerate(floor) if f > 0.0}
+    frame = HOP_LENGTH / float(SR)
+    eq(got, {i: float(round(_rest_floor(m, {"pause_scale": 1.0}) / frame)) for i, m in want.items()},
+       "frames on the space after , and : only")
+    eq(runs[1][1], None, "the sentence after the full stop has no paused mark: nothing fed")
+    _, runs = fed(_FloorSession(), {"pause_scale": 0.0})
+    ok(all(f is None for _, f in runs), "nothing at Pause 0")
+
+    class _Plain(_FakeSession):
+        fed: list = []
+
+        def run(self, outputs, feeds):
+            self.fed.append((list(feeds["input"][0]), feeds.get("rest_floor")))
+            return super().run(outputs, feeds)
+
+    _, runs = fed(_Plain(), {"pause_scale": 1.0})
+    ok(all(f is None for _, f in runs), "a graph without the input is never fed it")
+
+
+@check
+def test_a_floored_id_is_fixed_in_the_nominal_length():
+    """An id held at its floor does not scale with the length scale; one past it does."""
+    from backends.piper import HOP_LENGTH, _nominal_seconds
+
+    frames = [1.0, 5.0, 13.0, 20.0]
+    floor = [0.0, 0.0, 13.0, 13.0]
+    with_floor = _nominal_seconds(frames, 1.25, SR, floor)
+    without = _nominal_seconds(frames, 1.25, SR)
+    ok(with_floor > without, "the floored id keeps its frames at another scale")
+    gap = (with_floor - without) * SR / HOP_LENGTH
+    ok(2.0 < gap < 3.0, "by what 13 frames lose at 1.25x, and only that id (%.2f)" % gap)
+    near(_nominal_seconds(frames, 1.0, SR, floor), _nominal_seconds(frames, 1.0, SR),
+         "no difference at ratio 1")
+
+
+@check
+def test_the_patch_on_a_small_graph():
+    """`_ensure_patched` on a graph shaped like Piper's around its ceiling.
+
+    Exposes the plan, adds the optional floor that every reader of the plan sees, changes
+    nothing when the floor is not fed, and leaves a patched file byte-identical.
+    """
+    try:
+        import numpy as np
+        import onnx
+        import onnxruntime as ort
+        from onnx import TensorProto, helper
+    except ImportError as exc:
+        print("    -- onnx/onnxruntime missing (%s); skipping" % exc)
+        return
+    from backends.piper import REST_FLOOR_INPUT, PiperBackend
+
+    graph = helper.make_graph(
+        [
+            helper.make_node("Ceil", ["x"], ["w"]),
+            helper.make_node("ReduceSum", ["w"], ["total"], keepdims=0),
+        ],
+        "plan",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, "n"])],
+        [helper.make_tensor_value_info("total", TensorProto.FLOAT, None)],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8  # what Piper exports; a newer default can outrun onnxruntime
+    x = np.array([[[0.2, 1.5, 2.0]]], np.float32)
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "v.onnx"
+        onnx.save(model, str(path))
+        PiperBackend._ensure_patched(path)
+        once = path.read_bytes()
+        PiperBackend._ensure_patched(path)
+        eq(path.read_bytes() == once, True, "a patched graph is left alone")
+        s = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    eq([o.name for o in s.get_outputs()], ["total", "w"], "the plan is an output")
+    eq([i.name for i in s.get_overridable_initializers()], [REST_FLOOR_INPUT], "the floor is optional")
+    total, w = s.run(None, {"x": x})
+    eq(np.asarray(w).ravel().tolist(), [1.0, 2.0, 2.0], "unfed, the plan is the ceiling")
+    total, w = s.run(None, {"x": x, REST_FLOOR_INPUT: np.array([0.0, 5.0, 0.0], np.float32)})
+    eq(np.asarray(w).ravel().tolist(), [1.0, 5.0, 2.0], "fed, the plan is floored")
+    eq(float(total), 8.0, "and the graph's own reader of the plan sees the floor")
 
 
 @check
@@ -932,10 +1100,11 @@ def check_the_punctuation_hierarchy_survives_the_slider():
 def check_real_voice_comma():
     """On the real checkpoint, a comma the voice runs straight through.
 
-    "Hello, my loves." - this voice lengthens the vowel into the comma rather than pausing,
-    so there is no silence to cut in. Old and new splice the SAME render: the old cut at
-    the token boundary with 2 ms ramps must leave a loud edge (the click), the new must
-    not. Skipped when the voice is not installed.
+    "Hello, my loves." with no rest floor (a graph that cannot take one) - this voice
+    lengthens the vowel into the comma rather than pausing, so there is no silence to cut
+    in. Old and new splice the SAME render: the old cut at the token boundary with 2 ms
+    ramps must leave a loud edge (the click), the new must not. Skipped when the voice is
+    not installed.
     """
     import numpy as np
     import backends.piper as P
@@ -971,6 +1140,8 @@ def check_real_voice_comma():
         return out
 
     P._splice_pauses = spy
+    floor = P._rest_floor
+    P._rest_floor = lambda mark, params: 0.0
     try:
         for _ in range(5):
             seen.clear()
@@ -984,12 +1155,76 @@ def check_real_voice_comma():
                 break
     finally:
         P._splice_pauses = real
+        P._rest_floor = floor
     new, _ = real(audio, points, sr, mult)
     e_old, e_new = edges(old, peak), edges(new, peak)
     print("      edges (share of peak, 3 ms): old %s new %s"
           % (" ".join("%.3f" % x for x in e_old), " ".join("%.3f" % x for x in e_new)))
     ok(max(e_old) > 0.03, "the old cut leaves a loud edge (control)")
     ok(max(e_new) < 0.02, "the new cut leaves none")
+
+
+@check
+def check_real_voice_rests_at_a_mark():
+    """On the real checkpoint, the word before a comma is ended by the model, not the splice.
+
+    With no rest floor this voice runs through the comma and the spliced silence starts
+    its fade inside the vowel - the word heard cut off. With the floor the model rests
+    there itself and the splice lands in that rest. Two-sided on the same sentences and
+    settings (the tarot narrator's): without the floor most cuts have voice in the 30 ms
+    before them, with it none do. Skipped when the voice is not installed.
+    """
+    import numpy as np
+    import backends.piper as P
+    from backends.piper import PiperBackend
+
+    voice = "en_US-libritts-high"
+    be = PiperBackend()
+    try:
+        sess, cfg = be._load(voice)
+    except Exception as exc:  # noqa: BLE001
+        print("    -- %s is not installed here (%s); skipping" % (voice, exc))
+        return
+    sr = int(cfg["audio"]["sample_rate"])
+    params = {
+        "speaker": 13, "length_scale": 1.08, "noise_scale": 0.78, "noise_w": 0.52,
+        "pause_scale": 6.5,
+    }
+    sentences = [
+        [_tok("On", "", []), _tok("you", ",", []), _tok("my", "", []), _tok("loves", ".", [])],
+        [_tok("Hello", ",", []), _tok("my", "", []), _tok("loves", ".", [])],
+    ]
+
+    def before_cuts() -> list:
+        """Voice in the 30 ms before each spliced rest, as a share of the take's peak."""
+        out = []
+        for toks in sentences:
+            for _ in range(4):
+                with tempfile.TemporaryDirectory() as td:
+                    path = Path(td) / "a.wav"
+                    be._synth_tokens(list(toks), voice, str(path), params, cfg, sess)
+                    raw = path.read_bytes()
+                a = np.frombuffer(raw[44:], "<i2").astype(np.float32) / 32768.0
+                peak = float(np.max(np.abs(a)))
+                n = int(0.030 * sr)
+                for start, length in _zero_runs(a, int(0.05 * sr)):
+                    if n <= start and start + length < a.size:
+                        seg = a[start - n : start].astype(np.float64)
+                        out.append(float(np.sqrt(np.mean(seg**2))) / peak)
+        return out
+
+    floor = P._rest_floor
+    P._rest_floor = lambda mark, params: 0.0
+    try:
+        bare = before_cuts()
+    finally:
+        P._rest_floor = floor
+    floored = before_cuts()
+    print("      voice before the cut, no floor: %s" % " ".join("%.3f" % x for x in bare))
+    print("      voice before the cut, floored:  %s" % " ".join("%.3f" % x for x in floored))
+    ok(len(bare) >= 6 and len(floored) >= 6, "every take has its comma rest")
+    ok(sum(x > 0.05 for x in bare) * 2 > len(bare), "without the floor most cuts are in voice (control)")
+    ok(max(floored) < 0.04, "with it, every cut is in the model's own rest")
 
 
 def check_hyphen_is_a_word_boundary():

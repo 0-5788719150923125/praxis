@@ -182,6 +182,15 @@ static func start_with_pipe(path: String, args: PackedStringArray, tag := "") ->
 	return info
 
 
+## The words that bind a program a WRAPPER starts (xvfb-run, say) to that wrapper: run
+## `pact_prefix() + [program, args...]` where the wrapper would run `[program, args...]`. A pact
+## does not pass to a child's own children, so without this, stopping the wrapper leaves what it
+## started running. Empty where no pact is available.
+static func pact_prefix() -> PackedStringArray:
+	var bin := _pact_bin()
+	return PackedStringArray() if bin == "-" else PackedStringArray([bin, "--pdeathsig", "KILL", "--"])
+
+
 ## Start a program that is SUPPOSED to outlive the app. Not tracked, not bound; the call
 ## site must justify itself in a comment, because this is the behavior every reported
 ## orphan came from.

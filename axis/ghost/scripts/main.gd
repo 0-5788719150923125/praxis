@@ -593,6 +593,7 @@ func _open_synth_editor(mode := "fishing") -> void:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
 		_chrome.exporter.name_provider = Callable()
+		_chrome.exporter.upload_provider = Callable()
 		_chrome.exporter.automation_available = true
 	_feedback = _chrome.attach_feedback()
 
@@ -619,6 +620,7 @@ func _open_generative_editor(script: Script = preload("res://scripts/generative_
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
 		_chrome.exporter.name_provider = editor.export_name
+		_chrome.exporter.upload_provider = editor.upload_meta
 		_chrome.exporter.automation_available = false
 		# no fishing game on this path, so nothing to record
 	_feedback = _chrome.attach_feedback()

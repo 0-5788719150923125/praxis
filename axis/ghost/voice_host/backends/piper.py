@@ -228,6 +228,32 @@ def _dwell_for(mark: str, base: float | None = None) -> float:
     return DWELL["."] if base is not None else 0.0
 
 
+def _rest_floor(mark: str, params: dict) -> float:
+    """Seconds of rest the MODEL renders at a mid-sentence mark, before any splice.
+
+    en_US-libritts-high does not end a word at a comma: it lengthens the vowel through the
+    mark and runs on into the next word, so silence spliced there cuts the word off
+    mid-sound, heard as the word truncated early. Given frames on the word-space after the
+    mark (`_render_symbols`, through the input `_ensure_patched` adds to the graph), the
+    model renders a real rest, with its own release of the word before it and its own
+    onset of the word after, and `_splice_pauses` takes that silence to the target. The
+    word-space is the id that renders as silence; lengthening the mark or the blank after
+    it renders sustained voice. The mark's natural dwell is enough for the release (at the
+    comma's 13 frames, 52 of 54 measured cuts had under 2% of peak in the 30 ms before
+    them, against 17 of 54 with none), and a target shorter than the dwell is rendered
+    whole.
+    """
+    m = str(mark)
+    if m in SENTENCE_END or PAUSE_AFTER.get(m, 0.0) <= 0.0:
+        return 0.0
+    dwell = _dwell_for(m)
+    return max(0.0, min(dwell, (dwell + _top_up(m, params)) * _pause_multiplier(params)))
+
+
+# The graph input `_ensure_patched` adds: per-id frames the duration plan may not fall below.
+REST_FLOOR_INPUT = "rest_floor"
+
+
 # Click avoidance for spliced silence - see _splice_pauses.
 SPLICE_SEARCH_MS = 3.0  # zero-crossing refinement around the chosen trough
 SPLICE_ENV_MS = 8.0  # envelope smoothing: finds the quiet PLACE, not a quiet sample
@@ -237,6 +263,7 @@ SPLICE_ATTACK_MS = 12.0  # ramp back into one
 SPLICE_QUIET = 0.02  # share of the utterance's peak under which an edge is silence
 SPLICE_LOUD = 0.16  # share at which the ramps reach their full length
 SPLICE_REACH_MS = 70.0  # how far past a mark the cut may look when no plan bounds it
+SPLICE_REST_REACH = 2.0  # s each way a mark's rest is measured in: words bound it, not this
 
 # Symbols that are punctuation rather than a word's sound, as `_symbols` emits them.
 _MARK_SYMBOLS = frozenset(PAUSE_AFTER)
@@ -792,7 +819,7 @@ def _lpc_order(sr: int) -> int:
     return int(min(36, 2 + sr // 1000))
 
 
-def _nominal_seconds(frames, ratio: float, sr: int) -> float:
+def _nominal_seconds(frames, ratio: float, sr: int, floor=None) -> float:
     """How long this sentence WOULD have run at `1/ratio` of the length scale it was given.
 
     A per-sentence pitch move is bought by rendering `pr` times slower and playing
@@ -824,6 +851,9 @@ def _nominal_seconds(frames, ratio: float, sr: int) -> float:
 
     Exact at ratio 1 by construction, so with no arc there is no correction and the
     render is what it always was, byte for byte.
+
+    `floor` is the per-id rest floor the render was given (`_rest_floor`), or None. An id
+    held at its floor is a fixed number of frames at any length scale.
     """
     import numpy as np
 
@@ -848,6 +878,9 @@ def _nominal_seconds(frames, ratio: float, sr: int) -> float:
     # past a whole frame) turns that into a whole extra frame each: measured +6% of a
     # sentence on all three voices at the bottom of the range, which is every paragraph end.
     exp = np.where(m <= 1.0, 1.0, exp)
+    if floor is not None:
+        f = np.asarray(floor, dtype=np.float64)
+        exp = np.where((f > 0.0) & (m <= f), m, exp)
     return float(np.maximum(exp, 1.0).sum()) * HOP_LENGTH / float(sr)
 
 
@@ -1004,7 +1037,10 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     an onset back into the next.
 
     The silence measured around the cut says how much of the rest is already paid for;
-    the target itself comes from the table (see `_rest_from`).
+    the target itself comes from the table (see `_rest_from`). Where the model rested
+    LONGER than the target - a floored mark (`_rest_floor`) on a voice that also pauses
+    there on its own - the excess comes out of the middle of that silence, a negative
+    entry in `inserted`.
     """
     import numpy as np
 
@@ -1027,6 +1063,7 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
     quiet = peak * SPLICE_QUIET
     reach = max(1, int(round(SPLICE_REACH_MS * sr / 1000.0)))
+    fade = max(1, int(round(SPLICE_FADE_MS * sr / 1000.0)))
 
     pieces: list = []
     inserted: list = []
@@ -1041,13 +1078,28 @@ def _splice_pauses(audio, points, sr: int, mult: float = 1.0):
             hi = min(int(round(limit * sr)), want + reach) if limit > 0.0 else want
         lo = max(lo, prev)
         cut = _trough(audio, lo, max(hi, lo), sr, quiet)
-        have = _silence_around(audio, cut, quiet, sr)
+        have = _silence_around(audio, cut, quiet, sr, SPLICE_REST_REACH)
         pad = int(
             round(
                 _rest_from(dwell if dwell is not None else have, secs, mult, have) * sr
             )
         )
         if pad <= 0:
+            if dwell is None:
+                continue
+            # The model rested past the target: the excess comes out of the middle of its
+            # silence, where the join is silence on both sides and a short ramp is enough.
+            over = int(round((have - (dwell + secs) * mult) * sr))
+            s0, s1 = _silent_span(audio, cut, quiet, sr, SPLICE_REST_REACH)
+            s0 = max(s0, prev)
+            if over <= 0 or s1 - s0 <= over + 2 * fade:
+                continue
+            at = s0 + (s1 - s0 - over) // 2
+            seg = np.array(audio[prev:at], dtype=audio.dtype, copy=True)
+            _ramp(seg, n_in, fade)
+            pieces.append(seg)
+            inserted.append((at / float(sr), -over / float(sr)))
+            prev, n_in = at + over, fade
             continue
         seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
         out = _edge_ramp(_edge_level(audio, cut, True, sr), peak, SPLICE_RELEASE_MS, sr)
@@ -1171,20 +1223,20 @@ def _trim_rests(audio, rests, sr: int):
     return np.concatenate(pieces), removed
 
 
-def _silent_span(audio, at: int, thresh: float, sr: int) -> tuple:
+def _silent_span(audio, at: int, thresh: float, sr: int, reach: float = 0.5) -> tuple:
     """(first, last+1) of the contiguous near-silence containing sample `at`.
 
     Walked outward from the point rather than measured between the token spans, because a
     span is the aligner's opinion about where a word ends and this is a question about the
-    waveform. Bounded at half a second in each direction: past that it is not a dwell, it is
-    the end of the utterance, and topping THAT up would put the sentence's own tail inside
-    the multiplier. `(at, at)` - an empty span - if `at` is not in silence at all.
+    waveform. Bounded at `reach` seconds in each direction - half a second by default,
+    because past that a silence at a sentence's edge is not a dwell, it is the end of the
+    utterance. `(at, at)` - an empty span - if `at` is not in silence at all.
     """
     import numpy as np
 
     if audio.size == 0 or thresh <= 0.0:
         return at, at
-    span = int(0.5 * sr)
+    span = int(reach * sr)
     lo = max(0, at - span)
     hi = min(audio.size, at + span)
     a = np.abs(audio[lo:hi])
@@ -1201,9 +1253,9 @@ def _silent_span(audio, at: int, thresh: float, sr: int) -> tuple:
     return lo + start, lo + end
 
 
-def _silence_around(audio, at: int, thresh: float, sr: int) -> float:
+def _silence_around(audio, at: int, thresh: float, sr: int, reach: float = 0.5) -> float:
     """Seconds of contiguous near-silence containing `at` - what the model rests here."""
-    lo, hi = _silent_span(audio, at, thresh, sr)
+    lo, hi = _silent_span(audio, at, thresh, sr, reach)
     return float(hi - lo) / sr
 
 
@@ -1234,10 +1286,17 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
     so the span begins after it) and its END is not (a pause landing exactly on
     the end belongs after the span, which is what puts the mark's own token in
     front of its own silence instead of underneath it).
+
+    A negative entry is silence taken OUT from `at` on: a time inside what was removed
+    lands where the removal starts, a time after it moves back by all of it, and one
+    exactly at `at` stays put either way.
     """
     add = 0.0
     for at, dur in inserted:
-        if at < t or (inclusive and at <= t):
+        if dur < 0.0:
+            if at < t:
+                add += max(dur, at - t)
+        elif at < t or (inclusive and at <= t):
             add += dur
     return t + add
 
@@ -1435,6 +1494,7 @@ class PiperBackend(Backend):
         )
         # The frame plan of the most recent render - see `_render_symbols`.
         self._last_frames = None
+        self._last_floor = None
         self._last_rests: list = []
         self._last_edges: dict = {}
 
@@ -1520,7 +1580,7 @@ class PiperBackend(Backend):
         import onnxruntime as ort
 
         onnx, cfgp = self._files(voice)
-        self._ensure_aligned(onnx)
+        self._ensure_patched(onnx)
         cfg = json.loads(cfgp.read_text(encoding="utf-8"))
         opts = ort.SessionOptions()
         opts.log_severity_level = 3  # the protocol owns stdout
@@ -1545,18 +1605,20 @@ class PiperBackend(Backend):
         return sess, cfg
 
     @staticmethod
-    def _ensure_aligned(onnx: Path) -> None:
-        """Expose the duration predictor, once, on first load of a voice.
+    def _ensure_patched(onnx: Path) -> None:
+        """Expose the duration plan and let it be floored, once, on first load of a voice.
 
-        Stock Piper graphs return audio only. Without the duration tensor there
-        are no phoneme times, no word times, and therefore NO SUBTITLES - which
-        is how a voice that had been hand-patched during development worked
-        while every other voice silently had no overlay at all. Patching belongs
-        here, where a voice is first used, not in a script someone has to
-        remember to run.
+        ALIGNMENT: stock Piper graphs return audio only. Without the duration tensor
+        there are no phoneme times, no word times, and therefore NO SUBTITLES. THE REST
+        FLOOR: an optional input, REST_FLOOR_INPUT (frames per id, default none), that the
+        plan may not fall below, between the duration predictor's ceiling and everything
+        that reads it - how a mark gets a rest the model renders itself (`_rest_floor`).
+        Without the input fed, the graph computes exactly what it did before.
 
-        Idempotent and cheap: the check is one session open, and a patched graph
-        is left alone.
+        Patching belongs here, where a voice is first used, not in a script someone has to
+        remember to run. Idempotent and cheap: the check is one session open, and a graph
+        carrying both is left alone. The patched graph is opened before it replaces the
+        file, so one that will not load is never written.
         """
         import onnxruntime as ort
 
@@ -1565,38 +1627,68 @@ class PiperBackend(Backend):
         probe = ort.InferenceSession(
             str(onnx), sess_options=opts, providers=["CPUExecutionProvider"]
         )
-        if len(probe.get_outputs()) > 1:
-            return
+        aligned = len(probe.get_outputs()) > 1
+        floored = REST_FLOOR_INPUT in {
+            i.name for i in probe.get_overridable_initializers()
+        }
         del probe
+        if aligned and floored:
+            return
         try:
+            import numpy as np
             import onnx as onnx_mod
+            from onnx import helper, numpy_helper
         except ImportError:
-            # no `onnx` package: synthesis still works, subtitles do not
+            # no `onnx` package: synthesis still works, subtitles (or the floor) do not
             print(
-                f"ghost/voice: {onnx.name} has no alignment output and the "
-                "`onnx` package is missing - subtitles unavailable",
+                f"ghost/voice: {onnx.name} is unpatched and the `onnx` package is "
+                "missing - "
+                + ("subtitles unavailable" if not aligned else "no rest floor at marks"),
                 file=sys.stderr,
             )
             return
         model = onnx_mod.load(str(onnx))
-        ceil_nodes = [n for n in model.graph.node if n.op_type == "Ceil"]
-        if len(ceil_nodes) != 1:
+        graph = model.graph
+        at = [i for i, n in enumerate(graph.node) if n.op_type == "Ceil"]
+        if len(at) != 1:
             print(
-                f"ghost/voice: {onnx.name} has {len(ceil_nodes)} Ceil nodes, "
+                f"ghost/voice: {onnx.name} has {len(at)} Ceil nodes, "
                 "expected 1 - not patching",
                 file=sys.stderr,
             )
             return
-        tensor = ceil_nodes[0].output[0]
-        model.graph.output.append(
-            onnx_mod.helper.make_tensor_value_info(
-                tensor, onnx_mod.TensorProto.FLOAT, None
+        ceil = graph.node[at[0]]
+        tensor = ceil.output[0]
+        if not aligned:
+            graph.output.append(
+                helper.make_tensor_value_info(tensor, onnx_mod.TensorProto.FLOAT, None)
             )
-        )
+        if not floored:
+            # The ceiling is renamed and a Max takes its old name, so the graph's own
+            # consumers and the alignment output all read the floored plan. One-dimensional,
+            # so it broadcasts along the ids whatever rank the plan has.
+            planned = tensor + "_planned"
+            ceil.output[0] = planned
+            graph.node.insert(
+                at[0] + 1,
+                helper.make_node(
+                    "Max", [planned, REST_FLOOR_INPUT], [tensor], name="ghost_rest_floor"
+                ),
+            )
+            graph.initializer.append(
+                numpy_helper.from_array(np.zeros(1, np.float32), REST_FLOOR_INPUT)
+            )
+            graph.input.append(
+                helper.make_tensor_value_info(
+                    REST_FLOOR_INPUT, onnx_mod.TensorProto.FLOAT, None
+                )
+            )
+        data = model.SerializeToString()
+        ort.InferenceSession(data, sess_options=opts, providers=["CPUExecutionProvider"])
         tmp = onnx.with_suffix(onnx.suffix + ".part")
-        onnx_mod.save(model, str(tmp))
+        tmp.write_bytes(data)
         tmp.replace(onnx)  # atomic: a reader sees whole graph or old graph
-        print(f"ghost/voice: patched {onnx.name} for alignment", file=sys.stderr)
+        print(f"ghost/voice: patched {onnx.name}", file=sys.stderr)
 
     # -- synthesis ---------------------------------------------------------
 
@@ -2154,7 +2246,9 @@ class PiperBackend(Backend):
                 # scale. The pitch then moves by that same measured ratio rather than by the
                 # nominal one, which is a few percent either way of what was asked for and
                 # is the half of this trade nobody can hear.
-                nominal = _nominal_seconds(self._last_frames, _pitch_length(pr), sr)
+                nominal = _nominal_seconds(
+                    self._last_frames, _pitch_length(pr), sr, self._last_floor
+                )
                 played = float(audio.size) / float(sr)
                 ratio = pr
                 if nominal > 0.05 and played > 0.05:
@@ -2291,7 +2385,7 @@ class PiperBackend(Backend):
         existing drop.
         """
         # LOOK AT THE STREAM BEFORE LOOKING AT THE MAP. Two reasons, and the second is
-        # the load-bearing one: most utterances contain no syllabic mark at all, so
+        # the one that matters: most utterances contain no syllabic mark at all, so
         # probing is wasted work - and a phoneme_id_map is not always an inert dict.
         # The test harness's stand-in ALLOCATES AN ID on first lookup, so probing it for
         # two symbols that never appear silently shifted every subsequent id by two and
@@ -2332,19 +2426,28 @@ class PiperBackend(Backend):
         # to render correctly - see `_load`, which is where that measurement happens,
         # and vowel_probe.py for what it is measuring.
         symbols = self._symbols(group, phonemizer, espeak_voice, voice)
-        return self._render_symbols(symbols, cfg, sess, params)
+        floors = {
+            ti: _rest_floor(str(t.get("punct", "")), params) for ti, t in enumerate(group)
+        }
+        return self._render_symbols(symbols, cfg, sess, params, floors)
 
-    def _render_symbols(self, symbols: list, cfg: dict, sess, params: dict):
+    def _render_symbols(
+        self, symbols: list, cfg: dict, sess, params: dict, floors: dict | None = None
+    ):
         """(symbol, source) pairs -> audio, plus a time span per source.
 
         Split out of `_run` so the vowel probe can render a phoneme string it built
         itself and get spans back keyed to single SYMBOLS rather than to words - a
         vowel is a symbol, and there is no other way to measure one. Nothing here
         interprets the source index; it is carried through and handed back.
+
+        `floors` is {source: seconds} of rest the model renders on the word-space after
+        that source's mark (`_rest_floor`), fed to the graph when it takes one.
         """
         import numpy as np
 
         pmap: dict = cfg["phoneme_id_map"]
+        frame_s = HOP_LENGTH / float(cfg["audio"]["sample_rate"])
         # eSpeak is where U+0329 comes from, so this is the call that matters.
         symbols, folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]
@@ -2362,28 +2465,40 @@ class PiperBackend(Backend):
         # next's (`_gap_window`), because a token's span runs on through its mark and its
         # space and the next span starts the moment it ends.
         sound: list[bool] = [False]
+        # Frames each id's duration may not fall below - nonzero only on the word-space
+        # right after a mark that has a floor (`_rest_floor`), so never the lead-in spaces.
+        floor: list[float] = [0.0]
+        marked = -1  # the source whose mark is the latest symbol, until its word-space
         for sym, src in symbols:
             mapped = pmap.get(sym)
             if mapped is None:
                 missing.append(sym)
                 continue
+            rest = 0.0
+            if sym == " " and src == marked and floors:
+                rest = float(round(float(floors.get(src, 0.0)) / frame_s))
             ids.append(PAD)
             owner.append(src)
             rest_of.append(-1)
             sound.append(False)
-            for m in mapped:
+            floor.append(0.0)
+            for k, m in enumerate(mapped):
                 ids.append(int(m))
                 owner.append(src)
                 rest_of.append(src if sym == " " else -2)
                 sound.append(sym != " " and sym not in _MARK_SYMBOLS)
+                floor.append(rest if k == 0 else 0.0)
+            marked = src if sym in _MARK_SYMBOLS else (-1 if sym == " " else marked)
         ids.append(PAD)
         owner.append(-1)
         rest_of.append(-1)
         sound.append(False)
+        floor.append(0.0)
         ids.append(EOS)
         owner.append(-1)
         rest_of.append(-2)
         sound.append(False)
+        floor.append(0.0)
         if folded and SYLLABIC not in self._warned_symbols:
             self._warned_symbols.add(SYLLABIC)
             print(
@@ -2428,14 +2543,22 @@ class PiperBackend(Backend):
         }
         if int(cfg.get("num_speakers", 1)) > 1:
             feeds["sid"] = np.array([int(params.get("speaker", 0))], dtype=np.int64)
+        fed = None
+        if any(floor) and REST_FLOOR_INPUT in {
+            i.name for i in getattr(sess, "get_overridable_initializers", list)()
+        }:
+            fed = np.array(floor, dtype=np.float32)
+            feeds[REST_FLOOR_INPUT] = fed
         out = sess.run(None, feeds)
         audio = np.asarray(out[0]).squeeze().astype(np.float32)
 
         spans: dict = {}
-        # THE DURATION PLAN, kept: `_pace_keep` needs it to undo what a per-sentence
-        # length_scale does to the timing. Stashed rather than returned because the vowel
-        # probe renders through this same function and unpacks a pair.
+        # THE DURATION PLAN, kept: `_nominal_seconds` needs it, and the floor it was given,
+        # to undo what a per-sentence length_scale does to the timing. Stashed rather than
+        # returned because the vowel probe renders through this same function and unpacks
+        # a pair.
         self._last_frames = None
+        self._last_floor = None
         # [(t0, t1, token index)] for every run of blanks carrying a word-space, in the
         # same seconds `spans` is in. Stashed rather than returned for the reason
         # `_last_frames` is: the vowel probe renders through here and unpacks a pair.
@@ -2446,6 +2569,7 @@ class PiperBackend(Backend):
             frames = np.asarray(out[1]).squeeze().astype(np.float64)
             if frames.ndim == 1 and frames.size == len(owner):
                 self._last_frames = frames
+                self._last_floor = fed
                 t = 0.0
                 run_at = 0.0
                 run_of = -1

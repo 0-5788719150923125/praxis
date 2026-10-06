@@ -110,6 +110,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`dial_widget.gd`](../scripts/dial_widget.gd) **DialWidget** - the on-screen face of a `Dial` (see that class for what turning does).
 - [`volume_knob.gd`](../scripts/volume_knob.gd) **VolumeKnob** - A pull-rope volume control. Click-and-HOLD the knob, then drag AWAY from it: a rope stretches from the knob (the anchor) to your cursor, and the farther you pull the louder it gets - but the ceiling is ASYMPTOTIC (v = 1 - e^(-d/D0)), so "max" is approached, never reached. Let go and the level is ...
 - [`scrubber.gd`](../scripts/scrubber.gd) **Scrubber** - a seek bar for the session, so a ten minute take can be reviewed.
+- [`tag_field.gd`](../scripts/tag_field.gd) **tag_field** - TagField - tags as chips, the way YouTube Studio shows them: every tag visible, wrapping onto as many lines as it needs, each with an × that removes it, and a box at the end where a comma (or Enter, or leaving the box, or pasting "a, b, c") turns what was typed into chips. Backspace in the empty ...
 
 ### Scene substrate
 
@@ -223,7 +224,7 @@ An automatic tarot reading: a show's brief, its episodes - each planned, painted
 - [`tarot_table.gd`](../scripts/tarot_table.gd) **TarotTable** - what an episode's look may name, and how a look is made safe to draw.
 - [`tarot_cards.gd`](../scripts/tarot_cards.gd) **TarotCards** - a card's face, its back and its booklet page, composed in 2D for the table.
 - [`props.gd`](../scripts/props.gd) **Props** - things BUILT FROM A DESCRIPTION. A thing is a few PARTS, each one SHAPE with real sizes and one MATERIAL whose surface is procedural, with an ORNAMENT worked into it if it has one - or a GROUP of parts, placed and repeated as one (a candelabra's arm, cup and taper, copied round). An agent writes ...
-- [`effects.gd`](../scripts/effects.gd) **Effects** - air that moves and light that bursts: FOG that rolls through a stretch of the scene, MOTES that wander about it (pixies, fireflies, embers, dust) and leave and come back, and BURSTS of sparks, glitter, embers, flame, smoke or stars at a moment. An agent describes them as data - the registries' ...
+- [`effects.gd`](../scripts/effects.gd) **Effects** - air that moves and light that bursts: FOG that rolls through a stretch of the scene, MOTES that wander about it (pixies, fireflies, flies, embers, dust) and leave and come back, and BURSTS of sparks, glitter, embers, flame, smoke or stars at a moment. An agent describes them as data - the ...
 - [`set_dresser_tools.gd`](../scripts/set_dresser_tools.gd) **SetDresserTools** - what the set dresser can do while it sets a tarot reader's table: MAKE a thing, LOOK at it, FIX it, and see the whole table as the camera will before handing it in.
 - [`table_preview.gd`](../scripts/table_preview.gd) **TablePreview** - a table described but not yet set, SEEN: each thing alone in a studio, and the whole table standing on the episode's own cloth, photographed from the camera's own place. It is what the set dresser looks through (`SetDresserTools`): it makes a thing, looks at it, and fixes what it sees.
 
@@ -260,9 +261,10 @@ The video chroma-key masking editor - a second app surface inside ghost. See [ma
 
 ### Export
 
-Rendering a session to video (bake + Movie Maker, background processes).
+Rendering a session to video (bake + Movie Maker, background processes), and uploading it to YouTube.
 
 - [`exporter.gd`](../scripts/exporter.gd) **Exporter** - render the visualization to a video, in the background, in two steps.
+- [`youtube.gd`](../scripts/youtube.gd) **youtube** - YouTube - sign in to the author's YouTube channel and upload a finished export to it.
 
 ### Feedback & assistant
 

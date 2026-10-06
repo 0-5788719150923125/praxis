@@ -111,6 +111,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "dial_widget.gd",
             "volume_knob.gd",
             "scrubber.gd",
+            "tag_field.gd",
         ],
     ),
     (
@@ -287,8 +288,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
     ),
     (
         "Export",
-        "Rendering a session to video (bake + Movie Maker, background " "processes).",
-        ["exporter.gd"],
+        "Rendering a session to video (bake + Movie Maker, background "
+        "processes), and uploading it to YouTube.",
+        ["exporter.gd", "youtube.gd"],
     ),
     (
         "Feedback & assistant",

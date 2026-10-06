@@ -15,15 +15,22 @@ class_name Exporter
 ##   2. RENDER (Movie Maker): a second process loads that cache (`--bake-file`, no
 ##      in-process baking) and draws immediately, recording the visualization + audio
 ##      to a scratch AVI. Its window is moved off-screen by main.
-##   3. TRANSCODE (ffmpeg): the scratch AVI is re-encoded to the chosen MP4 (H.264 + AAC),
-##      then deleted. Godot only writes AVI, and AVI is a 32-bit/RIFF container that
-##      corrupts past ~4 GB (the 4K exports had a broken index + glitchy audio); the MP4
-##      we ship uses 64-bit offsets, is ~10-20x smaller, and plays everywhere.
+##   3. TRANSCODE (ffmpeg): the scratch AVI is re-encoded to the chosen MP4 (H.264 + AAC)
+##      WHILE it is written, and on Linux what has been encoded is given back as it goes and
+##      the scratch leaves the folder (see [member _live_encode]). Godot only writes AVI, and
+##      AVI is a 32-bit/RIFF container that corrupts past ~4 GB (the 4K exports had a broken
+##      index + glitchy audio); the MP4 we ship uses 64-bit offsets, is ~10-20x smaller, and
+##      plays everywhere.
+##   4. UPLOAD (only when the menu's "Upload to YouTube" is ticked): the saved MP4 goes up to
+##      the author's channel, unlisted, described as the mode describes it - see
+##      [member upload_provider] and youtube.gd. The sign-in it needs is settled as the export
+##      starts, beside the render, while the person is still at the machine.
 ##
 ## All three steps are separate processes, polled by PID; status ("Analyzing… / Rendering… /
 ## Finalizing… / Saved ✓") shows here in the main window. Nothing to watch, nothing to force-quit.
 
 const Bake := preload("res://scripts/bake.gd")
+const YouTube := preload("res://scripts/youtube.gd")
 
 # Output quality presets, offered when the Export button is pressed. `w`/`h` is the file's
 # resolution and `fps` what Movie Maker records at, so the file is exactly what is chosen here.
@@ -61,6 +68,22 @@ const UI_TOGGLE_ID := 1000
 # synth_editor.gd's _begin_hook), so no fixed window guarantees a full throw
 # -> catch -> hold/fold cycle. This is long enough to usually show one.
 const SYNTH_AUTOPLAY_DURATION := 150.0
+## The status line's widest (see [method _place_status]).
+const STATUS_W := 588.0
+## The menu's YouTube items (see [method _refresh_upload_items]).
+const UPLOAD_ID := 1001
+const RESUME_ID := 1002
+const SIGN_OUT_ID := 1003
+const CLIENT_ID := 1004
+## What the sign-in dialog says. Google's "Access blocked" page is a dead end that never comes back
+## to Ghost Notes, so the dialog names it rather than waiting the whole timeout out in silence.
+const SIGN_BLOCKED := ("\"Access blocked\" or \"has not completed the Google verification process\"? "
+	+ "While your Google Cloud project is in Testing, only its test users can sign in: add your Google "
+	+ "account as a test user (Google Cloud, Google Auth Platform, Audience), then open the page again.")
+const SIGN_WAIT := ("Your browser should be showing Google's sign-in. Sign in with the Google account "
+	+ "that owns your channel and allow Ghost Notes to upload videos - this window closes by itself.\n\n"
+	+ "No page? It may have opened behind another window: open it again, or copy the link into the "
+	+ "browser you use.\n\n" + SIGN_BLOCKED)
 
 ## Set by a mode that owns its OWN export path, so the shared button steps aside
 ## instead of sitting dead on top of it. Masking is the one such mode: its export
@@ -79,7 +102,7 @@ var _btn: Button
 var _status: Label
 var _dialog: FileDialog
 var _quality_menu: PopupMenu
-var _state := "idle"     # idle | baking | rendering | transcoding | done
+var _state := "idle"     # idle | baking | rendering | transcoding | upload_wait | uploading | done
 var _bake_pid := -1
 var _render_pid := -1
 var _transcode_pid := -1
@@ -91,6 +114,18 @@ var _transcode_pid := -1
 var _live_encode := false        # the transcode is following the render
 var _punched := 0                # bytes released from the head of the AVI so far
 var _punch_t := 0.0
+## ...AND THE SCRATCH LEAVES THE FOLDER. A release frees blocks but cannot shorten the file:
+## Movie Maker writes at its own offset, so the AVI's LENGTH still grows to the whole film, and
+## the length is what a file manager shows - a second file beside the MP4, "growing constantly"
+## (reported 2026-10-06; measured on that render: 13 GB listed, 40 MB on disk). So once a
+## release has worked, the name is unlinked. The render and the encoder go on writing and
+## reading the same file through the handles they hold, ghost holds one more ([member _hold],
+## reached by path as [member _held]) to measure and release through, and the kernel frees what
+## is left when the last of them closes - however ghost ends.
+var _hold: FileAccess = null
+var _held := ""                  # /proc/<ghost>/fd/<n> for _hold; "" = reach the scratch by name
+var _unlinked := false           # the scratch's name is gone from the folder
+var _released := false           # some of it was given back, so it can never be encoded again
 ## True when this render is running on the real desktop rather than a display of its own -
 ## the state in which burying the window corrupts the picture. Shown to the user, because a
 ## six-hour job that can be spoiled by another window needs to say so BEFORE it is spoiled.
@@ -110,6 +145,20 @@ var _stall_t := 0.0      # seconds since the render last showed ANY sign of life
 var _stall_frac := -1.0  # high-water fractional progress the watchdog has seen
 var _stall_size := 0     # high-water size of the movie file being written
 var _synth_autoplay := false   # UI_TOGGLE_ID checked at export time (synth takes only)
+var _yt: YouTube               # the sign-in and the upload
+var _client_dialog: FileDialog # the Google client file, asked for once
+var _upload := false           # the menu's "Upload to YouTube" box
+var _upload_this := false      # this export goes to YouTube once it is saved
+var _upload_meta := {}         # what it goes up as: asked of the mode once the take was rendered
+var _upload_file := ""         # the file going up (an earlier export's, on a resume)
+var _sign := ""                # the sign-in an upload needs: "" | checking | signing_in | ok | failed
+var _sign_why := ""
+var _sign_attempt := 0         # which sign-in may still report: a newer one, or a cancel, moves it on
+var _sign_then := Callable()   # what the sign-in leads on to, kept for "Try again"
+var _sign_dialog: AcceptDialog # what Ghost Notes is waiting for while the browser signs in
+var _sign_again: Button
+var _sign_copy: Button
+var _reopen := false           # the menu reopens after the sign-in: its box stays ticked
 
 # The watchdog exists for ONE failure: a render that can never finish (the
 # audio failed to load, so the session has no end and Movie Maker records
@@ -123,8 +172,11 @@ var _synth_autoplay := false   # UI_TOGGLE_ID checked at export time (synth take
 # producing, and a healthy 720p render was killed for it.
 const STALL_LIMIT := 300.0
 ## How long the following encoder waits on a file that has stopped growing before it decides the
-## render is over (microseconds, ffmpeg's unit). Longer than any pause a live render makes.
+## render is over (microseconds, ffmpeg's unit). Longer than any pause a live render makes; a
+## render that does pause longer is caught by [method _encoder_quit_early].
 const FOLLOW_TIMEOUT_US := 60000000
+## Seconds the render's virtual display outlives its last client (see [method virtual_display]).
+const XVFB_LINGER := 10
 ## The head of the AVI is never released: Movie Maker seeks back there to finish its header.
 const PUNCH_KEEP := 1 << 20
 ## ...and the release stays this far behind the encoder's read position.
@@ -153,11 +205,20 @@ var name_provider := Callable()
 ## "record the game" there is noise.
 var automation_available := false
 
+## What an upload of the take at the given path says: `{title, description, tags, record}` -
+## `record` is a file the upload's result is kept in - or {} when the mode has nothing to upload.
+## Asked with "" for a look at what an upload would be now: the menu offers "Upload to YouTube"
+## only when that finds something. Asked again with the take once it is rendered, so a mode can
+## time chapters from it and describe the episode the take was made of.
+var upload_provider := Callable()
+
 
 func _ready() -> void:
 	layer = 250          # above the splash (200), so status shows on the home screen too
 	_clear_override()    # remove a stale override.cfg left by a crashed/killed render
 	_build_ui()
+	_place_status()
+	get_viewport().size_changed.connect(_place_status)
 
 
 ## AN EXPORT DOES NOT SURVIVE THE APP, and until this existed it did. Every step of the
@@ -169,9 +230,9 @@ func _ready() -> void:
 ##
 ## The pids go through [Subprocess], so `Boot` would reap them anyway - this is the owner
 ## doing it first and at the right moment, and it also clears the render's `override.cfg`,
-## which is the one piece of shutdown state the generic reap cannot know about. A render
-## killed here leaves its scratch AVI behind on purpose: the next export overwrites it, and
-## deleting a file during teardown is how a half-written one gets lost instead of resumed.
+## which is the one piece of shutdown state the generic reap cannot know about. The scratch AVI
+## goes with the render: nothing resumes a render, and what the encoder read has already been
+## given back, so a scratch left behind is only a large file in the author's folder.
 ##
 ## WM_CLOSE_REQUEST reaches every node when the window is asked to close; EXIT_TREE covers
 ## the programmatic-quit paths. Both, because either can be the one that happens.
@@ -180,12 +241,17 @@ func _notification(what: int) -> void:
 		return
 	if _state == "idle" or _state == "done":
 		return
+	if _state in ["preparing", "upload_wait", "uploading"]:
+		# the video is saved and the upload waits in pending.json: nothing to stop or clear
+		print("ghost: YouTube upload interrupted - ghost is closing; resume it from the ⤓ menu")
+		return
 	for pid in [_bake_pid, _render_pid, _transcode_pid]:
 		Subprocess.stop(int(pid))
 	_bake_pid = -1
 	_render_pid = -1
 	_transcode_pid = -1
 	_clear_override()
+	_drop_scratch()
 	print("ghost: export stopped - ghost is closing")
 
 
@@ -209,19 +275,19 @@ func _build_ui() -> void:
 
 	_status = Label.new()
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	# Shifted left in step with _btn above, so right-aligned text ends just clear
-	# of the button row - which now includes the console's >_ slot at -156..-116
-	# (see console.gd), hence the -160 right edge.
-	_status.offset_left = -616
-	_status.offset_top = -64
-	_status.offset_right = -160
-	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_status.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	# WRAPPED, and growing UP and LEFT - never toward the buttons or past the screen's edge
+	# (see _place_status)
+	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_status.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_status.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_status.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
 	_status.add_theme_constant_override("shadow_offset_x", 1)
 	_status.add_theme_constant_override("shadow_offset_y", 1)
 	_status.visible = false
 	add_child(_status)
+	_place_status()
 
 	# Quality picker - shown first when Export is pressed, before the save dialog.
 	_quality_menu = PopupMenu.new()
@@ -255,6 +321,33 @@ func _build_ui() -> void:
 	_dialog.file_selected.connect(_on_path)
 	add_child(_dialog)
 
+	# The author's Google client file, asked for the first time an upload is ticked and kept from
+	# then on (see youtube.gd).
+	_client_dialog = FileDialog.new()
+	_client_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_client_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_client_dialog.use_native_dialog = true
+	_client_dialog.title = "Import your Google OAuth client (the JSON file from Google Cloud)"
+	_client_dialog.filters = PackedStringArray(["*.json ; Google OAuth client (JSON)"])
+	if not downloads.is_empty():
+		_client_dialog.current_dir = downloads
+	_client_dialog.size = Vector2i(800, 560)
+	_client_dialog.file_selected.connect(_on_client_file)
+	add_child(_client_dialog)
+	_yt = YouTube.new()
+	add_child(_yt)
+	# The sign-in, visible while it waits: the page can open behind another window, and Google's
+	# "Access blocked" never comes back, so the person needs to see what is awaited and act on it.
+	_sign_dialog = AcceptDialog.new()
+	_sign_dialog.title = "Sign in to YouTube"
+	_sign_dialog.dialog_autowrap = true
+	_sign_again = _sign_dialog.add_button("Open the page again", false, "again")
+	_sign_copy = _sign_dialog.add_button("Copy the link", false, "copy")
+	_sign_dialog.custom_action.connect(_on_sign_action)
+	_sign_dialog.confirmed.connect(_on_sign_close)
+	_sign_dialog.canceled.connect(_on_sign_close)
+	add_child(_sign_dialog)
+
 
 func _process(dt: float) -> void:
 	match _state:
@@ -267,82 +360,40 @@ func _process(dt: float) -> void:
 			else:
 				_fail("⚠  Bake failed (is ffmpeg on PATH?)")
 		"rendering":
-			if Subprocess.alive(_render_pid):
-				_poll_pct()
-				# STALL WATCHDOG (see the consts): alive = the playback
-				# position advanced at ALL, or the movie file grew. A slow
-				# render satisfies both; only a render that cannot finish
-				# satisfies neither.
-				_stall_t += dt
-				var frac := Bake.read_progress()
-				if frac > _stall_frac:
-					_stall_frac = frac
-					_stall_t = 0.0
-				var sz := _file_size(_avi)
-				if not _live_encode and _transcode_pid <= 0 and sz > 65536:
-					_start_transcode(true)
-				if _live_encode:
-					_punch_t -= dt
-					if _punch_t <= 0.0:
-						_punch_t = 2.0
-						_punch_behind_encoder()
-				if sz > _stall_size + STALL_MIN_GROWTH:
-					_stall_size = sz
-					_stall_t = 0.0
-				if _stall_t > STALL_LIMIT:
-					Subprocess.stop(_render_pid)
-					_clear_override()
-					DirAccess.remove_absolute(_avi)
-					_fail("⚠  Render stalled at %d%% - frozen for %d min (see console)"
-						% [_pct, int(STALL_LIMIT / 60.0)])
-					push_warning("ghost export: render stalled (no frames, no progress); killed pid %d"
-						% _render_pid)
-				else:
-					# one decimal, deliberately: whole percents on a long take
-					# sit still for minutes on heavy scenes, which reads as a
-					# freeze. A moving number is the difference between "slow"
-					# and "hung" for the person watching it.
-					# THE WARNING RIDES THE PROGRESS LINE, not a one-shot notice: this is
-					# the only text on screen for hours, and "leave the render window
-					# alone" is advice that has to still be visible at hour five.
-					var how := " …  %.1f%%" % (maxf(_stall_frac, 0.0) * 100.0)
-					if _note_no_virtual_display:
-						how += "   ⚠ leave the render window visible"
-					_set_status("⏺  Rendering %s%s" % [_out.get_file(), how],
-						Color(0.95, 0.92, 0.7))
-			else:
-				_clear_override()                # render finished -> restore live resolution
-				# The render only reports success by PID exit; make sure it actually produced the AVI
-				# (a crashed Movie Maker exits too) before spending minutes transcoding nothing.
-				if _live_encode:
-					# the encoder has been following all along; it finishes by itself once the
-					# file stops growing (FOLLOW_TIMEOUT_US)
-					_state = "transcoding"
-				elif FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
-					_repair_avi_sizes(_avi)
-					_start_transcode()
-				else:
-					_fail("⚠  Render produced no file (see console)")
+			_tick_render(dt)
 		"transcoding":
-			if Subprocess.alive(_transcode_pid):
-				_set_status("⏳  Finalizing %s …  %d%%" % [_out.get_file(), _read_transcode_pct()], Color(0.95, 0.92, 0.7))
-			elif FileAccess.file_exists(_out) and _file_size(_out) > 4096:
-				DirAccess.remove_absolute(_avi)   # transcode ok -> drop the scratch AVI
-				_state = "done"
-				_done_t = 30.0
-				_set_status("✓  Saved  %s" % _out, Color(0.82, 0.95, 0.86))
-				print("ghost: exported -> ", _out)
-			else:
-				# Transcode failed (ffmpeg missing/errored). Keep the raw AVI so the work isn't lost.
-				_state = "done"
-				_done_t = 30.0
-				_set_status("⚠  Transcode failed; raw file kept: %s" % _avi, Color(1.0, 0.7, 0.6))
-				push_warning("ghost export: transcode failed; kept AVI at " + _avi)
+			_tick_transcode()
+		"preparing":
+			_set_status("⇪  Taking the thumbnail for %s…" % _out.get_file(), Color(0.95, 0.92, 0.7))
+		"upload_wait":
+			# the video is saved and queued; it goes up once the sign-in settles
+			match _sign:
+				"ok":
+					_run_upload()
+				"failed":
+					if YouTube.signed_in():
+						_run_upload()        # a sign-in is kept: what failed was reaching Google - try now
+					else:
+						_state = "done"
+						_done_t = 60.0
+						_set_status("⚠  Not uploaded: %s - resume it from the ⤓ menu" % _sign_why,
+							Color(1.0, 0.7, 0.6))
+				"signing_in":
+					_set_status("⇪  %s waits for the YouTube sign-in in your browser" % _upload_file.get_file(),
+						Color(0.95, 0.92, 0.7))
+				_:
+					_set_status("⇪  Checking the YouTube sign-in…", Color(0.95, 0.92, 0.7))
+		"uploading":
+			_set_status("⇪  Uploading %s to YouTube …  %d%%" % [_upload_file.get_file(),
+				int(round(_yt.progress * 100.0))], Color(0.95, 0.92, 0.7))
 		"done":
 			_done_t -= dt
 			if _done_t <= 0.0:
 				_status.visible = false
 				_state = "idle"
+	# the take renders with the state still idle: keep its line, and the sign-in beside it, current
+	if _prepping and _upload_this:
+		_set_status("⏳  Rendering the take…", Color(0.95, 0.92, 0.7))
 	# The button fades in once eligible (idle, not mid-export, past the delay) and
 	# fades out otherwise - never a hard pop.
 	# an informational note (e.g. "nothing to export yet") clears itself
@@ -368,6 +419,98 @@ func _process(dt: float) -> void:
 	_btn.tooltip_text = ("Render this visualization + audio to a video file (in the background)"
 		if content else
 		"Nothing to render yet - catch a seed (or play a song) first")
+
+
+func _tick_render(dt: float) -> void:
+	if not Subprocess.alive(_render_pid):
+		_clear_override()                # render finished -> restore live resolution
+		# The render only reports success by PID exit; make sure it actually produced the AVI
+		# (a crashed Movie Maker exits too) before spending minutes transcoding nothing.
+		if _live_encode:
+			# the encoder has been following all along; it finishes by itself once the
+			# file stops growing (FOLLOW_TIMEOUT_US)
+			_state = "transcoding"
+		elif FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
+			_repair_avi_sizes(_avi)
+			_start_transcode()
+		else:
+			_fail("⚠  Render produced no file (see console)")
+		return
+	_poll_pct()
+	# STALL WATCHDOG (see the consts): alive = the playback
+	# position advanced at ALL, or the movie file grew. A slow
+	# render satisfies both; only a render that cannot finish
+	# satisfies neither.
+	_stall_t += dt
+	var frac := Bake.read_progress()
+	if frac > _stall_frac:
+		_stall_frac = frac
+		_stall_t = 0.0
+	var sz := _scratch_len()
+	if not _live_encode and _transcode_pid <= 0 and sz > 65536:
+		_start_transcode(true)
+	if _live_encode and not Subprocess.alive(_transcode_pid) and _riff_size() == 0:
+		_encoder_quit_early()
+		if _state != "rendering":
+			return
+	if _live_encode:
+		_punch_t -= dt
+		if _punch_t <= 0.0:
+			_punch_t = 2.0
+			_punch_behind_encoder()
+	if sz > _stall_size + STALL_MIN_GROWTH:
+		_stall_size = sz
+		_stall_t = 0.0
+	if _stall_t > STALL_LIMIT:
+		Subprocess.stop(_render_pid)
+		_clear_override()
+		_drop_scratch()
+		_fail("⚠  Render stalled at %d%% - frozen for %d min (see console)"
+			% [_pct, int(STALL_LIMIT / 60.0)])
+		push_warning("ghost export: render stalled (no frames, no progress); killed pid %d"
+			% _render_pid)
+		return
+	# one decimal, deliberately: whole percents on a long take
+	# sit still for minutes on heavy scenes, which reads as a
+	# freeze. A moving number is the difference between "slow"
+	# and "hung" for the person watching it.
+	# THE WARNING RIDES THE PROGRESS LINE, not a one-shot notice: this is
+	# the only text on screen for hours, and "leave the render window
+	# alone" is advice that has to still be visible at hour five.
+	var how := " …  %.1f%%" % (maxf(_stall_frac, 0.0) * 100.0)
+	if _note_no_virtual_display:
+		how += "   ⚠ leave the render window visible"
+	_set_status("⏺  Rendering %s%s" % [_out.get_file(), how],
+		Color(0.95, 0.92, 0.7))
+
+
+func _tick_transcode() -> void:
+	if Subprocess.alive(_transcode_pid):
+		_set_status("⏳  Finalizing %s …  %d%%" % [_out.get_file(), _read_transcode_pct()], Color(0.95, 0.92, 0.7))
+	elif FileAccess.file_exists(_out) and _file_size(_out) > 4096:
+		_drop_scratch()                   # transcode ok -> the scratch goes, and its space with it
+		_state = "done"
+		_done_t = 30.0
+		_set_status("✓  Saved  %s" % _out, Color(0.82, 0.95, 0.86))
+		print("ghost: exported -> ", _out)
+		if _upload_this:
+			_queue_upload()
+	elif _released:
+		# what the encoder read was given back as it went, so there is no whole AVI to keep
+		_upload_this = false
+		_drop_scratch()
+		_state = "done"
+		_done_t = 30.0
+		_set_status("⚠  Transcode failed (see console)", Color(1.0, 0.7, 0.6))
+		push_warning("ghost export: transcode failed")
+	else:
+		# Transcode failed (ffmpeg missing/errored). Keep the raw AVI so the work isn't lost.
+		_upload_this = false
+		_drop_scratch(false)
+		_state = "done"
+		_done_t = 30.0
+		_set_status("⚠  Transcode failed; raw file kept: %s" % _avi, Color(1.0, 0.7, 0.6))
+		push_warning("ghost export: transcode failed; kept AVI at " + _avi)
 
 
 # THE BUTTON IS ALWAYS VISIBLE. History, because this exact gate regressed
@@ -434,6 +577,11 @@ func _on_export() -> void:
 		_quality_menu.add_check_item("Automate the Synthesis game (record the UI)", UI_TOGGLE_ID)
 	elif not automation_available and ui_idx >= 0:
 		_quality_menu.remove_item(ui_idx)
+	# THE UPLOAD BOX STARTS CLEAR every time - an upload is public-facing - except when the menu
+	# comes back after the client file was imported, which happened because it was ticked
+	if not _reopen:
+		_upload = false
+	_refresh_upload_items()
 	var btn_rect := _btn.get_global_rect()
 	_quality_menu.reset_size()
 	var pos := Vector2i(btn_rect.position) + Vector2i(0, -int(_quality_menu.get_contents_minimum_size().y) - 8)
@@ -446,6 +594,19 @@ func _on_quality(id: int) -> void:
 		_synth_autoplay = not _synth_autoplay
 		_quality_menu.set_item_checked(_quality_menu.get_item_index(UI_TOGGLE_ID), _synth_autoplay)
 		return
+	match id:
+		UPLOAD_ID:
+			_toggle_upload()
+			return
+		RESUME_ID:
+			_resume_upload()
+			return
+		SIGN_OUT_ID:
+			_sign_out()
+			return
+		CLIENT_ID:
+			_client_dialog.popup_centered()
+			return
 	_quality = QUALITIES[id]
 	var named := safe_name(String(name_provider.call())) if name_provider.is_valid() else ""
 	_dialog.current_file = ("%s.mp4" % named) if not named.is_empty() else "ghost_notes_%s.mp4" % _quality.tag
@@ -482,6 +643,14 @@ func _on_path(out_path: String) -> void:
 	# forever. write_wav is atomic now; this keeps the work from doubling too.
 	if _prepping:
 		return
+	# THE UPLOAD IS DECIDED WITH THE PATH: the box is read once and cleared for the next export, and
+	# the sign-in starts now - while the person is still at the machine to answer the browser - and
+	# runs beside the render rather than in front of it.
+	_upload_this = _upload and not _upload_peek().is_empty()
+	_upload = false
+	_upload_meta = {}
+	if _upload_this:
+		_check_sign_in()
 	# _song was resolved at click time (_on_export) - the live audio path. A
 	# synthesis session without a finished take renders one NOW, after the
 	# quality and path are committed: the provider is a coroutine that runs
@@ -501,6 +670,13 @@ func _on_path(out_path: String) -> void:
 	_out = out_path
 	if _out.get_extension().to_lower() != "mp4":
 		_out += ".mp4"
+	# what the upload says, asked of the mode now that the take exists (a mode times chapters from it)
+	if _upload_this:
+		var meta: Variant = upload_provider.call(_song) if upload_provider.is_valid() else {}
+		_upload_meta = meta if meta is Dictionary else {}
+		if _upload_meta.is_empty():
+			_upload_this = false
+			push_warning("ghost export: the mode described nothing to upload - the video is only saved")
 	# Capture the duration NOW, while the song is loaded: the transcode (esp. 4K) runs for minutes, by
 	# which point the live song may have ended/unloaded and Spectrum.song_length() would read 0.
 	_song_dur = Spectrum.song_length()
@@ -535,9 +711,10 @@ func _on_path(out_path: String) -> void:
 		printerr("ghost/export: WARNING - the take reads as %.2fs, so the render "
 			% _song_dur + "will stop there. Check the text in the panel.")
 
-	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk); we then
-	# transcode it to the chosen .mp4 and delete it. The AVI is only ever scratch - it never ships,
-	# so its 4 GB/RIFF index limit (which corrupts 4K exports) can't reach the user.
+	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk), and it
+	# is encoded to the chosen .mp4 as it is written - on Linux given back as it goes and taken out
+	# of the folder (see _hold). The AVI is only ever scratch - it never ships, so its 4 GB/RIFF
+	# index limit (which corrupts 4K exports) can't reach the user.
 	_avi = _out.get_basename() + ".render.avi"
 	_cache = Bake.cache_path(_song)
 	if FileAccess.file_exists(_cache):
@@ -565,9 +742,7 @@ func _start_bake() -> void:
 # Step 2: Movie Maker render that loads the cache (--bake-file) and draws at once.
 func _start_render() -> void:
 	_pct = 0
-	_transcode_pid = -1
-	_live_encode = false
-	_punched = PUNCH_KEEP
+	_begin_scratch()
 	Bake.write_progress(0.0)
 	# Movie Maker locks its output resolution to the project's viewport size at engine
 	# startup, before any script runs - so the only way to drive it is override.cfg, which
@@ -636,14 +811,10 @@ func _start_render() -> void:
 	# come out wrong.
 	var runner := exe
 	var run_args := args
-	var virtual := Deps.resolve("xvfb-run")
+	var virtual := virtual_display(exe, args)
 	if not virtual.is_empty():
-		runner = virtual
-		# -a picks a free display number; the screen must be at least the size of the
-		# WINDOW (the 480x270 floater), never of the recorded viewport - the movie records
-		# the viewport, which is independent of the window in "viewport" stretch mode.
-		run_args = PackedStringArray(["-a", "-s", "-screen 0 960x540x24", exe])
-		run_args.append_array(args)
+		runner = virtual[0]
+		run_args = virtual.slice(1)
 		print("ghost export: rendering on a virtual display - the desktop cannot freeze it")
 	else:
 		# xvfb-run is Linux-only; on Windows and macOS there is no virtual display to offer,
@@ -668,6 +839,28 @@ func _start_render() -> void:
 	else:
 		_clear_override()
 		_fail("⚠  Could not start the render process")
+
+
+## The argv that runs `exe args` on a virtual display of its own (see [method _start_render]), or
+## [] without xvfb-run. `-a` picks a free display number; the screen must be at least the size of
+## the WINDOW (the 480x270 floater), never of the recorded viewport - the movie records the
+## viewport, which is independent of the window in "viewport" stretch mode.
+##
+## GODOT DIES WITH ITS WRAPPER. Subprocess binds xvfb-run's shell to ghost, but a pact does not
+## pass to the shell's children: stopping a render killed the shell and left Godot rendering and
+## Xvfb running (measured 2026-10-06) - a render that could not be stopped, writing on into a
+## scratch nothing reads. So Godot gets a pact with the shell, and Xvfb ends [constant
+## XVFB_LINGER] seconds after its last client leaves (the delay covers any connection a client
+## opens and closes before its own).
+static func virtual_display(exe: String, args: PackedStringArray) -> PackedStringArray:
+	var xvfb := Deps.resolve("xvfb-run")
+	if xvfb.is_empty():
+		return PackedStringArray()
+	var argv := PackedStringArray([xvfb, "-a", "-s", "-screen 0 960x540x24 -terminate %d" % XVFB_LINGER])
+	argv.append_array(Subprocess.pact_prefix())
+	argv.append(exe)
+	argv.append_array(args)
+	return argv
 
 
 # Step 3: transcode the scratch AVI into the chosen MP4 (H.264 + AAC) via ffmpeg. This is what the
@@ -734,6 +927,7 @@ func _start_transcode(follow := false) -> void:
 		_punched = PUNCH_KEEP
 		_punch_t = 2.0
 		if _live_encode:
+			_hold_scratch()
 			print("ghost: encoding while rendering (pid %d) %s -> %s" % [_transcode_pid, _avi, _out])
 		return
 	if _transcode_pid > 0:
@@ -757,23 +951,22 @@ func _punch_behind_encoder() -> void:
 	# size (measured), so the encoder can only read straight through and everything behind its
 	# position is done with. A finished header names the index at the end, and a reader that
 	# jumps there would have its unread data released under it - never release then.
-	var hf := FileAccess.open(_avi, FileAccess.READ)
-	if hf == null:
-		return
-	hf.seek(4)
-	var riff := hf.get_32()
-	hf.close()
-	if riff != 0:
+	if _riff_size() != 0:
 		return
 	var pos := _encoder_read_pos()
 	var upto := (pos - PUNCH_BEHIND) / 4096 * 4096
 	if pos < 0 or upto <= _punched:
 		return
+	var target := _release_target()
+	if target.is_empty():
+		return
 	var out: Array = []
 	var code := Deps.execute("fallocate", ["--punch-hole", "--offset", str(_punched),
-		"--length", str(upto - _punched), ProjectSettings.globalize_path(_avi)], out)
+		"--length", str(upto - _punched), target], out)
 	if code == 0:
 		_punched = upto
+		_released = true
+		_unlink_scratch()
 	else:
 		push_warning("ghost export: could not release scratch space (%s) - the file will grow" % str(out))
 		_punched = 1 << 62               # stop trying
@@ -787,7 +980,8 @@ func _encoder_read_pos() -> int:
 		return -1
 	var want := ProjectSettings.globalize_path(_avi)
 	for fd in DirAccess.get_files_at(dir):
-		if d.read_link(dir.path_join(fd)) != want:
+		var link := d.read_link(dir.path_join(fd))
+		if link != want and link != want + " (deleted)":
 			continue
 		# READ, NOT SIZED: /proc files report a length of 0, so a whole-file read returns nothing
 		var f := FileAccess.open("/proc/%d/fdinfo/%s" % [_transcode_pid, fd], FileAccess.READ)
@@ -797,6 +991,104 @@ func _encoder_read_pos() -> int:
 			if line.begins_with("pos:"):
 				return int(line.substr(4).strip_edges())
 	return -1
+
+
+## A fresh scratch for a new render. A file already at the path goes first: the live encoder
+## starts on whatever is there, and one left by an earlier run would be taken for this render's.
+func _begin_scratch() -> void:
+	_drop_scratch(false)
+	_unlinked = false
+	_released = false
+	_transcode_pid = -1
+	_live_encode = false
+	_punched = PUNCH_KEEP
+	if not _avi.is_empty() and FileAccess.file_exists(_avi):
+		DirAccess.remove_absolute(_avi)
+
+
+## Hold the scratch open and learn which descriptor holds it, so it can still be measured and
+## released once its name is gone (see [member _hold]). The render and the encoder are other
+## processes, so the one descriptor of ghost's that names the scratch is this one. Linux only:
+## elsewhere there is no /proc to reach it by, and it keeps its name to the end.
+func _hold_scratch() -> void:
+	_drop_scratch(false)
+	if OS.get_name() != "Linux":
+		return
+	_hold = FileAccess.open(_avi, FileAccess.READ)
+	var dir := "/proc/%d/fd" % OS.get_process_id()
+	var d := DirAccess.open(dir)
+	if _hold == null or d == null:
+		return
+	var want := ProjectSettings.globalize_path(_avi)
+	for fd in DirAccess.get_files_at(dir):
+		if d.read_link(dir.path_join(fd)) == want:
+			_held = dir.path_join(fd)
+			return
+
+
+## Take the scratch's name out of the folder. Only once a release has worked through ghost's own
+## handle: a scratch that cannot shrink keeps its name, so it can at least be seen and deleted.
+func _unlink_scratch() -> void:
+	if _unlinked or _held.is_empty():
+		return
+	if DirAccess.remove_absolute(_avi) == OK:
+		_unlinked = true
+		print("ghost: the scratch is given back as it is encoded - %s is out of the folder" % _avi.get_file())
+
+
+## Where fallocate reaches the scratch: through ghost's own descriptor when there is one -
+## checked to still be the scratch, so a release can never land on another file - else by name.
+func _release_target() -> String:
+	var want := ProjectSettings.globalize_path(_avi)
+	if _held.is_empty():
+		return "" if _unlinked else want
+	var d := DirAccess.open(_held.get_base_dir())
+	var link := d.read_link(_held) if d != null else ""
+	return _held if link == want or link == want + " (deleted)" else ""
+
+
+## Let go of the scratch: close ghost's handle - once its name is gone, the kernel frees it when
+## the render and the encoder have closed theirs too - and with [param remove], delete it if it
+## still has a name.
+func _drop_scratch(remove := true) -> void:
+	if _hold != null:
+		_hold.close()
+		_hold = null
+	_held = ""
+	if remove and not _unlinked and not _avi.is_empty() and FileAccess.file_exists(_avi):
+		DirAccess.remove_absolute(_avi)
+
+
+func _scratch_len() -> int:
+	return _hold.get_length() if _hold != null else _file_size(_avi)
+
+
+## The RIFF size in the scratch's header: 0 while Movie Maker is still writing (it finishes the
+## header last), -1 when it cannot be read.
+func _riff_size() -> int:
+	var f := _hold if _hold != null else FileAccess.open(_avi, FileAccess.READ)
+	if f == null:
+		return -1
+	f.seek(4)
+	return f.get_32()
+
+
+## THE ENCODER QUIT WHILE THE RENDER WENT ON - the header is unfinished, so Movie Maker is still
+## writing. A following encoder ends itself only after FOLLOW_TIMEOUT_US with nothing new, so this
+## is a render that stalled that long, or ffmpeg failing. Left alone, the render fills a file
+## nobody reads (unseen, once its name is gone) and the export then calls the short MP4 saved.
+func _encoder_quit_early() -> void:
+	if not _released:
+		# nothing given back yet, so the AVI is whole: let the render finish and encode it then
+		push_warning("ghost export: the encoder stopped early - encoding once the render finishes")
+		_live_encode = false
+		_drop_scratch(false)
+		return
+	var at := _read_transcode_pct()
+	Subprocess.stop(_render_pid)
+	_clear_override()
+	_drop_scratch()
+	_fail("⚠  Encoding stopped at %d%% while the render went on - export abandoned (see console)" % at)
 
 
 const _PROGRESS_FILE := "user://transcode_progress.txt"
@@ -934,6 +1226,7 @@ func _clear_override() -> void:
 
 func _fail(msg: String) -> void:
 	_clear_override()
+	_upload_this = false
 	_state = "done"
 	_done_t = 8.0
 	_set_status(msg, Color(1.0, 0.7, 0.6))
@@ -941,9 +1234,309 @@ func _fail(msg: String) -> void:
 
 
 func _set_status(text: String, color: Color) -> void:
-	_status.text = text
+	var t := text + _sign_note()
+	if t != _status.text:
+		_status.text = t
+		# back to one line's height, AFTER the text: a label grown by a long line does not shrink
+		# by itself, and reset before the new text it grows straight back to the old one's height
+		_status.offset_top = -110.0 - _inset
 	_status.add_theme_color_override("font_color", color)
 	_status.visible = true
+
+
+# --- YouTube -------------------------------------------------------------------------------------
+
+## While an export that is going to YouTube is being made, how its sign-in stands - on the progress
+## line, the one thing on screen for the length of the render.
+func _sign_note() -> String:
+	if not _upload_this or not (_prepping or _state in ["baking", "rendering", "transcoding"]):
+		return ""
+	match _sign:
+		"signing_in":
+			return "   ⇪ sign in to YouTube in your browser"
+		"ok":
+			return "   ⇪ YouTube: signed in"
+		"failed":
+			return "   ⇪ no upload: " + _sign_why
+	return ""
+
+
+## What the mode would upload now, {} for nothing (see [member upload_provider]).
+func _upload_peek() -> Dictionary:
+	if not upload_provider.is_valid():
+		return {}
+	var m: Variant = upload_provider.call("")
+	return m if m is Dictionary else {}
+
+
+## The menu's YouTube items as things stand: the box when the mode has something to upload, a
+## resume while an upload waits (from any mode - it is an earlier export's), a sign-out while a
+## sign-in is kept, and another client file once one is.
+func _refresh_upload_items() -> void:
+	for id in [UPLOAD_ID, RESUME_ID, SIGN_OUT_ID, CLIENT_ID]:
+		var at := _quality_menu.get_item_index(id)
+		if at >= 0:
+			_quality_menu.remove_item(at)
+	var peek := _upload_peek()
+	if not peek.is_empty():
+		var before: Array = YouTube.uploads_in(str(peek.get("record", "")))
+		_quality_menu.add_check_item("Upload to YouTube again (unlisted)" if not before.is_empty()
+			else "Upload to YouTube (unlisted)", UPLOAD_ID)
+		var at := _quality_menu.get_item_index(UPLOAD_ID)
+		_quality_menu.set_item_checked(at, _upload)
+		_quality_menu.set_item_tooltip(at, _upload_tip(peek, before))
+	var p: Dictionary = YouTube.pending()
+	if not p.is_empty() and FileAccess.file_exists(str(p.get("file", ""))):
+		_quality_menu.add_item("Resume the YouTube upload of %s" % str(p["file"]).get_file(), RESUME_ID)
+	if YouTube.signed_in():
+		_quality_menu.add_item("Sign out of YouTube", SIGN_OUT_ID)
+	if YouTube.has_client():
+		_quality_menu.add_item("Use a different Google client file…", CLIENT_ID)
+		_quality_menu.set_item_tooltip(_quality_menu.get_item_index(CLIENT_ID),
+			"Import another Google OAuth client file (a \"Desktop app\" client's JSON). It replaces the one "
+			+ "Ghost Notes keeps; a sign-in made with a different client is forgotten.")
+
+
+func _upload_tip(peek: Dictionary, before: Array) -> String:
+	var tip := ("Once the video is saved, upload it to your YouTube channel as an unlisted video "
+		+ "titled \"%s\". The title, description and tags are the episode's - edit them in the panel.") \
+		% YouTube.fit_title(str(peek.get("title", "")))
+	if not YouTube.has_client():
+		tip += ("\n\nTicking it asks for your Google OAuth client file first (the JSON from Google Cloud) "
+			+ "and keeps it for every later sign-in; then your browser opens to sign in.")
+	elif not YouTube.signed_in():
+		tip += "\n\nTicking it opens your browser to sign in to YouTube first."
+	else:
+		tip += "\n\nGhost Notes is signed in: the upload starts by itself once the video is saved."
+	if not before.is_empty():
+		var last: Dictionary = before[before.size() - 1]
+		tip += "\n\nAlready uploaded: %s (%s, %s)." % [str(last.get("url", "")), str(last.get("privacy", "")),
+			str(last.get("at", "")).get_slice("T", 0)]
+	return tip
+
+
+## TICKING THE BOX SETS UPLOADS UP, as far as they need: the Google client file the first time,
+## then the sign-in while none is kept - each visibly, before the quality and the save path - and
+## the menu comes back with the box ticked. Once signed in it simply ticks.
+func _toggle_upload() -> void:
+	var at := _quality_menu.get_item_index(UPLOAD_ID)
+	if at < 0:
+		return
+	if not _upload and not YouTube.has_client():
+		_quality_menu.hide()
+		_client_dialog.popup_centered()
+		return
+	if not _upload and not YouTube.signed_in():
+		_quality_menu.hide()
+		_check_sign_in(_reopen_ticked)
+		return
+	_upload = not _upload
+	_quality_menu.set_item_checked(at, _upload)
+
+
+func _on_client_file(path: String) -> void:
+	var err: String = YouTube.import_client(path)
+	if not err.is_empty():
+		_note_t = 10.0
+		_set_status("⚠  " + err, Color(1.0, 0.7, 0.6))
+		return
+	_note_t = 6.0
+	_set_status("✓  Google client imported - Ghost Notes keeps it for every sign-in", Color(0.82, 0.95, 0.86))
+	_check_sign_in(_reopen_ticked)
+
+
+## Back to the menu with the box ticked, to choose the quality.
+func _reopen_ticked() -> void:
+	_upload = true
+	_reopen = true
+	_on_export()
+	_reopen = false
+
+
+## THE SIGN-IN AN UPLOAD NEEDS, settled where the person can see it: a kept sign-in is renewed
+## (which proves Google still honors it), and one that is missing or has lapsed opens the browser
+## beside a dialog that says what is awaited, opens the page again, copies its link, names Google's
+## usual block, and cancels. A newer check replaces one still waiting. [param then] runs once signed
+## in (the menu reopened, ticked); the export's own check runs nothing - its upload waits on [member _sign].
+func _check_sign_in(then := Callable()) -> void:
+	_sign_attempt += 1
+	var mine := _sign_attempt
+	_sign_then = then
+	_sign = "checking"
+	_sign_why = ""
+	var tok: Dictionary = await _yt.access_token()
+	if mine != _sign_attempt:
+		return
+	if not tok.has("error"):
+		_signed_in(then)
+		return
+	if not tok.has("signed_out"):
+		# the client file is bad, or Google could not be reached: a browser would not help
+		_sign = "failed"
+		_sign_why = str(tok["error"])
+		if then.is_valid():
+			_show_sign_failed(_sign_why)
+		return
+	_sign = "signing_in"
+	_show_sign_wait()
+	var err: String = await _yt.sign_in()
+	if mine != _sign_attempt:
+		return
+	if err.is_empty():
+		_signed_in(then)
+		return
+	_sign = "failed"
+	_sign_why = err
+	_show_sign_failed(err)
+
+
+func _signed_in(then: Callable) -> void:
+	_sign = "ok"
+	_sign_dialog.hide()
+	if _state == "idle":
+		_note_t = 5.0
+		_set_status("✓  Signed in to YouTube", Color(0.82, 0.95, 0.86))
+	if then.is_valid():
+		then.call()
+
+
+func _show_sign_wait() -> void:
+	_sign_dialog.dialog_text = SIGN_WAIT
+	_sign_dialog.ok_button_text = "Cancel"
+	_sign_again.text = "Open the page again"
+	_sign_copy.text = "Copy the link"
+	_sign_copy.visible = true
+	if not _sign_dialog.visible:
+		_sign_dialog.popup_centered(Vector2i(560, 0))
+
+
+func _show_sign_failed(why: String) -> void:
+	var hint := SIGN_BLOCKED if why.contains("timed out") or why.contains("access_denied") else ""
+	_sign_dialog.dialog_text = "The YouTube sign-in did not finish: %s.%s" % [why, ("\n\n" + hint) if not hint.is_empty() else ""]
+	_sign_dialog.ok_button_text = "Close"
+	_sign_again.text = "Try again"
+	_sign_copy.visible = false
+	if not _sign_dialog.visible:
+		_sign_dialog.popup_centered(Vector2i(560, 0))
+
+
+func _on_sign_action(action: StringName) -> void:
+	match String(action):
+		"again":
+			if _yt.phase == "signing_in":
+				_yt.reopen_sign_in()
+			else:
+				_check_sign_in(_sign_then)
+		"copy":
+			DisplayServer.clipboard_set(_yt.sign_in_url)
+			_sign_copy.text = "Link copied"
+
+
+## The dialog closed: while a sign-in waits, that cancels it. An export goes on and saves its video;
+## the upload then waits to be resumed from the menu.
+func _on_sign_close() -> void:
+	_sign_copy.text = "Copy the link"
+	if _sign != "signing_in":
+		return
+	_sign_attempt += 1
+	_yt.stop_sign_in()
+	_sign = "failed"
+	_sign_why = "the sign-in was cancelled"
+	if _state == "idle":
+		_note_t = 5.0
+		_set_status("YouTube sign-in cancelled", Color(0.95, 0.92, 0.7))
+
+
+## The saved export joins the queue at once - so a quit, a lapsed sign-in or a dropped connection
+## leaves it resumable - and goes up once the sign-in settles (see the `upload_wait` state).
+func _queue_upload() -> void:
+	_upload_this = false
+	# THE THUMBNAIL FIRST, when the mode names a moment for one (the tarot's title screen): a frame of
+	# the saved video itself, so it is exactly what the video shows. A frame that cannot be taken
+	# only costs the thumbnail.
+	var thumb := ""
+	var at := float(_upload_meta.get("thumbnail_at", -1.0))
+	if at >= 0.0:
+		_state = "preparing"
+		thumb = await _take_thumbnail(_out, at)
+	var q: Dictionary = YouTube.queue(_out, YouTube.video_body(_upload_meta, _out.get_file().get_basename()),
+		str(_upload_meta.get("record", "")), thumb)
+	if q.has("error"):
+		_state = "done"
+		_done_t = 30.0
+		_set_status("✓  Saved  %s   ⚠ not uploaded: %s" % [_out, q["error"]], Color(1.0, 0.85, 0.6))
+		return
+	_upload_file = _out
+	_state = "upload_wait"
+
+
+## A frame of [param video] at [param at] seconds, as a 1280x720 JPEG beside it (YouTube's thumbnail
+## size): its path, or "" when ffmpeg could not make one.
+func _take_thumbnail(video: String, at: float) -> String:
+	var jpg := video.get_basename() + ".thumbnail.jpg"
+	DirAccess.remove_absolute(jpg)
+	var pid := Subprocess.start("ffmpeg", thumbnail_args(video, jpg, at), "thumbnail")
+	if pid <= 0:
+		return ""
+	var t0 := Time.get_ticks_msec()
+	while Subprocess.alive(pid) and Time.get_ticks_msec() - t0 < 30000:
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	if Subprocess.alive(pid):
+		Subprocess.stop(pid)
+		return ""
+	if _file_size(jpg) < 1024:
+		push_warning("ghost export: no thumbnail could be taken from %s at %.1f s" % [video.get_file(), at])
+		return ""
+	print("ghost: thumbnail taken at %.1f s -> %s" % [at, jpg])
+	return jpg
+
+
+## ffmpeg's arguments for [method _take_thumbnail]: seek, one frame, scaled to 1280x720.
+static func thumbnail_args(video: String, jpg: String, at: float) -> PackedStringArray:
+	return PackedStringArray(["-y", "-nostdin", "-loglevel", "error", "-ss", "%.3f" % maxf(at, 0.0), "-i", video,
+		"-frames:v", "1", "-vf", "scale=1280:720:flags=lanczos", "-q:v", "2", jpg])
+
+
+func _resume_upload() -> void:
+	var p: Dictionary = YouTube.pending()
+	if p.is_empty():
+		return
+	_upload_file = str(p.get("file", ""))
+	_state = "upload_wait"
+	_check_sign_in()
+
+
+## Send the queued upload; the state is set before the first await, so the frame loop starts it once.
+func _run_upload() -> void:
+	_state = "uploading"
+	var res: Dictionary = await _yt.resume()
+	_state = "done"
+	_done_t = 60.0
+	if res.has("error"):
+		var later := "" if YouTube.pending().is_empty() else " - resume it from the ⤓ menu"
+		_set_status("⚠  The YouTube upload stopped: %s%s" % [res["error"], later], Color(1.0, 0.7, 0.6))
+		return
+	var url := str(res.get("url", ""))
+	var privacy := str(res.get("privacy", ""))
+	DisplayServer.clipboard_set(url)
+	if not privacy.is_empty() and privacy != YouTube.PRIVACY:
+		# what YouTube does with uploads from a Cloud project that has not passed its API audit
+		_set_status("✓  On YouTube, but YouTube kept it %s: %s (link copied)" % [privacy, url], Color(1.0, 0.85, 0.6))
+		push_warning("ghost: YouTube kept the upload %s - uploads from a Cloud project that has not "
+			% privacy + "passed YouTube's API audit stay private until it does")
+		return
+	var thumb_err := str(res.get("thumbnail_error", ""))
+	if not thumb_err.is_empty():
+		push_warning("ghost: YouTube - the thumbnail was not set: " + thumb_err)
+	_set_status("✓  On YouTube (%s): %s  (link copied)%s" % [privacy if not privacy.is_empty() else YouTube.PRIVACY, url,
+		("   ⚠ thumbnail not set: " + thumb_err) if not thumb_err.is_empty() else ""],
+		Color(0.82, 0.95, 0.86) if thumb_err.is_empty() else Color(1.0, 0.85, 0.6))
+
+
+func _sign_out() -> void:
+	await _yt.sign_out()
+	_note_t = 6.0
+	_set_status("Signed out of YouTube (the Google client file stays imported)", Color(0.95, 0.92, 0.7))
 
 
 ## Lift the button and its status line clear of whatever the mode has put along
@@ -953,12 +1546,24 @@ func set_bottom_inset(v: float) -> void:
 	if _btn != null:
 		_btn.offset_top = -68.0 - _inset
 		_btn.offset_bottom = -28.0 - _inset
-	if _status != null:
-		# ITS OWN LINE, ABOVE THE BUTTON ROW. Sharing the row worked while the row
-		# was the only thing at the bottom of the frame, but a long status ("100% of
-		# the clip", an export's progress line) then runs under the buttons the
-		# moment the row moves or the text grows. A row of its own cannot collide
-		# with them whatever either one does.
-		_status.offset_top = -110.0 - _inset
-		_status.offset_bottom = -74.0 - _inset
-		_status.offset_right = -28.0
+	_place_status()
+
+
+## THE STATUS LINE HAS A ROW OF ITS OWN, ABOVE THE BUTTONS, AND WRAPS. It used to get that row
+## only when a mode claimed the bottom of the frame (see [method set_bottom_inset]) and otherwise
+## shared the button row - and a Label that does not wrap grows to its right, so a long export
+## line ("⏺ Rendering <an episode's whole title>.mp4 … 12.3%") ran under the buttons and off the
+## screen, hiding the very progress it showed (reported 2026-10-06). Now it is as wide as the
+## window allows, never wider than [constant STATUS_W], ends at the row's right edge, and extra
+## lines grow UPWARD, away from the buttons.
+func _place_status() -> void:
+	if _status == null:
+		return
+	var w := STATUS_W
+	var vp := get_viewport() if is_inside_tree() else null
+	if vp != null:
+		w = minf(STATUS_W, maxf(160.0, vp.get_visible_rect().size.x - 56.0))
+	_status.offset_left = -28.0 - w
+	_status.offset_right = -28.0
+	_status.offset_top = -110.0 - _inset
+	_status.offset_bottom = -74.0 - _inset

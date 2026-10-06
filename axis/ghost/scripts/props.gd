@@ -649,7 +649,7 @@ static func _assemble(parts: Array, seed: int, path: Array) -> Array:
 		var geos := _geometry(part, rng)
 		if geos.is_empty():
 			continue
-		if String((part.get("copies", {}) as Dictionary).get("kind", "")) == "heap":
+		if String((part.get("copies", {}) as Dictionary).get("kind", "")) in ["heap", "scatter"]:
 			heaps.append([out.size(), rng])
 			out.append({"part": part, "geos": geos, "xforms": [], "salt": here})
 			continue
@@ -657,8 +657,46 @@ static func _assemble(parts: Array, seed: int, path: Array) -> Array:
 	for h in heaps:
 		var leaf: Dictionary = out[h[0]]
 		var at: Vector3 = (leaf["part"] as Dictionary).get("at", Vector3.ZERO)
-		leaf["xforms"] = _placements(leaf["part"], h[1], leaf["geos"], _walls(out, h[0], at * 0.01))
+		if String(((leaf["part"] as Dictionary)["copies"] as Dictionary)["kind"]) == "scatter":
+			leaf["xforms"] = _placements(leaf["part"], h[1], leaf["geos"], {}, _blocks(out, at.y * 0.01))
+		else:
+			leaf["xforms"] = _placements(leaf["part"], h[1], leaf["geos"], _walls(out, h[0], at * 0.01))
 	return out
+
+
+## WHAT A STREWN PART MUST NOT LIE ON: the outline, seen from above, of every standing part among
+## [param leaves] (everything but the strewn ones) that rises above the floor at [param floor_y],
+## one convex hull per copy - a tablet's slab, a pedestal. Stones scattered beside a slab used to be
+## drawn through it (feedback 0009).
+static func _blocks(leaves: Array, floor_y: float) -> Array:
+	var out: Array = []
+	for leaf in leaves:
+		if String(((leaf["part"] as Dictionary).get("copies", {}) as Dictionary).get("kind", "")) in ["scatter", "heap"]:
+			continue
+		for x in leaf["xforms"]:
+			var pts := PackedVector2Array()
+			for e in leaf["geos"]:
+				for q in ((e as Dictionary)["geo"] as Tris).v:
+					var w: Vector3 = (x as Transform3D) * q
+					if w.y > floor_y + 0.002:
+						pts.append(Vector2(w.x, w.z))
+			if pts.size() >= 3:
+				var hull := Geometry2D.convex_hull(pts)
+				if hull.size() >= 4:
+					out.append(hull)
+	return out
+
+
+## Whether a disc of [param r] at [param p] meets any of [param blocks] ([method _blocks]).
+static func _blocked(p: Vector2, r: float, blocks: Array) -> bool:
+	for hull in blocks:
+		var poly: PackedVector2Array = hull
+		if Geometry2D.is_point_in_polygon(p, poly):
+			return true
+		for i in poly.size():
+			if p.distance_to(Geometry2D.get_closest_point_to_segment(p, poly[i], poly[(i + 1) % poly.size()])) < r + 0.001:
+				return true
+	return false
 
 
 ## Where a candle's wicks stand on a top of radius [param R] (meters), from its middle: each where
@@ -754,7 +792,7 @@ static func material(m: Dictionary, orn: Variant, girth: float, height: float, s
 ## Where each copy of a part goes, in the thing's space: the part turned about its own origin,
 ## then laid out as its copies ask, then moved to its `at`. [param geos] are the part's geometry
 ## ([method _geometry]), which strewn copies need the size of.
-static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Array, walls := {}) -> Array:
+static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Array, walls := {}, blocks := []) -> Array:
 	var turn: Vector3 = part.get("turn", Vector3.ZERO)
 	var own := Transform3D(Basis.from_euler(Vector3(deg_to_rad(turn.x), deg_to_rad(turn.y), deg_to_rad(turn.z))), Vector3.ZERO)
 	var at: Vector3 = (part.get("at", Vector3.ZERO) as Vector3) * 0.01
@@ -765,7 +803,7 @@ static func _placements(part: Dictionary, rng: RandomNumberGenerator, geos: Arra
 	var n := int(c["count"])
 	var jit := float(c.get("jitter", 0.0))
 	if String(c["kind"]) in ["scatter", "heap"]:
-		return _strewn(String(c["kind"]) == "heap", n, jit, float(c["radius"]) * 0.01, own, at, _bounds(geos, own), rng, walls)
+		return _strewn(String(c["kind"]) == "heap", n, jit, float(c["radius"]) * 0.01, own, at, _bounds(geos, own), rng, walls, blocks)
 	# A COPY'S JITTER TURNS IT ABOUT ITS OWN MIDDLE: about the part's origin, a rod drawn away from
 	# it (a squid's arm, a jig lying on its side) swung across the thing, and a row of them splayed
 	# like legs (feedback 0006)
@@ -810,7 +848,7 @@ static func _pivot(geos: Array, own: Transform3D) -> Vector3:
 ## the pockets of the heap, a little tipped where they lie on others - so the floor fills before
 ## the heap rises.
 static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transform3D, at: Vector3, bounds: Dictionary,
-		rng: RandomNumberGenerator, walls := {}) -> Array:
+		rng: RandomNumberGenerator, walls := {}, blocks := []) -> Array:
 	var reach := float(bounds["reach"])
 	var girth := float(bounds["girth"])
 	var low := float(bounds["low"])
@@ -847,9 +885,14 @@ static func _strewn(heap: bool, n: int, jit: float, radius: float, own: Transfor
 					if q.distance_to(e[0]) < r + float(e[1]) + 0.001:
 						clear = false
 						break
+				# NEVER THROUGH A STANDING PART of the same thing
+				if clear and not blocks.is_empty() and _blocked(Vector2(at.x, at.z) + q, r, blocks):
+					clear = false
 				spot = q
 				if clear:
 					break
+			if not blocks.is_empty() and _blocked(Vector2(at.x, at.z) + spot, r, blocks):
+				continue
 		laid.append([spot, r])
 		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s, s))
 		if mid > hh * 1.2:

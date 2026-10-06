@@ -10,11 +10,18 @@ extends SceneTree
 ## - THE VOCABULARY names every kind, look, place and moment, with each look's sizes.
 ## - A FUNCTION OF SHOW TIME: a mote's place and brightness are the same whenever asked; a mote that
 ##   is away is where it went (out of the picture); a firefly blinks; an ember rises through its
-##   region and round again; nothing sinks under its region's floor.
+##   region and round again; nothing sinks under the air's floor (the room's, not its region's).
 ## - BURSTS are born the same way from the same moments - within their moment, most at its start, at
 ##   the emitter - and a moved moment is born again; one not moved is left alone.
-## - A MOTE'S HOME IS SEEN: in the picture and in front of the stage's occluders. Two-sided: homes drawn
-##   from the region's volume alone are hidden behind the table often.
+## - A MOTE'S HOME IS SEEN: in the picture, in front of the stage's occluders and short of where the air
+##   ends. Two-sided: homes drawn from the region's volume alone are hidden behind the table often, and
+##   without the limit some lie past the room's picture. Away, a mote is out of the picture or off in
+##   the distance - some of each.
+## - A FLY FLIES LIKE ONE: fast legs with sharp turns, hardly ever still and never for long (a hover is a
+##   fraction of a second), never faster than a fly; its planned flight loops without a jump; gone, it is
+##   out of the picture or off in the distance blurred past seeing, about as long as asked; it carries
+##   no light. Two-sided: pixies over the same cloth neither zip nor turn sharply, and a lens without
+##   blur keeps a distant fly whole.
 ## - NOTHING FLIES THROUGH WHAT STANDS: a mote over the table or a thing on it stays above its top - a lit
 ##   one by LIT_CLEAR, where its light at full glow burns no spot that blooms - and the floor lifting it
 ##   over a thing never makes it jump. Two-sided: with nothing under them (the old floor) motes go into
@@ -34,15 +41,31 @@ func _ok(cond: bool, what: String) -> void:
 		print("  FAIL: " + what)
 
 
-## A stage like the tarot table's: a camera looking down across a table, the air's regions round it.
+## A stage like the tarot table's: a camera looking down across a table, the air's regions round it,
+## and its lens - sharp over the table, blurring past it to the room's 1% of the frame at 3.2 m, the air
+## ending short of the room (as TarotMedium._air_stage reckons them).
 func _stage() -> Dictionary:
 	var lay := TarotTable.layout_of(1234)
-	return {"regions": TarotTable.AIR, "camera": lay["camera"], "fov": float(lay["fov"]), "aspect": 16.0 / 9.0,
-		"occluders": [AABB(Vector3(-0.95, -0.05, -0.405), Vector3(1.9, 0.05, 0.85))]}
+	var cam: Transform3D = lay["camera"]
+	var table := AABB(Vector3(-0.95, -0.05, -0.405), Vector3(1.9, 0.05, 0.85))
+	var near := INF
+	var far := 0.0
+	for i in 8:
+		var d := (table.get_endpoint(i) - cam.origin).dot(-cam.basis.z)
+		near = minf(near, d)
+		far = maxf(far, d)
+	return {"regions": TarotTable.AIR, "camera": cam, "fov": float(lay["fov"]), "aspect": 16.0 / 9.0,
+		"occluders": [table], "sharp": Vector2(near, far), "defocus": 0.01 / (1.0 / far - 1.0 / 3.2), "deep": 2.88}
+
+
+## How deep [param p] is, along the camera's axis.
+func _depth(stage: Dictionary, p: Vector3) -> float:
+	var cam: Transform3D = stage["camera"]
+	return (p - cam.origin).dot(-cam.basis.z)
 
 
 func _run() -> void:
-	for check in [_sanitize, _vocabulary, _motes, _bursts, _homes, _floors, _built]:
+	for check in [_sanitize, _vocabulary, _motes, _flies, _bursts, _homes, _floors, _built]:
 		var done: Variant = await (check as Callable).call()
 		_ok(done == true, "%s stopped part way (a script error - see above)" % (check as Callable).get_method())
 	print("effects_check: %s (%d failure%s)" % ["ALL OK" if _fails == 0 else "FAILED", _fails, "" if _fails == 1 else "s"])
@@ -102,6 +125,7 @@ func _motes() -> bool:
 	var same := true
 	var away_out := 0
 	var aways := 0
+	var away_deep := 0
 	for m in pix["each"]:
 		for t in [0.0, 13.7, 61.2]:
 			var a := Effects.mote_at(pix, m, t)
@@ -110,9 +134,12 @@ func _motes() -> bool:
 			if float(a["presence"]) == 0.0:
 				aways += 1
 				var s: Variant = Effects._screen(stage, a["pos"])
-				away_out += 1 if s == null or (s as Vector2).x < 0.0 or (s as Vector2).x > 1.0 or (s as Vector2).y < 0.0 or (s as Vector2).y > 1.0 else 0
+				var deep := _depth(stage, a["pos"]) > float(stage["deep"]) * 0.85
+				away_deep += 1 if deep else 0
+				away_out += 1 if deep or s == null or (s as Vector2).x < 0.0 or (s as Vector2).x > 1.0 or (s as Vector2).y < 0.0 or (s as Vector2).y > 1.0 else 0
 	_ok(same, "a mote is not the same whenever it is asked for at one time")
-	_ok(aways > 0 and away_out == aways, "a mote that is away is in the picture (%d of %d)" % [aways - away_out, aways])
+	_ok(aways > 0 and away_out == aways, "a mote that is away is in the picture and not off in the distance (%d of %d)" % [aways - away_out, aways])
+	_ok(away_deep > 0 and away_deep < aways, "motes away were all off in the distance or none were (%d of %d)" % [away_deep, aways])
 	var ff: Dictionary = air.motes[1]
 	var lo := INF
 	var hi := -INF
@@ -132,13 +159,108 @@ func _motes() -> bool:
 	_ok(rises > ys.size() * 0.7 and ys[ys.size() - 1] <= box.end.y + 1e-3, "an ember does not rise through its region and round (%d of %d steps up)" % [rises, ys.size()])
 	var under := 0
 	for pop in air.motes:
-		var b2: AABB = (pop as Dictionary)["box"]
 		for m in (pop as Dictionary)["each"]:
 			for i in 50:
-				under += 1 if (Effects.mote_at(pop, m, float(i) * 1.7)["pos"] as Vector3).y < b2.position.y - 1e-4 else 0
-	_ok(under == 0, "%d mote places were under their region's floor" % under)
+				under += 1 if (Effects.mote_at(pop, m, float(i) * 1.7)["pos"] as Vector3).y < float((pop as Dictionary)["floor"]) - 1e-4 else 0
+	_ok(under == 0 and float((air.motes[1] as Dictionary)["floor"]) < -0.5, "%d mote places were under the air's floor (the room's, %.2f)" % [under, float((air.motes[1] as Dictionary)["floor"])])
 	root.free()
 	return true
+
+
+func _flies() -> bool:
+	var fx := _clean([{"kind": "motes", "look": "fly", "where": "over the cloth", "count": 8, "away": 0.0, "light": true},
+		{"kind": "motes", "look": "pixie", "where": "over the cloth", "count": 8, "away": 0.0},
+		{"kind": "motes", "look": "fly", "where": "beyond the table", "count": 8, "away": 0.5}])
+	_ok(not bool(fx[0]["light"]), "a fly was let carry a light")
+	var root := Node3D.new()
+	var stage := _stage()
+	var air := Effects.build(fx, stage, 23)
+	root.add_child(air.root)
+	var fly := _flight(air.motes[0])
+	var pixie := _flight(air.motes[1])
+	print("  flies: up to %.2f m/s, %.2f sharp turns a second, still %.0f%% of half-seconds; pixies: %.2f m/s, %.2f turns, %.0f%%" % [
+		fly["top"], fly["turns"], fly["still"] * 100.0, pixie["top"], pixie["turns"], pixie["still"] * 100.0])
+	_ok(fly["top"] > 1.0 and fly["top"] < 5.0, "a fly's fastest is %.2f m/s (a fly zips, at a fly's speed)" % fly["top"])
+	_ok(fly["turns"] > 1.0, "a fly turns sharply only %.2f times a second" % fly["turns"])
+	_ok(fly["still"] > 0.01 and fly["still"] < 0.25, "a fly is still for %.0f%% of half-seconds (hardly ever, but now and then)" % (fly["still"] * 100.0))
+	_ok(pixie["top"] < 0.6 and pixie["turns"] < fly["turns"] * 0.2, "control: pixies zip (%.2f m/s) or turn sharply (%.2f a second) like flies" % [pixie["top"], pixie["turns"]])
+	# A HOVER IS A FRACTION OF A SECOND, and the plan loops without a jump
+	var longest := 0.0
+	var loops := true
+	for pop in [air.motes[0], air.motes[2]]:
+		for m in (pop as Dictionary)["each"]:
+			var times: PackedFloat32Array = m["zt"]
+			var kinds: PackedByteArray = m["zk"]
+			for i in kinds.size():
+				if kinds[i] == Effects.LEG_STILL:
+					longest = maxf(longest, times[i + 1] - times[i])
+			var span := times[times.size() - 1]
+			var before: Vector3 = Effects._zigzag(m, span - 1e-3)["at"]
+			var after: Vector3 = Effects._zigzag(m, span + 1e-3)["at"]
+			loops = loops and before.distance_to(after) < 0.005
+	_ok(longest > 0.0 and longest <= 0.5, "a fly hovered for %.2f s in one place" % longest)
+	_ok(loops, "a fly's flight jumps where its plan loops")
+	# GONE IS OUT OF THE PICTURE OR OFF IN THE DISTANCE, blurred away, about as much of the time as asked
+	var gone := 0
+	var seen_gone := 0
+	var deep_gone := 0
+	var samples := 0
+	var far: Dictionary = air.motes[2]
+	var body := float(fx[2]["size"]) * 0.001
+	for m in far["each"]:
+		for i in 1200:
+			var a := Effects.mote_at(far, m, float(i) * 0.25)
+			samples += 1
+			if float(a["presence"]) == 0.0:
+				gone += 1
+				var sc: Variant = Effects._screen(stage, a["pos"])
+				var inside := sc != null and (sc as Vector2).x > 0.0 and (sc as Vector2).x < 1.0 and (sc as Vector2).y > 0.0 and (sc as Vector2).y < 1.0
+				deep_gone += 1 if inside else 0
+				seen_gone += 1 if inside and Effects.speck_ink(stage, a["pos"], body) > 0.1 else 0
+	_ok(absf(float(gone) / samples - 0.5) < 0.15, "flies asked to be away half the time were gone %.0f%% of it" % (100.0 * gone / samples))
+	_ok(seen_gone == 0 and deep_gone > 0, "%d times a fly that was gone could be seen (%d of them off in the distance)" % [seen_gone, deep_gone])
+	# THE LENS: a speck over the table is whole; one off in the distance is blurred away - control, a lens
+	# with no blur keeps it whole there
+	var cam: Transform3D = stage["camera"]
+	var sharp: Vector2 = stage["sharp"]
+	var mid := cam.origin - cam.basis.z * (sharp.x + sharp.y) * 0.5
+	var distant := cam.origin - cam.basis.z * float(stage["deep"])
+	var open := stage.duplicate()
+	open.erase("defocus")
+	_ok(is_equal_approx(Effects.speck_ink(stage, mid, body), 1.0) and Effects.speck_ink(stage, distant, body) < 0.1
+		and is_equal_approx(Effects.speck_ink(open, distant, body), 1.0),
+		"a fly over the table shows %.2f of itself and one off in the distance %.2f (control, no blur: %.2f)" % [
+		Effects.speck_ink(stage, mid, body), Effects.speck_ink(stage, distant, body), Effects.speck_ink(open, distant, body)])
+	var m0: Dictionary = (air.motes[0] as Dictionary)["each"][0]
+	_ok(Effects.mote_at(air.motes[0], m0, 41.3)["pos"] == Effects.mote_at(air.motes[0], m0, 41.3)["pos"], "a fly is not where it was when asked again")
+	root.free()
+	return true
+
+
+## How a population flies over a minute at 60 Hz: its top speed, its SHARP TURNS a second (its heading
+## swung past 60 degrees within a twentieth of a second, at speed) and the share of half-seconds it
+## went under 2 cm (still, its buzz aside).
+func _flight(pop: Dictionary) -> Dictionary:
+	var dt := 1.0 / 60.0
+	var top := 0.0
+	var turns := 0
+	var halves := 0
+	var still := 0
+	for m in pop["each"]:
+		var ps: Array = []
+		for i in 3601:
+			ps.append(Effects.mote_at(pop, m, float(i) * dt)["pos"])
+		for i in range(1, ps.size()):
+			top = maxf(top, ((ps[i] as Vector3) - (ps[i - 1] as Vector3)).length() / dt)
+		for i in range(3, ps.size() - 3, 3):
+			var v0 := (ps[i] as Vector3) - (ps[i - 3] as Vector3)
+			var v1 := (ps[i + 3] as Vector3) - (ps[i] as Vector3)
+			if v0.length() / (3.0 * dt) > 0.3 and v1.length() / (3.0 * dt) > 0.3 and v0.angle_to(v1) > deg_to_rad(60.0):
+				turns += 1
+		for i in range(30, ps.size(), 30):
+			halves += 1
+			still += 1 if ((ps[i] as Vector3) - (ps[i - 30] as Vector3)).length() < 0.02 else 0
+	return {"top": top, "turns": turns / (60.0 * (pop["each"] as Array).size()), "still": float(still) / maxf(halves, 1.0)}
 
 
 func _bursts() -> bool:
@@ -189,6 +311,15 @@ func _homes() -> bool:
 		seen += 1 if s != null and (s as Vector2).x >= 0.0 and (s as Vector2).x <= 1.0 and (s as Vector2).y >= 0.0 and (s as Vector2).y <= 1.0 else 0
 		hidden += 1 if Effects._hidden(stage, p) else 0
 	_ok(seen == 200 and hidden == 0, "mote homes were out of the picture (%d) or behind the table (%d)" % [200 - seen, hidden])
+	# NONE PAST WHERE THE AIR ENDS (the room's picture stands there): control - without the limit, some are
+	var past := 0
+	var past_open := 0
+	var open := stage.duplicate()
+	open.erase("deep")
+	for i in 200:
+		past += 1 if _depth(stage, Effects._in_view(box, stage, rng)) > float(stage["deep"]) + 1e-3 else 0
+		past_open += 1 if _depth(stage, Effects._in_view(box, open, rng)) > float(stage["deep"]) + 1e-3 else 0
+	_ok(past == 0 and past_open > 0, "mote homes past where the air ends: %d (control, unlimited: %d)" % [past, past_open])
 	var naive := 0
 	for i in 200:
 		var p := box.position + Vector3(rng.randf(), rng.randf(), rng.randf()) * box.size

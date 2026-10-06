@@ -528,8 +528,8 @@ func _describe_air(names: Array) -> PackedStringArray:
 			"fog":
 				what = "fog %s, density %.2f, reaching %d cm" % [String(built["where"]), float(built["density"]), roundi(float(built["height"]))]
 			"motes":
-				what = "%d %s%s %s, %s mm%s" % [int(built["count"]), String(built["look"]), "" if int(built["count"]) == 1 else "s",
-					String(built["where"]), Effects._mm(float(built["size"])), ", lit" if bool(built["light"]) else ""]
+				what = "%s %s, %s mm%s" % [Effects.count_of(String(built["look"]), int(built["count"])), String(built["where"]),
+					Effects._mm(float(built["size"])), ", lit" if bool(built["light"]) else ""]
 			"burst":
 				what = "%s on %s, %d of them, %s mm" % [String(built["look"]), String(built["on"]), int(built["count"]), Effects._mm(float(built["size"]))]
 		out.append("- %s: %s" % [String(nm), what])
@@ -558,6 +558,8 @@ func _air_troubles(e: Dictionary) -> PackedStringArray:
 			var r: Vector2 = (looks[look] as Dictionary)["sizes"]
 			if float(e["size"]) < r.x or float(e["size"]) > r.y:
 				out.append("a %s is %s to %s mm: its size was kept within that" % [look, Effects._mm(r.x), Effects._mm(r.y)])
+		if kind == "motes" and looks.has(look) and String((looks[look] as Dictionary)["shape"]) == "speck" and Props._flag(e.get("light"), false):
+			out.append("a %s is a dark speck and carries no light: it was left unlit" % look)
 	if kind == "burst":
 		var on := String(e.get("on", "")).strip_edges().to_lower()
 		if not TarotTable.MOMENTS.has(on):
@@ -575,7 +577,7 @@ func _air_line(safe: Dictionary) -> String:
 			"fog":
 				parts.append("%s (fog, %s)" % [String(d["name"]), String(d["where"])])
 			"motes":
-				parts.append("%s (%d %ss, %s)" % [String(d["name"]), int(d["count"]), String(d["look"]), String(d["where"])])
+				parts.append("%s (%s, %s)" % [String(d["name"]), Effects.count_of(String(d["look"]), int(d["count"])), String(d["where"])])
 			"burst":
 				bursts += 1
 	if parts.is_empty() and bursts == 0:

@@ -22,7 +22,10 @@ format and voice, told true).
 3. **Play** reads it at the table (the karaoke line tracks the voice). The voice is the panel's
    own and is saved in the show's frontmatter; **Test** auditions it.
 4. **Export** renders the video, named after the episode's title; the episode's folder then holds
-   `upload.md` - the title, a description, chapters timed per card from the take, and tags.
+   `upload.md` - the title, a description, chapters timed per card from the take, and tags (the
+   show's own `tags:` line first). Tick **Upload to YouTube (unlisted)** in the export menu and the
+   saved video goes up to your channel - see "YouTube" below. The panel's **YouTube** fields edit
+   the title, description and tags the producer wrote (saved into the plan).
 5. Any earlier episode is one pick away in the episode list, exactly as it was made.
 6. **Delete…** removes the picked episode, after asking: its whole folder goes to the system
    trash (restorable from there); exported videos and the other episodes are untouched. The
@@ -263,7 +266,15 @@ The set dresser writes `effects` beside its things; `Effects` builds them:
   falling away round it as a gentle dome - so a mote is lifted over what stands, never through it. Lit
   motes carry a tiny OmniLight, so the fog glows in their color round them; the light is nearly all the
   fog's (a surface sees 1/15), and a lit mote keeps 4 cm off what it flies over - at full strength a
-  pixie skimming the cloth bloomed into a red blot. Each look's size and brightness stay in its own range (the user: pixies
+  pixie skimming the cloth bloomed into a red blot. FLIES (2026-10-06) are dark specks on a planned
+  flight: zips with sharp turns, hovers of a fraction of a second, now and then a short drift, out of
+  the picture and back in elsewhere (the user: "flies are almost never still... a fly zips into a
+  scene, hovers for a fraction of a second, then zips somewhere else"); a zip smears as a bright
+  day's fast shutter would, a short dark dash. EVERY MOTE CAN FLY AWAY FROM THE CAMERA (the user:
+  "a fly COULD fade, if it moved away from the camera and flew far enough away"; "a pixie could fly
+  away from the camera too"): two in five leavings are off into the room past the table - with the
+  camera looking down at the cloth, up the picture and shrinking - and a fly, a dark speck, also
+  blurs as the room is blurred, so it fades out of sight; glows shrink to a point and the fog takes them. Each look's size and brightness stay in its own range (the user: pixies
   "quite small generally", adjustable "within constraints"): a pixie 3 mm, 1.5-8.
 - BURSTS - sparks, glitter, embers, flames, smoke, stars - mark a MOMENT (`TarotTable.MOMENTS`:
   shuffle, jumper, reveal, pirouette, lay, close), read off the schedule by `TarotMedium._air_moments`
@@ -521,9 +532,55 @@ lets it bleed. The look's `foil` (0-1) says how much.
 Everything is a function of show time (`ReadingFollower` + the schedule), so live and export
 draw the same frames.
 
+## YouTube
+
+Built 2026-10-06 (user: "upload them unlisted... an optional flag, selected when we press the
+export button"; "have Ghost Notes prompt for a credentials file... and cache those credentials for
+every future login"). `scripts/youtube.gd` is generic; the tarot mode opts in through
+`Exporter.upload_provider` (`TarotEditor.upload_meta`).
+
+- **The flow**: ⤓ -> tick "Upload to YouTube (unlisted)" -> (first time only: a file dialog for the
+  Google Cloud "Desktop app" OAuth client JSON, kept in `user://youtube/client.json`) -> (while no
+  sign-in is kept: the browser opens Google's consent page beside a "Sign in to YouTube" dialog -
+  Open the page again / Copy the link / Cancel) -> the menu comes back ticked -> quality -> save
+  path -> render -> transcode -> upload, with progress on the status line; the link is copied. A
+  sign-in that lapsed (7 days in Testing) opens the same dialog as the export starts, beside the
+  render. "Use a different Google client file…" replaces the kept one.
+- **Google's "Access blocked"** (fixed 2026-10-06): an account that is not one of a Testing
+  project's test users gets a dead-end page that never comes back to Ghost Notes, so the dialog
+  names it; add the account under Google Auth Platform > Audience > Test users, then "Open the page
+  again" finishes the same sign-in. A newer sign-in replaces one still waiting.
+- **The panel's fields** (2026-10-06): Title and Description are the episode's - edits are saved
+  into its plan. THE TAGS ARE THE SHOW'S (the user: "I want global tags, not per-episode ones"):
+  the document's own top-level `tags:` line, the North Star chapters' format, edited as CHIPS like
+  YouTube Studio's - × removes one, a comma (or Enter, or a pasted "a, b, c") in the box at the end
+  makes chips, Backspace in the empty box removes the last, a chip past 500 characters is dimmed.
+  NOTHING PER EPISODE goes into the markdown but the picked episode's title, one `episode_title`
+  overwritten as the episode changes, as the seed is ("I just don't want to store a bunch of
+  episode-specific logic in the frontmatter"). A per-seed record map was tried the same day and
+  removed.
+- **The title screen**: the show's name, and under it the BYLINE - the document's `byline:` ("with
+  Pen & Ink"), a field under the Intro slider.
+- **What goes up**: the plan's title and description (as the panel's fields left them), a chapter
+  per card timed from the take, the show's tags fitted to YouTube's 500 characters, and a THUMBNAIL:
+  a 1280x720 frame of the saved video at the title screen - the name fully up over the out-of-focus
+  table - set once the video is up (needs a verified channel; refused, the video stays up and the
+  status line says why). Constants: unlisted, not made for kids, `containsSyntheticMedia`, no paid
+  promotion (`paidProductPlacementDetails`), category 22 (People & Blogs).
+- **Resilient**: the upload is queued (`pending.json`) the moment the video is saved, so a quit, a
+  lapsed sign-in or a dropped connection leaves "Resume the YouTube upload of ..." in the menu;
+  resumable sessions live about a week. Each upload is recorded in `<episode>/youtube.json`; the
+  menu then says "Upload to YouTube again" and the panel's note shows the link.
+- **Google's side**: in "Testing" the sign-in lasts 7 days, then the browser opens again. Until the
+  Cloud project passes YouTube's API audit, YouTube keeps API uploads private whatever was asked
+  (the status line says so when that happens). Uploads have their own quota: 100 a day.
+- **Not built**: Generative mode's provider (its chapters already carry `title` and `tags`).
+
 ## Probes and gates
 
 - `godot --headless --path . --script res://tests/tarot_check.gd` - the gate.
+- `godot --headless --path . --script res://tests/youtube_check.gd` and `youtube_flow_check.gd` -
+  the upload's pieces, and sign-in + upload end to end against a stand-in for Google.
 - `tests/tarot_episode_probe.gd` - make an episode headlessly (real quota); `--only table` sets
   just the table.
 - `tests/run_quiet.sh -- res://tests/props_look_probe.gd --spec <table.json> --out x.png` - a
@@ -543,7 +600,6 @@ draw the same frames.
 
 ## Not built yet
 
-- A thumbnail.
 - Pick-a-pile episodes (three piles, "all four piles say the same thing").
 - Moving `Illustrations`' own job pump onto `AgentJobs`.
 - Porting the tablet's follower onto `ReadingFollower`.

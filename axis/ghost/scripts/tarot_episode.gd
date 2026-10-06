@@ -18,6 +18,7 @@ class_name TarotEpisode
 ## record that the reader was never shown a card before it was drawn.
 
 const ROOT := "user://tarot"
+const YouTube := preload("res://scripts/youtube.gd")
 
 ## Where shows live. Moved aside under test, so a gate never touches the author's episodes.
 static var root := ROOT
@@ -142,6 +143,8 @@ func file_of(step: String) -> String:
 			return dir.path_join("meta.json")
 		"upload":
 			return dir.path_join("upload.md")
+		"youtube":
+			return dir.path_join("youtube.json")
 	return ""
 
 
@@ -342,26 +345,26 @@ func complete() -> bool:
 	return true
 
 
-## UPLOAD NOTES: `upload.md` - the title, the description and tags the producer wrote, and a
-## chapter per card timed from the take at [param take] (its sidecar's word timings). "" on
-## success, else why not.
-func write_upload_notes(take: String) -> String:
-	var side := FileAccess.get_file_as_string(take.get_basename() + ".json")
-	var j := JSON.new()
-	if j.parse(side) != OK or not (j.data is Dictionary):
-		return "the take's sidecar is unreadable"
-	var words: Array = (j.data as Dictionary).get("words", [])
+## WHAT AN UPLOAD OF THE EPISODE SAYS: the title, the description (else the premise) and the tags
+## of the plan - as the panel left them - and, given the take at [param take], a chapter per card
+## timed from its sidecar's word timings. `{title, description, chapters, tags}`; no chapters
+## without a readable take.
+func upload_notes(take := "") -> Dictionary:
 	var plan: Variant = read_json("plan")
 	var p: Dictionary = plan if plan is Dictionary else {}
-	var doc := document()
-	var cards: Array = doc.get("cards", [])
-	var lines := PackedStringArray()
-	lines.append("# " + String(p.get("episode_title", "")))
-	lines.append("")
 	var desc := String(p.get("description", "")).strip_edges()
-	lines.append(desc if not desc.is_empty() else String(p.get("premise", "")))
-	lines.append("")
-	lines.append("Chapters")
+	var out := {"title": String(p.get("episode_title", "")).strip_edges(),
+		"description": desc if not desc.is_empty() else String(p.get("premise", "")).strip_edges(),
+		"chapters": PackedStringArray(),
+		"tags": PackedStringArray(p.get("tags", []) if p.get("tags") is Array else [])}
+	var side := FileAccess.get_file_as_string(take.get_basename() + ".json") \
+		if not take.is_empty() and FileAccess.file_exists(take.get_basename() + ".json") else ""
+	var j := JSON.new()
+	if side.is_empty() or j.parse(side) != OK or not (j.data is Dictionary):
+		return out
+	var words: Array = (j.data as Dictionary).get("words", [])
+	var cards: Array = document().get("cards", [])
+	var chapters := PackedStringArray()
 	for c in TarotScript.chapters(script(), words):
 		var d: Dictionary = c
 		var label := "Intro"
@@ -375,13 +378,39 @@ func write_upload_notes(take: String) -> String:
 					" - a jumper" if String(d["kind"]) == "jumper" else ""]
 			"spread":
 				label = "The spread"
-		var t := int(d["t"])
-		lines.append("%d:%02d %s" % [floori(float(t) / 60.0), t % 60, label])
-	var tags := PackedStringArray(p.get("tags", []) if p.get("tags") is Array else [])
-	if not tags.is_empty():
+		chapters.append("%s %s" % [chapter_clock(int(d["t"])), label])
+	out["chapters"] = chapters
+	return out
+
+
+## [param t] seconds as a chapter's timestamp, as YouTube reads one: `m:ss`, `h:mm:ss` from an hour.
+static func chapter_clock(t: int) -> String:
+	if t >= 3600:
+		return "%d:%02d:%02d" % [floori(t / 3600.0), floori(t / 60.0) % 60, t % 60]
+	return "%d:%02d" % [floori(t / 60.0), t % 60]
+
+
+## UPLOAD NOTES: `upload.md` - what an upload of the episode says (see [method upload_notes]), its
+## chapters timed from the take at [param take], and the tags that go up with it - [param tags], the
+## show's - fitted to YouTube's limit. "" on success, else why not.
+func write_upload_notes(take: String, tags := PackedStringArray()) -> String:
+	var side := FileAccess.get_file_as_string(take.get_basename() + ".json")
+	var j := JSON.new()
+	if j.parse(side) != OK or not (j.data is Dictionary):
+		return "the take's sidecar is unreadable"
+	var n := upload_notes(take)
+	var lines := PackedStringArray(["# " + String(n["title"]), "", String(n["description"]), "", "Chapters"])
+	lines.append_array(n["chapters"] as PackedStringArray)
+	var going: PackedStringArray = YouTube.fit_tags(Array(tags))
+	if not going.is_empty():
 		lines.append("")
-		lines.append("Tags: " + ", ".join(tags))
+		lines.append("Tags: " + ", ".join(going))
 	return write_text("upload", "\n".join(lines) + "\n")
+
+
+## The YouTube uploads made of this episode, oldest first (`youtube.json`, kept by youtube.gd).
+func uploads() -> Array:
+	return YouTube.uploads_in(file_of("youtube"))
 
 
 # --- what the table is given ------------------------------------------------------------

@@ -4318,6 +4318,12 @@ func export_name() -> String:
 	return ""
 
 
+## What an upload of the take at [param take] says (see [member Exporter.upload_provider]); {}
+## here - a reading of this panel offers no upload yet. The tarot mode describes its episodes.
+func upload_meta(_take: String) -> Dictionary:
+	return {}
+
+
 ## Gate for the export button. The procedural path asks whether a seed has been
 ## caught; here the only requirements are text and a loaded voice.
 func can_export_take() -> bool:

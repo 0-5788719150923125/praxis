@@ -157,7 +157,16 @@ static func put_block(raw: String, value: Variant, key := KEY) -> String:
 		return prefix + nl.join(lead) + (nl + body if not body.is_empty() else nl)
 	var head := _lines(String(parts.head))
 	var span := _span_of(head, key)
-	if span.is_empty():
+	var ghost := _span_of(head, KEY) if key != KEY else []
+	if span.is_empty() and not ghost.is_empty():
+		# A NEW FIELD OF THE AUTHOR'S KIND (tags, a byline) goes in just above ghost's block, as a
+		# new document's title does (see [method create]): ghost's block stays the machine-written
+		# one at the bottom, and the author's own keys stay where they were put.
+		var rest: Array = head.slice(int(ghost[0]))
+		head = head.slice(0, int(ghost[0]))
+		head.append_array(block)
+		head.append_array(rest)
+	elif span.is_empty():
 		# Appended rather than inserted: an author's own keys stay where they were put,
 		# and ghost's block is recognizably the machine-written one at the bottom.
 		head.append_array(block)

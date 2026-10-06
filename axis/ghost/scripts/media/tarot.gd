@@ -54,6 +54,8 @@ const CLOTH := Vector2(1.2, 0.72)
 ## half a meter off sees a room some meters away about so soft at f/4.
 const ROOM_SHADER := preload("res://shaders/tarot_room.gdshader")
 const ROOM_BLUR := 0.005
+## How far out the room's picture stands from the camera (meters, level).
+const ROOM_REACH := 3.2
 ## Where a shown card and its booklet page float, in the camera's frame (meters right, up, and
 ## away). The page sits a hair farther back so the card always reads as in front.
 const PRESENT_DIST := 0.23
@@ -710,6 +712,8 @@ func _build_episode() -> void:
 	_title.channel = String(_subs.document.get("title", "")) if _subs != null else ""
 	# THE CHANNEL'S NAME ONLY: the episode's title is the video's, on the platform, not on the table
 	_title.episode = ""
+	# ...and the show's byline under it, when it has one ("with Pen & Ink")
+	_title.byline = String(_subs.document.get("byline", "")) if _subs != null else ""
 	# THE CHANNEL'S NAME IS THE CHANNEL'S, set the same way every episode - a brand, not a
 	# deck's lettering (an uncial deck turned "Truthful" into "Truchful")
 	_title.face = TarotTable.font("roman")
@@ -990,13 +994,12 @@ func _place_backdrop() -> void:
 	var view := _backdrop_view()
 	if not view.is_empty():
 		var lens := clampf(float(view.get("lens_mm", TarotTable.BACKDROP_LENS)), 8.0, 200.0)
-		var reach := 3.2
 		var ahead := Vector3(-_cam_base.basis.z.x, 0.0, -_cam_base.basis.z.z).normalized()
-		_backdrop.transform = Transform3D(Basis.looking_at(ahead, Vector3.UP), _cam_base.origin + ahead * reach)
+		_backdrop.transform = Transform3D(Basis.looking_at(ahead, Vector3.UP), _cam_base.origin + ahead * ROOM_REACH)
 		# a 36 x 24 frame behind a lens of this length, seen at this reach
-		(_backdrop.mesh as QuadMesh).size = Vector2(36.0, 24.0) * reach / lens
+		(_backdrop.mesh as QuadMesh).size = Vector2(36.0, 24.0) * ROOM_REACH / lens
 	else:
-		var dist := 3.2
+		var dist := ROOM_REACH
 		var fwd := -_cam_base.basis.z
 		var center := _cam_base.origin + fwd * dist
 		var h := 2.0 * dist * tan(deg_to_rad(_cam.fov * 0.5))
@@ -1365,6 +1368,7 @@ func _put(t: Dictionary, b: Dictionary, spot: Dictionary, basis: Basis, group: S
 	var foot := _translated(_turned(b["foot"], basis), at)
 	if foot.size() >= 3:
 		_contact(foot)
+		_foot_shadow(foot, own)
 		var grown := _grown(foot, FOOT_MARGIN)
 		_standing.append(grown)
 		var c := Vector2.ZERO
@@ -1444,6 +1448,32 @@ func _light_flames(flames: Array, own: int) -> void:
 	light.position = at + Vector3(0, 0.016, 0)
 	_props.add_child(light)
 	_lights.append({"light": light, "base": at, "light_base": light.position, "energy": 0.28, "flames": flames})
+
+
+## A SHADOW-ONLY SLAB under [param foot]: the tabletop's shadow biases are larger than the gap
+## under a bowl's sloping wall, so a ring of the lamp leaked in beside its base (feedback 0009). The
+## slab stands a few millimeters over the cloth, draws nothing and shades what the thing already
+## covers. It is on [param layer], so a candle's own flames still leave it out.
+func _foot_shadow(foot: PackedVector2Array, layer: int) -> void:
+	var tris := Geometry2D.triangulate_polygon(foot)
+	if tris.is_empty():
+		return
+	const H := 0.006
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in range(0, tris.size() - 2, 3):
+		var a := foot[tris[i]]
+		var b := foot[tris[i + 1]]
+		var c := foot[tris[i + 2]]
+		# top and bottom, each both ways round: no winding to get wrong in the shadow pass
+		for y in [H, 0.0]:
+			for q in [a, b, c, a, c, b]:
+				st.add_vertex(Vector3(q.x, y, q.y))
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	mi.layers = layer
+	_props.add_child(mi)
 
 
 ## A soft shade on the cloth under [param foot] (a thing's outline where it meets it): what
@@ -1825,12 +1855,25 @@ func _build_air(spec: Dictionary) -> void:
 
 
 ## Where the air may be, the camera it is seen through, and what stands in it - the table and the
-## things on it, which motes are homed in front of and fly over.
+## things on it, which motes are homed in front of and fly over. And THE LENS: sharp over the table
+## (its nearest corner to its farthest, along the camera's axis), blurring past it as the room is -
+## [constant ROOM_BLUR] of the frame's width, [constant ROOM_REACH] out - and the air ending just short
+## of the room's picture.
 func _air_stage() -> Dictionary:
-	var under: Array = [AABB(Vector3(-TABLE.x * 0.5, -TABLE.y, TABLE_Z - TABLE.z * 0.5), TABLE)]
+	var table := AABB(Vector3(-TABLE.x * 0.5, -TABLE.y, TABLE_Z - TABLE.z * 0.5), TABLE)
+	var under: Array = [table]
 	for th in _things:
 		under.append((th as Dictionary)["box"])
-	return {"regions": TarotTable.AIR, "camera": _cam_base, "fov": _cam.fov, "aspect": 16.0 / 9.0, "occluders": under}
+	var fwd := -_cam_base.basis.z
+	var near := INF
+	var far := 0.0
+	for i in 8:
+		var d := (table.get_endpoint(i) - _cam_base.origin).dot(fwd)
+		near = minf(near, d)
+		far = maxf(far, d)
+	return {"regions": TarotTable.AIR, "camera": _cam_base, "fov": _cam.fov, "aspect": 16.0 / 9.0, "occluders": under,
+		"sharp": Vector2(near, far), "defocus": 2.0 * ROOM_BLUR / maxf(1.0 / far - 1.0 / ROOM_REACH, 1e-3),
+		"deep": ROOM_REACH * 0.9}
 
 
 ## The air at show time [param t] - its bursts planned again whenever the schedule moved.
@@ -3549,6 +3592,8 @@ class TitleCard:
 
 	var channel := ""
 	var episode := ""
+	## A line under the name in the italic face, where an episode line would go.
+	var byline := ""
 	var face: Font = null
 	var italic: Font = null
 	var alpha := 0.0
@@ -3572,9 +3617,10 @@ class TitleCard:
 		for o in [Vector2(2, 3), Vector2(0, 0)]:
 			draw_string(face, Vector2(0, y) + (o as Vector2) * s, channel, HORIZONTAL_ALIGNMENT_CENTER,
 				vp.x, size, shadow if o != Vector2(0, 0) else ink)
-		if episode.is_empty() or italic == null:
+		var under := episode if not episode.is_empty() else byline
+		if under.is_empty() or italic == null:
 			return
-		var es := TarotCards._fit(italic, episode, int(40.0 * s), vp.x * 0.78)
+		var es := TarotCards._fit(italic, under, int(40.0 * s), vp.x * 0.78)
 		var ey := y + 70.0 * s
-		draw_string(italic, Vector2(2, ey + 2) * Vector2(1, 1), episode, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, shadow)
-		draw_string(italic, Vector2(0, ey), episode, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, ink)
+		draw_string(italic, Vector2(2, ey + 2) * Vector2(1, 1), under, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, shadow)
+		draw_string(italic, Vector2(0, ey), under, HORIZONTAL_ALIGNMENT_CENTER, vp.x, es, ink)

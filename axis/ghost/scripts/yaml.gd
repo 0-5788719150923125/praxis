@@ -14,7 +14,7 @@ class_name MiniYaml
 ##     (spaces only - a tab in the indent is an error)
 ##   - single-line flow collections `[a, b, [c]]` and `{k: v, k2: v2}`, nestable
 ##   - scalars: int, float, `true`/`false`, `null`/`~`, bare strings, `'single'` and
-##     `"double"` quoted strings (`\\`, `\"`, `\n`, `\t` escapes in double quotes)
+##     `"double"` quoted strings (`\\`, `\"`, `\n`, `\r`, `\t` escapes in double quotes)
 ##   - a list item may open an inline map (`- {id: x}`) or a block map (`- id: x`
 ##     with further keys aligned beneath)
 ##
@@ -337,6 +337,7 @@ class _Parser:
 					var e := s[pos[0]]
 					match e:
 						"n": out += "\n"
+						"r": out += "\r"
 						"t": out += "\t"
 						"\"": out += "\""
 						"\\": out += "\\"
@@ -498,6 +499,7 @@ static func _quote(s: String) -> String:
 			"\\": out += "\\\\"
 			"\"": out += "\\\""
 			"\n": out += "\\n"
+			"\r": out += "\\r"
 			"\t": out += "\\t"
 			_: out += c
 	return out + "\""
@@ -509,6 +511,11 @@ static func _needs_quote(s: String) -> bool:
 	if s.is_valid_int() or s.is_valid_float():
 		return true
 	if s in ["true", "True", "false", "False", "null", "Null", "~"]:
+		return true
+	# A LINE BREAK ANYWHERE, not only at the start: bare, the rest of the string lands on lines of
+	# its own and reads as keys (a YouTube description's paragraphs did, 2026-10-06). Quoted, `\n`
+	# is escaped and the value round-trips.
+	if s.contains("\n") or s.contains("\r") or s.contains("\t"):
 		return true
 	for c in ["#", ":", "-", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "%",
 			"@", "`", "\"", "'", "\n", "\t"]:

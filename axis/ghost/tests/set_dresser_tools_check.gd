@@ -335,7 +335,8 @@ func _air() -> bool:
 		{"name": "sparks", "kind": "burst", "look": "sparks", "on": "jumper"},
 		{"name": "rain", "kind": "weather"},
 		{"name": "lost", "kind": "fog", "where": "the ceiling"},
-		{"name": "odd", "kind": "burst", "look": "confetti", "on": "the end"}]})
+		{"name": "odd", "kind": "burst", "look": "confetti", "on": "the end"},
+		{"name": "flies", "kind": "motes", "look": "fly", "where": "over the cloth", "count": 3, "light": true}]})
 	var text := String(r["text"])
 	_ok(text.contains("sea mist: fog beyond the table") and text.contains("wisps: 5 pixies beyond the table") and text.contains("sparks: sparks on jumper"),
 		"effects put were not reported as built:\n%s" % text)
@@ -343,12 +344,14 @@ func _air() -> bool:
 	_ok(text.contains("rain: NOT BUILT") and text.contains("\"weather\" is not a kind of effect"), "an unknown kind was not reported:\n%s" % text)
 	_ok(text.contains("lost: NOT BUILT") and text.contains("\"the ceiling\" is not a place in the air"), "an unknown place was not reported:\n%s" % text)
 	_ok(text.contains("\"confetti\" is not a look of burst") and text.contains("\"the end\" is not a moment"), "an unknown look or moment was not reported:\n%s" % text)
+	_ok(text.contains("flies: 3 flies over the cloth") and not text.contains("flies over the cloth, 5 mm, lit") and text.contains("a fly is a dark speck and carries no light"),
+		"a fly was not reported unlit, or not counted as flies:\n%s" % text)
 	r = await t.call_tool("put", {"effects": [{"name": "sea mist", "kind": "fog", "where": "low on the cloth", "density": 0.2}]})
 	var fogs := 0
 	for e in t.draft()["effects"]:
 		fogs += 1 if String((e as Dictionary)["name"]) == "sea mist" else 0
 	_ok(fogs == 1 and String(r["text"]).contains("sea mist: fog low on the cloth"), "an effect put again under its name was not replaced")
-	r = await t.call_tool("remove", {"names": ["rain", "lost", "odd"]})
+	r = await t.call_tool("remove", {"names": ["rain", "lost", "odd", "flies"]})
 	_ok((t.draft()["effects"] as Array).size() == 3, "effects were not removed by name: %s" % str(t.draft()["effects"]))
 	r = await t.call_tool("watch", {"name": "snow"})
 	_ok(bool(r.get("error", false)) and String(r["text"]).contains("In it: sea mist, wisps, sparks"), "watching an effect not there was not refused with what is: %s" % r)

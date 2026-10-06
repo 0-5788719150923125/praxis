@@ -1,21 +1,24 @@
 // What every sprite of an effect shares (see scripts/effects.gd): a quad turned to the camera,
 // sized in meters, at a place that is a function of SHOW TIME. A mote is POSED (the CPU put it where
-// it is now: its place, its size in the custom data's w, its brightness in the color's alpha). A
-// burst's particle FLIES: born at a time and place with a velocity (the transform's first column -
-// nothing else is in it), pulled by gravity and slowed by the air in closed form, so any time can be
-// asked for and none is stepped to. Included by effect_sprite.gdshader and effect_smoke.gdshader,
-// both with render_mode skip_vertex_transform: VERTEX is set in view space here.
+// it is now: its place, its size in the custom data's w, its brightness in the color's alpha, and -
+// for a speck - its velocity in the transform's first column). A burst's particle FLIES: born at a
+// time and place with a velocity (the transform's first column - nothing else is in it), pulled by
+// gravity and slowed by the air in closed form, so any time can be asked for and none is stepped to.
+// Included by effect_sprite.gdshader, effect_smoke.gdshader and effect_speck.gdshader, all with
+// render_mode skip_vertex_transform: VERTEX is set in view space here.
 
 uniform float show_time = 0.0;
 uniform bool posed = false;
 uniform vec3 gravity = vec3(0.0, -2.0, 0.0);   // m/s2
 uniform float drag = 1.0;                      // 1/s
 uniform float glow = 2.0;                      // brighter than white blooms
-uniform int shape = 0;                         // 0 orb, 1 streak, 2 flame, 3 puff, 4 star, 5 flake
-uniform float stretch = 0.045;                 // a streak's length per m/s, seconds
+uniform int shape = 0;                         // 0 orb, 1 streak, 2 flame, 3 puff, 4 star, 5 flake, 6 speck
+uniform float stretch = 0.045;                 // a streak's (or a speck's smear's) length per m/s, seconds
 uniform float grow = 0.0;                      // sizes added over a life
 uniform float waver = 0.0;                     // meters a second of sideways wandering
 uniform float twinkle = 0.0;                   // how much its brightness flutters
+uniform vec2 sharp = vec2(0.01, 1000.0);       // the depths the lens has sharp, meters along its axis
+uniform float defocus = 0.0;                   // past them, a speck's blur: a share of the frame's width per 1/m
 
 varying vec4 tint;
 varying vec2 corner;
@@ -30,6 +33,7 @@ void vertex() {
 	fade = 1.0;
 	if (posed) {
 		pos = MODEL_MATRIX[3].xyz;
+		vel = MODEL_MATRIX[0].xyz;
 		size = INSTANCE_CUSTOM.w;
 		fade = COLOR.a;
 		hide = COLOR.a <= 0.002 ? 1.0 : 0.0;
@@ -57,13 +61,28 @@ void vertex() {
 	}
 	vec3 view = (VIEW_MATRIX * vec4(pos, 1.0)).xyz;
 	vec2 c = VERTEX.xy;
-	if (shape == 1) {
-		// A STREAK lies along its motion as the camera sees it, longer the faster it goes
+	if (shape == 1 || shape == 6) {
+		// A STREAK lies along its motion as the camera sees it, longer the faster it goes - and a SPECK
+		// smears along its motion as a camera's shutter would, thinner the further: one speck's ink
+		// spread over the way it went (a little more, or a fast one would vanish)
 		vec2 d = (VIEW_MATRIX * vec4(vel, 0.0)).xy;
 		float len = length(d);
 		vec2 dir = len > 1e-5 ? d / len : vec2(0.0, 1.0);
 		vec2 side = vec2(-dir.y, dir.x);
-		view.xy += dir * c.y * (size + len * stretch) + side * c.x * size;
+		float sz = size;
+		if (shape == 6) {
+			// OUT OF FOCUS past the lens's sharp band (the table), or nearer it, as the room is: the body
+			// spreads over the lens's blur at its depth and thins as it spreads - one speck's ink over the
+			// disc - so a fly flown off into the room fades as the room's own detail does
+			float z = max(-view.z, 0.01);
+			float coc = defocus * (max(0.0, 1.0 / sharp.y - 1.0 / z) + max(0.0, 1.0 / z - 1.0 / sharp.x));
+			float blur = coc * 2.0 * z / PROJECTION_MATRIX[0][0];
+			float body = size / 3.0;
+			sz = size + 3.0 * blur;
+			fade *= (body * body) / ((body + blur) * (body + blur));
+			fade *= max(sz / (sz + len * stretch), 0.5);
+		}
+		view.xy += dir * c.y * (sz + len * stretch) + side * c.x * sz;
 	} else if (shape == 2) {
 		// A FLAME stands up from its base
 		view.xy += vec2(c.x * size, (c.y + 0.4) * size * 2.0);
