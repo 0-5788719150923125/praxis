@@ -1,4 +1,0 @@
-# ghost's page-capture environment (user://capture_venv), for the tablet medium's REAL pages.
-# Built by uv on ghost's own Python; its Chromium is fetched afterwards by `playwright install
-# chromium`, into Playwright's own cache (see the capture_venv row in scripts/deps.gd).
-playwright>=1.63.0

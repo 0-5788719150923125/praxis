@@ -6,7 +6,7 @@ A home for random side projects that live in the Praxis repo but have little or 
 
 - **[`vortex/`](vortex/README.md)** - the original Vortex mobile app: an archived Godot companion for controlling Praxis. Largely unmaintained; kept as a record of the idea.
 - **[`nutube/`](nutube/README.md)** - a local-first YouTube explorer (Godot, mobile). An experiment in replacing the algorithm with a simple recommender that runs entirely on the device. In early development.
-- **[`ghost/`](ghost/README.md)** - a spectral audio visualizer (Godot, desktop). Reads a `.wav` and draws seeded scene definitions modulated by audio features, looping like a recordable video. Procedural, deterministic, no generative AI in the render path. Early scaffold.
+- **ghost** - moved to its own repository on 2026-10-06: [ghost-notes](https://github.com/0-5788719150923125/ghost-notes) ("Ghost Notes: A Spectral Experience"). Its first ten commits, from when it lived here as `vortex/`, stay in this repository's history.
 
 ## Adding one
 
