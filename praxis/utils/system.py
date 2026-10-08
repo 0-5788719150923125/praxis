@@ -652,8 +652,10 @@ def graceful_shutdown(api_server, exit_code=0, reason="training complete"):
 def update_license_timestamp():
     """Update the LICENSE file's copyright line with year progress (0-1).
 
-    A no-op when the working directory has no LICENSE (a launch from outside
-    the repo)."""
+    Only the timestamp is rewritten; the holder name after it is left as written
+    in the file. A no-op when the working directory has no LICENSE (a launch from
+    outside the repo)."""
+    import re
     from datetime import datetime
 
     if not os.path.exists("LICENSE"):
@@ -671,6 +673,7 @@ def update_license_timestamp():
 
     if len(lines) >= 3 and "Copyright (c)" in lines[2]:
         fraction = str(year_progress).split(".", 1)[1]
-        lines[2] = f"Copyright (c) {now.year}.{fraction}\n"
+        holder = re.sub(r"^Copyright \(c\) \d+(?:\.\d+)?", "", lines[2]).rstrip("\n")
+        lines[2] = f"Copyright (c) {now.year}.{fraction}{holder}\n"
         with open("LICENSE", "w") as f:
             f.writelines(lines)
