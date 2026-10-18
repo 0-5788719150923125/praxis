@@ -2,15 +2,30 @@
 
 ``N`` full ``[T, T]`` mixing matrices are drawn once at construction and never
 trained. What the model learns is which combination of them to look through at
-each token and each recurrent pass. There are no Q/K projections - nothing is
-computed by pairwise comparison - so the score half costs ``N * T^2`` instead of
-``T^2 * d``.
+each token and each recurrent pass. There are no Q/K projections, so the score
+half costs ``N * T^2`` instead of ``T^2 * d``; the crack (below) adds one
+32-wide pairwise product. It saves compute, not memory: the blend is per query,
+so every example still builds its own ``[T, T]`` scores, which flex attention
+never does.
 
     turn      w(x_i) = beta_d + m * tanh(W_turn x_i)     free, signed, per token
     facets    M_k^(d) = A_k + s * tanh(u_{d,k} (x) v_{d,k})
     scores    S[i, j] = sum_k w_k(x_i) * M_k^(d)[i, j]
     O         = ghostmax(mask(S)) @ dropoff(V)
     out       W_o (gamma * O),   gamma = silu(W_gamma x)
+
+Under ``coords="crack"`` each query classifies the keys it can see:
+
+    crack     g_ij = sigmoid(n(x_i) . c(x_j) + b(x_i))       query i's hyperplane
+    offset    S[i, j] += drop(x_i) * (g_ij - 1/2)              the far side drops
+    lag       p_ij = sum_{j<k<i} g_ik + g_ij / 2              cracks crossed
+              a third of the mirrors is read at (i, p_ij), not (i, i - j)
+
+That is the only path by which a KEY's content reaches the scores; every other
+mirror is a function of the query and of position alone, so it cannot find a
+needle whatever the blend. Content enters as one bounded bit per pair; every
+graded preference still comes from the frozen geometry. See ``MIRROR_COORDS``
+and next/cracked_mirror.md.
 
 Mirrors are functions on the unit square in RELATIVE position, stored at a
 canonical ``[R, R]`` and resampled to the live ``[T, T]``, so the geometry is
@@ -111,14 +126,33 @@ MIRROR_ALPHA: float = 0.0
 #       own canonical cell at any length: at T=512, R=64, lags 0/1/2/3 land on
 #       columns 0/7/11/14 where a uniform grid puts them at 0/0.1/0.2/0.4.
 #
+#   "crack" - thirds: ratio, lag, and lag counted in CRACKS rather than tokens.
+#       Each query draws a hyperplane through key space and every earlier key
+#       on its far side cracks the glass: its logit drops by a learned offset,
+#       and a crack mirror reads the number of cracks between query and key on
+#       the same log warp. A crack sits half a step out, so the k-th most
+#       recent hit is the only key at k - 1/2 and the haystack collapses onto a
+#       few coordinates. Gates all on recovers the plain lag mirror.
+#
 # Both rather than a warp, because a lag-warped mirror loses ratios exactly as a
 # ratio mirror loses lags. Splitting lets the router reach either - the same
 # argument the block makes for blending geometries, one level up.
 #
-# This fixes acuity only. Selection stays structural: a smooth router over a
-# frozen dictionary emits a smooth attention row however well the geometry
-# resolves position, and induction wants a discrete pointer.
+# "split" fixes acuity only. Selection stays structural: a row of logits lies in
+# the span of N fixed rows whatever the blend, so no turn of the router can
+# point at a key chosen by its content. "crack" lets content move the glass.
 MIRROR_COORDS: str = "ratio"
+# Width of the crack's classifier. Each query emits a normal and an offset in
+# this space, each key a point, and the gate is which side the point falls on.
+# 32 is one head of the 8 x 32 trunk the byte-latent line runs, the width there
+# that grows a copy signal. The gate costs C * T^2 against QK^T's d * T^2.
+CRACK_DIM: int = 32
+# How far the reflection drops across a crack, in logits, at init: the far side
+# of each query's hyperplane is offset by ``drop * (g - 1/2)``. Centered, so at
+# init (every g = 1/2) it is exactly zero and the block starts uniform; the
+# drop is not zero, so the classifier learns from step 0 rather than waiting on
+# the mirror slopes. Unit, the scale of a fresh mirror.
+CRACK_DROP: float = 1.0
 # Fixed seed for the dictionary. The mirrors are never trained, so they are
 # reproducible constants of the architecture rather than learned state: they
 # are generated deterministically here and registered non-persistent, exactly
@@ -330,9 +364,9 @@ class KaleidoscopeAttention(nn.Module):
         },
         "kaleido_lag_share": {
             "description": (
-                "Share of blend magnitude on the lag-coordinate (log-warped) half of "
-                "the dictionary. 0.5 is parity; below it the warp is not paying for "
-                "itself."
+                "Share of blend magnitude on the lag-coordinate (log-warped) mirrors. "
+                "Parity is their share of the dictionary: 0.5 under split, 1/3 under "
+                "crack."
             ),
             "chart": {
                 "title": "Kaleidoscope Lag Share",
@@ -340,6 +374,81 @@ class KaleidoscopeAttention(nn.Module):
                 "y_scale": "linear",
                 "group": "kaleidoscope",
                 "order": 17,
+            },
+        },
+        "kaleido_crack_share": {
+            "description": (
+                "Share of blend magnitude on the crack mirrors, the only ones a key's "
+                "content can reach. 1/3 is parity; near 0 the crack is unused."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Crack",
+                "y_label": "share",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 19,
+                "series_group": "kaleido_crack",
+                "series_label": "crack share of |w|",
+            },
+        },
+        "kaleido_crack_density": {
+            "description": (
+                "Mean crack gate over visible (query, earlier key) pairs. 0.5 at init; "
+                "1 = every key cracks, the plain lag clock; 0 = intact glass."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Crack",
+                "y_label": "share",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 20,
+                "series_group": "kaleido_crack",
+                "series_label": "density",
+            },
+        },
+        "kaleido_crack_decisiveness": {
+            "description": (
+                "1 - 4 g(1 - g), averaged over the gates. 0 at init (every key on the "
+                "hyperplane); 1 = every key classified cleanly to one side."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Crack",
+                "y_label": "share",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 21,
+                "series_group": "kaleido_crack",
+                "series_label": "decisiveness",
+            },
+        },
+        "kaleido_crack_drop": {
+            "description": (
+                "Mean |drop|: how far, in logits, the far side of each query's "
+                "hyperplane is offset. 1 at init. Far past kaleido_turn_scale = "
+                "sigmoid-gated attention with the mirrors along for the ride."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Crack Drop",
+                "y_label": "|drop| (logits)",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 23,
+            },
+        },
+        "kaleido_crack_interaction": {
+            "description": (
+                "Share of gate-logit variance from the (query, key) pair rather than "
+                "either alone. 0 = one content clock for every query; rising = each "
+                "query classifies keys its own way, which retrieval needs."
+            ),
+            "chart": {
+                "title": "Kaleidoscope Crack",
+                "y_label": "share",
+                "y_scale": "linear",
+                "group": "kaleidoscope",
+                "order": 22,
+                "series_group": "kaleido_crack",
+                "series_label": "query x key interaction",
             },
         },
         "kaleido_zoom_mean": {
@@ -454,7 +563,13 @@ class KaleidoscopeAttention(nn.Module):
         self.num_mirrors = int(num_mirrors or type(self).num_mirrors)
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
-        self.depths = max(1, int(getattr(config, "depth", 1) or 1))
+        total = max(1, int(getattr(config, "depth", 1) or 1))
+        self.layers = max(1, int(getattr(config, "num_layers", 1) or 1))
+        # Per-depth tables hold one row per pass THIS block makes. The decoder
+        # numbers depth globally, so with four distinct layers each block sees
+        # one index; sizing by `depth` would leave three rows per block that
+        # never train and that the depth-specialization metrics read as real.
+        self.depths = max(1, math.ceil(total / self.layers))
         self.pos_type = "kaleido"
 
         # Dropoff ablation (next/dropoff.md). Same schedule options as
@@ -465,8 +580,7 @@ class KaleidoscopeAttention(nn.Module):
         if dropoff is None:
             self.dropoff_step = None
         else:
-            layers = max(1, int(getattr(config, "num_layers", 1) or 1))
-            self.dropoff_step = max(0, self.depths - layers)
+            self.dropoff_step = max(0, total - self.layers)
 
         # 1/sqrt(N) on the mix, for the reason attention divides q.k by
         # sqrt(d): `scores` sums N mirror terms, so logit variance grows with N
@@ -483,7 +597,7 @@ class KaleidoscopeAttention(nn.Module):
         self.resolution = int(resolution or type(self).resolution)
         self.alpha = float(type(self).alpha if alpha is None else alpha)
         self.coords = str(coords or type(self).coords)
-        if self.coords not in ("ratio", "split"):
+        if self.coords not in ("ratio", "split", "crack"):
             raise ValueError(f"unknown mirror coordinates: {self.coords!r}")
 
         # Per-mirror zoom over the RATIO group. `True` derives the harmonic
@@ -493,11 +607,17 @@ class KaleidoscopeAttention(nn.Module):
         self.zoom_spec = zoom
 
         N, H = self.num_mirrors, self.num_heads
-        # Contiguous groups, ratio first, so the resample can slice rather than
-        # gather. "split" gives the lag half the smaller share when N is odd:
-        # ratio is the coordinate system the block already worked in.
-        self.n_lag = N // 2 if self.coords == "split" else 0
-        self.n_ratio = N - self.n_lag
+        # Contiguous groups - ratio, lag, crack - so the resample can slice
+        # rather than gather. Ratio takes the remainder when N does not divide:
+        # it is the coordinate system the block already worked in.
+        if self.coords == "split":
+            self.n_lag, self.n_crack = N // 2, 0
+        elif self.coords == "crack":
+            self.n_lag, self.n_crack = N // 3, N // 3
+        else:
+            self.n_lag, self.n_crack = 0, 0
+        self.n_ratio = N - self.n_lag - self.n_crack
+        self.n_shared = self.n_ratio + self.n_lag
 
         # One factor per ratio mirror. The derived ladder spans the group; an
         # explicit one cycles, so a short spec still spreads across it evenly.
@@ -540,8 +660,8 @@ class KaleidoscopeAttention(nn.Module):
         # the warp by an accident of ordering.
         rank = torch.cat(
             [
-                torch.arange(1, self.n_ratio + 1, dtype=torch.float32),
-                torch.arange(1, self.n_lag + 1, dtype=torch.float32),
+                torch.arange(1, n + 1, dtype=torch.float32)
+                for n in (self.n_ratio, self.n_lag, self.n_crack)
             ]
         )
         self.register_buffer("env_rank", rank, persistent=False)
@@ -570,6 +690,19 @@ class KaleidoscopeAttention(nn.Module):
         self.facet_u = nn.Parameter(torch.zeros(self.depths, N, R))
         self.facet_v = nn.Parameter(torch.randn(self.depths, N, R) * FACET_V_STD)
 
+        # The crack's classifier: the query emits a hyperplane (normal and
+        # threshold) and a drop, the key a point. The plane zero-inits, so every
+        # gate opens at 0.5 and the crack lag starts as half the token lag; the
+        # point does not, or the plane would receive no gradient.
+        self.crack_dim = CRACK_DIM
+        if self.n_crack:
+            self.crack_plane = nn.Linear(hidden_size, CRACK_DIM + 2)
+            nn.init.zeros_(self.crack_plane.weight)
+            nn.init.zeros_(self.crack_plane.bias)
+            with torch.no_grad():
+                self.crack_plane.bias[-1] = CRACK_DROP
+            self.crack_point = nn.Linear(hidden_size, CRACK_DIM, bias=False)
+
         self.value = nn.Linear(hidden_size, H * self.head_dim, bias=False)
         # Mega's output gate. Bias included (Mega's own form is
         # ``silu(X W + b)``), and left at the default init rather than zeroed:
@@ -596,6 +729,10 @@ class KaleidoscopeAttention(nn.Module):
         config.num_queries = 1
 
     # ------------------------------------------------------------------ field
+    def _row(self, current_depth: int) -> int:
+        """This block's pass index for a global depth, clamped to its tables."""
+        return min(int(current_depth) // self.layers, self.depths - 1)
+
     def _canonical(self, depth: int) -> Tensor:
         """The deformed dictionary at canonical resolution: ``[N, R, R]``."""
         d = min(int(depth), self.depths - 1)
@@ -603,22 +740,94 @@ class KaleidoscopeAttention(nn.Module):
         v = self.facet_v[d].unsqueeze(-2)  # [N, 1, R]
         return self.mirrors + FACET_SCALE * torch.tanh(u * v)
 
-    def _lag_grid(self, T: int, device, dtype) -> Tensor:
-        """Sampling grid for the lag half of the dictionary, ``[1, T, T, 2]``.
+    @staticmethod
+    def _warp_grid(lag: Tensor, T: int) -> Tensor:
+        """Sampling grid ``[..., T, T, 2]`` for a ``[..., T, T]`` lag.
 
         Rows stay the query fraction; columns become ``log1p(lag)``, normalized
         so the longest representable lag lands on the canonical grid's far
         edge. The log is what buys the acuity: lag 1 sits a fixed distance from
         the diagonal in canonical cells at EVERY ``T``, where a uniform grid
-        lets it collapse onto lag 0 as ``T`` grows. Non-causal cells (``j > i``)
-        clamp to lag 0; they are masked before the softmax either way.
+        lets it collapse onto lag 0 as ``T`` grows.
+        """
+        idx = torch.arange(T, device=lag.device, dtype=lag.dtype)
+        denom = float(max(T - 1, 1))
+        y = (2.0 * idx / denom - 1.0).view(T, 1).expand(lag.shape)
+        x = 2.0 * (torch.log1p(lag) / math.log1p(denom)) - 1.0
+        return torch.stack((x, y), dim=-1)
+
+    def _lag_grid(self, T: int, device, dtype) -> Tensor:
+        """Sampling grid for the lag group, ``[1, T, T, 2]``, in token lag.
+
+        Non-causal cells (``j > i``) clamp to lag 0; they are masked before the
+        softmax either way.
         """
         idx = torch.arange(T, device=device, dtype=dtype)
-        denom = float(max(T - 1, 1))
-        y = (2.0 * idx / denom - 1.0).view(T, 1).expand(T, T)
         lag = (idx.view(T, 1) - idx.view(1, T)).clamp_min(0.0)
-        x = 2.0 * (torch.log1p(lag) / math.log1p(denom)) - 1.0
-        return torch.stack((x, y), dim=-1).unsqueeze(0)
+        return self._warp_grid(lag, T).unsqueeze(0)
+
+    def _allowed(self, T: int, block_ids: Optional[Tensor], device) -> Tensor:
+        """Keys each query may read: ``[T, T]``, or ``[B, T, T]`` per document.
+
+        ``block_ids`` reaches the trunk pooled to patch granularity; one that
+        does not line up with this sequence is declined rather than applied
+        wrongly, as in ``SelfAttention.forward``.
+        """
+        pos = torch.arange(T, device=device)
+        lag = pos[:, None] - pos[None, :]
+        allowed = torch.ones(T, T, dtype=torch.bool, device=device)
+        if self.causal:
+            allowed = lag >= 0
+            if self.window_size is not None:
+                allowed = allowed & (lag <= self.window_size)
+        if block_ids is not None and block_ids.dim() == 2 and block_ids.size(1) >= T:
+            ids = block_ids[:, :T]
+            allowed = allowed & (ids.unsqueeze(-1) == ids.unsqueeze(-2))
+        return allowed
+
+    def _crack(self, inputs: Tensor, allowed: Tensor) -> Tuple[Tensor, Tensor]:
+        """The crack's two effects, each ``[B, T, T]``: lag counted in cracks,
+        and the drop across the crack.
+
+        ``p_ij = sum_{j<k<i} g_ik + g_ij / 2``: the gates strictly between key
+        and query, plus half the key's own, so a crack sits alone at a half
+        step. Only keys the query can see may crack. Reverse cumulative sum, as
+        CoPE (arXiv:2405.18719) computes its positions.
+
+        The count reads the classifier's decisions but sends it no gradient.
+        That gradient arrives only through the slopes of random mirrors, which
+        is noise: on associative recall a count-only crack learned nothing (12%
+        against 13% with no crack), and with the path open the full crack took
+        ~6x the steps of the offset alone. Detached, it trains as fast.
+        """
+        T = inputs.shape[1]
+        plane = self.crack_plane(inputs).float()
+        normal, threshold, drop = plane[..., :-2], plane[..., -2], plane[..., -1]
+        point = self.crack_point(inputs).float()
+        logits = normal @ point.transpose(1, 2) * self.crack_dim**-0.5
+        logits = logits + threshold.unsqueeze(-1)  # [B, query, key]
+        pos = torch.arange(T, device=inputs.device)
+        seen = (pos[None, :] < pos[:, None]) & allowed
+        side = torch.sigmoid(logits)
+        gate = side * seen
+        if self.training:
+            self._note_crack(logits, gate, normal, point, seen.expand_as(gate), drop)
+        counted = gate.detach()
+        lag = counted.flip(-1).cumsum(-1).flip(-1) - 0.5 * counted
+        offset = drop.unsqueeze(-1) * (side - 0.5) * seen
+        return lag.clamp_min(0.0), offset
+
+    def _cracked(self, canonical: Tensor, lag: Tensor) -> Tensor:
+        """The crack group read at its content-counted lag: ``[B, n, T, T]``."""
+        B, T = lag.shape[0], lag.shape[-1]
+        group = canonical[self.n_shared :].unsqueeze(0).expand(B, -1, -1, -1)
+        return F.grid_sample(
+            group,
+            self._warp_grid(lag, T),
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
+        )
 
     def _zoom_grid(self, T: int, device, dtype) -> Tensor:
         """Folded sampling grids for the ratio group, ``[n_ratio, T, T, 2]``.
@@ -640,11 +849,12 @@ class KaleidoscopeAttention(nn.Module):
         return torch.stack((x, y), dim=-1)
 
     def _resample(self, grid: Tensor, T: int) -> Tensor:
-        """A canonical ``[N, R, R]`` dictionary at ``[N, T, T]``.
+        """The ratio and lag groups of a canonical dictionary at ``[n, T, T]``.
 
         Each mirror is read in its own coordinate system, so this is one
-        ``interpolate`` for the ratio half and one ``grid_sample`` for the lag
-        half. Differentiable through both, so the facets still learn.
+        ``interpolate`` for the ratio group and one ``grid_sample`` for the lag
+        group. Differentiable through both, so the facets still learn. The
+        crack group depends on the input and is read by ``_cracked``.
         """
         parts = []
         if self.n_ratio:
@@ -674,7 +884,7 @@ class KaleidoscopeAttention(nn.Module):
             g = self._lag_grid(T, grid.device, grid.dtype)
             parts.append(
                 F.grid_sample(
-                    grid[self.n_ratio :].unsqueeze(0),
+                    grid[self.n_ratio : self.n_shared].unsqueeze(0),
                     g,
                     mode="bilinear",
                     padding_mode="border",
@@ -684,11 +894,12 @@ class KaleidoscopeAttention(nn.Module):
         return parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
 
     def _faceted_frozen(self, T: int) -> Tensor:
-        """The undeformed dictionary at ``[N, T, T]`` - the facet-free control."""
+        """The undeformed ratio and lag groups at ``[n, T, T]`` - the facet-free
+        control."""
         return self._resample(self.mirrors, T)
 
     def _faceted(self, depth: int, T: int) -> Tensor:
-        """The dictionary as this depth sees it, resampled to ``[N, T, T]``.
+        """The ratio and lag groups as this depth sees them, at ``[n, T, T]``.
 
         Deformation happens in CANONICAL space, before the resample, so the
         facets are length-free too. ``align_corners=True`` pins the canonical
@@ -741,15 +952,21 @@ class KaleidoscopeAttention(nn.Module):
 
         return SelfAttention._dropoff_warp_value(v)
 
-    def _scores(self, w: Tensor, mirrors: Tensor) -> Tensor:
+    def _scores(
+        self, w: Tensor, mirrors: Tensor, cracked: Optional[Tensor] = None
+    ) -> Tensor:
         """Blend the dictionary per query position.
 
-        ``w`` is ``[B, T, H, N]`` and ``mirrors`` is ``[N, T, T]``; row ``i`` of
-        the result is that token's own mixture, which is what makes the geometry
-        input-conditional rather than merely learned. Costs ``N * T^2`` per
-        (batch, head) against ``T^2 * d`` for a QK product.
+        ``w`` is ``[B, T, H, N]``, ``mirrors`` the shared ``[n, T, T]`` groups
+        and ``cracked`` the per-example ``[B, N - n, T, T]`` crack group; row
+        ``i`` of the result is that token's own mixture, which is what makes the
+        geometry input-conditional rather than merely learned. Costs ``N * T^2``
+        per (batch, head) against ``T^2 * d`` for a QK product.
         """
-        out = torch.einsum("bihk,kij->bhij", w, mirrors)
+        n = mirrors.shape[0]
+        out = torch.einsum("bihk,kij->bhij", w[..., :n], mirrors)
+        if cracked is not None:
+            out = out + torch.einsum("bihk,bkij->bhij", w[..., n:], cracked)
         return out * self.mix_scale if self.mix_norm else out
 
     def forward(
@@ -763,7 +980,7 @@ class KaleidoscopeAttention(nn.Module):
         B, T, _ = inputs.shape
         N, H = self.num_mirrors, self.num_heads
 
-        d = min(int(current_depth), self.depths - 1)
+        d = self._row(current_depth)
         cond = TURN_MOD * torch.tanh(self.turn(inputs).view(B, T, H, N))
         static = self.turn_static.weight[d].view(1, 1, H, N)
         w = (cond + static).float()
@@ -771,16 +988,18 @@ class KaleidoscopeAttention(nn.Module):
             self._note_turn(w, cond, static)
             w = self._mirror_dropout(w)
 
-        mirrors = self._faceted(current_depth, T).to(w.dtype)
-        scores = self._scores(w, mirrors)  # [B, H, T, T]
-
-        if self.causal:
-            pos = torch.arange(T, device=inputs.device)
-            lag = pos[:, None] - pos[None, :]
-            allowed = lag >= 0
-            if self.window_size is not None:
-                allowed = allowed & (lag <= self.window_size)
-            scores = scores.masked_fill(~allowed, float("-inf"))
+        allowed = self._allowed(T, block_ids, inputs.device)
+        canonical = self._canonical(d)
+        mirrors = self._resample(canonical, T).to(w.dtype)
+        cracked = offset = None
+        if self.n_crack:
+            lag, offset = self._crack(inputs, allowed)
+            cracked = self._cracked(canonical, lag).to(w.dtype)
+        scores = self._scores(w, mirrors, cracked)  # [B, H, T, T]
+        if offset is not None:
+            scores = scores + offset.unsqueeze(1).to(scores.dtype)
+        mask = allowed.unsqueeze(1) if allowed.dim() == 3 else allowed
+        scores = scores.masked_fill(~mask, float("-inf"))
 
         # Ghostmax without the column: softmax1 = softmax * Z/(1+Z), and
         # Z/(1+Z) = sigmoid(log Z), so the ghost costs one sigmoid on the
@@ -868,16 +1087,20 @@ class KaleidoscopeAttention(nn.Module):
             slope = (xc * yc).sum() / xc.pow(2).sum().clamp_min(1e-12)
             self._metrics["kaleido_envelope_fight"] = float((slope / self.alpha).item())
 
-        # Is the warped half of the dictionary earning its place? Share of
-        # blend magnitude sitting on the lag-coordinate mirrors. The split is
-        # even, so 0.5 is parity: below it the router prefers ratio geometry
-        # and the warp is not paying for itself; at 0 the lag mirrors are dead
-        # and this reduces to the ratio-only block. Absent when there are none.
+        # Is each warped group earning its place? Share of blend magnitude on
+        # it, against parity at its share of the dictionary. At 0 the group is
+        # dead and this reduces to the block without it. Absent when empty.
+        m = f.abs()
+        total_mass = m.sum(-1).clamp_min(1e-9)
         if self.n_lag:
-            m = f.abs()
-            lag_mass = m[..., self.n_ratio :].sum(-1)
+            lag_mass = m[..., self.n_ratio : self.n_shared].sum(-1)
             self._metrics["kaleido_lag_share"] = float(
-                (lag_mass / m.sum(-1).clamp_min(1e-9)).mean().item()
+                (lag_mass / total_mass).mean().item()
+            )
+        if self.n_crack:
+            crack_mass = m[..., self.n_shared :].sum(-1)
+            self._metrics["kaleido_crack_share"] = float(
+                (crack_mass / total_mass).mean().item()
             )
 
         # Which granularity the router actually buys. Weighted by |w| over the
@@ -910,6 +1133,46 @@ class KaleidoscopeAttention(nn.Module):
             self._metrics["kaleido_turn_static_share"] = float(
                 (v_static / total).item()
             )
+
+    @torch.no_grad()
+    def _note_crack(
+        self,
+        logits: Tensor,
+        gate: Tensor,
+        normal: Tensor,
+        point: Tensor,
+        seen: Tensor,
+        drop: Tensor,
+    ) -> None:
+        """Crack diagnostics over visible (query, earlier key) pairs."""
+        if torch.compiler.is_compiling():
+            return
+        self._metrics["kaleido_crack_drop"] = float(drop.detach().abs().mean().item())
+        m = seen.float()
+        count = m.sum()
+        if float(count) < 1.0:
+            return
+        g = gate.detach().float()
+        self._metrics["kaleido_crack_density"] = float((g.sum() / count).item())
+        self._metrics["kaleido_crack_decisiveness"] = float(
+            (1.0 - 4.0 * (g * (1.0 - g) * m).sum() / count).item()
+        )
+        # Pair share of the logit: center the plane and the point over tokens,
+        # which leaves only what depends on both. A key-only content clock (one
+        # plane for every query, Mamba's or FoX's shape) reads 0. Absent at
+        # init, where every logit is 0 and there is no variance to split.
+        lg = logits.detach().float()
+        mean = (lg * m).sum() / count
+        var = ((lg - mean).pow(2) * m).sum() / count
+        if float(var) <= 1e-12:
+            return
+        nc = normal.detach().float()
+        pc = point.detach().float()
+        nc = nc - nc.mean(dim=1, keepdim=True)
+        pc = pc - pc.mean(dim=1, keepdim=True)
+        pair = nc @ pc.transpose(1, 2) * self.crack_dim**-0.5
+        share = ((pair.pow(2) * m).sum() / count / var).clamp(0.0, 1.0)
+        self._metrics["kaleido_crack_interaction"] = float(share.item())
 
     @torch.no_grad()
     def _note_ghost(self, keep: Tensor) -> None:

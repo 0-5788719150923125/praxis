@@ -290,6 +290,19 @@ registry.declare(
                 "validation without one."
             ),
         ),
+        "kaleido_12_zoom_crack": Entry(
+            partial(KaleidoscopeAttention, num_mirrors=12, zoom=True, coords="crack"),
+            (
+                "kaleido_12_zoom with the dictionary in thirds: four zoomed ratio "
+                "mirrors, four on the log lag axis, and four read at a lag counted in "
+                "cracks. Each query classifies every earlier key against its own "
+                "hyperplane, and keys on the far side advance the count, so a crack "
+                "mirror can point at the k-th most recent key of a kind - the only path "
+                "by which a key's content reaches the scores. Every other kaleido "
+                "profile is positional, so a copy gain above zero here is the crack's. "
+                "See next/cracked_mirror.md."
+            ),
+        ),
         "kaleido_norm_dropoff_always": Entry(
             partial(
                 KaleidoscopeAttention, mix_norm=True, dropoff="warp", dropoff_every=True

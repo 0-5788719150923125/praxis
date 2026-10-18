@@ -523,7 +523,7 @@ def test_turn_modes_reads_collapse_and_spread():
 
 
 # --------------------------------------------- length invariance by resampling
-@pytest.mark.parametrize("coords", ["ratio", "split"])
+@pytest.mark.parametrize("coords", ["ratio", "split", "crack"])
 def test_any_sequence_length_works_including_a_cached_decode_step(coords):
     """No span, nothing to slice, no length that raises. T=1 is the decode case."""
     a = _attn(coords=coords, max_position_embeddings=64)
@@ -757,3 +757,178 @@ def test_mix_norm_scales_scores_by_inverse_root_n():
     torch.testing.assert_close(
         normed._scores(w, mirrors), plain._scores(w, mirrors) * plain.num_mirrors**-0.5
     )
+
+
+# ---------------------------------------------------------------- per-pass rows
+def test_per_depth_tables_hold_one_row_per_pass_of_this_block():
+    """Distinct layers see one global depth each; looped layers see several."""
+    assert _attn(depth=4).depths == 4  # one block looped four times
+    assert _attn(depth=4, num_layers=4).depths == 1
+    a = _attn(depth=6, num_layers=2)
+    assert a.depths == 3
+    assert [a._row(d) for d in range(6)] == [0, 0, 1, 1, 2, 2]
+
+
+# ------------------------------------------------------------- document mask
+@pytest.mark.parametrize("coords", ["ratio", "crack"])
+def test_block_ids_keep_packed_documents_apart(coords):
+    a = _attn(coords=coords, num_mirrors=6).eval()  # no mirror dropout
+    with torch.no_grad():
+        a.turn_static.weight.normal_(std=1.0)
+        a.turn.weight.normal_(std=0.5)
+    x = torch.randn(1, 12, 32)
+    bid = torch.tensor([[1] * 5 + [2] * 7])
+    y = x.clone()
+    y[:, :5] += torch.randn(1, 5, 32)  # rewrite the first document only
+    out_x = a(x, block_ids=bid)[0]
+    out_y = a(y, block_ids=bid)[0]
+    torch.testing.assert_close(out_x[:, 5:], out_y[:, 5:])
+    assert not torch.allclose(out_x[:, :5], out_y[:, :5])
+
+
+# ------------------------------------------------------------------ the crack
+def _cracked_attn(**over):
+    a = _attn(coords="crack", num_mirrors=6, **over)
+    with torch.no_grad():
+        a.turn_static.weight.normal_(std=1.0)
+        a.turn.weight.normal_(std=0.5)
+        a.crack_plane.weight.normal_(std=0.5)
+    return a
+
+
+def test_crack_splits_the_dictionary_in_thirds_on_the_same_draw():
+    a = _attn(coords="crack", num_mirrors=12)
+    assert (a.n_ratio, a.n_lag, a.n_crack) == (4, 4, 4)
+    assert torch.equal(a.mirrors, _attn(seed=1, num_mirrors=12).mirrors)
+    assert a.env_rank.tolist() == [1.0, 2.0, 3.0, 4.0] * 3
+    assert not hasattr(_attn(), "crack_plane")
+
+
+def test_crack_lag_opens_at_half_the_token_lag():
+    """Every gate is 0.5 at init, so p_ij = (i - j) / 2 - 1/4 below the diagonal."""
+    a = _attn(coords="crack", num_mirrors=6)
+    T = 9
+    lag, offset = a._crack(torch.randn(2, T, 32), a._allowed(T, None, "cpu"))
+    i, j = torch.tril_indices(T, T, offset=-1)
+    torch.testing.assert_close(
+        lag[:, i, j], (0.5 * (i - j) - 0.25).float().expand(2, -1)
+    )
+    assert not lag.diagonal(dim1=-2, dim2=-1).any()
+    assert not lag.triu(1).any()
+    assert not offset.any()  # centered: the drop is exactly zero at init
+
+
+def test_a_crack_sits_alone_at_a_half_step():
+    """One key on the far side of the plane: later keys at 0, the hit at 1/2,
+    everything before it at 1. The needle is the only key at its coordinate."""
+    T, hit = 10, 4
+    gate = torch.zeros(1, T, T)
+    gate[0, -1, hit] = 1.0
+    lag = gate.flip(-1).cumsum(-1).flip(-1) - 0.5 * gate
+    row = lag[0, -1, : T - 1].tolist()
+    assert row == [1.0] * hit + [0.5] + [0.0] * (T - 2 - hit)
+
+
+def test_only_the_crack_lets_a_keys_content_reach_the_scores():
+    """The structural claim. Rewriting an earlier token's content leaves the
+    positional mirrors' share of the query's row unchanged; the crack's moves."""
+    T, q = 12, 11
+    x = torch.randn(1, T, 32)
+    y = x.clone()
+    y[:, 3] += torch.randn(32)  # an earlier KEY, not the query
+    a = _cracked_attn()
+
+    def row(inp, crack):
+        w = _blend(a, inp)
+        if not crack:
+            w = torch.cat(
+                [w[..., : a.n_shared], torch.zeros_like(w[..., a.n_shared :])], -1
+            )
+        lag, offset = a._crack(inp, a._allowed(T, None, "cpu"))
+        cracked = a._cracked(a._canonical(0), lag)
+        scores = a._scores(w, a._faceted(0, T), cracked)
+        return (scores + offset.unsqueeze(1) * crack)[0, 0, q]
+
+    torch.testing.assert_close(row(x, crack=False), row(y, crack=False))
+    assert not torch.allclose(row(x, crack=True), row(y, crack=True))
+
+
+def test_crack_preserves_causality():
+    a = _cracked_attn().eval()
+    x = torch.randn(1, 12, 32)
+    y = x.clone()
+    y[:, 8:] += torch.randn(1, 4, 32)
+    torch.testing.assert_close(a(x)[0][:, :8], a(y)[0][:, :8])
+
+
+def test_crack_classifier_learns_from_step_zero_through_the_drop():
+    """The drop is zero at init but its slope is not, so the plane learns at
+    step 0 with the turn still zero; the point follows once the plane moves.
+    Without the drop the classifier would wait on the mirror slopes."""
+    a = _attn(coords="crack", num_mirrors=6).train()
+    a(torch.randn(2, 10, 32))[0].sum().backward()
+    assert a.crack_plane.weight.grad[: a.crack_dim].abs().sum() > 0
+    assert not a.crack_point.weight.grad.any()
+    a = _cracked_attn().train()
+    a(torch.randn(2, 10, 32))[0].sum().backward()
+    assert a.crack_point.weight.grad.abs().sum() > 0
+
+
+def test_the_count_sends_the_classifier_no_gradient():
+    """Its only route back is the slope of random mirrors, which is noise; the
+    offset is what trains the classifier."""
+    a = _cracked_attn()
+    lag, offset = a._crack(torch.randn(1, 10, 32), a._allowed(10, None, "cpu"))
+    assert not lag.requires_grad
+    assert offset.requires_grad
+
+
+def test_the_crack_is_inert_at_init():
+    """Uniform attention at step 0, as with every other coordinate system."""
+    x = torch.randn(2, 10, 32)
+    a, r = _attn(coords="crack", num_mirrors=6).eval(), _attn(num_mirrors=6).eval()
+    with torch.no_grad():
+        for name in ("value", "gate", "output"):
+            getattr(r, name).load_state_dict(getattr(a, name).state_dict())
+    torch.testing.assert_close(a(x)[0], r(x)[0])
+
+
+def test_crack_metrics_read_their_init_and_omit_what_has_no_meaning():
+    a = _attn(coords="crack", num_mirrors=6).train()
+    a(torch.randn(2, 10, 32))
+    m = a._metrics
+    assert m["kaleido_crack_density"] == pytest.approx(0.5)
+    assert m["kaleido_crack_decisiveness"] == pytest.approx(0.0, abs=1e-6)
+    assert "kaleido_crack_interaction" not in m  # every logit 0: nothing to split
+    assert m["kaleido_crack_drop"] == pytest.approx(1.0)
+
+
+def test_crack_interaction_is_zero_for_a_key_only_clock():
+    """One plane for every query is a content clock (Mamba's or FoX's shape),
+    not retrieval, and must read 0."""
+    a = _attn(coords="crack", num_mirrors=6).train()
+    with torch.no_grad():
+        a.crack_plane.bias.normal_(std=1.0)  # the same normal at every token
+    a(torch.randn(2, 10, 32))
+    assert a._metrics["kaleido_crack_interaction"] == pytest.approx(0.0, abs=1e-6)
+    b = _cracked_attn().train()
+    b(torch.randn(2, 10, 32))
+    assert b._metrics["kaleido_crack_interaction"] > 0.1
+
+
+def test_crack_share_reported_only_under_crack():
+    a = _cracked_attn().train()
+    a(torch.randn(2, 10, 32))
+    assert 0.0 < a._metrics["kaleido_crack_share"] < 1.0
+    s = _attn(coords="split").train()
+    with torch.no_grad():
+        s.turn_static.weight.normal_(std=1.0)
+    s(torch.randn(2, 10, 32))
+    assert "kaleido_crack_share" not in s._metrics
+
+
+def test_crack_profile_is_registered():
+    entry = registry.namespace("attention").get("kaleido_12_zoom_crack")
+    a = entry(_config())
+    assert (a.n_ratio, a.n_lag, a.n_crack) == (4, 4, 4)
+    assert a.zoom == zoom_ladder(4)
