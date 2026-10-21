@@ -123,6 +123,23 @@ class TestTrainingStepRunsEndToEnd:
         batch, _ = packed_batch
         trainer.validation_step(batch, 0)
 
+    def test_validation_skips_padding_only_batches(self, trainer, packed_batch):
+        """A starved stream pads whole rows. Scoring them logged val_loss 0."""
+        batch, _ = packed_batch
+        logged = []
+        trainer.log_dict = lambda stats, **k: logged.append(stats)
+        trainer.on_validation_start()
+        padding = {
+            **batch,
+            "input_ids": torch.zeros_like(batch["input_ids"]),
+            "assistant_mask": torch.zeros_like(batch["assistant_mask"]),
+        }
+        assert trainer.validation_step(padding, 0) is None
+        assert logged == []
+        trainer.validation_step(batch, 1)
+        assert len(logged) == 1
+        assert (trainer.val_padding_batches, trainer.val_scored_batches) == (1, 1)
+
     def test_step_runs_without_the_optional_channels(self, trainer, packed_batch):
         """A bare tensor batch must still work: no block_ids, no masks."""
         batch, _ = packed_batch
@@ -140,12 +157,15 @@ class TestTrainingStepRunsEndToEnd:
 
 
 # ── val_byte_nll_bits ────────────────────────────────────────────────────────
-# `_compute_byte_nll_bits` only reads `self.outputs_are_aligned`, so a namespace
-# stub stands in for the Lightning module.
+# `_compute_byte_nll_bits` only reads `self.outputs_are_aligned` and the
+# tokenizer's pad id, so a namespace stub stands in for the Lightning module.
 
 
-def _byte_nll_bits(aligned, logits, labels):
-    stub = types.SimpleNamespace(outputs_are_aligned=aligned)
+def _byte_nll_bits(aligned, logits, labels, pad_token_id=None):
+    stub = types.SimpleNamespace(
+        outputs_are_aligned=aligned,
+        tokenizer=types.SimpleNamespace(pad_token_id=pad_token_id),
+    )
     out = types.SimpleNamespace(logits=logits)
     return BackpropagationTrainer._compute_byte_nll_bits(stub, out, labels)
 
@@ -167,6 +187,17 @@ def test_byte_nll_bits_is_calibrated_against_chance():
     masked = labels.clone()
     masked[:, ::2] = -100
     assert abs(float(_byte_nll_bits(True, uniform, masked)) - 8.0) < 1e-4
+
+    # The packer pads with [PAD], not -100. A model that predicts [PAD] after
+    # [PAD] must not pull the mean toward 0.
+    pad = 0
+    labels = torch.randint(4, 256, (2, 32))
+    padded = labels.clone()
+    padded[1] = pad
+    confident = uniform.clone()
+    confident[1, :, pad] = 1e4
+    assert abs(float(_byte_nll_bits(True, confident, padded, pad)) - 8.0) < 1e-4
+    assert _byte_nll_bits(True, uniform, torch.full_like(labels, pad), pad) is None
 
     # The codec-only helper is a plain nats-to-bits conversion.
     got = BackpropagationTrainer._compute_bits_per_byte(None, torch.tensor(3.0))

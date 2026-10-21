@@ -55,10 +55,16 @@ class MetricsLoggerCallback(Callback):
         """
         metrics = {}
 
+        # An eval that scored no batch (every row was padding) logged nothing,
+        # so callback_metrics still holds the previous eval's val_* values.
+        stale = getattr(pl_module, "val_scored_batches", None) == 0
+
         # Log ALL metrics without filtering
         for key, value in trainer.callback_metrics.items():
             # Skip 'step' as we pass it explicitly
             if key == "step":
+                continue
+            if stale and key.startswith("val_"):
                 continue
             try:
                 metrics[key] = float(value)

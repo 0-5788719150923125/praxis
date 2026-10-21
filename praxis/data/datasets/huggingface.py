@@ -1,6 +1,7 @@
 """HuggingFace dataset implementation."""
 
 import hashlib
+import time
 from typing import Dict
 
 from transformers import PreTrainedTokenizer
@@ -9,6 +10,7 @@ from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
 from praxis.data.datasets.network_retry import (
     force_offline,
     hf_offline,
+    hub_reachable,
     is_network_error,
     is_skippable_load_error,
     is_unrecoverable,
@@ -49,6 +51,10 @@ FORMAT_HANDLERS = {
     DataFormat.TOOL_CALLING: format_tool_calling,
     DataFormat.JOKE: format_joke,
 }
+
+# Backoff between a retired stream's rebuild attempts. Each failure doubles it.
+REVIVE_INITIAL_SECONDS = 60.0
+REVIVE_MAX_SECONDS = 900.0
 
 
 class HuggingfaceDataset(PraxisSampler):
@@ -160,9 +166,11 @@ class HuggingfaceDataset(PraxisSampler):
         # Storage for rewards when using RL format
         self.reward_cache = {}
 
-        # A stream that can no longer fetch (offline mode latched mid-run)
-        # retires: logs once, then yields empty documents quietly.
+        # A stream that can no longer fetch retires: it logs once, yields empty
+        # documents, and tries to rebuild on a backoff (see _revive).
         self._retired = False
+        self._revive_at = 0.0
+        self._revive_delay = REVIVE_INITIAL_SECONDS
 
     def _load_frugal(self, dataset_args: Dict):
         """Load the stream with small fetches: prune to the columns we actually
@@ -211,7 +219,9 @@ class HuggingfaceDataset(PraxisSampler):
     def get_document(self) -> Dict:
         """Get a formatted document with messages and metadata."""
         if self._retired:
-            return {"messages": [], "metadata": {}}
+            if time.monotonic() < self._revive_at:
+                return {"messages": [], "metadata": {}}
+            return self._revive()
         try:
             try:
                 document = retry_on_network_error(
@@ -303,11 +313,7 @@ class HuggingfaceDataset(PraxisSampler):
         cache (non-streaming is the only mode that can read it). No cache ->
         retire quietly: one line, no traceback, no per-fetch repetition."""
         if getattr(self, "_cache_fallback_tried", False):
-            self._retired = True
-            print(
-                f"[DATA] retiring {self.dataset_path} "
-                f"({reason}; cache fallback also failed)."
-            )
+            self._retire(f"{reason}; cache fallback also failed")
             return {"messages": [], "metadata": {}}
         self._cache_fallback_tried = True
         try:
@@ -325,12 +331,54 @@ class HuggingfaceDataset(PraxisSampler):
             )
             return self.get_document()
         except Exception:
-            self._retired = True
-            print(
-                f"[DATA] retiring stream {self.dataset_path} for this "
-                f"session ({reason}; no local cache)."
-            )
+            self._retire(f"{reason}; no local cache")
         return {"messages": [], "metadata": {}}
+
+    def _retire(self, reason: str) -> None:
+        """Stop fetching until the next rebuild attempt, logging only the first
+        retirement of a stretch."""
+        if not self._retired:
+            print(
+                f"[DATA] retiring stream {self.dataset_path} ({reason}); "
+                f"retrying in {self._revive_delay:.0f}s."
+            )
+        self._retired = True
+        self._revive_at = time.monotonic() + self._revive_delay
+        self._revive_delay = min(self._revive_delay * 2, REVIVE_MAX_SECONDS)
+
+    def _revive(self) -> Dict:
+        """Rebuild a retired stream once the hub answers again.
+
+        Without this a stream stayed empty for the rest of the session after the
+        network came back. A starved validation stream pads every row, and the
+        padding scores a loss of 0.
+        """
+        empty = {"messages": [], "metadata": {}}
+        if hf_offline() or not hub_reachable(attempts=1):
+            self._retire("hub unreachable")
+            return empty
+        try:
+            reset_hub_session()
+            self.is_streaming = self._dataset_args.get("streaming", True)
+            self._cache_only = False
+            self.dataset = self._load_frugal(dict(self._dataset_args))
+            # A new seed, so a revived training stream does not replay its start.
+            self.restart_count += 1
+            shuffle_args = {"seed": self.base_seed + self.restart_count}
+            if self.is_streaming:
+                shuffle_args["buffer_size"] = self.buffer_size
+            self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
+            self.dataset_iterator = iter(self.shuffled_dataset)
+        except Exception as e:
+            self._retire(f"rebuild failed: {type(e).__name__}")
+            return empty
+        self._retired = False
+        self._cache_fallback_tried = False
+        self._stream_rebuilds = 0
+        self._revive_delay = REVIVE_INITIAL_SECONDS
+        HuggingfaceDataset.transport_broken = False
+        print(f"[DATA] restored stream {self.dataset_path}.")
+        return self.get_document()
 
     def fill_sequence_cache(self):
         """Legacy method for compatibility - converts to old text format."""

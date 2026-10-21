@@ -1692,3 +1692,22 @@ def test_rlct_probe_unpacks_the_whole_batch_and_forwards_block_ids():
 
     assert captured.get("block_ids") is not None
     assert captured["block_ids"].shape == captured["input_ids"].shape
+
+
+def test_metrics_logger_drops_stale_val_metrics(tmp_path):
+    """An eval that scored nothing logs nothing, so Lightning still holds the
+    previous eval's val_* values. Writing them again would invent a point."""
+    from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
+
+    callback = MetricsLoggerCallback(str(tmp_path))
+    written = []
+    callback.metrics_logger = SimpleNamespace(log=lambda **k: written.append(k))
+    trainer = SimpleNamespace(
+        global_step=7, callback_metrics={"loss": 1.0, "val_loss": 1.5}
+    )
+
+    callback.on_validation_end(trainer, SimpleNamespace(val_scored_batches=0))
+    assert written[-1] == {"step": 7, "loss": 1.0}
+
+    callback.on_validation_end(trainer, SimpleNamespace(val_scored_batches=3))
+    assert written[-1] == {"step": 7, "loss": 1.0, "val_loss": 1.5}

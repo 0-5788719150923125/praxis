@@ -309,6 +309,38 @@ def test_midrun_offline_retires_quietly_when_uncached(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_retired_stream_revives_when_the_hub_returns(monkeypatch, capsys):
+    """Retirement used to last the session, so the network came back and the
+    stream stayed empty (validation then scored pure padding as loss 0)."""
+    empty = {"messages": [], "metadata": {}}
+    s = _dies_midrun(monkeypatch, cache_works=False)
+    assert s.get_document()["messages"]
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    assert s.get_document() == empty and s._retired
+    monkeypatch.delenv("HF_HUB_OFFLINE")
+    capsys.readouterr()
+
+    # Due, but the hub is still down: stay retired, back off, say nothing.
+    monkeypatch.setattr(hf, "hub_reachable", lambda **k: False)
+    s._revive_at = 0.0
+    delay = s._revive_delay
+    assert s.get_document() == empty and s._retired
+    assert s._revive_delay == min(delay * 2, hf.REVIVE_MAX_SECONDS)
+    assert capsys.readouterr().out == ""
+
+    # Not due yet: no probe at all.
+    monkeypatch.setattr(hf, "hub_reachable", lambda **k: pytest.fail("probed"))
+    assert s.get_document() == empty
+
+    # Due and reachable: a fresh stream, back on its original streaming mode.
+    monkeypatch.setattr(hf, "hub_reachable", lambda **k: True)
+    s._revive_at = 0.0
+    assert s.get_document()["messages"]
+    assert not s._retired and s.is_streaming is True
+    assert s._revive_delay == hf.REVIVE_INITIAL_SECONDS
+    assert "restored stream" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "first",
     [

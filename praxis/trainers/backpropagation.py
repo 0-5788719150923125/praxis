@@ -45,6 +45,9 @@ class BackpropagationTrainer(LightningModule):
         )
         self.byte_level = byte_level  # Track byte-level for metrics (bits_per_byte)
         self.last_logged_step = -1  # Track last step we logged a document
+        # Per-eval batch counts, reset in on_validation_start.
+        self.val_scored_batches = 0
+        self.val_padding_batches = 0
         self.save_hyperparameters(
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
         )
@@ -490,6 +493,9 @@ class BackpropagationTrainer(LightningModule):
         # averaged parameters, giving more stable validation metrics.
         if hasattr(self.optimizer, "eval"):
             self.optimizer.eval()
+        # MetricsLoggerCallback reads these: an eval that scored nothing logs nothing.
+        self.val_scored_batches = 0
+        self.val_padding_batches = 0
 
     def validation_step(self, batch, batch_idx):
         # Check if we should stop early
@@ -503,6 +509,14 @@ class BackpropagationTrainer(LightningModule):
 
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
+
+        # A starved stream pads whole rows, and the packer gives padding a zero
+        # assistant mask. A batch with nothing to score would log a loss of 0.
+        assistant_mask = fields.get("assistant_mask")
+        if assistant_mask is not None and not assistant_mask.any():
+            self.val_padding_batches += 1
+            return None
+        self.val_scored_batches += 1
 
         input_ids = fields["input_ids"]
 
@@ -592,6 +606,19 @@ class BackpropagationTrainer(LightningModule):
     def on_validation_end(self):
         super().on_validation_end()
         self.last_train_step_time = time.monotonic()
+        if self.val_padding_batches:
+            total = self.val_padding_batches + self.val_scored_batches
+            message = (
+                f"Validation skipped {self.val_padding_batches} of {total} "
+                "batches that were all padding (a starved data stream)."
+            )
+            print(f"[VALIDATION] {message}")
+            try:
+                from praxis.interface.state.live_metrics import LiveMetrics
+
+                LiveMetrics().add_event(message, level="warning")
+            except Exception:
+                pass
         # Restore training mode for ScheduleFreeWrapper.
         if hasattr(self.optimizer, "train"):
             self.optimizer.train()
@@ -729,10 +756,15 @@ class BackpropagationTrainer(LightningModule):
         if logits.shape[:-1] != labels.shape:
             return None
 
-        # ignore_index catches both the packer's pad and any negative sentinel
-        # (we use negative token values for internal slots), so the mean is over
-        # real bytes only. Float32 because a bf16 log_softmax over a 256-way
-        # vocab loses enough precision to move the third decimal.
+        # The mean is over real bytes only. The packer pads with [PAD], which is
+        # never a byte, so it is masked here; -100 is the usual ignore label.
+        # Float32 because a bf16 log_softmax over a 256-way vocab loses enough
+        # precision to move the third decimal.
+        pad_id = getattr(getattr(self, "tokenizer", None), "pad_token_id", None)
+        if pad_id is not None:
+            labels = labels.masked_fill(labels == pad_id, -100)
+        if not (labels != -100).any():
+            return None
         nll = F.cross_entropy(
             logits.reshape(-1, logits.size(-1)).float(),
             labels.reshape(-1),
