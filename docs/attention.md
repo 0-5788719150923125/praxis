@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants, plus the Q/K-free kaleidoscope and SSOG fields. Entries may be ``functools.partial`` profiles of one class; a profile is the variant, not a flag.
 
-Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (37 entries)
+Namespace: ``registry.namespace("attention")``, declared in ``praxis.attention`` (38 entries)
 
 Selected with ``--attention-type`` (default: ``modular``).
 
@@ -111,6 +111,19 @@ Presets:
 - `kaleido_split_dropoff_always` (`coords='split', dropoff='warp', dropoff_every=True`) - kaleido_split with the ``warp`` dropoff sink at every recurrent pass.
 - `kaleido_zoom_dropoff_always` (`dropoff='warp', dropoff_every=True, zoom=True`) - kaleido_dropoff_always with a per-mirror spatial zoom: the ratio mirrors are read at a ladder of harmonic and sub-harmonic zoom factors centred on 1 (1/2, 1, 2, 3 at N=4), so the dictionary spans coarser and finer relative-position periods. See ``zoom_ladder`` for why granularity and not amplitude. The ladder derives from the group size, so a wider dictionary buys finer rungs rather than more draws. This is the redundancy fix, not the capacity fix: N iid draws from one distribution stay redundant however many are taken. ``kaleido_zoom_mean`` says which rung the router buys, as a 0-1 position comparable across N.
 
+## `kuramoto`, `self_attention`, `self_attention_dropoff_always` - SelfAttention
+
+Self-attention on PyTorch's FlexAttention API, with block masking, an optional sliding
+window and the dropoff ablation. Causal when ``config.causal`` is set, bidirectional
+under a diffusion objective.
+
+Source: [praxis/attention/self_attention.py:21](../praxis/attention/self_attention.py#L21)
+
+Presets:
+- `kuramoto` (`output=<class 'praxis.attention.phase.TangentStep'>, projection=<class 'praxis.attention.phase.PhaseProjection'>`) - Kuramoto Attention (arXiv:2606.11585): self_attention with the value update replaced by a synchronization step. Each input coordinate is read as a phase (learned frequency per coordinate). Queries and keys are gated (cos, sin) lifts, so the score is a gated phase similarity, and the values are the raw phases, so each token steps along the tangent toward (or, with a negative gate, away from) the circular mean of the tokens it attends to. Steps are bounded by a learned radius. ``head_size`` stays the head width and the head count becomes ``hidden_size // (head_size // 2)``, with one query per head. Pair with ``encoding: rope_learned_rates`` for the paper's per-oscillator natural frequencies. Logs local and global phase order, decoupled mass, repelling oscillators and step size per layer.
+- `self_attention` - Plain self-attention on FlexAttention, with an optional sliding window. Masking is NOT part of what this entry selects: whether a causal mask is applied is ``config.causal``, which every entry in this namespace reads and which ``PraxisForCausalLM`` sets to ``not diffusion_type``. Under a diffusion objective this runs fully bidirectional.
+- `self_attention_dropoff_always` (`dropoff='warp', dropoff_every=True`) - self_attention with the ``warp`` value sink at every recurrent pass, as in arc_dropoff_always. The content-addressed control for the ``*_dropoff_always`` kaleidoscope profiles: same sink, but scores come from comparing queries against keys rather than from frozen mirrors.
+
 ## `modular` - ModularAttention
 
 This class is akin to a wrapper, which implements a number of interesting attention
@@ -128,18 +141,6 @@ bank queried at every step, decoupling memory size from sequence length.
 Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
-
-## `self_attention`, `self_attention_dropoff_always` - SelfAttention
-
-Self-attention on PyTorch's FlexAttention API, with block masking, an optional sliding
-window and the dropoff ablation. Causal when ``config.causal`` is set, bidirectional
-under a diffusion objective.
-
-Source: [praxis/attention/self_attention.py:21](../praxis/attention/self_attention.py#L21)
-
-Presets:
-- `self_attention` - Plain self-attention on FlexAttention, with an optional sliding window. Masking is NOT part of what this entry selects: whether a causal mask is applied is ``config.causal``, which every entry in this namespace reads and which ``PraxisForCausalLM`` sets to ``not diffusion_type``. Under a diffusion objective this runs fully bidirectional.
-- `self_attention_dropoff_always` (`dropoff='warp', dropoff_every=True`) - self_attention with the ``warp`` value sink at every recurrent pass, as in arc_dropoff_always. The content-addressed control for the ``*_dropoff_always`` kaleidoscope profiles: same sink, but scores come from comparing queries against keys rather than from frozen mirrors.
 
 ## `ssog` - SSOGAttention
 

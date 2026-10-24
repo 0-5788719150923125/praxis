@@ -338,7 +338,7 @@ class SSOGAttention(nn.Module):
         self.block_mask_cache = {}
 
     @classmethod
-    def patch_config(cls, config) -> None:
+    def patch_config(cls, config, **kwargs) -> None:
         """No query heads are built, so ``num_queries`` must read 1. Idempotent."""
         if getattr(config, "num_queries", 1) != 1:
             config.num_queries = 1

@@ -112,25 +112,51 @@ def _attention_modules(root) -> Iterator:
             yield module
 
 
+def _layered_attention(root) -> Iterator:
+    """Yield ``(layer, module)`` for the attention modules under ``root``.
+
+    ``layer`` counts only the modules that declare ``per_layer_metrics``, in
+    module order, and is None for the rest. Metrics and descriptions both walk
+    through here, so a key and its declaration always agree on the layer.
+    """
+    layer = 0
+    for module in _attention_modules(root):
+        if getattr(module, "per_layer_metrics", None):
+            yield layer, module
+            layer += 1
+        else:
+            yield None, module
+
+
+def layer_key(key: str, layer: int) -> str:
+    """The logged name of one layer's value of a per-layer metric."""
+    return f"{key}_layer{layer}"
+
+
 def collect_attention_metrics(root) -> Dict[str, float]:
     """Average each attention diagnostic across the attention modules under
     ``root`` (empty when none opt in).
 
     Averaging across modules is the same convention Arc and the activations
-    use. At ``num_layers: 1`` there is one module and the average is the value;
-    with several distinct attention blocks the grid cards below become a mean
-    field, which is a real limitation and the reason the per-module story would
-    need a layer prefix if it is ever wanted.
+    use. A module can opt keys out of it with ``per_layer_metrics``: those are
+    logged once per layer instead (:func:`layer_key`), for diagnostics whose
+    depth profile is the signal.
     """
     sums: Dict[str, float] = {}
     counts: Dict[str, int] = {}
-    for module in _attention_modules(root):
+    out: Dict[str, float] = {}
+    for layer, module in _layered_attention(root):
+        per_layer = getattr(module, "per_layer_metrics", ())
         for key, value in module.training_metrics().items():
             if value is None:
                 continue
+            if key in per_layer:
+                out[layer_key(key, layer)] = value
+                continue
             sums[key] = sums.get(key, 0.0) + value
             counts[key] = counts.get(key, 0) + 1
-    return {key: sums[key] / counts[key] for key in sums}
+    out.update({key: sums[key] / counts[key] for key in sums})
+    return out
 
 
 def _activation_modules(root) -> Iterator:
@@ -183,12 +209,30 @@ def collect_attention_descriptions(root) -> Dict[str, dict]:
     Without this the Dynamics tab has no declaration for an attention key, and
     a metric with no declaration is logged to the database and then dropped on
     the floor - the manifest is built from descriptions, not from columns.
+
+    Read off the instance, which falls back to the class: a module composed
+    from stages declares what its stages publish. Per-layer keys are expanded
+    to one series per layer on a shared chart.
     """
     out: Dict[str, dict] = {}
-    for module in _attention_modules(root):
-        descs = getattr(type(module), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            out.update(descs)
+    for layer, module in _layered_attention(root):
+        descs = getattr(module, "metric_descriptions", None)
+        if not isinstance(descs, dict):
+            continue
+        per_layer = getattr(module, "per_layer_metrics", ())
+        for key, value in descs.items():
+            if key not in per_layer:
+                out[key] = value
+            elif isinstance(value, dict) and isinstance(value.get("chart"), dict):
+                out[layer_key(key, layer)] = {
+                    **value,
+                    "chart": {
+                        **value["chart"],
+                        "series_group": key,
+                        "series_label": f"layer {layer}",
+                    },
+                    "caller": type(module).__name__,
+                }
     return out
 
 

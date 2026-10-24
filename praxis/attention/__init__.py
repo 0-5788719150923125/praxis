@@ -12,6 +12,7 @@ from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.kaleidoscope import KaleidoscopeAttention
 from praxis.attention.modular import ModularAttention
+from praxis.attention.phase import PhaseProjection, TangentStep
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.single import (
     SingleHeadArcAttention,
@@ -56,6 +57,25 @@ registry.declare(
                 "``*_dropoff_always`` kaleidoscope profiles: same sink, but scores "
                 "come from comparing queries against keys rather than from frozen "
                 "mirrors."
+            ),
+        ),
+        "kuramoto": Entry(
+            partial(SelfAttention, projection=PhaseProjection, output=TangentStep),
+            (
+                "Kuramoto Attention (arXiv:2606.11585): self_attention with the "
+                "value update replaced by a synchronization step. Each input "
+                "coordinate is read as a phase (learned frequency per "
+                "coordinate). Queries and keys are gated (cos, sin) lifts, so "
+                "the score is a gated phase similarity, and the values are the "
+                "raw phases, so each token steps along the tangent toward (or, "
+                "with a negative gate, away from) the circular mean of the "
+                "tokens it attends to. Steps are bounded by a learned radius. "
+                "``head_size`` stays the head width and the head count becomes "
+                "``hidden_size // (head_size // 2)``, with one query per head. "
+                "Pair with ``encoding: rope_learned_rates`` for the paper's "
+                "per-oscillator natural frequencies. Logs local and global "
+                "phase order, decoupled mass, repelling oscillators and step "
+                "size per layer."
             ),
         ),
         # Configs and checkpoints written before the rename.
@@ -423,7 +443,9 @@ def patch_attention_config(config: Any, args: Any = None) -> None:
     # Diff rather than naming fields, so a future patch_config that corrects
     # some other knob is reported and mirrored without editing this function.
     before = dict(vars(config))
-    patch(config)
+    # A profile's keyword arguments reach the hook, so a stage it composes
+    # (e.g. kuramoto's phase projection) can correct the layout it builds.
+    patch(config, **getattr(entry, "keywords", {}))
     changed = {
         key: (old, getattr(config, key, old))
         for key, old in before.items()

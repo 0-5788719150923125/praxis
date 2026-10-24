@@ -116,7 +116,7 @@ class SingleHeadArcAttention(ArcAttention):
     }
 
     @classmethod
-    def patch_config(cls, config) -> None:
+    def patch_config(cls, config, **kwargs) -> None:
         """Correct the head COUNT, and only the count.
 
         ``head_size`` is deliberately not touched. It is already the knob for

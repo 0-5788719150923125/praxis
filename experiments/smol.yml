@@ -573,7 +573,7 @@ seed: 42
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 37 of them, described in docs/attention.md
+# Options: 38 of them, described in docs/attention.md
 
 # attention_type: modular
 
@@ -598,7 +598,7 @@ seed: 42
 # RoPE, ALiBi, NoPE and friends - the rotational / additive position priors
 # injected into attention.
 #
-# Options: nope, alibi, rope, hope, arc
+# Options: nope, alibi, rope, rope_learned_rates, hope, arc
 
 # encoding_type: rope
 

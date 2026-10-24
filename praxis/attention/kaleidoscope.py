@@ -715,7 +715,7 @@ class KaleidoscopeAttention(nn.Module):
         self._metrics: dict = {}
 
     @classmethod
-    def patch_config(cls, config) -> None:
+    def patch_config(cls, config, **kwargs) -> None:
         """Correct the head COUNT to 1, and only the count.
 
         ``head_size`` is a width and stays in the config, so an unset one gives

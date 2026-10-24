@@ -102,7 +102,7 @@ ffn_type: mlp
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 37 of them, described in docs/attention.md
+# Options: 38 of them, described in docs/attention.md
 # Default: modular
 #
 # vanilla: Standard multi-head attention implementation using PyTorch's
@@ -116,7 +116,7 @@ attention_type: vanilla
 # RoPE, ALiBi, NoPE and friends - the rotational / additive position priors
 # injected into attention.
 #
-# Options: nope, alibi, rope, hope, arc
+# Options: nope, alibi, rope, rope_learned_rates, hope, arc
 # Default: rope
 #
 # nope: Implementation of NoPE (No Position Encoding) with head-wise attention

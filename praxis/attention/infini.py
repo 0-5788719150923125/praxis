@@ -216,9 +216,9 @@ class InfiniAttention(SelfAttention):
             self._attn_span = (span[..., keep] / uniform[keep]).mean()
 
     def training_metrics(self) -> dict:
-        # SelfAttention declares none, so this is the root of the chain;
-        # ArcAttention chains up to it.
-        out: dict = {}
+        # SelfAttention reports its stages' and encoding's diagnostics;
+        # ArcAttention chains up through this one.
+        out: dict = super().training_metrics()
         if self._attn_span is not None:
             out["attn_span"] = self._attn_span.item()
         # Absent on the memory-free variants, which delete the blend rather

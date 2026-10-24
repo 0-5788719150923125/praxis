@@ -3,7 +3,7 @@
 
 RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 
-Namespace: ``registry.namespace("encoding")``, declared in ``praxis.encoding`` (5 entries)
+Namespace: ``registry.namespace("encoding")``, declared in ``praxis.encoding`` (6 entries)
 
 Selected with ``--encoding-type`` (default: ``rope``).
 
@@ -60,3 +60,11 @@ depths). Parameterized in a bounded log space: theta = THETA_MIN *
 THETA_INIT; z_delta is zero-init so every depth starts there and ...
 
 Source: [praxis/encoding/rope.py:24](../praxis/encoding/rope.py#L24)
+
+## `rope_learned_rates` - LearnedRateRoPE
+
+RoPE with a learned rate for every rotary pair of every KV head, initialized on the
+geometric schedule, plus a per-depth shift. Kuramoto Attention's per-oscillator natural
+frequencies (arXiv:2606.11585). Logs the mean rate per layer.
+
+Source: [praxis/encoding/learned_rates.py:13](../praxis/encoding/learned_rates.py#L13)

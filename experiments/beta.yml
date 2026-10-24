@@ -102,7 +102,7 @@ ffn_type: arc
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 37 of them, described in docs/attention.md
+# Options: 38 of them, described in docs/attention.md
 # Default: modular
 #
 # arc: InfiniAttention subclass that adds per-depth learned biases.
@@ -607,7 +607,7 @@ encoding: arc
 # RoPE, ALiBi, NoPE and friends - the rotational / additive position priors
 # injected into attention.
 #
-# Options: nope, alibi, rope, hope, arc
+# Options: nope, alibi, rope, rope_learned_rates, hope, arc
 
 # encoding_type: rope
 

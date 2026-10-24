@@ -220,13 +220,21 @@ class RoPE(NoPE):
 
         freqs = self._position_freqs(positions, inv_freq, current_depth)
 
-        # Reshape for proper broadcasting
-        cos = torch.cos(freqs)  # [batch_size, seq_len, head_dim//2]
-        sin = torch.sin(freqs)  # [batch_size, seq_len, head_dim//2]
+        cos = torch.cos(freqs)  # [batch_size, seq_len, bands]
+        sin = torch.sin(freqs)  # [batch_size, seq_len, bands]
 
-        # Stack and reshape to match original dimensions
-        cos = torch.stack([cos, cos], dim=-1).view(cos.size(0), 1, cos.size(1), -1)
-        sin = torch.stack([-sin, sin], dim=-1).view(sin.size(0), 1, sin.size(1), -1)
+        # Rotate-half layout, as in transformers' Llama: _apply_rotary_pos_emb
+        # pairs x[..., j] with x[..., j + ceil(d/2)], and pair j turns at band
+        # j, so the cache holds the bands in order. (An interleaved cache here
+        # gave pairs 2i and 2i+1 the same band with opposite signs, so only the
+        # faster half of the spectrum was used.) An odd head_dim leaves one
+        # slot unpaired: cos 1, sin 0, so it passes through unrotated.
+        unpaired = (head_dim + 1) // 2 - cos.size(-1)
+        if unpaired > 0:
+            cos = F.pad(cos, (0, unpaired), value=1.0)
+            sin = F.pad(sin, (0, unpaired), value=0.0)
+        cos = cos.unsqueeze(1)  # [batch_size, 1, seq_len, ceil(head_dim/2)]
+        sin = sin.unsqueeze(1)
 
         self._cached_cos = cos.to(dtype)
         self._cached_sin = sin.to(dtype)
@@ -235,38 +243,8 @@ class RoPE(NoPE):
     def _compute_relative_positions_vectorized(
         self, block_ids: torch.Tensor, device: torch.device
     ) -> torch.Tensor:
-        """
-        Compute relative positions respecting block boundaries.
-
-        Args:
-            block_ids: Block IDs tensor of shape [batch_size, seq_len]
-            device: Device to create tensors on
-
-        Returns:
-            Tensor of positions respecting block boundaries
-        """
-        # Create mask for valid tokens
-        mask = block_ids != -1
-
-        # Create position indices
-        positions = torch.cumsum(mask, dim=-1)
-
-        # Create segment boundaries
-        boundaries = torch.nn.functional.pad(
-            block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True
-        )
-
-        # Reset cumsum at boundaries
-        reset_mask = torch.cumsum(boundaries, dim=-1)
-        segment_positions = (
-            positions
-            - positions.masked_fill(~mask, 0)
-            .masked_fill(~boundaries, 0)
-            .cummax(dim=-1)[0]
-        )
-
-        # Zero out special token positions
-        return segment_positions * mask
+        """Positions that restart at each block boundary. See :func:`segment_positions`."""
+        return segment_positions(block_ids)
 
     def _apply_rotary_pos_emb(
         self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
@@ -288,7 +266,7 @@ class RoPE(NoPE):
         cos = cos[:, :, :seq_len, :]
         sin = sin[:, :, :seq_len, :]
 
-        # Split input into pairs (handles odd dimensions)
+        # Rotate-half pairs: x1[j] with x2[j] (handles odd dimensions)
         x1, x2 = x.chunk(2, dim=-1)
         d1, d2 = x1.size(-1), x2.size(-1)
 
@@ -305,3 +283,36 @@ class RoPE(NoPE):
             out2 = out2[..., :d2]
 
         return torch.cat([out1, out2], dim=-1)
+
+
+def segment_positions(block_ids: torch.Tensor) -> torch.Tensor:
+    """
+    Compute relative positions respecting block boundaries.
+
+    Args:
+        block_ids: Block IDs tensor of shape [batch_size, seq_len]
+
+    Returns:
+        Tensor of positions respecting block boundaries
+    """
+    # Create mask for valid tokens
+    mask = block_ids != -1
+
+    # Create position indices
+    positions = torch.cumsum(mask, dim=-1)
+
+    # Create segment boundaries
+    boundaries = torch.nn.functional.pad(
+        block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True
+    )
+
+    # Reset cumsum at boundaries
+    restarted = (
+        positions
+        - positions.masked_fill(~mask, 0)
+        .masked_fill(~boundaries, 0)
+        .cummax(dim=-1)[0]
+    )
+
+    # Zero out special token positions
+    return restarted * mask

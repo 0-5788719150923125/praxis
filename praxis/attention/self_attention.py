@@ -30,6 +30,8 @@ class SelfAttention(nn.Module):
         config,
         dropoff: str = None,
         dropoff_every: bool = False,
+        projection: Optional[type] = None,
+        output: Optional[type] = None,
     ) -> None:
         """
         Initialize SelfAttention module.
@@ -39,8 +41,25 @@ class SelfAttention(nn.Module):
                 ``config.encoding`` selects any entry from the ``encoding`` registry
                 (rope, alibi, hope, nope, ...). Optional ``config.window_size``
                 (int) enables sliding window attention.
+            projection: Optional stage class replacing the fused QKV linear.
+                Built from ``config``; its forward returns flat ``q, k, v`` and a
+                state for the output stage, and its ``patch_config`` (if any)
+                may correct the head layout first.
+            output: Optional stage class replacing the output linear. Its
+                forward takes the attended values, the projection's state and
+                the ghost-key attention mass. Needs a ``projection``.
         """
         super().__init__()
+        if output is not None and projection is None:
+            raise ValueError(
+                "an output stage reads the projection stage's state, so it "
+                "needs a projection stage too"
+            )
+        if projection is not None and hasattr(projection, "patch_config"):
+            projection.patch_config(config)
+        # Staged mode: the projection hands a state to the output stage, and
+        # the output stage also sees how much attention went to the ghost key.
+        self.staged = projection is not None
 
         hidden_size = config.hidden_size
         self.num_heads = config.num_heads
@@ -100,12 +119,31 @@ class SelfAttention(nn.Module):
         qkv_dim = (
             self.num_query_heads * self.head_dim + 2 * self.num_heads * self.head_dim
         )
-        self.qkv = nn.Linear(hidden_size, qkv_dim, bias=False)
+        if projection is not None:
+            self.qkv = projection(config)
+        else:
+            self.qkv = nn.Linear(hidden_size, qkv_dim, bias=False)
 
         # Output projection
-        self.output = nn.Linear(
-            self.num_query_heads * self.head_dim, hidden_size, bias=False
-        )
+        if output is not None:
+            self.output = output(config)
+        else:
+            self.output = nn.Linear(
+                self.num_query_heads * self.head_dim, hidden_size, bias=False
+            )
+
+        # Stages and the encoding may publish diagnostics. Merge their chart
+        # declarations over the class's own, so the dashboard can find them.
+        descriptions = dict(getattr(type(self), "metric_descriptions", None) or {})
+        per_layer = set(getattr(type(self), "per_layer_metrics", ()))
+        for part in (self.qkv, self.output, self.encoding):
+            descriptions.update(getattr(type(part), "metric_descriptions", None) or {})
+            per_layer |= set(getattr(type(part), "per_layer_metrics", ()))
+        if per_layer or len(descriptions) > len(
+            getattr(type(self), "metric_descriptions", None) or {}
+        ):
+            self.metric_descriptions = descriptions
+            self.per_layer_metrics = frozenset(per_layer)
 
         # Dropout layers
         self.dropout = nn.Dropout(self.dropout_p)
@@ -121,7 +159,7 @@ class SelfAttention(nn.Module):
         self.block_mask_cache = {}
 
     @classmethod
-    def patch_config(cls, config) -> None:
+    def patch_config(cls, config, projection: Optional[type] = None, **kwargs) -> None:
         """Correct the config fields that would otherwise misdescribe this module.
 
         Most mechanisms build exactly what the config asks for, so this is a
@@ -135,7 +173,21 @@ class SelfAttention(nn.Module):
         Called for the selected ``attention_type`` by
         :func:`praxis.attention.patch_attention_config`, and again from the
         implementing class's own ``__init__``, so it MUST be idempotent.
+
+        A profile's keyword arguments arrive here too, so a ``projection``
+        stage gets to correct the head layout it builds.
         """
+        if projection is not None and hasattr(projection, "patch_config"):
+            projection.patch_config(config)
+
+    def training_metrics(self) -> dict:
+        """Diagnostics published by the stages and the positional encoding."""
+        out: dict = {}
+        for part in (self.qkv, self.output, self.encoding):
+            report = getattr(part, "training_metrics", None)
+            if report is not None:
+                out.update(report())
+        return out
 
     @contextmanager
     def head_budget(self, kv_keep: Tensor):
@@ -149,7 +201,13 @@ class SelfAttention(nn.Module):
         The head counts the ``.view``s read are dropped to match. Weight slices
         are differentiable gathers, so only the heads that ran get gradient. The
         per-depth output bias is per-hidden, not per-head, so it is left whole.
+
+        A no-op with projection/output stages, whose weights have no per-head
+        row layout to slice; a mixture-of-widths policy leaves them at full width.
         """
+        if getattr(self, "staged", False):
+            yield
+            return
         nq, hd = self.num_queries, self.head_dim
         H, QH = self.num_heads, self.num_query_heads
         dev = self.qkv.weight.device
@@ -228,6 +286,12 @@ class SelfAttention(nn.Module):
             self.flex_attention = flex_attention
             self.create_block_mask = create_block_mask
             self.and_masks = and_masks
+            try:
+                from torch.nn.attention.flex_attention import AuxRequest
+
+                self.lse_request = {"return_aux": AuxRequest(lse=True)}
+            except ImportError:
+                self.lse_request = {"return_lse": True}
         except ImportError:
             print("[SelfAttention] FlexAttention not available, using SDPA fallback")
             self.flex_attention = None
@@ -428,7 +492,8 @@ class SelfAttention(nn.Module):
         seq_len: int,
         is_gqa: bool,
         block_ids: Optional[Tensor] = None,
-    ) -> Tensor:
+        with_ghost: bool = False,
+    ):
         """Manual masked attention preserving the ghost column.
 
         Inputs already include the zero ghost at kv index 0
@@ -447,6 +512,8 @@ class SelfAttention(nn.Module):
             is_gqa: Whether to expand K/V across query-head groups.
             block_ids: Optional ``[B, T]`` document index per token. Must stay
                 numerically identical to the flex path's document mask.
+            with_ghost: Also return the attention mass on the ghost key,
+                ``[B, Hq, S]``.
         """
         device = q.device
         batch_size, _, _, head_dim = q.shape
@@ -499,8 +566,11 @@ class SelfAttention(nn.Module):
         scores = scores.masked_fill(~allowed, -1e9)
 
         weights = F.softmax(scores, dim=-1)
+        ghost = weights[..., 0]
         if self.training and self.dropout_p > 0:
             weights = F.dropout(weights, p=self.dropout_p)
+        if with_ghost:
+            return weights @ v_exp, ghost
         return weights @ v_exp
 
     def forward(
@@ -545,16 +615,19 @@ class SelfAttention(nn.Module):
         ):
             block_ids = None
 
-        # Calculate QKV
-        qkv = self.qkv(inputs)
+        if self.staged:
+            q, k, v, state = self.qkv(inputs)
+        else:
+            # Calculate QKV
+            qkv = self.qkv(inputs)
 
-        # Split into Q, K, V with proper dimensions
-        q_dim = self.num_query_heads * self.head_dim
-        kv_dim = self.num_heads * self.head_dim
+            # Split into Q, K, V with proper dimensions
+            q_dim = self.num_query_heads * self.head_dim
+            kv_dim = self.num_heads * self.head_dim
 
-        q = qkv[..., :q_dim]
-        k = qkv[..., q_dim : q_dim + kv_dim]
-        v = qkv[..., q_dim + kv_dim :]
+            q = qkv[..., :q_dim]
+            k = qkv[..., q_dim : q_dim + kv_dim]
+            v = qkv[..., q_dim + kv_dim :]
 
         # Reshape for multi-head attention
         # (B, T, num_heads * head_dim) -> (B, num_heads, T, head_dim)
@@ -600,6 +673,7 @@ class SelfAttention(nn.Module):
 
         # Check if we should use CPU fallback
         use_fallback = self._use_cpu_fallback(inputs.device)
+        ghost = None
 
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
@@ -611,8 +685,16 @@ class SelfAttention(nn.Module):
             # Manual masked attention that preserves the ghost column so
             # softmax1/ghostmax behavior matches the flex_attention path.
             attn_output = self._ghost_aware_attention(
-                q, k, v, seq_len=seq_len, is_gqa=is_gqa, block_ids=block_ids
+                q,
+                k,
+                v,
+                seq_len=seq_len,
+                is_gqa=is_gqa,
+                block_ids=block_ids,
+                with_ghost=self.staged,
             )
+            if self.staged:
+                attn_output, ghost = attn_output
         else:
             # Use FlexAttention (GPU only)
             # Handle masking: causal + document block_mask with ghost access
@@ -632,14 +714,23 @@ class SelfAttention(nn.Module):
                 score_mod=score_mod,
                 enable_gqa=is_gqa,
                 scale=None,  # Use default: 1.0 / sqrt(head_dim)
+                **(self.lse_request if self.staged else {}),
             )
+            if self.staged:
+                attn_output, aux = attn_output
+                lse = aux if torch.is_tensor(aux) else aux.lse
+                # The ghost key scores exactly 0, so its weight is exp(-lse).
+                ghost = torch.exp(-lse.detach().float())
 
         # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads * head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(batch_size, seq_len, -1)
 
         # Output projection
-        output = self.output(attn_output)
+        if self.staged:
+            output = self.output(attn_output, state, ghost=ghost)
+        else:
+            output = self.output(attn_output)
         output = self.dropout(output)
 
         # Return output, cache (None for now), and aux_loss (0)
