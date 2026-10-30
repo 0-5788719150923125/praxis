@@ -6,7 +6,7 @@ from praxis.encoders.abstractinator import (
     AbstractinatorCALM,
     AbstractinatorEncoder,
 )
-from praxis.encoders.byte_latent import ByteLatentEncoder
+from praxis.encoders.byte_latent import ByteLatentEncoder, CoarseToFineEncoder
 from praxis.encoders.calm import CALMEncoder
 from praxis.registry import Alias, Entry, unwrap
 
@@ -25,6 +25,21 @@ ByteLatentConvSmall = partial(
     ByteLatentConv,
     n_layers_encoder=2,
     n_layers_decoder=2,
+)
+
+ByteLatentConvCoarseToFine = partial(
+    CoarseToFineEncoder,
+    local_architecture="conv",
+    patching_mode="space",
+    n_layers_encoder=3,
+    n_layers_decoder=3,
+    embeddings="byte_hash",
+    # The latent is the decoder's main input here, not a hint: under BLT's sum
+    # the byte path outgrows it (RMS 6.8 vs 1.0, content ratio 0.03 at 200
+    # steps; 0.47 normalized, with lower reconstruction and code bits).
+    merge="normalized",
+    chunk=32,
+    codebook_size=4096,
 )
 
 ByteLatentTransformer = partial(
@@ -297,6 +312,18 @@ registry.declare(
         "byte_latent_conv_small": Entry(
             ByteLatentConvSmall,
             "byte_latent_conv with two local layers on each side.",
+        ),
+        "byte_latent_conv_coarse_to_fine": Entry(
+            ByteLatentConvCoarseToFine,
+            (
+                "byte_latent_conv as Next-Concept Modeling (arXiv:2610.14162), "
+                "trained in one run. Chunks of 32 patches get a multiscale "
+                "residual code ladder (1, 2, 4 ... 32 codes, 4096 per level, EMA "
+                "codebooks); the trunk predicts every level from the coarser ones "
+                "with earlier chunks as context, and the local decoder spells each "
+                "patch from its reconstructed latent. The code loss never reaches "
+                "the tokenizer. Generates a chunk in 6 trunk passes."
+            ),
         ),
         "byte_latent_transformer": Entry(
             ByteLatentTransformer,

@@ -42,11 +42,14 @@ def copy_gain(
     The first token of each copy is excluded - nothing in the context says
     where a copy starts. Runs the uncompiled module, so the probe's shape never
     spends the compiled model's recompile budget. None when the rows are too
-    short, the model emits no per-token logits, or its encoder owns the loss
-    (CALM's logits reconstruct the input rather than predict it).
+    short, the model emits no per-token logits, or its encoder's logits
+    reconstruct the input rather than predict it (CALM, coarse to fine).
     """
     model = getattr(model, "_orig_mod", model)
-    if getattr(getattr(model, "encoder", None), "handles_loss", False):
+    encoder = getattr(model, "encoder", None)
+    if getattr(encoder, "handles_loss", False):
+        return None
+    if not getattr(encoder, "emits_next_token_likelihood", True):
         return None
     length = min(int(length), input_ids.size(1) // 2)
     if length < 4:

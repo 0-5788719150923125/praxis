@@ -102,8 +102,9 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "val_brier_4": {"description": "BrierLM order-4 raw score, x100."},
     "val_byte_nll_bits": {
         "description": (
-            "Plain per-byte cross-entropy of the emitted logits, in bits - measured, "
-            "never optimized. Chance is 8.0. Absent under cut-CE."
+            "Per-byte cross-entropy of the emitted logits in bits, never optimized. "
+            "Chance is 8.0; absent under cut-CE. Coarse-to-fine runs add their code "
+            "bits: an upper bound."
         ),
         "chart": {
             "title": "Bits per Byte",
@@ -157,8 +158,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "val_codec_bpb": {
         "description": (
-            "Teacher-forced reconstruction bits/byte for codec encoders (CALM). "
-            "Fidelity, not generation quality."
+            "Teacher-forced reconstruction bits/byte for codec encoders (CALM, "
+            "coarse to fine). Fidelity, not generation quality."
         ),
         "chart": {
             "title": "Codec Recon (bits/byte)",

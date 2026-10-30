@@ -25,6 +25,18 @@ class SelfAttention(nn.Module):
     bidirectional under a diffusion objective.
     """
 
+    # A trunk sequence that is not one causal stream publishes its mask and
+    # positions here for one forward (praxis/attention/layout.py). It replaces
+    # the causal, window and document masks while set.
+    layout = None
+
+    @staticmethod
+    def set_layout(root: nn.Module, layout) -> None:
+        """Publish ``layout`` to every self-attention under ``root``; None clears it."""
+        for module in root.modules():
+            if isinstance(module, SelfAttention):
+                module.layout = layout
+
     def __init__(
         self,
         config,
@@ -573,6 +585,33 @@ class SelfAttention(nn.Module):
             return weights @ v_exp, ghost
         return weights @ v_exp
 
+    def _layout_attention(self, q: Tensor, k: Tensor, v: Tensor, layout, is_gqa: bool):
+        """Attention under a published layout, on SDPA's memory-efficient kernel.
+
+        Eager FlexAttention materializes every score, and a layout's sequence
+        is several times a patch sequence; SDPA with the layout's boolean mask
+        never holds the score matrix. ``k``/``v`` already carry the zero ghost,
+        so the softmax is ghostmax, as on the flex path. A staged output's ghost
+        mass is ``exp(-lse)``, read in query slices without gradient (the flex
+        path detaches it too).
+        """
+        if is_gqa:
+            k = k.repeat_interleave(self.num_queries, dim=1)
+            v = v.repeat_interleave(self.num_queries, dim=1)
+        mask = layout.dense(q.shape[0])
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        if not self.staged:
+            return out, None
+        with torch.no_grad():
+            scale = q.shape[-1] ** -0.5
+            ghost = []
+            for start in range(0, q.shape[2], 256):
+                end = start + 256
+                scores = (q[:, :, start:end] @ k.transpose(-2, -1)).float() * scale
+                scores = scores.masked_fill(~mask[:, :, start:end], float("-inf"))
+                ghost.append(torch.exp(-torch.logsumexp(scores, dim=-1)))
+        return out, torch.cat(ghost, dim=-1)
+
     def forward(
         self,
         inputs: Tensor,
@@ -639,10 +678,22 @@ class SelfAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        layout = self.layout
+        if layout is not None and len(layout) != seq_len:
+            raise ValueError(
+                f"the published attention layout covers {len(layout)} positions, "
+                f"but this forward has {seq_len}"
+            )
+
         # Apply positional encoding to Q/K (no-op for ALiBi/NoPE, rotates
         # for RoPE/HoPE). Must happen before ghostmax so the ghost token
         # remains a pristine zero.
-        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
+        if layout is None:
+            q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
+        else:
+            q, k, v = self.encoding.before_scores(
+                q, k, v, current_depth=current_depth, positions=layout.positions
+            )
 
         # Dropoff ablation: optionally withhold the causal tip at one depth step.
         k, v = self._maybe_dropoff(k, v, current_depth)
@@ -675,7 +726,9 @@ class SelfAttention(nn.Module):
         use_fallback = self._use_cpu_fallback(inputs.device)
         ghost = None
 
-        if use_fallback:
+        if layout is not None:
+            attn_output, ghost = self._layout_attention(q, k, v, layout, is_gqa)
+        elif use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
                 print(
                     "[SelfAttention] Using manual ghost-aware SDPA fallback "

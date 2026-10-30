@@ -547,6 +547,13 @@ class BackpropagationTrainer(LightningModule):
                 stats["val_codec_bpb"] = self._compute_bits_per_byte(codec_loss)
             # The per-byte likelihood. See `_compute_byte_nll_bits`.
             nll_bits = self._compute_byte_nll_bits(outputs, labels)
+            # A coarse-to-fine decoder reconstructs from codes the trunk must
+            # also pay for: its logits alone are codec fidelity, and with the
+            # code bits added they bound bits per byte from above.
+            code_bits = self._compute_code_bits(labels)
+            if nll_bits is not None and code_bits is not None:
+                stats["val_codec_bpb"] = nll_bits
+                nll_bits = nll_bits + code_bits
             if nll_bits is not None:
                 stats["val_byte_nll_bits"] = nll_bits
         else:
@@ -588,7 +595,10 @@ class BackpropagationTrainer(LightningModule):
         # Does loss keep falling as context grows? Read off this same forward,
         # on every row, weighted by the rows that hold a long enough document.
         # See praxis/metrics/context_gain.py.
-        if not self.outputs_are_aligned:
+        encoder = getattr(self.model, "encoder", None)
+        if not self.outputs_are_aligned and getattr(
+            encoder, "emits_next_token_likelihood", True
+        ):
             reading = context_gain(outputs.logits, input_ids, fields.get("block_ids"))
             if reading is not None:
                 value, rows = reading
@@ -772,6 +782,25 @@ class BackpropagationTrainer(LightningModule):
             reduction="mean",
         )
         return nll / math.log(2.0)
+
+    @torch.no_grad()
+    def _compute_code_bits(self, labels):
+        """Bits per byte the encoder's codes cost, over the bytes
+        ``_compute_byte_nll_bits`` averages; None unless the encoder codes its
+        input (coarse to fine)."""
+        encoder = getattr(self.model, "encoder", None)
+        reader = getattr(encoder, "code_nats", None)
+        nats = reader() if reader is not None else None
+        if nats is None or labels is None:
+            return None
+        pad_id = getattr(getattr(self, "tokenizer", None), "pad_token_id", None)
+        scored = labels != -100
+        if pad_id is not None:
+            scored &= labels != pad_id
+        count = scored.sum()
+        if not count:
+            return None
+        return nats.float() / count / math.log(2.0)
 
     @torch.compiler.disable
     def _compute_softmax_collapse(self, output):

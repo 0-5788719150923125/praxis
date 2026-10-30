@@ -564,7 +564,9 @@ def test_mtp_still_trains_under_a_surgical_classifier():
 #
 # One token changes in one row; no logit at an earlier position of that row, and
 # none in any other row, may move. CALM's logits reconstruct each K-token chunk
-# from that chunk's own latent, so for it "earlier" means an earlier chunk. Each
+# from that chunk's own latent, so for it "earlier" means an earlier chunk. The
+# coarse-to-fine decoder likewise reads its chunk's codes, so for it "earlier"
+# means a logit whose target is in an earlier chunk of patches. Each
 # forward runs on a fresh copy of the model with the same RNG, because
 # training-mode forwards mutate state (EMA buffers, dual variables) and reusing
 # one model would show movement that is not a leak. Every parameter is first
@@ -591,6 +593,10 @@ OVERRIDES = {
     ("classifier", "tied"): {"tie_weights": True},
     ("block", "mru"): {"hidden_size": 64, "embed_size": 64},  # square head size
     "encoder": {"hidden_size": 64, "embed_size": 64, "num_heads": 2},
+    # It publishes its trunk's mask, which only the self-attention family reads.
+    ("encoder", "byte_latent_conv_coarse_to_fine"): {
+        "attention_type": "self_attention"
+    },
 }
 
 # Expert-choice top-k decides a token's route from the tokens after it. The
@@ -684,6 +690,8 @@ def _movement(kind: str, key: str, train: bool):
         edited[0, position] = (edited[0, position] + 17) % (high - low) + low
         delta = (logits(edited) - base).abs().amax(dim=-1)
         start = position // chunk * chunk
+        if hasattr(encoder, "first_affected_position"):
+            start = encoder.first_affected_position(ids, position)
         if start:
             before = max(before, delta[0, :start].max().item())
         other_row = max(other_row, delta[1].max().item())

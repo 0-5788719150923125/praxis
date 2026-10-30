@@ -44,6 +44,12 @@ class BaseEncoder(nn.Module, ABC):
     # encoder is not driving generation.
     generation_mode: Optional[str] = None
 
+    # False when the per-token logits are not the model's next-token likelihood
+    # (a coarse-to-fine decoder reads its target's own patch code). Probes that
+    # read context use off those logits (copy gain, trunk swap, context gain)
+    # skip such encoders.
+    emits_next_token_likelihood: bool = True
+
     def resolve_generation_mode(self, requested: Optional[str] = None) -> Optional[str]:
         """Settle the run's decoding path against what this encoder offers.
 

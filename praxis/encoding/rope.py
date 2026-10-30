@@ -121,6 +121,7 @@ class RoPE(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply rotary position embeddings to queries and keys.
@@ -132,6 +133,8 @@ class RoPE(NoPE):
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
             current_depth: Recurrent depth pass, selects the per-depth theta
+            positions: Explicit ``[T]`` or ``[B, T]`` positions; override
+                ``offset`` and ``block_ids``
 
         Returns:
             Tuple of (rotated_queries, rotated_keys, values)
@@ -145,7 +148,14 @@ class RoPE(NoPE):
         # Compute embeddings using the longer sequence length
         max_seq_len = max(q_seq_len, k_seq_len)
         self._compute_rope_embeddings(
-            head_dim, max_seq_len, device, dtype, offset, block_ids, current_depth
+            head_dim,
+            max_seq_len,
+            device,
+            dtype,
+            offset,
+            block_ids,
+            current_depth,
+            positions=positions,
         )
 
         # When using caching during inference
@@ -195,6 +205,7 @@ class RoPE(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Compute rotary positional embeddings for the given parameters.
@@ -211,7 +222,9 @@ class RoPE(NoPE):
         # Recomputed each call: theta is learned, so inv_freq carries gradient.
         inv_freq = self._compute_inv_freq(head_dim, device, current_depth)
 
-        if block_ids is not None and block_ids.size(1) != 1:
+        if positions is not None:
+            positions = positions.view(1, -1) if positions.dim() == 1 else positions
+        elif block_ids is not None and block_ids.size(1) != 1:
             positions = self._compute_relative_positions_vectorized(
                 block_ids, device
             )  # Shape: [batch_size, seq_len]

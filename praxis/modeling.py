@@ -22,6 +22,7 @@ from transformers.modeling_outputs import (
 
 from praxis import PraxisConfig, registry
 from praxis.attention.cache import PraxisCache
+from praxis.attention.self_attention import SelfAttention
 from praxis.containers import LossContainer
 from praxis.memory import MemoryBase
 from praxis.migrations import rename_legacy_state_dict
@@ -90,6 +91,10 @@ class PraxisModel(PreTrainedModel):
             profile = getattr(config, "embeddings", None) or config.block_type
             self.embeds = registry.lookup("embeddings", profile)(config)
         self.decoder = registry.namespace("decoders").get(config.decoder_type)(config)
+        # Encoders that dictate the trunk's attention pattern refuse a trunk
+        # they cannot steer, now that it exists.
+        if self.encoder and hasattr(self.encoder, "check_trunk"):
+            self.encoder.check_trunk(config, self.decoder)
 
     @property
     def default_sampling_temperature(self):
@@ -183,21 +188,31 @@ class PraxisModel(PreTrainedModel):
         # without links can never inherit the previous one's grouping.
         MemoryBase.set_row_links(self.decoder, row_continues)
 
+        # An encoder whose trunk sequence is not one causal stream (coarse to
+        # fine) publishes its own mask and positions for this forward only.
+        layout = getattr(self.encoder, "trunk_layout", None) if self.encoder else None
+        if layout is not None:
+            SelfAttention.set_layout(self.decoder, layout)
+
         # A patched trunk counts patches, as the BLT reference's does. Counting
         # bytes advances RoPE several positions per word, which spins even its
         # slowest bands too fast to match content at a distance.
-        last_hidden_state, new_key_values, new_state, losses = self.decoder(
-            inputs,
-            attention_mask,
-            past_key_values,
-            current_state,
-            block_ids,
-            losses,
-            labels,
-            row_continues=row_continues,
-            # Empty patches pad content-adaptive patching's short rows.
-            valid=None if patch_lengths is None else patch_lengths > 0,
-        )
+        try:
+            last_hidden_state, new_key_values, new_state, losses = self.decoder(
+                inputs,
+                attention_mask,
+                past_key_values,
+                current_state,
+                block_ids,
+                losses,
+                labels,
+                row_continues=row_continues,
+                # Empty patches pad content-adaptive patching's short rows.
+                valid=None if patch_lengths is None else patch_lengths > 0,
+            )
+        finally:
+            if layout is not None:
+                SelfAttention.set_layout(self.decoder, None)
 
         return PraxisModelOutput(
             last_hidden_state=last_hidden_state,

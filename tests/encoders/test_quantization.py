@@ -132,3 +132,75 @@ def test_rvq_telemetry_keys_per_stage():
         assert t[f"vq_perplexity_s{s}"] >= 1.0
         assert 0.0 <= t[f"vq_dead_frac_s{s}"] <= 1.0
         assert t[f"vq_resets_s{s}"] >= 0.0
+
+
+# ------------------------------------------------------------------------------
+# multiscale_ladder
+# ------------------------------------------------------------------------------
+# The coarse-to-fine ladder: doubling levels per chunk, a reconstruction that is
+# rebuilt exactly from the codes, and codebooks that move only when told to learn.
+
+from praxis.encoders.quantization.multiscale import MultiScaleResidualVQ
+
+
+def _ladder(chunk=8, codes=32):
+    torch.manual_seed(0)
+    return MultiScaleResidualVQ(D, chunk, codes)
+
+
+def _latents(B=2, n=3, chunk=8):
+    torch.manual_seed(1)
+    z = torch.randn(B, n, chunk, D)
+    valid = torch.ones(B, n, chunk, dtype=torch.bool)
+    valid[1, 2, 5:] = False  # a partly padded last chunk
+    return z, valid
+
+
+def test_ladder_levels_double_up_to_one_code_per_latent():
+    assert _ladder(chunk=8).lengths == (1, 2, 4, 8)
+    for bad in (1, 6, 12):
+        try:
+            MultiScaleResidualVQ(D, bad, 8)
+        except ValueError:
+            continue
+        raise AssertionError(f"chunk {bad} was accepted")
+
+
+def test_ladder_reconstructions_rebuild_from_the_codes():
+    ladder = _ladder().train()
+    z, valid = _latents()
+    codes, masks, sums = ladder(z, valid, learn=False)
+    rebuilt = ladder.reconstructions(codes, valid)
+    for a, b in zip(sums, rebuilt):
+        torch.testing.assert_close(a, b)
+    assert not masks[-1][1, 2, 5:].any(), "padding produced a code"
+    assert (sums[-1][1, 2, 5:] == 0).all(), "padding was reconstructed"
+
+
+def test_ladder_refines_coarse_to_fine():
+    ladder = _ladder(codes=64).train()
+    z, valid = _latents()
+    ladder(z, valid)  # seed from this batch
+    _, _, sums = ladder.eval()(z, valid)
+    errors = [((z - s) ** 2)[valid].mean().item() for s in sums]
+    assert errors == sorted(errors, reverse=True), errors
+
+
+def test_ladder_moves_codebooks_only_when_learning():
+    ladder = _ladder().train()
+    z, valid = _latents()
+    before = [level.codebook.clone() for level in ladder.levels]
+    ladder(z, valid, learn=False)
+    assert not bool(ladder.seeded), "seeded from a batch it was told not to learn"
+    for level, old in zip(ladder.levels, before):
+        torch.testing.assert_close(level.codebook, old, rtol=0, atol=0)
+    ladder(z, valid)
+    assert bool(ladder.seeded)
+    assert any(
+        not torch.equal(level.codebook, old)
+        for level, old in zip(ladder.levels, before)
+    )
+
+
+def test_ladder_codebooks_take_no_gradient():
+    assert not any(level.codebook.requires_grad for level in _ladder().levels)

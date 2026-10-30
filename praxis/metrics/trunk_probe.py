@@ -54,6 +54,8 @@ def trunk_swap_cost(
     decoder = getattr(model, "decoder", None)
     if getattr(model, "encoder", None) is None or decoder is None:
         return None
+    if not getattr(model.encoder, "emits_next_token_likelihood", True):
+        return None
     if input_ids.size(0) < 2:
         return None
 

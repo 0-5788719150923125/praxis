@@ -71,6 +71,7 @@ class LearnedRateRoPE(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         rates = self.rates(current_depth)
         heads, bands = rates.shape
@@ -80,7 +81,9 @@ class LearnedRateRoPE(NoPE):
                 f"{2 * bands}, got q {tuple(q.shape)} and k {tuple(k.shape)}"
             )
         q_len, k_len = q.size(2), k.size(2)
-        if block_ids is not None and block_ids.size(1) != 1:
+        if positions is not None:
+            positions = positions.view(1, -1) if positions.dim() == 1 else positions
+        elif block_ids is not None and block_ids.size(1) != 1:
             positions = segment_positions(block_ids)
         else:
             positions = (

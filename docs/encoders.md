@@ -3,7 +3,7 @@
 
 Front-end encoders between the tokenizer and the decoder: the byte-latent (BLT) family, the Abstractinator (BLT plus a residual VQ bottleneck on the patch vectors, versioned v0 to v2), and CALM (a token-chunk VAE plus a next-latent generator; K, the tokens per latent, scales with tokenizer granularity: BPE 4, char 8, byte 16). Unset, tokens are embedded directly. Set, an encoder turns the input into the sequence the decoder sees, maps the decoder's output back and adds its own term to the loss; runs with an encoder skip the KV cache and cannot use the tied classifier. The byte-latent and Abstractinator encoders read raw bytes, so they switch the tokenizer to ``byte_level`` on their own. Descriptive Abstractinator names resolve to the versioned profiles.
 
-Namespace: ``registry.namespace("encoders")``, declared in ``praxis.encoders`` (26 entries)
+Namespace: ``registry.namespace("encoders")``, declared in ``praxis.encoders`` (27 entries)
 
 Selected with ``--encoder-type`` (default: unset).
 
@@ -54,6 +54,19 @@ Presets:
 - `byte_latent_conv_small` (`embeddings='byte_hash', local_architecture='conv', n_layers_decoder=2, n_layers_encoder=2, patching_mode='space'`) - byte_latent_conv with two local layers on each side.
 - `byte_latent_transformer` (`embeddings='byte_hash', local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`) - Byte-latent encoder with one transformer local layer on each side of the trunk, space patching and hashed n-gram byte embeddings.
 - `byte_latent_transformer_windowed` (`embeddings='byte_hash', local_architecture='transformer', local_window=14, n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`) - byte_latent_transformer with each local layer attending 14 bytes back, so the local path reaches exactly as far as byte_latent_conv's (28 bytes across encoder and decoder) and longer context arrives only through the trunk.
+
+## `byte_latent_conv_coarse_to_fine` - CoarseToFineEncoder
+
+byte_latent_conv as Next-Concept Modeling (arXiv:2610.14162), trained in one run. Chunks
+of 32 patches get a multiscale residual code ladder (1, 2, 4 ... 32 codes, 4096 per
+level, EMA codebooks); the trunk predicts every level from the coarser ones with earlier
+chunks as context, and the local decoder spells each patch from its reconstructed
+latent. The code loss never reaches the tokenizer. Generates a chunk in 6 trunk passes.
+
+Source: [praxis/encoders/byte_latent/coarse_to_fine.py:47](../praxis/encoders/byte_latent/coarse_to_fine.py#L47)
+
+Presets:
+- `byte_latent_conv_coarse_to_fine` - `chunk=32, codebook_size=4096, embeddings='byte_hash', local_architecture='conv', merge='normalized', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space'`
 
 ## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_fixed`, `calm_byte_flow`, `calm_byte_harmonic`, `calm_byte_harmonic_codec`, `calm_byte_harmonic_serpent`, `calm_byte_hybrid`, `calm_byte_ref`, `calm_byte_small`, `calm_byte_small_harmonic`, `calm_small`, `calm_tm_ref` - CALMEncoder
 
