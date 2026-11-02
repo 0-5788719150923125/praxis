@@ -86,7 +86,9 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         # them.
         self.level_inputs = nn.Linear(dim, dim)
         self.level_embeddings = nn.Parameter(torch.randn(levels, dim) * 0.02)
-        self.code_heads = nn.ModuleList(nn.Linear(dim, dim) for _ in range(levels))
+        self.code_classifiers = nn.ModuleList(
+            nn.Linear(dim, dim) for _ in range(levels)
+        )
         self.code_temperatures = nn.Parameter(torch.zeros(levels))
 
         self.trunk_layout: Optional[BlockLayout] = None
@@ -296,7 +298,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         codebook = self.ladder.levels[level].codebook.detach()
         energy = codebook.pow(2).sum(-1)
         mean_energy = energy.mean().clamp_min(1e-12)
-        point = self.code_heads[level](hidden) * mean_energy.div(self.dim).sqrt()
+        point = self.code_classifiers[level](hidden) * mean_energy.div(self.dim).sqrt()
         scale = self.code_temperatures[level].exp() / mean_energy
         return (2 * point @ codebook.t() - energy) * scale
 

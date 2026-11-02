@@ -726,3 +726,12 @@ def test_inference_is_causal(case):
 )
 def test_training_is_causal(case):
     _assert_causal(*_movement(*case, train=True))
+
+
+@pytest.mark.parametrize("case", CASES, ids=_ids)
+def test_a_checkpoint_loads_back(case):
+    """Loading runs praxis/migrations.py, which renames retired names wherever
+    they appear: a module that reuses one (``code_heads``) saves fine and then
+    fails to resume."""
+    model = _model(*case)
+    model.load_state_dict(model.state_dict())
