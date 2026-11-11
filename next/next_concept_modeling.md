@@ -1,8 +1,9 @@
 # Next-Concept Modeling: coarse-to-fine generation on the byte-latent line
 
-> Status: **second run training** (read at step 10k on 2026-11-07: best bound
-> still at the level-0 cut; generation's replacement characters fixed, see
-> "Second run"). The first run
+> Status: **third run pending** (2026-11-10): the finest level is now drawn in
+> four rounds, each reading the codes drawn before it. The second run learned
+> words without phrases because all 32 finest codes of a chunk were drawn at
+> once (see "Second run"). The first run
 > (9f8a6751d) collapsed onto the finest level and is void; the decoder is now
 > fenced to its own patch (see "First run"). `byte-latent-j` = `-i` +
 > `encoder_type: byte_latent_conv_coarse_to_fine`. Paper: Kumbong, Khare et al.
@@ -71,22 +72,27 @@ what we need: end-to-end training.
 | codebooks (4096 or 8192 per level) | 4096 at the last level, halving per coarser level (128 at level 0) |
 | tokenizer decoder (parallel transformer) | the conv local decoder fenced to one patch: its reconstructed latent, its slot in the chunk, and its own bytes so far |
 | generator (transformer) | the Kuramoto trunk |
+| generation: one step per level, every code of the level at once | one step per coarser level, then the finest level in 4 interleaved rounds of 8 patches, each round reading the finest codes drawn before it |
 | prompt prefix | every earlier chunk, as a causal context stream of clean latents |
 | two stages, tokenizer frozen | one run: the trunk reads detached latents, codebooks learn by EMA |
 
 **Why chunks of patches, not bytes.** A 2048-byte row has ~290 space patches.
 A ladder over bytes would need ~11 levels and around 4k trunk positions; over
-patches in chunks of 32 it is 320 context positions plus 10 x 63 code
-positions (~950), and block-diagonal attention keeps most of that cheap.
+patches in chunks of 32 it is 320 context positions plus 10 x 111 block
+positions (~1,430), and block-diagonal attention keeps most of that cheap.
 
 **Why chunks at all.** A single ladder per row could only generate a whole row
 from nothing. Chunks make it continue a prompt: the prompt's patches are the
-context, each new chunk is generated in 6 trunk passes, its bytes are spelled,
+context, each new chunk is generated in 9 trunk passes, its bytes are spelled,
 and it joins the context. The KV-cache argument survives too: context
 positions never attend to blocks.
 
-**The trunk sequence** is `[context: n*32 patch latents][chunk 0: levels 0-5]
-[chunk 1: levels 0-5] ...`. Context positions are causal within their
+**The trunk sequence** is `[context: n*32 patch latents][chunk 0: levels 0-4,
+rounds 0-3 of level 5][chunk 1: ...] ...`. Round `r`'s block holds the patches
+of rounds `0..r` (8, 16, 24, 32 positions; round order by slot residue mod 4 is
+0, 2, 1, 3, so each round fills the widest gaps). Its patches from earlier
+rounds read the reconstruction through their finest code, the rest read it
+through level 4, and it predicts the codes of the rest. Context positions are causal within their
 document, as in `-i`. A block reads context from earlier chunks (gated to the
 document its chunk opens in) and its own positions, nothing else. Positions
 are in patches: a context patch at its index, a code at the center of the span
@@ -114,7 +120,10 @@ bits plus code bits, over the same scored bytes), so it is an upper bound on
 the model's true bits per byte and can be read against `-i` in one direction:
 if it is lower, `-j` really is better. Higher is inconclusive, because the
 codes can carry detail the decoder never needed and the bound pays for it.
-`val_codec_bpb` is the decoder alone. Small overheads against `-i`: the code
+`val_codec_bpb` is the decoder alone. The finest level's rounds keep the bound
+exact: round `r` is scored given the codes of rounds before it and nothing
+else, so the rounds are a chain-rule factorization of the level (asserted in
+`test_no_round_reads_its_own_or_a_later_rounds_codes`). Small overheads against `-i`: the code
 for the row's first patch is paid although `-i` takes byte 0 as given, and
 blocks may read context from the previous document when a chunk straddles a
 seam (gated by the chunk's first patch).
@@ -165,9 +174,16 @@ by a per-index weight: a moved or reset code is scored by its new vector.
   both normalized the content ratio was 0.47 and both reconstruction and code
   bits were lower. Under `add` the decoder would have learned to ignore the
   codes, the same failure this line had with the trunk.
+- The finest level is drawn in 4 rounds, not one (since 2026-11-10). The
+  paper draws every code of a level at once; here that left a chunk's 32
+  word-sized codes choosing without each other, and the second run spelled
+  unrelated words even from true coarse codes. Round blocks cost 48 trunk
+  positions per chunk and 3 trunk passes per generated chunk. The paper's
+  single draw is kept as `byte_latent_conv_coarse_to_fine_parallel`.
 - Corruption endpoints: linear from 0.75 at level 0 to 0.25 at the last
-  conditioning level (mean 0.5). The paper gives the mean and "shifted linear
-  decreasing", not the endpoints.
+  conditioning level (mean 0.5), the finest level included now that later
+  rounds read it. The paper gives the mean and "shifted linear decreasing",
+  not the endpoints.
 - Codebooks learn only on steps with gradient. `initialize_lazy_modules` runs a
   train-mode, no-grad dummy forward of all-ones bytes; seeding from it put
   every code on one vector and collapsed every level at init (found in the
@@ -196,12 +212,16 @@ In order:
    decoder reading levels 0..k only, and that plus those levels' code bits.
    Reconstruction should fall at every level; the deepest cut should give the
    lowest bound. A coarse cut with the best bound means the finer levels cost
-   more than they carry (the first run's failure).
-4. **`val_codec_bpb`**: the decoder alone from the full ladder. With the
-   decoder fenced it starts high (it has to spell from codes) and is the
+   more than they carry (true of both earlier runs).
+4. **Finest Level Loss by Round**: round 0 reads no finest code, rounds 1-3
+   read those drawn before them. Rounds below round 0 mean neighbors inform
+   each other, which is what the rounds are for; equal lines mean they bought
+   nothing.
+5. **`val_codec_bpb`**: the decoder alone from the full ladder, the
    tokenizer's quality.
-5. **`val_byte_nll_bits`** (the bound) against `-i` at matched steps.
-6. **Samples.** 6 trunk passes per chunk, then the bytes.
+6. **`val_byte_nll_bits`** (the bound) against `-i` at matched steps.
+7. **Samples.** 9 trunk passes per chunk (5 levels, 4 rounds), then the
+   bytes.
 
 Off on this run, because the decoder's logits read their target's own code:
 `val_copy_gain`, `val_trunk_swap`, `val_context_gain` (`emits_next_token_likelihood`
@@ -229,9 +249,11 @@ measures the latent stream, not the trunk; `depth/tilt` reads the whole layout.
 
 ## Cost
 
-Trunk sequence ~3x the patch count: ~1,050 positions for a typical
-2048-byte row of code (~350 patches), up to ~1,700 for symbol-dense rows
-(~580 patches) and ~3,300 for the 1 x 4096 multiplier tier.
+Trunk sequence ~4.5x the patch count since the rounds (~3x before):
+~1,560 positions for a typical 2048-byte row of code (~350 patches), up to
+~2,600 for symbol-dense rows (~580 patches). On CPU, a training step with the
+rounds took 1.8x the parallel arm's (3.95 s against 2.18 s, 2 x 2048); the GPU
+cost and peak memory are not re-measured. The numbers below are from before.
 
 The layout path runs on SDPA's memory-efficient kernel with the layout's
 boolean mask, not FlexAttention. The first real launch on eager flex hit a
@@ -268,6 +290,10 @@ FLOPs, and generation no longer reruns the local encoder per byte).
   `val_cut_recon_l{k}`).
 - `ConvBlock` takes `segment_positions` (a fenced causal conv), used by the
   decoder's `_spell`; `MultiScaleResidualVQ.sizes` per level.
+- Rounds of the finest level (`rounds=4`; `fine_index`, `fine_round`,
+  `fine_known` describe the round blocks), `_draw_chunk` generating with one
+  pass per level and per round, and `code_loss_r{r}` ("Finest Level Loss by
+  Round").
 - `BaseEncoder.emits_next_token_likelihood`; the copy, trunk-swap and
   context-gain probes skip encoders where it is False.
 - Tests: `tests/encoders/test_coarse_to_fine.py` (gradient routing both ways,
@@ -380,6 +406,65 @@ where the fence hides the lead byte. Teacher-forced on the true codes, a
 continuation byte that opens a patch gets 35% of the probability spread over
 all continuation bytes (93% inside a patch). At T = 1.0 it accounts for about
 0.4% of generated bytes being invalid.
+
+**Step 20k (2026-11-10): words without phrases.** Cut bounds are 2.58, 2.60,
+2.69, 2.89, 3.27 and 3.67; reconstruction from the full ladder has flattened
+at 0.86. The full-ladder bound now falls about 0.03 bits per 1k steps and the
+gap to the level-0 cut closes about 0.02, slower than at 10k. The trunk's
+gain over each level's usage frequencies, in nats per code, averaged over
+2k-step windows:
+
+| steps | l0 | l1 | l2 | l3 | l4 | l5 |
+|---|---|---|---|---|---|---|
+| 2-4k | 0.89 | -0.04 | -0.06 | -0.05 | -0.01 | 0.18 |
+| 10-12k | 1.18 | 0.09 | 0.12 | 0.16 | 0.37 | 1.49 |
+| 18-20k | 1.22 | 0.16 | 0.26 | 0.32 | 0.51 | 1.73 |
+
+The test that separates "early" from "structural": take levels 0..k from the
+data, let the trunk sample the finer levels, and score the true text
+teacher-forced (3 held-out rows):
+
+| levels from the data | bits/byte of the true text |
+|---|---|
+| none | 5.07 |
+| 0 | 4.99 |
+| 0..2 | 4.58 |
+| 0..3 | 4.15 |
+| 0..4 | 2.88 |
+| all | 1.07 |
+
+With every coarse level exactly right, the trunk's level-5 codes still
+describe different words. From the true codes the decoder spells `decision
+making and praxise "async ... Praxis is organization as 55 registration`,
+while true levels 0-4 with level 5 sampled give `machine machiness ...
+ERROR_habits Genuine Mentires is is as`. A chunk's 32 word-sized codes are
+drawn in one parallel step, independent of each other given levels 0-4, and
+levels 0-4 pin down little. Given everything it can see, the trunk's
+level-5 cross-entropy is 6.15 nats per patch, so each word is one of roughly
+470 near-equal choices made without its neighbors. That is the
+non-autoregressive failure: frequent words, repeated ("of the of of"), no
+phrases. More steps of the same training improve each factor, not the
+factorization. The paper's last step is parallel too and works at ~100M on
+BPE tokens, so this does not rule NCM out; it says that here the coarse
+levels carry too little for the last step to be coherent. Two of our
+deviations push the same way: our coarse codebooks are 128 to 2048 codes
+where the paper uses 4096 or 8192 at every level, and a space patch carries
+more than a BPE token.
+
+The run's schedule-free state was also reset at each of its four resumes
+(11-07 to 11-10). `ScheduleFreeWrapper` saved its `z` keyed by live
+`Parameter` objects, which a reload cannot match, so every resume set the
+average to the training iterate and the checkpoint carried one more
+unreachable copy (198 MB grew to 460 MB). Fixed 2026-11-10
+(`praxis/optimization/indexed_state.py`); the next resume of this run still
+starts its average over once, since the old entries cannot be matched.
+
+**Rounds, 2026-11-10 (third run, same name).** The finest level is now drawn
+in 4 interleaved rounds of 8 patches, each reading the finest codes drawn
+before it (see Deviations). The test that showed the problem is the one to
+repeat: true levels 0-4 with the finest level sampled should now score the
+true text much nearer the all-true 1.07 than 2.88, and "Finest Level Loss by
+Round" should separate by round. Second-run checkpoints do not load.
 
 ## Next, if it trains
 

@@ -21,7 +21,7 @@ def test_sequential_wrapper_nests_in_order():
     base = torch.optim.SGD(model.parameters(), lr=0.05)
     wrapped = SequentialWrapper(["ortho", "schedule_free"])(base)
     # Outermost is schedule-free; unwrapping .optimizer reaches the base.
-    assert type(wrapped).__name__ == "ScheduleFreeWrapper"
+    assert type(wrapped).__name__ == "IndexedScheduleFree"
     inner = wrapped.optimizer
     assert type(inner).__name__ == "OrthoGrad"
     assert inner.optimizer is base

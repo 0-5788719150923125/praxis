@@ -84,6 +84,9 @@ class BackpropagationTrainer(LightningModule):
     def on_train_start(self):
         super().on_train_start()
         self.last_train_step_time = time.monotonic()
+        # A resumed schedule-free optimizer is in the mode it was saved in.
+        if hasattr(self.optimizer, "train"):
+            self.optimizer.train()
 
     def training_step(self, batch, batch_idx):
         current_time = time.monotonic()

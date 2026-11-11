@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from praxis import PraxisConfig
 from praxis.attention.self_attention import SelfAttention
 from praxis.containers import LossContainer
+from praxis.inference.decoding import trunk_hooks
 from praxis.metrics.copy_probe import copy_gain
 from praxis.metrics.trunk_probe import trunk_swap_cost
 from praxis.modeling import PraxisForCausalLM
@@ -122,7 +123,7 @@ def test_no_chunk_reads_a_later_one():
 
     for before, after in zip(base_codes, enc._state["codes"]):
         assert torch.equal(before[:, 0], after[:, 0]), "chunk 0's codes moved"
-    C, S = enc.chunk, sum(enc.ladder.lengths)
+    C, S = enc.chunk, enc._block_pattern("cpu")[0].numel()
     # The edit changes how many chunks there are, so each run's blocks start
     # after its own context stream.
     torch.testing.assert_close(
@@ -132,6 +133,78 @@ def test_no_chunk_reads_a_later_one():
     assert not torch.allclose(hidden[:, C : 2 * C], base_hidden[:, C : 2 * C])
     # Positions whose target byte is still in chunk 0.
     torch.testing.assert_close(logits[:, : start - 1], base_logits[:, : start - 1])
+
+
+def test_no_round_reads_its_own_or_a_later_rounds_codes(monkeypatch):
+    """One finest code, drawn in round 1, changed: only the round blocks that
+    read it as drawn move. No coarser level, its own round or an earlier one
+    sees it, so each round's loss conditions on earlier rounds alone."""
+    model = _model().eval()
+    enc = model.encoder
+    ids = _rows()[:1]
+    finest = len(enc.ladder.lengths) - 1
+    here = enc.fine_round == 1
+    slot = int(enc.fine_index[here][~enc.fine_known[here]][0])
+    quantize = enc.ladder.forward
+
+    def edited(z, valid, learn=True):
+        codes, masks, _ = quantize(z, valid, learn)
+        codes = [c.clone() for c in codes]
+        codes[-1][:, 0, slot] = (codes[-1][:, 0, slot] + 1) % enc.ladder.levels[-1].K
+        return codes, masks, enc.ladder.reconstructions(codes, valid)
+
+    with torch.no_grad():
+        base, _, _ = _pieces(model, ids)
+        monkeypatch.setattr(enc.ladder, "forward", edited)
+        moved, _, _ = _pieces(model, ids)
+    n, C = enc._state["n"], enc.chunk
+    _, steps = enc._block_pattern("cpu")
+    first = slice(n * C, n * C + steps.numel())
+    changed = (moved[0, first] - base[0, first]).abs().amax(-1) > 1e-6
+    assert not changed[steps <= finest + 1].any(), "a round read its own codes"
+    assert changed[steps > finest + 1].any(), "later rounds never read the code"
+
+
+@pytest.mark.parametrize(
+    "encoder_type",
+    ["byte_latent_conv_coarse_to_fine", "byte_latent_conv_coarse_to_fine_parallel"],
+)
+def test_generation_draws_codes_from_what_training_scores(encoder_type):
+    """Handed a chunk's true codes, generation's code logits at every level and
+    round are the ones training scores, and its reconstruction is the ladder's."""
+    model = _model(encoder_type=encoder_type).eval()
+    enc = model.encoder
+    ids = _rows()[:1]
+    c, finest = 1, len(enc.ladder.lengths) - 1
+    with torch.no_grad():
+        hidden, _, _ = _pieces(model, ids)
+        inputs = enc.encode(ids)[0]
+        st = enc._state
+        n, C = st["n"], enc.chunk
+        S = enc._block_pattern("cpu")[0].numel()
+        widths = list(enc.ladder.lengths[:-1]) + [enc.fine_index.numel()]
+        parts = hidden[0, n * C + c * S : n * C + (c + 1) * S].split(widths)
+        expected = [enc.code_logits(k, parts[k]) for k in range(finest)]
+        for r in range(enc.rounds):
+            here = enc.fine_round == r
+            drawn = parts[-1][here][~enc.fine_known[here]]
+            expected.append(enc.code_logits(finest, drawn))
+
+        seen = []
+
+        def pick(level, logits):
+            seen.append(logits)
+            if level < finest:
+                return st["codes"][level][0, c]
+            here = enc.fine_round == len(seen) - 1 - finest
+            return st["codes"][level][0, c][enc.fine_index[here][~enc.fine_known[here]]]
+
+        trunk = {"root": model.decoder, "forward": trunk_hooks(model)["latent_forward"]}
+        recon = enc._draw_chunk(trunk, inputs[:, : c * C], pick)
+    assert len(seen) == finest + enc.rounds
+    for got, want in zip(seen, expected):
+        torch.testing.assert_close(got, want.float(), atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(recon[0], st["sums"][-1][0, c])
 
 
 def test_the_decoder_reads_no_earlier_patch():

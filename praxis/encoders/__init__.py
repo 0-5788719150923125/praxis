@@ -40,7 +40,10 @@ ByteLatentConvCoarseToFine = partial(
     merge="normalized",
     chunk=32,
     codebook_size=4096,
+    rounds=4,
 )
+
+ByteLatentConvCoarseToFineParallel = partial(ByteLatentConvCoarseToFine, rounds=1)
 
 ByteLatentTransformer = partial(
     ByteLatentEncoder,
@@ -322,8 +325,19 @@ registry.declare(
                 "per level, EMA codebooks); the trunk predicts every level from the "
                 "coarser ones with earlier chunks as context, and the local decoder "
                 "spells each patch from its reconstructed latent and its own bytes, "
-                "never an earlier patch's. The code loss never reaches the "
-                "tokenizer. Generates a chunk in 6 trunk passes."
+                "never an earlier patch's. The finest level is drawn in 4 "
+                "interleaved rounds, each reading the codes drawn before it. The "
+                "code loss never reaches the tokenizer. Generates a chunk in 9 "
+                "trunk passes."
+            ),
+        ),
+        "byte_latent_conv_coarse_to_fine_parallel": Entry(
+            ByteLatentConvCoarseToFineParallel,
+            (
+                "byte_latent_conv_coarse_to_fine with the finest level drawn in one "
+                "parallel step, as in the paper: each patch's code reads the coarser "
+                "levels but none of its neighbors' codes. Generates a chunk in 6 "
+                "trunk passes."
             ),
         ),
         "byte_latent_transformer": Entry(

@@ -5,7 +5,9 @@ loop. The local encoder's patch latents are cut into chunks of ``chunk`` patches
 and a multiscale residual quantizer describes each chunk coarse to fine: one code,
 then two, four, ... one per patch. The trunk is the generator: it predicts every
 level of every chunk in one forward, each level from the reconstruction of the
-levels before it, with earlier chunks as clean context. The local decoder is the
+levels before it, with earlier chunks as clean context. The finest level is drawn
+in rounds, each reading the finest codes of the rounds before it, so neighboring
+patches choose their codes knowing some of each other's. The local decoder is the
 tokenizer's decoder: it spells each patch's bytes from that patch's reconstructed
 latent and the bytes of the same patch before them. No byte of an earlier patch
 reaches it except through the codes, so when nested dropout cuts the ladder the
@@ -42,6 +44,15 @@ from .patcher import decoder_patch_ids_from_lengths, patch_ids_from_lengths
 POSITIONED_ENCODINGS = ("rope", "rope_learned_rates", "nope")
 
 
+def _spread_order(rounds: int) -> List[int]:
+    """Slot residues mod ``rounds`` in bit-reversed order, so each round fills the
+    widest gaps the earlier ones left (0, 2, 1, 3 for four)."""
+    if rounds & (rounds - 1):
+        return list(range(rounds))
+    bits = max(1, (rounds - 1).bit_length())
+    return sorted(range(rounds), key=lambda r: int(f"{r:0{bits}b}"[::-1], 2))
+
+
 class CoarseToFineEncoder(ByteLatentEncoder):
     """Byte-latent encoder whose trunk generates multiscale patch codes."""
 
@@ -55,6 +66,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         *,
         chunk: int = 32,
         codebook_size: int = 4096,
+        rounds: int = 4,
         nested_dropout: float = 0.5,
         corruption: float = 0.5,
         commitment: float = 0.25,
@@ -88,6 +100,28 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             nn.Linear(dim, dim) for _ in range(levels)
         )
         self.code_temperatures = nn.Parameter(torch.zeros(levels))
+        # The finest level in rounds: round r's block holds the slots of rounds
+        # 0..r, those of earlier rounds carrying their finest code, and predicts
+        # the codes of the rest. One round is the paper's single parallel draw.
+        self.rounds = int(rounds)
+        if self.rounds < 1 or self.chunk % self.rounds:
+            raise ValueError(f"rounds ({rounds}) must divide chunk ({chunk})")
+        drawn_in = torch.empty(self.chunk, dtype=torch.long)
+        for r, residue in enumerate(_spread_order(self.rounds)):
+            drawn_in[residue :: self.rounds] = r
+        slots = [(drawn_in <= r).nonzero().squeeze(-1) for r in range(self.rounds)]
+        fine_index = torch.cat(slots)
+        self.register_buffer("fine_index", fine_index, persistent=False)
+        self.register_buffer(
+            "fine_round",
+            torch.cat([torch.full_like(s, r) for r, s in enumerate(slots)]),
+            persistent=False,
+        )
+        self.register_buffer(
+            "fine_known", drawn_in[fine_index] < self.fine_round, persistent=False
+        )
+        self.round_embeddings = nn.Parameter(torch.randn(self.rounds, dim) * 0.02)
+        self.known_embedding = nn.Parameter(torch.randn(dim) * 0.02)
         # The decoder's own byte table: the shared embeddings hash n-grams across
         # patch boundaries. The extra row marks a patch's first byte.
         self.spell_start = self.input_vocab_size
@@ -100,6 +134,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         self._state: Dict[str, Any] = {}
         self._pending: Dict[str, Tensor] = {}
         self._level_stats: List[tuple] = []
+        self._round_stats: List[Optional[Tensor]] = []
         self._code_bits: Optional[Tensor] = None
         self._code_nats: Optional[Tensor] = None
 
@@ -108,7 +143,8 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             f"{type(self).__name__}("
             f"architecture='{self.local_architecture}', "
             f"patching='{self.byte_config.patching_mode}', "
-            f"chunk={self.chunk}, codebook_sizes={self.ladder.sizes})"
+            f"chunk={self.chunk}, codebook_sizes={self.ladder.sizes}, "
+            f"rounds={self.rounds})"
         )
 
     def check_trunk(self, config, trunk: nn.Module) -> None:
@@ -155,8 +191,9 @@ class CoarseToFineEncoder(ByteLatentEncoder):
 
     def _corruption_rates(self) -> List[float]:
         """Replacement rate per conditioning level: linear, falling with depth,
-        averaging ``corruption`` (the paper's "shifted linear decreasing")."""
-        count = len(self.ladder.lengths) - 1
+        averaging ``corruption`` (the paper's "shifted linear decreasing"). The
+        finest level conditions too when later rounds read it."""
+        count = len(self.ladder.lengths) - (1 if self.rounds == 1 else 0)
         if count <= 1:
             return [self.corruption] * count
         return [self.corruption * (1.5 - j / (count - 1)) for j in range(count)]
@@ -173,39 +210,67 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             noisy.append(torch.where(swap, random, level_codes))
         return self.ladder.reconstructions(noisy, valid)
 
+    def _fine_inputs(self, coarse: Tensor, fine: Tensor, here: Tensor) -> Tensor:
+        """Round-block inputs at positions ``here`` of the fine pattern: each
+        slot's reconstruction through the coarser levels (``coarse``), or
+        through its finest code (``fine``) if an earlier round drew it."""
+        index, known = self.fine_index[here], self.fine_known[here]
+        mixed = torch.where(
+            known.view(-1, 1), fine[..., index, :], coarse[..., index, :]
+        )
+        return (
+            self.level_inputs(mixed)
+            + self.level_embeddings[-1]
+            + self.round_embeddings[self.fine_round[here]]
+            + known.unsqueeze(-1) * self.known_embedding
+        )
+
     def _level_blocks(self, conditioning: List[Tensor], valid: Tensor) -> Tensor:
         """Generator inputs [B, n, S, D]: level k reads the reconstruction of the
-        levels before it, resized to its own length."""
-        B, n = valid.shape[:2]
+        levels before it, resized to its own length; the finest level's rounds
+        read it per slot (see ``_fine_inputs``)."""
+        B, n, C = valid.shape
+        K = len(self.ladder.lengths)
+        dtype = self.level_embeddings.dtype
         blocks = []
-        for k, length in enumerate(self.ladder.lengths):
+        for k, length in enumerate(self.ladder.lengths[:-1]):
             if k == 0:
-                prior = valid.new_zeros(
-                    (B, n, 1, self.dim), dtype=self.level_embeddings.dtype
-                )
+                prior = valid.new_zeros((B, n, 1, self.dim), dtype=dtype)
             else:
                 prior, _ = self.ladder.pool(conditioning[k - 1], valid, length)
             blocks.append(self.level_inputs(prior) + self.level_embeddings[k])
+        coarse = (
+            conditioning[K - 2]
+            if K > 1
+            else valid.new_zeros((B, n, C, self.dim), dtype=dtype)
+        )
+        fine = conditioning[K - 1] if self.rounds > 1 else coarse
+        every = torch.ones_like(self.fine_known)
+        blocks.append(self._fine_inputs(coarse, fine, every))
         return torch.cat(blocks, dim=2)
 
     def _block_pattern(self, device) -> tuple:
-        """Per position of one chunk's level blocks: offset (span center, in
-        patches) and level."""
-        C = self.chunk
-        offsets, levels = [], []
-        for k, length in enumerate(self.ladder.lengths):
+        """Per position of one chunk's blocks: offset (span center, in patches)
+        and step (a coarser level, or a round of the finest)."""
+        C, K = self.chunk, len(self.ladder.lengths)
+        offsets, steps = [], []
+        for k, length in enumerate(self.ladder.lengths[:-1]):
             span = C // length
-            offsets.append(torch.arange(length, device=device) * span + (span - 1) / 2)
-            levels.append(torch.full((length,), k, device=device))
-        return torch.cat(offsets).float(), torch.cat(levels).long()
+            offsets.append(
+                (torch.arange(length, device=device) * span + (span - 1) / 2).float()
+            )
+            steps.append(torch.full((length,), k, device=device))
+        offsets.append(self.fine_index.to(device).float())
+        steps.append(K - 1 + self.fine_round.to(device))
+        return torch.cat(offsets), torch.cat(steps).long()
 
     def _layout(
         self, B: int, n: int, patch_docs: Optional[Tensor], device
     ) -> BlockLayout:
-        """Context stream of ``n * chunk`` patches, then each chunk's level blocks."""
-        C, K = self.chunk, len(self.ladder.lengths)
+        """Context stream of ``n * chunk`` patches, then each chunk's blocks."""
+        C, G = self.chunk, len(self.ladder.lengths) - 1 + self.rounds
         P = n * C
-        offsets, levels = self._block_pattern(device)
+        offsets, steps = self._block_pattern(device)
         S = offsets.numel()
         chunk_of = torch.arange(n, device=device).view(n, 1)
         positions = torch.cat(
@@ -217,7 +282,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         group = torch.cat(
             [
                 torch.full((P,), -1, device=device, dtype=torch.long),
-                (chunk_of * K + levels.view(1, S)).reshape(-1),
+                (chunk_of * G + steps.view(1, S)).reshape(-1),
             ]
         )
         chunk = torch.cat(
@@ -319,13 +384,23 @@ class CoarseToFineEncoder(ByteLatentEncoder):
     ):
         state = self._state
         B, n, C = h.shape[0], state["n"], self.chunk
-        lengths = list(self.ladder.lengths)
-        blocks = h[:, n * C :].reshape(B, n, sum(lengths), -1).split(lengths, dim=2)
+        K = len(self.ladder.lengths)
+        widths = list(self.ladder.lengths[:-1]) + [self.fine_index.numel()]
+        blocks = h[:, n * C :].reshape(B, n, sum(widths), -1).split(widths, dim=2)
+        # Every finest slot is scored once, in the round that draws it.
+        drawn = ~self.fine_known
         nats = h.new_zeros(())
-        stats, level_nats = [], []
+        stats, level_nats, round_stats = [], [], []
         for k, (out, codes, mask) in enumerate(
             zip(blocks, state["codes"], state["masks"])
         ):
+            if k == K - 1:
+                slots = self.fine_index[drawn]
+                out, codes, mask = (
+                    out[:, :, drawn],
+                    codes[:, :, slots],
+                    mask[:, :, slots],
+                )
             if not mask.any():
                 stats.append(None)
                 level_nats.append(h.new_zeros(()))
@@ -341,9 +416,16 @@ class CoarseToFineEncoder(ByteLatentEncoder):
                     (logits.argmax(-1) == target).float().mean().detach(),
                 )
             )
+            if k == K - 1:
+                which = self.fine_round[drawn].expand_as(mask)[mask]
+                round_stats = [
+                    ce[which == r].mean().detach() if (which == r).any() else None
+                    for r in range(self.rounds)
+                ]
         scored = state["scored"].clamp_min(1)
         self._pending["code"] = nats / scored
         self._level_stats = stats
+        self._round_stats = round_stats
         self._code_nats = nats.detach()
         self._code_bits = (nats / scored).detach() / math.log(2.0)
 
@@ -454,6 +536,10 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             marginal = self.ladder.marginal_entropy(k)
             if marginal is not None:
                 out[f"code_gain_l{k}"] = marginal - loss
+        if self.rounds > 1:
+            for r, loss in enumerate(self._round_stats):
+                if loss is not None:
+                    out[f"code_loss_r{r}"] = float(loss)
         if self._code_bits is not None:
             out["code_bits_per_byte"] = float(self._code_bits)
         return out
@@ -511,6 +597,25 @@ class CoarseToFineEncoder(ByteLatentEncoder):
                 },
             }
             for k in range(8)
+        },
+        **{
+            f"code_loss_r{r}": {
+                "description": (
+                    f"Finest-level code loss on the slots drawn in round {r}, nats "
+                    "per code. Each round reads the finest codes drawn before it, so "
+                    "a loss falling by round = neighbors inform each other."
+                ),
+                "chart": {
+                    "title": "Finest Level Loss by Round",
+                    "y_label": "nats per code",
+                    "y_scale": "linear",
+                    "group": "coarse_to_fine",
+                    "order": 7,
+                    "series_group": "code_loss_round",
+                    "series_label": f"round {r}",
+                },
+            }
+            for r in range(8)
         },
         **{
             f"code_acc_l{k}": {
@@ -633,14 +738,11 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         )
         return sums[-1].reshape(1, n * C, -1)[:, :P]
 
-    def _generation_layout(self, context: int, level: int, device) -> BlockLayout:
-        length = self.ladder.lengths[level]
-        span = self.chunk // length
-        block = (
-            context
-            + torch.arange(length, device=device).float() * span
-            + (span - 1) / 2
-        )
+    def _generation_layout(self, context: int, offsets: Tensor) -> BlockLayout:
+        """``context`` patches, then one block at ``offsets`` (in patches) into
+        the chunk after them."""
+        device, length = offsets.device, offsets.numel()
+        block = context + offsets.float()
         positions = torch.cat([torch.arange(context, device=device).float(), block])
         group = torch.cat(
             [
@@ -657,16 +759,23 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         doc = torch.zeros(1, context + length, dtype=torch.long, device=device)
         return BlockLayout(positions=positions, group=group, chunk=chunk, doc=doc)
 
-    def _sample_chunk(
-        self, trunk, context: Tensor, do_sample: bool, temperature: float
-    ):
-        """One chunk's reconstruction [1, chunk, D], level by level: ``levels``
-        trunk passes over the context plus the current level's block."""
+    def _draw_chunk(self, trunk, context: Tensor, pick) -> Tensor:
+        """One chunk's reconstruction [1, chunk, D]: a trunk pass over the context
+        plus one block per coarser level, then per round of the finest. Each pass
+        hands its code logits to ``pick(level, logits)``, which returns codes."""
         C, D = self.chunk, self.dim
-        P = context.shape[1]
-        valid = torch.ones(1, 1, C, dtype=torch.bool, device=context.device)
+        P, device = context.shape[1], context.device
+        valid = torch.ones(1, 1, C, dtype=torch.bool, device=device)
+
+        def run(block: Tensor, offsets: Tensor) -> Tensor:
+            SelfAttention.set_layout(trunk["root"], self._generation_layout(P, offsets))
+            try:
+                return trunk["forward"](torch.cat([context, block], dim=1))[:, P:]
+            finally:
+                SelfAttention.set_layout(trunk["root"], None)
+
         recon = context.new_zeros(1, 1, C, D)
-        for k, length in enumerate(self.ladder.lengths):
+        for k, length in enumerate(self.ladder.lengths[:-1]):
             if k == 0:
                 prior = context.new_zeros(1, 1, 1, D)
             else:
@@ -674,22 +783,21 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             block = (self.level_inputs(prior) + self.level_embeddings[k]).view(
                 1, length, D
             )
-            SelfAttention.set_layout(
-                trunk["root"], self._generation_layout(P, k, context.device)
-            )
-            try:
-                hidden = trunk["forward"](torch.cat([context, block], dim=1))
-            finally:
-                SelfAttention.set_layout(trunk["root"], None)
-            logits = self.code_logits(k, hidden[:, P:]).float()[0]
-            if do_sample:
-                probs = F.softmax(logits / max(temperature, 1e-6), dim=-1)
-                codes = torch.multinomial(probs, 1).squeeze(-1)
-            else:
-                codes = logits.argmax(dim=-1)
+            span = C // length
+            offsets = torch.arange(length, device=device) * span + (span - 1) / 2
+            codes = pick(k, self.code_logits(k, run(block, offsets)).float()[0])
             vectors = self.ladder.lookup(k, codes).view(1, 1, length, D)
             recon = recon + self.ladder.spread(vectors, length)
-        return recon.view(1, C, D)
+        finest = len(self.ladder.lengths) - 1
+        fine = torch.zeros_like(recon)  # finest codes drawn so far, per slot
+        for r in range(self.rounds):
+            here = self.fine_round == r
+            slots, known = self.fine_index[here], self.fine_known[here]
+            block = self._fine_inputs(recon, recon + fine, here).view(1, -1, D)
+            hidden = run(block, slots)[0, ~known]
+            codes = pick(finest, self.code_logits(finest, hidden).float())
+            fine[0, 0, slots[~known]] = self.ladder.lookup(finest, codes)
+        return (recon + fine).view(1, C, D)
 
     def _next_byte_logits(
         self,
@@ -722,6 +830,13 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         trunk = {"root": model.decoder, "forward": trunk_hooks(model)["latent_forward"]}
         do_sample = bool(getattr(config, "do_sample", False))
         temperature = float(getattr(config, "temperature", None) or 1.0)
+
+        def pick(level: int, logits: Tensor) -> Tensor:
+            if not do_sample:
+                return logits.argmax(dim=-1)
+            probs = F.softmax(logits / max(temperature, 1e-6), dim=-1)
+            return torch.multinomial(probs, 1).squeeze(-1)
+
         seq = prompt
         lengths = self._patches(seq)
         start = lengths.shape[1] - 1  # the patch the next byte is in
@@ -732,7 +847,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             table = torch.cat(
                 [
                     table[:, :start],
-                    self._sample_chunk(trunk, context, do_sample, temperature),
+                    self._draw_chunk(trunk, context, pick),
                 ],
                 dim=1,
             )
@@ -762,10 +877,11 @@ class CoarseToFineEncoder(ByteLatentEncoder):
     ):
         """A transformers decoding method (see ``BaseEncoder.decoding_method``).
 
-        Per chunk: ``levels`` trunk passes sample its codes coarse to fine, then
-        the local decoder spells its bytes one at a time from the reconstructed
-        latents, through the prepared processors and stopping criteria. A
-        prompt that ends mid-word is continued inside its open patch.
+        Per chunk: a trunk pass per coarser level and per round of the finest
+        samples its codes, then the local decoder spells its bytes one at a time
+        from the reconstructed latents, through the prepared processors and
+        stopping criteria. A prompt that ends mid-word is continued inside its
+        open patch.
         Rows are generated one at a time and right-padded to a common length.
         """
         from praxis.inference.decoding import stream_end

@@ -26,6 +26,8 @@ import math
 import torch
 from pytorch_optimizer.base.optimizer import BaseOptimizer
 
+from praxis.optimization.indexed_state import state_by_index, state_by_param
+
 WAVE_CYCLES = math.pi  # frozen spatial frequency (~pi bands across each tensor)
 WAVE_AMP = 0.5  # frozen blend depth; mix in [0, 0.5] keeps a current core
 WAVE_DRIFT = 0.05  # rad/step: smooth temporal travel of the bands
@@ -75,7 +77,7 @@ class HalfLion(BaseOptimizer):
 
     def state_dict(self):
         return {
-            "half_lion_state": self.state,
+            "half_lion_state": state_by_index(self),
             "wave_phase": self.wave_phase,
             "wave_amp": self.wave_amp,
             "wave_cycles": self.wave_cycles,
@@ -84,7 +86,7 @@ class HalfLion(BaseOptimizer):
         }
 
     def load_state_dict(self, state) -> None:
-        self.state = state["half_lion_state"]
+        self.state = state_by_param(self, state["half_lion_state"])
         self.wave_phase = state.get("wave_phase", self.wave_phase)
         self.wave_amp = state.get("wave_amp", self.wave_amp)
         self.wave_cycles = state.get("wave_cycles", self.wave_cycles)

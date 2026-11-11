@@ -1,7 +1,7 @@
 """Gated Schedule-Free: per-coordinate bias-variance control over averaging.
 
-Subclasses ``pytorch_optimizer``'s :class:`ScheduleFreeWrapper`, overriding only
-``step``. Schedule-Free averages the base iterate ``z`` (responsive = variance)
+Subclasses :class:`IndexedScheduleFree` (``pytorch_optimizer``'s
+``ScheduleFreeWrapper`` with checkpointable state), overriding only ``step``. Schedule-Free averages the base iterate ``z`` (responsive = variance)
 into the deployed average ``x`` (smooth = bias) with a scalar weight per step.
 Here that weight becomes a per-coordinate **gate**: the bias-corrected gradient
 SNR ``|EMA(grad)| / sqrt(EMA(grad^2))``, which is bounded in ``[0, 1]`` for free
@@ -12,19 +12,20 @@ statistics, with no hyperparameter. Gate pinned to 1 is exactly the parent, so
 this is a strict generalization (not a provably schedule-free method).
 
 The extra per-parameter state (``m1``, ``m2``, ``t``) lives inside
-``self.state[p]``, so the inherited ``state_dict`` (which dumps
-``schedulefree_state`` wholesale) serializes it with no new keys; ``step``
-lazy-inits it, so loading a plain schedule-free or pre-gate checkpoint is safe.
+``self.state[p]``, so the inherited ``state_dict`` serializes it with no new
+keys; ``step`` lazy-inits it, so loading a plain schedule-free checkpoint is
+safe.
 """
 
 import torch
 from pytorch_optimizer.base.exception import NoSparseGradientError
-from pytorch_optimizer.optimizer import ScheduleFreeWrapper
+
+from praxis.optimization.indexed_state import IndexedScheduleFree
 
 EPS = 1e-8
 
 
-class GatedScheduleFree(ScheduleFreeWrapper):
+class GatedScheduleFree(IndexedScheduleFree):
     """Schedule-free averaging gated per-coordinate by gradient SNR."""
 
     def __init__(

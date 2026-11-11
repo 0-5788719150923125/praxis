@@ -597,6 +597,9 @@ OVERRIDES = {
     ("encoder", "byte_latent_conv_coarse_to_fine"): {
         "attention_type": "self_attention"
     },
+    ("encoder", "byte_latent_conv_coarse_to_fine_parallel"): {
+        "attention_type": "self_attention"
+    },
 }
 
 # Expert-choice top-k decides a token's route from the tokens after it. The

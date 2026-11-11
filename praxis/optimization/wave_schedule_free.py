@@ -16,7 +16,7 @@ controller already proposes that exact sinusoid). The index is arbitrary, so
 this is content-free structure (a baseline against the SNR gate); its one edge
 over a random hash is neighbor correlation - adjacent coordinates share a phase.
 
-Subclasses ``ScheduleFreeWrapper``, overriding only ``step`` (the averaging
+Subclasses ``IndexedScheduleFree``, overriding only ``step`` (the averaging
 weight ``checkpoint -> checkpoint * gate``); train/eval/serialization inherited.
 Gate pinned to 1 (``amp=1, phase=pi/2`` at a peak) is the parent at that cell.
 """
@@ -25,13 +25,14 @@ import math
 
 import torch
 from pytorch_optimizer.base.exception import NoSparseGradientError
-from pytorch_optimizer.optimizer import ScheduleFreeWrapper
+
+from praxis.optimization.indexed_state import IndexedScheduleFree
 
 # Frozen default: ~pi oscillations across each tensor (irrational, no tuning).
 WAVE_CYCLES = math.pi
 
 
-class WaveScheduleFree(ScheduleFreeWrapper):
+class WaveScheduleFree(IndexedScheduleFree):
     """Schedule-free averaging gated by a standing wave over the param index."""
 
     def __init__(

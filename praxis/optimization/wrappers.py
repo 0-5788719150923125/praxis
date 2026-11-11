@@ -13,11 +13,13 @@ Replaces the old ``--trac/--ortho/--lookahead/--schedule-free`` boolean flags.
 
 from typing import Iterable, List
 
-from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
+from pytorch_optimizer.optimizer import TRAC, OrthoGrad
 
 from praxis import registry
 from praxis.optimization.gated_schedule_free import GatedScheduleFree
 from praxis.optimization.half_lion import HalfLion
+from praxis.optimization.indexed_state import (IndexedLookahead,
+                                               IndexedScheduleFree)
 from praxis.optimization.low_rank_moment import LowRankSecondMoment
 from praxis.optimization.wave_schedule_free import WaveScheduleFree
 from praxis.registry import Entry
@@ -34,7 +36,7 @@ def _ortho(optimizer):
 
 
 def _lookahead(optimizer):
-    return Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
+    return IndexedLookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
 
 
 def _schedule_free_prep(optimizer) -> float:
@@ -52,7 +54,7 @@ def _schedule_free_prep(optimizer) -> float:
 
 def _schedule_free(optimizer):
     wd = _schedule_free_prep(optimizer)
-    return ScheduleFreeWrapper(
+    return IndexedScheduleFree(
         optimizer, momentum=SCHEDULE_FREE_MOMENTUM, r=0, weight_decay=wd
     )
 
