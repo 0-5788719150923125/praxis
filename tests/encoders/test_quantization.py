@@ -177,6 +177,12 @@ def test_ladder_reconstructions_rebuild_from_the_codes():
     assert (sums[-1][1, 2, 5:] == 0).all(), "padding was reconstructed"
 
 
+def test_ladder_codebooks_grow_with_the_vectors_each_level_sees():
+    ladder = _ladder(chunk=8, codes=32)
+    assert ladder.sizes == (4, 8, 16, 32)
+    assert [level.K for level in ladder.levels] == list(ladder.sizes)
+
+
 def test_ladder_refines_coarse_to_fine():
     ladder = _ladder(codes=64).train()
     z, valid = _latents()

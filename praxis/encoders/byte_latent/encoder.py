@@ -1448,6 +1448,7 @@ class ConvBlock(nn.Module):
         x: torch.Tensor,
         input_ids: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        segment_positions: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -1460,6 +1461,10 @@ class ConvBlock(nn.Module):
             block_ids: Currently ignored. Dilated causal conv kernels span
                 fixed strides; per-position block masking would require
                 per-block reshape, which is not implemented here.
+            segment_positions: Optional [batch_size, seq_len] index of each
+                position within its segment (0 where one starts). A tap that
+                would reach before its position's segment reads zero, so no
+                position sees an earlier segment.
 
         Returns:
             Output tensor of shape [batch_size, seq_len, dim]
@@ -1467,24 +1472,40 @@ class ConvBlock(nn.Module):
         # x: [batch, seq_len, dim]
         normed = self.norm(x)
 
-        # Reshape for convolution
-        conv_in = normed.transpose(1, 2)  # [batch, dim, seq_len]
+        if segment_positions is not None:
+            out = self._fenced_conv(normed, segment_positions)
+        else:
+            # Reshape for convolution
+            conv_in = normed.transpose(1, 2)  # [batch, dim, seq_len]
 
-        # Apply convolution
-        conv_out = self.conv(conv_in)
+            # Apply convolution
+            conv_out = self.conv(conv_in)
 
-        # Remove extra padding to maintain causality
-        if self.padding > 0:
-            conv_out = conv_out[..., : -self.padding]
+            # Remove extra padding to maintain causality
+            if self.padding > 0:
+                conv_out = conv_out[..., : -self.padding]
 
-        # Reshape back to [batch, seq_len, dim * 2]
-        out = conv_out.transpose(1, 2)
+            # Reshape back to [batch, seq_len, dim * 2]
+            out = conv_out.transpose(1, 2)
 
         # GLU gating: split channels, gate with sigmoid
         content, gate = out.chunk(2, dim=-1)
         gated = content * torch.sigmoid(gate)
 
         return self.proj(gated) + x
+
+    def _fenced_conv(self, x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+        """The causal convolution one tap at a time, each tap zeroed where it
+        reaches back past the start of its position's segment."""
+        N = x.shape[1]
+        size, dilation = self.conv.kernel_size[0], self.conv.dilation[0]
+        out = self.conv.bias
+        for i in range(size):
+            lag = (size - 1 - i) * dilation
+            tap = F.pad(x, (0, 0, lag, 0))[:, :N] if lag else x
+            keep = (positions >= lag).unsqueeze(-1).to(x.dtype)
+            out = out + F.linear(tap * keep, self.conv.weight[:, :, i])
+        return out
 
 
 class ConvEncoder(nn.Module):
@@ -1607,6 +1628,7 @@ class ConvDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.LongTensor] = None,
+        segment_positions: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, None]:
@@ -1618,6 +1640,8 @@ class ConvDecoder(nn.Module):
             embeds: Pre-computed embeddings from encoder
             patch_embeds: Optional patch embeddings
             block_ids: Accepted for API parity; not honored by dilated conv.
+            segment_positions: Optional index of each position within its
+                segment; every layer stops at segment starts (see ConvBlock).
 
         Returns:
             Tuple containing:
@@ -1645,7 +1669,12 @@ class ConvDecoder(nn.Module):
 
         for layer in self.layers:
             h = self.dropout(h)
-            h = layer(h, input_ids=tokens, block_ids=block_ids)
+            h = layer(
+                h,
+                input_ids=tokens,
+                block_ids=block_ids,
+                segment_positions=segment_positions,
+            )
 
         h_preds = self.norm(h)
         h_preds = self.dropout(h_preds)

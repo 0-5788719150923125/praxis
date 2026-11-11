@@ -318,11 +318,12 @@ registry.declare(
             (
                 "byte_latent_conv as Next-Concept Modeling (arXiv:2610.14162), "
                 "trained in one run. Chunks of 32 patches get a multiscale "
-                "residual code ladder (1, 2, 4 ... 32 codes, 4096 per level, EMA "
-                "codebooks); the trunk predicts every level from the coarser ones "
-                "with earlier chunks as context, and the local decoder spells each "
-                "patch from its reconstructed latent. The code loss never reaches "
-                "the tokenizer. Generates a chunk in 6 trunk passes."
+                "residual code ladder (1, 2, 4 ... 32 codes; 128 doubling to 4096 "
+                "per level, EMA codebooks); the trunk predicts every level from the "
+                "coarser ones with earlier chunks as context, and the local decoder "
+                "spells each patch from its reconstructed latent and its own bytes, "
+                "never an earlier patch's. The code loss never reaches the "
+                "tokenizer. Generates a chunk in 6 trunk passes."
             ),
         ),
         "byte_latent_transformer": Entry(

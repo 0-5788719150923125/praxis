@@ -137,6 +137,16 @@ class MetricsLogger:
                 else:
                     extra_metrics[key] = value
 
+            # Merge into the step's stored extras key by key, as the native
+            # columns merge: validation logs its extras once, and the train
+            # micro-batches that follow at the same step must not replace them.
+            if extra_metrics:
+                row = self.conn.execute(
+                    "SELECT extra_metrics FROM metrics WHERE step = ?", (step,)
+                ).fetchone()
+                if row and row[0]:
+                    extra_metrics = {**json.loads(row[0]), **extra_metrics}
+
             # Serialize extra metrics to JSON
             extra_json = (
                 json.dumps(extra_metrics, separators=(",", ":"))

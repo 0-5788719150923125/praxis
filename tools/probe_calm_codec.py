@@ -48,7 +48,7 @@ def load_model(run_hash, device):
     model = PraxisForCausalLM(config)
     initialize_lazy_modules(model, device)
     sd = {
-        k[len("model.") :]: v
+        k.removeprefix("model.").removeprefix("_orig_mod."): v
         for k, v in ck["state_dict"].items()
         if k.startswith("model.")
     }

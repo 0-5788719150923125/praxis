@@ -157,8 +157,9 @@ class TestTrainingStepRunsEndToEnd:
 
 
 # ── val_byte_nll_bits ────────────────────────────────────────────────────────
-# `_compute_byte_nll_bits` only reads `self.outputs_are_aligned` and the
-# tokenizer's pad id, so a namespace stub stands in for the Lightning module.
+# `_byte_nll_bits` (what `_compute_byte_nll_bits` reads the logits with) only
+# reads `self.outputs_are_aligned` and the tokenizer's pad id, so a namespace
+# stub stands in for the Lightning module.
 
 
 def _byte_nll_bits(aligned, logits, labels, pad_token_id=None):
@@ -166,8 +167,7 @@ def _byte_nll_bits(aligned, logits, labels, pad_token_id=None):
         outputs_are_aligned=aligned,
         tokenizer=types.SimpleNamespace(pad_token_id=pad_token_id),
     )
-    out = types.SimpleNamespace(logits=logits)
-    return BackpropagationTrainer._compute_byte_nll_bits(stub, out, labels)
+    return BackpropagationTrainer._byte_nll_bits(stub, logits, labels)
 
 
 def test_byte_nll_bits_is_calibrated_against_chance():
@@ -278,3 +278,68 @@ def test_byte_nll_bits_is_emitted_for_every_byte_level_family(tag, over):
 
     # val_codec_bpb is the encoder-gated one, and none of these have a codec.
     assert not hasattr(encoder, "codec_recon_loss")
+
+
+def test_coarse_to_fine_val_loss_pays_for_its_codes():
+    """Eval drops aux losses, which would leave a coarse-to-fine run's val_loss
+    as a reconstruction that reads a code of its own target: below any next-byte
+    loss by construction. With the code nats added it is the bound, in nats."""
+    config = PraxisConfig(
+        vocab_size=264,
+        byte_vocab_size=256,
+        byte_offset=0,
+        hidden_size=32,
+        embed_size=32,
+        num_heads=2,
+        num_queries=1,
+        head_size=16,
+        depth=2,
+        num_layers=2,
+        encoder_type="byte_latent_conv_coarse_to_fine",
+        decoder_type="sequential",
+        attention_type="self_attention",
+        encoding="rope",
+        block_size=512,
+        max_position_embeddings=4096,
+        device_map="cpu",
+        mtp_type=None,
+        pad_token_id=None,
+    )
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(config).eval()
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer)
+    trainer = BackpropagationTrainer(
+        model, optimizer, scheduler, {"batch_size": 2}, byte_level=True
+    )
+    trainer.trainer = type("_Stub", (), {"should_stop": False})()
+    stats = {}
+    trainer.log_dict = lambda logged, **k: stats.update(logged)
+    trainer.log = lambda *a, **k: None
+    trainer.on_validation_start()
+
+    text = b"the quick brown fox jumps over the lazy dog, said nobody at all. " * 9
+    ids = torch.tensor([list(text[:512]), list(text[9:521])])
+    with torch.no_grad():
+        reconstruction = model(input_ids=ids, labels=ids[:, 1:].contiguous()).loss
+        trainer.validation_step({"input_ids": ids}, 0)
+
+    assert stats["val_codec_bpb"] < stats["val_byte_nll_bits"]
+    assert float(stats["val_loss"]) > float(reconstruction)
+    bound_nats = float(stats["val_byte_nll_bits"]) * math.log(2.0)
+    assert abs(float(stats["val_loss"]) - bound_nats) < 0.02
+
+    # One bound per ladder cut; the deepest cut is the whole ladder.
+    last = len(model.encoder.ladder.lengths) - 1
+    assert sorted(k for k in stats if k.startswith("val_cut_bound_l")) == [
+        f"val_cut_bound_l{k}" for k in range(last + 1)
+    ]
+    torch.testing.assert_close(
+        stats[f"val_cut_bound_l{last}"], stats["val_byte_nll_bits"]
+    )
+    torch.testing.assert_close(stats[f"val_cut_recon_l{last}"], stats["val_codec_bpb"])
+    costs = [
+        float(stats[f"val_cut_bound_l{k}"] - stats[f"val_cut_recon_l{k}"])
+        for k in range(last + 1)
+    ]
+    assert costs == sorted(costs), "a deeper cut paid for fewer codes"

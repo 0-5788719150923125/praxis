@@ -7,7 +7,9 @@ then two, four, ... one per patch. The trunk is the generator: it predicts every
 level of every chunk in one forward, each level from the reconstruction of the
 levels before it, with earlier chunks as clean context. The local decoder is the
 tokenizer's decoder: it spells each patch's bytes from that patch's reconstructed
-latent plus the causal byte path.
+latent and the bytes of the same patch before them. No byte of an earlier patch
+reaches it except through the codes, so when nested dropout cuts the ladder the
+coarse levels are all it has (the paper's decoder reads codes alone).
 
 The trunk reads detached latents and the codebooks learn by EMA, so the code loss
 never reaches the tokenizer (the paper's frozen-tokenizer setting, in a single
@@ -38,10 +40,6 @@ from .patcher import decoder_patch_ids_from_lengths, patch_ids_from_lengths
 # Encodings that rotate by an explicit position (or ignore position). ALiBi biases
 # by sequence-index distance and HoPE/ArcHoPE warp it, which a layout cannot steer.
 POSITIONED_ENCODINGS = ("rope", "rope_learned_rates", "nope")
-
-# How far back the byte loop re-runs the local layers each step. Well past the
-# conv stacks' reach (15 bytes a side) and the hashed n-grams.
-SPELL_WINDOW = 256
 
 
 class CoarseToFineEncoder(ByteLatentEncoder):
@@ -90,6 +88,13 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             nn.Linear(dim, dim) for _ in range(levels)
         )
         self.code_temperatures = nn.Parameter(torch.zeros(levels))
+        # The decoder's own byte table: the shared embeddings hash n-grams across
+        # patch boundaries. The extra row marks a patch's first byte.
+        self.spell_start = self.input_vocab_size
+        self.spelling = nn.Embedding(self.input_vocab_size + 1, self.input_dim)
+        # A patch's slot in its chunk, so a coarse cut (one vector over many
+        # patches) can still say different things about each.
+        self.chunk_positions = nn.Parameter(torch.randn(self.chunk, dim) * 0.02)
 
         self.trunk_layout: Optional[BlockLayout] = None
         self._state: Dict[str, Any] = {}
@@ -103,8 +108,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             f"{type(self).__name__}("
             f"architecture='{self.local_architecture}', "
             f"patching='{self.byte_config.patching_mode}', "
-            f"chunk={self.chunk}, levels={len(self.ladder.lengths)}, "
-            f"codebook_size={self.ladder.codebook_size})"
+            f"chunk={self.chunk}, codebook_sizes={self.ladder.sizes})"
         )
 
     def check_trunk(self, config, trunk: nn.Module) -> None:
@@ -160,11 +164,12 @@ class CoarseToFineEncoder(ByteLatentEncoder):
     def _corrupt(self, codes: List[Tensor], masks: List[Tensor], valid: Tensor):
         """Cumulative reconstructions from codes with some replaced at random."""
         noisy = []
-        for level_codes, mask, rate in zip(codes, masks, self._corruption_rates()):
+        for k, rate in enumerate(self._corruption_rates()):
+            level_codes = codes[k]
             swap = (
                 torch.rand(level_codes.shape, device=level_codes.device) < rate
-            ) & mask
-            random = torch.randint_like(level_codes, self.ladder.codebook_size)
+            ) & masks[k]
+            random = torch.randint_like(level_codes, self.ladder.levels[k].K)
             noisy.append(torch.where(swap, random, level_codes))
         return self.ladder.reconstructions(noisy, valid)
 
@@ -277,6 +282,7 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         self._state = dict(
             codes=codes,
             masks=masks,
+            sums=sums,
             latents=latents,
             n=n,
             scored=self._scored_bytes(input_ids),
@@ -316,17 +322,19 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         lengths = list(self.ladder.lengths)
         blocks = h[:, n * C :].reshape(B, n, sum(lengths), -1).split(lengths, dim=2)
         nats = h.new_zeros(())
-        stats = []
+        stats, level_nats = [], []
         for k, (out, codes, mask) in enumerate(
             zip(blocks, state["codes"], state["masks"])
         ):
             if not mask.any():
                 stats.append(None)
+                level_nats.append(h.new_zeros(()))
                 continue
             logits = self.code_logits(k, out[mask]).float()
             target = codes[mask]
             ce = F.cross_entropy(logits, target, reduction="none")
             nats = nats + ce.sum()
+            level_nats.append(ce.sum().detach())
             stats.append(
                 (
                     ce.mean().detach(),
@@ -347,19 +355,61 @@ class CoarseToFineEncoder(ByteLatentEncoder):
             )
             + 1
         )
-        latents = state["latents"]
+        state.update(
+            level_nats=level_nats,
+            target_patch=target_patch,
+            tokens=local_decoder_tokens,
+        )
+        return None, self._spell(local_decoder_tokens, target_patch, state["latents"])
+
+    def _spell(
+        self, tokens: Tensor, target_patch: Tensor, latents: Tensor, origin: int = 0
+    ) -> Tensor:
+        """Decoder features per position, read from its target's patch alone.
+
+        Position ``t`` predicts byte ``t + 1`` and reads that byte's patch: its
+        latent from ``latents``, its slot in its chunk, and the bytes of the
+        patch before ``t + 1``. The conv layers stop at each patch's first
+        position, whose own byte ends the previous patch and is read as the start
+        marker instead. ``origin`` is the patch chunks are counted from.
+        """
+        B, N = tokens.shape
+        index = torch.arange(N, device=tokens.device).expand(B, N)
+        opens = F.pad(target_patch[:, 1:] != target_patch[:, :-1], (1, 0), value=True)
+        positions = index - torch.cummax(index * opens, dim=1).values
+        spelled = tokens.masked_fill(positions == 0, self.spell_start)
+        slots = (target_patch - origin).remainder(self.chunk)
         aligned = latents.gather(
             1, target_patch.unsqueeze(-1).expand(-1, -1, latents.shape[-1])
         )
-        decoder_embeds = self.decoder(
-            tokens=local_decoder_tokens,
-            embeds=h_encoder,
-            patch_embeds=aligned,
+        return self.decoder(
+            tokens=spelled,
+            embeds=self.spelling(spelled),
+            patch_embeds=aligned + self.chunk_positions[slots],
             cross_mask=None,
             mask=None,
-            block_ids=block_ids,
+            block_ids=None,
+            segment_positions=positions,
         )
-        return None, decoder_embeds
+
+    @torch.no_grad()
+    def ladder_cuts(self, classifier) -> List[tuple]:
+        """Per cut ``k`` of the last forward's ladder: the decoder's logits from
+        levels ``0..k`` alone, and the code nats of those levels. Logits plus
+        nats bound bits per byte as the full ladder does. Read after an eval
+        forward, where no level is cut or corrupted."""
+        state = self._state
+        if "level_nats" not in state:
+            return []
+        B, length, D = state["latents"].shape
+        out, nats = [], 0.0
+        for total, level in zip(state["sums"], state["level_nats"]):
+            nats = nats + level
+            features = self._spell(
+                state["tokens"], state["target_patch"], total.reshape(B, length, D)
+            )
+            out.append((classifier(features), nats))
+        return out
 
     def consume_pending_losses(self) -> Dict[str, Tensor]:
         out, self._pending = self._pending, {}
@@ -542,19 +592,13 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         until a chunk's codes exist."""
         return self.coarse_to_fine_decoding
 
-    def _cut_patches(self, tokens: Tensor, cut: int) -> Tensor:
-        """Patch lengths of ``tokens`` (with the next-byte slot), plus a patch
-        forced to start at ``cut``: generation starts a fresh patch after the
-        prompt, wherever the prompt ends."""
+    def _patches(self, tokens: Tensor) -> Tensor:
+        """Patch lengths of ``tokens`` with the next-byte slot, cut as training
+        cuts them. A prompt that ends mid-word leaves its last patch open, and
+        the first generated bytes finish it: the decoder reads that patch's
+        bytes so far, which a fresh patch would hide from it."""
         lengths, _ = self.patcher.patch(tokens, include_next_token=True)
-        lengths = lengths[0][lengths[0] > 0]
-        ends = torch.cumsum(lengths, 0)
-        starts = set((ends - lengths).tolist())
-        if 0 < cut <= tokens.shape[1]:
-            starts.add(cut)
-        bounds = sorted(starts) + [tokens.shape[1] + 1]
-        sizes = [b - a for a, b in zip(bounds[:-1], bounds[1:])]
-        return torch.tensor(sizes, device=tokens.device).unsqueeze(0)
+        return lengths[:, lengths[0] > 0]
 
     def _patch_latents(self, tokens: Tensor, patch_lengths: Tensor) -> Tensor:
         """Normalized patch latents [1, P, D] for every patch of ``tokens``."""
@@ -648,32 +692,20 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         return recon.view(1, C, D)
 
     def _next_byte_logits(
-        self, model, tokens: Tensor, patch_lengths: Tensor, table: Tensor
+        self,
+        model,
+        tokens: Tensor,
+        patch_lengths: Tensor,
+        table: Tensor,
+        origin: int = 0,
     ):
-        """Logits for the byte after ``tokens``, each position reading the latent
-        of its target's patch from ``table``."""
+        """Logits for the byte after ``tokens``, from the latent of its patch in
+        ``table`` and that patch's bytes so far (all ``_spell`` reads)."""
         N = tokens.shape[1]
-        start = max(0, N - SPELL_WINDOW)
-        target_patch = patch_ids_from_lengths(patch_lengths, N + 1)[:, 1:][:, start:]
-        aligned = table.gather(
-            1, target_patch.unsqueeze(-1).expand(-1, -1, table.shape[-1])
-        )
-        window = tokens[:, start:]
-        (h_encoder, _), _ = self.encoder(
-            tokens=window,
-            embeds=self.embeddings(window),
-            patch_embeds=None,
-            cross_mask=None,
-            mask=None,
-            block_ids=None,
-        )
-        features = self.decoder(
-            tokens=window,
-            embeds=h_encoder,
-            patch_embeds=aligned,
-            cross_mask=None,
-            mask=None,
-            block_ids=None,
+        target_patch = patch_ids_from_lengths(patch_lengths, N + 1)[:, 1:]
+        first = int((target_patch[0] < target_patch[0, -1]).sum())
+        features = self._spell(
+            tokens[:, first:], target_patch[:, first:], table, origin
         )
         return model.classifier(features[:, -1:])[:, -1]
 
@@ -690,10 +722,10 @@ class CoarseToFineEncoder(ByteLatentEncoder):
         trunk = {"root": model.decoder, "forward": trunk_hooks(model)["latent_forward"]}
         do_sample = bool(getattr(config, "do_sample", False))
         temperature = float(getattr(config, "temperature", None) or 1.0)
-        prompt_len = prompt.shape[1]
         seq = prompt
-        lengths = self._cut_patches(seq, prompt_len)
-        start = lengths.shape[1] - 1  # the next byte opens this patch
+        lengths = self._patches(seq)
+        start = lengths.shape[1] - 1  # the patch the next byte is in
+        origin = start  # generated chunks count from here
         table = self._reconstruct_context(self._patch_latents(seq, lengths)[:, :start])
         while True:
             context = self._patch_latents(seq, lengths)[:, :start]
@@ -705,13 +737,13 @@ class CoarseToFineEncoder(ByteLatentEncoder):
                 dim=1,
             )
             while True:
-                logits = self._next_byte_logits(model, seq, lengths, table)
+                logits = self._next_byte_logits(model, seq, lengths, table, origin)
                 byte = pick_next(logits, seq, logits_processor, do_sample)
                 seq = torch.cat([seq, byte.view(1, 1).to(seq.dtype)], dim=1)
                 stream_put(streamer, byte.view(1))
                 if is_halted(seq, criteria):
                     return seq
-                lengths = self._cut_patches(seq, prompt_len)
+                lengths = self._patches(seq)
                 if lengths.shape[1] - 1 >= start + self.chunk:
                     break
             start += self.chunk
@@ -732,8 +764,8 @@ class CoarseToFineEncoder(ByteLatentEncoder):
 
         Per chunk: ``levels`` trunk passes sample its codes coarse to fine, then
         the local decoder spells its bytes one at a time from the reconstructed
-        latents, through the prepared processors and stopping criteria. The
-        first generated byte opens a new patch even if the prompt ends mid-word.
+        latents, through the prepared processors and stopping criteria. A
+        prompt that ends mid-word is continued inside its open patch.
         Rows are generated one at a time and right-padded to a common length.
         """
         from praxis.inference.decoding import stream_end

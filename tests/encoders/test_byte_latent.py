@@ -5,6 +5,7 @@ from torch import nn
 
 from praxis import registry
 from praxis.encoders.byte_latent.encoder import (
+    ConvBlock,
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
     packed_rnn_block,
@@ -355,6 +356,21 @@ def test_packed_rnn_matches_explicit_block_ids():
         rnn, x, input_ids, eos_token_id=0, block_ids=create_block_ids(input_ids, 0)
     )
     assert torch.allclose(derived, explicit, atol=1e-6)
+
+
+def test_a_fenced_conv_is_the_conv_inside_one_segment_and_blind_across():
+    """segment_positions stops every tap at its segment's start: one segment is
+    the plain causal conv, and each later segment reads as if it were alone."""
+    torch.manual_seed(0)
+    block = ConvBlock(8, dilation=2, padding=4, kernel_size=3)
+    x = torch.randn(2, 12, 8)
+    whole = torch.arange(12).expand(2, 12)
+    torch.testing.assert_close(block(x, segment_positions=whole), block(x))
+
+    split = torch.cat([torch.arange(5), torch.arange(7)]).expand(2, 12)
+    fenced = block(x, segment_positions=split)
+    torch.testing.assert_close(fenced[:, :5], block(x[:, :5]))
+    torch.testing.assert_close(fenced[:, 5:], block(x[:, 5:]))
 
 
 def test_topk_mean_pooling():

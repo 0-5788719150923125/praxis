@@ -549,11 +549,27 @@ class BackpropagationTrainer(LightningModule):
             nll_bits = self._compute_byte_nll_bits(outputs, labels)
             # A coarse-to-fine decoder reconstructs from codes the trunk must
             # also pay for: its logits alone are codec fidelity, and with the
-            # code bits added they bound bits per byte from above.
+            # code bits added they bound bits per byte from above. The same
+            # goes for val_loss, which drops aux terms in eval: alone it is a
+            # reconstruction that reads a code of its own target, below any
+            # next-byte loss by construction. With the code nats it is the
+            # loss as trained, less the commitment term.
             code_bits = self._compute_code_bits(labels)
-            if nll_bits is not None and code_bits is not None:
-                stats["val_codec_bpb"] = nll_bits
-                nll_bits = nll_bits + code_bits
+            if code_bits is not None:
+                stats["val_loss"] = loss + code_bits * math.log(2.0)
+                if nll_bits is not None:
+                    stats["val_codec_bpb"] = nll_bits
+                    nll_bits = nll_bits + code_bits
+            # The same bound at every cut of the code ladder: decoded from the
+            # coarser levels alone, paying only for their codes. A cut that
+            # beats the full ladder has finer levels costing more than they
+            # carry.
+            for k, (cut_logits, cut_nats) in enumerate(self._ladder_cuts()):
+                recon = self._byte_nll_bits(cut_logits, labels)
+                cost = self._code_bits(cut_nats, labels)
+                if recon is not None and cost is not None:
+                    stats[f"val_cut_recon_l{k}"] = recon
+                    stats[f"val_cut_bound_l{k}"] = recon + cost
             if nll_bits is not None:
                 stats["val_byte_nll_bits"] = nll_bits
         else:
@@ -754,7 +770,10 @@ class BackpropagationTrainer(LightningModule):
         (cut-cross-entropy) or the classifier emits a non-vocab space; a missing
         series is a readable failure, an exception in a validation loop is not.
         """
-        logits = getattr(outputs, "logits", None)
+        return self._byte_nll_bits(getattr(outputs, "logits", None), labels)
+
+    def _byte_nll_bits(self, logits, labels):
+        """``_compute_byte_nll_bits`` on bare logits."""
         if logits is None or labels is None or logits.dim() != 3:
             return None
 
@@ -790,7 +809,10 @@ class BackpropagationTrainer(LightningModule):
         input (coarse to fine)."""
         encoder = getattr(self.model, "encoder", None)
         reader = getattr(encoder, "code_nats", None)
-        nats = reader() if reader is not None else None
+        return self._code_bits(reader() if reader is not None else None, labels)
+
+    def _code_bits(self, nats, labels):
+        """``nats`` of code loss in bits per scored byte of ``labels``."""
         if nats is None or labels is None:
             return None
         pad_id = getattr(getattr(self, "tokenizer", None), "pad_token_id", None)
@@ -801,6 +823,17 @@ class BackpropagationTrainer(LightningModule):
         if not count:
             return None
         return nats.float() / count / math.log(2.0)
+
+    @torch.no_grad()
+    def _ladder_cuts(self):
+        """``(logits, code nats)`` per cut of a coarse-to-fine encoder's code
+        ladder, from the last forward; empty for any other encoder."""
+        encoder = getattr(self.model, "encoder", None)
+        reader = getattr(encoder, "ladder_cuts", None)
+        classifier = getattr(self.model, "classifier", None)
+        if reader is None or classifier is None:
+            return []
+        return reader(classifier)
 
     @torch.compiler.disable
     def _compute_softmax_collapse(self, output):

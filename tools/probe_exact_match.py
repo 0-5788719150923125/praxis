@@ -299,7 +299,11 @@ def load_model(experiment, device, ckpt):
     config = create_praxis_config(args, tokenizer)
     model = assemble_model(cfg, config).model
     state = torch.load(ckpt, map_location="cpu", weights_only=False)["state_dict"]
-    weights = {k[len("model.") :]: v for k, v in state.items() if k.startswith("model.")}
+    weights = {
+        k.removeprefix("model.").removeprefix("_orig_mod."): v
+        for k, v in state.items()
+        if k.startswith("model.")
+    }
     missing, unexpected = model.load_state_dict(weights, strict=False)
     if missing or unexpected:
         print(f"[sample] missing={missing[:5]} unexpected={unexpected[:5]}")

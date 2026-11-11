@@ -58,7 +58,8 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "val_loss": {
         "description": (
             "Cross-entropy on the validation set, emitted every "
-            "``val_check_interval`` steps."
+            "``val_check_interval`` steps. Coarse-to-fine runs add their code "
+            "nats per byte, so it is their bound in nats."
         ),
         "chart": {
             "title": "Validation Loss",
@@ -930,6 +931,37 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "key_pattern": r"^val_brier_[1-4]$",
         "series_noun": "Order",
         "order": 45,
+    },
+    {
+        # Coarse-to-fine encoders: the bound decoded from levels 0..k alone,
+        # paying only for those levels' codes (CoarseToFineEncoder.ladder_cuts).
+        # The deepest series is val_byte_nll_bits.
+        "key": "val_cut_bound",
+        "type": "multi_expert_line",
+        "title": "Bound by Ladder Cut",
+        "y_label": "bits per byte",
+        "description": (
+            "Bits-per-byte bound when the decoder reads code levels 0 through k "
+            "only. The deepest cut should be lowest; a coarser cut below it means "
+            "finer levels cost more than they save."
+        ),
+        "key_pattern": r"^val_cut_bound_l\d$",
+        "series_noun": "Through level",
+        "order": 56,
+    },
+    {
+        "key": "val_cut_recon",
+        "type": "multi_expert_line",
+        "title": "Reconstruction by Ladder Cut",
+        "y_label": "bits per byte",
+        "description": (
+            "Decoder bits per byte from code levels 0 through k alone, codes not "
+            "counted. Equal lines mean the finer levels carry nothing the decoder "
+            "uses."
+        ),
+        "key_pattern": r"^val_cut_recon_l\d$",
+        "series_noun": "Through level",
+        "order": 57,
     },
     {
         "key": "sampling_weights",

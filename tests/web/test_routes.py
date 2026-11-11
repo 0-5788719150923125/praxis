@@ -594,6 +594,23 @@ def test_validation_points_carry_every_x_coordinate(tmp_path):
         assert not missing, f"val points {missing} have no {axis['source']}"
 
 
+def test_validation_extras_survive_the_microbatches_after_them(tmp_path):
+    """A val metric with no native column rides in ``extra_metrics``. The train
+    micro-batches that follow validation at the same step log extras of their
+    own, and must merge with it rather than replace it."""
+    from praxis.logging.metrics_logger import MetricsLogger
+
+    logger = MetricsLogger(run_dir=tmp_path, csv_mirror=False)
+    logger.log(step=3, loss=2.0, probe_gain=0.1)
+    logger.log(step=3, val_loss=2.9, val_cut_bound_l0=3.5)
+    logger.log(step=3, loss=1.9, probe_gain=0.2)
+    logger.close()
+
+    payload = _payload(tmp_path / "metrics.db")
+    assert payload["val_cut_bound_l0"] == [3.5]
+    assert payload["probe_gain"] == [0.2]
+
+
 def test_elapsed_discounts_a_suspension():
     """A stopped-and-resumed run must not be billed for the hours it sat idle."""
     from praxis.web.routes.metrics import _TS_RAW, _elapsed_seconds

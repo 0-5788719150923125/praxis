@@ -58,12 +58,13 @@ Presets:
 ## `byte_latent_conv_coarse_to_fine` - CoarseToFineEncoder
 
 byte_latent_conv as Next-Concept Modeling (arXiv:2610.14162), trained in one run. Chunks
-of 32 patches get a multiscale residual code ladder (1, 2, 4 ... 32 codes, 4096 per
-level, EMA codebooks); the trunk predicts every level from the coarser ones with earlier
-chunks as context, and the local decoder spells each patch from its reconstructed
-latent. The code loss never reaches the tokenizer. Generates a chunk in 6 trunk passes.
+of 32 patches get a multiscale residual code ladder (1, 2, 4 ... 32 codes; 128 doubling
+to 4096 per level, EMA codebooks); the trunk predicts every level from the coarser ones
+with earlier chunks as context, and the local decoder spells each patch from its
+reconstructed latent and its own bytes, never an earlier patch's. The code loss never
+reaches the tokenizer. Generates a chunk in 6 trunk passes.
 
-Source: [praxis/encoders/byte_latent/coarse_to_fine.py:47](../praxis/encoders/byte_latent/coarse_to_fine.py#L47)
+Source: [praxis/encoders/byte_latent/coarse_to_fine.py:45](../praxis/encoders/byte_latent/coarse_to_fine.py#L45)
 
 Presets:
 - `byte_latent_conv_coarse_to_fine` - `chunk=32, codebook_size=4096, embeddings='byte_hash', local_architecture='conv', merge='normalized', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space'`

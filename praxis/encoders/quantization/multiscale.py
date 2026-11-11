@@ -7,6 +7,11 @@ spans), quantizes each against its own codebook, and spreads the selected codes
 back over their spans. Level 0 is one code per chunk; the last level is one per
 latent. Doubling is the structural schedule: every level halves the span.
 
+``codebook_size`` is the last level's. Each coarser level has half the codes of
+the level after it, in step with the vectors it sees, so a code at any level is
+hit about as often. A level-0 bank as large as the last level's sees 1/chunk of
+the traffic per code and lives on dead-code resets.
+
 The codebooks learn by EMA only. Nothing here takes a gradient, so the ladder
 runs under ``no_grad`` and the caller passes gradient around it (straight-through).
 """
@@ -23,7 +28,8 @@ from praxis.encoders.quantization.vector_quantizer import VectorQuantizer
 
 
 class MultiScaleResidualVQ(nn.Module):
-    """Coarse-to-fine residual codes, ``log2(chunk) + 1`` levels per chunk."""
+    """Coarse-to-fine residual codes, ``log2(chunk) + 1`` levels per chunk;
+    level ``k`` has ``codebook_size * 2**k / chunk`` codes."""
 
     def __init__(
         self,
@@ -43,9 +49,12 @@ class MultiScaleResidualVQ(nn.Module):
         self.lengths: Tuple[int, ...] = tuple(
             2**k for k in range(int(math.log2(chunk)) + 1)
         )
+        self.sizes: Tuple[int, ...] = tuple(
+            max(1, self.codebook_size * length // self.chunk) for length in self.lengths
+        )
         self.levels = nn.ModuleList(
             VectorQuantizer(
-                K=codebook_size,
+                K=size,
                 D=dim,
                 ema=True,
                 decay=decay,
@@ -53,7 +62,7 @@ class MultiScaleResidualVQ(nn.Module):
                 reset_interval=reset_interval,
                 stale_after=stale_after,
             )
-            for _ in self.lengths
+            for size in self.sizes
         )
         # EMA owns the codebooks; an optimizer step would fight it.
         for level in self.levels:
@@ -63,7 +72,7 @@ class MultiScaleResidualVQ(nn.Module):
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(dim={self.dim}, chunk={self.chunk}, "
-            f"codebook_size={self.codebook_size}, levels={len(self.lengths)})"
+            f"codebook_sizes={self.sizes})"
         )
 
     @staticmethod
@@ -185,8 +194,8 @@ class MultiScaleResidualVQ(nn.Module):
     def telemetry(self) -> Dict[str, float]:
         """Per-level codebook health. Syncs to host; metrics interval only."""
         out: Dict[str, float] = {}
-        log_k = math.log(max(self.codebook_size, 2))
         for k, level in enumerate(self.levels):
+            log_k = math.log(max(level.K, 2))
             out[f"vq_dead_frac_l{k}"] = float(level.dead_code_count) / level.K
             out[f"vq_resets_l{k}"] = float(level.reset_count_total)
             entropy = self.marginal_entropy(k)
