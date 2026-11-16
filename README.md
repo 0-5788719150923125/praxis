@@ -81,7 +81,6 @@ Praxis is organized as 55 registry namespaces. The feature categories below link
 Top-level directories, with detail sourced from each one's README
 where present.
 
-- **[`axis/`](axis/README.md)** - A home for random side projects that live in the Praxis repo but have little or no integration with it. Each subdirectory is a self-contained app with its own toolchain (Godot, Kotlin, ...); Praxis neither imports them nor depends on them. They live here because this is where the work happens, not ...
 - **[`docs/`](docs/)** - Auto-generated per-registry docs. Regenerated at every launch.
 - **[`environments/`](environments/README.md)** - Environment configurations override all other settings (defaults, experiments, and CLI args) to provide controlled presets for different use cases.
 - **[`evaluation/`](evaluation/)** - Evaluation harnesses and helpers.
@@ -109,8 +108,6 @@ Standalone subsystems, documented outside the registry map.
 
 - [CLI arguments](docs/cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](docs/web.md) - dashboard, JSON API routes, and inference endpoints.
-- [Vortex mobile app](axis/vortex/README.md) - archived Godot companion app for controlling Praxis.
-- [nuTube](axis/nutube/README.md) - local-first YouTube explorer with an on-device recommender (Godot, in development).
 
 <!-- AUTODOC:SUBSYSTEMS:END -->
 
@@ -258,10 +255,6 @@ The Terminal tab streams the live training dashboard - error and validation, the
 The Customs tab inspects the instantiated model. Its Architecture card renders the full module tree, so the registry choices for a run are legible at a glance (shown here for a `--beta` model: byte-latent encoder, Arc attention, KL-divergence halting):
 
 ![Architecture card](./static/architecture.webp)
-
-## side projects
-
-The [`axis/`](./axis/README.md) directory holds standalone side projects that live in this repo but have little or no integration with Praxis. It currently contains [Vortex](./axis/vortex/README.md), an older Godot app for controlling Praxis, and [nuTube](./axis/nutube/README.md), an experiment in a local-first YouTube recommender that runs entirely on the device.
 
 </details>
 
