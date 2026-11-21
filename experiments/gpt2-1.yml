@@ -87,7 +87,7 @@ block_type: transformer
 # Arguments card shows it.
 #
 # Options: mlp, glu, arc, poly, scatter, kan, peer, peer_glu,
-#     peer_glu_single_head, eml_tree, spline
+#     peer_glu_single_head, eml_tree, spline, capsule_harmonic
 # Default: glu
 #
 # mlp: A multi-layer perceptron mapping ``input_dim -> input_dim``.
@@ -102,7 +102,7 @@ ffn_type: mlp
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 38 of them, described in docs/attention.md
+# Options: 39 of them, described in docs/attention.md
 # Default: modular
 #
 # vanilla: Standard multi-head attention implementation using PyTorch's

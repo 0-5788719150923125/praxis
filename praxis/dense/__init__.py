@@ -3,6 +3,7 @@ from functools import partial
 from praxis import registry
 from praxis.dense.arc import ArcGLU
 from praxis.dense.base import BaseDense
+from praxis.dense.capsule import HarmonicCapsules
 from praxis.dense.eml import EMLTree
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.kan import KolmogorovArnoldNetwork
@@ -54,5 +55,6 @@ registry.declare(
         ),
         "eml_tree": EMLTree,
         "spline": SplineNetwork,
+        "capsule_harmonic": HarmonicCapsules,
     },
 )

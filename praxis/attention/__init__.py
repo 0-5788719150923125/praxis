@@ -12,7 +12,7 @@ from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.kaleidoscope import KaleidoscopeAttention
 from praxis.attention.modular import ModularAttention
-from praxis.attention.phase import PhaseProjection, TangentStep
+from praxis.attention.phase import CapsuleTangentStep, PhaseProjection, TangentStep
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.single import (
     SingleHeadArcAttention,
@@ -76,6 +76,21 @@ registry.declare(
                 "per-oscillator natural frequencies. Logs local and global "
                 "phase order, decoupled mass, repelling oscillators and step "
                 "size per layer."
+            ),
+        ),
+        "kuramoto_capsules": Entry(
+            partial(
+                SelfAttention, projection=PhaseProjection, output=CapsuleTangentStep
+            ),
+            (
+                "kuramoto with routing by agreement (Sabour et al. 2017) in the "
+                "value path. Each token's oscillators vote as their first three "
+                "harmonics in the rotary frame, carried forward by their natural "
+                "frequencies; two agreement rounds re-weight the paper's score "
+                "toward votes that agree with the squashed whole, and the step "
+                "follows a learned-harmonic coupling. Sets ``encoding`` to "
+                "``rope_learned_rates``. Adds routing shift, whole length and "
+                "vote harmonic share per layer."
             ),
         ),
         # Configs and checkpoints written before the rename.

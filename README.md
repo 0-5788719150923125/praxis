@@ -22,7 +22,7 @@ Praxis is organized as 55 registry namespaces. The feature categories below link
 
 - [Activation combination types](docs/activation-types.md) (5)
 - [Activation functions](docs/activations.md) (35)
-- [Attention mechanisms](docs/attention.md) (38)
+- [Attention mechanisms](docs/attention.md) (39)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Chat formats](docs/chat-formats.md) (3)
 - [Classifiers](docs/classifiers.md) (17)
@@ -30,7 +30,7 @@ Praxis is organized as 55 registry namespaces. The feature categories below link
 - [Decoder block layouts](docs/blocks.md) (9)
 - [Diffusion objectives](docs/diffusion.md) (2)
 - [Expert mixing](docs/mixing.md) (6)
-- [Feedforward experts](docs/dense.md) (11)
+- [Feedforward experts](docs/dense.md) (12)
 - [Foreign model adapters](docs/model-adapters.md) (1)
 - [Foreign model tasks](docs/model-tasks.md) (1)
 - [Generators](docs/generators.md) (3)

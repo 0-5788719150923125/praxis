@@ -561,7 +561,7 @@ seed: 42
 # Arguments card shows it.
 #
 # Options: mlp, glu, arc, poly, scatter, kan, peer, peer_glu,
-#     peer_glu_single_head, eml_tree, spline
+#     peer_glu_single_head, eml_tree, spline, capsule_harmonic
 
 # ffn_type: glu
 
@@ -573,7 +573,7 @@ seed: 42
 # Entries may be ``functools.partial`` profiles of one class; a profile is the
 # variant, not a flag.
 #
-# Options: 38 of them, described in docs/attention.md
+# Options: 39 of them, described in docs/attention.md
 
 # attention_type: modular
 

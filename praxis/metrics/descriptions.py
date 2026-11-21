@@ -32,6 +32,7 @@ from praxis.metrics.specialization import (
     collect_activation_descriptions,
     collect_arc_descriptions,
     collect_attention_descriptions,
+    collect_dense_descriptions,
 )
 
 
@@ -106,6 +107,11 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         attention_descs = collect_attention_descriptions(model)
         if attention_descs:
             yield attention_descs
+
+        # Feedforwards that publish diagnostics (capsule routing).
+        dense_descs = collect_dense_descriptions(model)
+        if dense_descs:
+            yield dense_descs
 
     # The decoder's sorting slot, when it holds a learnable positional field
     # (decay_bias / amplitude_field); the stateless sorts declare nothing.

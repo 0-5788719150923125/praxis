@@ -128,6 +128,9 @@ class DynamicsLoggerCallback(Callback):
             # no loss hook either and opt in via training_metrics().
             dynamics.update(self._extract_attention_dynamics(model))
 
+            # Feedforward diagnostics (capsule routing), same opt-in.
+            dynamics.update(self._extract_dense_dynamics(model))
+
             # Activation diagnostics (e.g. Servant's chirp coupling), averaged
             # across activation modules. Empty unless the activation opts in.
             dynamics.update(self._extract_activation_dynamics(model))
@@ -529,6 +532,17 @@ class DynamicsLoggerCallback(Callback):
             return collect_attention_metrics(model)
         except Exception as e:
             print(f"[DynamicsLogger] attention training_metrics failed: {e}")
+            return {}
+
+    def _extract_dense_dynamics(self, model) -> dict:
+        """Collect feedforward diagnostics (per layer where declared); wrapped
+        in try/except so one bad metric cannot kill the dynamics log."""
+        from praxis.metrics.specialization import collect_dense_metrics
+
+        try:
+            return collect_dense_metrics(model)
+        except Exception as e:
+            print(f"[DynamicsLogger] dense training_metrics failed: {e}")
             return {}
 
     def _extract_activation_dynamics(self, model) -> dict:

@@ -1,4 +1,5 @@
-"""Module-walk diagnostics: Arc depth specialization, attention, activations.
+"""Module-walk diagnostics: Arc depth specialization, attention, feedforwards,
+activations.
 
 ArcAttention and ArcGLU give each recurrent-depth pass its own learned
 parameters (per-depth Q/K/V/O biases, per-pass activations). The risk is
@@ -112,20 +113,46 @@ def _attention_modules(root) -> Iterator:
             yield module
 
 
-def _layered_attention(root) -> Iterator:
-    """Yield ``(layer, module)`` for the attention modules under ``root``.
+def _dense_modules(root) -> Iterator:
+    """Yield feedforward modules under ``root`` that publish diagnostics.
+
+    The same opt-in as attention: any ``dense`` registry class defining
+    ``training_metrics``. ArcGLU is excluded because
+    :func:`collect_arc_metrics` already reports it.
+    """
+    from praxis.dense.arc import ArcGLU
+
+    classes = tuple(
+        {getattr(v, "func", v) for v in registry.namespace("dense").values()}
+    )
+    for module in root.modules():
+        if (
+            isinstance(module, classes)
+            and not isinstance(module, ArcGLU)
+            and hasattr(module, "training_metrics")
+        ):
+            yield module
+
+
+def _layered(modules: Iterator) -> Iterator:
+    """Yield ``(layer, module)`` for ``modules``.
 
     ``layer`` counts only the modules that declare ``per_layer_metrics``, in
     module order, and is None for the rest. Metrics and descriptions both walk
     through here, so a key and its declaration always agree on the layer.
     """
     layer = 0
-    for module in _attention_modules(root):
+    for module in modules:
         if getattr(module, "per_layer_metrics", None):
             yield layer, module
             layer += 1
         else:
             yield None, module
+
+
+def _layered_attention(root) -> Iterator:
+    """Yield ``(layer, module)`` for the attention modules under ``root``."""
+    return _layered(_attention_modules(root))
 
 
 def layer_key(key: str, layer: int) -> str:
@@ -142,10 +169,20 @@ def collect_attention_metrics(root) -> Dict[str, float]:
     logged once per layer instead (:func:`layer_key`), for diagnostics whose
     depth profile is the signal.
     """
+    return _collect_layered(_layered_attention(root))
+
+
+def collect_dense_metrics(root) -> Dict[str, float]:
+    """Feedforward diagnostics, with the attention walk's averaging and
+    per-layer conventions (empty when no feedforward opts in)."""
+    return _collect_layered(_layered(_dense_modules(root)))
+
+
+def _collect_layered(layered: Iterator) -> Dict[str, float]:
     sums: Dict[str, float] = {}
     counts: Dict[str, int] = {}
     out: Dict[str, float] = {}
-    for layer, module in _layered_attention(root):
+    for layer, module in layered:
         per_layer = getattr(module, "per_layer_metrics", ())
         for key, value in module.training_metrics().items():
             if value is None:
@@ -214,8 +251,18 @@ def collect_attention_descriptions(root) -> Dict[str, dict]:
     from stages declares what its stages publish. Per-layer keys are expanded
     to one series per layer on a shared chart.
     """
+    return _layered_descriptions(_layered_attention(root))
+
+
+def collect_dense_descriptions(root) -> Dict[str, dict]:
+    """Gather ``metric_descriptions`` from the feedforward modules under
+    ``root``, per-layer keys expanded as for attention."""
+    return _layered_descriptions(_layered(_dense_modules(root)))
+
+
+def _layered_descriptions(layered: Iterator) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
-    for layer, module in _layered_attention(root):
+    for layer, module in layered:
         descs = getattr(module, "metric_descriptions", None)
         if not isinstance(descs, dict):
             continue

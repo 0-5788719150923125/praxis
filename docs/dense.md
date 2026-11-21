@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Entries are feedforward structure only; the activation a feedforward gates through is set on ``--activation-type``, where the run's Arguments card shows it.
 
-Namespace: ``registry.namespace("dense")``, declared in ``praxis.dense`` (11 entries)
+Namespace: ``registry.namespace("dense")``, declared in ``praxis.dense`` (12 entries)
 
 Selected with ``--ffn-type`` (default: ``glu``).
 
@@ -18,6 +18,19 @@ sees current_depth values {i, i + num_layers, i + 2*num_layers, ...}; we index t
 activation list by current_depth // num_layers so each pass gets its own instance.
 
 Source: [praxis/dense/arc.py:15](../praxis/dense/arc.py#L15)
+
+## `capsule_harmonic` - HarmonicCapsules
+
+A capsule layer with dynamic routing (Sabour et al. 2017, arXiv:1710.09829) whose poses
+are phase harmonics.
+
+Each input coordinate is read as a phase ``theta = alpha * x`` (learned frequency
+starting at 1, as in Kuramoto Attention and Serpent). The phases split into
+``hidden_size // atoms`` primary capsules; primary ``i`` has the complex ``[harmonics,
+atoms]`` pose ``M_i[n, c] = exp(i n theta_ic)``. Each pair ``(i, j)`` has a complex
+``[atoms, atoms]`` transform applied on the right, vote ...
+
+Source: [praxis/dense/capsule.py:20](../praxis/dense/capsule.py#L20)
 
 ## `eml_tree` - EMLTree
 

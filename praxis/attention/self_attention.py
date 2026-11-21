@@ -59,7 +59,8 @@ class SelfAttention(nn.Module):
                 may correct the head layout first.
             output: Optional stage class replacing the output linear. Its
                 forward takes the attended values, the projection's state and
-                the ghost-key attention mass. Needs a ``projection``.
+                the ghost-key attention mass; a ``route`` method, if present,
+                runs its own attention passes instead. Needs a ``projection``.
         """
         super().__init__()
         if output is not None and projection is None:
@@ -67,8 +68,9 @@ class SelfAttention(nn.Module):
                 "an output stage reads the projection stage's state, so it "
                 "needs a projection stage too"
             )
-        if projection is not None and hasattr(projection, "patch_config"):
-            projection.patch_config(config)
+        for stage in (projection, output):
+            if stage is not None and hasattr(stage, "patch_config"):
+                stage.patch_config(config)
         # Staged mode: the projection hands a state to the output stage, and
         # the output stage also sees how much attention went to the ghost key.
         self.staged = projection is not None
@@ -171,7 +173,13 @@ class SelfAttention(nn.Module):
         self.block_mask_cache = {}
 
     @classmethod
-    def patch_config(cls, config, projection: Optional[type] = None, **kwargs) -> None:
+    def patch_config(
+        cls,
+        config,
+        projection: Optional[type] = None,
+        output: Optional[type] = None,
+        **kwargs,
+    ) -> None:
         """Correct the config fields that would otherwise misdescribe this module.
 
         Most mechanisms build exactly what the config asks for, so this is a
@@ -187,10 +195,12 @@ class SelfAttention(nn.Module):
         implementing class's own ``__init__``, so it MUST be idempotent.
 
         A profile's keyword arguments arrive here too, so a ``projection``
-        stage gets to correct the head layout it builds.
+        stage gets to correct the head layout it builds, and an ``output``
+        stage the encoding it reads.
         """
-        if projection is not None and hasattr(projection, "patch_config"):
-            projection.patch_config(config)
+        for stage in (projection, output):
+            if stage is not None and hasattr(stage, "patch_config"):
+                stage.patch_config(config)
 
     def training_metrics(self) -> dict:
         """Diagnostics published by the stages and the positional encoding."""
@@ -496,6 +506,45 @@ class SelfAttention(nn.Module):
         warp = 1.0 - torch.exp(-dist[:, None] * rate[None, :])  # [T, D], 0 at the tip
         return v * warp
 
+    @staticmethod
+    def _prefers_sdpa(score_mod) -> bool:
+        """Eager GPU passes run on SDPA with a boolean mask: eager
+        FlexAttention materializes every score and is ~3x slower. Compiled
+        passes keep FlexAttention's fused kernel, and so does any encoding
+        with a ``score_mod`` (ALiBi), which SDPA cannot apply."""
+        return score_mod is None and not torch.compiler.is_compiling()
+
+    def _dense_mask(
+        self, seq_len: int, device: torch.device, block_ids: Optional[Tensor] = None
+    ) -> Tensor:
+        """Boolean ``[1 or B, 1, S, S+1]`` mask over keys with the ghost at
+        index 0: the ghost always passes, real keys are gated by causality,
+        the sliding window and the packed document."""
+        q_pos = torch.arange(seq_len, device=device)
+        kv_pos_real = torch.arange(seq_len + 1, device=device) - 1
+        if self.causal:
+            allowed = q_pos.unsqueeze(-1) >= kv_pos_real.unsqueeze(0)
+        else:
+            allowed = torch.ones(seq_len, seq_len + 1, dtype=torch.bool, device=device)
+        if self.window_size is not None:
+            within_window = (
+                q_pos.unsqueeze(-1) - kv_pos_real.unsqueeze(0)
+            ) <= self.window_size
+            allowed = allowed & within_window
+
+        if block_ids is None:
+            # Ghost column always passes.
+            allowed[:, 0] = True
+            return allowed.view(1, 1, seq_len, seq_len + 1)
+        # A token may only read keys from its own packed document. Same
+        # ghost shift as the flex path: kv index k>0 is real position k-1.
+        kv_blocks = F.pad(block_ids[:, :seq_len], (1, 0), value=0)
+        same_block = block_ids[:, :seq_len].unsqueeze(-1) == kv_blocks.unsqueeze(-2)
+        allowed = allowed.unsqueeze(0) & same_block
+        # Ghost column always passes.
+        allowed[:, :, 0] = True
+        return allowed.unsqueeze(1)
+
     def _ghost_aware_attention(
         self,
         q: Tensor,
@@ -505,6 +554,7 @@ class SelfAttention(nn.Module):
         is_gqa: bool,
         block_ids: Optional[Tensor] = None,
         with_ghost: bool = False,
+        scale: Optional[float] = None,
     ):
         """Manual masked attention preserving the ghost column.
 
@@ -526,6 +576,7 @@ class SelfAttention(nn.Module):
                 numerically identical to the flex path's document mask.
             with_ghost: Also return the attention mass on the ghost key,
                 ``[B, Hq, S]``.
+            scale: Score scale; ``1 / sqrt(head_dim)`` when None.
         """
         device = q.device
         batch_size, _, _, head_dim = q.shape
@@ -536,7 +587,8 @@ class SelfAttention(nn.Module):
         else:
             k_exp, v_exp = k_ghost, v_ghost
 
-        scale = 1.0 / (head_dim**0.5)
+        if scale is None:
+            scale = 1.0 / (head_dim**0.5)
         scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, S, S+1]
 
         # Apply the encoding's post-score bias (no-op for RoPE/HoPE/NoPE).
@@ -547,34 +599,7 @@ class SelfAttention(nn.Module):
             real_scores = self.encoding.after_scores(scores[..., 1:])
             scores = torch.cat([ghost_col, real_scores], dim=-1)
 
-        # Build mask: ghost (kv_idx=0) always reachable; real keys
-        # gated by causal + optional sliding window.
-        q_pos = torch.arange(seq_len, device=device)
-        kv_pos_real = torch.arange(seq_len + 1, device=device) - 1
-        if self.causal:
-            allowed = q_pos.unsqueeze(-1) >= kv_pos_real.unsqueeze(0)
-        else:
-            allowed = torch.ones(seq_len, seq_len + 1, dtype=torch.bool, device=device)
-        if self.window_size is not None:
-            within_window = (
-                q_pos.unsqueeze(-1) - kv_pos_real.unsqueeze(0)
-            ) <= self.window_size
-            allowed = allowed & within_window
-
-        if block_ids is None:
-            # Ghost column always passes.
-            allowed[:, 0] = True
-            allowed = allowed.view(1, 1, seq_len, seq_len + 1)
-        else:
-            # A token may only read keys from its own packed document. Same
-            # ghost shift as the flex path: kv index k>0 is real position k-1.
-            kv_blocks = F.pad(block_ids[:, :seq_len], (1, 0), value=0)
-            same_block = block_ids[:, :seq_len].unsqueeze(-1) == kv_blocks.unsqueeze(-2)
-            allowed = allowed.unsqueeze(0) & same_block
-            # Ghost column always passes.
-            allowed[:, :, 0] = True
-            allowed = allowed.unsqueeze(1)
-
+        allowed = self._dense_mask(seq_len, device, block_ids)
         scores = scores.masked_fill(~allowed, -1e9)
 
         weights = F.softmax(scores, dim=-1)
@@ -585,7 +610,15 @@ class SelfAttention(nn.Module):
             return weights @ v_exp, ghost
         return weights @ v_exp
 
-    def _layout_attention(self, q: Tensor, k: Tensor, v: Tensor, layout, is_gqa: bool):
+    def _layout_attention(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        layout,
+        is_gqa: bool,
+        scale: Optional[float] = None,
+    ):
         """Attention under a published layout, on SDPA's memory-efficient kernel.
 
         Eager FlexAttention materializes every score, and a layout's sequence
@@ -595,15 +628,32 @@ class SelfAttention(nn.Module):
         mass is ``exp(-lse)``, read in query slices without gradient (the flex
         path detaches it too).
         """
+        return self._masked_sdpa(
+            q, k, v, layout.dense(q.shape[0]), is_gqa, scale, self.staged
+        )
+
+    def _masked_sdpa(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        mask: Tensor,
+        is_gqa: bool,
+        scale: Optional[float] = None,
+        with_ghost: bool = False,
+    ):
+        """SDPA under a boolean mask; ``k``/``v`` carry the zero ghost at index
+        0. With ``with_ghost``, also the ghost mass ``exp(-lse)``, read in query
+        slices without gradient."""
         if is_gqa:
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
-        mask = layout.dense(q.shape[0])
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
-        if not self.staged:
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+        if not with_ghost:
             return out, None
         with torch.no_grad():
-            scale = q.shape[-1] ** -0.5
+            if scale is None:
+                scale = q.shape[-1] ** -0.5
             ghost = []
             for start in range(0, q.shape[2], 256):
                 end = start + 256
@@ -611,6 +661,107 @@ class SelfAttention(nn.Module):
                 scores = scores.masked_fill(~mask[:, :, start:end], float("-inf"))
                 ghost.append(torch.exp(-torch.logsumexp(scores, dim=-1)))
         return out, torch.cat(ghost, dim=-1)
+
+    def _attend(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        block_ids: Optional[Tensor] = None,
+        layout=None,
+        scale: Optional[float] = None,
+        with_ghost: Optional[bool] = None,
+    ) -> Tuple[Tensor, Optional[Tensor]]:
+        """Masked ghostmax attention over ``[B, H, T, D]`` inputs, the value
+        width free. Returns ``[B, Hq, T, Dv]`` and the attention mass on the
+        ghost key ``[B, Hq, T]`` when ``with_ghost`` (default: a staged module
+        in training, whose output stage logs it), else None."""
+        batch_size, _, seq_len, _ = q.shape
+        if with_ghost is None:
+            with_ghost = self.staged and self.training
+
+        # Ghostmax: Prepend zero token to K and V (after positional encoding)
+        # This implements softmax1 by adding an implicit exp(0)=1 to the denominator
+        # and a zero vector that contributes nothing to the output.
+        # See: https://www.evanmiller.org/attention-is-off-by-one.html
+        zero_k = torch.zeros_like(k[:, :, :1])
+        zero_v = torch.zeros_like(v[:, :, :1])
+        k = torch.cat([zero_k, k], dim=2)  # (B, H, T+1, D)
+        v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
+        kv_len = seq_len + 1
+
+        # FlexAttention score modification (no-op for RoPE/HoPE/NoPE, ALiBi
+        # supplies its slope-based closure). ghost_offset=1 lets ALiBi
+        # leave the kv_idx=0 ghost column unbiased.
+        score_mod = self.encoding.build_score_mod(
+            self.num_query_heads, q.device, ghost_offset=1
+        )
+
+        # Determine if we're using GQA
+        is_gqa = self.num_queries > 1
+
+        # Check if we should use CPU fallback
+        use_fallback = self._use_cpu_fallback(q.device)
+        ghost = None
+
+        if layout is not None:
+            attn_output, ghost = self._layout_attention(
+                q, k, v, layout, is_gqa, scale=scale
+            )
+        elif not use_fallback and self._prefers_sdpa(score_mod):
+            mask = self._dense_mask(seq_len, q.device, block_ids)
+            attn_output, ghost = self._masked_sdpa(
+                q, k, v, mask, is_gqa, scale, with_ghost
+            )
+        elif use_fallback:
+            if not hasattr(self, "_cpu_fallback_warned"):
+                print(
+                    "[SelfAttention] Using manual ghost-aware SDPA fallback "
+                    "(CPU device - flex_attention not supported)"
+                )
+                self._cpu_fallback_warned = True
+            # Manual masked attention that preserves the ghost column so
+            # softmax1/ghostmax behavior matches the flex_attention path.
+            attn_output = self._ghost_aware_attention(
+                q,
+                k,
+                v,
+                seq_len=seq_len,
+                is_gqa=is_gqa,
+                block_ids=block_ids,
+                with_ghost=with_ghost,
+                scale=scale,
+            )
+            if with_ghost:
+                attn_output, ghost = attn_output
+        else:
+            # Use FlexAttention (GPU only)
+            # Handle masking: causal + document block_mask with ghost access
+            if self.causal or block_ids is not None:
+                block_mask = self._create_causal_mask(
+                    seq_len, kv_len, q.device, block_ids=block_ids
+                )
+            else:
+                block_mask = None
+
+            # Apply FlexAttention with causal mask and GQA support
+            attn_output = self.flex_attention(
+                q,
+                k,
+                v,
+                block_mask=block_mask,
+                score_mod=score_mod,
+                enable_gqa=is_gqa,
+                scale=scale,  # None: 1 / sqrt(head_dim)
+                **(self.lse_request if with_ghost else {}),
+            )
+            if with_ghost:
+                attn_output, aux = attn_output
+                lse = aux if torch.is_tensor(aux) else aux.lse
+                # The ghost key scores exactly 0, so its weight is exp(-lse).
+                ghost = torch.exp(-lse.detach().float())
+
+        return attn_output, ghost
 
     def forward(
         self,
@@ -698,82 +849,28 @@ class SelfAttention(nn.Module):
         # Dropoff ablation: optionally withhold the causal tip at one depth step.
         k, v = self._maybe_dropoff(k, v, current_depth)
 
-        # Ghostmax: Prepend zero token to K and V (after positional encoding)
-        # This implements softmax1 by adding an implicit exp(0)=1 to the denominator
-        # and a zero vector that contributes nothing to the output.
-        # See: https://www.evanmiller.org/attention-is-off-by-one.html
-        zero_k = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim, device=k.device, dtype=k.dtype
-        )
-        zero_v = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim, device=v.device, dtype=v.dtype
-        )
-        k = torch.cat([zero_k, k], dim=2)  # (B, H, T+1, D)
-        v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
-        kv_len = seq_len + 1
-
-        # FlexAttention score modification (no-op for RoPE/HoPE/NoPE, ALiBi
-        # supplies its slope-based closure). ghost_offset=1 lets ALiBi
-        # leave the kv_idx=0 ghost column unbiased.
-        score_mod = self.encoding.build_score_mod(
-            self.num_query_heads, inputs.device, ghost_offset=1
-        )
-
-        # Determine if we're using GQA
-        is_gqa = self.num_queries > 1
-
-        # Check if we should use CPU fallback
-        use_fallback = self._use_cpu_fallback(inputs.device)
-        ghost = None
-
-        if layout is not None:
-            attn_output, ghost = self._layout_attention(q, k, v, layout, is_gqa)
-        elif use_fallback:
-            if not hasattr(self, "_cpu_fallback_warned"):
-                print(
-                    "[SelfAttention] Using manual ghost-aware SDPA fallback "
-                    "(CPU device - flex_attention not supported)"
-                )
-                self._cpu_fallback_warned = True
-            # Manual masked attention that preserves the ghost column so
-            # softmax1/ghostmax behavior matches the flex_attention path.
-            attn_output = self._ghost_aware_attention(
+        # A routing output stage runs its own attention passes over keys and
+        # values it builds itself, through the same masks and ghost key.
+        if self.staged and hasattr(self.output, "route"):
+            output = self.output.route(
+                lambda q_, k_, v_, scale, with_ghost: self._attend(
+                    q_,
+                    k_,
+                    v_,
+                    block_ids=block_ids,
+                    layout=layout,
+                    scale=scale,
+                    with_ghost=with_ghost,
+                ),
                 q,
                 k,
-                v,
-                seq_len=seq_len,
-                is_gqa=is_gqa,
-                block_ids=block_ids,
-                with_ghost=self.staged,
+                state,
+                rates=self.encoding.rates(current_depth),
+                positions=None if layout is None else layout.positions,
             )
-            if self.staged:
-                attn_output, ghost = attn_output
-        else:
-            # Use FlexAttention (GPU only)
-            # Handle masking: causal + document block_mask with ghost access
-            if self.causal or block_ids is not None:
-                block_mask = self._create_causal_mask(
-                    seq_len, kv_len, inputs.device, block_ids=block_ids
-                )
-            else:
-                block_mask = None
+            return self.dropout(output), past_key_values, 0.0
 
-            # Apply FlexAttention with causal mask and GQA support
-            attn_output = self.flex_attention(
-                q,
-                k,
-                v,
-                block_mask=block_mask,
-                score_mod=score_mod,
-                enable_gqa=is_gqa,
-                scale=None,  # Use default: 1.0 / sqrt(head_dim)
-                **(self.lse_request if self.staged else {}),
-            )
-            if self.staged:
-                attn_output, aux = attn_output
-                lse = aux if torch.is_tensor(aux) else aux.lse
-                # The ghost key scores exactly 0, so its weight is exp(-lse).
-                ghost = torch.exp(-lse.detach().float())
+        attn_output, ghost = self._attend(q, k, v, block_ids=block_ids, layout=layout)
 
         # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads * head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()
