@@ -717,23 +717,32 @@ def _compute_activation_curves(model, x_min: float, x_max: float, num_points: in
     type_counts: Dict[str, int] = {}
 
     for name, module in model.named_modules():
-        if not isinstance(module, activation_types):
+        if isinstance(module, activation_types):
+            probes = {"": module}
+        elif callable(getattr(module, "activation_probes", None)):
+            # A module whose nonlinearity is not an activation module (the
+            # capsule FFN's phase read) hands over elementwise stand-ins.
+            probes = module.activation_probes()
+        else:
             continue
 
         type_name = type(module).__name__
         type_counts[type_name] = type_counts.get(type_name, 0) + 1
 
-        sample = _sample_activation(module, x_min, x_max, num_points, device, dtype)
-        if sample is None:
-            continue
-
-        curves.append(
-            {
-                "name": _short_module_path(name),
-                "type": type_name,
-                **sample,
-            }
-        )
+        path = _short_module_path(name)
+        for label, probe in probes.items():
+            sample = _sample_activation(
+                probe, x_min, x_max, num_points, device, dtype
+            )
+            if sample is None:
+                continue
+            curves.append(
+                {
+                    "name": f"{path}.{label}" if label else path,
+                    "type": type_name,
+                    **sample,
+                }
+            )
 
     activation_type = max(type_counts, key=type_counts.get) if type_counts else None
     return curves, activation_type

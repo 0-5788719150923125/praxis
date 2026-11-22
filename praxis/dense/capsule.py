@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from torch import Tensor, nn
@@ -15,6 +15,20 @@ def squash(s: Tensor, dims: Tuple[int, ...]) -> Tensor:
     direction kept, norm taken jointly over ``dims``."""
     n2 = s.pow(2).sum(dim=dims, keepdim=True)
     return s * (n2 / (1 + n2)) * torch.rsqrt(n2 + _EPS)
+
+
+class PhaseRead(nn.Module):
+    """One real channel of a per-coordinate phase read, ``cos`` or ``sin`` of
+    ``alpha * x``: the elementwise curve the activation chart samples."""
+
+    def __init__(self, frequency: Tensor, part: str) -> None:
+        super().__init__()
+        self.frequency = frequency
+        self.part = part
+
+    def forward(self, x: Tensor) -> Tensor:
+        angle = x * self.frequency
+        return angle.cos() if self.part == "cos" else angle.sin()
 
 
 class HarmonicCapsules(BaseDense):
@@ -175,6 +189,12 @@ class HarmonicCapsules(BaseDense):
         poses, _ = self.route(inputs)
         poses = poses.flatten(-3).to(self.readout.weight.dtype)
         return self.readout(poses).to(inputs.dtype)
+
+    def activation_probes(self) -> Dict[str, nn.Module]:
+        """Curves for the activation chart, which finds no activation module
+        here: each coordinate's phase read. Harmonic n is the same curve n
+        times faster."""
+        return {part: PhaseRead(self.frequency, part) for part in ("cos", "sin")}
 
     def _record(self, coupling: Tensor, poses: Tensor) -> None:
         """Routing entropy and length into a buffer, in-graph: no host sync."""

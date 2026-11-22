@@ -30,7 +30,7 @@ starting at 1, as in Kuramoto Attention and Serpent). The phases split into
 atoms]`` pose ``M_i[n, c] = exp(i n theta_ic)``. Each pair ``(i, j)`` has a complex
 ``[atoms, atoms]`` transform applied on the right, vote ...
 
-Source: [praxis/dense/capsule.py:20](../praxis/dense/capsule.py#L20)
+Source: [praxis/dense/capsule.py:34](../praxis/dense/capsule.py#L34)
 
 ## `eml_tree` - EMLTree
 

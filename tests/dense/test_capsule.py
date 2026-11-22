@@ -89,3 +89,28 @@ def test_dense_walk_logs_and_declares_each_layer():
             assert descriptions[name]["chart"]["series_label"] == f"layer {layer}"
     entropy = metrics["capsule_routing_entropy_layer0"]
     assert 0 < entropy < 1
+
+
+def test_activation_chart_samples_the_phase_read():
+    """The model walker finds no activation module in this FFN, so the
+    activation charts were empty; the phase read stands in for one."""
+    from praxis.web.routes.dynamics import _compute_activation_curves
+
+    net = _module()
+    with torch.no_grad():
+        net.frequency.uniform_(0.3, 1.5)
+    curves, kind = _compute_activation_curves(nn.Sequential(net), -6.0, 6.0, 64)
+    assert kind == "HarmonicCapsules"
+    assert [c["name"] for c in curves] == ["0.cos", "0.sin"]
+
+    x = torch.tensor(curves[0]["x"])
+    alpha = net.frequency.detach().sort().values[net.frequency.numel() // 2]
+    for curve, fn in zip(curves, (torch.cos, torch.sin)):
+        torch.testing.assert_close(torch.tensor(curve["forward"]), fn(alpha * x))
+        assert len(curve["forward_low"]) == len(curve["backward_high"]) == 64
+    torch.testing.assert_close(
+        torch.tensor(curves[1]["backward"]),
+        alpha * torch.cos(alpha * x),
+        atol=0.02,
+        rtol=0.0,
+    )
