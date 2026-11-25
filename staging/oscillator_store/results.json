@@ -1,0 +1,301 @@
+{
+ "sizes": {
+  "store": 9700,
+  "osc_store": 500,
+  "osc": 200,
+  "gate": 100,
+  "eval": 1000,
+  "small": 1000,
+  "osc_steps": 400,
+  "osc_batch": 2048,
+  "experts": 1024,
+  "expert_steps": 3000,
+  "gate_steps": 500,
+  "gru": 256,
+  "gru_steps": 20000,
+  "order": 9,
+  "sample": 400
+ },
+ "store_chars": 9700000,
+ "clusterer": "s-means (3 epochs)",
+ "oscillator": {
+  "trained_numbers": 4480,
+  "T": 11.002256393432617,
+  "seconds": 226.68840169906616,
+  "timescales": [
+   3.2,
+   3.2,
+   3.2,
+   3.3,
+   3.6,
+   3.6,
+   3.6,
+   3.6,
+   3.7,
+   3.9,
+   4.0,
+   4.1,
+   4.2,
+   4.2,
+   4.4,
+   4.5,
+   4.7,
+   5.2,
+   5.3,
+   5.3,
+   5.4,
+   5.5,
+   5.7,
+   5.8,
+   6.2,
+   6.4,
+   6.4,
+   6.6,
+   6.6,
+   7.2,
+   7.3,
+   7.7,
+   7.7,
+   7.9,
+   7.9,
+   9.4,
+   9.6,
+   10.0,
+   11.1,
+   12.4,
+   12.4,
+   12.4,
+   13.7,
+   13.7,
+   14.3,
+   14.5,
+   15.7,
+   18.1,
+   18.6,
+   19.0,
+   19.2,
+   19.3,
+   20.0,
+   20.2,
+   21.7,
+   23.5,
+   26.0,
+   27.4,
+   28.2,
+   29.5,
+   30.1,
+   31.0,
+   32.7,
+   42.2
+  ],
+  "phases": [
+   0.001,
+   0.005,
+   0.005,
+   0.101,
+   0.121,
+   0.125,
+   0.125,
+   0.145,
+   0.169,
+   0.213,
+   0.324,
+   0.335,
+   0.366,
+   0.416,
+   0.448,
+   0.482,
+   0.589,
+   0.592,
+   0.609,
+   0.69,
+   0.715,
+   0.917,
+   1.011,
+   1.017,
+   1.108,
+   1.113,
+   1.123,
+   1.157,
+   1.316,
+   1.379,
+   1.396,
+   1.404,
+   1.417,
+   1.562,
+   1.564,
+   1.664,
+   1.7,
+   1.7,
+   1.718,
+   1.729,
+   1.768,
+   1.793,
+   1.804,
+   1.965,
+   2.001,
+   2.056,
+   2.116,
+   2.146,
+   2.25,
+   2.341,
+   2.408,
+   2.415,
+   2.424,
+   2.432,
+   2.459,
+   2.524,
+   2.643,
+   2.68,
+   2.683,
+   2.738,
+   2.796,
+   2.809,
+   2.834,
+   3.133
+  ]
+ },
+ "store": {
+  "entries": 9379900,
+  "lists": 16384,
+  "probed": 128,
+  "index_mse": 32.415985107421875,
+  "ngram_order": 9,
+  "ngram_counts": 4096900,
+  "seconds": 30.29104971885681
+ },
+ "experts": {
+  "experts": 1024,
+  "hidden": 4,
+  "trained_numbers": 835246,
+  "seconds": 29.538087844848633
+ },
+ "gru": {
+  "hidden": 256,
+  "steps": 20000,
+  "trained_numbers": 232994,
+  "seconds": 139.4835593700409
+ },
+ "readout": {
+  "T": 9.473701477050781,
+  "floor": 0.02
+ },
+ "evaluation": {
+  "store + n-gram": {
+   "system": 1.0806137323379517,
+   "fixed mixture": 1.0937650203704834,
+   "store alone": 1.1480263471603394,
+   "n-gram alone": 1.1672316789627075,
+   "mean weights": {
+    "store": 0.594,
+    "n-gram": 0.406
+   }
+  },
+  "store + n-gram + experts": {
+   "system": 1.0666614770889282,
+   "fixed mixture": 1.086421251296997,
+   "store alone": 1.1480262279510498,
+   "n-gram alone": 1.1672316789627075,
+   "experts alone": 1.464408278465271,
+   "without store": 1.171920657157898,
+   "without n-gram": 1.094606637954712,
+   "without experts": 1.0879383087158203,
+   "mean weights": {
+    "store": 0.628,
+    "n-gram": 0.28,
+    "experts": 0.092
+   }
+  },
+  "store + n-gram + GRU": {
+   "system": 1.0313199758529663,
+   "fixed mixture": 1.0529781579971313,
+   "store alone": 1.1480262279510498,
+   "n-gram alone": 1.1672316789627075,
+   "GRU alone": 1.147701382637024,
+   "without store": 1.0916863679885864,
+   "without n-gram": 1.0471585988998413,
+   "without GRU": 1.0974236726760864,
+   "mean weights": {
+    "store": 0.504,
+    "n-gram": 0.113,
+    "GRU": 0.383
+   }
+  },
+  "all four": {
+   "system": 1.0301182270050049,
+   "fixed mixture": 1.053112268447876,
+   "store alone": 1.1480262279510498,
+   "n-gram alone": 1.1672316789627075,
+   "experts alone": 1.464408278465271,
+   "GRU alone": 1.147701382637024,
+   "without store": 1.0927056074142456,
+   "without n-gram": 1.0452131032943726,
+   "without experts": 1.0306243896484375,
+   "without GRU": 1.086692214012146,
+   "mean weights": {
+    "store": 0.476,
+    "n-gram": 0.191,
+    "experts": 0.007,
+    "GRU": 0.326
+   }
+  },
+  "index recall@64": 0.9997711181640625
+ },
+ "store_1M": {
+  "untrained oscillator": {
+   "store + n-gram": {
+    "system": 1.330852746963501,
+    "fixed mixture": 1.3404650688171387,
+    "store alone": 1.5156943798065186,
+    "n-gram alone": 1.3750050067901611,
+    "mean weights": {
+     "store": 0.29,
+     "n-gram": 0.71
+    }
+   }
+  },
+  "trained oscillator": {
+   "store + n-gram": {
+    "system": 1.326362133026123,
+    "fixed mixture": 1.3335922956466675,
+    "store alone": 1.429305076599121,
+    "n-gram alone": 1.3750050067901611,
+    "mean weights": {
+     "store": 0.382,
+     "n-gram": 0.618
+    }
+   },
+   "store + n-gram + experts": {
+    "system": 1.2658442258834839,
+    "fixed mixture": 1.2885661125183105,
+    "store alone": 1.429305076599121,
+    "n-gram alone": 1.3750050067901611,
+    "experts alone": 1.464408278465271,
+    "without store": 1.290224552154541,
+    "without n-gram": 1.3281012773513794,
+    "without experts": 1.3372421264648438,
+    "mean weights": {
+     "store": 0.256,
+     "n-gram": 0.487,
+     "experts": 0.257
+    }
+   }
+  },
+  "index by k-means (25 passes)": {
+   "recall@64": 0.9945907592773438,
+   "lists": 4096,
+   "probed": 32,
+   "mse": 43.490028381347656,
+   "store alone": 1.4295375347137451
+  },
+  "index by s-means (3 epochs)": {
+   "recall@64": 0.9946823120117188,
+   "lists": 4096,
+   "probed": 32,
+   "mse": 43.098602294921875,
+   "store alone": 1.4292163848876953
+  }
+ },
+ "sample": "once upon a time, there was a would help unpoi...ith her, she loved how they were busy muddy. he hose. we have to the car. lily crawled around, but he couldn't see what was inside.\nhis mom came to the zoo with her mommy made a good friend.\"\nthey go to the couch with their toys in the park. one day, they see a big tent in the park. she saw a bad dream. they just said to jumining, the bear won named lucy. lily looked",
+ "seconds": 747.6310329437256
+}

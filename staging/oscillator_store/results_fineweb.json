@@ -1,0 +1,302 @@
+{
+ "data": "fineweb",
+ "sizes": {
+  "store": 9700,
+  "osc_store": 500,
+  "osc": 200,
+  "gate": 100,
+  "eval": 1000,
+  "small": 1000,
+  "osc_steps": 400,
+  "osc_batch": 2048,
+  "experts": 1024,
+  "expert_steps": 3000,
+  "gate_steps": 500,
+  "gru": 256,
+  "gru_steps": 20000,
+  "order": 9,
+  "sample": 400
+ },
+ "store_chars": 9700000,
+ "clusterer": "s-means (3 epochs)",
+ "oscillator": {
+  "trained_numbers": 4480,
+  "T": 23.403345108032227,
+  "seconds": 241.47847771644592,
+  "timescales": [
+   3.1,
+   3.3,
+   3.3,
+   3.5,
+   3.5,
+   3.5,
+   3.7,
+   4.0,
+   4.1,
+   4.2,
+   4.3,
+   4.6,
+   5.1,
+   5.1,
+   5.1,
+   5.1,
+   5.2,
+   5.2,
+   5.2,
+   5.4,
+   5.4,
+   5.5,
+   5.5,
+   5.8,
+   5.9,
+   6.1,
+   6.2,
+   6.3,
+   6.5,
+   6.5,
+   6.9,
+   7.0,
+   7.1,
+   7.7,
+   7.8,
+   8.3,
+   8.7,
+   8.8,
+   8.8,
+   9.4,
+   11.7,
+   12.3,
+   12.4,
+   12.7,
+   13.1,
+   13.2,
+   13.4,
+   13.5,
+   16.5,
+   16.8,
+   17.6,
+   18.5,
+   18.6,
+   18.7,
+   19.3,
+   19.4,
+   23.5,
+   28.4,
+   28.8,
+   28.9,
+   29.3,
+   30.0,
+   31.6,
+   38.7
+  ],
+  "phases": [
+   0.001,
+   0.008,
+   0.009,
+   0.019,
+   0.1,
+   0.1,
+   0.173,
+   0.224,
+   0.23,
+   0.272,
+   0.343,
+   0.358,
+   0.36,
+   0.455,
+   0.507,
+   0.603,
+   0.637,
+   0.696,
+   0.725,
+   0.734,
+   0.792,
+   0.812,
+   0.823,
+   0.872,
+   0.977,
+   1.009,
+   1.083,
+   1.101,
+   1.154,
+   1.281,
+   1.286,
+   1.298,
+   1.308,
+   1.354,
+   1.488,
+   1.533,
+   1.629,
+   1.657,
+   1.736,
+   1.775,
+   1.78,
+   1.838,
+   1.874,
+   1.883,
+   1.979,
+   1.996,
+   2.113,
+   2.133,
+   2.25,
+   2.28,
+   2.34,
+   2.342,
+   2.37,
+   2.371,
+   2.497,
+   2.559,
+   2.62,
+   2.647,
+   2.683,
+   2.713,
+   2.72,
+   2.74,
+   2.906,
+   2.97
+  ]
+ },
+ "store": {
+  "entries": 9379900,
+  "lists": 16384,
+  "probed": 128,
+  "index_mse": 41.12039566040039,
+  "ngram_order": 9,
+  "ngram_counts": 10227795,
+  "seconds": 31.72480607032776
+ },
+ "experts": {
+  "experts": 1024,
+  "hidden": 4,
+  "trained_numbers": 835246,
+  "seconds": 30.863765716552734
+ },
+ "gru": {
+  "hidden": 256,
+  "steps": 20000,
+  "trained_numbers": 232994,
+  "seconds": 133.81301832199097
+ },
+ "readout": {
+  "T": 12.73580964225889,
+  "floor": 0.05
+ },
+ "evaluation": {
+  "store + n-gram": {
+   "system": 1.9032281637191772,
+   "fixed mixture": 1.907460331916809,
+   "store alone": 2.012148857116699,
+   "n-gram alone": 1.95783531665802,
+   "mean weights": {
+    "store": 0.342,
+    "n-gram": 0.658
+   }
+  },
+  "store + n-gram + experts": {
+   "system": 1.8537007570266724,
+   "fixed mixture": 1.8773061037063599,
+   "store alone": 2.012148857116699,
+   "n-gram alone": 1.95783531665802,
+   "experts alone": 2.2378008365631104,
+   "without store": 1.8736191987991333,
+   "without n-gram": 1.9268878698349,
+   "without experts": 1.9086440801620483,
+   "mean weights": {
+    "store": 0.284,
+    "n-gram": 0.492,
+    "experts": 0.225
+   }
+  },
+  "store + n-gram + GRU": {
+   "system": 1.8263158798217773,
+   "fixed mixture": 1.841564416885376,
+   "store alone": 2.012148857116699,
+   "n-gram alone": 1.95783531665802,
+   "GRU alone": 1.9720475673675537,
+   "without store": 1.8364334106445312,
+   "without n-gram": 1.8864567279815674,
+   "without GRU": 1.9113011360168457,
+   "mean weights": {
+    "store": 0.179,
+    "n-gram": 0.406,
+    "GRU": 0.415
+   }
+  },
+  "all four": {
+   "system": 1.8234866857528687,
+   "fixed mixture": 1.8415000438690186,
+   "store alone": 2.012148857116699,
+   "n-gram alone": 1.95783531665802,
+   "experts alone": 2.2378008365631104,
+   "GRU alone": 1.9720475673675537,
+   "without store": 1.8326921463012695,
+   "without n-gram": 1.882027506828308,
+   "without experts": 1.8265368938446045,
+   "without GRU": 1.867926836013794,
+   "mean weights": {
+    "store": 0.183,
+    "n-gram": 0.404,
+    "experts": 0.057,
+    "GRU": 0.355
+   }
+  },
+  "index recall@64": 0.9995956420898438
+ },
+ "store_1M": {
+  "untrained oscillator": {
+   "store + n-gram": {
+    "system": 2.172783613204956,
+    "fixed mixture": 2.183885097503662,
+    "store alone": 2.4224812984466553,
+    "n-gram alone": 2.235109567642212,
+    "mean weights": {
+     "store": 0.271,
+     "n-gram": 0.729
+    }
+   }
+  },
+  "trained oscillator": {
+   "store + n-gram": {
+    "system": 2.172672748565674,
+    "fixed mixture": 2.179156541824341,
+    "store alone": 2.2997310161590576,
+    "n-gram alone": 2.235109567642212,
+    "mean weights": {
+     "store": 0.327,
+     "n-gram": 0.673
+    }
+   },
+   "store + n-gram + experts": {
+    "system": 2.049455404281616,
+    "fixed mixture": 2.0728988647460938,
+    "store alone": 2.2997307777404785,
+    "n-gram alone": 2.235109567642212,
+    "experts alone": 2.2378008365631104,
+    "without store": 2.05550479888916,
+    "without n-gram": 2.1549317836761475,
+    "without experts": 2.1920254230499268,
+    "mean weights": {
+     "store": 0.109,
+     "n-gram": 0.452,
+     "experts": 0.439
+    }
+   }
+  },
+  "index by k-means (25 passes)": {
+   "recall@64": 0.9954452514648438,
+   "lists": 4096,
+   "probed": 32,
+   "mse": 49.90805435180664,
+   "store alone": 2.299650192260742
+  },
+  "index by s-means (3 epochs)": {
+   "recall@64": 0.9959182739257812,
+   "lists": 4096,
+   "probed": 32,
+   "mse": 49.470088958740234,
+   "store alone": 2.2998502254486084
+  }
+ },
+ "sample": "the history of the application, and thunder benefits the nile, transpt. by parking improve.ets oscilled out the hunts dilation and many of the yery strength incorporating and may increasing the table and taking me he made a great landscape iiratego by food trucks.\nwaiting couples. he has promotional held in the course, third anxious why the acrobat year.\na doubts around them, the best done after fast eventually ",
+ "seconds": 791.6855704784393
+}
